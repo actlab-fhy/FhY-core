@@ -2,6 +2,7 @@
 
 from copy import copy
 from unittest.mock import patch
+
 from fhy_core.identifier import Identifier
 
 
@@ -12,7 +13,7 @@ def test_identifier_initialization():
     assert isinstance(identifier.id, int)
 
 
-@patch.object(Identifier, '_next_id', 0)
+@patch.object(Identifier, "_next_id", 0)
 def test_unique_id_generation():
     """Test that the identifier generates a unique ID."""
     id1 = Identifier("")
@@ -30,7 +31,7 @@ def test_equality():
     id2 = Identifier("name")
     id3 = Identifier("bar")
 
-    assert id1 == id1
+    assert id1 == id1  # noqa: PLR0124
     assert id1 != id2
     assert id2 != id3
 
