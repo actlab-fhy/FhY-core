@@ -102,6 +102,10 @@ class EvaluateExpression(ExpressionTransformer):
         new_operand = self.visit(unary_expression.operand)
         if isinstance(new_operand, LiteralExpression):
             operation = self._UNARY_OPERATIONS[unary_expression.operation]
+            if isinstance(new_operand.value, str):
+                raise NotImplementedError(
+                    "Operations on strings are not supported yet."
+                )
             return LiteralExpression(operation(new_operand.value))
         else:
             return UnaryExpression(
@@ -116,6 +120,10 @@ class EvaluateExpression(ExpressionTransformer):
         if isinstance(new_left, LiteralExpression) and isinstance(
             new_right, LiteralExpression
         ):
+            if isinstance(new_left.value, str) or isinstance(new_right.value, str):
+                raise NotImplementedError(
+                    "Operations on strings are not supported yet."
+                )
             operation = self._BINARY_OPERATIONS[binary_expression.operation]
             return LiteralExpression(operation(new_left.value, new_right.value))
         else:

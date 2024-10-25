@@ -78,7 +78,7 @@ class LiteralExpression(Expression):
     def __init__(self, value: LiteralType) -> None:
         if isinstance(value, str):
             try:
-                value = complex(value)
+                complex(value)
             except ValueError:
                 raise ValueError(
                     f"Invalid literal expression value: "
