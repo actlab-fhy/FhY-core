@@ -66,9 +66,6 @@ exclude_also = [
 [tool.mypy]
 pretty = false
 
-[[tool.mypy.overrides]]
-ignore_errors = true
-
 [tool.pylint.main]
 extension-pkg-whitelist = ["networkx"]
 ignore = ["tests", "dist", "build"]
