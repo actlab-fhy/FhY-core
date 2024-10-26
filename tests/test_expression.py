@@ -144,10 +144,34 @@ def test_tokenize_expression(expression_str: str, expected_tokens: list[str]):
         ),
     ],
 )
-def test_parse_expression(expression_str: str, expected_tree: Expression):
-    """Tests that the expression is correctly parsed."""
+def test_parse_constant_expression(expression_str: str, expected_tree: Expression):
+    """Tests that the constant expression is correctly parsed."""
     result = parse_expression(expression_str)
     _assert_exact_expression_equality(result, expected_tree)
+
+
+def test_parse_expression_with_identifiers():
+    """Tests that the expression with identifiers is correctly parsed."""
+    expression_str = "(x + y) * (5 + x)"
+
+    result = parse_expression(expression_str)
+
+    assert isinstance(result, BinaryExpression)
+    assert result.operation == BinaryOperation.MULTIPLY
+    assert isinstance(result.left, BinaryExpression)
+    assert result.left.operation == BinaryOperation.ADD
+    assert isinstance(result.left.left, IdentifierExpression)
+    assert result.left.left.identifier.name_hint == "x"
+    assert isinstance(result.left.right, IdentifierExpression)
+    assert result.left.right.identifier.name_hint == "y"
+    assert isinstance(result.right, BinaryExpression)
+    assert result.right.operation == BinaryOperation.ADD
+    assert isinstance(result.right.left, LiteralExpression)
+    assert result.right.left.value == "5"
+    assert isinstance(result.right.right, IdentifierExpression)
+    assert result.right.right.identifier.name_hint == "x"
+    assert result.left.left.identifier == result.right.right.identifier
+    assert result.left.right.identifier != result.right.right.identifier
 
 
 @pytest.mark.parametrize(

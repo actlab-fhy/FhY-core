@@ -107,10 +107,12 @@ class ExpressionParser:
 
     _tokens: list[str]
     _current: int
+    _idenfitiers: dict[str, Identifier]
 
     def __init__(self, tokens: list[str]):
         self._tokens = tokens
         self._current = 0
+        self._idenfitiers = {}
 
     def parse(self) -> Expression:
         """Return the parsed expression as an expression tree."""
@@ -175,7 +177,8 @@ class ExpressionParser:
         if self._match_number():
             return LiteralExpression(self._get_previous_token())
         elif self._match_identifier():
-            return IdentifierExpression(Identifier(self._get_previous_token()))
+            identifier = self._get_identifier_from_symbol(self._get_previous_token())
+            return IdentifierExpression(identifier)
         elif self._match("("):
             expression = self._expression()
             self._consume_token(
@@ -188,6 +191,11 @@ class ExpressionParser:
             f'Unexpected token "{self._peek_at_current_token()}" at position '
             f"{self._current} while parsing an expression."
         )
+
+    def _get_identifier_from_symbol(self, symbol: str) -> Identifier:
+        if symbol not in self._idenfitiers:
+            self._idenfitiers[symbol] = Identifier(symbol)
+        return self._idenfitiers[symbol]
 
     def _match(self, *types: str) -> bool:
         if self._peek_at_current_token() in types:
