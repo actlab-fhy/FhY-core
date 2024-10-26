@@ -64,6 +64,39 @@ def copy_expression(expression: Expression) -> Expression:
     return ExpressionCopier()(expression)
 
 
+def _convert_expression_to_sympy_expression(expression: Expression) -> sympy.Expr:
+    """Convert an expression to a SymPy expression.
+
+    Args:
+        expression: Expression to convert.
+
+    Returns:
+        SymPy expression.
+
+    """
+    return sympy.parsing.sympy_parser.parse_expr(
+        pformat_expression(expression, show_id=True, functional=False)
+    )
+
+
+def _substitute_sympy_expression_variables(
+    sympy_expression: sympy.Expr, environment: dict[Identifier, LiteralType]
+) -> sympy.Expr:
+    """Substitute variables in a SymPy expression.
+
+    Args:
+        sympy_expression: SymPy expression to substitute variables in.
+        environment: Environment to substitute variables from.
+
+    Returns:
+        SymPy expression with substituted variables.
+
+    """
+    return sympy_expression.subs(
+        {pformat_identifier(k, show_id=True): v for k, v in environment.items()}
+    )
+
+
 def simplify_expression(
     expression: Expression, environment: dict[Identifier, LiteralType] | None = None
 ) -> Expression:
@@ -77,12 +110,10 @@ def simplify_expression(
         Result of the expression.
 
     """
-    sympy_expression = sympy.parsing.sympy_parser.parse_expr(
-        pformat_expression(expression, show_id=True, functional=False)
-    )
+    sympy_expression = _convert_expression_to_sympy_expression(expression)
     if environment is not None:
-        sympy_expression = sympy_expression.subs(
-            {pformat_identifier(k, show_id=True): v for k, v in environment.items()}
+        sympy_expression = _substitute_sympy_expression_variables(
+            sympy_expression, environment
         )
     result = sympy.simplify(sympy_expression)
     return parse_expression(str(result))
