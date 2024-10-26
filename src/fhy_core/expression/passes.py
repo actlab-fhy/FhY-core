@@ -106,8 +106,9 @@ def convert_expression_to_sympy_expression(expression: Expression) -> sympy.Expr
         SymPy expression.
 
     """
-    return sympy.parsing.sympy_parser.parse_expr(
-        pformat_expression(expression, show_id=True, functional=False)
+    return sympy.parse_expr(
+        pformat_expression(expression, show_id=True, functional=False),
+        evaluate=False,
     )
 
 

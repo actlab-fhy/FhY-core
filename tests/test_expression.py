@@ -402,7 +402,7 @@ def test_copy_binary_expression():
             BinaryExpression(
                 BinaryOperation.ADD, LiteralExpression(5), LiteralExpression(10)
             ),
-            sympy.Integer(5) + sympy.Integer(10),
+            sympy.parse_expr("5 + 10", evaluate=False),
         ),
         (
             BinaryExpression(
