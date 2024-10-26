@@ -14,10 +14,12 @@ from fhy_core.expression import (
     UnaryOperation,
     collect_identifiers,
     convert_expression_to_sympy_expression,
+    convert_sympy_expression_to_expression,
     copy_expression,
     parse_expression,
     pformat_expression,
     simplify_expression,
+    substitute_sympy_expression_variables,
     tokenize_expression,
 )
 from fhy_core.expression.core import LiteralType
@@ -418,6 +420,58 @@ def test_convert_expression_to_sympy_expression(
     """Test that the expression is correctly converted to a sympy expression."""
     result = convert_expression_to_sympy_expression(expression)
     assert result == expected_sympy_expression
+
+
+def test_substitute_sympy_expression_variables():
+    """Test that the sympy expression variables are correctly substituted."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    sympy_expression = sympy.Symbol("x_0") + sympy.Symbol("y_1")
+    substitutions = {x: 5, y: 10}
+    result = substitute_sympy_expression_variables(sympy_expression, substitutions)
+    assert result == 15
+
+
+@pytest.mark.parametrize(
+    "sympy_expression, expected_expression",
+    [
+        (sympy.Integer(5), LiteralExpression("5")),
+        (
+            -sympy.Integer(5),
+            UnaryExpression(UnaryOperation.NEGATE, LiteralExpression("5")),
+        ),
+        (
+            sympy.Integer(5) - sympy.Symbol("x_0"),
+            BinaryExpression(
+                BinaryOperation.SUBTRACT,
+                LiteralExpression("5"),
+                IdentifierExpression(mock_identifier("x", 0)),
+            ),
+        ),
+        (
+            -sympy.Integer(5) / sympy.Symbol("y_3"),
+            BinaryExpression(
+                BinaryOperation.DIVIDE,
+                UnaryExpression(UnaryOperation.NEGATE, LiteralExpression("5")),
+                IdentifierExpression(mock_identifier("y", 3)),
+            ),
+        ),
+    ],
+)
+def test_convert_sympy_expression_to_expression(
+    sympy_expression: sympy.Expr, expected_expression: Expression
+):
+    """Test that the sympy expression is correctly converted to an expression."""
+    result = convert_sympy_expression_to_expression(sympy_expression)
+    _assert_exact_expression_equality(result, expected_expression)
+
+
+def test_sympy_expression_conversion_fails_when_symbol_is_not_identifier():
+    """Test that the sympy expression conversion fails when the symbol is not an
+    identifier.
+    """
+    with pytest.raises(RuntimeError):
+        convert_sympy_expression_to_expression(sympy.Symbol("x"))
 
 
 # TODO: See if this and the next test can combined to just test simplify expr.

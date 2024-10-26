@@ -65,21 +65,26 @@ def copy_expression(expression: Expression) -> Expression:
 
 
 class _ExpressionIdentifierRepairer(ExpressionTransformer):
-    """Repairs the identifiers in an expression tree after manipulation in sympy."""
+    """Repairs the identifiers in an expression tree after manipulation in sympy.
+
+    Expressions are all parsed using the same parser which assumes that all symbols
+    have not been assigned unique IDs yet. As such, the symbols are assigned new
+    unique IDs after parsing. This transformer repairs the identifiers in an expression
+    to match the old IDs using the appended ID to the symbol name in the expression.
+
+    """
 
     def visit_identifier_expression(
         self, identifier_expression
     ) -> IdentifierExpression:
-        identifier = Identifier(identifier_expression.identifier.id)
+        identifier = identifier_expression.identifier
         last_underscore_index = identifier_expression.identifier.name_hint.rfind("_")
         if last_underscore_index == -1:
             raise RuntimeError(
                 "After parsing an expression emitted from sympy, "
                 "an identifier without an underscore was found."
             )
-        identifier_id = int(
-            identifier_expression.identifier.name_hint[last_underscore_index + 1 :]
-        )
+        identifier_id = int(identifier.name_hint[last_underscore_index + 1 :])
         identifier._name_hint = identifier._name_hint[:last_underscore_index]
         identifier._id = identifier_id
         return IdentifierExpression(identifier)
