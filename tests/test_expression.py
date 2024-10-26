@@ -238,6 +238,18 @@ def test_pformat_expressions_with_functional(expression: Expression, expected_st
     assert pformat_expression(expression, functional=True) == expected_str
 
 
+def test_pformat_expressions_with_id():
+    """Tests that the expression is correctly pretty-formatted with the
+    identifier ID.
+    """
+    identifier = Identifier("test_identifier")
+    expression = IdentifierExpression(identifier)
+    assert (
+        pformat_expression(expression, show_id=True)
+        == f"test_identifier_{identifier.id}"
+    )
+
+
 def test_collect_expression_identifiers():
     """Tests that the identifiers are correctly collected from an expression."""
     x = Identifier("x")
