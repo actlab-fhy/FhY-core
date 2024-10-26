@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=67.6.1"]
+requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -17,8 +17,12 @@ keywords = [
    "Compiler",
 ]
 classifiers = [
-   "Development Status :: 1 - Planning",
+   "Development Status :: 3 - Alpha",
    "Programming Language :: Python :: 3",
+   "Programming Language :: Python :: 3.10",
+   "Programming Language :: Python :: 3.11",
+   "Programming Language :: Python :: 3.12",
+   "Programming Language :: Python :: 3.13",
 ]
 dynamic = ["version", "readme", "dependencies"]
 
