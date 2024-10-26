@@ -64,7 +64,34 @@ def copy_expression(expression: Expression) -> Expression:
     return ExpressionCopier()(expression)
 
 
-def _convert_expression_to_sympy_expression(expression: Expression) -> sympy.Expr:
+class _ExpressionIdentifierRepairer(ExpressionTransformer):
+    """Repairs the identifiers in an expression tree after manipulation in sympy."""
+
+    def visit_identifier_expression(
+        self, identifier_expression
+    ) -> IdentifierExpression:
+        identifier = Identifier(identifier_expression.identifier.id)
+        last_underscore_index = identifier_expression.identifier.name_hint.rfind("_")
+        if last_underscore_index == -1:
+            raise RuntimeError(
+                "After parsing an expression emitted from sympy, "
+                "an identifier without an underscore was found."
+            )
+        identifier_id = int(
+            identifier_expression.identifier.name_hint[last_underscore_index + 1 :]
+        )
+        identifier._name_hint = identifier._name_hint[:last_underscore_index]
+        identifier._id = identifier_id
+        return IdentifierExpression(identifier)
+
+
+def _repair_sympy_expression_identifiers(expression: sympy.Expr) -> sympy.Expr:
+    """Repairs the identifiers in a sympy expression after manipulation in sympy."""
+    repairer = _ExpressionIdentifierRepairer()
+    return repairer(expression)
+
+
+def convert_expression_to_sympy_expression(expression: Expression) -> sympy.Expr:
     """Convert an expression to a SymPy expression.
 
     Args:
@@ -79,7 +106,7 @@ def _convert_expression_to_sympy_expression(expression: Expression) -> sympy.Exp
     )
 
 
-def _substitute_sympy_expression_variables(
+def substitute_sympy_expression_variables(
     sympy_expression: sympy.Expr, environment: dict[Identifier, LiteralType]
 ) -> sympy.Expr:
     """Substitute variables in a SymPy expression.
@@ -97,6 +124,22 @@ def _substitute_sympy_expression_variables(
     )
 
 
+def convert_sympy_expression_to_expression(
+    sympy_expression: sympy.Expr,
+) -> Expression:
+    """Convert a SymPy expression to an expression.
+
+    Args:
+        sympy_expression: SymPy expression to convert.
+
+    Returns:
+        Expression.
+
+    """
+    expression = parse_expression(str(sympy_expression))
+    return _repair_sympy_expression_identifiers(expression)
+
+
 def simplify_expression(
     expression: Expression, environment: dict[Identifier, LiteralType] | None = None
 ) -> Expression:
@@ -110,9 +153,9 @@ def simplify_expression(
         Result of the expression.
 
     """
-    sympy_expression = _convert_expression_to_sympy_expression(expression)
+    sympy_expression = convert_expression_to_sympy_expression(expression)
     if environment is not None:
-        sympy_expression = _substitute_sympy_expression_variables(
+        sympy_expression = substitute_sympy_expression_variables(
             sympy_expression, environment
         )
     result = sympy.simplify(sympy_expression)

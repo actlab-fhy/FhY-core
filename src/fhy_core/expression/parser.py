@@ -25,9 +25,8 @@ def _build_token_pattern(*patterns: str) -> re.Pattern[str]:
 
 _FLOAT_PATTERN = re.compile(r"\d+\.\d+")
 _INTEGER_PATTERN = re.compile(r"\d+")
-_COMPLEX_PATTERN = re.compile(
-    _build_token_pattern(_FLOAT_PATTERN.pattern, _INTEGER_PATTERN.pattern).pattern
-    + r"j"
+_COMPLEX_PATTERN = _build_token_pattern(
+    _FLOAT_PATTERN.pattern + r"j", _INTEGER_PATTERN.pattern + r"j"
 )
 _IDENTIFIER_PATTERN = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
 _TOKEN_PATTERN = _build_token_pattern(
@@ -41,7 +40,7 @@ _TOKEN_PATTERN = _build_token_pattern(
     r"\|\|",
     r"<=|>=|==|!=",
     r">>|<<",
-    r"[-!~+*%|&^<>()]",
+    r"[-!~+*/%|&^<>()]",
 )
 
 
@@ -177,8 +176,14 @@ class ExpressionParser:
         if self._match_number():
             return LiteralExpression(self._get_previous_token())
         elif self._match_identifier():
-            identifier = self._get_identifier_from_symbol(self._get_previous_token())
-            return IdentifierExpression(identifier)
+            previous_token = self._get_previous_token()
+            if previous_token == "True":
+                return LiteralExpression(True)
+            elif previous_token == "False":
+                return LiteralExpression(False)
+            else:
+                identifier = self._get_identifier_from_symbol(previous_token)
+                return IdentifierExpression(identifier)
         elif self._match("("):
             expression = self._expression()
             self._consume_token(
