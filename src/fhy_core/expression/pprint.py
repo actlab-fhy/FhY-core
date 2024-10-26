@@ -1,5 +1,7 @@
 """Pretty-printer for expressions."""
 
+from fhy_core.identifier import Identifier
+
 from .core import (
     BINARY_OPERATION_FUNCTION_NAMES,
     BINARY_OPERATION_SYMBOLS,
@@ -12,6 +14,23 @@ from .core import (
     UnaryExpression,
 )
 from .visitor import ExpressionBasePass
+
+
+def pformat_identifier(identifier: Identifier, show_id: bool = False) -> str:
+    """Pretty-format an identifier.
+
+    Args:
+        identifier: Identifier to pretty-format.
+        show_id: Whether to show the identifier ID.
+
+    Returns:
+        Pretty-formatted identifier.
+
+    """
+    if show_id:
+        return f"{identifier.name_hint}_{identifier.id}"
+    else:
+        return identifier.name_hint
 
 
 class ExpressionPrettyFormatter(ExpressionBasePass):
@@ -58,10 +77,7 @@ class ExpressionPrettyFormatter(ExpressionBasePass):
         self, identifier_expression: IdentifierExpression
     ) -> str:
         identifier = identifier_expression.identifier
-        if self._is_id_shown:
-            return f"{identifier.name_hint}_{identifier.id}"
-        else:
-            return identifier.name_hint
+        return pformat_identifier(identifier, self._is_id_shown)
 
     def visit_literal_expression(self, literal_expression: LiteralExpression) -> str:
         return str(literal_expression.value)

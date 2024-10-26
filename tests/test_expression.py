@@ -401,7 +401,29 @@ def test_copy_binary_expression():
 def test_simplify_constant_expression(
     expression: Expression, expected_value: LiteralType
 ):
-    """Tests that the expression is correctly simplified."""
+    """Tests that a constant expression is correctly simplified."""
     result = simplify_expression(expression)
     assert isinstance(result, LiteralExpression)
     assert result.value == expected_value
+
+
+def test_simplify_variable_expression():
+    """Tests that variables are correctly substituted and simplified in an
+    expression.
+    """
+    x_1 = Identifier("x")
+    x_2 = Identifier("x")
+    expr = BinaryExpression(
+        BinaryOperation.ADD,
+        IdentifierExpression(x_1),
+        BinaryExpression(
+            BinaryOperation.MULTIPLY,
+            LiteralExpression(5),
+            IdentifierExpression(x_2),
+        ),
+    )
+
+    result = simplify_expression(expr, {x_1: 10, x_2: 5})
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == "35"

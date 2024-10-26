@@ -10,7 +10,7 @@ from .core import (
     LiteralType,
 )
 from .parser import parse_expression
-from .pprint import pformat_expression
+from .pprint import pformat_expression, pformat_identifier
 from .visitor import ExpressionTransformer, ExpressionVisitor
 
 
@@ -78,11 +78,11 @@ def simplify_expression(
 
     """
     sympy_expression = sympy.parsing.sympy_parser.parse_expr(
-        pformat_expression(expression, functional=False)
+        pformat_expression(expression, show_id=True, functional=False)
     )
     if environment is not None:
         sympy_expression = sympy_expression.subs(
-            {str(k): v for k, v in environment.items()}
+            {pformat_identifier(k, show_id=True): v for k, v in environment.items()}
         )
     result = sympy.simplify(sympy_expression)
     return parse_expression(str(result))
