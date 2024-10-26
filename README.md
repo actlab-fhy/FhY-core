@@ -1,7 +1,15 @@
 # *FhY* Core
 
 *FhY* Core is a collection of utilities for FhY and other parts of the compiler.
-The current list of utilities are as follows.
+
+| Utility                                  | Description                                                            |
+| :--------------------------------------: | :--------------------------------------------------------------------- |
+| Identifier                               | Unique naming class with a non-unique name hint and a unique ID.       |
+| Expression                               | General expression represented as an AST with a parser and printer.    |
+| _General Utility_ - Stack                | General stack utility that wraps `deque`.                              |
+| _General Utility_ - POSET                | General partially ordered set utility represented as a directed graph. |
+| _General Utility_ - Lattice              | General lattice (order theory) utility represented with a POSET.       |
+| _General Utility_ - Dictionary Utilities | Additional dictionary helper functions.                                |
 
 
 ## Table of Contents
