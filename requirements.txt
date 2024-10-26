@@ -1,2 +1,3 @@
-sympy
 frozendict
+networkx>=3.2.1
+sympy
