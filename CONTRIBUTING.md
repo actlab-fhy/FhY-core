@@ -7,8 +7,8 @@ Pull requests are always welcome, and the FhY community appreciates any help you
 1. Download the development branch of the *FhY* Core source code.
 
 ```bash
-git clone https://github.com/actlab-fhy/FhY.git -b dev
-cd FhY
+git clone https://github.com/actlab-fhy/FhY-core.git -b dev
+cd FhY-core
 ```
 
 2. Create a new virtual environment (instructions to create and activate a virutal
