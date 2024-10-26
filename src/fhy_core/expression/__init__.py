@@ -9,5 +9,6 @@ from .core import (
     UnaryExpression,
     UnaryOperation,
 )
-from .passes import copy_expression, evaluate_expression
+from .parser import parse_expression, tokenize_expression
+from .passes import collect_identifiers, copy_expression, simplify_expression
 from .pprint import pformat_expression

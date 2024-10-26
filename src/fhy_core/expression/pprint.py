@@ -1,6 +1,10 @@
 """Pretty-printer for expressions."""
 
 from .core import (
+    BINARY_OPERATION_FUNCTION_NAMES,
+    BINARY_OPERATION_SYMBOLS,
+    UNARY_OPERATION_FUNCTION_NAMES,
+    UNARY_OPERATION_SYMBOLS,
     BinaryExpression,
     Expression,
     IdentifierExpression,
@@ -11,6 +15,11 @@ from .core import (
 
 class ExpressionPrettyFormatter:
     """Pretty-formatter for expressions."""
+
+    _is_printed_functional: bool
+
+    def __init__(self, is_printed_functional: bool = False) -> None:
+        self._is_printed_functional = is_printed_functional
 
     def __call__(self, expression: Expression) -> str:
         return self.pformat(expression)
@@ -51,9 +60,16 @@ class ExpressionPrettyFormatter:
             Pretty-formatted unary expression.
 
         """
-        return (
-            f"({unary_expression.operation} {self.pformat(unary_expression.operand)})"
-        )
+        if self._is_printed_functional:
+            return (
+                f"({UNARY_OPERATION_FUNCTION_NAMES[unary_expression.operation]} "
+                f"{self.pformat(unary_expression.operand)})"
+            )
+        else:
+            return (
+                f"({UNARY_OPERATION_SYMBOLS[unary_expression.operation]}"
+                f"{self.pformat(unary_expression.operand)})"
+            )
 
     def pformat_binary_expression(self, binary_expression: BinaryExpression) -> str:
         """Pretty-format a binary expression.
@@ -67,7 +83,17 @@ class ExpressionPrettyFormatter:
         """
         left = self.pformat(binary_expression.left)
         right = self.pformat(binary_expression.right)
-        return f"({binary_expression.operation} {left} {right})"
+        if self._is_printed_functional:
+            return (
+                f"({BINARY_OPERATION_FUNCTION_NAMES[binary_expression.operation]} "
+                f"{left} {right})"
+            )
+        else:
+            return (
+                f"({left} "
+                f"{BINARY_OPERATION_SYMBOLS[binary_expression.operation]} "
+                f"{right})"
+            )
 
     def pformat_identifier_expression(
         self, identifier_expression: IdentifierExpression
@@ -96,14 +122,15 @@ class ExpressionPrettyFormatter:
         return str(literal_expression.value)
 
 
-def pformat_expression(expression: Expression) -> str:
+def pformat_expression(expression: Expression, functional: bool = False) -> str:
     """Pretty-format an expression.
 
     Args:
         expression: Expression to pretty-format.
+        functional: Whether to use functional notation.
 
     Returns:
         Pretty-formatted expression.
 
     """
-    return ExpressionPrettyFormatter()(expression)
+    return ExpressionPrettyFormatter(is_printed_functional=functional)(expression)

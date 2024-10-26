@@ -11,43 +11,44 @@ from fhy_core.expression import (
     LiteralExpression,
     UnaryExpression,
     UnaryOperation,
+    collect_identifiers,
     copy_expression,
-    evaluate_expression,
+    parse_expression,
     pformat_expression,
+    simplify_expression,
+    tokenize_expression,
 )
 from fhy_core.expression.core import LiteralType
-from fhy_core.expression.transformer import ExpressionTransformer
+from fhy_core.expression.visitor import (
+    ExpressionBasePass,
+)
 from fhy_core.identifier import Identifier
 
 
-def test_unary_operations():
-    """Tests that unary operations are correctly defined."""
-    assert UnaryOperation.NEGATE == "negate"
-    assert UnaryOperation.BITWISE_NOT == "bitwise_not"
-    assert UnaryOperation.LOGICAL_NOT == "logical_not"
-
-
-def test_binary_operations():
-    """Tests that binary operations are correctly defined."""
-    assert BinaryOperation.ADD == "add"
-    assert BinaryOperation.SUBTRACT == "subtract"
-    assert BinaryOperation.MULTIPLY == "multiply"
-    assert BinaryOperation.DIVIDE == "divide"
-    assert BinaryOperation.MODULO == "modulo"
-    assert BinaryOperation.POWER == "power"
-    assert BinaryOperation.BITWISE_AND == "bitwise_and"
-    assert BinaryOperation.BITWISE_OR == "bitwise_or"
-    assert BinaryOperation.BITWISE_XOR == "bitwise_xor"
-    assert BinaryOperation.LEFT_SHIFT == "left_shift"
-    assert BinaryOperation.RIGHT_SHIFT == "right_shift"
-    assert BinaryOperation.LOGICAL_AND == "logical_and"
-    assert BinaryOperation.LOGICAL_OR == "logical_or"
-    assert BinaryOperation.EQUAL == "equal"
-    assert BinaryOperation.NOT_EQUAL == "not_equal"
-    assert BinaryOperation.LESS == "less"
-    assert BinaryOperation.LESS_EQUAL == "less_equal"
-    assert BinaryOperation.GREATER == "greater"
-    assert BinaryOperation.GREATER_EQUAL == "greater_equal"
+def _assert_exact_expression_equality(
+    expression1: Expression, expression2: Expression
+) -> None:
+    if isinstance(expression1, LiteralExpression) and isinstance(
+        expression2, LiteralExpression
+    ):
+        assert expression1.value == expression2.value
+    elif isinstance(expression1, IdentifierExpression) and isinstance(
+        expression2, IdentifierExpression
+    ):
+        assert expression1.identifier == expression2.identifier
+    elif isinstance(expression1, UnaryExpression) and isinstance(
+        expression2, UnaryExpression
+    ):
+        assert expression1.operation == expression2.operation
+        _assert_exact_expression_equality(expression1.operand, expression2.operand)
+    elif isinstance(expression1, BinaryExpression) and isinstance(
+        expression2, BinaryExpression
+    ):
+        assert expression1.operation == expression2.operation
+        _assert_exact_expression_equality(expression1.left, expression2.left)
+        _assert_exact_expression_equality(expression1.right, expression2.right)
+    else:
+        assert False, "Expression trees did not have the same structure."
 
 
 def test_unary_expression():
@@ -71,7 +72,7 @@ def test_binary_expression():
 def test_identifier_expression():
     """Tests that the identifier expression is correctly initialized."""
     identifier = Identifier("test_identifier")
-    expr = IdentifierExpression(identifier=identifier)
+    expr = IdentifierExpression(identifier)
     assert expr.identifier == identifier
 
 
@@ -90,37 +91,84 @@ def test_literal_expression_invalid_string():
         LiteralExpression("invalid_literal")
 
 
+# TODO: More tests for tokenization!
+@pytest.mark.parametrize(
+    "expression_str, expected_tokens",
+    [
+        ("5", ["5"]),
+        ("-5", ["-", "5"]),
+        ("10 + 2.5", ["10", "+", "2.5"]),
+        (
+            "((10j+2) >> 2) > 5",
+            ["(", "(", "10j", "+", "2", ")", ">>", "2", ")", ">", "5"],
+        ),
+    ],
+)
+def test_tokenize_expression(expression_str: str, expected_tokens: list[str]):
+    """Tests that the expression is correctly tokenized."""
+    assert tokenize_expression(expression_str) == expected_tokens
+
+
+# TODO: More tests for parsing!
+@pytest.mark.parametrize(
+    "expression_str, expected_tree",
+    [
+        ("5", LiteralExpression("5")),
+        (
+            "10 + -2 * 5",
+            BinaryExpression(
+                BinaryOperation.ADD,
+                LiteralExpression("10"),
+                BinaryExpression(
+                    BinaryOperation.MULTIPLY,
+                    UnaryExpression(UnaryOperation.NEGATE, LiteralExpression("2")),
+                    LiteralExpression("5"),
+                ),
+            ),
+        ),
+        (
+            "(2 + (5+6j)) * -0",
+            BinaryExpression(
+                BinaryOperation.MULTIPLY,
+                BinaryExpression(
+                    BinaryOperation.ADD,
+                    LiteralExpression("2"),
+                    BinaryExpression(
+                        BinaryOperation.ADD,
+                        LiteralExpression("5"),
+                        LiteralExpression("6j"),
+                    ),
+                ),
+                UnaryExpression(UnaryOperation.NEGATE, LiteralExpression("0")),
+            ),
+        ),
+    ],
+)
+def test_parse_expression(expression_str: str, expected_tree: Expression):
+    """Tests that the expression is correctly parsed."""
+    result = parse_expression(expression_str)
+    _assert_exact_expression_equality(result, expected_tree)
+
+
 @pytest.mark.parametrize(
     "expression, expected_str",
     [
-        (LiteralExpression(5), "5"),
+        (LiteralExpression(4.5), "4.5"),
         (
-            IdentifierExpression(identifier=Identifier("test_identifier")),
-            "test_identifier",
+            IdentifierExpression(Identifier("baz")),
+            "baz",
         ),
         (
-            UnaryExpression(
-                operation=UnaryOperation.NEGATE, operand=LiteralExpression(5)
-            ),
-            "(negate 5)",
-        ),
-        (
-            BinaryExpression(
-                operation=BinaryOperation.ADD,
-                left=LiteralExpression(5),
-                right=LiteralExpression(10),
-            ),
-            "(add 5 10)",
+            UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(True)),
+            "(!True)",
         ),
         (
             BinaryExpression(
-                operation=BinaryOperation.DIVIDE,
-                left=UnaryExpression(
-                    operation=UnaryOperation.NEGATE, operand=LiteralExpression(5)
-                ),
-                right=LiteralExpression(10),
+                BinaryOperation.MULTIPLY,
+                LiteralExpression(5 + 6j),
+                LiteralExpression(10.5),
             ),
-            "(divide (negate 5) 10)",
+            "((5+6j) * 10.5)",
         ),
     ],
 )
@@ -129,76 +177,127 @@ def test_pformat_expression(expression: Expression, expected_str: str):
     assert pformat_expression(expression) == expected_str
 
 
+@pytest.mark.parametrize(
+    "expression, expected_str",
+    [
+        (LiteralExpression(5), "5"),
+        (
+            IdentifierExpression(Identifier("test_identifier")),
+            "test_identifier",
+        ),
+        (
+            UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(5)),
+            "(negate 5)",
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.ADD,
+                LiteralExpression(5),
+                LiteralExpression(10),
+            ),
+            "(add 5 10)",
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.DIVIDE,
+                UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(5)),
+                LiteralExpression(10),
+            ),
+            "(divide (negate 5) 10)",
+        ),
+    ],
+)
+def test_pformat_expressions_with_functional(expression: Expression, expected_str: str):
+    """Tests that the expression is correctly pretty-formatted in a functional
+    format.
+    """
+    assert pformat_expression(expression, functional=True) == expected_str
+
+
+def test_collect_expression_identifiers():
+    """Tests that the identifiers are correctly collected from an expression."""
+    x = Identifier("x")
+    y = Identifier("y")
+    expr = BinaryExpression(
+        BinaryOperation.ADD,
+        IdentifierExpression(x),
+        BinaryExpression(
+            BinaryOperation.DIVIDE,
+            LiteralExpression(5),
+            IdentifierExpression(y),
+        ),
+    )
+    assert collect_identifiers(expr) == {x, y}
+
+
 # TODO: Revisit the use of MagicMock here and in the following tests.
 @pytest.fixture
-def transformer():
-    class ConcreteExpressionTransformer(ExpressionTransformer):
-        """Concrete expression transformer for testing."""
+def base_pass():
+    class ConcreteBasePass(ExpressionBasePass):
+        """Concrete base pass for testing"""
 
-    transformer = ConcreteExpressionTransformer()
-    transformer.visit_unary_expression = MagicMock()
-    transformer.visit_binary_expression = MagicMock()
-    transformer.visit_identifier_expression = MagicMock()
-    transformer.visit_literal_expression = MagicMock()
-    return transformer
+    base_pass = ConcreteBasePass()
+    base_pass.visit_unary_expression = MagicMock()
+    base_pass.visit_binary_expression = MagicMock()
+    base_pass.visit_identifier_expression = MagicMock()
+    base_pass.visit_literal_expression = MagicMock()
+    return base_pass
 
 
-def test_transformer_calls_unary_expression_visitor(transformer: ExpressionTransformer):
+def test_base_pass_call_calls_visit(base_pass: ExpressionBasePass):
+    """Tests that the visit method calls the correct visit method for
+    Expression.
+    """
+    base_pass.visit = MagicMock()
+    expr = MagicMock()
+    base_pass(expr)
+    base_pass.visit.assert_called_once_with(expr)
+
+
+def test_base_pass_calls_unary_expression_visitor(base_pass: ExpressionBasePass):
     """Tests that the visit method calls the correct visit method for
     UnaryExpression.
     """
     expr = UnaryExpression(operation=UnaryOperation.NEGATE, operand=MagicMock())
-
-    transformer.visit(expr)
-
-    transformer.visit_unary_expression.assert_called_once_with(expr)
+    base_pass.visit(expr)
+    base_pass.visit_unary_expression.assert_called_once_with(expr)
 
 
-def test_transformer_calls_binary_expression_visitor(
-    transformer: ExpressionTransformer,
-):
+def test_base_pass_calls_binary_expression_visitor(base_pass: ExpressionBasePass):
     """Tests that the visit method calls the correct visit method for
     BinaryExpression.
     """
     expr = BinaryExpression(
         operation=BinaryOperation.ADD, left=MagicMock(), right=MagicMock()
     )
-
-    transformer.visit(expr)
-
-    transformer.visit_binary_expression.assert_called_once_with(expr)
+    base_pass.visit(expr)
+    base_pass.visit_binary_expression.assert_called_once_with(expr)
 
 
-def test_transformer_calls_identifier_expression_visitor(
-    transformer: ExpressionTransformer,
-):
+def test_base_pass_calls_identifier_expression_visitor(base_pass: ExpressionBasePass):
     """Tests that the visit method calls the correct visit method for
     IdentifierExpression.
     """
     expr = IdentifierExpression(identifier=Identifier("x"))
-
-    transformer.visit(expr)
-
-    transformer.visit_identifier_expression.assert_called_once_with(expr)
+    base_pass.visit(expr)
+    base_pass.visit_identifier_expression.assert_called_once_with(expr)
 
 
-def test_transformer_calls_literal_visitor(transformer: ExpressionTransformer):
+def test_base_pass_calls_literal_visitor(base_pass: ExpressionBasePass):
     """Tests that the visit method calls the correct visit method for
     LiteralExpression.
     """
     expr = LiteralExpression(value=42)
-
-    transformer.visit(expr)
-
-    transformer.visit_literal_expression.assert_called_once_with(expr)
+    base_pass.visit(expr)
+    base_pass.visit_literal_expression.assert_called_once_with(expr)
 
 
-def test_visit_unsupported_expression(transformer: ExpressionTransformer):
-    """Tests that NotImplementedError is raised for unsupported expression types."""
-    expr = MagicMock(spec=Expression)
-
-    with pytest.raises(NotImplementedError):
-        transformer.visit(expr)
+def test_base_pass_with_unsupported_expression(base_pass: ExpressionBasePass):
+    """Tests that the visit method raises an exception for unsupported
+    expressions.
+    """
+    with pytest.raises(NotImplementedError, match="Unsupported expression type:"):
+        base_pass.visit(MagicMock())
 
 
 def test_copy_literal_expression():
@@ -245,40 +344,28 @@ def test_copy_binary_expression():
 @pytest.mark.parametrize(
     "expression, expected_value",
     [
-        (LiteralExpression(5), 5),
-        (UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(5)), -5),
+        (LiteralExpression(5), "5"),
+        (UnaryExpression(UnaryOperation.POSITIVE, LiteralExpression(5)), "5"),
         (
             BinaryExpression(
                 BinaryOperation.ADD, LiteralExpression(5), LiteralExpression(10)
             ),
-            15,
+            "15",
         ),
         (
             BinaryExpression(
-                BinaryOperation.DIVIDE,
-                UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(5)),
+                BinaryOperation.MULTIPLY,
+                UnaryExpression(UnaryOperation.POSITIVE, LiteralExpression(5)),
                 LiteralExpression(10),
             ),
-            -0.5,
+            "50",
         ),
     ],
 )
-def test_evaluate_constant_expression(
+def test_simplify_constant_expression(
     expression: Expression, expected_value: LiteralType
 ):
-    """Tests that the expression is correctly evaluated."""
-    result = evaluate_expression(expression)
+    """Tests that the expression is correctly simplified."""
+    result = simplify_expression(expression)
     assert isinstance(result, LiteralExpression)
     assert result.value == expected_value
-
-
-def test_evaluate_expression_with_environment():
-    """Tests that the expression is correctly evaluated with an environment."""
-    x = Identifier("x")
-    environment = {x: 5}
-    expr = BinaryExpression(
-        BinaryOperation.ADD, IdentifierExpression(x), LiteralExpression(10)
-    )
-    result = evaluate_expression(expr, environment)
-    assert isinstance(result, LiteralExpression)
-    assert result.value == 15
