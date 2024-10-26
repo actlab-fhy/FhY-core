@@ -12,7 +12,7 @@ authors = [
 maintainers = [
    {name = "Christopher Priebe", email = "cpriebe@ucsd.edu"},
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 keywords = [
    "Compiler",
 ]
