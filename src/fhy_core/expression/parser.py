@@ -35,12 +35,10 @@ _TOKEN_PATTERN = _build_token_pattern(
     _INTEGER_PATTERN.pattern,
     _IDENTIFIER_PATTERN.pattern,
     r"\*\*",
-    r"\*\*",
     r"&&",
     r"\|\|",
     r"<=|>=|==|!=",
-    r">>|<<",
-    r"[-!~+*/%|&^<>()]",
+    r"[-!+*/%<>()]",
 )
 
 
@@ -65,23 +63,11 @@ _LOGICAL_OR_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
 _LOGICAL_AND_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
     _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "&&")
 )
-_BITWISE_OR_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
-    _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "|")
-)
-_BITWISE_XOR_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
-    _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "^")
-)
-_BITWISE_AND_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
-    _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "&")
-)
 _EQUALITY_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
     _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "==", "!=")
 )
 _COMPARISON_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
     _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "<", "<=", ">", ">=")
-)
-_SHIFT_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
-    _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "<<", ">>")
 )
 _ADDITION_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
     _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "+", "-")
@@ -136,25 +122,13 @@ class ExpressionParser:
         return self._binary_operation(_LOGICAL_OR_SYMBOL_OPERATIONS, self._logical_and)
 
     def _logical_and(self) -> Expression:
-        return self._binary_operation(_LOGICAL_AND_SYMBOL_OPERATIONS, self._bitwise_or)
-
-    def _bitwise_or(self) -> Expression:
-        return self._binary_operation(_BITWISE_OR_SYMBOL_OPERATIONS, self._bitwise_xor)
-
-    def _bitwise_xor(self) -> Expression:
-        return self._binary_operation(_BITWISE_XOR_SYMBOL_OPERATIONS, self._bitwise_and)
-
-    def _bitwise_and(self) -> Expression:
-        return self._binary_operation(_BITWISE_AND_SYMBOL_OPERATIONS, self._equality)
+        return self._binary_operation(_LOGICAL_AND_SYMBOL_OPERATIONS, self._comparison)
 
     def _equality(self) -> Expression:
         return self._binary_operation(_EQUALITY_SYMBOL_OPERATIONS, self._comparison)
 
     def _comparison(self) -> Expression:
-        return self._binary_operation(_COMPARISON_SYMBOL_OPERATIONS, self._shift)
-
-    def _shift(self) -> Expression:
-        return self._binary_operation(_SHIFT_SYMBOL_OPERATIONS, self._addition)
+        return self._binary_operation(_COMPARISON_SYMBOL_OPERATIONS, self._addition)
 
     def _addition(self):
         return self._binary_operation(_ADDITION_SYMBOL_OPERATIONS, self.multiplication)
@@ -163,7 +137,7 @@ class ExpressionParser:
         return self._binary_operation(_MULTIPLICATION_SYMBOL_OPERATIONS, self._unary)
 
     def _unary(self):
-        if self._match("-", "+", "!", "~"):
+        if self._match("-", "+", "!"):
             op = self._get_previous_token()
             right = self._unary()
             return UnaryExpression(UNARY_SYMBOL_OPERATIONS[op], right)

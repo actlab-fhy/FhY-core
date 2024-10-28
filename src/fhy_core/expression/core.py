@@ -1,8 +1,10 @@
 """General expression tree."""
 
+import operator
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Any, Callable
 
 from frozendict import frozendict
 
@@ -19,7 +21,6 @@ class UnaryOperation(Enum):
 
     NEGATE = auto()
     POSITIVE = auto()
-    BITWISE_NOT = auto()
     LOGICAL_NOT = auto()
 
 
@@ -27,7 +28,6 @@ UNARY_OPERATION_FUNCTION_NAMES: frozendict[UnaryOperation, str] = frozendict(
     {
         UnaryOperation.NEGATE: "negate",
         UnaryOperation.POSITIVE: "positive",
-        UnaryOperation.BITWISE_NOT: "bitwise_not",
         UnaryOperation.LOGICAL_NOT: "logical_not",
     }
 )
@@ -39,11 +39,19 @@ UNARY_OPERATION_SYMBOLS: frozendict[UnaryOperation, str] = frozendict(
         UnaryOperation.NEGATE: "-",
         UnaryOperation.POSITIVE: "+",
         UnaryOperation.LOGICAL_NOT: "!",
-        UnaryOperation.BITWISE_NOT: "~",
     }
 )
 UNARY_SYMBOL_OPERATIONS: frozendict[str, UnaryOperation] = invert_frozen_dict(
     UNARY_OPERATION_SYMBOLS
+)
+UNARY_OPERATION_OPERATORS: frozendict[UnaryOperation, Callable[[Any], Any]] = (
+    frozendict(
+        {
+            UnaryOperation.NEGATE: operator.neg,
+            UnaryOperation.POSITIVE: operator.pos,
+            UnaryOperation.LOGICAL_NOT: operator.not_,
+        }
+    )
 )
 
 
@@ -64,11 +72,6 @@ class BinaryOperation(Enum):
     DIVIDE = auto()
     MODULO = auto()
     POWER = auto()
-    BITWISE_AND = auto()
-    BITWISE_OR = auto()
-    BITWISE_XOR = auto()
-    LEFT_SHIFT = auto()
-    RIGHT_SHIFT = auto()
     LOGICAL_AND = auto()
     LOGICAL_OR = auto()
     EQUAL = auto()
@@ -87,11 +90,6 @@ BINARY_OPERATION_FUNCTION_NAMES: frozendict[BinaryOperation, str] = frozendict(
         BinaryOperation.DIVIDE: "divide",
         BinaryOperation.MODULO: "modulo",
         BinaryOperation.POWER: "power",
-        BinaryOperation.BITWISE_AND: "bitwise_and",
-        BinaryOperation.BITWISE_OR: "bitwise_or",
-        BinaryOperation.BITWISE_XOR: "bitwise_xor",
-        BinaryOperation.LEFT_SHIFT: "left_shift",
-        BinaryOperation.RIGHT_SHIFT: "right_shift",
         BinaryOperation.LOGICAL_AND: "logical_and",
         BinaryOperation.LOGICAL_OR: "logical_or",
         BinaryOperation.EQUAL: "equal",
@@ -113,11 +111,6 @@ BINARY_OPERATION_SYMBOLS: frozendict[BinaryOperation, str] = frozendict(
         BinaryOperation.DIVIDE: "/",
         BinaryOperation.MODULO: "%",
         BinaryOperation.POWER: "**",
-        BinaryOperation.BITWISE_AND: "&",
-        BinaryOperation.BITWISE_OR: "|",
-        BinaryOperation.BITWISE_XOR: "^",
-        BinaryOperation.LEFT_SHIFT: "<<",
-        BinaryOperation.RIGHT_SHIFT: ">>",
         BinaryOperation.LOGICAL_AND: "&&",
         BinaryOperation.LOGICAL_OR: "||",
         BinaryOperation.EQUAL: "==",
@@ -130,6 +123,26 @@ BINARY_OPERATION_SYMBOLS: frozendict[BinaryOperation, str] = frozendict(
 )
 BINARY_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = invert_frozen_dict(
     BINARY_OPERATION_SYMBOLS
+)
+BINARY_OPERATION_OPERATORS: frozendict[BinaryOperation, Callable[[Any, Any], Any]] = (
+    frozendict(
+        {
+            BinaryOperation.ADD: operator.add,
+            BinaryOperation.SUBTRACT: operator.sub,
+            BinaryOperation.MULTIPLY: operator.mul,
+            BinaryOperation.DIVIDE: operator.truediv,
+            BinaryOperation.MODULO: operator.mod,
+            BinaryOperation.POWER: operator.pow,
+            BinaryOperation.LOGICAL_AND: operator.and_,
+            BinaryOperation.LOGICAL_OR: operator.or_,
+            BinaryOperation.EQUAL: operator.eq,
+            BinaryOperation.NOT_EQUAL: operator.ne,
+            BinaryOperation.LESS: operator.lt,
+            BinaryOperation.LESS_EQUAL: operator.le,
+            BinaryOperation.GREATER: operator.gt,
+            BinaryOperation.GREATER_EQUAL: operator.ge,
+        }
+    )
 )
 
 
