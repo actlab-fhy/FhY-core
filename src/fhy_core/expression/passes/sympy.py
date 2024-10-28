@@ -102,6 +102,11 @@ def substitute_sympy_expression_variables(
         SymPy expression with substituted variables.
 
     """
+    # TODO: Figure out why this is necessary...
+    #       The sympy expression should only take on the two types in the type hint,
+    #       but it seems that it can also be a bool.
+    if isinstance(sympy_expression, bool):
+        return sympy_expression
     return sympy_expression.subs(
         {
             ExpressionToSympyConverter.format_identifier(
