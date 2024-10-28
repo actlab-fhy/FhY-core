@@ -6,6 +6,7 @@ from .core import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    LiteralType,
     UnaryExpression,
     UnaryOperation,
 )
