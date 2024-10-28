@@ -11,10 +11,10 @@ class Constraint(ABC):
     """Abstract base class for constraints."""
 
     def __call__(self, values: dict[Identifier, Any]) -> bool:
-        return self.check(values)
+        return self.is_satisfied(values)
 
     @abstractmethod
-    def check(self, values: dict[Identifier, Any]) -> bool:
+    def is_satisfied(self, values: dict[Identifier, Any]) -> bool:
         """Check if the value satisfies the constraint.
 
         Args:
@@ -34,7 +34,7 @@ class EquationConstraint(Constraint):
     def __init__(self, expression: Expression) -> None:
         self._expression = expression
 
-    def check(self, values: dict[Identifier, Expression]) -> bool:
+    def is_satisfied(self, values: dict[Identifier, Expression]) -> bool:
         result = simplify_expression(self._expression, values)
         return (
             isinstance(result, LiteralExpression)

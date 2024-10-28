@@ -221,4 +221,4 @@ def test_equation_constraint_checks_correctly(
     expected_outcome: bool,
 ):
     """Test the equation constraint evaluates correctly when checked."""
-    assert constraint.check(values) == expected_outcome
+    assert constraint.is_satisfied(values) == expected_outcome
