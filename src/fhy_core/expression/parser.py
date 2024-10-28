@@ -25,12 +25,8 @@ def _build_token_pattern(*patterns: str) -> re.Pattern[str]:
 
 _FLOAT_PATTERN = re.compile(r"\d+\.\d+")
 _INTEGER_PATTERN = re.compile(r"\d+")
-_COMPLEX_PATTERN = _build_token_pattern(
-    _FLOAT_PATTERN.pattern + r"j", _INTEGER_PATTERN.pattern + r"j"
-)
 _IDENTIFIER_PATTERN = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
 _TOKEN_PATTERN = _build_token_pattern(
-    _COMPLEX_PATTERN.pattern,
     _FLOAT_PATTERN.pattern,
     _INTEGER_PATTERN.pattern,
     _IDENTIFIER_PATTERN.pattern,
@@ -183,9 +179,7 @@ class ExpressionParser:
         return False
 
     def _match_number(self) -> bool:
-        pattern = _build_token_pattern(
-            _COMPLEX_PATTERN.pattern, _FLOAT_PATTERN.pattern, _INTEGER_PATTERN.pattern
-        )
+        pattern = _build_token_pattern(_FLOAT_PATTERN.pattern, _INTEGER_PATTERN.pattern)
         current_token = self._peek_at_current_token()
         if current_token and re.match(pattern, current_token):
             self._advance_to_next_token()

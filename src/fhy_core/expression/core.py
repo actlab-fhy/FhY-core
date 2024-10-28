@@ -162,7 +162,7 @@ class IdentifierExpression(Expression):
     identifier: Identifier
 
 
-LiteralType = str | complex | float | int | bool
+LiteralType = str | float | int | bool
 
 
 class LiteralExpression(Expression):
@@ -173,7 +173,7 @@ class LiteralExpression(Expression):
     def __init__(self, value: LiteralType) -> None:
         if isinstance(value, str):
             try:
-                complex(value)
+                float(value)
             except ValueError:
                 raise ValueError(
                     f"Invalid literal expression value: "
