@@ -339,14 +339,14 @@ class SymPyToExpressionConverter:
             ),
         )
 
-    def convert_Nor(self, nor: sympy.logic.boolalg.Nor) -> BinaryExpression:
+    def convert_Nor(self, nor: sympy.logic.boolalg.Nor) -> Expression:
         """Convert a SymPy Nor node to an expression.
 
         Args:
             nor: SymPy Nor node to convert.
 
         Returns:
-            Binary expression.
+            Expression.
 
         """
         or_statement = self._convert_commutative_and_associative_binary_operation(
@@ -354,14 +354,14 @@ class SymPyToExpressionConverter:
         )
         return UnaryExpression(UnaryOperation.LOGICAL_NOT, or_statement)
 
-    def convert_Nand(self, nand: sympy.logic.boolalg.Nand) -> BinaryExpression:
+    def convert_Nand(self, nand: sympy.logic.boolalg.Nand) -> Expression:
         """Convert a SymPy Nand node to an expression.
 
         Args:
             nand: SymPy Nand node to convert.
 
         Returns:
-            Binary expression.
+            Expression.
 
         """
         and_statement = self._convert_commutative_and_associative_binary_operation(
