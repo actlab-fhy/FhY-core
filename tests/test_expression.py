@@ -85,6 +85,8 @@ _binary_operator_operations_pairs = pytest.mark.parametrize(
         (operator.truediv, BinaryOperation.DIVIDE),
         (operator.mod, BinaryOperation.MODULO),
         (operator.pow, BinaryOperation.POWER),
+        (lambda x, y: x.equals(y), BinaryOperation.EQUAL),
+        (lambda x, y: x.not_equals(y), BinaryOperation.NOT_EQUAL),
         (operator.lt, BinaryOperation.LESS),
         (operator.le, BinaryOperation.LESS_EQUAL),
         (operator.gt, BinaryOperation.GREATER),

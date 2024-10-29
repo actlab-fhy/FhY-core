@@ -79,6 +79,34 @@ class Expression(ABC):
             BinaryOperation.POWER, self, self._get_expression_from_other(other)
         )
 
+    def equals(self, other: Any) -> "BinaryExpression":
+        """Create an equality expression.
+
+        Args:
+            other: Other expression.
+
+        Returns:
+            Equality expression.
+
+        """
+        return BinaryExpression(
+            BinaryOperation.EQUAL, self, self._get_expression_from_other(other)
+        )
+
+    def not_equals(self, other: Any) -> "BinaryExpression":
+        """Create an inequality expression.
+
+        Args:
+            other: Other expression.
+
+        Returns:
+            Inequality expression.
+
+        """
+        return BinaryExpression(
+            BinaryOperation.NOT_EQUAL, self, self._get_expression_from_other(other)
+        )
+
     def __lt__(self, other: Any) -> "BinaryExpression":
         return BinaryExpression(
             BinaryOperation.LESS, self, self._get_expression_from_other(other)
