@@ -3,7 +3,12 @@
 __version__ = "0.0.1"
 
 
-from .constraint import Constraint, EquationConstraint
+from .constraint import (
+    Constraint,
+    EquationConstraint,
+    InSetConstraint,
+    NotInSetConstraint,
+)
 from .expression import (
     BinaryExpression,
     BinaryOperation,
