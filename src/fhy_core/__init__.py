@@ -3,6 +3,12 @@
 __version__ = "0.0.1"
 
 
+from .constraint import (
+    Constraint,
+    EquationConstraint,
+    InSetConstraint,
+    NotInSetConstraint,
+)
 from .expression import (
     BinaryExpression,
     BinaryOperation,
@@ -16,4 +22,13 @@ from .expression import (
     simplify_expression,
 )
 from .identifier import Identifier
-from .utils import invert_dict, invert_frozen_dict
+from .param import (
+    CategoricalParam,
+    IntParam,
+    NatParam,
+    OrdinalParam,
+    Param,
+    PermParam,
+    RealParam,
+)
+from .utils import Lattice, PartiallyOrderedSet, Stack, invert_dict, invert_frozen_dict

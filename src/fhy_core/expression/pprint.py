@@ -17,10 +17,14 @@ from .visitor import ExpressionBasePass
 class ExpressionPrettyFormatter(ExpressionBasePass):
     """Pretty-formatter for expressions."""
 
+    _is_id_shown: bool
     _is_printed_functional: bool
 
-    def __init__(self, is_printed_functional: bool = False) -> None:
+    def __init__(
+        self, is_id_shown: bool = False, is_printed_functional: bool = False
+    ) -> None:
         super().__init__()
+        self._is_id_shown = is_id_shown
         self._is_printed_functional = is_printed_functional
 
     def visit_unary_expression(self, unary_expression: UnaryExpression) -> str:
@@ -53,21 +57,33 @@ class ExpressionPrettyFormatter(ExpressionBasePass):
     def visit_identifier_expression(
         self, identifier_expression: IdentifierExpression
     ) -> str:
-        return str(identifier_expression.identifier)
+        identifier = identifier_expression.identifier
+        if not self._is_id_shown:
+            return identifier.name_hint
+        else:
+            return repr(identifier)
 
     def visit_literal_expression(self, literal_expression: LiteralExpression) -> str:
         return str(literal_expression.value)
 
 
-def pformat_expression(expression: Expression, functional: bool = False) -> str:
+def pformat_expression(
+    expression: Expression, show_id: bool = False, functional: bool = False
+) -> str:
     """Pretty-format an expression.
+
+    Note:
+        There is no guarantee that the pretty-formatted expression can be parsed back.
 
     Args:
         expression: Expression to pretty-format.
+        show_id: Whether to show the identifier ID.
         functional: Whether to use functional notation.
 
     Returns:
         Pretty-formatted expression.
 
     """
-    return ExpressionPrettyFormatter(is_printed_functional=functional)(expression)
+    return ExpressionPrettyFormatter(
+        is_id_shown=show_id, is_printed_functional=functional
+    )(expression)

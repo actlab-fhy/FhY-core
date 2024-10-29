@@ -25,23 +25,16 @@ def _build_token_pattern(*patterns: str) -> re.Pattern[str]:
 
 _FLOAT_PATTERN = re.compile(r"\d+\.\d+")
 _INTEGER_PATTERN = re.compile(r"\d+")
-_COMPLEX_PATTERN = re.compile(
-    _build_token_pattern(_FLOAT_PATTERN.pattern, _INTEGER_PATTERN.pattern).pattern
-    + r"j"
-)
 _IDENTIFIER_PATTERN = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*")
 _TOKEN_PATTERN = _build_token_pattern(
-    _COMPLEX_PATTERN.pattern,
     _FLOAT_PATTERN.pattern,
     _INTEGER_PATTERN.pattern,
     _IDENTIFIER_PATTERN.pattern,
     r"\*\*",
-    r"\*\*",
     r"&&",
     r"\|\|",
     r"<=|>=|==|!=",
-    r">>|<<",
-    r"[-!~+*%|&^<>()]",
+    r"[-!+*/%<>()]",
 )
 
 
@@ -66,23 +59,11 @@ _LOGICAL_OR_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
 _LOGICAL_AND_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
     _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "&&")
 )
-_BITWISE_OR_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
-    _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "|")
-)
-_BITWISE_XOR_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
-    _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "^")
-)
-_BITWISE_AND_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
-    _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "&")
-)
 _EQUALITY_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
     _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "==", "!=")
 )
 _COMPARISON_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
     _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "<", "<=", ">", ">=")
-)
-_SHIFT_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
-    _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "<<", ">>")
 )
 _ADDITION_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
     _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "+", "-")
@@ -107,10 +88,12 @@ class ExpressionParser:
 
     _tokens: list[str]
     _current: int
+    _idenfitiers: dict[str, Identifier]
 
     def __init__(self, tokens: list[str]):
         self._tokens = tokens
         self._current = 0
+        self._idenfitiers = {}
 
     def parse(self) -> Expression:
         """Return the parsed expression as an expression tree."""
@@ -135,25 +118,13 @@ class ExpressionParser:
         return self._binary_operation(_LOGICAL_OR_SYMBOL_OPERATIONS, self._logical_and)
 
     def _logical_and(self) -> Expression:
-        return self._binary_operation(_LOGICAL_AND_SYMBOL_OPERATIONS, self._bitwise_or)
-
-    def _bitwise_or(self) -> Expression:
-        return self._binary_operation(_BITWISE_OR_SYMBOL_OPERATIONS, self._bitwise_xor)
-
-    def _bitwise_xor(self) -> Expression:
-        return self._binary_operation(_BITWISE_XOR_SYMBOL_OPERATIONS, self._bitwise_and)
-
-    def _bitwise_and(self) -> Expression:
-        return self._binary_operation(_BITWISE_AND_SYMBOL_OPERATIONS, self._equality)
+        return self._binary_operation(_LOGICAL_AND_SYMBOL_OPERATIONS, self._comparison)
 
     def _equality(self) -> Expression:
         return self._binary_operation(_EQUALITY_SYMBOL_OPERATIONS, self._comparison)
 
     def _comparison(self) -> Expression:
-        return self._binary_operation(_COMPARISON_SYMBOL_OPERATIONS, self._shift)
-
-    def _shift(self) -> Expression:
-        return self._binary_operation(_SHIFT_SYMBOL_OPERATIONS, self._addition)
+        return self._binary_operation(_COMPARISON_SYMBOL_OPERATIONS, self._addition)
 
     def _addition(self):
         return self._binary_operation(_ADDITION_SYMBOL_OPERATIONS, self.multiplication)
@@ -162,7 +133,7 @@ class ExpressionParser:
         return self._binary_operation(_MULTIPLICATION_SYMBOL_OPERATIONS, self._unary)
 
     def _unary(self):
-        if self._match("-", "+", "!", "~"):
+        if self._match("-", "+", "!"):
             op = self._get_previous_token()
             right = self._unary()
             return UnaryExpression(UNARY_SYMBOL_OPERATIONS[op], right)
@@ -175,7 +146,14 @@ class ExpressionParser:
         if self._match_number():
             return LiteralExpression(self._get_previous_token())
         elif self._match_identifier():
-            return IdentifierExpression(Identifier(self._get_previous_token()))
+            previous_token = self._get_previous_token()
+            if previous_token == "True":
+                return LiteralExpression(True)
+            elif previous_token == "False":
+                return LiteralExpression(False)
+            else:
+                identifier = self._get_identifier_from_symbol(previous_token)
+                return IdentifierExpression(identifier)
         elif self._match("("):
             expression = self._expression()
             self._consume_token(
@@ -189,6 +167,11 @@ class ExpressionParser:
             f"{self._current} while parsing an expression."
         )
 
+    def _get_identifier_from_symbol(self, symbol: str) -> Identifier:
+        if symbol not in self._idenfitiers:
+            self._idenfitiers[symbol] = Identifier(symbol)
+        return self._idenfitiers[symbol]
+
     def _match(self, *types: str) -> bool:
         if self._peek_at_current_token() in types:
             self._advance_to_next_token()
@@ -196,9 +179,7 @@ class ExpressionParser:
         return False
 
     def _match_number(self) -> bool:
-        pattern = _build_token_pattern(
-            _COMPLEX_PATTERN.pattern, _FLOAT_PATTERN.pattern, _INTEGER_PATTERN.pattern
-        )
+        pattern = _build_token_pattern(_FLOAT_PATTERN.pattern, _INTEGER_PATTERN.pattern)
         current_token = self._peek_at_current_token()
         if current_token and re.match(pattern, current_token):
             self._advance_to_next_token()

@@ -3,6 +3,7 @@
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Any
 
 from frozendict import frozendict
 
@@ -13,13 +14,140 @@ from fhy_core.utils import invert_frozen_dict
 class Expression(ABC):
     """Abstract base class for expressions."""
 
+    def __neg__(self) -> "UnaryExpression":
+        return UnaryExpression(UnaryOperation.NEGATE, self)
+
+    def __pos__(self) -> "UnaryExpression":
+        return UnaryExpression(UnaryOperation.POSITIVE, self)
+
+    def __invert__(self) -> "UnaryExpression":
+        return UnaryExpression(UnaryOperation.LOGICAL_NOT, self)
+
+    def __add__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.ADD, self, self._get_expression_from_other(other)
+        )
+
+    def __radd__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.ADD, self._get_expression_from_other(other), self
+        )
+
+    def __sub__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.SUBTRACT, self, self._get_expression_from_other(other)
+        )
+
+    def __rsub__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.SUBTRACT, self._get_expression_from_other(other), self
+        )
+
+    def __mul__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.MULTIPLY, self, self._get_expression_from_other(other)
+        )
+
+    def __rmul__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.MULTIPLY, self._get_expression_from_other(other), self
+        )
+
+    def __truediv__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.DIVIDE, self, self._get_expression_from_other(other)
+        )
+
+    def __rtruediv__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.DIVIDE, self._get_expression_from_other(other), self
+        )
+
+    def __mod__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.MODULO, self, self._get_expression_from_other(other)
+        )
+
+    def __rmod__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.MODULO, self._get_expression_from_other(other), self
+        )
+
+    def __pow__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.POWER, self, self._get_expression_from_other(other)
+        )
+
+    def __rpow__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.POWER, self._get_expression_from_other(other), self
+        )
+
+    def equals(self, other: Any) -> "BinaryExpression":
+        """Create an equality expression.
+
+        Args:
+            other: Other expression.
+
+        Returns:
+            Equality expression.
+
+        """
+        return BinaryExpression(
+            BinaryOperation.EQUAL, self, self._get_expression_from_other(other)
+        )
+
+    def not_equals(self, other: Any) -> "BinaryExpression":
+        """Create an inequality expression.
+
+        Args:
+            other: Other expression.
+
+        Returns:
+            Inequality expression.
+
+        """
+        return BinaryExpression(
+            BinaryOperation.NOT_EQUAL, self, self._get_expression_from_other(other)
+        )
+
+    def __lt__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.LESS, self, self._get_expression_from_other(other)
+        )
+
+    def __le__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.LESS_EQUAL, self, self._get_expression_from_other(other)
+        )
+
+    def __gt__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.GREATER, self, self._get_expression_from_other(other)
+        )
+
+    def __ge__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.GREATER_EQUAL, self, self._get_expression_from_other(other)
+        )
+
+    def _get_expression_from_other(self, other: Any) -> "Expression":
+        if isinstance(other, Expression):
+            return other
+        elif isinstance(other, Identifier):
+            return IdentifierExpression(other)
+        elif isinstance(other, (int, float, bool, str)):
+            return LiteralExpression(other)
+        raise ValueError(
+            f"Unsupported type for creating literal expression: {type(other)}."
+        )
+
 
 class UnaryOperation(Enum):
     """Unary operation."""
 
     NEGATE = auto()
     POSITIVE = auto()
-    BITWISE_NOT = auto()
     LOGICAL_NOT = auto()
 
 
@@ -27,7 +155,6 @@ UNARY_OPERATION_FUNCTION_NAMES: frozendict[UnaryOperation, str] = frozendict(
     {
         UnaryOperation.NEGATE: "negate",
         UnaryOperation.POSITIVE: "positive",
-        UnaryOperation.BITWISE_NOT: "bitwise_not",
         UnaryOperation.LOGICAL_NOT: "logical_not",
     }
 )
@@ -39,7 +166,6 @@ UNARY_OPERATION_SYMBOLS: frozendict[UnaryOperation, str] = frozendict(
         UnaryOperation.NEGATE: "-",
         UnaryOperation.POSITIVE: "+",
         UnaryOperation.LOGICAL_NOT: "!",
-        UnaryOperation.BITWISE_NOT: "~",
     }
 )
 UNARY_SYMBOL_OPERATIONS: frozendict[str, UnaryOperation] = invert_frozen_dict(
@@ -64,11 +190,6 @@ class BinaryOperation(Enum):
     DIVIDE = auto()
     MODULO = auto()
     POWER = auto()
-    BITWISE_AND = auto()
-    BITWISE_OR = auto()
-    BITWISE_XOR = auto()
-    LEFT_SHIFT = auto()
-    RIGHT_SHIFT = auto()
     LOGICAL_AND = auto()
     LOGICAL_OR = auto()
     EQUAL = auto()
@@ -87,11 +208,6 @@ BINARY_OPERATION_FUNCTION_NAMES: frozendict[BinaryOperation, str] = frozendict(
         BinaryOperation.DIVIDE: "divide",
         BinaryOperation.MODULO: "modulo",
         BinaryOperation.POWER: "power",
-        BinaryOperation.BITWISE_AND: "bitwise_and",
-        BinaryOperation.BITWISE_OR: "bitwise_or",
-        BinaryOperation.BITWISE_XOR: "bitwise_xor",
-        BinaryOperation.LEFT_SHIFT: "left_shift",
-        BinaryOperation.RIGHT_SHIFT: "right_shift",
         BinaryOperation.LOGICAL_AND: "logical_and",
         BinaryOperation.LOGICAL_OR: "logical_or",
         BinaryOperation.EQUAL: "equal",
@@ -113,11 +229,6 @@ BINARY_OPERATION_SYMBOLS: frozendict[BinaryOperation, str] = frozendict(
         BinaryOperation.DIVIDE: "/",
         BinaryOperation.MODULO: "%",
         BinaryOperation.POWER: "**",
-        BinaryOperation.BITWISE_AND: "&",
-        BinaryOperation.BITWISE_OR: "|",
-        BinaryOperation.BITWISE_XOR: "^",
-        BinaryOperation.LEFT_SHIFT: "<<",
-        BinaryOperation.RIGHT_SHIFT: ">>",
         BinaryOperation.LOGICAL_AND: "&&",
         BinaryOperation.LOGICAL_OR: "||",
         BinaryOperation.EQUAL: "==",
@@ -149,7 +260,7 @@ class IdentifierExpression(Expression):
     identifier: Identifier
 
 
-LiteralType = str | complex | float | int | bool
+LiteralType = str | float | int | bool
 
 
 class LiteralExpression(Expression):
@@ -160,7 +271,7 @@ class LiteralExpression(Expression):
     def __init__(self, value: LiteralType) -> None:
         if isinstance(value, str):
             try:
-                complex(value)
+                float(value)
             except ValueError:
                 raise ValueError(
                     f"Invalid literal expression value: "

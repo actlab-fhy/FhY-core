@@ -1,17 +1,11 @@
-"""Expression tree passes and manipulations."""
+"""Basic expression passes."""
 
-import sympy  # type: ignore
-
-from fhy_core.identifier import Identifier
-
-from .core import (
+from fhy_core.expression.core import (
     Expression,
     IdentifierExpression,
-    LiteralType,
 )
-from .parser import parse_expression
-from .pprint import pformat_expression
-from .visitor import ExpressionTransformer, ExpressionVisitor
+from fhy_core.expression.visitor import ExpressionTransformer, ExpressionVisitor
+from fhy_core.identifier import Identifier
 
 
 class IdentifierCollector(ExpressionVisitor):
@@ -62,27 +56,3 @@ def copy_expression(expression: Expression) -> Expression:
 
     """
     return ExpressionCopier()(expression)
-
-
-def simplify_expression(
-    expression: Expression, environment: dict[Identifier, LiteralType] | None = None
-) -> Expression:
-    """Simplify an expression.
-
-    Args:
-        expression: Expression to simplify.
-        environment: Environment to simplify the expression in. Defaults to None.
-
-    Returns:
-        Result of the expression.
-
-    """
-    sympy_expression = sympy.parsing.sympy_parser.parse_expr(
-        pformat_expression(expression, functional=False)
-    )
-    if environment is not None:
-        sympy_expression = sympy_expression.subs(
-            {str(k): v for k, v in environment.items()}
-        )
-    result = sympy.simplify(sympy_expression)
-    return parse_expression(str(result))

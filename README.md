@@ -1,11 +1,13 @@
 # *FhY* Core
 
-*FhY* Core is a collection of utilities for FhY and other parts of the compiler.
+*FhY* Core is a collection of utilities for *FhY* and other parts of the compiler.
 
 | Utility                                  | Description                                                            |
 | :--------------------------------------: | :--------------------------------------------------------------------- |
 | Identifier                               | Unique naming class with a non-unique name hint and a unique ID.       |
 | Expression                               | General expression represented as an AST with a parser and printer.    |
+| Constraint                               | General logical constraint.                                            |
+| Parameter                                | Real, integer, orginal, categorical, and permutation parameters.       |
 | _General Utility_ - Stack                | General stack utility that wraps `deque`.                              |
 | _General Utility_ - POSET                | General partially ordered set utility represented as a directed graph. |
 | _General Utility_ - Lattice              | General lattice (order theory) utility represented with a POSET.       |
@@ -39,7 +41,7 @@
     pip install setuptools wheel
     ```
 
-3. Install FhY.
+3. Install *FhY*.
 
     ```bash
     # Standard Installation
