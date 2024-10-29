@@ -1,10 +1,9 @@
 """General expression tree."""
 
-import operator
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any, Callable
+from typing import Any
 
 from frozendict import frozendict
 
@@ -192,15 +191,6 @@ UNARY_OPERATION_SYMBOLS: frozendict[UnaryOperation, str] = frozendict(
 UNARY_SYMBOL_OPERATIONS: frozendict[str, UnaryOperation] = invert_frozen_dict(
     UNARY_OPERATION_SYMBOLS
 )
-UNARY_OPERATION_OPERATORS: frozendict[UnaryOperation, Callable[[Any], Any]] = (
-    frozendict(
-        {
-            UnaryOperation.NEGATE: operator.neg,
-            UnaryOperation.POSITIVE: operator.pos,
-            UnaryOperation.LOGICAL_NOT: operator.not_,
-        }
-    )
-)
 
 
 @dataclass(frozen=True, eq=False)
@@ -271,26 +261,6 @@ BINARY_OPERATION_SYMBOLS: frozendict[BinaryOperation, str] = frozendict(
 )
 BINARY_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = invert_frozen_dict(
     BINARY_OPERATION_SYMBOLS
-)
-BINARY_OPERATION_OPERATORS: frozendict[BinaryOperation, Callable[[Any, Any], Any]] = (
-    frozendict(
-        {
-            BinaryOperation.ADD: operator.add,
-            BinaryOperation.SUBTRACT: operator.sub,
-            BinaryOperation.MULTIPLY: operator.mul,
-            BinaryOperation.DIVIDE: operator.truediv,
-            BinaryOperation.MODULO: operator.mod,
-            BinaryOperation.POWER: operator.pow,
-            BinaryOperation.LOGICAL_AND: operator.and_,
-            BinaryOperation.LOGICAL_OR: operator.or_,
-            BinaryOperation.EQUAL: operator.eq,
-            BinaryOperation.NOT_EQUAL: operator.ne,
-            BinaryOperation.LESS: operator.lt,
-            BinaryOperation.LESS_EQUAL: operator.le,
-            BinaryOperation.GREATER: operator.gt,
-            BinaryOperation.GREATER_EQUAL: operator.ge,
-        }
-    )
 )
 
 

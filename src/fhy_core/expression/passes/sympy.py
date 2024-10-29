@@ -1,12 +1,14 @@
 """Expression passes that interface with SymPy."""
 
+import operator
+from typing import Any, Callable
+
 import sympy  # type: ignore
 import sympy.logic  # type: ignore
 import sympy.logic.boolalg  # type: ignore
+from frozendict import frozendict
 
 from fhy_core.expression.core import (
-    BINARY_OPERATION_OPERATORS,
-    UNARY_OPERATION_OPERATORS,
     BinaryExpression,
     BinaryOperation,
     Expression,
@@ -24,18 +26,52 @@ from fhy_core.identifier import Identifier
 class ExpressionToSympyConverter(ExpressionBasePass):
     """Transforms an expression to SymPy expression."""
 
+    _UNARY_OPERATION_SYMPY_OPERATORS: frozendict[
+        UnaryOperation, Callable[[Any], Any]
+    ] = frozendict(
+        {
+            UnaryOperation.NEGATE: operator.neg,
+            UnaryOperation.POSITIVE: operator.pos,
+            UnaryOperation.LOGICAL_NOT: operator.not_,
+        }
+    )
+    _BINARY_OPERATION_SYMPY_OPERATORS: frozendict[
+        BinaryOperation, Callable[[Any, Any], Any]
+    ] = frozendict(
+        {
+            BinaryOperation.ADD: operator.add,
+            BinaryOperation.SUBTRACT: operator.sub,
+            BinaryOperation.MULTIPLY: operator.mul,
+            BinaryOperation.DIVIDE: operator.truediv,
+            BinaryOperation.MODULO: operator.mod,
+            BinaryOperation.POWER: operator.pow,
+            BinaryOperation.LOGICAL_AND: operator.and_,
+            BinaryOperation.LOGICAL_OR: operator.or_,
+            BinaryOperation.EQUAL: lambda x, y: sympy.Eq(x, y),
+            BinaryOperation.NOT_EQUAL: lambda x, y: sympy.Ne(x, y),
+            BinaryOperation.LESS: operator.lt,
+            BinaryOperation.LESS_EQUAL: operator.le,
+            BinaryOperation.GREATER: operator.gt,
+            BinaryOperation.GREATER_EQUAL: operator.ge,
+        }
+    )
+
     def visit_binary_expression(
         self, binary_expression: BinaryExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
         left = self.visit(binary_expression.left)
         right = self.visit(binary_expression.right)
-        return BINARY_OPERATION_OPERATORS[binary_expression.operation](left, right)
+        return self._BINARY_OPERATION_SYMPY_OPERATORS[binary_expression.operation](
+            left, right
+        )
 
     def visit_unary_expression(
         self, unary_expression: UnaryExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
         operand = self.visit(unary_expression.operand)
-        return UNARY_OPERATION_OPERATORS[unary_expression.operation](operand)
+        return self._UNARY_OPERATION_SYMPY_OPERATORS[unary_expression.operation](
+            operand
+        )
 
     def visit_identifier_expression(
         self, identifier_expression: IdentifierExpression

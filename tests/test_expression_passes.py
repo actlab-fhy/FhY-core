@@ -330,7 +330,7 @@ def test_copy_binary_expression():
                 IdentifierExpression(mock_identifier("x", 0)),
                 LiteralExpression(5),
             ),
-            sympy.Symbol("x_0") == sympy.Integer(5),
+            sympy.Eq(sympy.Symbol("x_0"), sympy.Integer(5)),
         ),
         (
             BinaryExpression(
@@ -338,7 +338,7 @@ def test_copy_binary_expression():
                 IdentifierExpression(mock_identifier("x", 0)),
                 LiteralExpression(5),
             ),
-            sympy.Symbol("x_0") != sympy.Integer(5),
+            sympy.Ne(sympy.Symbol("x_0"), sympy.Integer(5)),
         ),
         (
             BinaryExpression(
@@ -371,6 +371,18 @@ def test_copy_binary_expression():
                 LiteralExpression(5),
             ),
             sympy.Symbol("x_0") >= sympy.Integer(5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.EQUAL,
+                BinaryExpression(
+                    BinaryOperation.MODULO,
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    LiteralExpression(5),
+                ),
+                LiteralExpression(0),
+            ),
+            sympy.Eq(sympy.Symbol("x_0") % sympy.Integer(5), sympy.Integer(0)),
         ),
     ],
 )
@@ -567,6 +579,16 @@ def test_sympy_expression_conversion_fails_when_symbol_is_not_identifier():
                 LiteralExpression(10),
             ),
             50,
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.EQUAL,
+                BinaryExpression(
+                    BinaryOperation.MODULO, LiteralExpression(15), LiteralExpression(5)
+                ),
+                LiteralExpression(0),
+            ),
+            True,
         ),
     ],
 )
