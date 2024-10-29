@@ -1,0 +1,162 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fhy_core"
+description = "Core utilities for the FhY compiler infrastructure."
+license = {file = "LICENSE"}
+authors = [
+   {name = "Christopher Priebe", email = "cpriebe@ucsd.edu"},
+]
+maintainers = [
+   {name = "Christopher Priebe", email = "cpriebe@ucsd.edu"},
+]
+requires-python = ">=3.10"
+keywords = [
+   "Compiler",
+]
+classifiers = [
+   "Development Status :: 3 - Alpha",
+   "Programming Language :: Python :: 3",
+   "Programming Language :: Python :: 3.10",
+   "Programming Language :: Python :: 3.11",
+   "Programming Language :: Python :: 3.12",
+   "Programming Language :: Python :: 3.13",
+]
+dynamic = ["version", "readme", "dependencies"]
+
+[project.urls]
+Homepage = "https://github.com/actlab-fhy/FhY-core"
+Issues = "https://github.com/actlab-fhy/FhY-core/issues"
+
+[tool.setuptools.dynamic]
+readme = {file = ["README.md"], content-type = "text/markdown"}
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+exclude = ["tests"]
+
+[project.optional-dependencies]
+dev = ["fhy_core[test,lint,type,docs]", "tox"]
+test = ["pytest", "coverage", "pytest-xdist"]
+lint = ["ruff", "pylint"]
+type = ["mypy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-n auto -rA"
+
+[tool.coverage.run]
+parallel = true
+branch = true
+source = ["fhy_core"]
+
+[tool.coverage.paths]
+source = ["src", "*/.tox/py*/**/site-packages"]
+
+[tool.coverage.report]
+format = "markdown"
+fail_under = 85.0
+precision = 1
+show_missing = true
+skip_empty = true
+skip_covered = true
+exclude_also = [
+   "def __repr__",
+   'if __name__ == "__main__"'
+]
+
+[tool.mypy]
+pretty = false
+
+[tool.pylint.main]
+extension-pkg-whitelist = ["networkx"]
+ignore = ["tests", "dist", "build"]
+fail-under = 9.0
+jobs = 0
+limit-inference-results = 100
+persistent = true
+suggestion-mode = true
+
+[tool.pylint.basic]
+good-names = ["i", "j", "k", "ex", "run", "_", "e"]
+
+[tool.pylint.format]
+max-line-length = 88
+
+[tool.pylint."messages control"]
+disable = [
+   "C0103",  # invalid-name
+   "C0116",  # missing-function-docstring
+   "C1804",  # "use-implicit-booleaness-not-comparison-to-string",
+   "C1805",  # use-implicit-booleaness-not-comparison-to-zero
+   "I0001",  # raw-checker-failed
+   "I0010",  # bad-inline-option
+   "I0011",  # locally-disabled
+   "I0013",  # file-ignored
+   "I0020",  # suppressed-message
+   "I0021",  # useless-suppression
+   "I0022",  # deprecated-pragma
+   "I0023",  # use-symbolic-message-instead
+   "R0205",  # useless-object-inheritance
+   "R0903",  # too-few-public-methods
+   "R0904",  # too-many-public-methods
+   "R0911",  # too-many-return-statements
+   "R0913",  # too-many-arguments
+   "R0914",  # too-many-locals
+   "R1705",  # no-else-return
+   "R1735",  # use-dict-literal
+   "W",  # Warning Codes
+   "W0613",  # unused-argument
+   "W2301",  # unnecessary-ellipsis
+]
+
+[tool.ruff]
+line-length = 88
+indent-width = 4
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+   "E",  # pycodestyle
+   "F",  # Pyflakes
+   "I",  # Isort
+   "D",  # PyDocstyle
+   "W",  # Warning
+   "PL",  # Pylint
+   # "C",  # Convention
+]
+ignore = [
+   "D102",  # undocumented-public-method (D102)
+   "D105",  # undocumented-magic-method (D105)
+   "D107",  # undocumented-public-init (D107)
+   "D203",  # one-blank-line-before-class (D203)
+   "D213",  # multi-line-summary-second-line (D213)
+   "PLR0913",  # too-many-arguments (PLR0913)
+   "C408",  # unnecessary-collection-call (C408)
+   "PLR0911",  # too-many-return-statements (PLR0911)
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"  # Accepts: "google" | "numpy" | "pep257"
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = [
+   "E402",  # Import Statement not at Top of File
+   "F401",  # Unused Imports
+]
+"tests/*.py" = [
+   "D",  # PyDocstyle
+   "F841",  # unused-variable (F841)
+   "PLR2004",  # magic-value-comparison (PLR2004)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
