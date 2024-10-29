@@ -29,6 +29,8 @@ def mock_identifier(name_hint: str, identifier_id: int) -> Identifier:
     identifier._id = identifier_id
     identifier.name_hint = name_hint
     identifier.id = identifier_id
+    identifier.__eq__ = lambda self, other: self.id == other.id
+    identifier.__hash__ = lambda self: hash(self.id)
     return identifier
 
 

@@ -1,7 +1,7 @@
 """Tests the constraint utility."""
 
 import pytest
-from fhy_core.constraint import EquationConstraint
+from fhy_core.constraint import EquationConstraint, InSetConstraint, NotInSetConstraint
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -221,4 +221,80 @@ def test_equation_constraint_checks_correctly(
     expected_outcome: bool,
 ):
     """Test the equation constraint evaluates correctly when checked."""
+    assert constraint.is_satisfied(values) == expected_outcome
+
+
+@pytest.mark.parametrize(
+    "constraint, values, expected_outcome",
+    [
+        (
+            InSetConstraint({mock_identifier("x", 0)}, {1, 2, 3}),
+            {mock_identifier("x", 0): 1},
+            True,
+        ),
+        (
+            InSetConstraint({mock_identifier("x", 0)}, {1, 2, 3}),
+            {mock_identifier("x", 0): 4},
+            False,
+        ),
+        (
+            InSetConstraint(
+                {mock_identifier("x", 0), mock_identifier("y", 1)}, {"a", "b", "c"}
+            ),
+            {mock_identifier("x", 0): "a", mock_identifier("y", 1): "b"},
+            True,
+        ),
+        (
+            InSetConstraint(
+                {mock_identifier("x", 0), mock_identifier("y", 1)}, {"a", "b", "c"}
+            ),
+            {mock_identifier("x", 0): "a", mock_identifier("y", 1): "d"},
+            False,
+        ),
+    ],
+)
+def test_in_set_constraint_checks_correctly(
+    constraint: InSetConstraint,
+    values: dict[Identifier, LiteralType],
+    expected_outcome: bool,
+):
+    """Test the in-set constraint evaluates correctly when checked."""
+    assert constraint.is_satisfied(values) == expected_outcome
+
+
+@pytest.mark.parametrize(
+    "constraint, values, expected_outcome",
+    [
+        (
+            NotInSetConstraint({mock_identifier("x", 0)}, {1, 2, 3}),
+            {mock_identifier("x", 0): 1},
+            False,
+        ),
+        (
+            NotInSetConstraint({mock_identifier("x", 0)}, {1, 2, 3}),
+            {mock_identifier("x", 0): 4},
+            True,
+        ),
+        (
+            NotInSetConstraint(
+                {mock_identifier("x", 0), mock_identifier("y", 1)}, {"a", "b", "c"}
+            ),
+            {mock_identifier("x", 0): "a", mock_identifier("y", 1): "b"},
+            False,
+        ),
+        (
+            NotInSetConstraint(
+                {mock_identifier("x", 0), mock_identifier("y", 1)}, {"a", "b", "c"}
+            ),
+            {mock_identifier("x", 0): "a", mock_identifier("y", 1): "d"},
+            True,
+        ),
+    ],
+)
+def test_not_in_set_constraint_checks_correctly(
+    constraint: NotInSetConstraint,
+    values: dict[Identifier, LiteralType],
+    expected_outcome: bool,
+):
+    """Test the not-in-set constraint evaluates correctly when checked."""
     assert constraint.is_satisfied(values) == expected_outcome
