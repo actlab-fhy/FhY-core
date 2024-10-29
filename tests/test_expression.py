@@ -91,8 +91,6 @@ _binary_operator_operations_pairs = pytest.mark.parametrize(
         (operator.le, BinaryOperation.LESS_EQUAL),
         (operator.gt, BinaryOperation.GREATER),
         (operator.ge, BinaryOperation.GREATER_EQUAL),
-        (operator.and_, BinaryOperation.LOGICAL_AND),
-        (operator.or_, BinaryOperation.LOGICAL_OR),
     ],
 )
 
@@ -154,8 +152,6 @@ def test_binary_operation_left_dunder_methods_for_literals(
         (operator.truediv, BinaryOperation.DIVIDE),
         (operator.mod, BinaryOperation.MODULO),
         (operator.pow, BinaryOperation.POWER),
-        (operator.and_, BinaryOperation.LOGICAL_AND),
-        (operator.or_, BinaryOperation.LOGICAL_OR),
     ],
 )
 @pytest.mark.parametrize(

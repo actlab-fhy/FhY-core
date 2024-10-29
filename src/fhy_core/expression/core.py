@@ -78,6 +78,11 @@ class Expression(ABC):
             BinaryOperation.POWER, self, self._get_expression_from_other(other)
         )
 
+    def __rpow__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.POWER, self._get_expression_from_other(other), self
+        )
+
     def equals(self, other: Any) -> "BinaryExpression":
         """Create an equality expression.
 
@@ -124,31 +129,6 @@ class Expression(ABC):
     def __ge__(self, other: Any) -> "BinaryExpression":
         return BinaryExpression(
             BinaryOperation.GREATER_EQUAL, self, self._get_expression_from_other(other)
-        )
-
-    def __rpow__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.POWER, self._get_expression_from_other(other), self
-        )
-
-    def __and__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.LOGICAL_AND, self, self._get_expression_from_other(other)
-        )
-
-    def __rand__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.LOGICAL_AND, self._get_expression_from_other(other), self
-        )
-
-    def __or__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.LOGICAL_OR, self, self._get_expression_from_other(other)
-        )
-
-    def __ror__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.LOGICAL_OR, self._get_expression_from_other(other), self
         )
 
     def _get_expression_from_other(self, other: Any) -> "Expression":
