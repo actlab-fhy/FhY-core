@@ -26,6 +26,10 @@ classifiers = [
 ]
 dynamic = ["version", "readme", "dependencies"]
 
+[project.urls]
+Homepage = "https://github.com/actlab-fhy/FhY-core"
+Issues = "https://github.com/actlab-fhy/FhY-core/issues"
+
 [tool.setuptools.dynamic]
 readme = {file = ["README.md"], content-type = "text/markdown"}
 dependencies = {file = ["requirements.txt"]}
