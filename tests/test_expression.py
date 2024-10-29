@@ -1,15 +1,20 @@
 """Tests the expression utility."""
 
+import operator
+
 import pytest
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
+    Expression,
     IdentifierExpression,
     LiteralExpression,
     UnaryExpression,
     UnaryOperation,
 )
 from fhy_core.identifier import Identifier
+
+from .utils import assert_exact_expression_equality, mock_identifier
 
 
 def test_unary_expression():
@@ -50,3 +55,150 @@ def test_literal_expression_invalid_string():
     """
     with pytest.raises(ValueError, match="Invalid literal expression value:"):
         LiteralExpression("invalid_literal")
+
+
+@pytest.mark.parametrize(
+    "unary_operator, expected_operation",
+    [
+        (operator.neg, UnaryOperation.NEGATE),
+        (operator.pos, UnaryOperation.POSITIVE),
+        (operator.invert, UnaryOperation.LOGICAL_NOT),
+    ],
+)
+def test_unary_operator_dunder_methods(
+    unary_operator, expected_operation: UnaryOperation
+):
+    """Test that the unary operation dunder methods correctly create unary
+    expressions.
+    """
+    operand = LiteralExpression(5)
+    expected_expr = UnaryExpression(expected_operation, operand)
+    assert_exact_expression_equality(unary_operator(operand), expected_expr)
+
+
+_binary_operator_operations_pairs = pytest.mark.parametrize(
+    "binary_operator, expected_operation",
+    [
+        (operator.add, BinaryOperation.ADD),
+        (operator.sub, BinaryOperation.SUBTRACT),
+        (operator.mul, BinaryOperation.MULTIPLY),
+        (operator.truediv, BinaryOperation.DIVIDE),
+        (operator.mod, BinaryOperation.MODULO),
+        (operator.pow, BinaryOperation.POWER),
+        (operator.lt, BinaryOperation.LESS),
+        (operator.le, BinaryOperation.LESS_EQUAL),
+        (operator.gt, BinaryOperation.GREATER),
+        (operator.ge, BinaryOperation.GREATER_EQUAL),
+        (operator.and_, BinaryOperation.LOGICAL_AND),
+        (operator.or_, BinaryOperation.LOGICAL_OR),
+    ],
+)
+
+
+@_binary_operator_operations_pairs
+def test_binary_operation_dunder_methods(
+    binary_operator, expected_operation: BinaryOperation
+):
+    """Test that the binary operation dunder methods correctly create binary"""
+    left = LiteralExpression(5)
+    right = LiteralExpression(10)
+    expected_expr = BinaryExpression(expected_operation, left, right)
+    assert_exact_expression_equality(binary_operator(left, right), expected_expr)
+
+
+@_binary_operator_operations_pairs
+@pytest.mark.parametrize(
+    "left, right, expected_right_type",
+    [
+        (LiteralExpression(5), 10, LiteralExpression),
+        (IdentifierExpression(mock_identifier("x", 0)), 10.23, LiteralExpression),
+        (
+            UnaryExpression(UnaryOperation.POSITIVE, LiteralExpression(10)),
+            False,
+            LiteralExpression,
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.ADD, LiteralExpression(5), LiteralExpression(10)
+            ),
+            "2.264",
+            LiteralExpression,
+        ),
+        (LiteralExpression(5), mock_identifier("x", 2), IdentifierExpression),
+    ],
+)
+def test_binary_operation_left_dunder_methods_for_literals(
+    binary_operator,
+    expected_operation: BinaryOperation,
+    left: Expression,
+    right: Identifier | str | float | int | bool,
+    expected_right_type: type[Expression],
+):
+    """Test that the binary operation left dunder methods correctly create
+    literal expressions.
+    """
+    expected_expr = BinaryExpression(
+        expected_operation, left, expected_right_type(right)
+    )
+    assert_exact_expression_equality(binary_operator(left, right), expected_expr)
+
+
+@pytest.mark.parametrize(
+    "binary_operator, expected_operation",
+    [
+        (operator.add, BinaryOperation.ADD),
+        (operator.sub, BinaryOperation.SUBTRACT),
+        (operator.mul, BinaryOperation.MULTIPLY),
+        (operator.truediv, BinaryOperation.DIVIDE),
+        (operator.mod, BinaryOperation.MODULO),
+        (operator.pow, BinaryOperation.POWER),
+        (operator.and_, BinaryOperation.LOGICAL_AND),
+        (operator.or_, BinaryOperation.LOGICAL_OR),
+    ],
+)
+@pytest.mark.parametrize(
+    "left, expected_left_type, right",
+    [
+        (6, LiteralExpression, LiteralExpression(10)),
+        (10.3, LiteralExpression, IdentifierExpression(mock_identifier("y", 19))),
+        (
+            True,
+            LiteralExpression,
+            UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(15)),
+        ),
+        (
+            "2.4",
+            LiteralExpression,
+            BinaryExpression(
+                BinaryOperation.SUBTRACT, LiteralExpression(2), LiteralExpression(3)
+            ),
+        ),
+        (mock_identifier("x", 1), IdentifierExpression, LiteralExpression(5)),
+    ],
+)
+def test_binary_operation_right_dunder_methods_for_literals(
+    binary_operator,
+    expected_operation: BinaryOperation,
+    left: Identifier | str | float | int | bool,
+    expected_left_type: type[Expression],
+    right: Expression,
+):
+    """Test that the binary operation right dunder methods correctly create
+    literal expressions.
+    """
+    if binary_operator == operator.mod and isinstance(left, str):
+        pytest.skip(
+            "Modulo operation with string on the left is reserved for formatting."
+        )
+    expected_expr = BinaryExpression(
+        expected_operation, expected_left_type(left), right
+    )
+    assert_exact_expression_equality(binary_operator(left, right), expected_expr)
+
+
+def test_binary_operation_dunder_method_fails_to_create_expression_with_unknown_type():
+    """Test that the binary operation dunder methods fail to create an expression
+    with an unknown type.
+    """
+    with pytest.raises(ValueError):
+        operator.add(LiteralExpression(5), [])

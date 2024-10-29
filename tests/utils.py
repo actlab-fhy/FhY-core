@@ -64,6 +64,6 @@ def assert_exact_expression_equality(
     else:
         assert False, (
             "Expression trees did not have the same structure: "
-            f"{pformat_expression(expression1, show_id=True)} ,"
+            f"{pformat_expression(expression1, show_id=True)} , "
             f"{pformat_expression(expression2, show_id=True)}."
         )
