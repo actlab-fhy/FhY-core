@@ -33,6 +33,7 @@ Issues = "https://github.com/actlab-fhy/FhY-core/issues"
 [tool.setuptools.dynamic]
 readme = {file = ["README.md"], content-type = "text/markdown"}
 dependencies = {file = ["requirements.txt"]}
+version = {path = "src/fhy_core/__init__.py", attr = "__version__"}
 
 [tool.setuptools]
 package-dir = {"" = "src"}
