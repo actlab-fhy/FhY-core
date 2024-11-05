@@ -42,6 +42,9 @@ package-dir = {"" = "src"}
 where = ["src"]
 exclude = ["tests"]
 
+[tool.setuptools.package-data]
+fhy_core = ["py.typed"]
+
 [project.optional-dependencies]
 dev = ["fhy_core[test,lint,type,docs]", "tox"]
 test = ["pytest", "coverage", "pytest-xdist"]
