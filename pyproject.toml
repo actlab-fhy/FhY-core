@@ -33,6 +33,7 @@ Issues = "https://github.com/actlab-fhy/FhY-core/issues"
 [tool.setuptools.dynamic]
 readme = {file = ["README.md"], content-type = "text/markdown"}
 dependencies = {file = ["requirements.txt"]}
+version = {attr = "fhy_core.__version__"}
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -40,6 +41,9 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 exclude = ["tests"]
+
+[tool.setuptools.package-data]
+fhy_core = ["py.typed"]
 
 [project.optional-dependencies]
 dev = ["fhy_core[test,lint,type,docs]", "tox"]
@@ -73,6 +77,7 @@ exclude_also = [
 
 [tool.mypy]
 pretty = false
+strict = true
 
 [tool.pylint.main]
 extension-pkg-whitelist = ["networkx"]

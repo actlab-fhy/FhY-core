@@ -1,5 +1,7 @@
 """Stack utility."""
 
+__all__ = ["Stack"]
+
 from collections import deque
 from collections.abc import Iterator
 from typing import Generic, TypeVar
@@ -40,7 +42,7 @@ class Stack(Generic[T]):
     _stack: deque[T]
     _iter_index: int
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._stack = deque[T]()
         self._iter_index = 0
 

@@ -1,5 +1,12 @@
 """Expression passes that interface with SymPy."""
 
+__all__ = [
+    "convert_expression_to_sympy_expression",
+    "convert_sympy_expression_to_expression",
+    "simplify_expression",
+    "substitute_sympy_expression_variables",
+]
+
 import operator
 from typing import Any, Callable
 

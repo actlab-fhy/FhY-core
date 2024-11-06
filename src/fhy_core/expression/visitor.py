@@ -1,5 +1,11 @@
 """Expression tree visitor and transformer."""
 
+__all__ = [
+    "ExpressionBasePass",
+    "ExpressionVisitor",
+    "ExpressionTransformer",
+]
+
 from abc import ABC
 from typing import Any
 
@@ -94,6 +100,9 @@ class ExpressionBasePass(ABC):
 class ExpressionVisitor(ExpressionBasePass, ABC):
     """Visitor for expression trees."""
 
+    def __call__(self, expression: Expression) -> None:
+        super().__call__(expression)
+
     def visit_unary_expression(self, unary_expression: UnaryExpression) -> None:
         self.visit(unary_expression.operand)
 
@@ -112,6 +121,14 @@ class ExpressionVisitor(ExpressionBasePass, ABC):
 
 class ExpressionTransformer(ExpressionBasePass, ABC):
     """Transformer for expression trees."""
+
+    def __call__(self, expression: Expression) -> Expression:
+        transformed_expression = super().__call__(expression)
+        if not isinstance(transformed_expression, Expression):
+            raise TypeError(
+                f"Invalid transformed expression type: {type(transformed_expression)}"
+            )
+        return transformed_expression
 
     def visit_unary_expression(self, unary_expression: UnaryExpression) -> Expression:
         new_expression = self.visit(unary_expression.operand)

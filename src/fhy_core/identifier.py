@@ -1,5 +1,7 @@
 """Unique identifier for named FhY objects."""
 
+__all__ = ["Identifier"]
+
 from typing import Any
 
 
