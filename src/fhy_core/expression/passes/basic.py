@@ -1,5 +1,10 @@
 """Basic expression passes."""
 
+__all__ = [
+    "collect_identifiers",
+    "copy_expression",
+]
+
 from fhy_core.expression.core import (
     Expression,
     IdentifierExpression,
@@ -13,7 +18,7 @@ class IdentifierCollector(ExpressionVisitor):
 
     _identifiers: set[Identifier]
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._identifiers = set()
 
     @property

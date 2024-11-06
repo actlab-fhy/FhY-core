@@ -1,5 +1,7 @@
 """Fundamental parameter classes."""
 
+__all__ = ["NatParam"]
+
 from fhy_core.constraint import EquationConstraint
 from fhy_core.expression import (
     BinaryExpression,

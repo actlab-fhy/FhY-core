@@ -1,5 +1,7 @@
 """Pretty-printer for expressions."""
 
+__all__ = ["pformat_expression"]
+
 from .core import (
     BINARY_OPERATION_FUNCTION_NAMES,
     BINARY_OPERATION_SYMBOLS,
@@ -26,6 +28,14 @@ class ExpressionPrettyFormatter(ExpressionBasePass):
         super().__init__()
         self._is_id_shown = is_id_shown
         self._is_printed_functional = is_printed_functional
+
+    def __call__(self, expression: Expression) -> str:
+        formatted_expression = super().__call__(expression)
+        if not isinstance(formatted_expression, str):
+            raise TypeError(
+                f"Invalid formatted expression type: {type(formatted_expression)}"
+            )
+        return formatted_expression
 
     def visit_unary_expression(self, unary_expression: UnaryExpression) -> str:
         if self._is_printed_functional:

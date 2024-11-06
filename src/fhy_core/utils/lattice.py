@@ -1,5 +1,7 @@
 """Lattice (order theory) utility."""
 
+__all__ = ["Lattice"]
+
 from typing import Generic, TypeVar
 
 from .poset import PartiallyOrderedSet
@@ -12,7 +14,7 @@ class Lattice(Generic[T]):
 
     _poset: PartiallyOrderedSet[T]
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._poset = PartiallyOrderedSet[T]()
 
     def __contains__(self, element: T) -> bool:

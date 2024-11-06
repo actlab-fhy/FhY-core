@@ -1,5 +1,7 @@
 """Parser from strings to expression trees."""
 
+__all__ = ["parse_expression", "tokenize_expression"]
+
 import re
 from typing import Callable, TypeVar
 
@@ -126,23 +128,23 @@ class ExpressionParser:
     def _comparison(self) -> Expression:
         return self._binary_operation(_COMPARISON_SYMBOL_OPERATIONS, self._addition)
 
-    def _addition(self):
-        return self._binary_operation(_ADDITION_SYMBOL_OPERATIONS, self.multiplication)
+    def _addition(self) -> Expression:
+        return self._binary_operation(_ADDITION_SYMBOL_OPERATIONS, self._multiplication)
 
-    def multiplication(self):
+    def _multiplication(self) -> Expression:
         return self._binary_operation(_MULTIPLICATION_SYMBOL_OPERATIONS, self._unary)
 
-    def _unary(self):
+    def _unary(self) -> Expression:
         if self._match("-", "+", "!"):
             op = self._get_previous_token()
             right = self._unary()
             return UnaryExpression(UNARY_SYMBOL_OPERATIONS[op], right)
         return self._exponentiation()
 
-    def _exponentiation(self):
+    def _exponentiation(self) -> Expression:
         return self._binary_operation(_EXPONENTIATION_SYMBOL_OPERATIONS, self._primary)
 
-    def _primary(self):
+    def _primary(self) -> Expression:
         if self._match_number():
             return LiteralExpression(self._get_previous_token())
         elif self._match_identifier():
@@ -193,7 +195,7 @@ class ExpressionParser:
             return True
         return False
 
-    def _consume_token(self, token: str, error_message: str):
+    def _consume_token(self, token: str, error_message: str) -> str:
         if self._peek_at_current_token() == token:
             return self._advance_to_next_token()
         else:

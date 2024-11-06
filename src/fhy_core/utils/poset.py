@@ -1,6 +1,8 @@
 """Partially ordered set (poset) utility."""
 
-from typing import Generic, TypeVar
+__all__ = ["PartiallyOrderedSet"]
+
+from typing import Generic, Iterator, TypeVar
 
 import networkx as nx  # type: ignore
 
@@ -12,13 +14,16 @@ class PartiallyOrderedSet(Generic[T]):
 
     _graph: nx.DiGraph
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._graph = nx.DiGraph()
 
     def __contains__(self, element: T) -> bool:
-        return self._graph.has_node(element)
+        is_contain = self._graph.has_node(element)
+        if not isinstance(is_contain, bool):
+            raise TypeError(f"Expected bool, but got {type(is_contain)}")
+        return is_contain
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[T]:
         return iter(nx.topological_sort(self._graph))
 
     def __len__(self) -> int:
@@ -73,7 +78,10 @@ class PartiallyOrderedSet(Generic[T]):
         """
         self._check_element_in_poset(lower)
         self._check_element_in_poset(upper)
-        return nx.has_path(self._graph, lower, upper)
+        has_path = nx.has_path(self._graph, lower, upper)
+        if not isinstance(has_path, bool):
+            raise TypeError(f"Expected bool, but got {type(has_path)}")
+        return has_path
 
     def is_greater_than(self, lower: T, upper: T) -> bool:
         """Check if one element is greater than another.
@@ -91,7 +99,10 @@ class PartiallyOrderedSet(Generic[T]):
         """
         self._check_element_in_poset(lower)
         self._check_element_in_poset(upper)
-        return nx.has_path(self._graph, upper, lower)
+        has_path = nx.has_path(self._graph, upper, lower)
+        if not isinstance(has_path, bool):
+            raise TypeError(f"Expected bool, but got {type(has_path)}")
+        return has_path
 
     def _check_element_not_in_poset(self, element: T) -> None:
         if element in self:
