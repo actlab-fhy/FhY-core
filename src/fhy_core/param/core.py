@@ -1,7 +1,16 @@
 """Core parameter structures."""
 
+__all__ = [
+    "Param",
+    "RealParam",
+    "IntParam",
+    "OrdinalParam",
+    "CategoricalParam",
+    "PermParam",
+]
+
 from abc import ABC
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from typing import Any, Generic, TypeVar
 
 from fhy_core.constraint import (
@@ -12,8 +21,10 @@ from fhy_core.constraint import (
 from fhy_core.expression import IdentifierExpression, LiteralExpression
 from fhy_core.identifier import Identifier
 
+H = TypeVar("H", bound=Hashable)
 
-def _is_values_unique_in_sequence_without_set(values: Sequence) -> bool:
+
+def _is_values_unique_in_sequence_without_set(values: Sequence[Any]) -> bool:
     for i, value_1 in enumerate(values):
         for value_2 in values[i + 1 :]:
             if value_1 == value_2:
@@ -21,11 +32,11 @@ def _is_values_unique_in_sequence_without_set(values: Sequence) -> bool:
     return True
 
 
-def _is_values_unique_in_sorted_sequence(values: Sequence) -> bool:
+def _is_values_unique_in_sorted_sequence(values: Sequence[Any]) -> bool:
     return all(values[i] != values[i + 1] for i in range(len(values) - 1))
 
 
-def _is_values_unique_in_sequence_with_set(values: Sequence) -> bool:
+def _is_values_unique_in_sequence_with_set(values: Sequence[H]) -> bool:
     return len(values) == len(set(values))
 
 
@@ -161,7 +172,7 @@ class OrdinalParam(Param[Any]):
         return super().add_constraint(constraint)
 
 
-class CategoricalParam(Param[Any]):
+class CategoricalParam(Param[H]):
     """Categorical parameter.
 
     Note:
@@ -169,15 +180,15 @@ class CategoricalParam(Param[Any]):
 
     """
 
-    _categories: set[Any]
+    _categories: set[H]
 
-    def __init__(self, categories: Sequence[Any], name: Identifier | None = None):
+    def __init__(self, categories: Sequence[H], name: Identifier | None = None):
         super().__init__(name)
         if not _is_values_unique_in_sequence_with_set(categories):
             raise ValueError("Values must be unique.")
         self._categories = set(categories)
 
-    def set_value(self, value: Any) -> None:
+    def set_value(self, value: H) -> None:
         if value not in self._categories:
             raise ValueError("Value is not in the set of allowed categories.")
         return super().set_value(value)

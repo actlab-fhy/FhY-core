@@ -77,6 +77,7 @@ exclude_also = [
 
 [tool.mypy]
 pretty = false
+strict = true
 
 [tool.pylint.main]
 extension-pkg-whitelist = ["networkx"]

@@ -1,5 +1,7 @@
 """Dictionary manipulation utilities."""
 
+__all__ = ["invert_dict", "invert_frozen_dict"]
+
 from typing import TypeVar
 
 from frozendict import frozendict
