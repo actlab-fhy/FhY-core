@@ -13,7 +13,7 @@ from fhy_core.expression import (
 )
 from fhy_core.identifier import Identifier
 
-from .utils import mock_identifier
+from .utils import assert_exact_expression_equality, mock_identifier
 
 
 @pytest.mark.parametrize(
@@ -298,3 +298,31 @@ def test_not_in_set_constraint_checks_correctly(
 ):
     """Test the not-in-set constraint evaluates correctly when checked."""
     assert constraint.is_satisfied(values) == expected_outcome
+
+
+# TODO: If there is ever an equality for constraints, use this instead of
+#       accessing private attributes for the three following tests.
+def test_copy_equation_constraint():
+    """Test the equation constraint is copied correctly."""
+    constraint = EquationConstraint(LiteralExpression(True))
+    copy = constraint.copy()
+    assert_exact_expression_equality(constraint._expression, copy._expression)
+    assert constraint is not copy
+
+
+def test_copy_in_set_constraint():
+    """Test the in-set constraint is copied correctly."""
+    constraint = InSetConstraint({mock_identifier("x", 0)}, {1, 2, 3})
+    copy = constraint.copy()
+    assert constraint._variables == copy._variables
+    assert constraint._valid_values == copy._valid_values
+    assert constraint is not copy
+
+
+def test_copy_not_in_set_constraint():
+    """Test the not-in-set constraint is copied correctly."""
+    constraint = NotInSetConstraint({mock_identifier("x", 0)}, {1, 2, 3})
+    copy = constraint.copy()
+    assert constraint._variables == copy._variables
+    assert constraint._invalid_values == copy._invalid_values
+    assert constraint is not copy

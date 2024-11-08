@@ -244,3 +244,51 @@ def test_adding_invalid_constraint_to_perm_param_fails(perm_param_nchw: PermPara
         perm_param_nchw.add_constraint(
             EquationConstraint(perm_param_nchw.variable_expression > 1)
         )
+
+
+def test_copy_real_param():
+    """Test that a real parameter can be copied."""
+    real_param = RealParam()
+    real_param_copy = real_param.copy()
+    assert real_param_copy.variable is real_param.variable
+    assert real_param_copy is not real_param
+
+
+def test_copy_int_param():
+    """Test that an integer parameter can be copied."""
+    int_param = IntParam()
+    int_param_copy = int_param.copy()
+    assert int_param_copy.variable is int_param.variable
+    assert int_param_copy is not int_param
+
+
+def test_copy_ordinal_param(ordinal_param_123: OrdinalParam):
+    """Test that an ordinal parameter can be copied."""
+    ordinal_param_copy = ordinal_param_123.copy()
+    assert ordinal_param_copy.variable is ordinal_param_123.variable
+    assert ordinal_param_copy is not ordinal_param_123
+
+
+def test_copy_categorical_param(categorical_param_abc: CategoricalParam):
+    """Test that a categorical parameter can be copied."""
+    categorical_param_copy = categorical_param_abc.copy()
+    assert categorical_param_copy.variable is categorical_param_abc.variable
+    assert categorical_param_copy is not categorical_param_abc
+
+
+def test_copy_perm_param(perm_param_nchw: PermParam):
+    """Test that a permutation parameter can be copied."""
+    perm_param_copy = perm_param_nchw.copy()
+    assert perm_param_copy.variable is perm_param_nchw.variable
+    assert perm_param_copy is not perm_param_nchw
+
+
+def test_copied_param_keeps_constraints(ordinal_param_123: OrdinalParam):
+    """Test that a copied parameter keeps its constraints."""
+    ordinal_param_123.add_constraint(
+        InSetConstraint({ordinal_param_123.variable}, {1, 2})
+    )
+    ordinal_param_copy = ordinal_param_123.copy()
+    assert ordinal_param_copy.is_constraints_satisfied(1)
+    assert ordinal_param_copy.is_constraints_satisfied(2)
+    assert not ordinal_param_copy.is_constraints_satisfied(3)

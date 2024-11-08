@@ -10,7 +10,12 @@ __all__ = [
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .expression import Expression, LiteralExpression, simplify_expression
+from .expression import (
+    Expression,
+    LiteralExpression,
+    copy_expression,
+    simplify_expression,
+)
 from .identifier import Identifier
 
 
@@ -32,6 +37,10 @@ class Constraint(ABC):
 
         """
 
+    @abstractmethod
+    def copy(self) -> "Constraint":
+        """Return a shallow copy of the constraint."""
+
 
 class EquationConstraint(Constraint):
     """Represents an equation constraint."""
@@ -48,6 +57,10 @@ class EquationConstraint(Constraint):
             and isinstance(result.value, bool)
             and result.value
         )
+
+    def copy(self) -> "EquationConstraint":
+        new_constraint = EquationConstraint(copy_expression(self._expression))
+        return new_constraint
 
 
 class InSetConstraint(Constraint):
@@ -67,6 +80,12 @@ class InSetConstraint(Constraint):
             values[variable] in self._valid_values for variable in self._variables
         )
 
+    def copy(self) -> "InSetConstraint":
+        new_constraint = InSetConstraint(
+            self._variables.copy(), self._valid_values.copy()
+        )
+        return new_constraint
+
 
 class NotInSetConstraint(Constraint):
     """Represents a not-in-set constraint."""
@@ -84,3 +103,9 @@ class NotInSetConstraint(Constraint):
         return any(
             values[variable] not in self._invalid_values for variable in self._variables
         )
+
+    def copy(self) -> "NotInSetConstraint":
+        new_constraint = NotInSetConstraint(
+            self._variables.copy(), self._invalid_values.copy()
+        )
+        return new_constraint
