@@ -6,12 +6,7 @@ from typing import Any
 
 
 class Identifier:
-    """Unique name.
-
-    Args:
-        name_hint: Variable name.
-
-    """
+    """Unique name."""
 
     _next_id: int = 0
     _id: int
