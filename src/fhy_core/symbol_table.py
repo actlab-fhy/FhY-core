@@ -3,9 +3,9 @@
 from abc import ABC
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, NoReturn
+from typing import Generic, NoReturn, TypeVar
 
-from fhy_core import Identifier
+from fhy_core.identifier import Identifier
 
 from .error import SymbolTableError
 from .types import Type, TypeQualifier
@@ -45,6 +45,16 @@ class FunctionSymbolTableFrame(SymbolTableFrame):
 
     keyword: FunctionKeyword
     signature: list[tuple[TypeQualifier, Type]] = field(default_factory=list)
+
+
+_T = TypeVar("_T")
+_SUCC_T = TypeVar("_SUCC_T")
+_FAIL_T = TypeVar("_FAIL_T")
+
+
+@dataclass(frozen=True)
+class _SymbolTableSearchResult(Generic[_T]):
+    value: _T
 
 
 class SymbolTable:
@@ -169,11 +179,11 @@ class SymbolTable:
 
         def is_symbol_defined_in_namespace(
             namespace_name: Identifier,
-        ) -> tuple[bool | None, bool]:
+        ) -> _SymbolTableSearchResult[bool] | None:
             if symbol_name in self._table[namespace_name]:
-                return True, True
+                return _SymbolTableSearchResult(True)
             else:
-                return None, False
+                return None
 
         return self._search_namespace_with_action(
             namespace_name, is_symbol_defined_in_namespace, lambda: False
@@ -199,11 +209,13 @@ class SymbolTable:
 
         def get_frame_in_namespace(
             namespace_name: Identifier,
-        ) -> tuple[SymbolTableFrame | None, bool]:
+        ) -> _SymbolTableSearchResult[SymbolTableFrame] | None:
             if symbol_name in self._table[namespace_name]:
-                return self._table[namespace_name][symbol_name], True
+                return _SymbolTableSearchResult(
+                    self._table[namespace_name][symbol_name]
+                )
             else:
-                return None, False
+                return None
 
         def raise_symbol_not_found() -> NoReturn:
             raise SymbolTableError(
@@ -217,9 +229,9 @@ class SymbolTable:
     def _search_namespace_with_action(
         self,
         namespace_name: Identifier,
-        action: Callable[[Identifier], tuple[Any, bool]],
-        action_fail_func: Callable[[], Any] = lambda: None,
-    ) -> Any:
+        action: Callable[[Identifier], _SymbolTableSearchResult[_SUCC_T] | None],
+        action_fail_func: Callable[[], _FAIL_T],
+    ) -> _SUCC_T | _FAIL_T:
         if not self.is_namespace_defined(namespace_name):
             raise SymbolTableError(
                 f"Namespace {namespace_name} not found in the symbol table."
@@ -232,9 +244,9 @@ class SymbolTable:
                 raise RuntimeError(f"Namespace {current_namespace_name} is cyclic.")
             seen_namespace_names.add(current_namespace_name)
 
-            action_ret_val, ret_code = action(current_namespace_name)
-            if ret_code:
-                return action_ret_val
+            result = action(current_namespace_name)
+            if result is not None:
+                return result.value
 
             current_namespace_name = self._parent_namespace.get(
                 current_namespace_name, None
