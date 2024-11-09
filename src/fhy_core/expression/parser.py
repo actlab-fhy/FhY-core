@@ -40,12 +40,12 @@ _TOKEN_PATTERN = _build_token_pattern(
 )
 
 
-OperationType = TypeVar("OperationType")
+_OperationType = TypeVar("_OperationType")
 
 
 def _get_symbol_to_operation_subdict(
-    parent_dict: frozendict[str, OperationType], *symbols: str
-) -> frozendict[str, OperationType]:
+    parent_dict: frozendict[str, _OperationType], *symbols: str
+) -> frozendict[str, _OperationType]:
     return frozendict(
         {
             symbol: operation
