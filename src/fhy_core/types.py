@@ -274,7 +274,7 @@ class TupleType(Type):
         self._types = types
 
     @property
-    def types(self):
+    def types(self) -> list[Type]:
         return self._types
 
 
