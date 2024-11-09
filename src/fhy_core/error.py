@@ -21,3 +21,8 @@ def register_error(error: type[Exception]) -> type[Exception]:
 @register_error
 class FhYCoreTypeError(TypeError):
     """Core type error."""
+
+
+@register_error
+class SymbolTableError(Exception):
+    """Symbol table error."""
