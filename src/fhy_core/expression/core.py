@@ -29,6 +29,14 @@ from fhy_core.identifier import Identifier
 from fhy_core.utils import invert_frozen_dict
 
 
+class SymbolType(Enum):
+    """Symbol type."""
+
+    REAL = auto()
+    INT = auto()
+    BOOL = auto()
+
+
 class Expression(ABC):
     """Abstract base class for expressions."""
 
