@@ -6,6 +6,10 @@ Note:
 
 """
 
+__all__ = ["IntEnum", "StrEnum"]
+
+from typing import Any, Self
+
 try:
     from enum import IntEnum, StrEnum
 
@@ -18,8 +22,7 @@ except ImportError:
     class StrEnum(str, enum.Enum):  # type: ignore[no-redef]
         """String enumeration."""
 
-        def __new__(cls, *values):
-            """Values must already be of type `str`."""
+        def __new__(cls, *values: str) -> Self:
             value = str(*values)
             member = str.__new__(cls, value)
             member._value_ = value
@@ -27,6 +30,8 @@ except ImportError:
             return member
 
         @staticmethod
-        def _generate_next_value_(name, start, count, last_values):
+        def _generate_next_value_(
+            name: str, start: int, count: int, last_values: list[Any]
+        ) -> str:
             """Return the lower-cased version of the member name."""
             return name.lower()
