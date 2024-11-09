@@ -27,7 +27,7 @@ def test_empty_stack_length():
     assert len(stack) == 0
 
 
-def test_stack_length(text_stack):
+def test_stack_length(text_stack: Stack[str]):
     """Test that the stack's length is correctly calculated."""
     assert len(text_stack) == 2
 
@@ -41,7 +41,7 @@ def test_stack_push():
     assert len(stack) == 2
 
 
-def test_stack_peek(text_stack):
+def test_stack_peek(text_stack: Stack[str]):
     """Test that peek method reveals the correct element and does not mutate the
     stack.
     """
@@ -60,7 +60,7 @@ def test_stack_peek_error():
         stack.peek()
 
 
-def test_stack_pop(text_stack):
+def test_stack_pop(text_stack: Stack[str]):
     """Test that pop method removes the correct element from the stack."""
     first = text_stack.pop()
     assert first == "test"
@@ -79,13 +79,13 @@ def test_stack_pop_error():
         stack.pop()
 
 
-def test_stack_clear(text_stack):
+def test_stack_clear(text_stack: Stack[str]):
     """Test that clear method removes all elements from the stack."""
     text_stack.clear()
     assert len(text_stack) == 0
 
 
-def test_stack_iter(text_stack):
+def test_stack_iter(text_stack: Stack[str]):
     """Test that we can iterate over the stack and retrieve elements."""
     for element, expected_element in zip(text_stack, ("fhy", "test")):
         assert element == expected_element
@@ -94,7 +94,7 @@ def test_stack_iter(text_stack):
 stack again."
 
 
-def test_stack_next(text_stack):
+def test_stack_next(text_stack: Stack[str]):
     """Test use of next on a generator of the stack to retrieve elements."""
     generator = (i for i in text_stack)
 
