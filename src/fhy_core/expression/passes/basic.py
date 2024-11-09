@@ -3,6 +3,7 @@
 __all__ = [
     "collect_identifiers",
     "copy_expression",
+    "substitute_identifiers",
 ]
 
 from fhy_core.expression.core import (
@@ -61,3 +62,36 @@ def copy_expression(expression: Expression) -> Expression:
 
     """
     return ExpressionCopier()(expression)
+
+
+class IdentifierSubstituter(ExpressionTransformer):
+    """Substitute identifiers in an expression tree."""
+
+    _substitutions: dict[Identifier, Expression]
+
+    def __init__(self, substitutions: dict[Identifier, Expression]) -> None:
+        self._substitutions = substitutions
+
+    def visit_identifier_expression(
+        self, identifier_expression: IdentifierExpression
+    ) -> Expression:
+        identifier = identifier_expression.identifier
+        if identifier in self._substitutions:
+            return self._substitutions[identifier]
+        return identifier_expression
+
+
+def substitute_identifiers(
+    expression: Expression, substitutions: dict[Identifier, Expression]
+) -> Expression:
+    """Substitute identifiers in an expression tree.
+
+    Args:
+        expression: Expression to substitute identifiers in.
+        substitutions: Substitutions to make.
+
+    Returns:
+        Expression with identifiers substituted.
+
+    """
+    return IdentifierSubstituter(substitutions)(expression)

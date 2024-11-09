@@ -22,6 +22,7 @@ from fhy_core.expression import (
     is_satisfiable,
     pformat_expression,
     simplify_expression,
+    substitute_identifiers,
     substitute_sympy_expression_variables,
 )
 from fhy_core.expression.core import LiteralType
@@ -235,6 +236,35 @@ def test_copy_binary_expression():
     assert copy.left.value == left.value
     assert copy.right is not right
     assert copy.right.value == right.value
+
+
+def test_substitute_identifiers():
+    """Test that the identifiers are correctly substituted in an expression."""
+    x = Identifier("x")
+    y = Identifier("y")
+    expr = BinaryExpression(
+        BinaryOperation.ADD,
+        IdentifierExpression(x),
+        BinaryExpression(
+            BinaryOperation.DIVIDE,
+            LiteralExpression(5),
+            IdentifierExpression(y),
+        ),
+    )
+    substitutions = {x: LiteralExpression(10), y: LiteralExpression(5)}
+    result = substitute_identifiers(expr, substitutions)
+    assert_exact_expression_equality(
+        result,
+        BinaryExpression(
+            BinaryOperation.ADD,
+            LiteralExpression(10),
+            BinaryExpression(
+                BinaryOperation.DIVIDE,
+                LiteralExpression(5),
+                LiteralExpression(5),
+            ),
+        ),
+    )
 
 
 @pytest.mark.parametrize(

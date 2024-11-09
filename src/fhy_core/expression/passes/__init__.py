@@ -8,10 +8,11 @@ __all__ = [
     "convert_sympy_expression_to_expression",
     "is_satisfiable",
     "simplify_expression",
+    "substitute_identifiers",
     "substitute_sympy_expression_variables",
 ]
 
-from .basic import collect_identifiers, copy_expression
+from .basic import collect_identifiers, copy_expression, substitute_identifiers
 from .sympy import (
     convert_expression_to_sympy_expression,
     convert_sympy_expression_to_expression,

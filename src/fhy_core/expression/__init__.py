@@ -18,6 +18,7 @@ __all__ = [
     "parse_expression",
     "pformat_expression",
     "simplify_expression",
+    "substitute_identifiers",
     "substitute_sympy_expression_variables",
     "SymbolType",
     "tokenize_expression",
@@ -43,6 +44,7 @@ from .passes import (
     copy_expression,
     is_satisfiable,
     simplify_expression,
+    substitute_identifiers,
     substitute_sympy_expression_variables,
 )
 from .pprint import pformat_expression
