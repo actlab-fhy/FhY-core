@@ -1,4 +1,4 @@
-"""Unique identifier for named FhY objects."""
+"""Unique identifier for named compiler objects."""
 
 __all__ = ["Identifier"]
 
