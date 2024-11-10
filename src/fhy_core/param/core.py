@@ -76,7 +76,7 @@ class Param(ABC, Generic[_T]):
 
         """
         for constraint in self._constraints:
-            if not constraint.is_satisfied({self._variable: value}):
+            if not constraint.is_satisfied(value):
                 return False
         return True
 

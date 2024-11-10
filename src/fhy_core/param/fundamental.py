@@ -24,20 +24,22 @@ class NatParam(IntParam):
         if is_zero_included:
             self.add_constraint(
                 EquationConstraint(
+                    self.variable,
                     BinaryExpression(
                         BinaryOperation.GREATER_EQUAL,
                         IdentifierExpression(self.variable),
                         LiteralExpression(0),
-                    )
+                    ),
                 )
             )
         else:
             self.add_constraint(
                 EquationConstraint(
+                    self.variable,
                     BinaryExpression(
                         BinaryOperation.GREATER,
                         IdentifierExpression(self.variable),
                         LiteralExpression(0),
-                    )
+                    ),
                 )
             )
