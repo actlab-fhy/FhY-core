@@ -46,7 +46,13 @@ class Expression(ABC):
     def __pos__(self) -> "UnaryExpression":
         return UnaryExpression(UnaryOperation.POSITIVE, self)
 
-    def __invert__(self) -> "UnaryExpression":
+    def logical_not(self) -> "UnaryExpression":
+        """Create a logical NOT expression.
+
+        Returns:
+            Logical NOT expression.
+
+        """
         return UnaryExpression(UnaryOperation.LOGICAL_NOT, self)
 
     def __add__(self, other: Any) -> "BinaryExpression":

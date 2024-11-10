@@ -62,7 +62,7 @@ def test_literal_expression_invalid_string():
     [
         (operator.neg, UnaryOperation.NEGATE),
         (operator.pos, UnaryOperation.POSITIVE),
-        (operator.invert, UnaryOperation.LOGICAL_NOT),
+        (lambda x: x.logical_not(), UnaryOperation.LOGICAL_NOT),
     ],
 )
 def test_unary_operator_dunder_methods(
