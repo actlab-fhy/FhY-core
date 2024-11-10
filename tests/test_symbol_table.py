@@ -1,10 +1,14 @@
 """Tests the symbol table."""
 
+from unittest.mock import Mock
+
 import pytest
 from fhy_core.error import SymbolTableError
 from fhy_core.identifier import Identifier
+from fhy_core.memory_instance import MemoryInstance
 from fhy_core.symbol_table import (
     ImportSymbolTableFrame,
+    SymbolMemoryTracker,
     SymbolTable,
 )
 
@@ -133,3 +137,69 @@ def test_update_namespaces():
     assert symbol_table_2.is_namespace_defined(namespace)
     assert symbol_table_2.is_symbol_defined(namespace, symbol_name)
     assert symbol_table_2.get_frame(namespace, symbol_name) == frame
+
+
+def test_add_and_check_memory_instance_in_memory_tracker():
+    """Test that a memory instance can be added and checked in the memory tracker."""
+    memory_tracker = SymbolMemoryTracker()
+    memory_instance_name = Identifier("test_memory_instance")
+    memory_instance = Mock(spec=MemoryInstance)
+
+    memory_tracker.add_instance(memory_instance_name, memory_instance)
+
+    assert memory_tracker.is_instance_defined(memory_instance_name)
+
+
+def test_add_and_get_memory_instance_in_memory_tracker():
+    """Test that a memory instance can be added and retrieved from the memory
+    tracker.
+    """
+    memory_tracker = SymbolMemoryTracker()
+    memory_instance_name = Identifier("test_memory_instance")
+    memory_instance = Mock(spec=MemoryInstance)
+
+    memory_tracker.add_instance(memory_instance_name, memory_instance)
+
+    assert memory_tracker.get_instance(memory_instance_name) == memory_instance
+
+
+def test_get_undefined_memory_instance_fails():
+    """Test that getting an undefined memory instance raises a SymbolTableError."""
+    memory_tracker = SymbolMemoryTracker()
+    undefined_memory_instance_name = Identifier("undefined_memory_instance")
+
+    with pytest.raises(SymbolTableError):
+        memory_tracker.get_instance(undefined_memory_instance_name)
+
+
+def test_add_duplicate_memory_instance_fails():
+    """Test that adding a duplicate memory instance raises a SymbolTableError."""
+    memory_tracker = SymbolMemoryTracker()
+    memory_instance_name = Identifier("test_memory_instance")
+    memory_instance = Mock(spec=MemoryInstance)
+
+    memory_tracker.add_instance(memory_instance_name, memory_instance)
+
+    with pytest.raises(SymbolTableError):
+        memory_tracker.add_instance(memory_instance_name, memory_instance)
+
+
+def test_remove_memory_instance():
+    """Test that a memory instance can be removed from the memory tracker."""
+    memory_tracker = SymbolMemoryTracker()
+    memory_instance_name = Identifier("test_memory_instance")
+    memory_instance = Mock(spec=MemoryInstance)
+
+    memory_tracker.add_instance(memory_instance_name, memory_instance)
+    memory_tracker.remove_instance(memory_instance_name)
+
+    assert not memory_tracker.is_instance_defined(memory_instance_name)
+
+
+def test_remove_undefined_memory_instance_fails():
+    """Test that removing an undefined memory instance raises a SymbolTableError."""
+    memory_tracker = SymbolMemoryTracker()
+    undefined_memory_instance_name = Identifier("undefined_memory_instance")
+
+    with pytest.raises(SymbolTableError):
+        memory_tracker.remove_instance(undefined_memory_instance_name)
