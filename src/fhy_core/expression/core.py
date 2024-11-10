@@ -157,17 +157,6 @@ class Expression(ABC):
             BinaryOperation.GREATER_EQUAL, self, self._get_expression_from_other(other)
         )
 
-    def _get_expression_from_other(self, other: Any) -> "Expression":
-        if isinstance(other, Expression):
-            return other
-        elif isinstance(other, Identifier):
-            return IdentifierExpression(other)
-        elif isinstance(other, (int, float, bool, str)):
-            return LiteralExpression(other)
-        raise ValueError(
-            f"Unsupported type for creating literal expression: {type(other)}."
-        )
-
     @staticmethod
     def logical_and(*expressions: "Expression") -> "BinaryExpression":
         """Create a logical AND expression.
@@ -205,10 +194,30 @@ class Expression(ABC):
         if len(expressions) < 2:  # noqa: PLR2004
             raise ValueError("At least two expressions are required.")
         expressions = list(reversed(expressions))
-        result = BinaryExpression(operation, expressions[1], expressions[0])
+        result = BinaryExpression(
+            operation,
+            Expression._get_expression_from_other(expressions[1]),
+            Expression._get_expression_from_other(expressions[0]),
+        )
         for next_expression in expressions[2:]:
-            result = BinaryExpression(operation, next_expression, result)
+            result = BinaryExpression(
+                operation,
+                Expression._get_expression_from_other(next_expression),
+                result,
+            )
         return result
+
+    @staticmethod
+    def _get_expression_from_other(other: Any) -> "Expression":
+        if isinstance(other, Expression):
+            return other
+        elif isinstance(other, Identifier):
+            return IdentifierExpression(other)
+        elif isinstance(other, (int, float, bool, str)):
+            return LiteralExpression(other)
+        raise ValueError(
+            f"Unsupported type for creating literal expression: {type(other)}."
+        )
 
 
 class UnaryOperation(Enum):
