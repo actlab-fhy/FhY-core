@@ -1,6 +1,6 @@
 """FhY compiler core utilities."""
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 
 from .constraint import (
@@ -9,6 +9,7 @@ from .constraint import (
     InSetConstraint,
     NotInSetConstraint,
 )
+from .error import FhYCoreTypeError, SymbolTableError, register_error
 from .expression import (
     BinaryExpression,
     BinaryOperation,
@@ -31,4 +32,12 @@ from .param import (
     PermParam,
     RealParam,
 )
-from .utils import Lattice, PartiallyOrderedSet, Stack, invert_dict, invert_frozen_dict
+from .utils import (
+    IntEnum,
+    Lattice,
+    PartiallyOrderedSet,
+    Stack,
+    StrEnum,
+    invert_dict,
+    invert_frozen_dict,
+)

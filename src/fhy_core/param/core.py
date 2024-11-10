@@ -10,7 +10,7 @@ __all__ = [
 ]
 
 from abc import ABC
-from collections.abc import Hashable, Sequence
+from collections.abc import Collection, Hashable, Sequence
 from typing import Any, Generic, TypeVar
 
 from fhy_core.constraint import (
@@ -21,7 +21,8 @@ from fhy_core.constraint import (
 from fhy_core.expression import IdentifierExpression, LiteralExpression
 from fhy_core.identifier import Identifier
 
-H = TypeVar("H", bound=Hashable)
+_H = TypeVar("_H", bound=Hashable)
+_T = TypeVar("_T")
 
 
 def _is_values_unique_in_sequence_without_set(values: Sequence[Any]) -> bool:
@@ -36,17 +37,14 @@ def _is_values_unique_in_sorted_sequence(values: Sequence[Any]) -> bool:
     return all(values[i] != values[i + 1] for i in range(len(values) - 1))
 
 
-def _is_values_unique_in_sequence_with_set(values: Sequence[H]) -> bool:
+def _is_values_unique_in_sequence_with_set(values: Collection[_H]) -> bool:
     return len(values) == len(set(values))
 
 
-T = TypeVar("T")
-
-
-class Param(ABC, Generic[T]):
+class Param(ABC, Generic[_T]):
     """Abstract base class for constrained parameters."""
 
-    _value: T | None
+    _value: _T | None
     _variable: Identifier
     _constraints: list[Constraint]
 
@@ -82,7 +80,7 @@ class Param(ABC, Generic[T]):
                 return False
         return True
 
-    def get_value(self) -> T:
+    def get_value(self) -> _T:
         """Return the parameter value.
 
         Raises:
@@ -93,7 +91,7 @@ class Param(ABC, Generic[T]):
             raise ValueError("Parameter is not set.")
         return self._value
 
-    def set_value(self, value: T) -> None:
+    def set_value(self, value: _T) -> None:
         """Set the parameter value.
 
         Args:
@@ -115,6 +113,28 @@ class Param(ABC, Generic[T]):
 
         """
         self._constraints.append(constraint)
+
+    def copy(self) -> "Param[_T]":
+        """Return a shallow copy of the parameter."""
+        new_param = self.__class__(self._variable)
+        new_param._value = self._value
+        self.copy_constraints_to_new_param(self, new_param)
+        return new_param
+
+    @staticmethod
+    def copy_constraints_to_new_param(
+        param: "Param[_T]", new_param: "Param[_T]"
+    ) -> None:
+        """Copy constraints from one parameter to another.
+
+        Args:
+            param: Parameter to copy constraints from.
+            new_param: Parameter to copy constraints to.
+
+        """
+        new_param._constraints = [
+            constraint.copy() for constraint in param._constraints
+        ]
 
 
 class RealParam(Param[str | float]):
@@ -171,8 +191,13 @@ class OrdinalParam(Param[Any]):
             )
         return super().add_constraint(constraint)
 
+    def copy(self) -> "OrdinalParam":
+        new_param = OrdinalParam(self._all_values, self._variable)
+        self.copy_constraints_to_new_param(self, new_param)
+        return new_param
 
-class CategoricalParam(Param[H]):
+
+class CategoricalParam(Param[_H]):
     """Categorical parameter.
 
     Note:
@@ -180,15 +205,15 @@ class CategoricalParam(Param[H]):
 
     """
 
-    _categories: set[H]
+    _categories: set[_H]
 
-    def __init__(self, categories: Sequence[H], name: Identifier | None = None):
+    def __init__(self, categories: Collection[_H], name: Identifier | None = None):
         super().__init__(name)
         if not _is_values_unique_in_sequence_with_set(categories):
             raise ValueError("Values must be unique.")
         self._categories = set(categories)
 
-    def set_value(self, value: H) -> None:
+    def set_value(self, value: _H) -> None:
         if value not in self._categories:
             raise ValueError("Value is not in the set of allowed categories.")
         return super().set_value(value)
@@ -200,6 +225,11 @@ class CategoricalParam(Param[H]):
                 "categorical parameters."
             )
         return super().add_constraint(constraint)
+
+    def copy(self) -> "CategoricalParam[_H]":
+        new_param = CategoricalParam[_H](self._categories.copy(), self._variable)
+        self.copy_constraints_to_new_param(self, new_param)
+        return new_param
 
 
 class PermParam(Param[tuple[Any, ...]]):
@@ -241,3 +271,8 @@ class PermParam(Param[tuple[Any, ...]]):
                 "permutation parameters."
             )
         return super().add_constraint(constraint)
+
+    def copy(self) -> "PermParam":
+        new_param = PermParam(self._all_values, self._variable)
+        self.copy_constraints_to_new_param(self, new_param)
+        return new_param
