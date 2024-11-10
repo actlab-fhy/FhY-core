@@ -114,16 +114,14 @@ class InSetConstraint(Constraint):
     def convert_to_expression(self) -> Expression:
         if len(self._valid_values) == 0:
             return LiteralExpression(False)
+        elif len(self._valid_values) == 1:
+            return self._generate_single_value_constraint(
+                next(iter(self._valid_values))
+            )
         else:
-            invalid_values = self._valid_values.copy()
-            expression = self._generate_single_value_constraint(invalid_values.pop())
-            for value in invalid_values:
-                expression = BinaryExpression(
-                    BinaryOperation.LOGICAL_OR,
-                    expression,
-                    self._generate_single_value_constraint(value),
-                )
-            return expression
+            return Expression.logical_or(
+                *map(self._generate_single_value_constraint, self._valid_values)
+            )
 
     def _generate_single_value_constraint(self, value: Any) -> Expression:
         if not isinstance(value, LiteralType):
@@ -160,16 +158,14 @@ class NotInSetConstraint(Constraint):
     def convert_to_expression(self) -> Expression:
         if len(self._invalid_values) == 0:
             return LiteralExpression(True)
+        elif len(self._invalid_values) == 1:
+            return self._generate_single_value_constraint(
+                next(iter(self._invalid_values))
+            )
         else:
-            invalid_values = self._invalid_values.copy()
-            expression = self._generate_single_value_constraint(invalid_values.pop())
-            for value in invalid_values:
-                expression = BinaryExpression(
-                    BinaryOperation.LOGICAL_AND,
-                    expression,
-                    self._generate_single_value_constraint(value),
-                )
-        return expression
+            return Expression.logical_and(
+                *map(self._generate_single_value_constraint, self._invalid_values)
+            )
 
     def _generate_single_value_constraint(self, value: Any) -> Expression:
         if not isinstance(value, LiteralType):
