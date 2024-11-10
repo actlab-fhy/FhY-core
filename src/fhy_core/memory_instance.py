@@ -1,5 +1,12 @@
 """Memory layouts."""
 
+__all__ = [
+    "ColumnMajorMemoryInstance",
+    "MemoryInstance",
+    "RowMajorMemoryInstance",
+    "ScalarMemoryInstance",
+]
+
 from abc import ABC
 from collections.abc import Iterable, Sequence
 

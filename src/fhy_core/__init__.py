@@ -18,11 +18,22 @@ from .expression import (
     LiteralExpression,
     UnaryExpression,
     UnaryOperation,
+    collect_identifiers,
+    copy_expression,
+    is_satisfiable,
     parse_expression,
     pformat_expression,
+    replace_identifiers,
     simplify_expression,
+    substitute_identifiers,
 )
 from .identifier import Identifier
+from .memory_instance import (
+    ColumnMajorMemoryInstance,
+    MemoryInstance,
+    RowMajorMemoryInstance,
+    ScalarMemoryInstance,
+)
 from .param import (
     CategoricalParam,
     IntParam,
@@ -31,6 +42,27 @@ from .param import (
     Param,
     PermParam,
     RealParam,
+)
+from .symbol_table import (
+    FunctionSymbolTableFrame,
+    ImportSymbolTableFrame,
+    SymbolMemoryTracker,
+    SymbolTable,
+    SymbolTableFrame,
+    VariableSymbolTableFrame,
+)
+from .types import (
+    CoreDataType,
+    DataType,
+    IndexType,
+    NumericalType,
+    TemplateDataType,
+    TupleType,
+    Type,
+    TypeQualifier,
+    promote_core_data_types,
+    promote_primitive_data_types,
+    promote_type_qualifiers,
 )
 from .utils import (
     IntEnum,

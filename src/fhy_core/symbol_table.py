@@ -1,5 +1,15 @@
 """Core symbol table."""
 
+__all__ = [
+    "FunctionSymbolTableFrame",
+    "ImportSymbolTableFrame",
+    "SymbolMemoryTracker",
+    "SymbolTable",
+    "SymbolTableFrame",
+    "VariableSymbolTableFrame",
+]
+
+
 from abc import ABC
 from collections.abc import Callable
 from dataclasses import dataclass, field
