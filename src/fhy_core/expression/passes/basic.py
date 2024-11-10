@@ -95,3 +95,23 @@ def substitute_identifiers(
 
     """
     return IdentifierSubstituter(substitutions)(expression)
+
+
+def replace_identifiers(
+    expression: Expression, replacements: dict[Identifier, Identifier]
+) -> Expression:
+    """Replace identifiers in an expression tree.
+
+    Args:
+        expression: Expression to replace identifiers in.
+        replacements: Replacements to make.
+
+    Returns:
+        Expression with identifiers replaced.
+
+    """
+    substitutions = {
+        old_identifier: IdentifierExpression(new_identifier)
+        for old_identifier, new_identifier in replacements.items()
+    }
+    return substitute_identifiers(expression, substitutions)

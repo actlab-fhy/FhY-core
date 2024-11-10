@@ -21,6 +21,7 @@ from fhy_core.expression import (
     copy_expression,
     is_satisfiable,
     pformat_expression,
+    replace_identifiers,
     simplify_expression,
     substitute_identifiers,
     substitute_sympy_expression_variables,
@@ -263,6 +264,27 @@ def test_substitute_identifiers():
                 LiteralExpression(5),
                 LiteralExpression(5),
             ),
+        ),
+    )
+
+
+def test_replace_identifiers():
+    """Test that the identifiers are correctly replaced in an expression."""
+    x = Identifier("x")
+    y = Identifier("y")
+    expr = BinaryExpression(
+        BinaryOperation.ADD,
+        IdentifierExpression(x),
+        LiteralExpression(5),
+    )
+    replacements = {x: y}
+    result = replace_identifiers(expr, replacements)
+    assert_exact_expression_equality(
+        result,
+        BinaryExpression(
+            BinaryOperation.ADD,
+            IdentifierExpression(y),
+            LiteralExpression(5),
         ),
     )
 
