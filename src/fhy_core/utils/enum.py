@@ -8,7 +8,7 @@ Note:
 
 __all__ = ["IntEnum", "StrEnum"]
 
-from typing import Any, Self
+from typing import Any
 
 try:
     from enum import IntEnum, StrEnum
@@ -19,10 +19,10 @@ except ImportError:
     class IntEnum(int, enum.Enum):  # type: ignore[no-redef]
         """Integer enumeration."""
 
-    class StrEnum(str, enum.Enum):  # type: ignore[no-redef]
+    class _StrEnum(str, enum.Enum):
         """String enumeration."""
 
-        def __new__(cls, *values: str) -> Self:
+        def __new__(cls, *values: str) -> "_StrEnum":
             value = str(*values)
             member = str.__new__(cls, value)
             member._value_ = value
@@ -35,3 +35,6 @@ except ImportError:
         ) -> str:
             """Return the lower-cased version of the member name."""
             return name.lower()
+
+    class StrEnum(_StrEnum):  # type: ignore[no-redef]
+        """String enumeration."""
