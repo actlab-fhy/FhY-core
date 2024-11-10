@@ -136,12 +136,6 @@ class InSetConstraint(Constraint):
             LiteralExpression(value),
         )
 
-    def copy(self) -> "InSetConstraint":
-        new_constraint = InSetConstraint(
-            self._variables.copy(), self._valid_values.copy()
-        )
-        return new_constraint
-
 
 class NotInSetConstraint(Constraint):
     """Represents a not-in-set constraint."""
@@ -185,9 +179,3 @@ class NotInSetConstraint(Constraint):
             variable,
             LiteralExpression(value),
         )
-
-    def copy(self) -> "NotInSetConstraint":
-        new_constraint = NotInSetConstraint(
-            self._variables.copy(), self._invalid_values.copy()
-        )
-        return new_constraint
