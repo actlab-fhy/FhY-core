@@ -168,6 +168,48 @@ class Expression(ABC):
             f"Unsupported type for creating literal expression: {type(other)}."
         )
 
+    @staticmethod
+    def logical_and(*expressions: "Expression") -> "BinaryExpression":
+        """Create a logical AND expression.
+
+        Args:
+            expressions: Expressions to AND together.
+
+        Returns:
+            Logical AND expression.
+
+        """
+        return Expression._generate_commutative_associative_operation_tree(
+            BinaryOperation.LOGICAL_AND, *expressions
+        )
+
+    @staticmethod
+    def logical_or(*expressions: "Expression") -> "BinaryExpression":
+        """Create a logical OR expression.
+
+        Args:
+            expressions: Expressions to OR together.
+
+        Returns:
+            Logical OR expression.
+
+        """
+        return Expression._generate_commutative_associative_operation_tree(
+            BinaryOperation.LOGICAL_OR, *expressions
+        )
+
+    @staticmethod
+    def _generate_commutative_associative_operation_tree(
+        operation: "BinaryOperation", *expressions: "Expression"
+    ) -> "BinaryExpression":
+        if len(expressions) < 2:  # noqa: PLR2004
+            raise ValueError("At least two expressions are required.")
+        expressions = list(reversed(expressions))
+        result = BinaryExpression(operation, expressions[1], expressions[0])
+        for next_expression in expressions[2:]:
+            result = BinaryExpression(operation, next_expression, result)
+        return result
+
 
 class UnaryOperation(Enum):
     """Unary operation."""
