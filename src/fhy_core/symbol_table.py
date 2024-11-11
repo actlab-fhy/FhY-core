@@ -1,5 +1,15 @@
 """Core symbol table."""
 
+__all__ = [
+    "FunctionSymbolTableFrame",
+    "ImportSymbolTableFrame",
+    "SymbolMemoryTracker",
+    "SymbolTable",
+    "SymbolTableFrame",
+    "VariableSymbolTableFrame",
+]
+
+
 from abc import ABC
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -8,8 +18,87 @@ from typing import Generic, NoReturn, TypeVar
 from fhy_core.identifier import Identifier
 
 from .error import SymbolTableError
+from .memory_instance import MemoryInstance
 from .types import Type, TypeQualifier
 from .utils import StrEnum
+
+
+class SymbolMemoryTracker:
+    """Symbol memory tracker."""
+
+    _instances: dict[Identifier, MemoryInstance]
+
+    def __init__(self) -> None:
+        self._instances = {}
+
+    def get_number_of_instances(self) -> int:
+        """Return the number of memory instances in the tracker."""
+        return len(self._instances)
+
+    def add_instance(self, instance_name: Identifier, instance: MemoryInstance) -> None:
+        """Add a memory instance to the tracker.
+
+        Args:
+            instance_name: Name of the memory instance.
+            instance: Memory instance to be added.
+
+        Raises:
+            SymbolTableError: If the memory instance already exists in the tracker.
+
+        """
+        if instance_name in self._instances:
+            raise SymbolTableError(
+                f"Memory instance {instance_name} already exists in the memory tracker."
+            )
+        self._instances[instance_name] = instance
+
+    def is_instance_defined(self, instance_name: Identifier) -> bool:
+        """Check if a memory instance exists in the tracker.
+
+        Args:
+            instance_name: Name of the memory instance to check.
+
+        Returns:
+            True if the memory instance exists in the tracker, False otherwise.
+
+        """
+        return instance_name in self._instances
+
+    def get_instance(self, instance_name: Identifier) -> MemoryInstance:
+        """Retrieve a memory instance from the tracker.
+
+        Args:
+            instance_name: Name of the memory instance to retrieve.
+
+        Returns:
+            Memory instance.
+
+        Raises:
+            SymbolTableError: If the memory instance does not exist in the tracker.
+
+        """
+        if instance_name not in self._instances:
+            raise SymbolTableError(
+                f"Memory instance {instance_name} not found in the memory tracker."
+            )
+
+        return self._instances[instance_name]
+
+    def remove_instance(self, instance_name: Identifier) -> None:
+        """Remove a memory instance from the tracker.
+
+        Args:
+            instance_name: Name of the memory instance to remove.
+
+        Raises:
+            SymbolTableError: If the memory instance does not exist in the tracker.
+
+        """
+        if instance_name not in self._instances:
+            raise SymbolTableError(
+                f"Memory instance {instance_name} not found in the memory tracker."
+            )
+        self._instances.pop(instance_name)
 
 
 @dataclass(frozen=True)
@@ -29,6 +118,7 @@ class VariableSymbolTableFrame(SymbolTableFrame):
 
     type: Type
     type_qualifier: TypeQualifier
+    memory_tracker: SymbolMemoryTracker
 
 
 class FunctionKeyword(StrEnum):

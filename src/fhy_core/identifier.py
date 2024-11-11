@@ -2,8 +2,6 @@
 
 __all__ = ["Identifier"]
 
-__all__ = ["Identifier"]
-
 from typing import Any
 
 

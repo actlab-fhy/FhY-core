@@ -56,8 +56,12 @@ def test_int_param_value_set_fails_with_invalid_value():
 def test_add_and_check_real_param_constraints():
     """Test that a real constraint can be added and checked."""
     param = RealParam()
-    param.add_constraint(EquationConstraint(param.variable_expression * 3.14 < 20.0))
-    param.add_constraint(EquationConstraint(param.variable_expression >= 1.0))
+    param.add_constraint(
+        EquationConstraint(param.variable, param.variable_expression * 3.14 < 20.0)
+    )
+    param.add_constraint(
+        EquationConstraint(param.variable, param.variable_expression >= 1.0)
+    )
     assert param.is_constraints_satisfied(2.0)
     assert not param.is_constraints_satisfied(0.5)
     assert not param.is_constraints_satisfied(7.0)
@@ -66,8 +70,12 @@ def test_add_and_check_real_param_constraints():
 def test_add_and_check_int_param_constraints():
     """Test that an integer constraint can be added and checked."""
     param = IntParam()
-    param.add_constraint(EquationConstraint((param.variable_expression % 5).equals(0)))
-    param.add_constraint(EquationConstraint(param.variable_expression > 10))
+    param.add_constraint(
+        EquationConstraint(param.variable, (param.variable_expression % 5).equals(0))
+    )
+    param.add_constraint(
+        EquationConstraint(param.variable, param.variable_expression > 10)
+    )
     assert param.is_constraints_satisfied(15)
     with pytest.raises(ValueError):
         param.set_value(12)
@@ -144,7 +152,9 @@ def test_adding_invalid_constraint_to_ordinal_param_fails(
     """Test that adding an invalid constraint to an ordinal parameter fails."""
     with pytest.raises(ValueError):
         ordinal_param_123.add_constraint(
-            EquationConstraint(ordinal_param_123.variable_expression > 1)
+            EquationConstraint(
+                ordinal_param_123.variable, ordinal_param_123.variable_expression > 1
+            )
         )
 
 
@@ -193,7 +203,10 @@ def test_adding_invalid_constraint_to_categorical_param_fails(
     """Test that adding an invalid constraint to a categorical parameter fails."""
     with pytest.raises(ValueError):
         categorical_param_abc.add_constraint(
-            EquationConstraint(categorical_param_abc.variable_expression > "a")
+            EquationConstraint(
+                categorical_param_abc.variable,
+                categorical_param_abc.variable_expression > "a",
+            )
         )
 
 
@@ -242,7 +255,9 @@ def test_adding_invalid_constraint_to_perm_param_fails(perm_param_nchw: PermPara
     """Test that adding an invalid constraint to a permutation parameter fails."""
     with pytest.raises(ValueError):
         perm_param_nchw.add_constraint(
-            EquationConstraint(perm_param_nchw.variable_expression > 1)
+            EquationConstraint(
+                perm_param_nchw.variable, perm_param_nchw.variable_expression > 1
+            )
         )
 
 

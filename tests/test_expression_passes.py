@@ -4,20 +4,26 @@ from unittest.mock import MagicMock
 
 import pytest
 import sympy
+import z3
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    SymbolType,
     UnaryExpression,
     UnaryOperation,
     collect_identifiers,
     convert_expression_to_sympy_expression,
+    convert_expression_to_z3_expression,
     convert_sympy_expression_to_expression,
     copy_expression,
+    is_satisfiable,
     pformat_expression,
+    replace_identifiers,
     simplify_expression,
+    substitute_identifiers,
     substitute_sympy_expression_variables,
 )
 from fhy_core.expression.core import LiteralType
@@ -231,6 +237,56 @@ def test_copy_binary_expression():
     assert copy.left.value == left.value
     assert copy.right is not right
     assert copy.right.value == right.value
+
+
+def test_substitute_identifiers():
+    """Test that the identifiers are correctly substituted in an expression."""
+    x = Identifier("x")
+    y = Identifier("y")
+    expr = BinaryExpression(
+        BinaryOperation.ADD,
+        IdentifierExpression(x),
+        BinaryExpression(
+            BinaryOperation.DIVIDE,
+            LiteralExpression(5),
+            IdentifierExpression(y),
+        ),
+    )
+    substitutions = {x: LiteralExpression(10), y: LiteralExpression(5)}
+    result = substitute_identifiers(expr, substitutions)
+    assert_exact_expression_equality(
+        result,
+        BinaryExpression(
+            BinaryOperation.ADD,
+            LiteralExpression(10),
+            BinaryExpression(
+                BinaryOperation.DIVIDE,
+                LiteralExpression(5),
+                LiteralExpression(5),
+            ),
+        ),
+    )
+
+
+def test_replace_identifiers():
+    """Test that the identifiers are correctly replaced in an expression."""
+    x = Identifier("x")
+    y = Identifier("y")
+    expr = BinaryExpression(
+        BinaryOperation.ADD,
+        IdentifierExpression(x),
+        LiteralExpression(5),
+    )
+    replacements = {x: y}
+    result = replace_identifiers(expr, replacements)
+    assert_exact_expression_equality(
+        result,
+        BinaryExpression(
+            BinaryOperation.ADD,
+            IdentifierExpression(y),
+            LiteralExpression(5),
+        ),
+    )
 
 
 @pytest.mark.parametrize(
@@ -623,3 +679,265 @@ def test_simplify_variable_expression():
 
     assert isinstance(result, LiteralExpression)
     assert result.value == 35
+
+
+@pytest.mark.parametrize(
+    "expression, symbol_types, expected_z3_expression",
+    [
+        (LiteralExpression(5), {}, z3.IntVal(5)),
+        (LiteralExpression(5.5), {}, z3.RealVal(5.5)),
+        (LiteralExpression(True), {}, z3.BoolVal(True)),
+        (LiteralExpression(False), {}, z3.BoolVal(False)),
+        (LiteralExpression("10.6"), {}, z3.RealVal(10.6)),
+        (
+            UnaryExpression(
+                UnaryOperation.POSITIVE, IdentifierExpression(mock_identifier("x", 0))
+            ),
+            {mock_identifier("x", 0): SymbolType.REAL},
+            z3.Real("x_0"),
+        ),
+        (
+            UnaryExpression(
+                UnaryOperation.NEGATE, IdentifierExpression(mock_identifier("x", 0))
+            ),
+            {mock_identifier("x", 0): SymbolType.REAL},
+            -z3.Real("x_0"),
+        ),
+        (
+            UnaryExpression(
+                UnaryOperation.LOGICAL_NOT,
+                IdentifierExpression(mock_identifier("x", 0)),
+            ),
+            {mock_identifier("x", 0): SymbolType.BOOL},
+            z3.Not(z3.Bool("x_0")),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.ADD,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {mock_identifier("x", 0): SymbolType.INT},
+            z3.Int("x_0") + z3.IntVal(5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.SUBTRACT,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {mock_identifier("x", 0): SymbolType.INT},
+            z3.Int("x_0") - z3.IntVal(5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.MULTIPLY,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5.5),
+            ),
+            {mock_identifier("x", 0): SymbolType.REAL},
+            z3.Real("x_0") * z3.RealVal(5.5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.DIVIDE,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5.5),
+            ),
+            {mock_identifier("x", 0): SymbolType.REAL},
+            z3.Real("x_0") / z3.RealVal(5.5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.MODULO,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {mock_identifier("x", 0): SymbolType.INT},
+            z3.Int("x_0") % z3.IntVal(5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.POWER,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {mock_identifier("x", 0): SymbolType.INT},
+            z3.Int("x_0") ** z3.IntVal(5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.LOGICAL_AND,
+                IdentifierExpression(mock_identifier("x", 0)),
+                IdentifierExpression(mock_identifier("y", 1)),
+            ),
+            {
+                mock_identifier("x", 0): SymbolType.BOOL,
+                mock_identifier("y", 1): SymbolType.BOOL,
+            },
+            z3.And(z3.Bool("x_0"), z3.Bool("y_1")),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.LOGICAL_OR,
+                IdentifierExpression(mock_identifier("x", 0)),
+                IdentifierExpression(mock_identifier("y", 1)),
+            ),
+            {
+                mock_identifier("x", 0): SymbolType.BOOL,
+                mock_identifier("y", 1): SymbolType.BOOL,
+            },
+            z3.Or(z3.Bool("x_0"), z3.Bool("y_1")),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.EQUAL,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {mock_identifier("x", 0): SymbolType.REAL},
+            z3.Real("x_0") == z3.IntVal(5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.NOT_EQUAL,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {mock_identifier("x", 0): SymbolType.REAL},
+            z3.Real("x_0") != z3.IntVal(5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.LESS,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {mock_identifier("x", 0): SymbolType.INT},
+            z3.Int("x_0") < z3.IntVal(5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.LESS_EQUAL,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {mock_identifier("x", 0): SymbolType.INT},
+            z3.Int("x_0") <= z3.IntVal(5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {mock_identifier("x", 0): SymbolType.INT},
+            z3.Int("x_0") > z3.IntVal(5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER_EQUAL,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {mock_identifier("x", 0): SymbolType.INT},
+            z3.Int("x_0") >= z3.IntVal(5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.EQUAL,
+                BinaryExpression(
+                    BinaryOperation.MODULO,
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    LiteralExpression(5),
+                ),
+                LiteralExpression(0),
+            ),
+            {mock_identifier("x", 0): SymbolType.INT},
+            z3.Int("x_0") % z3.IntVal(5) == z3.IntVal(0),
+        ),
+    ],
+)
+def test_convert_expression_to_z3_expression(
+    expression: Expression,
+    symbol_types: dict[Identifier, SymbolType],
+    expected_z3_expression: z3.ExprRef,
+):
+    """Test that the expression is correctly converted to a Z3 expression."""
+    result, identifier_to_z3_symbol = convert_expression_to_z3_expression(
+        expression, symbol_types
+    )
+    assert result == expected_z3_expression
+    # TODO: Check correctness of identifier_to_z3_symbol
+
+
+@pytest.mark.parametrize(
+    "expression, considered_identifiers, symbol_types, expected_output",
+    [
+        (
+            BinaryExpression(
+                BinaryOperation.EQUAL,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {mock_identifier("x", 0)},
+            {mock_identifier("x", 0): SymbolType.INT},
+            True,
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.LOGICAL_AND,
+                BinaryExpression(
+                    BinaryOperation.LESS,
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    IdentifierExpression(mock_identifier("N", 3)),
+                ),
+                BinaryExpression(
+                    BinaryOperation.GREATER,
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    IdentifierExpression(mock_identifier("N", 3)),
+                ),
+            ),
+            {mock_identifier("x", 0)},
+            {
+                mock_identifier("x", 0): SymbolType.INT,
+                mock_identifier("N", 3): SymbolType.INT,
+            },
+            False,
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.LOGICAL_AND,
+                BinaryExpression(
+                    BinaryOperation.LESS,
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    IdentifierExpression(mock_identifier("N", 3)),
+                ),
+                BinaryExpression(
+                    BinaryOperation.LESS,
+                    IdentifierExpression(mock_identifier("x", 0)),
+                    BinaryExpression(
+                        BinaryOperation.SUBTRACT,
+                        IdentifierExpression(mock_identifier("N", 3)),
+                        LiteralExpression(1),
+                    ),
+                ),
+            ),
+            {mock_identifier("x", 0)},
+            {
+                mock_identifier("x", 0): SymbolType.INT,
+                mock_identifier("N", 3): SymbolType.INT,
+            },
+            True,
+        ),
+    ],
+)
+def test_find_satisfying_assignment(
+    expression: Expression,
+    considered_identifiers: set[Identifier],
+    symbol_types: dict[Identifier, SymbolType],
+    expected_output: dict[Identifier, LiteralType] | None,
+):
+    """Test that a satisfying assignment is correctly found for an expression."""
+    result = is_satisfiable(considered_identifiers, expression, symbol_types)
+    assert result == expected_output
