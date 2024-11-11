@@ -98,15 +98,15 @@ class ArrayMemoryInstance(MemoryInstance, ABC):
             True if the indices are within the instance; False otherwise.
 
         """
-        sub_array_indices = [
+        standardized_sub_array_indices = [
             list(index) if isinstance(index, Iterable) else [index]
             for index in sub_array_indices
         ]
-        if not len(sub_array_indices) == len(self._parent_array_indices):
+        if not len(standardized_sub_array_indices) == len(self._parent_array_indices):
             raise ValueError("Number of indices must match the number of dimensions.")
 
         for instance_index_constraints, index_constraints in zip(
-            self._parent_array_indices, sub_array_indices
+            self._parent_array_indices, standardized_sub_array_indices
         ):
             constrained_variable = Identifier("index")
             constraint_expressions = []

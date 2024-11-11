@@ -110,7 +110,7 @@ def replace_identifiers(
         Expression with identifiers replaced.
 
     """
-    substitutions = {
+    substitutions: dict[Identifier, Expression] = {
         old_identifier: IdentifierExpression(new_identifier)
         for old_identifier, new_identifier in replacements.items()
     }

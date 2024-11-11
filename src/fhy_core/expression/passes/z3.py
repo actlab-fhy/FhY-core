@@ -3,7 +3,7 @@
 import operator
 from typing import Any, Callable
 
-import z3
+import z3  # type: ignore
 from frozendict import frozendict
 
 from fhy_core.expression.core import (
