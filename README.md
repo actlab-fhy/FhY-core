@@ -5,9 +5,14 @@
 | Utility                                  | Description                                                            |
 | :--------------------------------------: | :--------------------------------------------------------------------- |
 | Identifier                               | Unique naming class with a non-unique name hint and a unique ID.       |
+| Error                                    | Custom error registration and core errors for the compiler.            |
 | Expression                               | General expression represented as an AST with a parser and printer.    |
 | Constraint                               | General logical constraint.                                            |
 | Parameter                                | Real, integer, orginal, categorical, and permutation parameters.       |
+| Types                                    | Core type system for the compiler.                                     |
+| Memory Instance                          | Extensible record for an instance of data in memory.                   |
+| Symbol Table                             | Nested symbol table.                                                   |
+| _General Utility_ - Python 3.11 Enums    | String and integer enum types only introduced in Python 3.11           |
 | _General Utility_ - Stack                | General stack utility that wraps `deque`.                              |
 | _General Utility_ - POSET                | General partially ordered set utility represented as a directed graph. |
 | _General Utility_ - Lattice              | General lattice (order theory) utility represented with a POSET.       |
