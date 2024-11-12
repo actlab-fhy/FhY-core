@@ -29,6 +29,14 @@ from fhy_core.identifier import Identifier
 from fhy_core.utils import invert_frozen_dict
 
 
+class SymbolType(Enum):
+    """Symbol type."""
+
+    REAL = auto()
+    INT = auto()
+    BOOL = auto()
+
+
 class Expression(ABC):
     """Abstract base class for expressions."""
 
@@ -38,7 +46,13 @@ class Expression(ABC):
     def __pos__(self) -> "UnaryExpression":
         return UnaryExpression(UnaryOperation.POSITIVE, self)
 
-    def __invert__(self) -> "UnaryExpression":
+    def logical_not(self) -> "UnaryExpression":
+        """Create a logical NOT expression.
+
+        Returns:
+            Logical NOT expression.
+
+        """
         return UnaryExpression(UnaryOperation.LOGICAL_NOT, self)
 
     def __add__(self, other: Any) -> "BinaryExpression":
@@ -79,6 +93,16 @@ class Expression(ABC):
     def __rtruediv__(self, other: Any) -> "BinaryExpression":
         return BinaryExpression(
             BinaryOperation.DIVIDE, self._get_expression_from_other(other), self
+        )
+
+    def __floordiv__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.FLOOR_DIVIDE, self, self._get_expression_from_other(other)
+        )
+
+    def __rfloordiv__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.FLOOR_DIVIDE, self._get_expression_from_other(other), self
         )
 
     def __mod__(self, other: Any) -> "BinaryExpression":
@@ -149,7 +173,58 @@ class Expression(ABC):
             BinaryOperation.GREATER_EQUAL, self, self._get_expression_from_other(other)
         )
 
-    def _get_expression_from_other(self, other: Any) -> "Expression":
+    @staticmethod
+    def logical_and(*expressions: "Expression") -> "BinaryExpression":
+        """Create a logical AND expression.
+
+        Args:
+            expressions: Expressions to AND together.
+
+        Returns:
+            Logical AND expression.
+
+        """
+        return Expression._generate_commutative_associative_operation_tree(
+            BinaryOperation.LOGICAL_AND, *expressions
+        )
+
+    @staticmethod
+    def logical_or(*expressions: "Expression") -> "BinaryExpression":
+        """Create a logical OR expression.
+
+        Args:
+            expressions: Expressions to OR together.
+
+        Returns:
+            Logical OR expression.
+
+        """
+        return Expression._generate_commutative_associative_operation_tree(
+            BinaryOperation.LOGICAL_OR, *expressions
+        )
+
+    @staticmethod
+    def _generate_commutative_associative_operation_tree(
+        operation: "BinaryOperation", *expressions: "Expression"
+    ) -> "BinaryExpression":
+        if len(expressions) < 2:  # noqa: PLR2004
+            raise ValueError("At least two expressions are required.")
+        reversed_expressions = list(reversed(expressions))
+        result = BinaryExpression(
+            operation,
+            Expression._get_expression_from_other(reversed_expressions[1]),
+            Expression._get_expression_from_other(reversed_expressions[0]),
+        )
+        for next_expression in reversed_expressions[2:]:
+            result = BinaryExpression(
+                operation,
+                Expression._get_expression_from_other(next_expression),
+                result,
+            )
+        return result
+
+    @staticmethod
+    def _get_expression_from_other(other: Any) -> "Expression":
         if isinstance(other, Expression):
             return other
         elif isinstance(other, Identifier):
@@ -206,6 +281,7 @@ class BinaryOperation(Enum):
     SUBTRACT = auto()
     MULTIPLY = auto()
     DIVIDE = auto()
+    FLOOR_DIVIDE = auto()
     MODULO = auto()
     POWER = auto()
     LOGICAL_AND = auto()
@@ -224,6 +300,7 @@ BINARY_OPERATION_FUNCTION_NAMES: frozendict[BinaryOperation, str] = frozendict(
         BinaryOperation.SUBTRACT: "subtract",
         BinaryOperation.MULTIPLY: "multiply",
         BinaryOperation.DIVIDE: "divide",
+        BinaryOperation.FLOOR_DIVIDE: "floor_divide",
         BinaryOperation.MODULO: "modulo",
         BinaryOperation.POWER: "power",
         BinaryOperation.LOGICAL_AND: "logical_and",
@@ -245,6 +322,7 @@ BINARY_OPERATION_SYMBOLS: frozendict[BinaryOperation, str] = frozendict(
         BinaryOperation.SUBTRACT: "-",
         BinaryOperation.MULTIPLY: "*",
         BinaryOperation.DIVIDE: "/",
+        BinaryOperation.FLOOR_DIVIDE: "//",
         BinaryOperation.MODULO: "%",
         BinaryOperation.POWER: "**",
         BinaryOperation.LOGICAL_AND: "&&",

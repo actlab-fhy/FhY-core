@@ -33,6 +33,10 @@ from .utils import assert_exact_expression_equality, mock_identifier
             "((10+2) >= 2) > 5",
             ["(", "(", "10", "+", "2", ")", ">=", "2", ")", ">", "5"],
         ),
+        (
+            "x // 5 + 3",
+            ["x", "//", "5", "+", "3"],
+        ),
     ],
 )
 def test_tokenize_expression(expression_str: str, expected_tokens: list[str]):

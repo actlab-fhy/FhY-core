@@ -1,4 +1,6 @@
-"""Unique identifier for named FhY objects."""
+"""Unique identifier for named compiler objects."""
+
+__all__ = ["Identifier"]
 
 __all__ = ["Identifier"]
 
@@ -6,12 +8,7 @@ from typing import Any
 
 
 class Identifier:
-    """Unique name.
-
-    Args:
-        name_hint: Variable name.
-
-    """
+    """Unique name."""
 
     _next_id: int = 0
     _id: int

@@ -36,16 +36,17 @@ _TOKEN_PATTERN = _build_token_pattern(
     r"&&",
     r"\|\|",
     r"<=|>=|==|!=",
+    r"//",
     r"[-!+*/%<>()]",
 )
 
 
-OperationType = TypeVar("OperationType")
+_OperationType = TypeVar("_OperationType")
 
 
 def _get_symbol_to_operation_subdict(
-    parent_dict: frozendict[str, OperationType], *symbols: str
-) -> frozendict[str, OperationType]:
+    parent_dict: frozendict[str, _OperationType], *symbols: str
+) -> frozendict[str, _OperationType]:
     return frozendict(
         {
             symbol: operation
@@ -71,7 +72,7 @@ _ADDITION_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
     _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "+", "-")
 )
 _MULTIPLICATION_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
-    _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "*", "/", "%")
+    _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "*", "/", "//", "%")
 )
 _EXPONENTIATION_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
     _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "**")

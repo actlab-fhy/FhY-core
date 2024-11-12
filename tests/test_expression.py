@@ -62,7 +62,7 @@ def test_literal_expression_invalid_string():
     [
         (operator.neg, UnaryOperation.NEGATE),
         (operator.pos, UnaryOperation.POSITIVE),
-        (operator.invert, UnaryOperation.LOGICAL_NOT),
+        (lambda x: x.logical_not(), UnaryOperation.LOGICAL_NOT),
     ],
 )
 def test_unary_operator_dunder_methods(
@@ -200,3 +200,39 @@ def test_binary_operation_dunder_method_fails_to_create_expression_with_unknown_
     """
     with pytest.raises(ValueError):
         operator.add(LiteralExpression(5), [])
+
+
+def test_logical_and():
+    """Test that the logical and static method creates an AND tree."""
+    expression_1 = LiteralExpression(True)
+    expression_2 = LiteralExpression(False)
+    expression_3 = True
+
+    result = Expression.logical_and(expression_1, expression_2, expression_3)
+
+    expected_expression = BinaryExpression(
+        BinaryOperation.LOGICAL_AND,
+        expression_1,
+        BinaryExpression(
+            BinaryOperation.LOGICAL_AND, expression_2, LiteralExpression(expression_3)
+        ),
+    )
+    assert_exact_expression_equality(result, expected_expression)
+
+
+def test_logical_or():
+    """Test that the logical or static method creates an OR tree."""
+    expression_1 = LiteralExpression(True)
+    expression_2 = False
+    expression_3 = LiteralExpression(True)
+
+    result = Expression.logical_or(expression_1, expression_2, expression_3)
+
+    expected_expression = BinaryExpression(
+        BinaryOperation.LOGICAL_OR,
+        expression_1,
+        BinaryExpression(
+            BinaryOperation.LOGICAL_OR, LiteralExpression(expression_2), expression_3
+        ),
+    )
+    assert_exact_expression_equality(result, expected_expression)

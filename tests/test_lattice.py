@@ -247,3 +247,32 @@ def test_subsets_of_xyz_lattice_join(subsets_of_xyz_lattice: Lattice[str]):
 def test_subsets_of_xyz_lattice_is_lattice(subsets_of_xyz_lattice: Lattice[str]):
     """Test that subsets of XYZ lattice is a lattice."""
     assert subsets_of_xyz_lattice.is_lattice() is True
+
+
+@pytest.fixture()
+def basic_non_lattice_poset():
+    lattice = Lattice[int]()
+    lattice.add_element(1)
+    lattice.add_element(2)
+    lattice.add_element(3)
+    lattice.add_element(4)
+    lattice.add_order(1, 3)
+    lattice.add_order(1, 4)
+    lattice.add_order(2, 3)
+    lattice.add_order(2, 4)
+    return lattice
+
+
+def test_basic_non_lattice_poset(basic_non_lattice_poset: Lattice[int]):
+    """Test that a basic non-lattice poset is not a lattice."""
+    assert basic_non_lattice_poset.is_lattice() is False
+
+
+def test_basic_non_lattice_has_no_least_upper_bound(
+    basic_non_lattice_poset: Lattice[int],
+):
+    """Test that a basic non-lattice poset has no least upper bound for certain
+    elements.
+    """
+    with pytest.raises(RuntimeError):
+        basic_non_lattice_poset.get_least_upper_bound(3, 4)
