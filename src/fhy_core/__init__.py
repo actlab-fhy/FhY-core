@@ -14,6 +14,8 @@ from .expression import (
     BinaryExpression,
     BinaryOperation,
     Expression,
+    ExpressionBasePass,
+    ExpressionVisitor,
     IdentifierExpression,
     LiteralExpression,
     UnaryExpression,
