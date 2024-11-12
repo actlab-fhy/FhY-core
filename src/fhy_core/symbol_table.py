@@ -3,7 +3,6 @@
 __all__ = [
     "FunctionSymbolTableFrame",
     "ImportSymbolTableFrame",
-    "SymbolMemoryTracker",
     "SymbolTable",
     "SymbolTableFrame",
     "VariableSymbolTableFrame",
@@ -18,87 +17,8 @@ from typing import Generic, NoReturn, TypeVar
 from fhy_core.identifier import Identifier
 
 from .error import SymbolTableError
-from .memory_instance import MemoryInstance
 from .types import Type, TypeQualifier
 from .utils import StrEnum
-
-
-class SymbolMemoryTracker:
-    """Symbol memory tracker."""
-
-    _instances: dict[Identifier, MemoryInstance]
-
-    def __init__(self) -> None:
-        self._instances = {}
-
-    def get_number_of_instances(self) -> int:
-        """Return the number of memory instances in the tracker."""
-        return len(self._instances)
-
-    def add_instance(self, instance_name: Identifier, instance: MemoryInstance) -> None:
-        """Add a memory instance to the tracker.
-
-        Args:
-            instance_name: Name of the memory instance.
-            instance: Memory instance to be added.
-
-        Raises:
-            SymbolTableError: If the memory instance already exists in the tracker.
-
-        """
-        if instance_name in self._instances:
-            raise SymbolTableError(
-                f"Memory instance {instance_name} already exists in the memory tracker."
-            )
-        self._instances[instance_name] = instance
-
-    def is_instance_defined(self, instance_name: Identifier) -> bool:
-        """Check if a memory instance exists in the tracker.
-
-        Args:
-            instance_name: Name of the memory instance to check.
-
-        Returns:
-            True if the memory instance exists in the tracker, False otherwise.
-
-        """
-        return instance_name in self._instances
-
-    def get_instance(self, instance_name: Identifier) -> MemoryInstance:
-        """Retrieve a memory instance from the tracker.
-
-        Args:
-            instance_name: Name of the memory instance to retrieve.
-
-        Returns:
-            Memory instance.
-
-        Raises:
-            SymbolTableError: If the memory instance does not exist in the tracker.
-
-        """
-        if instance_name not in self._instances:
-            raise SymbolTableError(
-                f"Memory instance {instance_name} not found in the memory tracker."
-            )
-
-        return self._instances[instance_name]
-
-    def remove_instance(self, instance_name: Identifier) -> None:
-        """Remove a memory instance from the tracker.
-
-        Args:
-            instance_name: Name of the memory instance to remove.
-
-        Raises:
-            SymbolTableError: If the memory instance does not exist in the tracker.
-
-        """
-        if instance_name not in self._instances:
-            raise SymbolTableError(
-                f"Memory instance {instance_name} not found in the memory tracker."
-            )
-        self._instances.pop(instance_name)
 
 
 @dataclass(frozen=True)
@@ -118,7 +38,6 @@ class VariableSymbolTableFrame(SymbolTableFrame):
 
     type: Type
     type_qualifier: TypeQualifier
-    memory_tracker: SymbolMemoryTracker
 
 
 class FunctionKeyword(StrEnum):
@@ -247,23 +166,40 @@ class SymbolTable:
             SymbolTableError: If the symbol is already defined in the namespace.
 
         """
-        if self.is_symbol_defined(namespace_name, symbol_name):
+        if self.is_symbol_defined_in_namespace(namespace_name, symbol_name):
             raise SymbolTableError(
                 f"Symbol {symbol_name} already defined in namespace {namespace_name}."
             )
         self._table[namespace_name][symbol_name] = frame
 
-    def is_symbol_defined(
+    def is_symbol_defined(self, symbol_name: Identifier) -> bool:
+        """Check if a symbol exists in the symbol table.
+
+        Args:
+            symbol_name: Name of the symbol to check.
+
+        Returns:
+            True if the symbol exists in the symbol table, False otherwise.
+
+        """
+        return self._search_table_with_action(
+            lambda _, candidate_symbol_name: _SymbolTableSearchResult(True)
+            if symbol_name == candidate_symbol_name
+            else None,
+            lambda: False,
+        )
+
+    def is_symbol_defined_in_namespace(
         self, namespace_name: Identifier, symbol_name: Identifier
     ) -> bool:
-        """Check if a symbol exists in the symbol table.
+        """Check if a symbol exists in a specific namespace.
 
         Args:
             namespace_name: Name of the namespace to check.
             symbol_name: Name of the symbol to check.
 
         Returns:
-            True if the symbol exists in the symbol table, False otherwise.
+            True if the symbol exists in the namespace, False otherwise.
 
         """
 
@@ -279,13 +215,45 @@ class SymbolTable:
             namespace_name, is_symbol_defined_in_namespace, lambda: False
         )
 
-    def get_frame(
-        self, namespace_name: Identifier, symbol_name: Identifier
-    ) -> SymbolTableFrame:
+    def get_frame(self, symbol_name: Identifier) -> SymbolTableFrame:
         """Retrieve a frame from the symbol table.
 
         Args:
-            namespace_name: Name of the current namespace.
+            symbol_name: Name of the symbol to retrieve the frame for.
+
+        Returns:
+            The frame for the given symbol.
+
+        Raises:
+            SymbolTableError: If the symbol is not found in the symbol table or
+                there is a cyclic namespace dependency.
+
+        """
+
+        def get_frame(
+            namespace_name: Identifier, candidate_symbol_name: Identifier
+        ) -> _SymbolTableSearchResult[SymbolTableFrame] | None:
+            if symbol_name == candidate_symbol_name:
+                return _SymbolTableSearchResult(
+                    self._table[namespace_name][symbol_name]
+                )
+            else:
+                return None
+
+        def raise_symbol_not_found() -> NoReturn:
+            raise SymbolTableError(
+                f"Symbol {symbol_name} not found in the symbol table."
+            )
+
+        return self._search_table_with_action(get_frame, raise_symbol_not_found)
+
+    def get_frame_from_namespace(
+        self, namespace_name: Identifier, symbol_name: Identifier
+    ) -> SymbolTableFrame:
+        """Retrieve a frame from a specific namespace.
+
+        Args:
+            namespace_name: Name of the namespace.
             symbol_name: Name of the symbol to retrieve the frame for.
 
         Returns:
@@ -315,6 +283,21 @@ class SymbolTable:
         return self._search_namespace_with_action(
             namespace_name, get_frame_in_namespace, raise_symbol_not_found
         )
+
+    def _search_table_with_action(
+        self,
+        action: Callable[
+            [Identifier, Identifier], _SymbolTableSearchResult[_SUCC_T] | None
+        ],
+        action_fail_func: Callable[[], _FAIL_T],
+    ) -> _SUCC_T | _FAIL_T:
+        for namespace_name, namespace_table in self._table.items():
+            for symbol_name in namespace_table:
+                result = action(namespace_name, symbol_name)
+                if result is not None:
+                    return result.value
+
+        return action_fail_func()
 
     def _search_namespace_with_action(
         self,

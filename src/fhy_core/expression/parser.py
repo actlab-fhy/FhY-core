@@ -36,6 +36,7 @@ _TOKEN_PATTERN = _build_token_pattern(
     r"&&",
     r"\|\|",
     r"<=|>=|==|!=",
+    r"//",
     r"[-!+*/%<>()]",
 )
 
@@ -71,7 +72,7 @@ _ADDITION_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
     _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "+", "-")
 )
 _MULTIPLICATION_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
-    _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "*", "/", "%")
+    _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "*", "/", "//", "%")
 )
 _EXPONENTIATION_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = (
     _get_symbol_to_operation_subdict(BINARY_SYMBOL_OPERATIONS, "**")

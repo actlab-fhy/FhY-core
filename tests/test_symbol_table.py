@@ -1,14 +1,10 @@
 """Tests the symbol table."""
 
-from unittest.mock import Mock
-
 import pytest
 from fhy_core.error import SymbolTableError
 from fhy_core.identifier import Identifier
-from fhy_core.memory_instance import MemoryInstance
 from fhy_core.symbol_table import (
     ImportSymbolTableFrame,
-    SymbolMemoryTracker,
     SymbolTable,
 )
 
@@ -46,6 +42,19 @@ def test_get_undefined_namespace_fails(empty_symbol_table: SymbolTable):
         empty_symbol_table.get_namespace(undefined_namespace)
 
 
+def test_add_and_get_symbol(empty_symbol_table: SymbolTable):
+    """Test that a symbol can be added and retrieved."""
+    namespace = Identifier("test_namespace")
+    symbol_name = Identifier("test_symbol")
+    frame = ImportSymbolTableFrame(symbol_name)
+
+    empty_symbol_table.add_namespace(namespace)
+    empty_symbol_table.add_symbol(namespace, symbol_name, frame)
+
+    assert empty_symbol_table.is_symbol_defined(symbol_name)
+    assert empty_symbol_table.get_frame(symbol_name) == frame
+
+
 def test_add_and_get_symbol_in_namespace(empty_symbol_table: SymbolTable):
     """Test that a symbol can be added and retrieved from a namespace."""
     namespace = Identifier("test_namespace")
@@ -55,8 +64,8 @@ def test_add_and_get_symbol_in_namespace(empty_symbol_table: SymbolTable):
     empty_symbol_table.add_namespace(namespace)
     empty_symbol_table.add_symbol(namespace, symbol_name, frame)
 
-    assert empty_symbol_table.is_symbol_defined(namespace, symbol_name)
-    assert empty_symbol_table.get_frame(namespace, symbol_name) == frame
+    assert empty_symbol_table.is_symbol_defined_in_namespace(namespace, symbol_name)
+    assert empty_symbol_table.get_frame_from_namespace(namespace, symbol_name) == frame
 
 
 def test_add_duplicate_symbol_fails(empty_symbol_table: SymbolTable):
@@ -72,15 +81,17 @@ def test_add_duplicate_symbol_fails(empty_symbol_table: SymbolTable):
         empty_symbol_table.add_symbol(namespace, symbol_name, frame)
 
 
-def test_get_undefined_symbol_fails(empty_symbol_table: SymbolTable):
-    """Test that getting an undefined symbol raises a SymbolTableError."""
+def test_get_undefined_symbol_from_namespace_fails(empty_symbol_table: SymbolTable):
+    """Test that getting an undefined symbol from a namespace raises a
+    SymbolTableError.
+    """
     namespace = Identifier("test_namespace")
     symbol_name = Identifier("undefined_symbol")
 
     empty_symbol_table.add_namespace(namespace)
 
     with pytest.raises(SymbolTableError):
-        empty_symbol_table.get_frame(namespace, symbol_name)
+        empty_symbol_table.get_frame_from_namespace(namespace, symbol_name)
 
 
 def test_add_namespace_with_parent(empty_symbol_table: SymbolTable):
@@ -94,7 +105,9 @@ def test_add_namespace_with_parent(empty_symbol_table: SymbolTable):
     assert empty_symbol_table.is_namespace_defined(child_namespace)
 
 
-def test_get_symbol_inherited_from_parent(empty_symbol_table: SymbolTable):
+def test_get_symbol_from_namespace_inherited_from_parent(
+    empty_symbol_table: SymbolTable,
+):
     """Test that a child namespace can access a symbol from a parent namespace."""
     parent_namespace = Identifier("parent_namespace")
     child_namespace = Identifier("child_namespace")
@@ -105,8 +118,13 @@ def test_get_symbol_inherited_from_parent(empty_symbol_table: SymbolTable):
     empty_symbol_table.add_namespace(child_namespace, parent_namespace)
     empty_symbol_table.add_symbol(parent_namespace, symbol_name, frame)
 
-    assert empty_symbol_table.is_symbol_defined(child_namespace, symbol_name)
-    assert empty_symbol_table.get_frame(child_namespace, symbol_name) == frame
+    assert empty_symbol_table.is_symbol_defined_in_namespace(
+        child_namespace, symbol_name
+    )
+    assert (
+        empty_symbol_table.get_frame_from_namespace(child_namespace, symbol_name)
+        == frame
+    )
 
 
 def test_cyclic_namespace_fails(empty_symbol_table: SymbolTable):
@@ -118,7 +136,9 @@ def test_cyclic_namespace_fails(empty_symbol_table: SymbolTable):
     empty_symbol_table.add_namespace(namespace_b, namespace_a)
 
     with pytest.raises(RuntimeError):
-        empty_symbol_table.is_symbol_defined(namespace_a, Identifier("some_symbol"))
+        empty_symbol_table.is_symbol_defined_in_namespace(
+            namespace_a, Identifier("some_symbol")
+        )
 
 
 def test_update_namespaces():
@@ -135,71 +155,5 @@ def test_update_namespaces():
     symbol_table_2.update_namespaces(symbol_table_1)
 
     assert symbol_table_2.is_namespace_defined(namespace)
-    assert symbol_table_2.is_symbol_defined(namespace, symbol_name)
-    assert symbol_table_2.get_frame(namespace, symbol_name) == frame
-
-
-def test_add_and_check_memory_instance_in_memory_tracker():
-    """Test that a memory instance can be added and checked in the memory tracker."""
-    memory_tracker = SymbolMemoryTracker()
-    memory_instance_name = Identifier("test_memory_instance")
-    memory_instance = Mock(spec=MemoryInstance)
-
-    memory_tracker.add_instance(memory_instance_name, memory_instance)
-
-    assert memory_tracker.is_instance_defined(memory_instance_name)
-
-
-def test_add_and_get_memory_instance_in_memory_tracker():
-    """Test that a memory instance can be added and retrieved from the memory
-    tracker.
-    """
-    memory_tracker = SymbolMemoryTracker()
-    memory_instance_name = Identifier("test_memory_instance")
-    memory_instance = Mock(spec=MemoryInstance)
-
-    memory_tracker.add_instance(memory_instance_name, memory_instance)
-
-    assert memory_tracker.get_instance(memory_instance_name) == memory_instance
-
-
-def test_get_undefined_memory_instance_fails():
-    """Test that getting an undefined memory instance raises a SymbolTableError."""
-    memory_tracker = SymbolMemoryTracker()
-    undefined_memory_instance_name = Identifier("undefined_memory_instance")
-
-    with pytest.raises(SymbolTableError):
-        memory_tracker.get_instance(undefined_memory_instance_name)
-
-
-def test_add_duplicate_memory_instance_fails():
-    """Test that adding a duplicate memory instance raises a SymbolTableError."""
-    memory_tracker = SymbolMemoryTracker()
-    memory_instance_name = Identifier("test_memory_instance")
-    memory_instance = Mock(spec=MemoryInstance)
-
-    memory_tracker.add_instance(memory_instance_name, memory_instance)
-
-    with pytest.raises(SymbolTableError):
-        memory_tracker.add_instance(memory_instance_name, memory_instance)
-
-
-def test_remove_memory_instance():
-    """Test that a memory instance can be removed from the memory tracker."""
-    memory_tracker = SymbolMemoryTracker()
-    memory_instance_name = Identifier("test_memory_instance")
-    memory_instance = Mock(spec=MemoryInstance)
-
-    memory_tracker.add_instance(memory_instance_name, memory_instance)
-    memory_tracker.remove_instance(memory_instance_name)
-
-    assert not memory_tracker.is_instance_defined(memory_instance_name)
-
-
-def test_remove_undefined_memory_instance_fails():
-    """Test that removing an undefined memory instance raises a SymbolTableError."""
-    memory_tracker = SymbolMemoryTracker()
-    undefined_memory_instance_name = Identifier("undefined_memory_instance")
-
-    with pytest.raises(SymbolTableError):
-        memory_tracker.remove_instance(undefined_memory_instance_name)
+    assert symbol_table_2.is_symbol_defined_in_namespace(namespace, symbol_name)
+    assert symbol_table_2.get_frame_from_namespace(namespace, symbol_name) == frame

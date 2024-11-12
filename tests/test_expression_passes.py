@@ -350,6 +350,14 @@ def test_replace_identifiers():
         ),
         (
             BinaryExpression(
+                BinaryOperation.FLOOR_DIVIDE,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            sympy.Symbol("x_0") // sympy.Integer(5),
+        ),
+        (
+            BinaryExpression(
                 BinaryOperation.MODULO,
                 IdentifierExpression(mock_identifier("x", 0)),
                 LiteralExpression(5),
@@ -746,6 +754,24 @@ def test_simplify_variable_expression():
             ),
             {mock_identifier("x", 0): SymbolType.REAL},
             z3.Real("x_0") / z3.RealVal(5.5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.FLOOR_DIVIDE,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {mock_identifier("x", 0): SymbolType.INT},
+            z3.Int("x_0") / z3.IntVal(5),
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.FLOOR_DIVIDE,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {mock_identifier("x", 0): SymbolType.REAL},
+            z3.ToInt(z3.Real("x_0") / z3.IntVal(5)),
         ),
         (
             BinaryExpression(

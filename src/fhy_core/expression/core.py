@@ -95,6 +95,16 @@ class Expression(ABC):
             BinaryOperation.DIVIDE, self._get_expression_from_other(other), self
         )
 
+    def __floordiv__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.FLOOR_DIVIDE, self, self._get_expression_from_other(other)
+        )
+
+    def __rfloordiv__(self, other: Any) -> "BinaryExpression":
+        return BinaryExpression(
+            BinaryOperation.FLOOR_DIVIDE, self._get_expression_from_other(other), self
+        )
+
     def __mod__(self, other: Any) -> "BinaryExpression":
         return BinaryExpression(
             BinaryOperation.MODULO, self, self._get_expression_from_other(other)
@@ -271,6 +281,7 @@ class BinaryOperation(Enum):
     SUBTRACT = auto()
     MULTIPLY = auto()
     DIVIDE = auto()
+    FLOOR_DIVIDE = auto()
     MODULO = auto()
     POWER = auto()
     LOGICAL_AND = auto()
@@ -289,6 +300,7 @@ BINARY_OPERATION_FUNCTION_NAMES: frozendict[BinaryOperation, str] = frozendict(
         BinaryOperation.SUBTRACT: "subtract",
         BinaryOperation.MULTIPLY: "multiply",
         BinaryOperation.DIVIDE: "divide",
+        BinaryOperation.FLOOR_DIVIDE: "floor_divide",
         BinaryOperation.MODULO: "modulo",
         BinaryOperation.POWER: "power",
         BinaryOperation.LOGICAL_AND: "logical_and",
@@ -310,6 +322,7 @@ BINARY_OPERATION_SYMBOLS: frozendict[BinaryOperation, str] = frozendict(
         BinaryOperation.SUBTRACT: "-",
         BinaryOperation.MULTIPLY: "*",
         BinaryOperation.DIVIDE: "/",
+        BinaryOperation.FLOOR_DIVIDE: "//",
         BinaryOperation.MODULO: "%",
         BinaryOperation.POWER: "**",
         BinaryOperation.LOGICAL_AND: "&&",

@@ -50,6 +50,7 @@ class ExpressionToSympyConverter(ExpressionBasePass):
             BinaryOperation.SUBTRACT: operator.sub,
             BinaryOperation.MULTIPLY: operator.mul,
             BinaryOperation.DIVIDE: operator.truediv,
+            BinaryOperation.FLOOR_DIVIDE: lambda x, y: sympy.floor(x / y),
             BinaryOperation.MODULO: operator.mod,
             BinaryOperation.POWER: operator.pow,
             BinaryOperation.LOGICAL_AND: operator.and_,
