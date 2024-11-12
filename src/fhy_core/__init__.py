@@ -44,9 +44,9 @@ from .param import (
     RealParam,
 )
 from .symbol_table import (
+    FunctionKeyword,
     FunctionSymbolTableFrame,
     ImportSymbolTableFrame,
-    SymbolMemoryTracker,
     SymbolTable,
     SymbolTableFrame,
     VariableSymbolTableFrame,
@@ -56,6 +56,7 @@ from .types import (
     DataType,
     IndexType,
     NumericalType,
+    PrimitiveDataType,
     TemplateDataType,
     TupleType,
     Type,
