@@ -22,6 +22,16 @@ from fhy_core.expression.visitor import (
 from fhy_core.identifier import Identifier
 
 
+def _z3_floor_divide(left: z3.ExprRef, right: z3.ExprRef) -> z3.ExprRef:
+    expr: z3.ArithRef = left / right
+    if expr.is_real():
+        return z3.ToInt(expr)
+    elif expr.is_int():
+        return expr
+    else:
+        raise ValueError(f"Unsupported floor divide expression type: {expr}")
+
+
 class ExpressionToZ3Converter(ExpressionBasePass):
     """Transforms an expression into a Z3 expression."""
 
@@ -42,6 +52,7 @@ class ExpressionToZ3Converter(ExpressionBasePass):
             BinaryOperation.SUBTRACT: operator.sub,
             BinaryOperation.MULTIPLY: operator.mul,
             BinaryOperation.DIVIDE: operator.truediv,
+            BinaryOperation.FLOOR_DIVIDE: _z3_floor_divide,
             BinaryOperation.MODULO: operator.mod,
             BinaryOperation.POWER: operator.pow,
             BinaryOperation.LOGICAL_AND: operator.and_,
