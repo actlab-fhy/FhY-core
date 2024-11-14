@@ -73,6 +73,7 @@ from .utils import (
     PartiallyOrderedSet,
     Stack,
     StrEnum,
+    get_array_size_in_bits,
     invert_dict,
     invert_frozen_dict,
 )
