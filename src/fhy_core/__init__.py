@@ -18,6 +18,7 @@ from .expression import (
     ExpressionVisitor,
     IdentifierExpression,
     LiteralExpression,
+    SymbolType,
     UnaryExpression,
     UnaryOperation,
     collect_identifiers,
