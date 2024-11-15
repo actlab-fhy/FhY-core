@@ -30,12 +30,6 @@ from .expression import (
     substitute_identifiers,
 )
 from .identifier import Identifier
-from .memory_instance import (
-    ColumnMajorMemoryInstance,
-    MemoryInstance,
-    RowMajorMemoryInstance,
-    ScalarMemoryInstance,
-)
 from .param import (
     CategoricalParam,
     IntParam,
