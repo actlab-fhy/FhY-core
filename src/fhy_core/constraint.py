@@ -75,7 +75,9 @@ class EquationConstraint(Constraint):
         super().__init__(constrained_variable)
         self._expression = expression
 
-    def is_satisfied(self, value: Expression) -> bool:
+    def is_satisfied(self, value: Expression | LiteralType) -> bool:
+        if isinstance(value, LiteralType):
+            value = LiteralExpression(value)
         result = simplify_expression(self._expression, {self.variable: value})
         return (
             isinstance(result, LiteralExpression)

@@ -18,7 +18,7 @@ from fhy_core.constraint import (
     InSetConstraint,
     NotInSetConstraint,
 )
-from fhy_core.expression import IdentifierExpression, LiteralExpression
+from fhy_core.expression import IdentifierExpression
 from fhy_core.identifier import Identifier
 
 _H = TypeVar("_H", bound=Hashable)
@@ -141,7 +141,7 @@ class RealParam(Param[str | float]):
     """Real-valued parameter."""
 
     def is_constraints_satisfied(self, value: str | float) -> bool:
-        return super().is_constraints_satisfied(LiteralExpression(value))
+        return super().is_constraints_satisfied(value)
 
     def set_value(self, value: str | float) -> None:
         if not isinstance(value, (str, float)):
@@ -153,7 +153,7 @@ class IntParam(Param[int]):
     """Integer-valued parameter."""
 
     def is_constraints_satisfied(self, value: int) -> bool:
-        return super().is_constraints_satisfied(LiteralExpression(value))
+        return super().is_constraints_satisfied(value)
 
     def set_value(self, value: int) -> None:
         if not isinstance(value, int):
