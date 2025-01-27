@@ -37,18 +37,19 @@ class ExpressionBasePass(ABC):
             NotImplementedError: If the expression type is not supported.
 
         """
-        if isinstance(expression, UnaryExpression):
-            return self.visit_unary_expression(expression)
-        elif isinstance(expression, BinaryExpression):
-            return self.visit_binary_expression(expression)
-        elif isinstance(expression, IdentifierExpression):
-            return self.visit_identifier_expression(expression)
-        elif isinstance(expression, LiteralExpression):
-            return self.visit_literal_expression(expression)
-        else:
-            raise NotImplementedError(
-                f"Unsupported expression type: {type(expression)}"
-            )
+        match expression:
+            case UnaryExpression():
+                return self.visit_unary_expression(expression)
+            case BinaryExpression():
+                return self.visit_binary_expression(expression)
+            case IdentifierExpression():
+                return self.visit_identifier_expression(expression)
+            case LiteralExpression():
+                return self.visit_literal_expression(expression)
+            case _:
+                raise NotImplementedError(
+                    f"Unsupported expression type: {type(expression)}"
+                )
 
     def visit_unary_expression(self, unary_expression: UnaryExpression) -> Any:
         """Visit a unary expression.
