@@ -306,7 +306,7 @@ class IndexType(Type):
         lower_bound_str = pformat_expression(self._lower_bound, show_id=True)
         upper_bound_str = pformat_expression(self._upper_bound, show_id=True)
         stride_str = (
-            pformat_expression(self._stride, show_id=True) if self._stride else ""
+            pformat_expression(self._stride, show_id=True) if self._stride else "1"
         )
         return f"index({lower_bound_str}:{upper_bound_str}:{stride_str})"
 
