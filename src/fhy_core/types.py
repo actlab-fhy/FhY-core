@@ -16,11 +16,12 @@ __all__ = [
 ]
 
 from abc import ABC
+from functools import partial
 
 from .error import FhYCoreTypeError
-from .expression import Expression
+from .expression import Expression, pformat_expression
 from .identifier import Identifier
-from .utils import Lattice, StrEnum
+from .utils import Lattice, StrEnum, format_comma_separated_list
 
 
 class Type(ABC):
@@ -183,6 +184,12 @@ class PrimitiveDataType(DataType):
     def core_data_type(self) -> CoreDataType:
         return self._core_data_type
 
+    def __str__(self) -> str:
+        return str(self._core_data_type)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({repr(self._core_data_type)})"
+
 
 class TemplateDataType(DataType):
     """Template data type."""
@@ -197,6 +204,12 @@ class TemplateDataType(DataType):
     @property
     def template_type(self) -> Identifier:
         return self._data_type
+
+    def __str__(self) -> str:
+        return str(self._data_type)
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({repr(self._data_type)})"
 
 
 def promote_primitive_data_types(
@@ -243,6 +256,17 @@ class NumericalType(Type):
     def shape(self) -> list[Expression]:
         return self._shape
 
+    def __str__(self) -> str:
+        shape_str = format_comma_separated_list(
+            self._shape, str_func=partial(pformat_expression, show_id=True)
+        )
+        return f"{self._data_type}[{shape_str}]"
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}({repr(self._data_type)}, {repr(self._shape)})"
+        )
+
 
 class IndexType(Type):
     """Index type.
@@ -278,6 +302,20 @@ class IndexType(Type):
     def stride(self) -> Expression | None:
         return self._stride
 
+    def __str__(self) -> str:
+        lower_bound_str = pformat_expression(self._lower_bound, show_id=True)
+        upper_bound_str = pformat_expression(self._upper_bound, show_id=True)
+        stride_str = (
+            pformat_expression(self._stride, show_id=True) if self._stride else ""
+        )
+        return f"index({lower_bound_str}:{upper_bound_str}:{stride_str})"
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}({repr(self._lower_bound)}, "
+            f"{repr(self._upper_bound)}, {repr(self._stride)})"
+        )
+
 
 class TupleType(Type):
     """Tuple type."""
@@ -291,6 +329,12 @@ class TupleType(Type):
     @property
     def types(self) -> list[Type]:
         return self._types
+
+    def __str__(self) -> str:
+        return f"({format_comma_separated_list(self._types)})"
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({repr(self._types)})"
 
 
 class TypeQualifier(StrEnum):
