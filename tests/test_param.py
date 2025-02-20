@@ -2,6 +2,7 @@
 
 import pytest
 from fhy_core.constraint import EquationConstraint, InSetConstraint
+from fhy_core.expression import SymbolType
 from fhy_core.param import (
     CategoricalParam,
     IntParam,
@@ -37,6 +38,18 @@ def test_get_param_value_after_setting_value():
     param = RealParam()
     param.set_value(1.0)
     assert param.get_value() == 1.0
+
+
+def test_real_param_get_symbol_type():
+    """Test that the symbol type of a real parameter is correct."""
+    param = RealParam()
+    assert param.get_symbol_type() == SymbolType.REAL
+
+
+def test_int_param_get_symbol_type():
+    """Test that the symbol type of an integer parameter is correct."""
+    param = IntParam()
+    assert param.get_symbol_type() == SymbolType.INT
 
 
 def test_real_param_value_set_fails_with_invalid_value():
@@ -79,6 +92,57 @@ def test_add_and_check_int_param_constraints():
     assert param.is_constraints_satisfied(15)
     with pytest.raises(ValueError):
         param.set_value(12)
+
+
+def test_set_real_param_and_real_param_is_subet():
+    """Test subset relationship between real parameters where they could be set."""
+    param1 = RealParam()
+    param1.set_value(1.0)
+    param2 = RealParam()
+    assert param1.is_subset(param2)
+    assert not param2.is_subset(param1)
+    param2.set_value(1.0)
+    assert param1.is_subset(param2)
+    assert param2.is_subset(param1)
+
+
+def test_real_param_is_subset_of_real_param():
+    """Test that a real parameter is a subset of another real parameter."""
+    param1 = RealParam()
+    param2 = RealParam()
+    assert param1.is_subset(param2)
+    assert param2.is_subset(param1)
+
+
+def test_positive_real_param_and_real_param_is_subset():
+    """Test subset relationship between positive real parameter and real parameter."""
+    param1 = RealParam()
+    param1.add_constraint(
+        EquationConstraint(param1.variable, param1.variable_expression > 0)
+    )
+    param2 = RealParam()
+    assert param1.is_subset(param2)
+    assert not param2.is_subset(param1)
+
+
+def test_interval_real_param_and_interval_real_param_is_subset():
+    """Test subset relationship between interval real parameters."""
+    param1 = RealParam()
+    param1.add_constraint(
+        EquationConstraint(param1.variable, param1.variable_expression >= 0)
+    )
+    param1.add_constraint(
+        EquationConstraint(param1.variable, param1.variable_expression <= 3)
+    )
+    param2 = RealParam()
+    param2.add_constraint(
+        EquationConstraint(param2.variable, param2.variable_expression >= 0)
+    )
+    param2.add_constraint(
+        EquationConstraint(param2.variable, param2.variable_expression <= 2)
+    )
+    assert not param1.is_subset(param2)
+    assert param2.is_subset(param1)
 
 
 def test_nat_param_zero_included():

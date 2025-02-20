@@ -9,7 +9,7 @@ __all__ = [
     "PermParam",
 ]
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from collections.abc import Collection, Hashable, Sequence
 from typing import Any, Generic, TypeVar
 
@@ -18,7 +18,13 @@ from fhy_core.constraint import (
     InSetConstraint,
     NotInSetConstraint,
 )
-from fhy_core.expression import IdentifierExpression
+from fhy_core.expression import (
+    Expression,
+    IdentifierExpression,
+    SymbolType,
+    is_satisfiable,
+    replace_identifiers,
+)
 from fhy_core.identifier import Identifier
 
 _H = TypeVar("_H", bound=Hashable)
@@ -61,6 +67,10 @@ class Param(ABC, Generic[_T]):
     def variable_expression(self) -> IdentifierExpression:
         return IdentifierExpression(self._variable)
 
+    @abstractmethod
+    def get_symbol_type(self) -> SymbolType:
+        """Return the symbol type of the parameter."""
+
     def is_set(self) -> bool:
         """Return True if the parameter is set; False otherwise."""
         return self._value is not None
@@ -79,6 +89,81 @@ class Param(ABC, Generic[_T]):
             if not constraint.is_satisfied(value):
                 return False
         return True
+
+    def is_subset(self, other: "Param[_T]") -> bool:
+        """Return if the current parameter is a subset of another parameter."""
+        if not isinstance(other, self.__class__):
+            return False
+
+        if self.is_set() and other.is_set():
+            return self.get_value() == other.get_value()
+
+        constrained_variable = Identifier("var")
+
+        def convert_param_constraints(
+            param_: Param[_T],
+        ) -> Expression | None:
+            if param_.is_set():
+                return IdentifierExpression(constrained_variable).equals(
+                    param_.get_value()
+                )
+
+            constraint_expressions_: list[Expression] = []
+            for constraint_ in param_._constraints:
+                constraint_expression_ = constraint_.convert_to_expression()
+                constraint_expression_ = replace_identifiers(
+                    constraint_expression_, {constraint_.variable: constrained_variable}
+                )
+                constraint_expressions_.append(constraint_expression_)
+            if len(constraint_expressions_) == 0:
+                return None
+            elif len(constraint_expressions_) == 1:
+                return constraint_expressions_[0]
+            else:
+                return Expression.logical_and(*constraint_expressions_)
+
+        self_constraint_expression = convert_param_constraints(self)
+        other_constraint_expression = convert_param_constraints(other)
+
+        # TODO: Match code not passing MyPy... using if-else chain instead
+        #       but fix this in the future when can get to pass
+        # match (self_constraint_expression, other_constraint_expression):
+        #     case (None, None):
+        #         return True
+        #     case (_, None):
+        #         return True
+        #     case (None, _):
+        #         return False
+        #     case (e1, e2):
+        #         all_constraints_expression = Expression.logical_and(
+        #             e1, Expression.logical_not(e2)
+        #         )
+        #         return not is_satisfiable(
+        #             {constrained_variable},
+        #             all_constraints_expression,
+        #             {constrained_variable: self.get_symbol_type()},
+        #         )
+
+        if (
+            self_constraint_expression is not None
+            and other_constraint_expression is not None
+        ):
+            e1 = self_constraint_expression
+            e2 = other_constraint_expression
+            all_constraints_expression = Expression.logical_and(
+                e1, Expression.logical_not(e2)
+            )
+            return not is_satisfiable(
+                {constrained_variable},
+                all_constraints_expression,
+                {constrained_variable: self.get_symbol_type()},
+            )
+        elif other_constraint_expression is None:
+            return True
+        elif self_constraint_expression is None:
+            return False
+        else:
+            return True
 
     def get_value(self) -> _T:
         """Return the parameter value.
@@ -140,6 +225,9 @@ class Param(ABC, Generic[_T]):
 class RealParam(Param[str | float]):
     """Real-valued parameter."""
 
+    def get_symbol_type(self) -> SymbolType:
+        return SymbolType.REAL
+
     def is_constraints_satisfied(self, value: str | float) -> bool:
         return super().is_constraints_satisfied(value)
 
@@ -151,6 +239,9 @@ class RealParam(Param[str | float]):
 
 class IntParam(Param[int]):
     """Integer-valued parameter."""
+
+    def get_symbol_type(self) -> SymbolType:
+        return SymbolType.INT
 
     def is_constraints_satisfied(self, value: int) -> bool:
         return super().is_constraints_satisfied(value)
@@ -177,6 +268,9 @@ class OrdinalParam(Param[Any]):
         if not _is_values_unique_in_sorted_sequence(values):
             raise ValueError("Values must be unique.")
         self._all_values = values
+
+    def get_symbol_type(self) -> SymbolType:
+        return SymbolType.REAL
 
     def set_value(self, value: Any) -> None:
         if value not in self._all_values:
@@ -213,6 +307,9 @@ class CategoricalParam(Param[_H]):
             raise ValueError("Values must be unique.")
         self._categories = set(categories)
 
+    def get_symbol_type(self) -> SymbolType:
+        return SymbolType.REAL
+
     def set_value(self, value: _H) -> None:
         if value not in self._categories:
             raise ValueError("Value is not in the set of allowed categories.")
@@ -247,6 +344,9 @@ class PermParam(Param[tuple[Any, ...]]):
         if not _is_values_unique_in_sequence_without_set(all_values):
             raise ValueError("Values must be unique.")
         self._all_values = tuple(all_values)
+
+    def get_symbol_type(self) -> SymbolType:
+        return SymbolType.REAL
 
     def _is_value_valid_permutation(self, value: Sequence[Any]) -> bool:
         return (
