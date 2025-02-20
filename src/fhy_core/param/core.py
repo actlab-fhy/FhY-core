@@ -158,9 +158,15 @@ class Param(ABC, Generic[_T]):
                 all_constraints_expression,
                 {constrained_variable: self.get_symbol_type()},
             )
-        elif other_constraint_expression is None:
+        elif (
+            self_constraint_expression is not None
+            and other_constraint_expression is None
+        ):
             return True
-        elif self_constraint_expression is None:
+        elif (
+            self_constraint_expression is None
+            and other_constraint_expression is not None
+        ):
             return False
         else:
             return True
