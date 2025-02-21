@@ -1,5 +1,7 @@
 """String utilities."""
 
+__all__ = ["format_comma_separated_list"]
+
 from collections.abc import Iterable
 from typing import Callable, TypeVar
 
@@ -21,4 +23,6 @@ def format_comma_separated_list(
 
     """
     join_char = ", " if add_space else ","
-    return join_char.join(str_func(item) for item in items)
+    return join_char.join(
+        str_func(item) if not isinstance(item, str) else item for item in items
+    )
