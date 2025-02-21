@@ -229,14 +229,23 @@ class Param(ABC, Generic[_T]):
         ]
 
     def __repr__(self) -> str:
+        param_set_repr = self._get_param_set_repr()
+        if param_set_repr:
+            param_set_repr = f"{param_set_repr}, "
         return (
-            f"{self.__class__.__name__}({repr(self._variable)}, "
+            f"{self.__class__.__name__}({repr(self._variable)}, {param_set_repr}"
             f"value={repr(self._value)}, constraints={repr(self._constraints)})"
         )
 
-    @abstractmethod
-    def _get_param_set_str(self) -> str:
-        """Return a string representation of the parameter set."""
+    def _get_param_set_repr(self) -> str:
+        """Return a string representation of the parameter set.
+
+        Note:
+            If the representation of the parameter set is implicit to the class,
+            this method should return an empty string.
+
+        """
+        return ""
 
     def __str__(self) -> str:
         if self.is_set():
@@ -248,6 +257,10 @@ class Param(ABC, Generic[_T]):
                 f"{land.join(str(c) for c in self._constraints)}"
                 "}"
             )
+
+    @abstractmethod
+    def _get_param_set_str(self) -> str:
+        """Return a string representation of the parameter set."""
 
 
 class RealParam(Param[str | float]):
@@ -324,6 +337,9 @@ class OrdinalParam(Param[Any]):
         self.copy_constraints_to_new_param(self, new_param)
         return new_param
 
+    def _get_param_set_repr(self) -> str:
+        return f"{{{format_comma_separated_list(self._all_values)}}}"
+
     def _get_param_set_str(self) -> str:
         return f"{{{format_comma_separated_list(self._all_values, str_func=str)}}}"
 
@@ -364,6 +380,9 @@ class CategoricalParam(Param[_H]):
         new_param = CategoricalParam[_H](self._categories.copy(), self._variable)
         self.copy_constraints_to_new_param(self, new_param)
         return new_param
+
+    def _get_param_set_repr(self) -> str:
+        return f"{{{format_comma_separated_list(self._categories)}}}"
 
     def _get_param_set_str(self) -> str:
         return f"{{{format_comma_separated_list(self._categories, str_func=str)}}}"
@@ -416,6 +435,9 @@ class PermParam(Param[tuple[Any, ...]]):
         new_param = PermParam(self._all_values, self._variable)
         self.copy_constraints_to_new_param(self, new_param)
         return new_param
+
+    def _get_param_set_repr(self) -> str:
+        return f"{{{format_comma_separated_list(self._all_values)}}}"
 
     def _get_param_set_str(self) -> str:
         return f"{{{format_comma_separated_list(self._all_values, str_func=str)}}}"
