@@ -10,6 +10,8 @@ __all__ = [
 from abc import ABC, abstractmethod
 from typing import Any
 
+from fhy_core.utils import format_comma_separated_list
+
 from .expression import (
     BinaryExpression,
     BinaryOperation,
@@ -18,6 +20,7 @@ from .expression import (
     LiteralExpression,
     LiteralType,
     copy_expression,
+    pformat_expression,
     simplify_expression,
 )
 from .identifier import Identifier
@@ -63,6 +66,12 @@ class Constraint(ABC):
 
         """
 
+    @abstractmethod
+    def __repr__(self) -> str: ...
+
+    @abstractmethod
+    def __str__(self) -> str: ...
+
 
 class EquationConstraint(Constraint):
     """Represents an equation constraint."""
@@ -93,6 +102,12 @@ class EquationConstraint(Constraint):
 
     def convert_to_expression(self) -> Expression:
         return copy_expression(self._expression)
+
+    def __repr__(self) -> str:
+        return repr(self._expression)
+
+    def __str__(self) -> str:
+        return pformat_expression(self._expression)
 
 
 class InSetConstraint(Constraint):
@@ -138,6 +153,17 @@ class InSetConstraint(Constraint):
             LiteralExpression(value),
         )
 
+    def __repr__(self) -> str:
+        return repr(self._valid_values)
+
+    def __str__(self) -> str:
+        return (
+            f"{self.variable} in "
+            "{"
+            f"{format_comma_separated_list(self._valid_values, str_func=str)}"
+            "}"
+        )
+
 
 class NotInSetConstraint(Constraint):
     """Represents a not-in-set constraint."""
@@ -180,4 +206,15 @@ class NotInSetConstraint(Constraint):
             BinaryOperation.NOT_EQUAL,
             variable,
             LiteralExpression(value),
+        )
+
+    def __repr__(self) -> str:
+        return repr(self._invalid_values)
+
+    def __str__(self) -> str:
+        return (
+            f"{self.variable} not in "
+            "{"
+            f"{format_comma_separated_list(self._invalid_values, str_func=str)}"
+            "}"
         )
