@@ -26,6 +26,7 @@ from fhy_core.expression import (
     replace_identifiers,
 )
 from fhy_core.identifier import Identifier
+from fhy_core.utils import format_comma_separated_list
 
 _H = TypeVar("_H", bound=Hashable)
 _T = TypeVar("_T")
@@ -227,6 +228,21 @@ class Param(ABC, Generic[_T]):
             constraint.copy() for constraint in param._constraints
         ]
 
+    @abstractmethod
+    def _get_param_set_str(self) -> str:
+        """Return a string representation of the parameter set."""
+
+    def __str__(self) -> str:
+        if self.is_set():
+            return f"{{{self.get_value()}}}"
+        else:
+            land = " /\\ "
+            return (
+                "{" + f"{self._variable} in {self._get_param_set_str()} | "
+                f"{land.join(str(c) for c in self._constraints)}"
+                "}"
+            )
+
 
 class RealParam(Param[str | float]):
     """Real-valued parameter."""
@@ -242,6 +258,9 @@ class RealParam(Param[str | float]):
             raise ValueError("Value must be a string or a float.")
         return super().set_value(value)
 
+    def _get_param_set_str(self) -> str:
+        return "R"
+
 
 class IntParam(Param[int]):
     """Integer-valued parameter."""
@@ -256,6 +275,9 @@ class IntParam(Param[int]):
         if not isinstance(value, int):
             raise ValueError("Value must be an integer.")
         return super().set_value(value)
+
+    def _get_param_set_str(self) -> str:
+        return "Z"
 
 
 class OrdinalParam(Param[Any]):
@@ -296,6 +318,9 @@ class OrdinalParam(Param[Any]):
         self.copy_constraints_to_new_param(self, new_param)
         return new_param
 
+    def _get_param_set_str(self) -> str:
+        return f"{{{format_comma_separated_list(self._all_values, str_func=str)}}}"
+
 
 class CategoricalParam(Param[_H]):
     """Categorical parameter.
@@ -333,6 +358,9 @@ class CategoricalParam(Param[_H]):
         new_param = CategoricalParam[_H](self._categories.copy(), self._variable)
         self.copy_constraints_to_new_param(self, new_param)
         return new_param
+
+    def _get_param_set_str(self) -> str:
+        return f"{{{format_comma_separated_list(self._categories, str_func=str)}}}"
 
 
 class PermParam(Param[tuple[Any, ...]]):
@@ -382,3 +410,6 @@ class PermParam(Param[tuple[Any, ...]]):
         new_param = PermParam(self._all_values, self._variable)
         self.copy_constraints_to_new_param(self, new_param)
         return new_param
+
+    def _get_param_set_str(self) -> str:
+        return f"{{{format_comma_separated_list(self._all_values, str_func=str)}}}"
