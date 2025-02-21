@@ -1,6 +1,6 @@
 """FhY compiler core utilities."""
 
-__version__ = "0.0.2"
+__version__ = "0.0.3"
 
 
 from .constraint import (
@@ -68,6 +68,7 @@ from .utils import (
     PartiallyOrderedSet,
     Stack,
     StrEnum,
+    format_comma_separated_list,
     get_array_size_in_bits,
     invert_dict,
     invert_frozen_dict,

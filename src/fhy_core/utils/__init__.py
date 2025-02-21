@@ -9,6 +9,7 @@ __all__ = [
     "PartiallyOrderedSet",
     "Stack",
     "StrEnum",
+    "format_comma_separated_list",
 ]
 
 from .array_utils import get_array_size_in_bits
