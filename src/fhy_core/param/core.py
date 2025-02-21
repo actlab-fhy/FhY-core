@@ -228,6 +228,12 @@ class Param(ABC, Generic[_T]):
             constraint.copy() for constraint in param._constraints
         ]
 
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}({repr(self._variable)}, "
+            f"value={repr(self._value)}, constraints={repr(self._constraints)})"
+        )
+
     @abstractmethod
     def _get_param_set_str(self) -> str:
         """Return a string representation of the parameter set."""
