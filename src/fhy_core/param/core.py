@@ -86,10 +86,15 @@ class Param(ABC, Generic[_T]):
             True if the value satisfies all constraints; False otherwise.
 
         """
+        return self._is_constraints_satisfied_with_failing_constraint(value)[0]
+
+    def _is_constraints_satisfied_with_failing_constraint(
+        self, value: Any
+    ) -> tuple[bool, Constraint | None]:
         for constraint in self._constraints:
             if not constraint.is_satisfied(value):
-                return False
-        return True
+                return False, constraint
+        return True, None
 
     def is_subset(self, other: "Param[_T]") -> bool:
         """Return if the current parameter is a subset of another parameter."""
@@ -193,8 +198,13 @@ class Param(ABC, Generic[_T]):
             ValueError: If the value is not valid.
 
         """
-        if not self.is_constraints_satisfied(value):
-            raise ValueError("Parameter value does not satisfy constraints.")
+        is_constraint_satisfied, failing_constraint = (
+            self._is_constraints_satisfied_with_failing_constraint(value)
+        )
+        if not is_constraint_satisfied:
+            raise ValueError(
+                f"Value does not satisfy the constraint: {failing_constraint}"
+            )
         self._value = value
 
     def add_constraint(self, constraint: Constraint) -> None:
