@@ -203,7 +203,7 @@ class Param(ABC, Generic[_T]):
         )
         if not is_constraint_satisfied:
             raise ValueError(
-                f"Value does not satisfy the constraint: {failing_constraint}"
+                f"Value ({value}) does not satisfy the constraint: {failing_constraint}"
             )
         self._value = value
 
