@@ -51,6 +51,39 @@ class CoreDataType(StrEnum):
     COMPLEX128 = "complex128"
 
 
+def get_core_data_type_bit_width(core_data_type: CoreDataType) -> int:
+    """Get the bit width of a core data type.
+
+    Args:
+        core_data_type: Core data type.
+
+    Returns:
+        Bit width of the core data type
+
+    """
+    match core_data_type:
+        case CoreDataType.UINT8 | CoreDataType.INT8:
+            return 8
+        case CoreDataType.UINT16 | CoreDataType.INT16 | CoreDataType.FLOAT16:
+            return 16
+        case (
+            CoreDataType.UINT32
+            | CoreDataType.INT32
+            | CoreDataType.FLOAT32
+            | CoreDataType.COMPLEX32
+        ):
+            return 32
+        case (
+            CoreDataType.UINT64
+            | CoreDataType.INT64
+            | CoreDataType.FLOAT64
+            | CoreDataType.COMPLEX64
+        ):
+            return 64
+        case CoreDataType.COMPLEX128:
+            return 128
+
+
 def _define_uint_data_type_lattice() -> Lattice[CoreDataType]:
     lattice = Lattice[CoreDataType]()
     lattice.add_element(CoreDataType.UINT8)
