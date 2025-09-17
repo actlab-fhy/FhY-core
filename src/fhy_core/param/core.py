@@ -13,6 +13,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Collection, Hashable, Sequence
 from typing import Any, Generic, TypeVar
 
+from typing_extensions import Self
+
 from fhy_core.constraint import (
     Constraint,
     InSetConstraint,
@@ -216,7 +218,7 @@ class Param(ABC, Generic[_T]):
         """
         self._constraints.append(constraint)
 
-    def copy(self) -> "Param[_T]":
+    def copy(self) -> Self:
         """Return a shallow copy of the parameter."""
         new_param = self.__class__(self._variable)
         new_param._value = self._value
