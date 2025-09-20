@@ -16,14 +16,14 @@ from fhy_core.param import (
 def test_param_is_not_set_after_initialization():
     """Test that the value of a parameter is not set after initialization."""
     param = RealParam()
-    assert not param.is_set()
+    assert not param.is_value_set()
 
 
 def test_param_is_set_after_setting_value():
     """Test that the value of a parameter is set after setting a value."""
     param = RealParam()
     param.set_value(1.0)
-    assert param.is_set()
+    assert param.is_value_set()
 
 
 def test_param_get_value_fails_when_not_set():
@@ -149,9 +149,9 @@ def test_nat_param_zero_included():
     """Test that a natural number parameter with zero included can be set."""
     param = NatParam()
     param.set_value(0)
-    assert param.is_set()
+    assert param.is_value_set()
     param.set_value(1)
-    assert param.is_set()
+    assert param.is_value_set()
     with pytest.raises(ValueError):
         param.set_value(-1)
 
@@ -160,7 +160,7 @@ def test_nat_param_zero_excluded():
     """Test that a natural number parameter with zero excluded can be set."""
     param = NatParam(is_zero_included=False)
     param.set_value(1)
-    assert param.is_set()
+    assert param.is_value_set()
     with pytest.raises(ValueError):
         param.set_value(0)
     with pytest.raises(ValueError):
@@ -170,7 +170,7 @@ def test_nat_param_zero_excluded():
 def test_ordinal_param_initialization():
     """Test that an ordinal parameter can be initialized."""
     param = OrdinalParam([5, 6, 7])
-    assert not param.is_set()
+    assert not param.is_value_set()
 
 
 def test_ordinal_param_initialization_fails_with_non_unique_values():
@@ -187,9 +187,9 @@ def ordinal_param_123() -> OrdinalParam:
 def test_set_ordinal_param_value(ordinal_param_123: OrdinalParam):
     """Test that an ordinal parameter value can be set."""
     ordinal_param_123.set_value(1)
-    assert ordinal_param_123.is_set()
+    assert ordinal_param_123.is_value_set()
     ordinal_param_123.set_value(3)
-    assert ordinal_param_123.is_set()
+    assert ordinal_param_123.is_value_set()
 
 
 def test_set_ordinal_param_value_fails_with_invalid_value(
@@ -225,7 +225,7 @@ def test_adding_invalid_constraint_to_ordinal_param_fails(
 def test_categorical_param_initialization():
     """Test that a categorical parameter can be initialized."""
     param = CategoricalParam({"a", "b", "c"})
-    assert not param.is_set()
+    assert not param.is_value_set()
 
 
 @pytest.fixture()
@@ -236,9 +236,9 @@ def categorical_param_abc() -> CategoricalParam:
 def test_set_categorical_param_value(categorical_param_abc: CategoricalParam):
     """Test that a categorical parameter value can be set."""
     categorical_param_abc.set_value("a")
-    assert categorical_param_abc.is_set()
+    assert categorical_param_abc.is_value_set()
     categorical_param_abc.set_value("c")
-    assert categorical_param_abc.is_set()
+    assert categorical_param_abc.is_value_set()
 
 
 def test_set_categorical_param_value_fails_with_invalid_value(
@@ -277,7 +277,7 @@ def test_adding_invalid_constraint_to_categorical_param_fails(
 def test_perm_param_initialization():
     """Test that a permutation parameter can be initialized."""
     param = PermParam(["n", "c", "h", "w"])
-    assert not param.is_set()
+    assert not param.is_value_set()
 
 
 def test_perm_param_initialization_fails_with_non_unique_values():
@@ -294,7 +294,7 @@ def perm_param_nchw() -> PermParam:
 def test_set_perm_param_value(perm_param_nchw: PermParam):
     """Test that a permutation parameter value can be set."""
     perm_param_nchw.set_value(["c", "n", "w", "h"])
-    assert perm_param_nchw.is_set()
+    assert perm_param_nchw.is_value_set()
 
 
 def test_set_perm_param_value_fails_with_invalid_value(perm_param_nchw: PermParam):

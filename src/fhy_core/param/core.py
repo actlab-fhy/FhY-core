@@ -74,8 +74,8 @@ class Param(ABC, Generic[_T]):
     def get_symbol_type(self) -> SymbolType:
         """Return the symbol type of the parameter."""
 
-    def is_set(self) -> bool:
-        """Return True if the parameter is set; False otherwise."""
+    def is_value_set(self) -> bool:
+        """Return True if the parameter value is set; False otherwise."""
         return self._value is not None
 
     def is_constraints_satisfied(self, value: Any) -> bool:
@@ -103,7 +103,7 @@ class Param(ABC, Generic[_T]):
         if not isinstance(other, self.__class__):
             return False
 
-        if self.is_set() and other.is_set():
+        if self.is_value_set() and other.is_value_set():
             return self.get_value() == other.get_value()
 
         constrained_variable = Identifier("var")
@@ -111,7 +111,7 @@ class Param(ABC, Generic[_T]):
         def convert_param_constraints(
             param_: Param[_T],
         ) -> Expression | None:
-            if param_.is_set():
+            if param_.is_value_set():
                 return IdentifierExpression(constrained_variable).equals(
                     param_.get_value()
                 )
@@ -260,7 +260,7 @@ class Param(ABC, Generic[_T]):
         return ""
 
     def __str__(self) -> str:
-        if self.is_set():
+        if self.is_value_set():
             return f"{{{self.get_value()}}}"
         else:
             land = " /\\ "
