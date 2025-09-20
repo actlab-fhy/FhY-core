@@ -240,6 +240,9 @@ class Param(ABC, Generic[_T]):
             constraint.copy() for constraint in param._constraints
         ]
 
+    def __copy__(self) -> Self:
+        return self.copy()
+
     def __repr__(self) -> str:
         param_set_repr = self._get_param_set_repr()
         if param_set_repr:

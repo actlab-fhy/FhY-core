@@ -10,6 +10,8 @@ __all__ = [
 from abc import ABC, abstractmethod
 from typing import Any
 
+from typing_extensions import Self
+
 from fhy_core.utils import format_comma_separated_list
 
 from .expression import (
@@ -54,7 +56,7 @@ class Constraint(ABC):
         """
 
     @abstractmethod
-    def copy(self) -> "Constraint":
+    def copy(self) -> Self:
         """Return a shallow copy of the constraint."""
 
     @abstractmethod
@@ -65,6 +67,9 @@ class Constraint(ABC):
             ValueError: If the constraint cannot be converted to an expression.
 
         """
+
+    def __copy__(self) -> Self:
+        return self.copy()
 
     @abstractmethod
     def __repr__(self) -> str: ...
