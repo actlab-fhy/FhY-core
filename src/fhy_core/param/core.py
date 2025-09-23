@@ -13,8 +13,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Collection, Hashable, Sequence
 from typing import Any, Generic, TypeVar
 
-from typing_extensions import Self
-
 from fhy_core.constraint import (
     Constraint,
     InSetConstraint,
@@ -28,7 +26,7 @@ from fhy_core.expression import (
     replace_identifiers,
 )
 from fhy_core.identifier import Identifier
-from fhy_core.utils import format_comma_separated_list
+from fhy_core.utils import Self, format_comma_separated_list
 
 _H = TypeVar("_H", bound=Hashable)
 _T = TypeVar("_T")

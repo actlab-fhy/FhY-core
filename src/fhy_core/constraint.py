@@ -10,9 +10,7 @@ __all__ = [
 from abc import ABC, abstractmethod
 from typing import Any
 
-from typing_extensions import Self
-
-from fhy_core.utils import format_comma_separated_list
+from fhy_core.utils import Self, format_comma_separated_list
 
 from .expression import (
     BinaryExpression,

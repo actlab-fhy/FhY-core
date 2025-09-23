@@ -7,6 +7,7 @@ __all__ = [
     "invert_frozen_dict",
     "Lattice",
     "PartiallyOrderedSet",
+    "Self",
     "Stack",
     "StrEnum",
     "format_comma_separated_list",
@@ -17,5 +18,6 @@ from .dict_utils import invert_dict, invert_frozen_dict
 from .enum import IntEnum, StrEnum
 from .lattice import Lattice
 from .poset import PartiallyOrderedSet
+from .self import Self
 from .stack import Stack
 from .str_utils import format_comma_separated_list
