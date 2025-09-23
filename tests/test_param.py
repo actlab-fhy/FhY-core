@@ -66,6 +66,32 @@ def test_int_param_value_set_fails_with_invalid_value():
         param.set_value(1.0)
 
 
+def test_create_real_param_with_value():
+    """Test that a real parameter can be created with a value."""
+    param = RealParam.with_value(1.0)
+    assert param.is_value_set()
+    assert param.get_value() == 1.0
+
+
+def test_create_real_param_with_value_fails_with_invalid_value():
+    """Test that creating a real parameter with an invalid value fails."""
+    with pytest.raises(ValueError):
+        RealParam.with_value("invalid")
+
+
+def test_create_int_param_with_value():
+    """Test that an integer parameter can be created with a value."""
+    param = IntParam.with_value(1)
+    assert param.is_value_set()
+    assert param.get_value() == 1
+
+
+def test_create_int_param_with_value_fails_with_invalid_value():
+    """Test that creating an integer parameter with an invalid value fails."""
+    with pytest.raises(ValueError):
+        IntParam.with_value(1.2)
+
+
 def test_add_and_check_real_param_constraints():
     """Test that a real constraint can be added and checked."""
     param = RealParam()
@@ -371,3 +397,7 @@ def test_copied_param_keeps_constraints(ordinal_param_123: OrdinalParam):
     assert ordinal_param_copy.is_constraints_satisfied(1)
     assert ordinal_param_copy.is_constraints_satisfied(2)
     assert not ordinal_param_copy.is_constraints_satisfied(3)
+
+
+# TODO: Test the repr method.
+# TODO: Update tests that check exceptions to match exception messages.

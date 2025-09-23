@@ -78,6 +78,23 @@ class Param(ABC, Generic[_T]):
         """Return True if the parameter value is set; False otherwise."""
         return self._value is not None
 
+    @classmethod
+    def with_value(cls: type[Self], value: _T, name: Identifier | None = None) -> Self:
+        """Create a parameter with a fixed value.
+
+        Args:
+            value: Parameter value.
+            name: Optional parameter name. If not provided, a default name
+                will be used.
+
+        Returns:
+            Parameter with the specified fixed value.
+
+        """
+        param = cls(name)
+        param.set_value(value)
+        return param
+
     def is_constraints_satisfied(self, value: Any) -> bool:
         """Check if the value satisfies all constraints.
 
@@ -290,6 +307,11 @@ class RealParam(Param[str | float]):
     def set_value(self, value: str | float) -> None:
         if not isinstance(value, (str, float)):
             raise ValueError("Value must be a string or a float.")
+        if isinstance(value, str):
+            try:
+                float(value)
+            except ValueError as e:
+                raise ValueError("String value must be a number.") from e
         return super().set_value(value)
 
     def _get_param_set_str(self) -> str:
