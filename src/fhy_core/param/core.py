@@ -15,6 +15,7 @@ from typing import Any, Generic, TypeVar
 
 from fhy_core.constraint import (
     Constraint,
+    EquationConstraint,
     InSetConstraint,
     NotInSetConstraint,
 )
@@ -293,6 +294,32 @@ class Param(ABC, Generic[_T]):
         """Return a string representation of the parameter set."""
 
 
+def _create_lower_bound_constraint(
+    param_variable: Identifier,
+    lower_bound: int | float | str,
+    is_inclusive: bool = True,
+) -> EquationConstraint:
+    param_variable_expression = IdentifierExpression(param_variable)
+    if is_inclusive:
+        constraint_equation = param_variable_expression >= lower_bound
+    else:
+        constraint_equation = param_variable_expression > lower_bound
+    return EquationConstraint(param_variable, constraint_equation)
+
+
+def _create_upper_bound_constraint(
+    param_variable: Identifier,
+    upper_bound: int | float | str,
+    is_inclusive: bool = True,
+) -> EquationConstraint:
+    param_variable_expression = IdentifierExpression(param_variable)
+    if is_inclusive:
+        constraint_equation = param_variable_expression <= upper_bound
+    else:
+        constraint_equation = param_variable_expression < upper_bound
+    return EquationConstraint(param_variable, constraint_equation)
+
+
 class RealParam(Param[str | float]):
     """Real-valued parameter."""
 
@@ -315,6 +342,119 @@ class RealParam(Param[str | float]):
     def _get_param_set_str(self) -> str:
         return "R"
 
+    @classmethod
+    def between(
+        cls: type[Self],
+        lower_bound: float | str,
+        upper_bound: float | str,
+        name: Identifier | None = None,
+        is_lower_inclusive: bool = True,
+        is_upper_inclusive: bool = True,
+    ) -> Self:
+        """Create a bounded real-valued parameter.
+
+        Args:
+            lower_bound: Lower bound of the parameter.
+            upper_bound: Upper bound of the parameter.
+            name: Optional parameter name. If not provided, a default name
+                will be used.
+            is_lower_inclusive: Whether the lower bound is inclusive.
+            is_upper_inclusive: Whether the upper bound is inclusive.
+
+        Returns:
+            Bounded real-valued parameter.
+
+        """
+        if float(lower_bound) > float(upper_bound) or (
+            float(lower_bound) == float(upper_bound)
+            and not (is_lower_inclusive and is_upper_inclusive)
+        ):
+            raise ValueError("Lower bound must be less than or equal to upper bound.")
+        param = cls(name)
+        param.add_lower_bound_constraint(lower_bound, is_lower_inclusive)
+        param.add_upper_bound_constraint(upper_bound, is_upper_inclusive)
+        return param
+
+    @classmethod
+    def with_lower_bound(
+        cls: type[Self],
+        lower_bound: float | str,
+        name: Identifier | None = None,
+        is_inclusive: bool = True,
+    ) -> Self:
+        """Create a real-valued parameter with a lower bound.
+
+        Args:
+            lower_bound: Lower bound of the parameter.
+            name: Optional parameter name. If not provided, a default name
+                will be used.
+            is_inclusive: Whether the lower bound is inclusive.
+
+        Returns:
+            Real-valued parameter with a lower bound.
+
+        """
+        param = cls(name)
+        param.add_lower_bound_constraint(lower_bound, is_inclusive)
+        return param
+
+    @classmethod
+    def with_upper_bound(
+        cls: type[Self],
+        upper_bound: float | str,
+        name: Identifier | None = None,
+        is_inclusive: bool = True,
+    ) -> Self:
+        """Create a real-valued parameter with an upper bound.
+
+        Args:
+            upper_bound: Upper bound of the parameter.
+            name: Optional parameter name. If not provided, a default name
+                will be used.
+            is_inclusive: Whether the upper bound is inclusive.
+
+        Returns:
+            Real-valued parameter with an upper bound.
+
+        """
+        param = cls(name)
+        param.add_upper_bound_constraint(upper_bound, is_inclusive)
+        return param
+
+    def add_upper_bound_constraint(
+        self,
+        upper_bound: float | str,
+        is_inclusive: bool = True,
+    ) -> None:
+        """Add an upper bound constraint to the parameter.
+
+        Args:
+            upper_bound: Upper bound of the parameter.
+            is_inclusive: Whether the upper bound is inclusive.
+
+        """
+        upper_bound_constraint = _create_upper_bound_constraint(
+            self.variable, upper_bound, is_inclusive
+        )
+        self.add_constraint(upper_bound_constraint)
+
+    def add_lower_bound_constraint(
+        self,
+        lower_bound: float | str,
+        is_inclusive: bool = True,
+    ) -> None:
+        """Add a lower bound constraint to the parameter.
+
+        Args:
+            lower_bound: Lower bound of the parameter.
+            is_inclusive: Whether the lower bound is inclusive.
+
+        """
+        lower_bound_constraint = _create_lower_bound_constraint(
+            self.variable, lower_bound, is_inclusive
+        )
+        self.add_constraint(lower_bound_constraint)
+
 
 class IntParam(Param[int]):
     """Integer-valued parameter."""
@@ -332,6 +472,119 @@ class IntParam(Param[int]):
 
     def _get_param_set_str(self) -> str:
         return "Z"
+
+    @classmethod
+    def between(
+        cls: type[Self],
+        lower_bound: int,
+        upper_bound: int,
+        name: Identifier | None = None,
+        is_lower_inclusive: bool = True,
+        is_upper_inclusive: bool = True,
+    ) -> Self:
+        """Create a bounded integer-valued parameter.
+
+        Args:
+            lower_bound: Lower bound of the parameter.
+            upper_bound: Upper bound of the parameter.
+            name: Optional parameter name. If not provided, a default name
+                will be used.
+            is_lower_inclusive: Whether the lower bound is inclusive.
+            is_upper_inclusive: Whether the upper bound is inclusive.
+
+        Returns:
+            Bounded integer-valued parameter.
+
+        """
+        if lower_bound > upper_bound or (
+            lower_bound == upper_bound
+            and not (is_lower_inclusive and is_upper_inclusive)
+        ):
+            raise ValueError("Lower bound must be less than or equal to upper bound.")
+        param = cls(name)
+        param.add_lower_bound_constraint(lower_bound, is_lower_inclusive)
+        param.add_upper_bound_constraint(upper_bound, is_upper_inclusive)
+        return param
+
+    @classmethod
+    def with_lower_bound(
+        cls: type[Self],
+        lower_bound: int,
+        name: Identifier | None = None,
+        is_inclusive: bool = True,
+    ) -> Self:
+        """Create an integer-valued parameter with a lower bound.
+
+        Args:
+            lower_bound: Lower bound of the parameter.
+            name: Optional parameter name. If not provided, a default name
+                will be used.
+            is_inclusive: Whether the lower bound is inclusive.
+
+        Returns:
+            Integer-valued parameter with a lower bound.
+
+        """
+        param = cls(name)
+        param.add_lower_bound_constraint(lower_bound, is_inclusive)
+        return param
+
+    @classmethod
+    def with_upper_bound(
+        cls: type[Self],
+        upper_bound: int,
+        name: Identifier | None = None,
+        is_inclusive: bool = True,
+    ) -> Self:
+        """Create an integer-valued parameter with an upper bound.
+
+        Args:
+            upper_bound: Upper bound of the parameter.
+            name: Optional parameter name. If not provided, a default name
+                will be used.
+            is_inclusive: Whether the upper bound is inclusive.
+
+        Returns:
+            Integer-valued parameter with an upper bound.
+
+        """
+        param = cls(name)
+        param.add_upper_bound_constraint(upper_bound, is_inclusive)
+        return param
+
+    def add_upper_bound_constraint(
+        self,
+        upper_bound: int,
+        is_inclusive: bool = True,
+    ) -> None:
+        """Add an upper bound constraint to the parameter.
+
+        Args:
+            upper_bound: Upper bound of the parameter.
+            is_inclusive: Whether the upper bound is inclusive.
+
+        """
+        upper_bound_constraint = _create_upper_bound_constraint(
+            self.variable, upper_bound, is_inclusive
+        )
+        self.add_constraint(upper_bound_constraint)
+
+    def add_lower_bound_constraint(
+        self,
+        lower_bound: int,
+        is_inclusive: bool = True,
+    ) -> None:
+        """Add a lower bound constraint to the parameter.
+
+        Args:
+            lower_bound: Lower bound of the parameter.
+            is_inclusive: Whether the lower bound is inclusive.
+
+        """
+        lower_bound_constraint = _create_lower_bound_constraint(
+            self.variable, lower_bound, is_inclusive
+        )
+        self.add_constraint(lower_bound_constraint)
 
 
 class OrdinalParam(Param[Any]):
