@@ -656,6 +656,10 @@ class CategoricalParam(Param[_H]):
             raise ValueError("Value is not in the set of allowed categories.")
         return super().set_value(value)
 
+    def get_possible_values(self) -> set[_H]:
+        """Return the set of possible values for the parameter."""
+        return self._categories.copy()
+
     def add_constraint(self, constraint: Constraint) -> None:
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
             raise ValueError(
