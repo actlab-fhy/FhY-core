@@ -88,7 +88,7 @@ class EquationConstraint(Constraint):
         self._expression = expression
 
     def is_satisfied(self, value: Expression | LiteralType) -> bool:
-        if isinstance(value, LiteralType):
+        if isinstance(value, (str, float, int, bool)):
             value = LiteralExpression(value)
         result = simplify_expression(self._expression, {self.variable: value})
         return (
@@ -160,10 +160,8 @@ class InSetConstraint(Constraint):
 
     def __str__(self) -> str:
         return (
-            f"{self.variable} in "
-            "{"
-            f"{format_comma_separated_list(self._valid_values, str_func=str)}"
-            "}"
+            f"{self.variable} in {{"
+            f"{format_comma_separated_list(self._valid_values, str_func=str)}}}"
         )
 
 
@@ -214,8 +212,6 @@ class NotInSetConstraint(Constraint):
 
     def __str__(self) -> str:
         return (
-            f"{self.variable} not in "
-            "{"
-            f"{format_comma_separated_list(self._invalid_values, str_func=str)}"
-            "}"
+            f"{self.variable} not in {{"
+            f"{format_comma_separated_list(self._invalid_values, str_func=str)}}}"
         )

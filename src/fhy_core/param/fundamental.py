@@ -2,6 +2,8 @@
 
 __all__ = ["NatParam"]
 
+from typing import Any
+
 from fhy_core.constraint import EquationConstraint
 from fhy_core.expression import (
     BinaryExpression,
@@ -20,7 +22,10 @@ class NatParam(IntParam):
     _is_zero_included: bool
 
     def __init__(
-        self, name: Identifier | None = None, is_zero_included: bool = True
+        self,
+        name: Identifier | None = None,
+        is_zero_included: bool = True,
+        **kwargs: Any,
     ) -> None:
         super().__init__(name)
         self._is_zero_included = is_zero_included
@@ -50,23 +55,50 @@ class NatParam(IntParam):
     def add_lower_bound_constraint(
         self, lower_bound: int, is_inclusive: bool = True
     ) -> None:
-        if lower_bound < 0 and not self._is_zero_included:
-            raise ValueError("Lower bound must be non-negative.")
-        if lower_bound < 1 and self._is_zero_included and not is_inclusive:
+        if self._is_zero_included:
+            if lower_bound < 0:
+                raise ValueError("Lower bound must be non-negative.")
+            if not is_inclusive and lower_bound < 1:
+                raise ValueError(
+                    "Lower bound must be at least 1 if zero is included and "
+                    "bound is exclusive."
+                )
+        elif is_inclusive:
+            if lower_bound < 1:
+                raise ValueError(
+                    "Lower bound must be at least 1 when zero is not included."
+                )
+        elif lower_bound < 0:
             raise ValueError(
-                "Lower bound must be at least 1 if zero is included and "
-                "bound is exclusive."
+                "Lower bound must be non-negative when zero is not included "
+                "and bound is exclusive."
             )
+
         return super().add_lower_bound_constraint(lower_bound, is_inclusive)
 
     def add_upper_bound_constraint(
         self, upper_bound: int, is_inclusive: bool = True
     ) -> None:
-        if upper_bound < 0 and not self._is_zero_included:
-            raise ValueError("Upper bound must be non-negative.")
-        if upper_bound < 1 and self._is_zero_included and not is_inclusive:
+        if self._is_zero_included:
+            if is_inclusive:
+                if upper_bound < 0:
+                    raise ValueError(
+                        "Upper bound must be non-negative when zero is included."
+                    )
+            elif upper_bound < 1:
+                raise ValueError(
+                    "Upper bound must be at least 1 if zero is included and "
+                    "bound is exclusive."
+                )
+        elif is_inclusive:
+            if upper_bound < 1:
+                raise ValueError(
+                    "Upper bound must be at least 1 when zero is not included."
+                )
+        elif upper_bound < 2:  # noqa: PLR2004
             raise ValueError(
-                "Upper bound must be at least 1 if zero is included and "
-                "bound is exclusive."
+                "Upper bound must be at least 2 when zero is not included "
+                "and bound is exclusive."
             )
+
         return super().add_upper_bound_constraint(upper_bound, is_inclusive)

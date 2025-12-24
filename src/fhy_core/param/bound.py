@@ -93,7 +93,10 @@ class BoundIntParam(IntParam):
     _prefer_inclusive: bool
 
     def __init__(
-        self, name: Identifier | None = None, prefer_inclusive: bool = True
+        self,
+        name: Identifier | None = None,
+        prefer_inclusive: bool = True,
+        **kwargs: Any,
     ) -> None:
         super().__init__(name)
         self._prefer_inclusive = prefer_inclusive
@@ -357,5 +360,8 @@ class BoundNatParam(BoundIntParam, NatParam):
         is_zero_included: bool = True,
         prefer_inclusive: bool = True,
     ) -> None:
-        NatParam.__init__(self, name, is_zero_included)
-        BoundIntParam.__init__(self, name, prefer_inclusive=prefer_inclusive)
+        super().__init__(
+            name=name,
+            is_zero_included=is_zero_included,
+            prefer_inclusive=prefer_inclusive,
+        )

@@ -20,14 +20,14 @@ from fhy_core.param import (
 T = TypeVar("T")
 
 
-def _assert_all_satisfied(param: Param[T], values: list[T]) -> bool:
+def _assert_all_satisfied(param: Param[T], values: list[T]) -> None:
     for v in values:
         assert param.is_constraints_satisfied(
             v
         ), f"Value {v} should satisfy constraints of parameter {param}"
 
 
-def _assert_none_satisfied(param: Param[T], values: list[T]) -> bool:
+def _assert_none_satisfied(param: Param[T], values: list[T]) -> None:
     for v in values:
         assert not param.is_constraints_satisfied(
             v
@@ -77,10 +77,10 @@ def test_int_param_get_symbol_type(default_int_param):
     assert default_int_param.get_symbol_type() == SymbolType.INT
 
 
-def test_real_param_value_set_fails_with_invalid_value(default_int_param):
+def test_real_param_value_set_fails_with_invalid_value(default_real_param):
     """Test that setting a real parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        default_int_param.set_value([])
+        default_real_param.set_value([])
 
 
 def test_int_param_value_set_fails_with_invalid_value(default_int_param):
@@ -150,7 +150,7 @@ def test_add_and_check_int_param_constraints(default_int_param):
         default_int_param.set_value(12)
 
 
-def test_set_real_param_and_real_param_is_subet():
+def test_set_real_param_and_real_param_is_subset():
     """Test subset relationship between real parameters where they could be set."""
     param1 = RealParam()
     param1.set_value(1.0)
