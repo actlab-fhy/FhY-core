@@ -4,9 +4,34 @@ import pytest
 from fhy_core.types import (
     CoreDataType,
     TypeQualifier,
+    get_core_data_type_bit_width,
     promote_core_data_types,
     promote_type_qualifiers,
 )
+
+
+@pytest.mark.parametrize(
+    "core_data_type, expected_bit_width",
+    [
+        (CoreDataType.UINT8, 8),
+        (CoreDataType.UINT16, 16),
+        (CoreDataType.UINT32, 32),
+        (CoreDataType.UINT64, 64),
+        (CoreDataType.INT8, 8),
+        (CoreDataType.INT16, 16),
+        (CoreDataType.INT32, 32),
+        (CoreDataType.INT64, 64),
+        (CoreDataType.FLOAT16, 16),
+        (CoreDataType.FLOAT32, 32),
+        (CoreDataType.FLOAT64, 64),
+        (CoreDataType.COMPLEX32, 32),
+        (CoreDataType.COMPLEX64, 64),
+        (CoreDataType.COMPLEX128, 128),
+    ],
+)
+def test_get_core_data_type_bit_width(core_data_type, expected_bit_width):
+    """Test get_core_data_type_bit_width function with various core data types."""
+    assert get_core_data_type_bit_width(core_data_type) == expected_bit_width
 
 
 @pytest.mark.parametrize(

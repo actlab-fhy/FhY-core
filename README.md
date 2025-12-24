@@ -10,7 +10,6 @@
 | Constraint                               | General logical constraint.                                            |
 | Parameter                                | Real, integer, orginal, categorical, and permutation parameters.       |
 | Types                                    | Core type system for the compiler.                                     |
-| Memory Instance                          | Extensible record for an instance of data in memory.                   |
 | Symbol Table                             | Nested symbol table.                                                   |
 | _General Utility_ - Python 3.11 Enums    | String and integer enum types only introduced in Python 3.11           |
 | _General Utility_ - Stack                | General stack utility that wraps `deque`.                              |

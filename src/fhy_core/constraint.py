@@ -10,6 +10,8 @@ __all__ = [
 from abc import ABC, abstractmethod
 from typing import Any
 
+from fhy_core.utils import Self, format_comma_separated_list
+
 from .expression import (
     BinaryExpression,
     BinaryOperation,
@@ -18,6 +20,7 @@ from .expression import (
     LiteralExpression,
     LiteralType,
     copy_expression,
+    pformat_expression,
     simplify_expression,
 )
 from .identifier import Identifier
@@ -51,7 +54,7 @@ class Constraint(ABC):
         """
 
     @abstractmethod
-    def copy(self) -> "Constraint":
+    def copy(self) -> Self:
         """Return a shallow copy of the constraint."""
 
     @abstractmethod
@@ -62,6 +65,15 @@ class Constraint(ABC):
             ValueError: If the constraint cannot be converted to an expression.
 
         """
+
+    def __copy__(self) -> Self:
+        return self.copy()
+
+    @abstractmethod
+    def __repr__(self) -> str: ...
+
+    @abstractmethod
+    def __str__(self) -> str: ...
 
 
 class EquationConstraint(Constraint):
@@ -75,7 +87,9 @@ class EquationConstraint(Constraint):
         super().__init__(constrained_variable)
         self._expression = expression
 
-    def is_satisfied(self, value: Expression) -> bool:
+    def is_satisfied(self, value: Expression | LiteralType) -> bool:
+        if isinstance(value, (str, float, int, bool)):
+            value = LiteralExpression(value)
         result = simplify_expression(self._expression, {self.variable: value})
         return (
             isinstance(result, LiteralExpression)
@@ -91,6 +105,12 @@ class EquationConstraint(Constraint):
 
     def convert_to_expression(self) -> Expression:
         return copy_expression(self._expression)
+
+    def __repr__(self) -> str:
+        return repr(self._expression)
+
+    def __str__(self) -> str:
+        return pformat_expression(self._expression)
 
 
 class InSetConstraint(Constraint):
@@ -126,14 +146,22 @@ class InSetConstraint(Constraint):
     def _generate_single_value_constraint(self, value: Any) -> Expression:
         if not isinstance(value, LiteralType):
             raise ValueError(
-                f"Conversion of type {type(value)} to an expression is not "
-                "supported."
+                f"Conversion of type {type(value)} to an expression is not supported."
             )
         variable = IdentifierExpression(self.variable)
         return BinaryExpression(
             BinaryOperation.EQUAL,
             variable,
             LiteralExpression(value),
+        )
+
+    def __repr__(self) -> str:
+        return repr(self._valid_values)
+
+    def __str__(self) -> str:
+        return (
+            f"{self.variable} in {{"
+            f"{format_comma_separated_list(self._valid_values, str_func=str)}}}"
         )
 
 
@@ -170,12 +198,20 @@ class NotInSetConstraint(Constraint):
     def _generate_single_value_constraint(self, value: Any) -> Expression:
         if not isinstance(value, LiteralType):
             raise ValueError(
-                f"Conversion of type {type(value)} to an expression is not "
-                "supported."
+                f"Conversion of type {type(value)} to an expression is not supported."
             )
         variable = IdentifierExpression(self.variable)
         return BinaryExpression(
             BinaryOperation.NOT_EQUAL,
             variable,
             LiteralExpression(value),
+        )
+
+    def __repr__(self) -> str:
+        return repr(self._invalid_values)
+
+    def __str__(self) -> str:
+        return (
+            f"{self.variable} not in {{"
+            f"{format_comma_separated_list(self._invalid_values, str_func=str)}}}"
         )

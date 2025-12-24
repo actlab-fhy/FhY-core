@@ -97,6 +97,14 @@ def test_tokenize_expression(expression_str: str, expected_tokens: list[str]):
                 IdentifierExpression(mock_identifier("y", 1)),
             ),
         ),
+        (
+            "i >= 1",
+            BinaryExpression(
+                BinaryOperation.GREATER_EQUAL,
+                IdentifierExpression(mock_identifier("i", 0)),
+                LiteralExpression("1"),
+            ),
+        ),
     ],
 )
 @patch("fhy_core.identifier.Identifier._next_id", 0)

@@ -103,7 +103,7 @@ class ExpressionParser:
         return self._expression()
 
     def _expression(self) -> Expression:
-        return self._addition()
+        return self._logical_or()
 
     def _binary_operation(
         self,
