@@ -1,18 +1,37 @@
 """Tests the parameter utility."""
 
 from functools import partial
+from typing import TypeVar
 
 import pytest
 from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.expression import SymbolType
 from fhy_core.param import (
+    BoundIntParam,
     CategoricalParam,
     IntParam,
     NatParam,
     OrdinalParam,
+    Param,
     PermParam,
     RealParam,
 )
+
+T = TypeVar("T")
+
+
+def _assert_all_satisfied(param: Param[T], values: list[T]) -> bool:
+    for v in values:
+        assert param.is_constraints_satisfied(
+            v
+        ), f"Value {v} should satisfy constraints of parameter {param}"
+
+
+def _assert_none_satisfied(param: Param[T], values: list[T]) -> bool:
+    for v in values:
+        assert not param.is_constraints_satisfied(
+            v
+        ), f"Value {v} should not satisfy constraints of parameter {param}"
 
 
 @pytest.fixture
@@ -109,9 +128,8 @@ def test_add_and_check_real_param_constraints(default_real_param):
             default_real_param.variable, default_real_param.variable_expression >= 1.0
         )
     )
-    assert default_real_param.is_constraints_satisfied(2.0)
-    assert not default_real_param.is_constraints_satisfied(0.5)
-    assert not default_real_param.is_constraints_satisfied(7.0)
+    _assert_all_satisfied(default_real_param, [2.0])
+    _assert_none_satisfied(default_real_param, [0.5, 7.0])
 
 
 def test_add_and_check_int_param_constraints(default_int_param):
@@ -243,9 +261,8 @@ def test_add_and_check_ordinal_param_constraints(ordinal_param_123: OrdinalParam
     ordinal_param_123.add_constraint(
         InSetConstraint({ordinal_param_123.variable}, {1, 2})
     )
-    assert ordinal_param_123.is_constraints_satisfied(1)
-    assert ordinal_param_123.is_constraints_satisfied(2)
-    assert not ordinal_param_123.is_constraints_satisfied(3)
+    _assert_all_satisfied(ordinal_param_123, [1, 2])
+    _assert_none_satisfied(ordinal_param_123, [3])
 
 
 def test_adding_invalid_constraint_to_ordinal_param_fails(
@@ -294,9 +311,8 @@ def test_add_and_check_categorical_param_constraints(
     categorical_param_abc.add_constraint(
         InSetConstraint({categorical_param_abc.variable}, {"a", "b"})
     )
-    assert categorical_param_abc.is_constraints_satisfied("a")
-    assert categorical_param_abc.is_constraints_satisfied("b")
-    assert not categorical_param_abc.is_constraints_satisfied("c")
+    _assert_all_satisfied(categorical_param_abc, ["a", "b"])
+    _assert_none_satisfied(categorical_param_abc, ["c"])
 
 
 def test_adding_invalid_constraint_to_categorical_param_fails(
@@ -348,9 +364,8 @@ def test_add_and_check_perm_param_constraints(perm_param_nchw: PermParam):
             {perm_param_nchw.variable}, {("n", "c", "h", "w"), ("c", "n", "w", "h")}
         )
     )
-    assert perm_param_nchw.is_constraints_satisfied(["n", "c", "h", "w"])
-    assert perm_param_nchw.is_constraints_satisfied(["c", "n", "w", "h"])
-    assert not perm_param_nchw.is_constraints_satisfied(["n", "c", "w", "h"])
+    _assert_all_satisfied(perm_param_nchw, [["n", "c", "h", "w"], ["c", "n", "w", "h"]])
+    _assert_none_satisfied(perm_param_nchw, [["n", "c", "w", "h"]])
 
 
 def test_adding_invalid_constraint_to_perm_param_fails(perm_param_nchw: PermParam):
@@ -406,9 +421,8 @@ def test_copied_param_keeps_constraints(ordinal_param_123: OrdinalParam):
         InSetConstraint({ordinal_param_123.variable}, {1, 2})
     )
     ordinal_param_copy = ordinal_param_123.copy()
-    assert ordinal_param_copy.is_constraints_satisfied(1)
-    assert ordinal_param_copy.is_constraints_satisfied(2)
-    assert not ordinal_param_copy.is_constraints_satisfied(3)
+    _assert_all_satisfied(ordinal_param_copy, [1, 2])
+    _assert_none_satisfied(ordinal_param_copy, [3])
 
 
 @pytest.mark.parametrize(
@@ -643,11 +657,8 @@ def test_numeric_params_adding_lower_and_upper_bounds(
     param = factory()
     for name, args, kwargs in ops:
         getattr(param, name)(*args, **kwargs)
-
-    for v in pass_values:
-        assert param.is_constraints_satisfied(v), f"{v} should pass"
-    for v in fail_values:
-        assert not param.is_constraints_satisfied(v), f"{v} should fail"
+    _assert_all_satisfied(param, pass_values)
+    _assert_none_satisfied(param, fail_values)
 
 
 @pytest.mark.parametrize(
@@ -752,9 +763,383 @@ def test_zero_included_in_nat_param_with_lower_bound_inclusive_at_zero():
     is added.
     """
     param = NatParam.with_lower_bound(0, is_inclusive=True)
-    assert param.is_constraints_satisfied(0)
-    assert param.is_constraints_satisfied(1)
+    _assert_all_satisfied(param, [0, 1, 2, 100])
 
 
 # TODO: Test the repr method.
+
+
+def test_bound_int_param_between_inclusive_inclusive_constraints_satisfied():
+    """Test ``between'' with inclusive bounds.
+
+    Integer semantics: [3,5] => {3,4,5}
+    """
+    p = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
+    _assert_all_satisfied(p, [3, 4, 5])
+    _assert_none_satisfied(p, [2, 6])
+
+
+def test_bound_int_param_between_exclusive_exclusive_constraints_satisfied():
+    """Test ``between'' with exclusive bounds.
+
+    Integer semantics: (3,5) => only {4}
+    """
+    p = BoundIntParam.between(3, 5, is_lower_inclusive=False, is_upper_inclusive=False)
+    _assert_all_satisfied(p, [4])
+    _assert_none_satisfied(p, [3, 5, 2, 6])
+
+
+def test_bound_int_param_between_exclusive_inclusive_constraints_satisfied():
+    """Test ``between'' with exclusive lower bound and inclusive upper bound.
+
+    Integer semantics: (3,5] => {4,5}
+    """
+    p = BoundIntParam.between(3, 5, is_lower_inclusive=False, is_upper_inclusive=True)
+    _assert_all_satisfied(p, [4, 5])
+    _assert_none_satisfied(p, [3, 2, 6])
+
+
+def test_bound_int_param_between_inclusive_exclusive_constraints_satisfied():
+    """Test ``between'' with inclusive lower bound and exclusive upper bound.
+
+    Integer semantics: [3,5) => {3,4}
+    """
+    p = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=False)
+    _assert_all_satisfied(p, [3, 4])
+    _assert_none_satisfied(p, [5, 2, 6])
+
+
+def test_bound_int_param_between_invalid_interval_raises_for_strict_equal_bounds():
+    """Test that ``between'' raises for intervals with strict equal bounds."""
+    with pytest.raises(ValueError):
+        BoundIntParam.between(3, 3, is_lower_inclusive=False, is_upper_inclusive=False)
+
+
+def test_bound_int_param_between_equal_bounds_inclusive_is_singleton():
+    """Test that ``between'' with equal inclusive bounds is a singleton."""
+    p = BoundIntParam.between(3, 3, is_lower_inclusive=True, is_upper_inclusive=True)
+    _assert_all_satisfied(p, [3])
+    _assert_none_satisfied(p, [2, 4])
+
+
+def test_bound_int_param_between_invalid_order_raises_error():
+    """Test that ``between'' raises for intervals with reversed bounds."""
+    with pytest.raises(ValueError):
+        BoundIntParam.between(5, 3)
+
+
+def test_bound_int_param_with_lower_bound_inclusive():
+    """Test ``with_lower_bound'' with inclusive bound."""
+    p = BoundIntParam.with_lower_bound(3, is_inclusive=True)
+    _assert_all_satisfied(p, [3, 4, 100])
+    _assert_none_satisfied(p, [2, -1])
+
+
+def test_bound_int_param_with_lower_bound_exclusive_integer_semantics():
+    """Test ``with_lower_bound'' with exclusive bound.
+
+    Integer semantics: x > 3 => ints {4,5,...}
+    """
+    p = BoundIntParam.with_lower_bound(3, is_inclusive=False)
+    _assert_all_satisfied(p, [4, 5, 100])
+    _assert_none_satisfied(p, [3, 2, -10])
+
+
+def test_bound_int_param_with_upper_bound_inclusive():
+    p = BoundIntParam.with_upper_bound(5, is_inclusive=True)
+    _assert_all_satisfied(p, [5, 4, -100])
+    _assert_none_satisfied(p, [6, 7])
+
+
+def test_bound_int_param_with_upper_bound_exclusive_integer_semantics():
+    """Test ``with_upper_bound'' with exclusive bound.
+
+    Integer semantics: x < 5 => ints {...,3,4}
+    """
+    p = BoundIntParam.with_upper_bound(5, is_inclusive=False)
+    _assert_all_satisfied(p, [4, 3, -100])
+    _assert_none_satisfied(p, [5, 6])
+
+
+def test_bound_int_param_exactly_satisfies_only_that_value():
+    """Test ``exactly'' creates a singleton parameter."""
+    p = BoundIntParam.exactly(7)
+    _assert_all_satisfied(p, [7])
+    _assert_none_satisfied(p, [6, 8, 0])
+
+
+def test_bound_int_param_prefer_inclusive_flag_does_not_change_satisfiable_set():
+    """Test that prefer_inclusive flag does not change satisfiable set."""
+    p1 = BoundIntParam.between(
+        3, 5, is_lower_inclusive=False, is_upper_inclusive=False, prefer_inclusive=True
+    )
+    p2 = BoundIntParam.between(
+        3, 5, is_lower_inclusive=False, is_upper_inclusive=False, prefer_inclusive=False
+    )
+    for v in range(0, 10):
+        assert p1.is_constraints_satisfied(v) == p2.is_constraints_satisfied(v)
+
+
+def test_bound_int_param_set_value_accepts_int_only():
+    """Test that BoundIntParam.set_value only accepts integer values."""
+    p = BoundIntParam.with_lower_bound(0)
+    p.set_value(1)
+    assert p.get_value() == 1
+    with pytest.raises(ValueError):
+        p.set_value(1.0)
+    with pytest.raises(ValueError):
+        p.set_value("1")
+
+
+def test_bound_int_param_set_value_rejects_value_outside_constraints():
+    """Test that ``set_value'' rejects values outside constraints."""
+    p = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
+    with pytest.raises(ValueError):
+        p.set_value(2)
+    with pytest.raises(ValueError):
+        p.set_value(6)
+    p.set_value(4)
+    assert p.get_value() == 4
+
+
+def test_bound_int_param_addition_of_singletons_is_singleton():
+    """Test addition of two singleton BoundIntParams results in a singleton."""
+    x = BoundIntParam.exactly(4)
+    y = BoundIntParam.exactly(6)
+    z = x + y
+    _assert_all_satisfied(z, [10])
+    _assert_none_satisfied(z, [9, 11])
+
+
+def test_bound_int_param_addition_with_int_rhs():
+    """Test addition of BoundIntParam with an integer on the right-hand side."""
+    x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
+    z = x + 2
+    _assert_all_satisfied(z, [5, 6, 7])
+    _assert_none_satisfied(z, [4, 8])
+
+
+def test_bound_int_param_addition_with_int_lhs():
+    """Test addition of BoundIntParam with an integer on the left-hand side."""
+    x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
+    z = 2 + x
+    _assert_all_satisfied(z, [5, 6, 7])
+    _assert_none_satisfied(z, [4, 8])
+
+
+def test_bound_int_param_addition_bounds_propagate_semantics_from_strict_inputs():
+    """Test addition bounds propagation with strict intervals.
+
+    Integer semantics:
+    x: (3,5) => {4}
+    y: (5,10) => {6,7,8,9}
+    x+y => {10,11,12,13}
+    """
+    x = BoundIntParam.between(3, 5, is_lower_inclusive=False, is_upper_inclusive=False)
+    y = BoundIntParam.between(5, 10, is_lower_inclusive=False, is_upper_inclusive=False)
+    z = x + y
+    _assert_all_satisfied(z, [10, 11, 12, 13])
+    _assert_none_satisfied(z, [9, 14])
+
+
+def test_bound_int_param_addition_unbounded_lower_or_upper_propagates_unboundedness():
+    """Test addition bounds propagation with unbounded inputs.
+
+    Integer semantics:
+    x >= 3, y unbounded => z >= 3 + (-inf) = -inf
+    """
+    x = BoundIntParam.with_lower_bound(3, is_inclusive=True)
+    y = BoundIntParam()
+    z = x + y
+    _assert_all_satisfied(z, [-(10**6), 0, 10**6])
+
+
+def test_bound_int_param_subtraction_of_singletons_is_singleton():
+    """Test subtraction of two singleton BoundIntParams results in a singleton."""
+    x = BoundIntParam.exactly(10)
+    y = BoundIntParam.exactly(6)
+    z = x - y
+    _assert_all_satisfied(z, [4])
+    _assert_none_satisfied(z, [3, 5])
+
+
+def test_bound_int_param_subtraction_with_int_rhs():
+    """Test subtraction of BoundIntParam with an integer on the right-hand side."""
+    x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
+    z = x - 2
+    _assert_all_satisfied(z, [1, 2, 3])
+    _assert_none_satisfied(z, [0, 4])
+
+
+def test_bound_int_param_subtraction_with_int_lhs():
+    """Test subtraction of BoundIntParam with an integer on the left-hand side."""
+    x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
+    z = 10 - x
+    _assert_all_satisfied(z, [5, 6, 7])
+    _assert_none_satisfied(z, [4, 8])
+
+
+def test_bound_int_param_subtraction_bounds_propagate_semantics_from_strict_inputs():
+    """Test subtraction bounds propagation with strict intervals.
+
+    Integer semantics:
+    x: (3,5) => {4}
+    y: (5,10) => {6,7,8,9}
+    x-y => {4-9 .. 4-6} = {-5,-4,-3,-2}
+    """
+    x = BoundIntParam.between(3, 5, is_lower_inclusive=False, is_upper_inclusive=False)
+    y = BoundIntParam.between(5, 10, is_lower_inclusive=False, is_upper_inclusive=False)
+    z = x - y
+    _assert_all_satisfied(z, [-5, -4, -3, -2])
+    _assert_none_satisfied(z, [-6, -1, 0])
+
+
+def test_bound_int_param_negation_of_singleton():
+    """Test negation of a singleton BoundIntParam results in a singleton."""
+    x = BoundIntParam.exactly(4)
+    z = -x
+    _assert_all_satisfied(z, [-4])
+    _assert_none_satisfied(z, [-3, -5])
+
+
+def test_bound_int_param_negation_of_interval():
+    """Test negation of an interval BoundIntParam."""
+    x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
+    z = -x
+    _assert_all_satisfied(z, [-5, -4, -3])
+    _assert_none_satisfied(z, [-6, -2])
+
+
+def test_bound_int_param_negation_of_strict_interval_integer_semantics():
+    """Test negation of a strict interval BoundIntParam."""
+    x = BoundIntParam.between(3, 5, is_lower_inclusive=False, is_upper_inclusive=False)
+    z = -x
+    _assert_all_satisfied(z, [-4])
+    _assert_none_satisfied(z, [-5, -3])
+
+
+def test_bound_int_param_prefer_inclusive_changes_str_not_membership_for_addition():
+    """Test that prefer_inclusive changes string but not membership for addition."""
+    x_incl = BoundIntParam.between(
+        3, 5, is_lower_inclusive=False, is_upper_inclusive=False, prefer_inclusive=True
+    )
+    y_incl = BoundIntParam.between(
+        5, 10, is_lower_inclusive=False, is_upper_inclusive=False, prefer_inclusive=True
+    )
+
+    x_excl = BoundIntParam.between(
+        3, 5, is_lower_inclusive=False, is_upper_inclusive=False, prefer_inclusive=False
+    )
+    y_excl = BoundIntParam.between(
+        5,
+        10,
+        is_lower_inclusive=False,
+        is_upper_inclusive=False,
+        prefer_inclusive=False,
+    )
+
+    z_incl = x_incl + y_incl
+    z_excl = x_excl + y_excl
+
+    for v in range(-20, 40):
+        assert z_incl.is_constraints_satisfied(v) == z_excl.is_constraints_satisfied(v)
+    assert str(z_incl) != str(z_excl)
+
+
+def test_bound_int_param_addition_accepts_int_param():
+    """Test addition of BoundIntParam with IntParam on the right-hand side."""
+    x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
+    y = IntParam.between(5, 10, is_lower_inclusive=True, is_upper_inclusive=True)
+    z = x + y
+    _assert_all_satisfied(z, [8, 9, 10, 11, 12, 13, 14, 15])
+    _assert_none_satisfied(z, [7, 16])
+
+
+def test_bound_int_param_subtraction_accepts_int_param():
+    """Test subtraction of BoundIntParam with IntParam on the right-hand side."""
+    x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
+    y = IntParam.between(5, 10, is_lower_inclusive=True, is_upper_inclusive=True)
+    z = x - y
+    _assert_all_satisfied(z, [-7, -3, 0])
+    _assert_none_satisfied(z, [-8, 1])
+
+
+def test_bound_int_param_rsub_accepts_int_param_on_left():
+    """Test subtraction of BoundIntParam with IntParam on the left-hand side."""
+    x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
+    y = IntParam.between(5, 10, is_lower_inclusive=True, is_upper_inclusive=True)
+    z = y - x
+    _assert_all_satisfied(z, [0, 7])
+    _assert_none_satisfied(z, [-1, 8])
+
+
+def test_bound_int_param_addition_with_unsupported_type_raises_error():
+    """Test that addition of BoundIntParam with unsupported type raises TypeError."""
+    x = BoundIntParam.between(0, 1)
+    with pytest.raises(TypeError):
+        _ = x + "nope"
+
+
+@pytest.mark.parametrize(
+    "lower,upper,lin,u_in",
+    [
+        (0, 0, True, True),
+        (0, 1, True, True),
+        (0, 1, False, True),
+        (0, 1, True, False),
+        (0, 2, False, False),
+        (-3, 3, True, True),
+        (-3, 3, False, False),
+    ],
+)
+def test_bound_int_param_addition_matches_brute_force(lower, upper, lin, u_in):
+    """Test that addition matches brute-force set addition."""
+    x = BoundIntParam.between(
+        lower, upper, is_lower_inclusive=lin, is_upper_inclusive=u_in
+    )
+    y = BoundIntParam.between(
+        lower, upper, is_lower_inclusive=lin, is_upper_inclusive=u_in
+    )
+    z = x + y
+    allowed_x = [
+        v for v in range(lower - 2, upper + 3) if x.is_constraints_satisfied(v)
+    ]
+    allowed_y = [
+        v for v in range(lower - 2, upper + 3) if y.is_constraints_satisfied(v)
+    ]
+    allowed_z = {a + b for a in allowed_x for b in allowed_y}
+    for v in range(2 * (lower - 2), 2 * (upper + 2) + 1):
+        assert z.is_constraints_satisfied(v) == (v in allowed_z)
+
+
+@pytest.mark.parametrize(
+    "lower,upper,lin,u_in",
+    [
+        (0, 0, True, True),
+        (0, 1, True, True),
+        (0, 2, False, False),
+        (-2, 2, True, True),
+        (-2, 2, False, False),
+    ],
+)
+def test_bound_int_param_subtraction_matches_brute_force(lower, upper, lin, u_in):
+    """Test that subtraction matches brute-force set subtraction."""
+    x = BoundIntParam.between(
+        lower, upper, is_lower_inclusive=lin, is_upper_inclusive=u_in
+    )
+    y = BoundIntParam.between(
+        lower, upper, is_lower_inclusive=lin, is_upper_inclusive=u_in
+    )
+    z = x - y
+    allowed_x = [
+        v for v in range(lower - 2, upper + 3) if x.is_constraints_satisfied(v)
+    ]
+    allowed_y = [
+        v for v in range(lower - 2, upper + 3) if y.is_constraints_satisfied(v)
+    ]
+    allowed_z = {a - b for a in allowed_x for b in allowed_y}
+    for v in range((lower - 2) - (upper + 2), (upper + 2) - (lower - 2) + 1):
+        assert z.is_constraints_satisfied(v) == (v in allowed_z)
+
+
 # TODO: Update tests that check exceptions to match exception messages.

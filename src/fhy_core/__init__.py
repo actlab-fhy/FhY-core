@@ -31,7 +31,9 @@ __all__ = [
     "Identifier",
     "CategoricalParam",
     "IntParam",
+    "BoundIntParam",
     "NatParam",
+    "BoundNatParam",
     "OrdinalParam",
     "Param",
     "PermParam",
@@ -96,6 +98,8 @@ from .expression import (
 )
 from .identifier import Identifier
 from .param import (
+    BoundIntParam,
+    BoundNatParam,
     CategoricalParam,
     IntParam,
     NatParam,
