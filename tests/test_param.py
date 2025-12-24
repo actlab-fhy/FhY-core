@@ -623,7 +623,7 @@ def test_copied_param_keeps_constraints(ordinal_param_123: OrdinalParam):
             ],
             [2],
             [1, 3, 5, -5],
-            id="int-between-mutating-(1,2)",
+            id="int-between-mutating-(1,3)",
         ),
         # --- between (constructor) ---
         pytest.param(
@@ -646,7 +646,7 @@ def test_copied_param_keeps_constraints(ordinal_param_123: OrdinalParam):
             [],
             [2],
             [1, 0, 3],
-            id="int-between-constructor-(1,2)",
+            id="int-between-constructor-(1,3)",
         ),
     ],
 )
@@ -662,7 +662,7 @@ def test_numeric_params_adding_lower_and_upper_bounds(
 
 
 @pytest.mark.parametrize(
-    "factory,ops",
+    "factory, ops",
     [
         pytest.param(
             partial(RealParam),
