@@ -62,7 +62,7 @@ def _invert_binary_comparison_operation(op: BinaryOperation) -> BinaryOperation:
     elif op == BinaryOperation.LESS_EQUAL:
         return BinaryOperation.GREATER_EQUAL
     else:
-        raise ValueError("Cannot invert non-comparison binary operation: " f"{op}")
+        raise ValueError(f"Cannot invert non-comparison binary operation: {op}")
 
 
 def _get_bound_from_expression(
