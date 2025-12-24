@@ -146,8 +146,7 @@ class InSetConstraint(Constraint):
     def _generate_single_value_constraint(self, value: Any) -> Expression:
         if not isinstance(value, LiteralType):
             raise ValueError(
-                f"Conversion of type {type(value)} to an expression is not "
-                "supported."
+                f"Conversion of type {type(value)} to an expression is not supported."
             )
         variable = IdentifierExpression(self.variable)
         return BinaryExpression(
@@ -201,8 +200,7 @@ class NotInSetConstraint(Constraint):
     def _generate_single_value_constraint(self, value: Any) -> Expression:
         if not isinstance(value, LiteralType):
             raise ValueError(
-                f"Conversion of type {type(value)} to an expression is not "
-                "supported."
+                f"Conversion of type {type(value)} to an expression is not supported."
             )
         variable = IdentifierExpression(self.variable)
         return BinaryExpression(
