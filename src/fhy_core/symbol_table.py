@@ -189,9 +189,11 @@ class SymbolTable:
 
         """
         return self._search_table_with_action(
-            lambda _, candidate_symbol_name: _SymbolTableSearchResult(True)
-            if symbol_name == candidate_symbol_name
-            else None,
+            lambda _, candidate_symbol_name: (
+                _SymbolTableSearchResult(True)
+                if symbol_name == candidate_symbol_name
+                else None
+            ),
             lambda: False,
         )
 
