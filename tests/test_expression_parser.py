@@ -15,7 +15,7 @@ from fhy_core.expression import (
     tokenize_expression,
 )
 
-from .utils import assert_exact_expression_equality, mock_identifier
+from .conftest import assert_exact_expression_equality, mock_identifier
 
 
 # TODO: More tests for tokenization!

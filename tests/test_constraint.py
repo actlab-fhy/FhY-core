@@ -13,7 +13,7 @@ from fhy_core.expression import (
 )
 from fhy_core.identifier import Identifier
 
-from .utils import assert_exact_expression_equality, mock_identifier
+from .conftest import assert_exact_expression_equality, mock_identifier
 
 
 @pytest.mark.parametrize(
