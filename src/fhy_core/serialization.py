@@ -62,7 +62,6 @@ import json
 import struct
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, ClassVar, TypeVar
 
 from frozendict import frozendict
@@ -464,11 +463,6 @@ class Serializable(ABC):
 
         """
         return _loads_from_binary(data)
-
-    def _dataclass_default_dict(self) -> dict[str, Any]:
-        if not is_dataclass(self):
-            raise SerializationError('Not a dataclass; implement "serialize_to_dict".')
-        return asdict(self)
 
 
 def get_wrapper_dict(obj: Serializable) -> dict[str, Any]:
