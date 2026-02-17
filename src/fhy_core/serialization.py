@@ -4,82 +4,54 @@ This module defines the serialization trait and utilities used across the FhY
 compiler stack. It provides:
 
 - A runtime-enforced base class (`Serializable`) that compiler components
-   can inherit from to support consistent serialization and deserialization.
+  can inherit from to support consistent serialization and deserialization.
 
 - A small set of supported serialization formats (`SerializationFormat`):
-   - DICT:  A JSON-friendly Python mapping (useful for tests and debugging).
-   - JSON:  UTF-8 JSON text of the DICT representation.
-   - BINARY: A self-describing binary envelope suitable for file storage and
+  - DICT:   A JSON-friendly Python mapping (useful for tests and debugging).
+  - JSON:   UTF-8 JSON text of the DICT representation.
+  - BINARY: A self-describing binary envelope suitable for file storage and
             round-tripping objects back into their concrete Python classes.
 
 Binary format
 -------------
 Binary serialization uses a compact envelope:
 
-    `MAGIC(4)` | `VERSION(u8)` | `type_id_len(u16)` | `type_id(bytes)`
+    `MAGIC(4)` | `VERSION(u8)` | `CODEC(u8)` | `type_id_len(u16)` | `type_id(bytes)`
              | `payload_len(u32)` | `payload(bytes)`
 
 - `MAGIC` identifies the blob as produced by this module.
-- `VERSION` allows future evolution of the format.
+- `VERSION` allows future evolution of the envelope format.
+- `CODEC` identifies how the payload bytes are encoded (e.g. JSON-bytes, custom).
 - `type_id` is a stable identifier for the concrete class being serialized.
   By default, it is the fully-qualified name: "<module>.<qualname>".
-- `payload` is the JSON encoding (UTF-8) of the object's DICT representation.
+- `payload` is the encoded representation of the object, determined by CODEC.
+
+Default behavior:
+- CODEC=JSON and payload = UTF-8 JSON encoding of `serialize_to_dict()`.
+
+Custom behavior:
+- Classes may override `get_binary_codec()`, `serialize_to_binary()`,
+  and `deserialize_from_binary()` to implement compact class-specific payloads.
 
 Because type_id is embedded in the envelope, deserialization can reconstruct
 the correct class automatically:
-```
     obj = Serializable.from_bytes(blob)
-```
 
 Type registration
 -----------------
 For deterministic and controlled reconstruction, classes can be registered
-into a local registry via the `@register_serializable` decorator:
-
-```
-    @register_serializable
-    class Span(Serializable):
-        ...
-```
+into a local registry via the `@register_serializable` decorator.
 
 At decode time, the registry is consulted first. This avoids importing
 arbitrary modules during deserialization and keeps reconstruction explicit.
 As a convenience, the module also supports a fallback that resolves classes
-by importing the module portion of the `type_id` (this is useful in simple
-setups, but explicit registration is recommended).
-
-Usage sketch
-------------
-```
-    @register_serializable
-    @dataclass(frozen=True)
-    class Span(Serializable):
-        lo: int
-        hi: int
-
-        def serialize_to_dict(self) -> dict[str, Any]:
-            return {"lo": self.lo, "hi": self.hi}
-
-        @classmethod
-        def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "Span":
-            return cls(int(data["lo"]), int(data["hi"]))
-
-    span = Span(1, 9)
-
-    # Dict / JSON
-    dictionary = span.serialize(SerializationFormat.DICT)
-    json_str = span.serialize(SerializationFormat.JSON)
-
-    # Binary round-trip with automatic reconstruction
-    binary = span.serialize(SerializationFormat.BINARY)
-    span2 = Serializable.from_bytes(binary)
-    assert span2 == span
-```
-
+by importing the module portion of the `type_id`.
 """
 
 __all__ = [
     "Serializable",
+    "SerializationFormat",
+    "BinaryPayloadCodec",
     "register_serializable",
     "get_wrapper_dict",
     "unwrap_wrapper_dict",
@@ -92,6 +64,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, ClassVar, TypeVar
+
+from frozendict import frozendict
 
 from .error import register_error
 from .utils import StrEnum
@@ -107,6 +81,24 @@ class SerializationFormat(StrEnum):
     BINARY = "binary"
 
 
+class BinaryPayloadCodec(StrEnum):
+    """Payload encoding used inside the binary envelope."""
+
+    JSON = "json"
+    CUSTOM = "custom"
+
+
+_CODEC_TO_U8: frozendict[BinaryPayloadCodec, int] = frozendict(
+    {
+        BinaryPayloadCodec.JSON: 1,
+        BinaryPayloadCodec.CUSTOM: 2,
+    }
+)
+_U8_TO_CODEC: frozendict[int, BinaryPayloadCodec] = frozendict(
+    {v: k for k, v in _CODEC_TO_U8.items()}
+)
+
+
 @register_error
 class SerializationError(Exception):
     """Base error for serialization failures."""
@@ -120,6 +112,16 @@ class UnknownTypeIdError(SerializationError):
 @register_error
 class VersionMismatchError(SerializationError):
     """Raised when the binary envelope version is unsupported."""
+
+
+@register_error
+class UnknownCodecError(SerializationError):
+    """Raised when a binary payload codec code is unknown/unsupported."""
+
+
+@register_error
+class CodecMismatchError(SerializationError):
+    """Raised when the envelope codec does not match the expected codec for a class."""
 
 
 _TYPE_REGISTRY: dict[str, type["Serializable"]] = {}
@@ -143,7 +145,7 @@ def _resolve_type_id(type_id: str) -> type["Serializable"]:
             obj = getattr(obj, part)
         if not isinstance(obj, type) or not issubclass(obj, Serializable):
             raise UnknownTypeIdError(
-                f'type_id "{type_id}" did not resolve to a Serializable class.'
+                f'type_id "{type_id}" did not resolve to a serializable class.'
             )
         return obj
     except Exception as e:
@@ -155,20 +157,7 @@ def register_serializable(
     *,
     type_id: str | None = None,
 ) -> type[_T] | Callable[[type[_T]], type[_T]]:
-    """Decorator to register a Serializable class under a type_id.
-
-    Usage:
-    ```
-        @register_serializable
-        class Foo(Serializable): ...
-    ```
-    or:
-    ```
-        @register_serializable(type_id="core.Foo")
-        class Foo(Serializable): ...
-    ```
-
-    """
+    """Decorator to register a Serializable class under a type_id."""
 
     def _wrapper(c: type[_T]) -> type[_T]:
         ty_id = type_id or _get_default_type_id(c)
@@ -180,26 +169,36 @@ def register_serializable(
 
 _MAGIC: bytes = b"FhYS"
 _VERSION: int = 1
-_HEADER_STRUCT = struct.Struct("!4sBH")
+# MAGIC(4) | VERSION(u8) | CODEC(u8) | type_id_len(u16)
+_HEADER_STRUCT = struct.Struct("!4sBBH")
 _PAYLOAD_LEN_STRUCT = struct.Struct("!I")
 
 
 def _dump_to_binary(obj: "Serializable") -> bytes:
     type_id = obj.get_class_type_id().encode("utf-8")
-    payload_dict = obj.serialize_to_dict()
 
-    payload = json.dumps(payload_dict, separators=(",", ":"), sort_keys=True).encode(
-        "utf-8"
-    )
+    codec = obj.get_binary_codec()
+    try:
+        codec_u8 = _CODEC_TO_U8[codec]
+    except KeyError as e:
+        raise UnknownCodecError(f'Unsupported binary codec "{codec}".') from e
+
+    payload = obj.serialize_to_binary(codec=codec)
+    if not isinstance(payload, (bytes, bytearray, memoryview)):
+        raise SerializationError(
+            "serialize_to_binary() must return bytes-like payload."
+        )
+
+    payload_bytes = bytes(payload)
 
     if len(type_id) > 65535:  # noqa: PLR2004
         raise SerializationError("type_id too long (>65535 bytes).")
-    if len(payload) > 0xFFFFFFFF:  # noqa: PLR2004
+    if len(payload_bytes) > 0xFFFFFFFF:  # noqa: PLR2004
         raise SerializationError("payload too large (>4GB).")
 
-    header = _HEADER_STRUCT.pack(_MAGIC, _VERSION, len(type_id))
-    payload_len = _PAYLOAD_LEN_STRUCT.pack(len(payload))
-    return header + type_id + payload_len + payload
+    header = _HEADER_STRUCT.pack(_MAGIC, _VERSION, codec_u8, len(type_id))
+    payload_len = _PAYLOAD_LEN_STRUCT.pack(len(payload_bytes))
+    return header + type_id + payload_len + payload_bytes
 
 
 def _loads_from_binary(data: bytes | bytearray | memoryview) -> "Serializable":
@@ -207,7 +206,9 @@ def _loads_from_binary(data: bytes | bytearray | memoryview) -> "Serializable":
     if len(mv) < _HEADER_STRUCT.size:
         raise SerializationError("Data too short for header.")
 
-    magic, version, type_id_len = _HEADER_STRUCT.unpack(mv[: _HEADER_STRUCT.size])
+    magic, version, codec_u8, type_id_len = _HEADER_STRUCT.unpack(
+        mv[: _HEADER_STRUCT.size]
+    )
     if magic != _MAGIC:
         raise SerializationError(
             "Bad magic header; not a recognized serialization blob."
@@ -216,6 +217,11 @@ def _loads_from_binary(data: bytes | bytearray | memoryview) -> "Serializable":
         raise VersionMismatchError(
             f"Unsupported version {version}; expected {_VERSION}."
         )
+
+    try:
+        codec = _U8_TO_CODEC[codec_u8]
+    except KeyError as e:
+        raise UnknownCodecError(f"Unknown codec code {codec_u8}.") from e
 
     offset = _HEADER_STRUCT.size
     end_type = offset + type_id_len
@@ -235,23 +241,27 @@ def _loads_from_binary(data: bytes | bytearray | memoryview) -> "Serializable":
         raise SerializationError("Data too short for payload.")
 
     payload_bytes = mv[offset:end_payload].tobytes()
-    payload_obj = json.loads(payload_bytes.decode("utf-8"))
-    if not isinstance(payload_obj, Mapping):
-        raise SerializationError("Payload did not decode to an object/dict.")
 
     cls = _resolve_type_id(type_id)
-    return cls.deserialize_from_dict(payload_obj)
+    return cls.deserialize_from_binary(payload_bytes, codec=codec)
 
 
 class Serializable(ABC):
     """Serialization trait for compiler objects.
 
-    Implementors MUST define:
-      - to_serializable_dict()
-      - from_serializable_dict()
+    Required:
+      - serialize_to_dict()
+      - deserialize_from_dict()
 
-    Best practice: keep the dict JSON-friendly (str/int/float/bool/None,
-    lists, dicts), and only store stable schema keys.
+    Optional:
+      - get_binary_codec()
+      - serialize_to_binary()
+      - deserialize_from_binary()
+
+    Notes:
+    - The default binary codec stores JSON bytes of the dict form.
+    - Override the binary hooks to define a compact canonical binary form.
+
     """
 
     TYPE_ID: ClassVar[str | None] = None
@@ -268,27 +278,90 @@ class Serializable(ABC):
     @classmethod
     @abstractmethod
     def deserialize_from_dict(cls: type[_T], data: Mapping[str, Any]) -> _T:
-        """Create an instance of this class from a dictionary representation.
+        """Create an instance of this class from a dictionary representation."""
+
+    @classmethod
+    def get_binary_codec(cls) -> BinaryPayloadCodec:
+        """Return the payload codec used for this class in BINARY format.
+
+        Default: JSON (payload is JSON bytes of serialize_to_dict()).
+        """
+        return BinaryPayloadCodec.JSON
+
+    def serialize_to_binary(self, *, codec: BinaryPayloadCodec) -> bytes:
+        """Encode this object into payload bytes according to `codec`.
+
+        Default implementation supports JSON only. Classes that return CUSTOM
+        from get_binary_codec() should override this to emit compact bytes.
 
         Args:
-            data: Mapping containing the serialized data for this object.
+            codec: Codec selected for this object's envelope.
 
         Returns:
-            Instance of this class reconstructed from the provided data.
+            Bytes payload to store inside the binary envelope.
+
+        Raises:
+            CodecMismatchError: If the provided codec does not match the expected codec.
 
         """
+        if codec is not BinaryPayloadCodec.JSON:
+            raise CodecMismatchError(
+                f'Class "{type(self)}" does not implement binary codec "{codec}".'
+            )
+        payload_dict = self.serialize_to_dict()
+        return json.dumps(payload_dict, separators=(",", ":"), sort_keys=True).encode(
+            "utf-8"
+        )
+
+    @classmethod
+    def deserialize_from_binary(
+        cls: type[_T],
+        payload: bytes,
+        *,
+        codec: BinaryPayloadCodec,
+    ) -> _T:
+        """Decode payload bytes into an instance of this class.
+
+        Default implementation supports JSON only (payload is JSON bytes of dict form).
+        Override for CUSTOM/PROTOBUF/etc.
+
+        Args:
+            payload: Payload bytes from the envelope.
+            codec: Codec stored in the envelope.
+
+        Returns:
+            Reconstructed instance of this class.
+
+        Raises:
+            CodecMismatchError: If the provided codec does not match the expected codec.
+            SerializationError: If the payload cannot be decoded properly.
+
+        """
+        expected = cls.get_binary_codec()
+        if codec is not expected:
+            raise CodecMismatchError(
+                f'Codec mismatch for "{cls}": envelope="{codec}" expected="{expected}".'
+            )
+
+        if codec is BinaryPayloadCodec.JSON:
+            payload_obj = json.loads(payload.decode("utf-8"))
+            if not isinstance(payload_obj, Mapping):
+                raise SerializationError("Payload did not decode to an object/dict.")
+            return cls.deserialize_from_dict(payload_obj)
+
+        raise UnknownCodecError(f'Unsupported codec "{codec}".')
 
     def serialize(self, fmt: SerializationFormat) -> Any:
         """Serialize this object to the specified format.
 
         Args:
-            fmt: Desired serialization format (DICT, JSON, BINARY).
+            fmt: The serialization format to use.
 
         Returns:
-            Serialized representation of this object in the specified format.
+            The serialized representation of this object in the specified format.
 
         Raises:
-            SerializationError: If the specified format is unsupported.
+            SerializationError: If the format is unsupported or if serialization fails.
 
         """
         if fmt is SerializationFormat.DICT:
@@ -305,15 +378,14 @@ class Serializable(ABC):
         """Deserialize an object of this class from the given payload and format.
 
         Args:
-            payload: Data to deserialize, whose type depends on the format.
-            fmt: Format of the payload (DICT, JSON, BINARY).
+            payload: The serialized representation of the object.
+            fmt: The format of the serialized payload.
 
         Returns:
-            Instance of this class reconstructed from the provided payload.
+            An instance of this class reconstructed from the payload.
 
         Raises:
-            SerializationError: If the specified format is unsupported or if the
-                payload type is incompatible with the expected format.
+            SerializationError: If the format is unsupported or deserialization fails.
 
         """
         if fmt is SerializationFormat.DICT:
@@ -346,12 +418,11 @@ class Serializable(ABC):
         """Serialize this object to a JSON string.
 
         Args:
-            indent: If specified, the number of spaces to use for indentation in the
-                resulting JSON string. If None, the most compact representation is used.
-            sort_keys: Whether to sort the keys in the resulting JSON string.
+            indent: If specified, the JSON string is formatted with this indent level.
+            sort_keys: Whether to sort the keys in the JSON output.
 
         Returns:
-            JSON string representation of this object.
+            A JSON string representation of this object.
 
         """
         return json.dumps(self.serialize_to_dict(), indent=indent, sort_keys=sort_keys)
@@ -361,26 +432,24 @@ class Serializable(ABC):
         """Deserialize an object of this class from a JSON string or bytes.
 
         Args:
-            payload: JSON string or bytes containing the serialized
-                representation of the object.
+            payload: A JSON string or bytes representing the object.
 
         Returns:
-            Instance of this class reconstructed from the provided payload.
+            An instance of this class reconstructed from the JSON payload.
 
         Raises:
-            SerializationError: If the payload is not valid JSON or if it does
-                not represent an object of this class.
+            SerializationError: If the payload cannot be decoded properly.
 
         """
         if isinstance(payload, (bytes, bytearray)):
             payload = payload.decode("utf-8")
-        payload = json.loads(payload)
-        if not isinstance(payload, Mapping):
+        payload_obj = json.loads(payload)
+        if not isinstance(payload_obj, Mapping):
             raise SerializationError("JSON did not decode to an object/dict.")
-        return cls.deserialize_from_dict(payload)
+        return cls.deserialize_from_dict(payload_obj)
 
     def to_bytes(self) -> bytes:
-        """Return a binary serialization of this object.."""
+        """Return a binary serialization of this object."""
         return _dump_to_binary(self)
 
     @staticmethod
@@ -388,29 +457,22 @@ class Serializable(ABC):
         """Deserialize a Serializable object from binary data.
 
         Args:
-            data: Binary data containing the serialized representation of the object.
+            data: The binary data containing the serialized object.
 
         Returns:
-            Instance of a Serializable object reconstructed from the provided data.
+            The deserialized Serializable object.
 
         """
         return _loads_from_binary(data)
 
     def _dataclass_default_dict(self) -> dict[str, Any]:
         if not is_dataclass(self):
-            raise SerializationError(
-                'Not a dataclass; implement "to_serializable_dict".'
-            )
+            raise SerializationError('Not a dataclass; implement "serialize_to_dict".')
         return asdict(self)
 
 
 def get_wrapper_dict(obj: Serializable) -> dict[str, Any]:
-    """Return a dict containing type information and the dict representation.
-
-    If you sometimes want a self-describing dict for JSON, use this wrapper:
-      {"__type__": "...", "__data__": {...}}
-
-    """
+    """Return a dict containing type information and the dict representation."""
     return {"__type__": obj.get_class_type_id(), "__data__": obj.serialize_to_dict()}
 
 
