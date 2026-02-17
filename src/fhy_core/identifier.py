@@ -2,13 +2,13 @@
 
 __all__ = ["Identifier"]
 
-from typing import Any
+from typing import Any, ClassVar
 
 
 class Identifier:
     """Unique name."""
 
-    _next_id: int = 0
+    _next_id: ClassVar[int] = 0
     _id: int
     _name_hint: str
 

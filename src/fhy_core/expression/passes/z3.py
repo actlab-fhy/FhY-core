@@ -40,7 +40,7 @@ class ExpressionToZ3Converter(ExpressionBasePass):
             {
                 UnaryOperation.NEGATE: operator.neg,
                 UnaryOperation.POSITIVE: operator.pos,
-                UnaryOperation.LOGICAL_NOT: lambda operand: z3.Not(operand),
+                UnaryOperation.LOGICAL_NOT: z3.Not,
             }
         )
     )
@@ -55,8 +55,8 @@ class ExpressionToZ3Converter(ExpressionBasePass):
             BinaryOperation.FLOOR_DIVIDE: _z3_floor_divide,
             BinaryOperation.MODULO: operator.mod,
             BinaryOperation.POWER: operator.pow,
-            BinaryOperation.LOGICAL_AND: operator.and_,
-            BinaryOperation.LOGICAL_OR: operator.or_,
+            BinaryOperation.LOGICAL_AND: z3.And,
+            BinaryOperation.LOGICAL_OR: z3.Or,
             BinaryOperation.EQUAL: operator.eq,
             BinaryOperation.NOT_EQUAL: operator.ne,
             BinaryOperation.LESS: operator.lt,

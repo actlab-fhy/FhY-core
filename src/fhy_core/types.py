@@ -3,6 +3,7 @@
 __all__ = [
     "CoreDataType",
     "DataType",
+    "FhYCoreTypeError",
     "IndexType",
     "NumericalType",
     "PrimitiveDataType",
@@ -18,7 +19,7 @@ __all__ = [
 from abc import ABC
 from functools import partial
 
-from .error import FhYCoreTypeError
+from .error import register_error
 from .expression import Expression, pformat_expression
 from .identifier import Identifier
 from .utils import Lattice, StrEnum, format_comma_separated_list
@@ -26,6 +27,11 @@ from .utils import Lattice, StrEnum, format_comma_separated_list
 
 class Type(ABC):
     """Abstract compiler type."""
+
+
+@register_error
+class FhYCoreTypeError(TypeError):
+    """Core type error."""
 
 
 class DataType(ABC):

@@ -75,7 +75,7 @@ from .constraint import (
     InSetConstraint,
     NotInSetConstraint,
 )
-from .error import FhYCoreTypeError, SymbolTableError, register_error
+from .error import register_error
 from .expression import (
     BinaryExpression,
     BinaryOperation,
@@ -113,12 +113,14 @@ from .symbol_table import (
     FunctionSymbolTableFrame,
     ImportSymbolTableFrame,
     SymbolTable,
+    SymbolTableError,
     SymbolTableFrame,
     VariableSymbolTableFrame,
 )
 from .types import (
     CoreDataType,
     DataType,
+    FhYCoreTypeError,
     IndexType,
     NumericalType,
     PrimitiveDataType,
