@@ -4,8 +4,11 @@ __all__ = ["Identifier"]
 
 from typing import Any, ClassVar
 
+from .serialization import Serializable, register_serializable
 
-class Identifier:
+
+@register_serializable
+class Identifier(Serializable):
     """Unique name."""
 
     _next_id: ClassVar[int] = 0
@@ -25,6 +28,18 @@ class Identifier:
     @property
     def id(self) -> int:
         return self._id
+
+    def serialize_to_dict(self) -> dict[str, Any]:
+        return {"id": self._id, "name_hint": self._name_hint}
+
+    @classmethod
+    def deserialize_from_dict(cls, data: dict[str, Any]) -> "Identifier":
+        identifier = cls.__new__(cls)
+        identifier._id = int(data["id"])
+        identifier._name_hint = str(data["name_hint"])
+        if identifier._id >= cls._next_id:
+            cls._next_id = identifier._id + 1
+        return identifier
 
     def __copy__(self) -> "Identifier":
         identifier = Identifier.__new__(Identifier)

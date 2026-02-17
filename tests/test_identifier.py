@@ -57,3 +57,12 @@ def test_hash():
     """Test that the identifier hash is based on the ID."""
     identifier = Identifier("hash_test")
     assert hash(identifier) == hash(identifier.id)
+
+
+def test_serialization():
+    """Test that the identifier can be serialized and deserialized."""
+    identifier = Identifier("serialization_test")
+    serialized = identifier.serialize_to_dict()
+    deserialized = Identifier.deserialize_from_dict(serialized)
+
+    assert deserialized == identifier
