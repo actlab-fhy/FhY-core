@@ -66,6 +66,10 @@ __all__ = [
     "get_array_size_in_bits",
     "invert_dict",
     "invert_frozen_dict",
+    "register_serializable",
+    "get_wrapper_dict",
+    "unwrap_wrapper_dict",
+    "Serializable",
 ]
 
 
@@ -107,6 +111,12 @@ from .param import (
     Param,
     PermParam,
     RealParam,
+)
+from .serialization import (
+    Serializable,
+    get_wrapper_dict,
+    register_serializable,
+    unwrap_wrapper_dict,
 )
 from .symbol_table import (
     FunctionKeyword,
