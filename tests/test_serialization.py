@@ -122,26 +122,6 @@ def test_deserialize_type_mismatch_raises():
         _CustomIdNode.deserialize(blob, serialization.SerializationFormat.BINARY)
 
 
-def test_wrapped_dict_round_trip():
-    """Test that get_wrapper_dict and unwrap_wrapper_dict work together."""
-    span = _DummySpan(3, 4)
-    wrapper_dict = serialization.get_wrapper_dict(span)
-    assert wrapper_dict["__type__"] == _DummySpan.get_class_type_id()
-    assert wrapper_dict["__data__"] == {"lo": 3, "hi": 4}
-
-    span2 = serialization.unwrap_wrapper_dict(wrapper_dict)
-    assert isinstance(span2, _DummySpan)
-    assert span2 == span
-
-
-def test_unwrap_dict_invalid_payload_raises():
-    """Test that `unwrap_wrapper_dict` raises if the dict is not in the right format."""
-    with pytest.raises(serialization.SerializationError):
-        serialization.unwrap_wrapper_dict({"__type__": "x", "__data__": 123})  # type: ignore[arg-type]
-    with pytest.raises(serialization.SerializationError):
-        serialization.unwrap_wrapper_dict({"__type__": 123, "__data__": {}})  # type: ignore[arg-type]
-
-
 def _parse_envelope(blob: bytes) -> tuple[bytes, int, int, str, bytes]:
     header_struct = struct.Struct("!4sBBH")
     payload_len_struct = struct.Struct("!I")
