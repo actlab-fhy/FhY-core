@@ -1,6 +1,7 @@
 """Tests the expression utility."""
 
 import operator
+from typing import Any
 
 import pytest
 from fhy_core.expression import (
@@ -14,7 +15,7 @@ from fhy_core.expression import (
 )
 from fhy_core.identifier import Identifier
 
-from .utils import assert_exact_expression_equality, mock_identifier
+from .conftest import assert_exact_expression_equality, mock_identifier
 
 
 def test_unary_expression():
@@ -236,3 +237,74 @@ def test_logical_or():
         ),
     )
     assert_exact_expression_equality(result, expected_expression)
+
+
+@pytest.mark.parametrize(
+    "expression, expected_dict",
+    [
+        (
+            LiteralExpression(True),
+            {
+                "__type__": "fhy_core.expression.core.LiteralExpression",
+                "__data__": {"value": True},
+            },
+        ),
+        (
+            IdentifierExpression(mock_identifier("x", 1)),
+            {
+                "__type__": "fhy_core.expression.core.IdentifierExpression",
+                "__data__": {"identifier": {"id": 1, "name_hint": "x"}},
+            },
+        ),
+        (
+            UnaryExpression(
+                UnaryOperation.NEGATE, IdentifierExpression(mock_identifier("y", 2))
+            ),
+            {
+                "__type__": "fhy_core.expression.core.UnaryExpression",
+                "__data__": {
+                    "operation": "negate",
+                    "operand": {
+                        "__type__": "fhy_core.expression.core.IdentifierExpression",
+                        "__data__": {
+                            "identifier": {"id": 2, "name_hint": "y"},
+                        },
+                    },
+                },
+            },
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.ADD,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {
+                "__type__": "fhy_core.expression.core.BinaryExpression",
+                "__data__": {
+                    "operation": "add",
+                    "left": {
+                        "__type__": "fhy_core.expression.core.IdentifierExpression",
+                        "__data__": {
+                            "identifier": {"id": 0, "name_hint": "x"},
+                        },
+                    },
+                    "right": {
+                        "__type__": "fhy_core.expression.core.LiteralExpression",
+                        "__data__": {
+                            "value": 5,
+                        },
+                    },
+                },
+            },
+        ),
+    ],
+)
+def test_expression_serialization(
+    expression: Expression, expected_dict: dict[str, Any]
+):
+    """Test that expressions can be serialized to a dict."""
+    assert expression.serialize_to_dict() == expected_dict
+    assert_exact_expression_equality(
+        Expression.deserialize_from_dict(expected_dict), expression
+    )
