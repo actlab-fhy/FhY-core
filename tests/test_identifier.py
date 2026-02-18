@@ -3,7 +3,8 @@
 from copy import copy
 from unittest.mock import patch
 
-from fhy_core.identifier import Identifier
+import pytest
+from fhy_core.identifier import Identifier, SerializationError
 
 
 def test_identifier_initialization():
@@ -66,3 +67,10 @@ def test_serialization():
     deserialized = Identifier.deserialize_from_dict(serialized)
 
     assert deserialized == identifier
+
+    with pytest.raises(SerializationError):
+        Identifier.deserialize_from_dict({"invalid": "data"})
+    with pytest.raises(SerializationError):
+        Identifier.deserialize_from_dict({"id": "not_an_int", "name_hint": "test"})
+    with pytest.raises(SerializationError):
+        Identifier.deserialize_from_dict({"id": 1, "name_hint": 123})

@@ -4,7 +4,7 @@ __all__ = ["Identifier"]
 
 from typing import Any, ClassVar
 
-from .serialization import Serializable, register_serializable
+from .serialization import Serializable, SerializationError, register_serializable
 
 
 @register_serializable
@@ -34,9 +34,15 @@ class Identifier(Serializable):
 
     @classmethod
     def deserialize_from_dict(cls, data: dict[str, Any]) -> "Identifier":
+        if "id" not in data or "name_hint" not in data:
+            raise SerializationError('Invalid fields for deserializing "Identifier".')
+        if not isinstance(data["id"], int) or not isinstance(data["name_hint"], str):
+            raise SerializationError(
+                'Invalid field types for deserializing "Identifier".'
+            )
         identifier = cls.__new__(cls)
-        identifier._id = int(data["id"])
-        identifier._name_hint = str(data["name_hint"])
+        identifier._id = data["id"]
+        identifier._name_hint = data["name_hint"]
         if identifier._id >= cls._next_id:
             cls._next_id = identifier._id + 1
         return identifier
