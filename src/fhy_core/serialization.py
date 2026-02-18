@@ -53,6 +53,8 @@ __all__ = [
     "SerializationFormat",
     "BinaryPayloadCodec",
     "register_serializable",
+    "get_wrapper_dict",
+    "unwrap_wrapper_dict",
 ]
 
 import importlib
@@ -461,3 +463,22 @@ class Serializable(ABC):
 
         """
         return _loads_from_binary(data)
+
+
+def get_wrapper_dict(
+    obj: Serializable, serialization_method: Callable[[], dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Return a dict containing type information and the dict representation."""
+    if serialization_method is None:
+        serialization_method = obj.serialize_to_dict
+    return {"__type__": obj.get_class_type_id(), "__data__": serialization_method()}
+
+
+def unwrap_wrapper_dict(data: Mapping[str, Any]) -> Serializable:
+    """Return the Serializable object represented by a wrapper dict."""
+    t = data.get("__type__")
+    object_data = data.get("__data__")
+    if not isinstance(t, str) or not isinstance(object_data, Mapping):
+        raise SerializationError("Not a wrapped dict with __type__ and __data__.")
+    cls = _resolve_type_id(t)
+    return cls.deserialize_from_dict(object_data)
