@@ -237,8 +237,7 @@ class PrimitiveDataType(DataType):
     @classmethod
     def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "PrimitiveDataType":
         cls.raise_error_if_deserialization_data_invalid(data, {"core_data_type": str})
-        core_data_type = CoreDataType(data["core_data_type"])
-        return cls(core_data_type)
+        return cls(CoreDataType(data["core_data_type"]))
 
     def __str__(self) -> str:
         return str(self._core_data_type)
@@ -327,11 +326,10 @@ class NumericalType(Type):
         cls.raise_error_if_deserialization_data_invalid(
             data, {"data_type": dict, "shape": list}
         )
-        data_type_dict = data["data_type"]
-        shape_list = data["shape"]
-        data_type = DataType.deserialize_from_dict(data_type_dict)
-        shape = [Expression.deserialize_from_dict(dim_dict) for dim_dict in shape_list]
-        return cls(data_type, shape)
+        return cls(
+            DataType.deserialize_from_dict(data["data_type"]),
+            [Expression.deserialize_from_dict(dim_dict) for dim_dict in data["shape"]],
+        )
 
     def __str__(self) -> str:
         shape_str = format_comma_separated_list(
@@ -399,13 +397,13 @@ class IndexType(Type):
             },
             optional_fields={"stride": dict},
         )
-        lower_bound_dict = data["lower_bound"]
-        upper_bound_dict = data["upper_bound"]
         stride_dict = data.get("stride")
-        lower_bound = Expression.deserialize_from_dict(lower_bound_dict)
-        upper_bound = Expression.deserialize_from_dict(upper_bound_dict)
         stride = Expression.deserialize_from_dict(stride_dict) if stride_dict else None
-        return cls(lower_bound, upper_bound, stride)
+        return cls(
+            Expression.deserialize_from_dict(data["lower_bound"]),
+            Expression.deserialize_from_dict(data["upper_bound"]),
+            stride,
+        )
 
     def __str__(self) -> str:
         lower_bound_str = pformat_expression(self._lower_bound, show_id=True)
@@ -442,9 +440,7 @@ class TupleType(Type):
     @classmethod
     def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "TupleType":
         cls.raise_error_if_deserialization_data_invalid(data, {"types": list})
-        types_list = data["types"]
-        types = [Type.deserialize_from_dict(ty_dict) for ty_dict in types_list]
-        return cls(types)
+        return cls([Type.deserialize_from_dict(ty_dict) for ty_dict in data["types"]])
 
     def __str__(self) -> str:
         return f"({format_comma_separated_list(self._types)})"
