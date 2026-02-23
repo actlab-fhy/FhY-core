@@ -68,6 +68,7 @@ __all__ = [
     "invert_frozen_dict",
     "register_serializable",
     "Serializable",
+    "WrappedFamilySerializable",
 ]
 
 
@@ -112,6 +113,7 @@ from .param import (
 )
 from .serialization import (
     Serializable,
+    WrappedFamilySerializable,
     register_serializable,
 )
 from .symbol_table import (

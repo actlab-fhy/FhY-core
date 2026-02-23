@@ -4,13 +4,17 @@ This module defines the serialization trait and utilities used across the FhY
 compiler stack. It provides:
 
 - A runtime-enforced base class (`Serializable`) that compiler components
-  can inherit from to support consistent serialization and deserialization.
+    can inherit from to support consistent serialization and deserialization.
 
 - A small set of supported serialization formats (`SerializationFormat`):
-  - DICT:   A JSON-friendly Python mapping (useful for tests and debugging).
-  - JSON:   UTF-8 JSON text of the DICT representation.
-  - BINARY: A self-describing binary envelope suitable for file storage and
-            round-tripping objects back into their concrete Python classes.
+    - DICT:   A JSON-friendly Python mapping (useful for tests and debugging).
+    - JSON:   UTF-8 JSON text of the DICT representation.
+    - BINARY: A self-describing binary envelope suitable for file storage and
+        round-tripping objects back into their concrete Python classes.
+
+- A class-family serialization pattern via `WrappedFamilySerializable` that
+    simplifies serialization of class hierarchies (e.g., AST nodes) by embedding
+    type information in the dict form.
 
 Binary format
 -------------
@@ -55,6 +59,7 @@ __all__ = [
     "register_serializable",
     "get_wrapper_dict",
     "unwrap_wrapper_dict",
+    "WrappedFamilySerializable",
 ]
 
 import importlib
@@ -413,6 +418,61 @@ class Serializable(ABC):
         else:
             raise SerializationError(f"Unsupported format: {fmt}")
 
+    @classmethod
+    def raise_error_if_deserialization_data_invalid(
+        cls,
+        data: Mapping[str, Any],
+        required_fields: dict[str, type | Callable[[Any], bool]],
+        optional_fields: dict[str, type | Callable[[Any], bool]] = None,
+    ) -> None:
+        """Helper to check that fields are valid in the data deserialization.
+
+        Args:
+            data: The data mapping to check for required fields.
+            required_fields: A dictionary mapping required field names to their
+                expected types or validation functions.
+            optional_fields: A dictionary mapping optional field names to their
+                expected types or validation functions.
+
+        Raises:
+            SerializationError: If any required field is missing or if any field
+                fails type checks or validation (including optional fields that
+                are present but invalid).
+
+        """
+        if optional_fields is None:
+            optional_fields = {}
+
+        def check_field(
+            fld_nme: str, expctd: type | Callable[[Any], bool], is_reqd: bool
+        ) -> None:
+            if fld_nme not in data:
+                raise SerializationError(f'Missing field "{fld_nme}".')
+            value = data[fld_nme]
+            if isinstance(expctd, type):
+                if not isinstance(value, expctd):
+                    field_type = "required" if is_reqd else "optional"
+                    raise SerializationError(
+                        f'Field "{fld_nme}" expected {field_type} type '
+                        f"{expctd.__name__}, got {type(value).__name__}."
+                    )
+            elif callable(expctd):
+                if not expctd(value):
+                    raise SerializationError(
+                        f'Field "{fld_nme}" failed validation function.'
+                    )
+            else:
+                raise ValueError("Expected must be a type or a validation function.")
+
+        for field_name, expected in required_fields.items():
+            if field_name not in data:
+                raise SerializationError(f'Missing required field "{field_name}".')
+            check_field(field_name, expected, is_reqd=True)
+
+        for field_name, expected in optional_fields.items():
+            if field_name in data:
+                check_field(field_name, expected, is_reqd=False)
+
     def to_json(self, *, indent: int | None = None, sort_keys: bool = True) -> str:
         """Serialize this object to a JSON string.
 
@@ -482,3 +542,94 @@ def unwrap_wrapper_dict(data: Mapping[str, Any]) -> Serializable:
         raise SerializationError("Not a wrapped dict with __type__ and __data__.")
     cls = _resolve_type_id(t)
     return cls.deserialize_from_dict(object_data)
+
+
+_F = TypeVar("_F", bound="WrappedFamilySerializable")
+
+
+class WrappedFamilySerializable(Serializable, ABC):
+    """Serializable base for class families (e.g., AST nodes).
+
+    Pattern:
+      - Base class implements serialize_to_dict() to emit a wrapped dict:
+        ```
+          {"__type__": <type_id>, "__data__": <data_dict>}
+        ```
+
+      - Subclasses implement only the data portion:
+          - `serialize_data_to_dict()`
+          - `deserialize_data_from_dict()`
+
+      - Base class implements deserialize_from_dict() that:
+          - reads `__type__`/`__data__`
+          - resolves the concrete subclass from `__type__`
+          - calls `subclass.deserialize_data_from_dict(__data__)`
+
+    Example usage:
+    ```
+    class BaseNode(WrappedFamilySerializable):
+        pass
+
+    @register_serializable
+    class NodeA(BaseNode):
+        value: int
+
+        def serialize_data_to_dict(self):
+            return {"value": self.value}
+
+        @classmethod
+        def deserialize_data_from_dict(cls, data):
+            return cls(value=data["value"])
+
+    """
+
+    def serialize_to_dict(self) -> dict[str, Any]:
+        return {
+            "__type__": self.get_class_type_id(),
+            "__data__": self.serialize_data_to_dict(),
+        }
+
+    @classmethod
+    def deserialize_from_dict(cls: type[_F], data: Mapping[str, Any]) -> _F:
+        class_type_id = data.get("__type__")
+        object_data = data.get("__data__")
+        if not isinstance(class_type_id, str) or not isinstance(object_data, Mapping):
+            raise SerializationError("Not a wrapped dict with __type__ and __data__.")
+
+        concrete_class = _resolve_type_id(class_type_id)
+
+        if not issubclass(concrete_class, cls):
+            raise SerializationError(
+                f'Wrapped type "{concrete_class}" is not a subclass of expected '
+                f'family "{cls}".'
+            )
+
+        try:
+            return concrete_class.deserialize_data_from_dict(object_data)
+        except AttributeError as e:
+            raise SerializationError(
+                f'Concrete type "{concrete_class}" does not implement '
+                '"deserialize_data_from_dict".'
+            ) from e
+
+    @abstractmethod
+    def serialize_data_to_dict(self) -> dict[str, Any]:
+        """Serialize only this class's data.
+
+        Returns:
+            A dict representing only this class's data (no type wrapper).
+
+        """
+
+    @classmethod
+    @abstractmethod
+    def deserialize_data_from_dict(cls: type[_F], data: Mapping[str, Any]) -> _F:
+        """Deserialize only this class's data.
+
+        Args:
+            data: A dict representing only this class's data (no type wrapper).
+
+        Returns:
+            An instance of this class reconstructed from the data dict.
+
+        """
