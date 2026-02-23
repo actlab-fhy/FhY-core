@@ -237,12 +237,7 @@ class PrimitiveDataType(DataType):
     @classmethod
     def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "PrimitiveDataType":
         cls.raise_error_if_deserialization_data_invalid(data, {"core_data_type": str})
-        core_data_type_name = data["core_data_type"]
-        # if core_data_type_name not in CoreDataType._member_names_:
-        #     raise SerializationError(
-        #         f"Invalid core data type name: {core_data_type_name}"
-        #     )
-        core_data_type = CoreDataType(core_data_type_name)
+        core_data_type = CoreDataType(data["core_data_type"])
         return cls(core_data_type)
 
     def __str__(self) -> str:
