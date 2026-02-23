@@ -18,7 +18,7 @@ __all__ = [
     "LiteralExpression",
 ]
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -28,11 +28,9 @@ from frozendict import frozendict
 
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
-    Serializable,
     SerializationError,
-    get_wrapper_dict,
+    WrappedFamilySerializable,
     register_serializable,
-    unwrap_wrapper_dict,
 )
 from fhy_core.utils import invert_frozen_dict
 
@@ -45,7 +43,7 @@ class SymbolType(Enum):
     BOOL = auto()
 
 
-class Expression(Serializable, ABC):
+class Expression(WrappedFamilySerializable, ABC):
     """Abstract base class for expressions."""
 
     def __neg__(self) -> "UnaryExpression":
@@ -243,27 +241,6 @@ class Expression(Serializable, ABC):
             f"Unsupported type for creating literal expression: {type(other)}."
         )
 
-    def serialize_to_dict(self) -> dict[str, Any]:
-        return get_wrapper_dict(self, self.serialize_leaf_fields_to_dict)
-
-    @abstractmethod
-    def serialize_leaf_fields_to_dict(self) -> dict[str, Any]:
-        """Serialize the leaf fields of the expression tree to a dictionary.
-
-        Returns:
-            Dictionary representation of the expression fields.
-
-        """
-
-    @classmethod
-    def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "Expression":
-        candidate = unwrap_wrapper_dict(data)
-        if not isinstance(candidate, Expression):
-            raise SerializationError(
-                f'Deserialized object must be an expression, got "{type(candidate)}".'
-            )
-        return candidate
-
 
 class UnaryOperation(Enum):
     """Unary operation."""
@@ -303,14 +280,17 @@ class UnaryExpression(Expression):
     operation: UnaryOperation
     operand: Expression
 
-    def serialize_leaf_fields_to_dict(self) -> dict[str, Any]:
+    def serialize_data_to_dict(self) -> dict[str, Any]:
         return {
             "operation": UNARY_OPERATION_FUNCTION_NAMES[self.operation],
             "operand": self.operand.serialize_to_dict(),
         }
 
     @classmethod
-    def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "UnaryExpression":
+    def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "UnaryExpression":
+        cls.raise_error_if_deserialization_data_invalid(
+            data, {"operation": str, "operand": dict}
+        )
         operation_name = data["operation"]
         if operation_name not in UNARY_FUNCTION_NAME_OPERATIONS:
             raise SerializationError(f"Invalid unary operation name: {operation_name}.")
@@ -396,7 +376,7 @@ class BinaryExpression(Expression):
     left: Expression
     right: Expression
 
-    def serialize_leaf_fields_to_dict(self) -> dict[str, Any]:
+    def serialize_data_to_dict(self) -> dict[str, Any]:
         return {
             "operation": BINARY_OPERATION_FUNCTION_NAMES[self.operation],
             "left": self.left.serialize_to_dict(),
@@ -404,11 +384,19 @@ class BinaryExpression(Expression):
         }
 
     @classmethod
-    def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "BinaryExpression":
+    def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "BinaryExpression":
+        cls.raise_error_if_deserialization_data_invalid(
+            data, {"operation": str, "left": dict, "right": dict}
+        )
+        operation_name = data["operation"]
+        if operation_name not in BINARY_FUNCTION_NAME_OPERATIONS:
+            raise SerializationError(
+                f"Invalid binary operation name: {operation_name}."
+            )
         left = Expression.deserialize_from_dict(data["left"])
         right = Expression.deserialize_from_dict(data["right"])
         return cls(
-            BINARY_FUNCTION_NAME_OPERATIONS[data["operation"]],
+            BINARY_FUNCTION_NAME_OPERATIONS[operation_name],
             left,
             right,
         )
@@ -421,11 +409,14 @@ class IdentifierExpression(Expression):
 
     identifier: Identifier
 
-    def serialize_leaf_fields_to_dict(self) -> dict[str, Any]:
+    def serialize_data_to_dict(self) -> dict[str, Any]:
         return {"identifier": self.identifier.serialize_to_dict()}
 
     @classmethod
-    def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "IdentifierExpression":
+    def deserialize_data_from_dict(
+        cls, data: Mapping[str, Any]
+    ) -> "IdentifierExpression":
+        cls.raise_error_if_deserialization_data_invalid(data, {"identifier": dict})
         return cls(Identifier.deserialize_from_dict(data["identifier"]))
 
 
@@ -453,14 +444,12 @@ class LiteralExpression(Expression):
     def value(self) -> LiteralType:
         return self._value
 
-    def serialize_leaf_fields_to_dict(self) -> dict[str, Any]:
+    def serialize_data_to_dict(self) -> dict[str, Any]:
         return {"value": self._value}
 
     @classmethod
-    def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "LiteralExpression":
-        value = data["value"]
-        if not isinstance(value, (str, float, int, bool)):
-            raise SerializationError(
-                f"Invalid type for literal expression value: {type(value)}."
-            )
-        return cls(value)
+    def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "LiteralExpression":
+        cls.raise_error_if_deserialization_data_invalid(
+            data, {"value": lambda v: isinstance(v, (str, float, int, bool))}
+        )
+        return cls(data["value"])
