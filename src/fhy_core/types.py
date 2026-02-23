@@ -24,6 +24,7 @@ from typing import Any
 from fhy_core.serialization import (
     WrappedFamilySerializable,
     register_serializable,
+    serialize_sequence_to_list,
 )
 
 from .error import register_error
@@ -318,7 +319,7 @@ class NumericalType(Type):
     def serialize_data_to_dict(self) -> dict[str, Any]:
         return {
             "data_type": self._data_type.serialize_to_dict(),
-            "shape": [dim.serialize_to_dict() for dim in self._shape],
+            "shape": serialize_sequence_to_list(self._shape),
         }
 
     @classmethod
@@ -435,7 +436,7 @@ class TupleType(Type):
         return self._types
 
     def serialize_data_to_dict(self) -> dict[str, Any]:
-        return {"types": [ty.serialize_to_dict() for ty in self._types]}
+        return {"types": serialize_sequence_to_list(self._types)}
 
     @classmethod
     def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "TupleType":
