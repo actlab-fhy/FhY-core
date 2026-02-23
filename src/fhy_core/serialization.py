@@ -447,26 +447,34 @@ class Serializable(ABC):
             fld_nme: str, expctd: type | Callable[[Any], bool], is_reqd: bool
         ) -> None:
             if fld_nme not in data:
-                raise SerializationError(f'Missing field "{fld_nme}".')
+                raise SerializationError(
+                    f'Missing field "{fld_nme}" while attempting to deserialize '
+                    f'"{cls.__name__}".'
+                )
             value = data[fld_nme]
             if isinstance(expctd, type):
                 if not isinstance(value, expctd):
                     field_type = "required" if is_reqd else "optional"
                     raise SerializationError(
                         f'Field "{fld_nme}" expected {field_type} type '
-                        f"{expctd.__name__}, got {type(value).__name__}."
+                        f'"{expctd.__name__}", got "{type(value).__name__}" while '
+                        f'attempting to deserialize "{cls.__name__}".'
                     )
             elif callable(expctd):
                 if not expctd(value):
                     raise SerializationError(
-                        f'Field "{fld_nme}" failed validation function.'
+                        f'Field "{fld_nme}" failed validation function while '
+                        f'attempting to deserialize "{cls.__name__}".'
                     )
             else:
                 raise ValueError("Expected must be a type or a validation function.")
 
         for field_name, expected in required_fields.items():
             if field_name not in data:
-                raise SerializationError(f'Missing required field "{field_name}".')
+                raise SerializationError(
+                    f'Missing required field "{field_name}" while attempting to '
+                    f'deserialize "{cls.__name__}".'
+                )
             check_field(field_name, expected, is_reqd=True)
 
         for field_name, expected in optional_fields.items():
