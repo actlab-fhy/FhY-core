@@ -5,7 +5,7 @@ __all__ = ["Identifier"]
 from collections.abc import Mapping
 from typing import Any, ClassVar
 
-from .serialization import Serializable, SerializationError, register_serializable
+from .serialization import Serializable, register_serializable
 
 
 @register_serializable
@@ -35,12 +35,9 @@ class Identifier(Serializable):
 
     @classmethod
     def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "Identifier":
-        if "id" not in data or "name_hint" not in data:
-            raise SerializationError('Invalid fields for deserializing "Identifier".')
-        if not isinstance(data["id"], int) or not isinstance(data["name_hint"], str):
-            raise SerializationError(
-                'Invalid field types for deserializing "Identifier".'
-            )
+        cls.raise_error_if_deserialization_data_invalid(
+            data, {"id": lambda x: isinstance(x, int) and x >= 0, "name_hint": str}
+        )
         identifier = cls.__new__(cls)
         identifier._id = data["id"]
         identifier._name_hint = data["name_hint"]

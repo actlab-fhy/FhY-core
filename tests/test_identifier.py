@@ -74,3 +74,5 @@ def test_serialization():
         Identifier.deserialize_from_dict({"id": "not_an_int", "name_hint": "test"})
     with pytest.raises(SerializationError):
         Identifier.deserialize_from_dict({"id": 1, "name_hint": 123})
+    with pytest.raises(SerializationError):
+        Identifier.deserialize_from_dict({"id": -1, "name_hint": "test"})
