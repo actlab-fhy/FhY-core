@@ -4,7 +4,8 @@ from copy import copy
 from unittest.mock import patch
 
 import pytest
-from fhy_core.identifier import Identifier, SerializationError
+from fhy_core.identifier import Identifier
+from fhy_core.serialization import SerializationError
 
 
 def test_identifier_initialization():
