@@ -4,6 +4,7 @@ import importlib
 import json
 import struct
 import types
+from abc import ABC
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -77,6 +78,24 @@ class _CustomIdNode(serialization.Serializable):
         return cls(int(data["x"]))
 
 
+class _CustomNodeBase(serialization.WrappedFamilySerializable, ABC):
+    pass
+
+
+class _CustomNode(_CustomNodeBase):
+    value: int
+
+    def __init__(self, value: int):
+        self.value = value
+
+    def serialize_data_to_dict(self) -> dict[str, Any]:
+        return {"value": self.value}
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "_CustomNode":
+        return cls(data["value"])
+
+
 def test_dict_round_trip_via_classmethod():
     """Test that `serialize`/`deserialize` via dict format works."""
     span = _DummySpan(1, 9)
@@ -112,7 +131,7 @@ def test_serialize_dispatch_and_invalid_format():
     )
 
     with pytest.raises(serialization.SerializationError):
-        span.serialize("nope")  # type: ignore[arg-type]
+        span.serialize("nope")
 
 
 def test_deserialize_type_mismatch_raises():
@@ -120,6 +139,67 @@ def test_deserialize_type_mismatch_raises():
     blob = _DummySpan(1, 2).to_bytes()
     with pytest.raises(serialization.SerializationError):
         _CustomIdNode.deserialize(blob, serialization.SerializationFormat.BINARY)
+
+
+def test_raise_error_if_deserialization_data_invalid_success():
+    """Test that valid required/optional fields do not raise."""
+    data = {"name": "node", "count": 2, "meta": {"tag": "ok"}}
+
+    _DummySpan.raise_error_if_deserialization_data_invalid(
+        data,
+        required_fields={"name": str, "count": lambda v: isinstance(v, int) and v >= 0},
+        optional_fields={"meta": dict},
+    )
+
+
+@pytest.mark.parametrize(
+    ("data", "required_fields", "optional_fields", "error_type"),
+    [
+        (
+            {},
+            {"name": str},
+            None,
+            serialization.SerializationError,
+        ),
+        (
+            {"name": 42},
+            {"name": str},
+            None,
+            serialization.SerializationError,
+        ),
+        (
+            {"count": -1},
+            {"count": lambda v: isinstance(v, int) and v >= 0},
+            None,
+            serialization.SerializationError,
+        ),
+        (
+            {"name": "ok", "meta": "not-a-dict"},
+            {"name": str},
+            {"meta": dict},
+            serialization.SerializationError,
+        ),
+        (
+            {"name": "ok", "meta": {}},
+            {"name": str},
+            {"meta": object()},
+            ValueError,
+        ),
+    ],
+)
+def test_raise_error_if_deserialization_data_invalid_failure_cases(
+    data: Mapping[str, Any],
+    required_fields: dict[str, type | Any],
+    optional_fields: dict[str, type | Any] | None,
+    error_type: type[Exception],
+):
+    """Test that invalid input triggers the expected failures."""
+    with pytest.raises(error_type):
+        _DummySpan.raise_error_if_deserialization_data_invalid(
+            data,
+            required_fields=required_fields,
+            optional_fields=optional_fields,
+        )
 
 
 def test_wrapped_dict_round_trip():
@@ -140,6 +220,27 @@ def test_unwrap_dict_invalid_payload_raises():
         serialization.unwrap_wrapper_dict({"__type__": "x", "__data__": 123})
     with pytest.raises(serialization.SerializationError):
         serialization.unwrap_wrapper_dict({"__type__": 123, "__data__": {}})
+
+
+def test_wrapped_family_serializable_round_trip():
+    """Test that a `WrappedFamilySerializable` can round-trip."""
+    node = _CustomNode(42)
+
+    dictionary = node.serialize(serialization.SerializationFormat.DICT)
+    assert dictionary == {
+        "__type__": node.get_class_type_id(),
+        "__data__": {"value": 42},
+    }
+
+    node2 = _CustomNodeBase.deserialize(
+        dictionary, serialization.SerializationFormat.DICT
+    )
+    assert isinstance(node2, _CustomNode)
+    assert node2.value == 42
+
+    node3 = _CustomNode.deserialize(dictionary, serialization.SerializationFormat.DICT)
+    assert isinstance(node3, _CustomNode)
+    assert node3.value == 42
 
 
 def _parse_envelope(blob: bytes) -> tuple[bytes, int, int, str, bytes]:
@@ -358,8 +459,8 @@ def test_from_json_non_object_raises():
 def test_deserialize_invalid_payload_type_raises():
     """Test that deserializing with an invalid payload type raises an error."""
     with pytest.raises(serialization.SerializationError):
-        _DummySpan.deserialize(123, serialization.SerializationFormat.DICT)  # type: ignore[arg-type]
+        _DummySpan.deserialize(123, serialization.SerializationFormat.DICT)
     with pytest.raises(serialization.SerializationError):
-        _DummySpan.deserialize(123, serialization.SerializationFormat.JSON)  # type: ignore[arg-type]
+        _DummySpan.deserialize(123, serialization.SerializationFormat.JSON)
     with pytest.raises(serialization.SerializationError):
-        _DummySpan.deserialize("not-bytes", serialization.SerializationFormat.BINARY)  # type: ignore[arg-type]
+        _DummySpan.deserialize("not-bytes", serialization.SerializationFormat.BINARY)
