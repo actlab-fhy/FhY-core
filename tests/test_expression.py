@@ -300,9 +300,7 @@ def test_logical_or():
         ),
     ],
 )
-def test_expression_serialization(
-    expression: Expression, expected_dict: dict[str, Any]
-):
+def test_serialization(expression: Expression, expected_dict: dict[str, Any]):
     """Test that expressions can be serialized to a dict."""
     assert expression.serialize_to_dict() == expected_dict
     assert_exact_expression_equality(
