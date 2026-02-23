@@ -145,7 +145,7 @@ def test_raise_error_if_deserialization_data_invalid_success():
     """Test that valid required/optional fields do not raise."""
     data = {"name": "node", "count": 2, "meta": {"tag": "ok"}}
 
-    _DummySpan.raise_error_if_deserialization_data_invalid(
+    _DummySpan.raise_error_if_deserialization_from_dict_data_invalid(
         data,
         required_fields={"name": str, "count": lambda v: isinstance(v, int) and v >= 0},
         optional_fields={"meta": dict},
@@ -195,20 +195,11 @@ def test_raise_error_if_deserialization_data_invalid_failure_cases(
 ):
     """Test that invalid input triggers the expected failures."""
     with pytest.raises(error_type):
-        _DummySpan.raise_error_if_deserialization_data_invalid(
+        _DummySpan.raise_error_if_deserialization_from_dict_data_invalid(
             data,
             required_fields=required_fields,
             optional_fields=optional_fields,
         )
-
-
-def test_serialize_sequence_to_list():
-    """Test that `serialize_sequence_to_list` works correctly."""
-    span1 = _DummySpan(1, 2)
-    span2 = _DummySpan(3, 4)
-    sequence = [span1, 3, [span2, "4"]]
-    result = serialization.serialize_sequence_to_list(sequence)
-    assert result == [{"lo": 1, "hi": 2}, 3, [{"lo": 3, "hi": 4}, "4"]]
 
 
 def test_wrapped_dict_round_trip():

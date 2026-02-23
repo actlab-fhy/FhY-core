@@ -69,7 +69,11 @@ __all__ = [
     "register_serializable",
     "Serializable",
     "WrappedFamilySerializable",
-    "serialize_sequence_to_list",
+    "SerializedObject",
+    "SerializedMapping",
+    "SerializedMappingItem",
+    "SerializationError",
+    "SerializationFormat",
 ]
 
 
@@ -114,9 +118,13 @@ from .param import (
 )
 from .serialization import (
     Serializable,
+    SerializationError,
+    SerializationFormat,
+    SerializedMapping,
+    SerializedMappingItem,
+    SerializedObject,
     WrappedFamilySerializable,
     register_serializable,
-    serialize_sequence_to_list,
 )
 from .symbol_table import (
     FunctionKeyword,

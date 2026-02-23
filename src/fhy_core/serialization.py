@@ -60,7 +60,10 @@ __all__ = [
     "get_wrapper_dict",
     "unwrap_wrapper_dict",
     "WrappedFamilySerializable",
-    "serialize_sequence_to_list",
+    "SerializationError",
+    "SerializedMappingItem",
+    "SerializedMapping",
+    "SerializedObject",
 ]
 
 import importlib
@@ -68,12 +71,20 @@ import json
 import struct
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from typing import Any, Callable, ClassVar, TypeVar
+from typing import Any, Callable, ClassVar, TypeAlias, TypeVar
 
 from frozendict import frozendict
 
 from .error import register_error
 from .utils import StrEnum
+
+SerializedMappingItem: TypeAlias = (
+    "str | int | float | bool | None | Sequence[SerializedMappingItem] | "
+    "SerializedMapping"
+)
+SerializedMapping: TypeAlias = Mapping[str, SerializedMappingItem]
+SerializedObject: TypeAlias = SerializedMapping | str | bytes
+
 
 _T = TypeVar("_T", bound="Serializable")
 
@@ -277,12 +288,12 @@ class Serializable(ABC):
         return cls.TYPE_ID or _get_default_type_id(cls)
 
     @abstractmethod
-    def serialize_to_dict(self) -> dict[str, Any]:
+    def serialize_to_dict(self) -> SerializedMapping:
         """Return a dictionary representation of this object for serialization."""
 
     @classmethod
     @abstractmethod
-    def deserialize_from_dict(cls: type[_T], data: Mapping[str, Any]) -> _T:
+    def deserialize_from_dict(cls: type[_T], data: SerializedMapping) -> _T:
         """Create an instance of this class from a dictionary representation."""
 
     @classmethod
@@ -356,7 +367,7 @@ class Serializable(ABC):
 
         raise UnknownCodecError(f'Unsupported codec "{codec}".')
 
-    def serialize(self, fmt: SerializationFormat) -> Any:
+    def serialize(self, fmt: SerializationFormat) -> SerializedObject:
         """Serialize this object to the specified format.
 
         Args:
@@ -379,7 +390,9 @@ class Serializable(ABC):
             raise SerializationError(f"Unsupported format: {fmt}")
 
     @classmethod
-    def deserialize(cls: type[_T], payload: Any, fmt: SerializationFormat) -> _T:
+    def deserialize(
+        cls: type[_T], payload: SerializedObject, fmt: SerializationFormat
+    ) -> _T:
         """Deserialize an object of this class from the given payload and format.
 
         Args:
@@ -420,11 +433,11 @@ class Serializable(ABC):
             raise SerializationError(f"Unsupported format: {fmt}")
 
     @classmethod
-    def raise_error_if_deserialization_data_invalid(
+    def raise_error_if_deserialization_from_dict_data_invalid(
         cls,
-        data: Mapping[str, Any],
+        data: SerializedMapping,
         required_fields: dict[str, type | Callable[[Any], bool]],
-        optional_fields: dict[str, type | Callable[[Any], bool]] = None,
+        optional_fields: dict[str, type | Callable[[Any], bool]] | None = None,
     ) -> None:
         """Helper to check that fields are valid in the data deserialization.
 
@@ -534,38 +547,17 @@ class Serializable(ABC):
         return _loads_from_binary(data)
 
 
-def serialize_sequence_to_list(sequence: Sequence[Any]) -> list[Any]:
-    """Serialize a sequence of objects to a list.
-
-    Args:
-        sequence: Sequence of objects to serialize.
-
-    Returns:
-        A list of serialized representations of the objects.
-
-    """
-
-    def helper(itm: Any) -> Any:
-        if isinstance(itm, Serializable):
-            return itm.serialize_to_dict()
-        elif isinstance(itm, Sequence) and not isinstance(itm, (str, bytes, bytearray)):
-            return [helper(sub) for sub in itm]
-        else:
-            return itm
-
-    return list(map(helper, sequence))
-
-
 def get_wrapper_dict(
-    obj: Serializable, serialization_method: Callable[[], dict[str, Any]] | None = None
-) -> dict[str, Any]:
+    obj: Serializable,
+    serialization_method: Callable[[], SerializedMapping] | None = None,
+) -> SerializedMapping:
     """Return a dict containing type information and the dict representation."""
     if serialization_method is None:
         serialization_method = obj.serialize_to_dict
     return {"__type__": obj.get_class_type_id(), "__data__": serialization_method()}
 
 
-def unwrap_wrapper_dict(data: Mapping[str, Any]) -> Serializable:
+def unwrap_wrapper_dict(data: SerializedMapping) -> Serializable:
     """Return the Serializable object represented by a wrapper dict."""
     t = data.get("__type__")
     object_data = data.get("__data__")
@@ -621,7 +613,7 @@ class WrappedFamilySerializable(Serializable, ABC):
         }
 
     @classmethod
-    def deserialize_from_dict(cls: type[_F], data: Mapping[str, Any]) -> _F:
+    def deserialize_from_dict(cls: type[_F], data: SerializedMapping) -> _F:
         class_type_id = data.get("__type__")
         object_data = data.get("__data__")
         if not isinstance(class_type_id, str) or not isinstance(object_data, Mapping):
@@ -644,7 +636,7 @@ class WrappedFamilySerializable(Serializable, ABC):
             ) from e
 
     @abstractmethod
-    def serialize_data_to_dict(self) -> dict[str, Any]:
+    def serialize_data_to_dict(self) -> SerializedMapping:
         """Serialize only this class's data.
 
         Returns:
@@ -654,7 +646,7 @@ class WrappedFamilySerializable(Serializable, ABC):
 
     @classmethod
     @abstractmethod
-    def deserialize_data_from_dict(cls: type[_F], data: Mapping[str, Any]) -> _F:
+    def deserialize_data_from_dict(cls: type[_F], data: SerializedMapping) -> _F:
         """Deserialize only this class's data.
 
         Args:

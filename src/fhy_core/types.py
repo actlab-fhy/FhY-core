@@ -24,7 +24,6 @@ from typing import Any
 from fhy_core.serialization import (
     WrappedFamilySerializable,
     register_serializable,
-    serialize_sequence_to_list,
 )
 
 from .error import register_error
@@ -237,7 +236,9 @@ class PrimitiveDataType(DataType):
 
     @classmethod
     def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "PrimitiveDataType":
-        cls.raise_error_if_deserialization_data_invalid(data, {"core_data_type": str})
+        cls.raise_error_if_deserialization_from_dict_data_invalid(
+            data, {"core_data_type": str}
+        )
         return cls(CoreDataType(data["core_data_type"]))
 
     def __str__(self) -> str:
@@ -319,12 +320,12 @@ class NumericalType(Type):
     def serialize_data_to_dict(self) -> dict[str, Any]:
         return {
             "data_type": self._data_type.serialize_to_dict(),
-            "shape": serialize_sequence_to_list(self._shape),
+            "shape": [dim.serialize_to_dict() for dim in self._shape],
         }
 
     @classmethod
     def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "NumericalType":
-        cls.raise_error_if_deserialization_data_invalid(
+        cls.raise_error_if_deserialization_from_dict_data_invalid(
             data, {"data_type": dict, "shape": list}
         )
         return cls(
@@ -390,7 +391,7 @@ class IndexType(Type):
 
     @classmethod
     def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "IndexType":
-        cls.raise_error_if_deserialization_data_invalid(
+        cls.raise_error_if_deserialization_from_dict_data_invalid(
             data,
             {
                 "lower_bound": dict,
@@ -436,11 +437,11 @@ class TupleType(Type):
         return self._types
 
     def serialize_data_to_dict(self) -> dict[str, Any]:
-        return {"types": serialize_sequence_to_list(self._types)}
+        return {"types": [ty.serialize_to_dict() for ty in self._types]}
 
     @classmethod
     def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "TupleType":
-        cls.raise_error_if_deserialization_data_invalid(data, {"types": list})
+        cls.raise_error_if_deserialization_from_dict_data_invalid(data, {"types": list})
         return cls([Type.deserialize_from_dict(ty_dict) for ty_dict in data["types"]])
 
     def __str__(self) -> str:

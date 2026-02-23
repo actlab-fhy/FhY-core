@@ -2,10 +2,9 @@
 
 __all__ = ["Identifier"]
 
-from collections.abc import Mapping
 from typing import Any, ClassVar
 
-from .serialization import Serializable, register_serializable
+from .serialization import Serializable, SerializedMapping, register_serializable
 
 
 @register_serializable
@@ -30,12 +29,12 @@ class Identifier(Serializable):
     def id(self) -> int:
         return self._id
 
-    def serialize_to_dict(self) -> dict[str, Any]:
+    def serialize_to_dict(self) -> SerializedMapping:
         return {"id": self._id, "name_hint": self._name_hint}
 
     @classmethod
-    def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "Identifier":
-        cls.raise_error_if_deserialization_data_invalid(
+    def deserialize_from_dict(cls, data: SerializedMapping) -> "Identifier":
+        cls.raise_error_if_deserialization_from_dict_data_invalid(
             data, {"id": lambda x: isinstance(x, int) and x >= 0, "name_hint": str}
         )
         identifier = cls.__new__(cls)

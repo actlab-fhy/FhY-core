@@ -29,6 +29,7 @@ from frozendict import frozendict
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
     SerializationError,
+    SerializedMapping,
     WrappedFamilySerializable,
     register_serializable,
 )
@@ -280,16 +281,16 @@ class UnaryExpression(Expression):
     operation: UnaryOperation
     operand: Expression
 
-    def serialize_data_to_dict(self) -> dict[str, Any]:
+    def serialize_data_to_dict(self) -> SerializedMapping:
         return {
             "operation": UNARY_OPERATION_FUNCTION_NAMES[self.operation],
             "operand": self.operand.serialize_to_dict(),
         }
 
     @classmethod
-    def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "UnaryExpression":
-        cls.raise_error_if_deserialization_data_invalid(
-            data, {"operation": str, "operand": dict}
+    def deserialize_data_from_dict(cls, data: SerializedMapping) -> "UnaryExpression":
+        cls.raise_error_if_deserialization_from_dict_data_invalid(
+            data, {"operation": str, "operand": Mapping}
         )
         operation_name = data["operation"]
         if operation_name not in UNARY_FUNCTION_NAME_OPERATIONS:
@@ -376,7 +377,7 @@ class BinaryExpression(Expression):
     left: Expression
     right: Expression
 
-    def serialize_data_to_dict(self) -> dict[str, Any]:
+    def serialize_data_to_dict(self) -> SerializedMapping:
         return {
             "operation": BINARY_OPERATION_FUNCTION_NAMES[self.operation],
             "left": self.left.serialize_to_dict(),
@@ -384,9 +385,9 @@ class BinaryExpression(Expression):
         }
 
     @classmethod
-    def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "BinaryExpression":
-        cls.raise_error_if_deserialization_data_invalid(
-            data, {"operation": str, "left": dict, "right": dict}
+    def deserialize_data_from_dict(cls, data: SerializedMapping) -> "BinaryExpression":
+        cls.raise_error_if_deserialization_from_dict_data_invalid(
+            data, {"operation": str, "left": Mapping, "right": Mapping}
         )
         operation_name = data["operation"]
         if operation_name not in BINARY_FUNCTION_NAME_OPERATIONS:
@@ -409,14 +410,16 @@ class IdentifierExpression(Expression):
 
     identifier: Identifier
 
-    def serialize_data_to_dict(self) -> dict[str, Any]:
+    def serialize_data_to_dict(self) -> SerializedMapping:
         return {"identifier": self.identifier.serialize_to_dict()}
 
     @classmethod
     def deserialize_data_from_dict(
-        cls, data: Mapping[str, Any]
+        cls, data: SerializedMapping
     ) -> "IdentifierExpression":
-        cls.raise_error_if_deserialization_data_invalid(data, {"identifier": dict})
+        cls.raise_error_if_deserialization_from_dict_data_invalid(
+            data, {"identifier": Mapping}
+        )
         return cls(Identifier.deserialize_from_dict(data["identifier"]))
 
 
@@ -444,12 +447,12 @@ class LiteralExpression(Expression):
     def value(self) -> LiteralType:
         return self._value
 
-    def serialize_data_to_dict(self) -> dict[str, Any]:
+    def serialize_data_to_dict(self) -> SerializedMapping:
         return {"value": self._value}
 
     @classmethod
-    def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "LiteralExpression":
-        cls.raise_error_if_deserialization_data_invalid(
+    def deserialize_data_from_dict(cls, data: SerializedMapping) -> "LiteralExpression":
+        cls.raise_error_if_deserialization_from_dict_data_invalid(
             data, {"value": lambda v: isinstance(v, (str, float, int, bool))}
         )
         return cls(data["value"])
