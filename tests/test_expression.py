@@ -301,16 +301,16 @@ def test_logical_or():
         ),
     ],
 )
-def test_serialization(expression: Expression, expected_dict: dict[str, Any]):
-    """Test that expressions can be serialized to a dict."""
+def test_dict_serialization(expression: Expression, expected_dict: dict[str, Any]):
+    """Test that expressions can be serialized/deserialized via a dictionary."""
     assert expression.serialize_to_dict() == expected_dict
     assert_exact_expression_equality(
         Expression.deserialize_from_dict(expected_dict), expression
     )
 
 
-def test_deserialization_fails_with_invalid_unary_operation():
-    """Test that deserialization fails with an invalid unary operation name."""
+def test_dict_deserialization_fails_with_invalid_unary_operation():
+    """Test dictionary deserialization fails with invalid unary operation name."""
     data = {
         "__type__": "fhy_core.expression.core.UnaryExpression",
         "__data__": {"operation": "invalid_operation", "operand": {}},
@@ -319,8 +319,8 @@ def test_deserialization_fails_with_invalid_unary_operation():
         Expression.deserialize_from_dict(data)
 
 
-def test_deserialization_fails_with_invalid_binary_operation():
-    """Test that deserialization fails with an invalid binary operation name."""
+def test_dict_deserialization_fails_with_invalid_binary_operation():
+    """Test dictionary deserialization fails with invalid binary operation name."""
     data = {
         "__type__": "fhy_core.expression.core.BinaryExpression",
         "__data__": {

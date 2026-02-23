@@ -60,8 +60,8 @@ def test_hash():
     assert hash(identifier) == hash(identifier.id)
 
 
-def test_serialization():
-    """Test that the identifier can be serialized and deserialized."""
+def test_dict_serialization():
+    """Test the identifier can be serialized/deserialized via a dictionary."""
     identifier = Identifier("serialization_test")
     serialized = identifier.serialize_to_dict()
     deserialized = Identifier.deserialize_from_dict(serialized)
