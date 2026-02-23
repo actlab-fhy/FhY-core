@@ -202,6 +202,15 @@ def test_raise_error_if_deserialization_data_invalid_failure_cases(
         )
 
 
+def test_serialize_sequence_to_list():
+    """Test that `serialize_sequence_to_list` works correctly."""
+    span1 = _DummySpan(1, 2)
+    span2 = _DummySpan(3, 4)
+    sequence = [span1, 3, [span2, "4"]]
+    result = serialization.serialize_sequence_to_list(sequence)
+    assert result == [{"lo": 1, "hi": 2}, 3, [{"lo": 3, "hi": 4}, "4"]]
+
+
 def test_wrapped_dict_round_trip():
     """Test that `get_wrapper_dict` and `unwrap_wrapper_dict` work together."""
     span = _DummySpan(3, 4)

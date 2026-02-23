@@ -60,13 +60,14 @@ __all__ = [
     "get_wrapper_dict",
     "unwrap_wrapper_dict",
     "WrappedFamilySerializable",
+    "serialize_sequence_to_list",
 ]
 
 import importlib
 import json
 import struct
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Callable, ClassVar, TypeVar
 
 from frozendict import frozendict
@@ -531,6 +532,28 @@ class Serializable(ABC):
 
         """
         return _loads_from_binary(data)
+
+
+def serialize_sequence_to_list(sequence: Sequence[Any]) -> list[Any]:
+    """Serialize a sequence of objects to a list.
+
+    Args:
+        sequence: Sequence of objects to serialize.
+
+    Returns:
+        A list of serialized representations of the objects.
+
+    """
+
+    def helper(itm: Any) -> Any:
+        if isinstance(itm, Serializable):
+            return itm.serialize_to_dict()
+        elif isinstance(itm, Sequence) and not isinstance(itm, (str, bytes, bytearray)):
+            return [helper(sub) for sub in itm]
+        else:
+            return itm
+
+    return list(map(helper, sequence))
 
 
 def get_wrapper_dict(
