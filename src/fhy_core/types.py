@@ -17,7 +17,14 @@ __all__ = [
 ]
 
 from abc import ABC
+from collections.abc import Mapping
 from functools import partial
+from typing import Any
+
+from fhy_core.serialization import (
+    WrappedFamilySerializable,
+    register_serializable,
+)
 
 from .error import register_error
 from .expression import Expression, pformat_expression
@@ -25,7 +32,7 @@ from .identifier import Identifier
 from .utils import Lattice, StrEnum, format_comma_separated_list
 
 
-class Type(ABC):
+class Type(WrappedFamilySerializable, ABC):
     """Abstract compiler type."""
 
 
@@ -34,7 +41,7 @@ class FhYCoreTypeError(TypeError):
     """Core type error."""
 
 
-class DataType(ABC):
+class DataType(WrappedFamilySerializable, ABC):
     """Abstract data type."""
 
 
@@ -211,6 +218,7 @@ def promote_core_data_types(
         )
 
 
+@register_serializable
 class PrimitiveDataType(DataType):
     """Primitive data type."""
 
@@ -223,6 +231,20 @@ class PrimitiveDataType(DataType):
     def core_data_type(self) -> CoreDataType:
         return self._core_data_type
 
+    def serialize_data_to_dict(self) -> dict[str, Any]:
+        return {"core_data_type": self._core_data_type.value}
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "PrimitiveDataType":
+        cls.raise_error_if_deserialization_data_invalid(data, {"core_data_type": str})
+        core_data_type_name = data["core_data_type"]
+        # if core_data_type_name not in CoreDataType._member_names_:
+        #     raise SerializationError(
+        #         f"Invalid core data type name: {core_data_type_name}"
+        #     )
+        core_data_type = CoreDataType(core_data_type_name)
+        return cls(core_data_type)
+
     def __str__(self) -> str:
         return str(self._core_data_type)
 
@@ -230,8 +252,11 @@ class PrimitiveDataType(DataType):
         return f"{self.__class__.__name__}({repr(self._core_data_type)})"
 
 
+@register_serializable
 class TemplateDataType(DataType):
     """Template data type."""
+
+    # TODO: Fix this class!
 
     _data_type: Identifier
     widths: list[int] | None
@@ -274,6 +299,7 @@ def promote_primitive_data_types(
     )
 
 
+@register_serializable
 class NumericalType(Type):
     """Numerical multi-dimensional array type; empty shapes indicate scalars."""
 
@@ -295,6 +321,23 @@ class NumericalType(Type):
     def shape(self) -> list[Expression]:
         return self._shape
 
+    def serialize_data_to_dict(self) -> dict[str, Any]:
+        return {
+            "data_type": self._data_type.serialize_to_dict(),
+            "shape": [dim.serialize_to_dict() for dim in self._shape],
+        }
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "NumericalType":
+        cls.raise_error_if_deserialization_data_invalid(
+            data, {"data_type": dict, "shape": list}
+        )
+        data_type_dict = data["data_type"]
+        shape_list = data["shape"]
+        data_type = DataType.deserialize_from_dict(data_type_dict)
+        shape = [Expression.deserialize_from_dict(dim_dict) for dim_dict in shape_list]
+        return cls(data_type, shape)
+
     def __str__(self) -> str:
         shape_str = format_comma_separated_list(
             self._shape, str_func=partial(pformat_expression, show_id=True)
@@ -307,6 +350,7 @@ class NumericalType(Type):
         )
 
 
+@register_serializable
 class IndexType(Type):
     """Index type.
 
@@ -341,6 +385,33 @@ class IndexType(Type):
     def stride(self) -> Expression | None:
         return self._stride
 
+    def serialize_data_to_dict(self) -> dict[str, Any]:
+        data = {
+            "lower_bound": self._lower_bound.serialize_to_dict(),
+            "upper_bound": self._upper_bound.serialize_to_dict(),
+        }
+        if self._stride is not None:
+            data["stride"] = self._stride.serialize_to_dict()
+        return data
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "IndexType":
+        cls.raise_error_if_deserialization_data_invalid(
+            data,
+            {
+                "lower_bound": dict,
+                "upper_bound": dict,
+            },
+            optional_fields={"stride": dict},
+        )
+        lower_bound_dict = data["lower_bound"]
+        upper_bound_dict = data["upper_bound"]
+        stride_dict = data.get("stride")
+        lower_bound = Expression.deserialize_from_dict(lower_bound_dict)
+        upper_bound = Expression.deserialize_from_dict(upper_bound_dict)
+        stride = Expression.deserialize_from_dict(stride_dict) if stride_dict else None
+        return cls(lower_bound, upper_bound, stride)
+
     def __str__(self) -> str:
         lower_bound_str = pformat_expression(self._lower_bound, show_id=True)
         upper_bound_str = pformat_expression(self._upper_bound, show_id=True)
@@ -356,6 +427,7 @@ class IndexType(Type):
         )
 
 
+@register_serializable
 class TupleType(Type):
     """Tuple type."""
 
@@ -368,6 +440,16 @@ class TupleType(Type):
     @property
     def types(self) -> list[Type]:
         return self._types
+
+    def serialize_data_to_dict(self) -> dict[str, Any]:
+        return {"types": [ty.serialize_to_dict() for ty in self._types]}
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "TupleType":
+        cls.raise_error_if_deserialization_data_invalid(data, {"types": list})
+        types_list = data["types"]
+        types = [Type.deserialize_from_dict(ty_dict) for ty_dict in types_list]
+        return cls(types)
 
     def __str__(self) -> str:
         return f"({format_comma_separated_list(self._types)})"
