@@ -231,7 +231,7 @@ def _is_valid_primitive_data_type_data(
     return "core_data_type" in data and isinstance(data["core_data_type"], str)
 
 
-@register_serializable
+@register_serializable(type_id="primitive_data_type")
 class PrimitiveDataType(DataType):
     """Primitive data type."""
 
@@ -266,7 +266,7 @@ class PrimitiveDataType(DataType):
         return f"{self.__class__.__name__}({repr(self._core_data_type)})"
 
 
-@register_serializable
+@register_serializable(type_id="template_data_type")
 class TemplateDataType(DataType):
     """Template data type."""
 
@@ -329,7 +329,7 @@ def _is_valid_numerical_type_data(
     )
 
 
-@register_serializable
+@register_serializable(type_id="numerical_type")
 class NumericalType(Type):
     """Numerical multi-dimensional array type; empty shapes indicate scalars."""
 
@@ -395,7 +395,7 @@ def _is_valid_index_type_data(data: SerializedDict) -> TypeGuard[_IndexTypeData]
     )
 
 
-@register_serializable
+@register_serializable(type_id="index_type")
 class IndexType(Type):
     """Index type.
 
@@ -472,7 +472,7 @@ def _is_valid_tuple_type_data(data: SerializedDict) -> TypeGuard[_TupleTypeData]
     return "types" in data and isinstance(data["types"], list)
 
 
-@register_serializable
+@register_serializable(type_id="tuple_type")
 class TupleType(Type):
     """Tuple type."""
 

@@ -395,7 +395,7 @@ def finalize_param_construction_from_data(
             param.add_constraint(constraint)
 
 
-@register_serializable
+@register_serializable(type_id="real_param")
 class RealParam(Param[str | float]):
     """Real-valued parameter."""
 
@@ -545,7 +545,7 @@ class RealParam(Param[str | float]):
         return param
 
 
-@register_serializable
+@register_serializable(type_id="int_param")
 class IntParam(Param[int]):
     """Integer-valued parameter."""
 
@@ -704,7 +704,7 @@ def _is_valid_ordinal_categorical_perm_param_data(
     )
 
 
-@register_serializable
+@register_serializable(type_id="ordinal_param")
 class OrdinalParam(Param[Any]):
     """Ordinal-valued parameter.
 
@@ -772,7 +772,7 @@ class OrdinalParam(Param[Any]):
         return f"{{{format_comma_separated_list(self._all_values, str_func=str)}}}"
 
 
-@register_serializable
+@register_serializable(type_id="categorical_param")
 class CategoricalParam(Param[_H]):
     """Categorical parameter.
 
@@ -843,7 +843,7 @@ class CategoricalParam(Param[_H]):
         return f"{{{format_comma_separated_list(self._categories, str_func=str)}}}"
 
 
-@register_serializable
+@register_serializable(type_id="perm_param")
 class PermParam(Param[tuple[Any, ...]]):
     """Permutation parameter.
 

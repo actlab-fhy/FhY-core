@@ -290,7 +290,7 @@ def _is_valid_unary_expression_data(
     )
 
 
-@register_serializable
+@register_serializable(type_id="unary_expression")
 @dataclass(frozen=True, eq=False)
 class UnaryExpression(Expression):
     """Unary expression."""
@@ -407,7 +407,7 @@ def _is_valid_binary_expression_data(
     )
 
 
-@register_serializable
+@register_serializable(type_id="binary_expression")
 @dataclass(frozen=True, eq=False)
 class BinaryExpression(Expression):
     """Binary expression."""
@@ -453,7 +453,7 @@ def _is_valid_identifier_expression_data(
     return "identifier" in data and isinstance(data["identifier"], SerializedDictBase)
 
 
-@register_serializable
+@register_serializable(type_id="identifier_expression")
 @dataclass(frozen=True, eq=False)
 class IdentifierExpression(Expression):
     """Identifier expression."""
@@ -485,7 +485,7 @@ def _is_valid_literal_expression_data(
     return "value" in data and isinstance(data["value"], (str, float, int, bool))
 
 
-@register_serializable
+@register_serializable(type_id="literal_expression")
 class LiteralExpression(Expression):
     """Literal expression."""
 

@@ -99,7 +99,7 @@ def _is_valid_equation_constraint_data(
     )
 
 
-@register_serializable
+@register_serializable(type_id="equation_constraint")
 class EquationConstraint(Constraint):
     """Represents an equation constraint."""
 
@@ -170,7 +170,7 @@ def _is_valid_in_set_constraint_data(
     )
 
 
-@register_serializable
+@register_serializable(type_id="in_set_constraint")
 class InSetConstraint(Constraint):
     """Represents an in-set constraint."""
 
@@ -256,7 +256,7 @@ def _is_valid_not_in_set_constraint_data(
     )
 
 
-@register_serializable
+@register_serializable(type_id="not_in_set_constraint")
 class NotInSetConstraint(Constraint):
     """Represents a not-in-set constraint."""
 

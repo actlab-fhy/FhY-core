@@ -97,6 +97,103 @@ class _CustomNode(_CustomNodeBase):
         return cls(data["value"])
 
 
+def test_register_serializable_refuses_override_by_default():
+    """Test registering a different class under an existing type_id is rejected."""
+
+    @serialization.register_serializable(type_id="test.DuplicateId")
+    class _First(serialization.Serializable):
+        def serialize_to_dict(self) -> dict[str, Any]:
+            return {"x": 1}
+
+        @classmethod
+        def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_First":
+            return cls()
+
+    with pytest.raises(serialization.SerializationError):
+
+        @serialization.register_serializable(type_id="test.DuplicateId")
+        class _Second(serialization.Serializable):
+            def serialize_to_dict(self) -> dict[str, Any]:
+                return {"x": 2}
+
+            @classmethod
+            def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_Second":
+                return cls()
+
+
+def test_register_serializable_canonical_conflict_rejected():
+    """Test registering a class with a conflicting canonical type_id is rejected."""
+
+    @serialization.register_serializable(type_id="test.CanonicalA")
+    class _Canon(serialization.Serializable):
+        def serialize_to_dict(self) -> dict[str, Any]:
+            return {}
+
+        @classmethod
+        def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_Canon":
+            return cls()
+
+    with pytest.raises(serialization.SerializationError):
+        serialization.register_serializable(_Canon, type_id="test.CanonicalB")
+
+
+def test_register_serializable_allows_alias_without_changing_canonical_id():
+    """Test alias registration works without changing the class' canonical type id."""
+
+    @serialization.register_serializable(type_id="test.CanonicalMain")
+    class _Aliased(serialization.Serializable):
+        def serialize_to_dict(self) -> dict[str, Any]:
+            return {"ok": True}
+
+        @classmethod
+        def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_Aliased":
+            return cls()
+
+    serialization.register_serializable(
+        _Aliased, type_id="test.LegacyAlias", alias=True
+    )
+
+    assert _Aliased.get_serialization_class_type_id() == "test.CanonicalMain"
+    assert serialization._resolve_type_id("test.CanonicalMain") is _Aliased
+    assert serialization._resolve_type_id("test.LegacyAlias") is _Aliased
+
+
+def test_binary_deserialization_accepts_alias_type_id():
+    """Test binary deserialization accepts a legacy alias type_id in the envelope."""
+    span = _DummySpan(11, 22)
+    blob = span.to_bytes()
+    magic, version, codec_u8, _, payload = _parse_envelope(blob)
+
+    legacy_id = "test.LegacyDummySpan"
+    serialization.register_serializable(_DummySpan, type_id=legacy_id, alias=True)
+
+    header_struct = struct.Struct("!4sBBH")
+    payload_len_struct = struct.Struct("!I")
+
+    rebuilt = (
+        header_struct.pack(magic, version, codec_u8, len(legacy_id.encode("utf-8")))
+        + legacy_id.encode("utf-8")
+        + payload_len_struct.pack(len(payload))
+        + payload
+    )
+
+    obj = serialization.Serializable.from_bytes(rebuilt)
+    assert isinstance(obj, _DummySpan)
+    assert obj == span
+
+
+def test_wrapped_family_serializable_accepts_alias_type_id():
+    """Test `WrappedFamilySerializable` accepts a legacy alias via `__type__`."""
+    legacy_id = "test.LegacyCustomNode"
+    serialization.register_serializable(_CustomNode, type_id=legacy_id, alias=True)
+
+    wrapped = {"__type__": legacy_id, "__data__": {"value": 7}}
+
+    node2 = _CustomNodeBase.deserialize(wrapped, serialization.SerializationFormat.DICT)
+    assert isinstance(node2, _CustomNode)
+    assert node2.value == 7
+
+
 def test_dict_round_trip_via_classmethod():
     """Test that `serialize`/`deserialize` via dict format works."""
     span = _DummySpan(1, 9)
@@ -148,7 +245,7 @@ def test_wrapped_family_serializable_round_trip():
 
     dictionary = node.serialize(serialization.SerializationFormat.DICT)
     assert dictionary == {
-        "__type__": node.get_class_type_id(),
+        "__type__": node.get_serialization_class_type_id(),
         "__data__": {"value": 42},
     }
 
@@ -213,7 +310,7 @@ def test_binary_envelope_contains_expected_fields_json_codec():
     assert magic == b"FhYS"
     assert version == 1
     assert codec_u8 == 1  # JSON
-    assert type_id == _DummySpan.get_class_type_id()
+    assert type_id == _DummySpan.get_serialization_class_type_id()
 
     payload_obj = json.loads(payload.decode("utf-8"))
     assert payload_obj == {"lo": 5, "hi": 6}
@@ -228,7 +325,7 @@ def test_binary_envelope_contains_expected_fields_custom_codec():
     assert magic == b"FhYS"
     assert version == 1
     assert codec_u8 == 2  # CUSTOM
-    assert type_id == _CompactSpan.get_class_type_id()
+    assert type_id == _CompactSpan.get_serialization_class_type_id()
 
     lo, hi = struct.unpack("!ii", payload)
     assert (lo, hi) == (5, 6)
@@ -322,7 +419,7 @@ def test_binary_unknown_type_id_raises():
 
 def test_registry_resolution_prefers_registered_class():
     """Test that the registry resolution prefers registered classes over importlib."""
-    cls = serialization._resolve_type_id(_DummySpan.get_class_type_id())
+    cls = serialization._resolve_type_id(_DummySpan.get_serialization_class_type_id())
     assert cls is _DummySpan
 
 

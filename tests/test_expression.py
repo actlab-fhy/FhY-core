@@ -245,14 +245,14 @@ def test_logical_or():
         (
             LiteralExpression(True),
             {
-                "__type__": "fhy_core.expression.core.LiteralExpression",
+                "__type__": "literal_expression",
                 "__data__": {"value": True},
             },
         ),
         (
             IdentifierExpression(mock_identifier("x", 1)),
             {
-                "__type__": "fhy_core.expression.core.IdentifierExpression",
+                "__type__": "identifier_expression",
                 "__data__": {"identifier": {"id": 1, "name_hint": "x"}},
             },
         ),
@@ -261,11 +261,11 @@ def test_logical_or():
                 UnaryOperation.NEGATE, IdentifierExpression(mock_identifier("y", 2))
             ),
             {
-                "__type__": "fhy_core.expression.core.UnaryExpression",
+                "__type__": "unary_expression",
                 "__data__": {
                     "operation": "negate",
                     "operand": {
-                        "__type__": "fhy_core.expression.core.IdentifierExpression",
+                        "__type__": "identifier_expression",
                         "__data__": {
                             "identifier": {"id": 2, "name_hint": "y"},
                         },
@@ -280,17 +280,17 @@ def test_logical_or():
                 LiteralExpression(5),
             ),
             {
-                "__type__": "fhy_core.expression.core.BinaryExpression",
+                "__type__": "binary_expression",
                 "__data__": {
                     "operation": "add",
                     "left": {
-                        "__type__": "fhy_core.expression.core.IdentifierExpression",
+                        "__type__": "identifier_expression",
                         "__data__": {
                             "identifier": {"id": 0, "name_hint": "x"},
                         },
                     },
                     "right": {
-                        "__type__": "fhy_core.expression.core.LiteralExpression",
+                        "__type__": "literal_expression",
                         "__data__": {
                             "value": 5,
                         },
@@ -311,7 +311,7 @@ def test_dict_serialization(expression: Expression, expected_dict: SerializedDic
 def test_dict_deserialization_fails_with_invalid_unary_operation():
     """Test dictionary deserialization fails with invalid unary operation name."""
     data = {
-        "__type__": "fhy_core.expression.core.UnaryExpression",
+        "__type__": "unary_expression",
         "__data__": {"operation": "invalid_operation", "operand": {}},
     }
     with pytest.raises(InvalidSerializationDataValueError):
@@ -321,7 +321,7 @@ def test_dict_deserialization_fails_with_invalid_unary_operation():
 def test_dict_deserialization_fails_with_invalid_binary_operation():
     """Test dictionary deserialization fails with invalid binary operation name."""
     data = {
-        "__type__": "fhy_core.expression.core.BinaryExpression",
+        "__type__": "binary_expression",
         "__data__": {
             "operation": "invalid_operation",
             "left": {},

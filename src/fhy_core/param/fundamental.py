@@ -102,7 +102,7 @@ def is_zero_not_included_constraint_exists(
     return False
 
 
-@register_serializable
+@register_serializable(type_id="nat_param")
 class NatParam(IntParam):
     """Natural number parameter."""
 

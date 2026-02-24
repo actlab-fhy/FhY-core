@@ -27,7 +27,7 @@ def _is_valid_identifier_data(data: SerializedDict) -> TypeGuard[_IdentifierData
     )
 
 
-@register_serializable
+@register_serializable(type_id="id")
 class Identifier(Serializable):
     """Unique name."""
 

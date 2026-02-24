@@ -113,7 +113,7 @@ def test_primitive_data_type_dict_serialization():
     for core_data_type in CoreDataType:
         primitive_data_type = PrimitiveDataType(core_data_type)
         expected_dict = {
-            "__type__": "fhy_core.types.PrimitiveDataType",
+            "__type__": "primitive_data_type",
             "__data__": {"core_data_type": core_data_type.value},
         }
         dictionary = primitive_data_type.serialize_to_dict()
@@ -134,10 +134,10 @@ def test_numerical_type_dict_serialization():
     ]
     numerical_type = NumericalType(PrimitiveDataType(CoreDataType.INT32), shape)
     expected_dict = {
-        "__type__": "fhy_core.types.NumericalType",
+        "__type__": "numerical_type",
         "__data__": {
             "data_type": {
-                "__type__": "fhy_core.types.PrimitiveDataType",
+                "__type__": "primitive_data_type",
                 "__data__": {"core_data_type": CoreDataType.INT32.value},
             },
             "shape": [
@@ -164,7 +164,7 @@ def test_index_type_dict_serialization():
     upper_bound = IdentifierExpression(N)
     index_type = IndexType(lower_bound, upper_bound, None)
     expected_dict = {
-        "__type__": "fhy_core.types.IndexType",
+        "__type__": "index_type",
         "__data__": {
             "lower_bound": lower_bound.serialize_to_dict(),
             "upper_bound": upper_bound.serialize_to_dict(),
@@ -187,7 +187,7 @@ def test_index_type_with_stride_serialization():
     stride = LiteralExpression(2)
     index_type = IndexType(lower_bound, upper_bound, stride)
     expected_dict = {
-        "__type__": "fhy_core.types.IndexType",
+        "__type__": "index_type",
         "__data__": {
             "lower_bound": lower_bound.serialize_to_dict(),
             "upper_bound": upper_bound.serialize_to_dict(),
@@ -213,7 +213,7 @@ def test_tuple_type_dict_serialization():
     numerical_type = NumericalType(PrimitiveDataType(CoreDataType.INT32), shape)
     tuple_type = TupleType([numerical_type, numerical_type])
     expected_dict = {
-        "__type__": "fhy_core.types.TupleType",
+        "__type__": "tuple_type",
         "__data__": {
             "types": [
                 numerical_type.serialize_to_dict(),

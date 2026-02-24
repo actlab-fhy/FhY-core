@@ -113,7 +113,7 @@ def _is_valid_bound_param_data(data: SerializedDict) -> TypeGuard[_BoundParamDat
     )
 
 
-@register_serializable
+@register_serializable(type_id="bound_int_param")
 class BoundIntParam(IntParam):
     """An interval integer parameter that supports basic arithmetic.
 
@@ -398,7 +398,7 @@ class BoundIntParam(IntParam):
         return self._create_param_from_min_max(self, new_min, new_max)
 
 
-@register_serializable
+@register_serializable(type_id="bound_nat_param")
 class BoundNatParam(BoundIntParam, NatParam):
     """A bounded natural number parameter (i.e., non-negative integers)."""
 

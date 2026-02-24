@@ -228,11 +228,44 @@ def register_serializable(
     cls: type[_T] | None = None,
     *,
     type_id: str | None = None,
+    alias: bool = False,
 ) -> type[_T] | Callable[[type[_T]], type[_T]]:
-    """Decorator to register a Serializable class under a type_id."""
+    """Decorator to register a Serializable class under a type_id.
+
+    Args:
+        cls: The class to register. Can be provided directly or via a decorator.
+        type_id: The type id to register under. If omitted, uses the class' existing
+            `_SERIALIZATION_CLASS_TYPE_ID` if present.
+        alias: If True, register `type_id` as an additional (legacy) id for the class
+            without changing the class' canonical `_SERIALIZATION_CLASS_TYPE_ID`.
+            If False (default), `type_id` is treated as the canonical id: it will be
+            set on the class (if not already set) and must match if already set.
+    """
 
     def _wrapper(c: type[_T]) -> type[_T]:
-        ty_id = type_id or _get_default_type_id(c)
+        local_existing = c.__dict__.get("_SERIALIZATION_CLASS_TYPE_ID", None)
+
+        if type_id is None:
+            ty_id = local_existing or _get_default_type_id(c)
+        else:
+            ty_id = type_id
+
+        if ty_id in _TYPE_REGISTRY and _TYPE_REGISTRY[ty_id] is not c:
+            raise SerializationError(
+                f'Duplicate registration for type_id "{ty_id}": '
+                f"{_TYPE_REGISTRY[ty_id]} already registered; refusing to override."
+            )
+
+        if type_id is not None and not alias:
+            if local_existing is None:
+                c._SERIALIZATION_CLASS_TYPE_ID = type_id
+            elif local_existing != type_id:
+                raise SerializationError(
+                    f"Class {c} already has "
+                    f'_SERIALIZATION_CLASS_TYPE_ID="{local_existing}", '
+                    f'cannot register with different type_id="{type_id}".'
+                )
+
         _TYPE_REGISTRY[ty_id] = c
         return c
 
@@ -247,7 +280,7 @@ _PAYLOAD_LEN_STRUCT = struct.Struct("!I")
 
 
 def _dump_to_binary(obj: "Serializable") -> bytes:
-    type_id = obj.get_class_type_id().encode("utf-8")
+    type_id = obj.get_serialization_class_type_id().encode("utf-8")
 
     codec = obj.get_binary_codec()
     try:
@@ -345,12 +378,13 @@ class Serializable(ABC):
 
     """
 
-    TYPE_ID: ClassVar[str | None] = None
+    _SERIALIZATION_CLASS_TYPE_ID: ClassVar[str | None] = None
 
     @classmethod
-    def get_class_type_id(cls) -> str:
+    def get_serialization_class_type_id(cls) -> str:
         """Return the type_id for this class; used for serialization."""
-        return cls.TYPE_ID or _get_default_type_id(cls)
+        local = cls.__dict__.get("_SERIALIZATION_CLASS_TYPE_ID", None)
+        return local or _get_default_type_id(cls)
 
     @abstractmethod
     def serialize_to_dict(self) -> SerializedDict:
@@ -603,7 +637,7 @@ class WrappedFamilySerializable(Serializable, ABC):
 
     def serialize_to_dict(self) -> SerializedDict:
         return {
-            "__type__": self.get_class_type_id(),
+            "__type__": self.get_serialization_class_type_id(),
             "__data__": self.serialize_data_to_dict(),
         }
 

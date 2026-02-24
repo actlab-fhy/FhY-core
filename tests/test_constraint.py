@@ -418,7 +418,7 @@ def test_equation_constraint_dict_serialization():
     )
     constraint = EquationConstraint(x, constraint_expression)
     expected_dict = {
-        "__type__": "fhy_core.constraint.EquationConstraint",
+        "__type__": "equation_constraint",
         "__data__": {
             "variable": x_data,
             "expression": constraint_expression.serialize_to_dict(),
@@ -440,7 +440,7 @@ def test_in_set_constraint_dict_serialization():
     x_data = x.serialize_to_dict()
     constraint = InSetConstraint(x, {1, 2})
     expected_dict = {
-        "__type__": "fhy_core.constraint.InSetConstraint",
+        "__type__": "in_set_constraint",
         "__data__": {
             "variable": x_data,
             "valid_values": [1, 2],
@@ -460,7 +460,7 @@ def test_not_in_set_constraint_dict_serialization():
     x_data = x.serialize_to_dict()
     constraint = NotInSetConstraint(x, {1, 2})
     expected_dict = {
-        "__type__": "fhy_core.constraint.NotInSetConstraint",
+        "__type__": "not_in_set_constraint",
         "__data__": {
             "variable": x_data,
             "invalid_values": [1, 2],
