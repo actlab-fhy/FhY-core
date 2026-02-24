@@ -904,7 +904,7 @@ class PermParam(Param[tuple[Any, ...]]):
         finalize_param_construction_from_data(
             param,
             data,
-            lambda v: param._is_value_valid_permutation(v),
+            param._is_value_valid_permutation,
             f"a permutation of {param._all_values}",
         )
         return param
