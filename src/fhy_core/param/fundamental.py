@@ -116,7 +116,9 @@ class NatParam(IntParam):
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "NatParam":
         if not is_valid_param_data(data):
             raise InvalidSerializationDictStructureError(cls, ParamData, data)
-        param = IntParam(Identifier.deserialize_from_dict(data["variable"]))
+        param = NatParam(
+            Identifier.deserialize_from_dict(data["variable"]), is_zero_included=True
+        )
         finalize_param_construction_from_data(
             param,
             data,

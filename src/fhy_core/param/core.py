@@ -363,8 +363,8 @@ def is_valid_param_data(data: SerializedDict) -> TypeGuard[ParamData]:
 
 
 def finalize_param_construction_from_data(
-    param: Param,
-    data: SerializedDict,
+    param: Param[Any],
+    data: ParamData,
     value_check_function: Callable[[Any], bool],
     value_description_phrase: str,
 ) -> None:
@@ -682,10 +682,7 @@ class IntParam(Param[int]):
         return param
 
 
-class _OrdinalCategorialPermParamData(TypedDict):
-    variable: SerializedDict
-    value: Any | None
-    constraints: list[SerializedDict]
+class _OrdinalCategorialPermParamData(ParamData):
     possible_values: list[Any]
 
 
@@ -693,17 +690,9 @@ def _is_valid_ordinal_categorical_perm_param_data(
     data: SerializedDict,
 ) -> TypeGuard[_OrdinalCategorialPermParamData]:
     return (
-        "variable" in data
-        and isinstance(data["variable"], SerializedDictBase)
-        and "value" in data
-        and (
-            data["value"] is None
-            or isinstance(data["value"], (int, float, str, list, tuple, dict))
-        )
-        and "constraints" in data
-        and isinstance(data["constraints"], list)
-        and "possible_values" in data
+        "possible_values" in data
         and isinstance(data["possible_values"], list)
+        and is_valid_param_data(data)
     )
 
 

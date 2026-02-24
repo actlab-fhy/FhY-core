@@ -2,7 +2,7 @@
 
 __all__ = ["BoundIntParam", "BoundNatParam"]
 
-from typing import Any, Iterable, Optional, Tuple
+from typing import Any, Iterable, Optional, Tuple, TypeGuard
 
 from fhy_core.constraint import Constraint, EquationConstraint
 from fhy_core.expression import (
@@ -13,9 +13,19 @@ from fhy_core.expression import (
     LiteralExpression,
 )
 from fhy_core.identifier import Identifier
+from fhy_core.serialization import (
+    InvalidSerializationDictStructureError,
+    SerializedDict,
+)
 from fhy_core.utils import Self
 
-from .core import IntParam, Param
+from .core import (
+    IntParam,
+    Param,
+    ParamData,
+    finalize_param_construction_from_data,
+    is_valid_param_data,
+)
 from .fundamental import NatParam
 
 
@@ -81,6 +91,18 @@ def _get_bound_from_expression(
         True
         if op in (BinaryOperation.GREATER_EQUAL, BinaryOperation.LESS_EQUAL)
         else False,
+    )
+
+
+class _BoundParamData(ParamData):
+    prefer_inclusive: bool
+
+
+def _is_valid_bound_param_data(data: SerializedDict) -> TypeGuard[_BoundParamData]:
+    return (
+        "prefer_inclusive" in data
+        and isinstance(data["prefer_inclusive"], bool)
+        and is_valid_param_data(data)
     )
 
 
@@ -279,7 +301,22 @@ class BoundIntParam(IntParam):
         p.add_upper_bound_constraint(value, is_inclusive=True)
         return p
 
-    # TODO: Add serialization/deserialization method
+    def serialize_data_to_dict(self) -> SerializedDict:
+        super_dict = super().serialize_data_to_dict()
+        super_dict["prefer_inclusive"] = self._prefer_inclusive
+        return super_dict
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "BoundIntParam":
+        if not _is_valid_bound_param_data(data):
+            raise InvalidSerializationDictStructureError(cls, _BoundParamData, data)
+        param = BoundIntParam(
+            Identifier.deserialize_from_dict(data["variable"]), data["prefer_inclusive"]
+        )
+        finalize_param_construction_from_data(
+            param, data, lambda v: isinstance(v, int), "an integer"
+        )
+        return param
 
     def _coerce_other(self, other: Any) -> "BoundIntParam":
         if isinstance(other, int):
@@ -368,4 +405,17 @@ class BoundNatParam(BoundIntParam, NatParam):
             prefer_inclusive=prefer_inclusive,
         )
 
-    # TODO: Add deserialization method
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "BoundNatParam":
+        if not _is_valid_bound_param_data(data):
+            raise InvalidSerializationDictStructureError(cls, _BoundParamData, data)
+        param = BoundNatParam(
+            Identifier.deserialize_from_dict(data["variable"]), data["prefer_inclusive"]
+        )
+        finalize_param_construction_from_data(
+            param,
+            data,
+            lambda v: isinstance(v, int) and v >= 0,
+            "a non-negative integer",
+        )
+        return param

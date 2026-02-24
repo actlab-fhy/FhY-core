@@ -8,6 +8,7 @@ from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.expression import SymbolType
 from fhy_core.param import (
     BoundIntParam,
+    BoundNatParam,
     CategoricalParam,
     IntParam,
     NatParam,
@@ -1241,6 +1242,30 @@ def test_bound_int_param_subtraction_matches_brute_force(lower, upper, lin, u_in
     allowed_z = {a - b for a in allowed_x for b in allowed_y}
     for v in range((lower - 2) - (upper + 2), (upper + 2) - (lower - 2) + 1):
         assert z.is_constraints_satisfied(v) == (v in allowed_z)
+
+
+def test_bound_int_param_serialization():
+    """Test bound int parameter can be serialized/deserialized via a dictionary."""
+    p = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=False)
+    p.set_value(4)
+    dictionary = p.serialize_to_dict()
+    p2 = BoundIntParam.deserialize_from_dict(dictionary)
+    assert p2.is_value_set()
+    assert p2.get_value() == 4
+    _assert_all_satisfied(p2, [3, 4])
+    _assert_none_satisfied(p2, [5])
+
+
+def test_bound_nat_param_serialization():
+    """Test bound nat parameter can be serialized/deserialized via a dictionary."""
+    p = BoundNatParam.with_lower_bound(0, is_inclusive=True)
+    p.set_value(5)
+    dictionary = p.serialize_to_dict()
+    p2 = BoundNatParam.deserialize_from_dict(dictionary)
+    assert p2.is_value_set()
+    assert p2.get_value() == 5
+    _assert_all_satisfied(p2, [0, 1, 5, 100])
+    _assert_none_satisfied(p2, [-1])
 
 
 # TODO: Update tests that check exceptions to match exception messages.
