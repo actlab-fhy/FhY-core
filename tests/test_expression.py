@@ -330,3 +330,6 @@ def test_dict_deserialization_fails_with_invalid_binary_operation():
     }
     with pytest.raises(InvalidSerializationDataValueError):
         Expression.deserialize_from_dict(data)
+
+
+# TODO: Check serialization structure errors and value errors for all types.

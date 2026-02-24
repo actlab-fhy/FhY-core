@@ -233,3 +233,6 @@ def test_tuple_type_dict_serialization():
         assert len(ty.shape) == 2
         assert_exact_expression_equality(ty.shape[0], shape[0])
         assert_exact_expression_equality(ty.shape[1], shape[1])
+
+
+# TODO: Check serialization structure errors and value errors for all types.
