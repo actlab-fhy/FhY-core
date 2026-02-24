@@ -36,6 +36,7 @@ from fhy_core.serialization import (
     SerializedDict,
     SerializedDictBase,
     WrappedFamilySerializable,
+    register_serializable,
 )
 from fhy_core.utils import Self, format_comma_separated_list
 
@@ -389,6 +390,7 @@ def finalize_param_construction_from_data(
         param.add_constraint(constraint)
 
 
+@register_serializable
 class RealParam(Param[str | float]):
     """Real-valued parameter."""
 
@@ -538,6 +540,7 @@ class RealParam(Param[str | float]):
         return param
 
 
+@register_serializable
 class IntParam(Param[int]):
     """Integer-valued parameter."""
 
@@ -682,13 +685,13 @@ class IntParam(Param[int]):
         return param
 
 
-class _OrdinalCategorialPermParamData(ParamData):
+class _OrdinalCategoricalPermParamData(ParamData):
     possible_values: list[Any]
 
 
 def _is_valid_ordinal_categorical_perm_param_data(
     data: SerializedDict,
-) -> TypeGuard[_OrdinalCategorialPermParamData]:
+) -> TypeGuard[_OrdinalCategoricalPermParamData]:
     return (
         "possible_values" in data
         and isinstance(data["possible_values"], list)
@@ -696,6 +699,7 @@ def _is_valid_ordinal_categorical_perm_param_data(
     )
 
 
+@register_serializable
 class OrdinalParam(Param[Any]):
     """Ordinal-valued parameter.
 
@@ -738,7 +742,7 @@ class OrdinalParam(Param[Any]):
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "OrdinalParam":
         if not _is_valid_ordinal_categorical_perm_param_data(data):
             raise InvalidSerializationDictStructureError(
-                cls, _OrdinalCategorialPermParamData, data
+                cls, _OrdinalCategoricalPermParamData, data
             )
         param = OrdinalParam(
             data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
@@ -763,6 +767,7 @@ class OrdinalParam(Param[Any]):
         return f"{{{format_comma_separated_list(self._all_values, str_func=str)}}}"
 
 
+@register_serializable
 class CategoricalParam(Param[_H]):
     """Categorical parameter.
 
@@ -808,7 +813,7 @@ class CategoricalParam(Param[_H]):
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "CategoricalParam[_H]":
         if not _is_valid_ordinal_categorical_perm_param_data(data):
             raise InvalidSerializationDictStructureError(
-                cls, _OrdinalCategorialPermParamData, data
+                cls, _OrdinalCategoricalPermParamData, data
             )
         param = CategoricalParam(
             data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
@@ -833,6 +838,7 @@ class CategoricalParam(Param[_H]):
         return f"{{{format_comma_separated_list(self._categories, str_func=str)}}}"
 
 
+@register_serializable
 class PermParam(Param[tuple[Any, ...]]):
     """Permutation parameter.
 
@@ -885,7 +891,7 @@ class PermParam(Param[tuple[Any, ...]]):
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "PermParam":
         if not _is_valid_ordinal_categorical_perm_param_data(data):
             raise InvalidSerializationDictStructureError(
-                cls, _OrdinalCategorialPermParamData, data
+                cls, _OrdinalCategoricalPermParamData, data
             )
         param = PermParam(
             data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
