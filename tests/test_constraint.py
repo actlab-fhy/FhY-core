@@ -407,7 +407,7 @@ def test_convert_not_in_set_constraint_to_expression():
     assert_exact_expression_equality(expected_expression, expression)
 
 
-def test_equation_constraint_serialization():
+def test_equation_constraint_dict_serialization():
     """Test the equation constraint can be serialized/deserialized via a dictionary."""
     constraint_expression = BinaryExpression(
         BinaryOperation.EQUAL,
@@ -432,7 +432,7 @@ def test_equation_constraint_serialization():
     )
 
 
-def test_in_set_constraint_serialization():
+def test_in_set_constraint_dict_serialization():
     """Test the in-set constraint can be serialized/deserialized via a dictionary."""
     constraint = InSetConstraint(mock_identifier("x", 0), {1, 2})
     expected_dict = {
@@ -450,7 +450,7 @@ def test_in_set_constraint_serialization():
     assert constraint_deserialized._valid_values == {1, 2}
 
 
-def test_not_in_set_constraint_serialization():
+def test_not_in_set_constraint_dict_serialization():
     """Test the NiS constraint can be serialized/deserialized via a dictionary."""
     constraint = NotInSetConstraint(mock_identifier("x", 0), {1, 2})
     expected_dict = {
