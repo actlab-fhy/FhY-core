@@ -1,7 +1,6 @@
 """Tests the expression utility."""
 
 import operator
-from typing import Any
 
 import pytest
 from fhy_core.expression import (
@@ -14,7 +13,7 @@ from fhy_core.expression import (
     UnaryOperation,
 )
 from fhy_core.identifier import Identifier
-from fhy_core.serialization import SerializationError
+from fhy_core.serialization import InvalidSerializationDataValueError, SerializedDict
 
 from .conftest import assert_exact_expression_equality, mock_identifier
 
@@ -301,7 +300,7 @@ def test_logical_or():
         ),
     ],
 )
-def test_dict_serialization(expression: Expression, expected_dict: dict[str, Any]):
+def test_dict_serialization(expression: Expression, expected_dict: SerializedDict):
     """Test that expressions can be serialized/deserialized via a dictionary."""
     assert expression.serialize_to_dict() == expected_dict
     assert_exact_expression_equality(
@@ -315,7 +314,7 @@ def test_dict_deserialization_fails_with_invalid_unary_operation():
         "__type__": "fhy_core.expression.core.UnaryExpression",
         "__data__": {"operation": "invalid_operation", "operand": {}},
     }
-    with pytest.raises(SerializationError):
+    with pytest.raises(InvalidSerializationDataValueError):
         Expression.deserialize_from_dict(data)
 
 
@@ -329,5 +328,5 @@ def test_dict_deserialization_fails_with_invalid_binary_operation():
             "right": {},
         },
     }
-    with pytest.raises(SerializationError):
+    with pytest.raises(InvalidSerializationDataValueError):
         Expression.deserialize_from_dict(data)
