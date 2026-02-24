@@ -52,6 +52,8 @@ As a convenience, the module also supports a fallback that resolves classes
 by importing the module portion of the `type_id`.
 """
 
+from __future__ import annotations
+
 __all__ = [
     "Serializable",
     "SerializationFormat",
@@ -79,7 +81,7 @@ from .error import register_error
 from .utils import StrEnum, format_comma_separated_list
 
 SerializedDictItem: TypeAlias = (
-    "str | int | float | bool | None | Sequence[SerializedDictItem] | " "SerializedDict"
+    "str | int | float | bool | None | Sequence[SerializedDictItem] | SerializedDict"
 )
 SerializedDictBase: TypeAlias = dict
 SerializedDict: TypeAlias = SerializedDictBase[str, SerializedDictItem]
@@ -184,14 +186,31 @@ def _get_default_type_id(cls: type[Any]) -> str:
     return f"{cls.__module__}.{cls.__qualname__}"
 
 
-def _resolve_type_id(type_id: str) -> type["Serializable"]:
+def _resolve_type_id(
+    type_id: str,
+    *,
+    allow_import_fallback: bool = False,
+    allowed_module_prefixes: tuple[str, ...] = ("fhy_core.",),
+) -> type["Serializable"]:
     if type_id in _TYPE_REGISTRY:
         return _TYPE_REGISTRY[type_id]
 
+    if not allow_import_fallback:
+        raise UnknownTypeIdError(
+            f'Type "{type_id}" is not registered. Import fallback is disabled.'
+        )
+
+    module_name, _, qual = type_id.rpartition(".")
+    if not module_name:
+        raise UnknownTypeIdError(f'Invalid type_id "{type_id}" (no module path).')
+
+    if allowed_module_prefixes and not module_name.startswith(allowed_module_prefixes):
+        raise UnknownTypeIdError(
+            f'Refusing to import "{module_name}" while resolving "{type_id}". '
+            f"Allowed prefixes: {allowed_module_prefixes}"
+        )
+
     try:
-        module_name, _, qual = type_id.rpartition(".")
-        if not module_name:
-            raise UnknownTypeIdError(f'Invalid type_id "{type_id}" (no module path).')
         module = importlib.import_module(module_name)
         obj: Any = module
         for part in qual.split("."):
@@ -254,7 +273,12 @@ def _dump_to_binary(obj: "Serializable") -> bytes:
     return header + type_id + payload_len + payload_bytes
 
 
-def _loads_from_binary(data: bytes | bytearray | memoryview) -> "Serializable":
+def _loads_from_binary(
+    data: bytes | bytearray | memoryview,
+    *,
+    allow_import_fallback: bool = False,
+    allowed_module_prefixes: tuple[str, ...] = ("fhy_core.",),
+) -> "Serializable":
     mv = memoryview(data)
     if len(mv) < _HEADER_STRUCT.size:
         raise SerializationError("Data too short for header.")
@@ -295,7 +319,11 @@ def _loads_from_binary(data: bytes | bytearray | memoryview) -> "Serializable":
 
     payload_bytes = mv[offset:end_payload].tobytes()
 
-    cls = _resolve_type_id(type_id)
+    cls = _resolve_type_id(
+        type_id,
+        allow_import_fallback=allow_import_fallback,
+        allowed_module_prefixes=allowed_module_prefixes,
+    )
     return cls.deserialize_from_binary(payload_bytes, codec=codec)
 
 
@@ -508,17 +536,30 @@ class Serializable(ABC):
         return _dump_to_binary(self)
 
     @staticmethod
-    def from_bytes(data: bytes | bytearray | memoryview) -> "Serializable":
+    def from_bytes(
+        data: bytes | bytearray | memoryview,
+        *,
+        allow_import_fallback: bool = False,
+        allowed_module_prefixes: tuple[str, ...] = ("fhy_core.",),
+    ) -> "Serializable":
         """Deserialize a Serializable object from binary data.
 
         Args:
             data: The binary data containing the serialized object.
+            allow_import_fallback: Whether to allow importing classes from
+                external modules.
+            allowed_module_prefixes: A tuple of allowed module prefixes for
+                import fallback.
 
         Returns:
             The deserialized Serializable object.
 
         """
-        return _loads_from_binary(data)
+        return _loads_from_binary(
+            data,
+            allow_import_fallback=allow_import_fallback,
+            allowed_module_prefixes=allowed_module_prefixes,
+        )
 
 
 _F = TypeVar("_F", bound="WrappedFamilySerializable")

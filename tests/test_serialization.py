@@ -82,6 +82,7 @@ class _CustomNodeBase(serialization.WrappedFamilySerializable, ABC):
     pass
 
 
+@serialization.register_serializable
 class _CustomNode(_CustomNodeBase):
     value: int
 
@@ -326,7 +327,7 @@ def test_registry_resolution_prefers_registered_class():
 
 
 def test_fallback_import_resolution_via_mock(monkeypatch):
-    """Test that the fallback resolution works when the type is not in the registry."""
+    """Test that import fallback works when explicitly enabled and allowlisted."""
     mod = types.SimpleNamespace()
 
     class _Outer(serialization.Serializable):
@@ -343,11 +344,28 @@ def test_fallback_import_resolution_via_mock(monkeypatch):
         assert name == "fakepkg.fakemod"
         return mod
 
-    ty_id = "fakepkg.fakemod._Outer"
     monkeypatch.setattr(importlib, "import_module", fake_import)
 
-    resolved = serialization._resolve_type_id(ty_id)
+    ty_id = "fakepkg.fakemod._Outer"
+
+    resolved = serialization._resolve_type_id(
+        ty_id,
+        allow_import_fallback=True,
+        allowed_module_prefixes=("fakepkg.",),
+    )
     assert resolved is _Outer
+
+
+def test_fallback_import_resolution_disabled_by_default(monkeypatch):
+    """Test that import fallback is disabled by default (registry-only)."""
+
+    def fail_import(name: str):
+        raise AssertionError("importlib.import_module should not be called by default")
+
+    monkeypatch.setattr(importlib, "import_module", fail_import)
+
+    with pytest.raises(serialization.UnknownTypeIdError):
+        serialization._resolve_type_id("fakepkg.fakemod._Outer")
 
 
 def test_fallback_import_resolution_rejects_non_serializable(monkeypatch):
@@ -367,6 +385,73 @@ def test_fallback_import_resolution_rejects_non_serializable(monkeypatch):
 
     with pytest.raises(serialization.UnknownTypeIdError):
         serialization._resolve_type_id("fakepkg.fakemod._NotSerializable")
+
+
+def test_binary_deserialization_does_not_import_by_default(monkeypatch):
+    """Test by default, deserialization does not import unknown types."""
+    blob = _DummySpan(1, 2).to_bytes()
+    magic, version, codec_u8, _, payload = _parse_envelope(blob)
+
+    fake_type_id = "fakepkg.fakemod._Outer".encode("utf-8")
+    header_struct = struct.Struct("!4sBBH")
+    payload_len_struct = struct.Struct("!I")
+
+    rebuilt = (
+        header_struct.pack(magic, version, codec_u8, len(fake_type_id))
+        + fake_type_id
+        + payload_len_struct.pack(len(payload))
+        + payload
+    )
+
+    def fail_import(name: str):
+        raise AssertionError(
+            "importlib.import_module was called but fallback should be disabled"
+        )
+
+    monkeypatch.setattr(importlib, "import_module", fail_import)
+
+    with pytest.raises(serialization.UnknownTypeIdError):
+        serialization.Serializable.from_bytes(rebuilt)
+
+
+def test_binary_deserialization_import_fallback_opt_in(monkeypatch):
+    """Test deserialization can import/deserialize a type not in the registry."""
+    blob = _DummySpan(1, 2).to_bytes()
+    magic, version, codec_u8, _, payload = _parse_envelope(blob)
+
+    mod = types.SimpleNamespace()
+
+    class _Outer(serialization.Serializable):
+        def serialize_to_dict(self) -> dict[str, Any]:
+            return {"ok": True}
+
+        @classmethod
+        def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_Outer":
+            return cls()
+
+    setattr(mod, "_Outer", _Outer)
+
+    def fake_import(name: str):
+        assert name == "fakepkg.fakemod"
+        return mod
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+
+    fake_type_id = "fakepkg.fakemod._Outer".encode("utf-8")
+    header_struct = struct.Struct("!4sBBH")
+    payload_len_struct = struct.Struct("!I")
+
+    rebuilt = (
+        header_struct.pack(magic, version, codec_u8, len(fake_type_id))
+        + fake_type_id
+        + payload_len_struct.pack(len(payload))
+        + payload
+    )
+
+    obj = serialization.Serializable.from_bytes(
+        rebuilt, allow_import_fallback=True, allowed_module_prefixes=("fakepkg.",)
+    )
+    assert isinstance(obj, _Outer)
 
 
 def test_from_json_non_object_raises():
