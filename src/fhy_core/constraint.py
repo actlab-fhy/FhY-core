@@ -8,8 +8,15 @@ __all__ = [
 ]
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, TypedDict, TypeGuard
 
+from fhy_core.serialization import (
+    InvalidSerializationDictStructureError,
+    SerializedDict,
+    SerializedDictBase,
+    WrappedFamilySerializable,
+    register_serializable,
+)
 from fhy_core.utils import Self, format_comma_separated_list
 
 from .expression import (
@@ -26,7 +33,7 @@ from .expression import (
 from .identifier import Identifier
 
 
-class Constraint(ABC):
+class Constraint(WrappedFamilySerializable, ABC):
     """Abstract base class for constraints."""
 
     _variable: Identifier
@@ -76,6 +83,23 @@ class Constraint(ABC):
     def __str__(self) -> str: ...
 
 
+class _EquationConstraintData(TypedDict):
+    variable: Identifier
+    expression: SerializedDict
+
+
+def _is_valid_equation_constraint_data(
+    data: SerializedDict,
+) -> TypeGuard[_EquationConstraintData]:
+    return (
+        "variable" in data
+        and isinstance(data["variable"], Identifier)
+        and "expression" in data
+        and isinstance(data["expression"], SerializedDictBase)
+    )
+
+
+@register_serializable
 class EquationConstraint(Constraint):
     """Represents an equation constraint."""
 
@@ -106,6 +130,23 @@ class EquationConstraint(Constraint):
     def convert_to_expression(self) -> Expression:
         return copy_expression(self._expression)
 
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {
+            "variable": self.variable,
+            "expression": self._expression.serialize_to_dict(),
+        }
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "EquationConstraint":
+        if not _is_valid_equation_constraint_data(data):
+            raise InvalidSerializationDictStructureError(
+                cls, _EquationConstraintData, data
+            )
+        return cls(
+            data["variable"],
+            Expression.deserialize_from_dict(data["expression"]),
+        )
+
     def __repr__(self) -> str:
         return repr(self._expression)
 
@@ -113,6 +154,23 @@ class EquationConstraint(Constraint):
         return pformat_expression(self._expression)
 
 
+class _InSetConstraintData(TypedDict):
+    variable: Identifier
+    valid_values: list[Any]
+
+
+def _is_valid_in_set_constraint_data(
+    data: SerializedDict,
+) -> TypeGuard[_InSetConstraintData]:
+    return (
+        "variable" in data
+        and isinstance(data["variable"], Identifier)
+        and "valid_values" in data
+        and isinstance(data["valid_values"], list)
+    )
+
+
+@register_serializable
 class InSetConstraint(Constraint):
     """Represents an in-set constraint."""
 
@@ -155,6 +213,23 @@ class InSetConstraint(Constraint):
             LiteralExpression(value),
         )
 
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {
+            "variable": self.variable,
+            "valid_values": list(self._valid_values),
+        }
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "InSetConstraint":
+        if not _is_valid_in_set_constraint_data(data):
+            raise InvalidSerializationDictStructureError(
+                cls, _InSetConstraintData, data
+            )
+        return cls(
+            data["variable"],
+            set(data["valid_values"]),
+        )
+
     def __repr__(self) -> str:
         return repr(self._valid_values)
 
@@ -163,6 +238,22 @@ class InSetConstraint(Constraint):
             f"{self.variable} in {{"
             f"{format_comma_separated_list(self._valid_values, str_func=str)}}}"
         )
+
+
+class _NotInSetConstraintData(TypedDict):
+    variable: Identifier
+    invalid_values: list[Any]
+
+
+def _is_valid_not_in_set_constraint_data(
+    data: SerializedDict,
+) -> TypeGuard[_NotInSetConstraintData]:
+    return (
+        "variable" in data
+        and isinstance(data["variable"], Identifier)
+        and "invalid_values" in data
+        and isinstance(data["invalid_values"], list)
+    )
 
 
 class NotInSetConstraint(Constraint):
@@ -205,6 +296,23 @@ class NotInSetConstraint(Constraint):
             BinaryOperation.NOT_EQUAL,
             variable,
             LiteralExpression(value),
+        )
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {
+            "variable": self.variable,
+            "invalid_values": list(self._invalid_values),
+        }
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "NotInSetConstraint":
+        if not _is_valid_not_in_set_constraint_data(data):
+            raise InvalidSerializationDictStructureError(
+                cls, _NotInSetConstraintData, data
+            )
+        return cls(
+            data["variable"],
+            set(data["invalid_values"]),
         )
 
     def __repr__(self) -> str:
