@@ -19,17 +19,18 @@ __all__ = [
 ]
 
 from abc import ABC
-from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any
+from typing import Any, TypedDict, TypeGuard
 
 from frozendict import frozendict
 
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
-    SerializationError,
-    SerializedMapping,
+    InvalidSerializationDataValueError,
+    InvalidSerializationDictStructureError,
+    SerializedDict,
+    SerializedDictBase,
     WrappedFamilySerializable,
     register_serializable,
 )
@@ -273,6 +274,22 @@ UNARY_SYMBOL_OPERATIONS: frozendict[str, UnaryOperation] = invert_frozen_dict(
 )
 
 
+class _UnaryExpressionData(TypedDict):
+    operation: str
+    operand: SerializedDict
+
+
+def _is_valid_unary_expression_data(
+    data: SerializedDict,
+) -> TypeGuard[_UnaryExpressionData]:
+    return (
+        "operation" in data
+        and isinstance(data["operation"], str)
+        and "operand" in data
+        and isinstance(data["operand"], SerializedDictBase)
+    )
+
+
 @register_serializable
 @dataclass(frozen=True, eq=False)
 class UnaryExpression(Expression):
@@ -281,20 +298,23 @@ class UnaryExpression(Expression):
     operation: UnaryOperation
     operand: Expression
 
-    def serialize_data_to_dict(self) -> SerializedMapping:
+    def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "operation": UNARY_OPERATION_FUNCTION_NAMES[self.operation],
             "operand": self.operand.serialize_to_dict(),
         }
 
     @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedMapping) -> "UnaryExpression":
-        cls.raise_error_if_deserialization_from_dict_data_invalid(
-            data, {"operation": str, "operand": Mapping}
-        )
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "UnaryExpression":
+        if not _is_valid_unary_expression_data(data):
+            raise InvalidSerializationDictStructureError(
+                cls, _UnaryExpressionData, data
+            )
         operation_name = data["operation"]
         if operation_name not in UNARY_FUNCTION_NAME_OPERATIONS:
-            raise SerializationError(f"Invalid unary operation name: {operation_name}.")
+            raise InvalidSerializationDataValueError(
+                cls, "operation", "a valid unary operation name", operation_name
+            )
         operand = Expression.deserialize_from_dict(data["operand"])
         return cls(
             UNARY_FUNCTION_NAME_OPERATIONS[operation_name],
@@ -368,6 +388,25 @@ BINARY_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = invert_frozen_dict(
 )
 
 
+class _BinaryExpressionData(TypedDict):
+    operation: str
+    left: SerializedDict
+    right: SerializedDict
+
+
+def _is_valid_binary_expression_data(
+    data: SerializedDict,
+) -> TypeGuard[_BinaryExpressionData]:
+    return (
+        "operation" in data
+        and isinstance(data["operation"], str)
+        and "left" in data
+        and isinstance(data["left"], SerializedDictBase)
+        and "right" in data
+        and isinstance(data["right"], SerializedDictBase)
+    )
+
+
 @register_serializable
 @dataclass(frozen=True, eq=False)
 class BinaryExpression(Expression):
@@ -377,7 +416,7 @@ class BinaryExpression(Expression):
     left: Expression
     right: Expression
 
-    def serialize_data_to_dict(self) -> SerializedMapping:
+    def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "operation": BINARY_OPERATION_FUNCTION_NAMES[self.operation],
             "left": self.left.serialize_to_dict(),
@@ -385,14 +424,15 @@ class BinaryExpression(Expression):
         }
 
     @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedMapping) -> "BinaryExpression":
-        cls.raise_error_if_deserialization_from_dict_data_invalid(
-            data, {"operation": str, "left": Mapping, "right": Mapping}
-        )
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "BinaryExpression":
+        if not _is_valid_binary_expression_data(data):
+            raise InvalidSerializationDictStructureError(
+                cls, _BinaryExpressionData, data
+            )
         operation_name = data["operation"]
         if operation_name not in BINARY_FUNCTION_NAME_OPERATIONS:
-            raise SerializationError(
-                f"Invalid binary operation name: {operation_name}."
+            raise InvalidSerializationDataValueError(
+                cls, "operation", "a valid binary operation name", operation_name
             )
         left = Expression.deserialize_from_dict(data["left"])
         right = Expression.deserialize_from_dict(data["right"])
@@ -403,6 +443,16 @@ class BinaryExpression(Expression):
         )
 
 
+class _IdentifierExpressionData(TypedDict):
+    identifier: SerializedDict
+
+
+def _is_valid_identifier_expression_data(
+    data: SerializedDict,
+) -> TypeGuard[_IdentifierExpressionData]:
+    return "identifier" in data and isinstance(data["identifier"], SerializedDictBase)
+
+
 @register_serializable
 @dataclass(frozen=True, eq=False)
 class IdentifierExpression(Expression):
@@ -410,20 +460,29 @@ class IdentifierExpression(Expression):
 
     identifier: Identifier
 
-    def serialize_data_to_dict(self) -> SerializedMapping:
+    def serialize_data_to_dict(self) -> SerializedDict:
         return {"identifier": self.identifier.serialize_to_dict()}
 
     @classmethod
-    def deserialize_data_from_dict(
-        cls, data: SerializedMapping
-    ) -> "IdentifierExpression":
-        cls.raise_error_if_deserialization_from_dict_data_invalid(
-            data, {"identifier": Mapping}
-        )
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "IdentifierExpression":
+        if not _is_valid_identifier_expression_data(data):
+            raise InvalidSerializationDictStructureError(
+                cls, _IdentifierExpressionData, data
+            )
         return cls(Identifier.deserialize_from_dict(data["identifier"]))
 
 
 LiteralType = str | float | int | bool
+
+
+class _LiteralExpressionData(TypedDict):
+    value: LiteralType
+
+
+def _is_valid_literal_expression_data(
+    data: SerializedDict,
+) -> TypeGuard[_LiteralExpressionData]:
+    return "value" in data and isinstance(data["value"], (str, float, int, bool))
 
 
 @register_serializable
@@ -447,12 +506,13 @@ class LiteralExpression(Expression):
     def value(self) -> LiteralType:
         return self._value
 
-    def serialize_data_to_dict(self) -> SerializedMapping:
+    def serialize_data_to_dict(self) -> SerializedDict:
         return {"value": self._value}
 
     @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedMapping) -> "LiteralExpression":
-        cls.raise_error_if_deserialization_from_dict_data_invalid(
-            data, {"value": lambda v: isinstance(v, (str, float, int, bool))}
-        )
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "LiteralExpression":
+        if not _is_valid_literal_expression_data(data):
+            raise InvalidSerializationDictStructureError(
+                cls, _LiteralExpressionData, data
+            )
         return cls(data["value"])

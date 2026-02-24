@@ -70,10 +70,11 @@ __all__ = [
     "Serializable",
     "WrappedFamilySerializable",
     "SerializedObject",
-    "SerializedMapping",
-    "SerializedMappingItem",
-    "SerializationError",
+    "SerializedDict",
+    "SerializedDictItem",
     "SerializationFormat",
+    "InvalidSerializationDictStructureError",
+    "InvalidSerializationDataValueError",
 ]
 
 
@@ -117,11 +118,12 @@ from .param import (
     RealParam,
 )
 from .serialization import (
+    InvalidSerializationDataValueError,
+    InvalidSerializationDictStructureError,
     Serializable,
-    SerializationError,
     SerializationFormat,
-    SerializedMapping,
-    SerializedMappingItem,
+    SerializedDict,
+    SerializedDictItem,
     SerializedObject,
     WrappedFamilySerializable,
     register_serializable,

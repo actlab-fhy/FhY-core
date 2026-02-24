@@ -2,9 +2,29 @@
 
 __all__ = ["Identifier"]
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypedDict, TypeGuard
 
-from .serialization import Serializable, SerializedMapping, register_serializable
+from .serialization import (
+    InvalidSerializationDataValueError,
+    InvalidSerializationDictStructureError,
+    Serializable,
+    SerializedDict,
+    register_serializable,
+)
+
+
+class _IdentifierData(TypedDict):
+    id: int
+    name_hint: str
+
+
+def _is_valid_identifier_data(data: SerializedDict) -> TypeGuard[_IdentifierData]:
+    return (
+        "id" in data
+        and isinstance(data["id"], int)
+        and "name_hint" in data
+        and isinstance(data["name_hint"], str)
+    )
 
 
 @register_serializable
@@ -29,14 +49,17 @@ class Identifier(Serializable):
     def id(self) -> int:
         return self._id
 
-    def serialize_to_dict(self) -> SerializedMapping:
+    def serialize_to_dict(self) -> SerializedDict:
         return {"id": self._id, "name_hint": self._name_hint}
 
     @classmethod
-    def deserialize_from_dict(cls, data: SerializedMapping) -> "Identifier":
-        cls.raise_error_if_deserialization_from_dict_data_invalid(
-            data, {"id": lambda x: isinstance(x, int) and x >= 0, "name_hint": str}
-        )
+    def deserialize_from_dict(cls, data: SerializedDict) -> "Identifier":
+        if not _is_valid_identifier_data(data):
+            raise InvalidSerializationDictStructureError(cls, _IdentifierData, data)
+        if data["id"] < 0:
+            raise InvalidSerializationDataValueError(
+                cls, "id", "a non-negative integer", data["id"]
+            )
         identifier = cls.__new__(cls)
         identifier._id = data["id"]
         identifier._name_hint = data["name_hint"]

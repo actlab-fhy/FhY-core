@@ -168,6 +168,7 @@ def test_index_type_dict_serialization():
         "__data__": {
             "lower_bound": lower_bound.serialize_to_dict(),
             "upper_bound": upper_bound.serialize_to_dict(),
+            "stride": None,
         },
     }
     dictionary = index_type.serialize_to_dict()

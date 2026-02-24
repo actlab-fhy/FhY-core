@@ -57,33 +57,33 @@ __all__ = [
     "SerializationFormat",
     "BinaryPayloadCodec",
     "register_serializable",
-    "get_wrapper_dict",
-    "unwrap_wrapper_dict",
     "WrappedFamilySerializable",
-    "SerializationError",
-    "SerializedMappingItem",
-    "SerializedMapping",
+    "SerializedDictItem",
+    "SerializedDict",
+    "SerializedDictBase",
     "SerializedObject",
+    "InvalidSerializationDictStructureError",
+    "InvalidSerializationDataValueError",
 ]
 
 import importlib
 import json
 import struct
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any, Callable, ClassVar, TypeAlias, TypeVar
 
 from frozendict import frozendict
 
 from .error import register_error
-from .utils import StrEnum
+from .utils import StrEnum, format_comma_separated_list
 
-SerializedMappingItem: TypeAlias = (
-    "str | int | float | bool | None | Sequence[SerializedMappingItem] | "
-    "SerializedMapping"
+SerializedDictItem: TypeAlias = (
+    "str | int | float | bool | None | Sequence[SerializedDictItem] | " "SerializedDict"
 )
-SerializedMapping: TypeAlias = Mapping[str, SerializedMappingItem]
-SerializedObject: TypeAlias = SerializedMapping | str | bytes
+SerializedDictBase: TypeAlias = dict
+SerializedDict: TypeAlias = SerializedDictBase[str, SerializedDictItem]
+SerializedObject: TypeAlias = SerializedDict | str | bytes
 
 
 _T = TypeVar("_T", bound="Serializable")
@@ -115,9 +115,46 @@ _U8_TO_CODEC: frozendict[int, BinaryPayloadCodec] = frozendict(
 )
 
 
-@register_error
 class SerializationError(Exception):
     """Base error for serialization failures."""
+
+
+@register_error
+class InvalidSerializationDictStructureError(SerializationError):
+    """Raised when dictionary provided for deserialization has an invalid structure."""
+
+    def __init__(
+        self, class_type: type, expected_structure, actual_data: SerializedDict
+    ):  # type: ignore[no-untyped-def]
+        expected_fields_str = format_comma_separated_list(
+            f'"{fld}": {ty}' for fld, ty in expected_structure.__annotations__.items()
+        )
+        actual_fields_str = format_comma_separated_list(
+            f'"{fld}": {type(val).__name__}' for fld, val in actual_data.items()
+        )
+        super().__init__(
+            f'Invalid dictionary structure for deserializing "{class_type.__name__}". '
+            f"Expected fields: {{{expected_fields_str}}}. "
+            f"Actual fields: {{{actual_fields_str}}}."
+        )
+
+
+@register_error
+class InvalidSerializationDataValueError(SerializationError, ValueError):
+    """Raised when data provided for deserialization has invalid values."""
+
+    def __init__(
+        self,
+        class_type: type,
+        field_name: str,
+        expected_description: str,
+        actual_value: Any,
+    ):
+        super().__init__(
+            f'Invalid value for field "{field_name}" while deserializing '
+            f'"{class_type.__name__}". Expected: {expected_description}. '
+            f"Actual: {repr(actual_value)}."
+        )
 
 
 @register_error
@@ -288,12 +325,12 @@ class Serializable(ABC):
         return cls.TYPE_ID or _get_default_type_id(cls)
 
     @abstractmethod
-    def serialize_to_dict(self) -> SerializedMapping:
+    def serialize_to_dict(self) -> SerializedDict:
         """Return a dictionary representation of this object for serialization."""
 
     @classmethod
     @abstractmethod
-    def deserialize_from_dict(cls: type[_T], data: SerializedMapping) -> _T:
+    def deserialize_from_dict(cls: type[_T], data: SerializedDict) -> _T:
         """Create an instance of this class from a dictionary representation."""
 
     @classmethod
@@ -361,7 +398,7 @@ class Serializable(ABC):
 
         if codec is BinaryPayloadCodec.JSON:
             payload_obj = json.loads(payload.decode("utf-8"))
-            if not isinstance(payload_obj, Mapping):
+            if not isinstance(payload_obj, SerializedDictBase):
                 raise SerializationError("Payload did not decode to an object/dict.")
             return cls.deserialize_from_dict(payload_obj)
 
@@ -407,9 +444,9 @@ class Serializable(ABC):
 
         """
         if fmt is SerializationFormat.DICT:
-            if not isinstance(payload, Mapping):
+            if not isinstance(payload, SerializedDictBase):
                 raise SerializationError(
-                    "DICT deserialization requires a Mapping payload."
+                    "DICT deserialization requires a dictionary payload."
                 )
             return cls.deserialize_from_dict(payload)
         elif fmt is SerializationFormat.JSON:
@@ -431,69 +468,6 @@ class Serializable(ABC):
             return obj
         else:
             raise SerializationError(f"Unsupported format: {fmt}")
-
-    @classmethod
-    def raise_error_if_deserialization_from_dict_data_invalid(
-        cls,
-        data: SerializedMapping,
-        required_fields: dict[str, type | Callable[[Any], bool]],
-        optional_fields: dict[str, type | Callable[[Any], bool]] | None = None,
-    ) -> None:
-        """Helper to check that fields are valid in the data deserialization.
-
-        Args:
-            data: The data mapping to check for required fields.
-            required_fields: A dictionary mapping required field names to their
-                expected types or validation functions.
-            optional_fields: A dictionary mapping optional field names to their
-                expected types or validation functions.
-
-        Raises:
-            SerializationError: If any required field is missing or if any field
-                fails type checks or validation (including optional fields that
-                are present but invalid).
-
-        """
-        if optional_fields is None:
-            optional_fields = {}
-
-        def check_field(
-            fld_nme: str, expctd: type | Callable[[Any], bool], is_reqd: bool
-        ) -> None:
-            if fld_nme not in data:
-                raise SerializationError(
-                    f'Missing field "{fld_nme}" while attempting to deserialize '
-                    f'"{cls.__name__}".'
-                )
-            value = data[fld_nme]
-            if isinstance(expctd, type):
-                if not isinstance(value, expctd):
-                    field_type = "required" if is_reqd else "optional"
-                    raise SerializationError(
-                        f'Field "{fld_nme}" expected {field_type} type '
-                        f'"{expctd.__name__}", got "{type(value).__name__}" while '
-                        f'attempting to deserialize "{cls.__name__}".'
-                    )
-            elif callable(expctd):
-                if not expctd(value):
-                    raise SerializationError(
-                        f'Field "{fld_nme}" failed validation function while '
-                        f'attempting to deserialize "{cls.__name__}".'
-                    )
-            else:
-                raise ValueError("Expected must be a type or a validation function.")
-
-        for field_name, expected in required_fields.items():
-            if field_name not in data:
-                raise SerializationError(
-                    f'Missing required field "{field_name}" while attempting to '
-                    f'deserialize "{cls.__name__}".'
-                )
-            check_field(field_name, expected, is_reqd=True)
-
-        for field_name, expected in optional_fields.items():
-            if field_name in data:
-                check_field(field_name, expected, is_reqd=False)
 
     def to_json(self, *, indent: int | None = None, sort_keys: bool = True) -> str:
         """Serialize this object to a JSON string.
@@ -525,7 +499,7 @@ class Serializable(ABC):
         if isinstance(payload, (bytes, bytearray)):
             payload = payload.decode("utf-8")
         payload_obj = json.loads(payload)
-        if not isinstance(payload_obj, Mapping):
+        if not isinstance(payload_obj, SerializedDictBase):
             raise SerializationError("JSON did not decode to an object/dict.")
         return cls.deserialize_from_dict(payload_obj)
 
@@ -545,26 +519,6 @@ class Serializable(ABC):
 
         """
         return _loads_from_binary(data)
-
-
-def get_wrapper_dict(
-    obj: Serializable,
-    serialization_method: Callable[[], SerializedMapping] | None = None,
-) -> SerializedMapping:
-    """Return a dict containing type information and the dict representation."""
-    if serialization_method is None:
-        serialization_method = obj.serialize_to_dict
-    return {"__type__": obj.get_class_type_id(), "__data__": serialization_method()}
-
-
-def unwrap_wrapper_dict(data: SerializedMapping) -> Serializable:
-    """Return the Serializable object represented by a wrapper dict."""
-    t = data.get("__type__")
-    object_data = data.get("__data__")
-    if not isinstance(t, str) or not isinstance(object_data, Mapping):
-        raise SerializationError("Not a wrapped dict with __type__ and __data__.")
-    cls = _resolve_type_id(t)
-    return cls.deserialize_from_dict(object_data)
 
 
 _F = TypeVar("_F", bound="WrappedFamilySerializable")
@@ -613,10 +567,12 @@ class WrappedFamilySerializable(Serializable, ABC):
         }
 
     @classmethod
-    def deserialize_from_dict(cls: type[_F], data: SerializedMapping) -> _F:
+    def deserialize_from_dict(cls: type[_F], data: SerializedDict) -> _F:
         class_type_id = data.get("__type__")
         object_data = data.get("__data__")
-        if not isinstance(class_type_id, str) or not isinstance(object_data, Mapping):
+        if not isinstance(class_type_id, str) or not isinstance(
+            object_data, SerializedDictBase
+        ):
             raise SerializationError("Not a wrapped dict with __type__ and __data__.")
 
         concrete_class = _resolve_type_id(class_type_id)
@@ -627,16 +583,10 @@ class WrappedFamilySerializable(Serializable, ABC):
                 f'family "{cls}".'
             )
 
-        try:
-            return concrete_class.deserialize_data_from_dict(object_data)
-        except AttributeError as e:
-            raise SerializationError(
-                f'Concrete type "{concrete_class}" does not implement '
-                '"deserialize_data_from_dict".'
-            ) from e
+        return concrete_class.deserialize_data_from_dict(object_data)
 
     @abstractmethod
-    def serialize_data_to_dict(self) -> SerializedMapping:
+    def serialize_data_to_dict(self) -> SerializedDict:
         """Serialize only this class's data.
 
         Returns:
@@ -646,7 +596,7 @@ class WrappedFamilySerializable(Serializable, ABC):
 
     @classmethod
     @abstractmethod
-    def deserialize_data_from_dict(cls: type[_F], data: SerializedMapping) -> _F:
+    def deserialize_data_from_dict(cls: type[_F], data: SerializedDict) -> _F:
         """Deserialize only this class's data.
 
         Args:
