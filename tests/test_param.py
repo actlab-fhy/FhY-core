@@ -858,11 +858,14 @@ def test_nat_param_serialization():
     )
     param.set_value(5)
     dictionary = param.serialize_to_dict()
+    assert len(dictionary["__data__"]["constraints"]) == 3
     param2 = NatParam.deserialize_from_dict(dictionary)
     assert param2.is_value_set()
     assert param2.get_value() == 5
     _assert_all_satisfied(param2, [1, 5, 10])
     _assert_none_satisfied(param2, [0, 11])
+    dictionary = param2.serialize_to_dict()
+    assert len(dictionary["__data__"]["constraints"]) == 3
 
 
 # TODO: Check serialization structure errors and value errors for all types.

@@ -116,13 +116,34 @@ class NatParam(IntParam):
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "NatParam":
         if not is_valid_param_data(data):
             raise InvalidSerializationDictStructureError(cls, ParamData, data)
-        param = NatParam(
-            Identifier.deserialize_from_dict(data["variable"]), is_zero_included=True
-        )
+        param = cls.__new__(cls)
+        IntParam.__init__(param, Identifier.deserialize_from_dict(data["variable"]))
         finalize_param_construction_from_data(
             param,
             data,
             lambda v: isinstance(v, int) and v >= 0,
             "a non-negative integer",
         )
+        for constraint in param._constraints:
+            if isinstance(constraint, EquationConstraint):
+                expression = constraint.convert_to_expression()
+                if isinstance(
+                    expression, BinaryExpression
+                ) and expression.operation in {
+                    BinaryOperation.GREATER,
+                    BinaryOperation.GREATER_EQUAL,
+                }:
+                    left_expr = expression.left
+                    right_expr = expression.right
+                    if (
+                        isinstance(left_expr, IdentifierExpression)
+                        and left_expr.identifier == param.variable
+                        and isinstance(right_expr, LiteralExpression)
+                        and isinstance(right_expr.value, int)
+                        and right_expr.value == 0
+                    ):
+                        param._is_zero_included = (
+                            expression.operation == BinaryOperation.GREATER_EQUAL
+                        )
+                        break
         return param
