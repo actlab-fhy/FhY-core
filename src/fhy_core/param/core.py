@@ -31,6 +31,7 @@ from fhy_core.expression import (
 )
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
+    InvalidDeserializationDataValueError,
     InvalidDeserializationDictStructureError,
     SerializedDict,
     WrappedFamilySerializable,
@@ -389,7 +390,7 @@ def finalize_param_construction_from_data(
     """
     if data["value"] is not None:
         if not value_check_function(data["value"]):
-            raise InvalidDeserializationDictStructureError(
+            raise InvalidDeserializationDataValueError(
                 type(param), "value", value_description_phrase, data["value"]
             )
         param.set_value(data["value"])

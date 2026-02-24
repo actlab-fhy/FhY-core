@@ -77,6 +77,7 @@ import struct
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pprint import pformat
+from types import UnionType
 from typing import (
     Any,
     Callable,
@@ -159,13 +160,13 @@ class SerializationError(Exception):
     """Base error for serialization failures."""
 
 
-def _format_type(ty: type) -> str:
+def _format_type(ty: type | UnionType) -> str:
     if isinstance(ty, type):
         return ty.__name__
     return pformat(ty)
 
 
-def _format_type_structure(structure: dict[str, type]) -> str:
+def _format_type_structure(structure: dict[str, type | UnionType]) -> str:
     return "\n".join(f'\t"{fld}": {_format_type(ty)}' for fld, ty in structure.items())
 
 
@@ -174,7 +175,7 @@ class InvalidSerializationPayloadTypeError(SerializationError, TypeError):
     """Raised when a payload has the wrong Python type for a given format."""
 
     def __init__(
-        self, fmt: SerializationFormat, expected_type: type, actual: Any
+        self, fmt: SerializationFormat, expected_type: type | UnionType, actual: Any
     ) -> None:
         super().__init__(
             f'Invalid payload type for format "{fmt.value}". '
@@ -231,7 +232,7 @@ class InvalidDeserializationDictStructureError(SerializationError):
     def __init__(
         self,
         class_type: type,
-        expected_structure: dict[str, type],
+        expected_structure: dict[str, type | UnionType],
         actual_data: SerializedDict,
     ) -> None:
         expected_fields_str = _format_type_structure(expected_structure)
