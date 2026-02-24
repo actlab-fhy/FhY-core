@@ -560,7 +560,7 @@ class WrappedFamilySerializable(Serializable, ABC):
 
     """
 
-    def serialize_to_dict(self) -> dict[str, Any]:
+    def serialize_to_dict(self) -> SerializedDict:
         return {
             "__type__": self.get_class_type_id(),
             "__data__": self.serialize_data_to_dict(),
