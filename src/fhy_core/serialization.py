@@ -171,7 +171,7 @@ def _format_type_structure(structure: dict[str, type | UnionType]) -> str:
 
 
 @register_error
-class InvalidSerializationPayloadTypeError(SerializationError, TypeError):
+class SerializationPayloadTypeError(SerializationError, TypeError):
     """Raised when a payload has the wrong Python type for a given format."""
 
     def __init__(
@@ -603,17 +603,17 @@ class Serializable(ABC):
         """
         if fmt is SerializationFormat.DICT:
             if not is_serialized_dict(payload):
-                raise InvalidSerializationPayloadTypeError(fmt, dict, payload)
+                raise SerializationPayloadTypeError(fmt, dict, payload)
             return cls.deserialize_from_dict(payload)
         elif fmt is SerializationFormat.JSON:
             if not isinstance(payload, (str, bytes, bytearray)):
-                raise InvalidSerializationPayloadTypeError(
+                raise SerializationPayloadTypeError(
                     fmt, str | bytes | bytearray, payload
                 )
             return cls.from_json(payload)
         elif fmt is SerializationFormat.BINARY:
             if not isinstance(payload, (bytes, bytearray, memoryview)):
-                raise InvalidSerializationPayloadTypeError(
+                raise SerializationPayloadTypeError(
                     fmt, bytes | bytearray | memoryview, payload
                 )
             obj = _loads_from_binary(payload)
