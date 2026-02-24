@@ -83,6 +83,7 @@ from typing import (
     TypeGuard,
     TypeVar,
     Union,
+    overload,
 )
 
 from frozendict import frozendict
@@ -256,6 +257,16 @@ def _resolve_type_id(
         return obj
     except Exception as e:
         raise UnknownTypeIdError(f'Could not resolve type_id "{type_id}": {e}') from e
+
+
+@overload
+def register_serializable(
+    cls: type[_T], *, type_id: str | None = ..., alias: bool = ...
+) -> type[_T]: ...
+@overload
+def register_serializable(
+    *, type_id: str | None = ..., alias: bool = ...
+) -> Callable[[type[_T]], type[_T]]: ...
 
 
 def register_serializable(
