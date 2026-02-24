@@ -14,8 +14,8 @@ from fhy_core.expression import (
 )
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
-    InvalidSerializationDataValueError,
-    InvalidSerializationDictStructureError,
+    InvalidDeserializationDataValueError,
+    InvalidDeserializationDictStructureError,
     SerializedDict,
     register_serializable,
 )
@@ -317,7 +317,9 @@ class BoundIntParam(IntParam):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "BoundIntParam":
         if not _is_valid_bound_param_data(data):
-            raise InvalidSerializationDictStructureError(cls, _BoundParamData, data)
+            raise InvalidDeserializationDictStructureError(
+                cls, _BoundParamData.__annotations__, data
+            )
         param = BoundIntParam(
             Identifier.deserialize_from_dict(data["variable"]), data["prefer_inclusive"]
         )
@@ -417,7 +419,9 @@ class BoundNatParam(BoundIntParam, NatParam):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "BoundNatParam":
         if not _is_valid_bound_param_data(data):
-            raise InvalidSerializationDictStructureError(cls, _BoundParamData, data)
+            raise InvalidDeserializationDictStructureError(
+                cls, _BoundParamData.__annotations__, data
+            )
 
         constraints = [Constraint.deserialize_from_dict(c) for c in data["constraints"]]
         variable = Identifier.deserialize_from_dict(data["variable"])
@@ -428,7 +432,7 @@ class BoundNatParam(BoundIntParam, NatParam):
         elif is_zero_not_included_constraint_exists(constraints, variable):
             is_zero_included = False
         else:
-            raise InvalidSerializationDataValueError(
+            raise InvalidDeserializationDataValueError(
                 cls,
                 "constraints",
                 (

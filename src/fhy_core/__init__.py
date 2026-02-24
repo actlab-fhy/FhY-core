@@ -75,8 +75,10 @@ __all__ = [
     "is_serialized_value",
     "is_serialized_dict",
     "SerializationFormat",
-    "InvalidSerializationDictStructureError",
-    "InvalidSerializationDataValueError",
+    "InvalidDeserializationDictStructureError",
+    "InvalidDeserializationDataValueError",
+    "SerializationTypeError",
+    "SerializationValueError",
 ]
 
 
@@ -120,10 +122,12 @@ from .param import (
     RealParam,
 )
 from .serialization import (
-    InvalidSerializationDataValueError,
-    InvalidSerializationDictStructureError,
+    InvalidDeserializationDataValueError,
+    InvalidDeserializationDictStructureError,
     Serializable,
     SerializationFormat,
+    SerializationTypeError,
+    SerializationValueError,
     SerializedDict,
     SerializedObject,
     SerializedValue,

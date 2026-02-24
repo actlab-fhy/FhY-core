@@ -19,8 +19,8 @@ from fhy_core.expression import (
 )
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
-    InvalidSerializationDataValueError,
-    InvalidSerializationDictStructureError,
+    InvalidDeserializationDataValueError,
+    InvalidDeserializationDictStructureError,
     SerializedDict,
     register_serializable,
 )
@@ -193,7 +193,9 @@ class NatParam(IntParam):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "NatParam":
         if not is_valid_param_data(data):
-            raise InvalidSerializationDictStructureError(cls, ParamData, data)
+            raise InvalidDeserializationDictStructureError(
+                cls, ParamData.__annotations__, data
+            )
 
         variable = Identifier.deserialize_from_dict(data["variable"])
         constraints = [Constraint.deserialize_from_dict(c) for c in data["constraints"]]
@@ -203,7 +205,7 @@ class NatParam(IntParam):
         elif is_zero_not_included_constraint_exists(constraints, variable):
             is_zero_included = False
         else:
-            raise InvalidSerializationDataValueError(
+            raise InvalidDeserializationDataValueError(
                 cls,
                 "constraints",
                 (

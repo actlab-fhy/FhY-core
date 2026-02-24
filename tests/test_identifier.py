@@ -6,8 +6,8 @@ from unittest.mock import patch
 import pytest
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
-    InvalidSerializationDataValueError,
-    InvalidSerializationDictStructureError,
+    InvalidDeserializationDataValueError,
+    InvalidDeserializationDictStructureError,
 )
 
 
@@ -72,11 +72,11 @@ def test_dict_serialization():
 
     assert deserialized == identifier
 
-    with pytest.raises(InvalidSerializationDictStructureError):
+    with pytest.raises(InvalidDeserializationDictStructureError):
         Identifier.deserialize_from_dict({"invalid": "data"})
-    with pytest.raises(InvalidSerializationDictStructureError):
+    with pytest.raises(InvalidDeserializationDictStructureError):
         Identifier.deserialize_from_dict({"id": "not_an_int", "name_hint": "test"})
-    with pytest.raises(InvalidSerializationDictStructureError):
+    with pytest.raises(InvalidDeserializationDictStructureError):
         Identifier.deserialize_from_dict({"id": 1, "name_hint": 123})
-    with pytest.raises(InvalidSerializationDataValueError):
+    with pytest.raises(InvalidDeserializationDataValueError):
         Identifier.deserialize_from_dict({"id": -1, "name_hint": "test"})
