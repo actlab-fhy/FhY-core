@@ -32,7 +32,7 @@ from fhy_core.expression.visitor import (
 )
 from fhy_core.identifier import Identifier
 
-from .utils import assert_exact_expression_equality, mock_identifier
+from .conftest import assert_exact_expression_equality, mock_identifier
 
 
 # TODO: Refactor pformat tests to be together and just alter the parameters

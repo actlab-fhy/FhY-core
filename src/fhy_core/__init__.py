@@ -66,6 +66,17 @@ __all__ = [
     "get_array_size_in_bits",
     "invert_dict",
     "invert_frozen_dict",
+    "register_serializable",
+    "Serializable",
+    "WrappedFamilySerializable",
+    "SerializedObject",
+    "SerializedDict",
+    "SerializedValue",
+    "is_serialized_value",
+    "is_serialized_dict",
+    "SerializationFormat",
+    "InvalidSerializationDictStructureError",
+    "InvalidSerializationDataValueError",
 ]
 
 
@@ -107,6 +118,19 @@ from .param import (
     Param,
     PermParam,
     RealParam,
+)
+from .serialization import (
+    InvalidSerializationDataValueError,
+    InvalidSerializationDictStructureError,
+    Serializable,
+    SerializationFormat,
+    SerializedDict,
+    SerializedObject,
+    SerializedValue,
+    WrappedFamilySerializable,
+    is_serialized_dict,
+    is_serialized_value,
+    register_serializable,
 )
 from .symbol_table import (
     FunctionKeyword,

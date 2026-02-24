@@ -13,8 +13,9 @@ from fhy_core.expression import (
     UnaryOperation,
 )
 from fhy_core.identifier import Identifier
+from fhy_core.serialization import InvalidSerializationDataValueError, SerializedDict
 
-from .utils import assert_exact_expression_equality, mock_identifier
+from .conftest import assert_exact_expression_equality, mock_identifier
 
 
 def test_unary_expression():
@@ -236,3 +237,99 @@ def test_logical_or():
         ),
     )
     assert_exact_expression_equality(result, expected_expression)
+
+
+@pytest.mark.parametrize(
+    "expression, expected_dict",
+    [
+        (
+            LiteralExpression(True),
+            {
+                "__type__": "literal_expression",
+                "__data__": {"value": True},
+            },
+        ),
+        (
+            IdentifierExpression(mock_identifier("x", 1)),
+            {
+                "__type__": "identifier_expression",
+                "__data__": {"identifier": {"id": 1, "name_hint": "x"}},
+            },
+        ),
+        (
+            UnaryExpression(
+                UnaryOperation.NEGATE, IdentifierExpression(mock_identifier("y", 2))
+            ),
+            {
+                "__type__": "unary_expression",
+                "__data__": {
+                    "operation": "negate",
+                    "operand": {
+                        "__type__": "identifier_expression",
+                        "__data__": {
+                            "identifier": {"id": 2, "name_hint": "y"},
+                        },
+                    },
+                },
+            },
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.ADD,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {
+                "__type__": "binary_expression",
+                "__data__": {
+                    "operation": "add",
+                    "left": {
+                        "__type__": "identifier_expression",
+                        "__data__": {
+                            "identifier": {"id": 0, "name_hint": "x"},
+                        },
+                    },
+                    "right": {
+                        "__type__": "literal_expression",
+                        "__data__": {
+                            "value": 5,
+                        },
+                    },
+                },
+            },
+        ),
+    ],
+)
+def test_dict_serialization(expression: Expression, expected_dict: SerializedDict):
+    """Test that expressions can be serialized/deserialized via a dictionary."""
+    assert expression.serialize_to_dict() == expected_dict
+    assert_exact_expression_equality(
+        Expression.deserialize_from_dict(expected_dict), expression
+    )
+
+
+def test_dict_deserialization_fails_with_invalid_unary_operation():
+    """Test dictionary deserialization fails with invalid unary operation name."""
+    data = {
+        "__type__": "unary_expression",
+        "__data__": {"operation": "invalid_operation", "operand": {}},
+    }
+    with pytest.raises(InvalidSerializationDataValueError):
+        Expression.deserialize_from_dict(data)
+
+
+def test_dict_deserialization_fails_with_invalid_binary_operation():
+    """Test dictionary deserialization fails with invalid binary operation name."""
+    data = {
+        "__type__": "binary_expression",
+        "__data__": {
+            "operation": "invalid_operation",
+            "left": {},
+            "right": {},
+        },
+    }
+    with pytest.raises(InvalidSerializationDataValueError):
+        Expression.deserialize_from_dict(data)
+
+
+# TODO: Check serialization structure errors and value errors for all types.

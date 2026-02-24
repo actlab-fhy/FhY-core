@@ -2,7 +2,7 @@
 
 __all__ = ["BoundIntParam", "BoundNatParam"]
 
-from typing import Any, Iterable, Optional, Tuple
+from typing import Any, Iterable, Optional, Tuple, TypeGuard
 
 from fhy_core.constraint import Constraint, EquationConstraint
 from fhy_core.expression import (
@@ -13,10 +13,27 @@ from fhy_core.expression import (
     LiteralExpression,
 )
 from fhy_core.identifier import Identifier
+from fhy_core.serialization import (
+    InvalidSerializationDataValueError,
+    InvalidSerializationDictStructureError,
+    SerializedDict,
+    register_serializable,
+)
 from fhy_core.utils import Self
 
-from .core import IntParam, Param
-from .fundamental import NatParam
+from .core import (
+    IntParam,
+    Param,
+    ParamData,
+    finalize_param_construction_from_data,
+    is_valid_param_data,
+)
+from .fundamental import (
+    NatParam,
+    is_the_basic_nat_param_constraint,
+    is_zero_included_constraint_exists,
+    is_zero_not_included_constraint_exists,
+)
 
 
 def _is_valid_bound_expression(expression: Expression) -> bool:
@@ -84,6 +101,19 @@ def _get_bound_from_expression(
     )
 
 
+class _BoundParamData(ParamData):
+    prefer_inclusive: bool
+
+
+def _is_valid_bound_param_data(data: SerializedDict) -> TypeGuard[_BoundParamData]:
+    return (
+        "prefer_inclusive" in data
+        and isinstance(data["prefer_inclusive"], bool)
+        and is_valid_param_data(data)
+    )
+
+
+@register_serializable(type_id="bound_int_param")
 class BoundIntParam(IntParam):
     """An interval integer parameter that supports basic arithmetic.
 
@@ -279,6 +309,23 @@ class BoundIntParam(IntParam):
         p.add_upper_bound_constraint(value, is_inclusive=True)
         return p
 
+    def serialize_data_to_dict(self) -> SerializedDict:
+        super_dict = super().serialize_data_to_dict()
+        super_dict["prefer_inclusive"] = self._prefer_inclusive
+        return super_dict
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "BoundIntParam":
+        if not _is_valid_bound_param_data(data):
+            raise InvalidSerializationDictStructureError(cls, _BoundParamData, data)
+        param = BoundIntParam(
+            Identifier.deserialize_from_dict(data["variable"]), data["prefer_inclusive"]
+        )
+        finalize_param_construction_from_data(
+            param, data, lambda v: isinstance(v, int), "an integer"
+        )
+        return param
+
     def _coerce_other(self, other: Any) -> "BoundIntParam":
         if isinstance(other, int):
             return BoundIntParam.exactly(other, prefer_inclusive=self._prefer_inclusive)
@@ -351,6 +398,7 @@ class BoundIntParam(IntParam):
         return self._create_param_from_min_max(self, new_min, new_max)
 
 
+@register_serializable(type_id="bound_nat_param")
 class BoundNatParam(BoundIntParam, NatParam):
     """A bounded natural number parameter (i.e., non-negative integers)."""
 
@@ -365,3 +413,43 @@ class BoundNatParam(BoundIntParam, NatParam):
             is_zero_included=is_zero_included,
             prefer_inclusive=prefer_inclusive,
         )
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "BoundNatParam":
+        if not _is_valid_bound_param_data(data):
+            raise InvalidSerializationDictStructureError(cls, _BoundParamData, data)
+
+        constraints = [Constraint.deserialize_from_dict(c) for c in data["constraints"]]
+        variable = Identifier.deserialize_from_dict(data["variable"])
+        prefer_inclusive = data["prefer_inclusive"]
+
+        if is_zero_included_constraint_exists(constraints, variable):
+            is_zero_included = True
+        elif is_zero_not_included_constraint_exists(constraints, variable):
+            is_zero_included = False
+        else:
+            raise InvalidSerializationDataValueError(
+                cls,
+                "constraints",
+                (
+                    "a constraint bounding the variable to be greater than or "
+                    "equal to zero or greater than zero"
+                ),
+                data["constraints"],
+            )
+
+        param = BoundNatParam(
+            name=variable,
+            is_zero_included=is_zero_included,
+            prefer_inclusive=prefer_inclusive,
+        )
+        finalize_param_construction_from_data(
+            param,
+            data,
+            lambda v: isinstance(v, int) and v >= 0,
+            "a non-negative integer",
+            constraint_filter_function=lambda c: (
+                not is_the_basic_nat_param_constraint(c, variable, is_zero_included)
+            ),
+        )
+        return param

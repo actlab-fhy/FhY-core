@@ -18,6 +18,16 @@ __all__ = [
 
 from abc import ABC
 from functools import partial
+from typing import TypedDict, TypeGuard
+
+from fhy_core.serialization import (
+    InvalidSerializationDataValueError,
+    InvalidSerializationDictStructureError,
+    SerializedDict,
+    WrappedFamilySerializable,
+    is_serialized_dict,
+    register_serializable,
+)
 
 from .error import register_error
 from .expression import Expression, pformat_expression
@@ -25,7 +35,7 @@ from .identifier import Identifier
 from .utils import Lattice, StrEnum, format_comma_separated_list
 
 
-class Type(ABC):
+class Type(WrappedFamilySerializable, ABC):
     """Abstract compiler type."""
 
 
@@ -34,7 +44,7 @@ class FhYCoreTypeError(TypeError):
     """Core type error."""
 
 
-class DataType(ABC):
+class DataType(WrappedFamilySerializable, ABC):
     """Abstract data type."""
 
 
@@ -211,6 +221,17 @@ def promote_core_data_types(
         )
 
 
+class _PrimitiveDataTypeData(TypedDict):
+    core_data_type: str
+
+
+def _is_valid_primitive_data_type_data(
+    data: SerializedDict,
+) -> TypeGuard[_PrimitiveDataTypeData]:
+    return "core_data_type" in data and isinstance(data["core_data_type"], str)
+
+
+@register_serializable(type_id="primitive_data_type")
 class PrimitiveDataType(DataType):
     """Primitive data type."""
 
@@ -223,6 +244,21 @@ class PrimitiveDataType(DataType):
     def core_data_type(self) -> CoreDataType:
         return self._core_data_type
 
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {"core_data_type": self._core_data_type.value}
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "PrimitiveDataType":
+        if not _is_valid_primitive_data_type_data(data):
+            raise InvalidSerializationDictStructureError(
+                cls, _PrimitiveDataTypeData, data
+            )
+        if data["core_data_type"] not in CoreDataType._value2member_map_:
+            raise InvalidSerializationDataValueError(
+                cls, "core_data_type", "a valid core data type", data["core_data_type"]
+            )
+        return cls(CoreDataType(data["core_data_type"]))
+
     def __str__(self) -> str:
         return str(self._core_data_type)
 
@@ -230,8 +266,11 @@ class PrimitiveDataType(DataType):
         return f"{self.__class__.__name__}({repr(self._core_data_type)})"
 
 
+@register_serializable(type_id="template_data_type")
 class TemplateDataType(DataType):
     """Template data type."""
+
+    # TODO: Fix this class!
 
     _data_type: Identifier
     widths: list[int] | None
@@ -274,6 +313,24 @@ def promote_primitive_data_types(
     )
 
 
+class _NumericalTypeData(TypedDict):
+    data_type: SerializedDict
+    shape: list[SerializedDict]
+
+
+def _is_valid_numerical_type_data(
+    data: SerializedDict,
+) -> TypeGuard[_NumericalTypeData]:
+    return (
+        "data_type" in data
+        and is_serialized_dict(data["data_type"])
+        and "shape" in data
+        and isinstance(data["shape"], list)
+        and all(is_serialized_dict(dim_dict) for dim_dict in data["shape"])
+    )
+
+
+@register_serializable(type_id="numerical_type")
 class NumericalType(Type):
     """Numerical multi-dimensional array type; empty shapes indicate scalars."""
 
@@ -295,6 +352,21 @@ class NumericalType(Type):
     def shape(self) -> list[Expression]:
         return self._shape
 
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {
+            "data_type": self._data_type.serialize_to_dict(),
+            "shape": [dim.serialize_to_dict() for dim in self._shape],
+        }
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "NumericalType":
+        if not _is_valid_numerical_type_data(data):
+            raise InvalidSerializationDictStructureError(cls, _NumericalTypeData, data)
+        return cls(
+            DataType.deserialize_from_dict(data["data_type"]),
+            [Expression.deserialize_from_dict(dim_dict) for dim_dict in data["shape"]],
+        )
+
     def __str__(self) -> str:
         shape_str = format_comma_separated_list(
             self._shape, str_func=partial(pformat_expression, show_id=True)
@@ -307,6 +379,24 @@ class NumericalType(Type):
         )
 
 
+class _IndexTypeData(TypedDict):
+    lower_bound: SerializedDict
+    upper_bound: SerializedDict
+    stride: SerializedDict | None
+
+
+def _is_valid_index_type_data(data: SerializedDict) -> TypeGuard[_IndexTypeData]:
+    return (
+        "lower_bound" in data
+        and is_serialized_dict(data["lower_bound"])
+        and "upper_bound" in data
+        and is_serialized_dict(data["upper_bound"])
+        and "stride" in data
+        and (is_serialized_dict(data["stride"]) or data["stride"] is None)
+    )
+
+
+@register_serializable(type_id="index_type")
 class IndexType(Type):
     """Index type.
 
@@ -341,6 +431,25 @@ class IndexType(Type):
     def stride(self) -> Expression | None:
         return self._stride
 
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {
+            "lower_bound": self._lower_bound.serialize_to_dict(),
+            "upper_bound": self._upper_bound.serialize_to_dict(),
+            "stride": self._stride.serialize_to_dict() if self._stride else None,
+        }
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "IndexType":
+        if not _is_valid_index_type_data(data):
+            raise InvalidSerializationDictStructureError(cls, _IndexTypeData, data)
+        stride_dict = data["stride"]
+        stride = Expression.deserialize_from_dict(stride_dict) if stride_dict else None
+        return cls(
+            Expression.deserialize_from_dict(data["lower_bound"]),
+            Expression.deserialize_from_dict(data["upper_bound"]),
+            stride,
+        )
+
     def __str__(self) -> str:
         lower_bound_str = pformat_expression(self._lower_bound, show_id=True)
         upper_bound_str = pformat_expression(self._upper_bound, show_id=True)
@@ -356,6 +465,19 @@ class IndexType(Type):
         )
 
 
+class _TupleTypeData(TypedDict):
+    types: list[SerializedDict]
+
+
+def _is_valid_tuple_type_data(data: SerializedDict) -> TypeGuard[_TupleTypeData]:
+    return (
+        "types" in data
+        and isinstance(data["types"], list)
+        and all(is_serialized_dict(ty_dict) for ty_dict in data["types"])
+    )
+
+
+@register_serializable(type_id="tuple_type")
 class TupleType(Type):
     """Tuple type."""
 
@@ -368,6 +490,15 @@ class TupleType(Type):
     @property
     def types(self) -> list[Type]:
         return self._types
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {"types": [ty.serialize_to_dict() for ty in self._types]}
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "TupleType":
+        if not _is_valid_tuple_type_data(data):
+            raise InvalidSerializationDictStructureError(cls, _TupleTypeData, data)
+        return cls([Type.deserialize_from_dict(ty_dict) for ty_dict in data["types"]])
 
     def __str__(self) -> str:
         return f"({format_comma_separated_list(self._types)})"

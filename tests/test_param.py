@@ -8,6 +8,7 @@ from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.expression import SymbolType
 from fhy_core.param import (
     BoundIntParam,
+    BoundNatParam,
     CategoricalParam,
     IntParam,
     NatParam,
@@ -259,7 +260,7 @@ def test_set_ordinal_param_value_fails_with_invalid_value(
 def test_add_and_check_ordinal_param_constraints(ordinal_param_123: OrdinalParam):
     """Test that ordinal parameter constraints can be added and checked."""
     ordinal_param_123.add_constraint(
-        InSetConstraint({ordinal_param_123.variable}, {1, 2})
+        InSetConstraint(ordinal_param_123.variable, {1, 2})
     )
     _assert_all_satisfied(ordinal_param_123, [1, 2])
     _assert_none_satisfied(ordinal_param_123, [3])
@@ -309,7 +310,7 @@ def test_add_and_check_categorical_param_constraints(
 ):
     """Test that categorical parameter constraints can be added and checked."""
     categorical_param_abc.add_constraint(
-        InSetConstraint({categorical_param_abc.variable}, {"a", "b"})
+        InSetConstraint(categorical_param_abc.variable, {"a", "b"})
     )
     _assert_all_satisfied(categorical_param_abc, ["a", "b"])
     _assert_none_satisfied(categorical_param_abc, ["c"])
@@ -361,7 +362,7 @@ def test_add_and_check_perm_param_constraints(perm_param_nchw: PermParam):
     """Test that permutation parameter constraints can be added and checked."""
     perm_param_nchw.add_constraint(
         InSetConstraint(
-            {perm_param_nchw.variable}, {("n", "c", "h", "w"), ("c", "n", "w", "h")}
+            perm_param_nchw.variable, {("n", "c", "h", "w"), ("c", "n", "w", "h")}
         )
     )
     _assert_all_satisfied(perm_param_nchw, [["n", "c", "h", "w"], ["c", "n", "w", "h"]])
@@ -418,7 +419,7 @@ def test_copy_perm_param(perm_param_nchw: PermParam):
 def test_copied_param_keeps_constraints(ordinal_param_123: OrdinalParam):
     """Test that a copied parameter keeps its constraints."""
     ordinal_param_123.add_constraint(
-        InSetConstraint({ordinal_param_123.variable}, {1, 2})
+        InSetConstraint(ordinal_param_123.variable, {1, 2})
     )
     ordinal_param_copy = ordinal_param_123.copy()
     _assert_all_satisfied(ordinal_param_copy, [1, 2])
@@ -764,6 +765,110 @@ def test_zero_included_in_nat_param_with_lower_bound_inclusive_at_zero():
     """
     param = NatParam.with_lower_bound(0, is_inclusive=True)
     _assert_all_satisfied(param, [0, 1, 2, 100])
+
+
+def test_real_param_serialization():
+    """Test a real parameter can be serialized/deserialized via a dictionary."""
+    param = RealParam()
+    param.add_constraint(
+        EquationConstraint(param.variable, param.variable_expression > 0)
+    )
+    param.add_constraint(
+        EquationConstraint(param.variable, param.variable_expression < 10)
+    )
+    param.set_value(5.0)
+    dictionary = param.serialize_to_dict()
+    param2 = RealParam.deserialize_from_dict(dictionary)
+    assert param2.is_value_set()
+    assert param2.get_value() == 5.0
+    _assert_all_satisfied(param2, [1.0, 5.0, 9.0])
+    _assert_none_satisfied(param2, [0.0, 10.0])
+
+
+def test_int_param_serialization():
+    """Test an int parameter can be serialized/deserialized via a dictionary."""
+    param = IntParam()
+    param.add_constraint(
+        EquationConstraint(param.variable, param.variable_expression > 0)
+    )
+    param.add_constraint(
+        EquationConstraint(param.variable, param.variable_expression < 10)
+    )
+    param.set_value(5)
+    dictionary = param.serialize_to_dict()
+    param2 = IntParam.deserialize_from_dict(dictionary)
+    assert param2.is_value_set()
+    assert param2.get_value() == 5
+    _assert_all_satisfied(param2, [1, 5, 9])
+    _assert_none_satisfied(param2, [0, 10])
+
+
+def test_ordinal_param_serialization(ordinal_param_123: OrdinalParam):
+    """Test an ordinal parameter can be serialized/deserialized via a dictionary."""
+    ordinal_param_123.add_constraint(
+        InSetConstraint(ordinal_param_123.variable, {1, 2})
+    )
+    ordinal_param_123.set_value(1)
+    dictionary = ordinal_param_123.serialize_to_dict()
+    param2 = OrdinalParam.deserialize_from_dict(dictionary)
+    assert param2.is_value_set()
+    assert param2.get_value() == 1
+    _assert_all_satisfied(param2, [1, 2])
+    _assert_none_satisfied(param2, [3])
+
+
+def test_categorical_param_serialization(categorical_param_abc: CategoricalParam):
+    """Test a categorical parameter can be serialized/deserialized via a dictionary."""
+    categorical_param_abc.add_constraint(
+        InSetConstraint(categorical_param_abc.variable, {"a", "b"})
+    )
+    categorical_param_abc.set_value("a")
+    dictionary = categorical_param_abc.serialize_to_dict()
+    param2 = CategoricalParam.deserialize_from_dict(dictionary)
+    assert param2.is_value_set()
+    assert param2.get_value() == "a"
+    _assert_all_satisfied(param2, ["a", "b"])
+    _assert_none_satisfied(param2, ["c"])
+
+
+def test_perm_param_serialization(perm_param_nchw: PermParam):
+    """Test a permutation parameter can be serialized/deserialized via a dictionary."""
+    perm_param_nchw.add_constraint(
+        InSetConstraint(
+            perm_param_nchw.variable, {("n", "c", "h", "w"), ("c", "n", "w", "h")}
+        )
+    )
+    perm_param_nchw.set_value(["c", "n", "w", "h"])
+    dictionary = perm_param_nchw.serialize_to_dict()
+    param2 = PermParam.deserialize_from_dict(dictionary)
+    assert param2.is_value_set()
+    assert param2.get_value() == ("c", "n", "w", "h")
+    _assert_all_satisfied(param2, [["n", "c", "h", "w"], ["c", "n", "w", "h"]])
+    _assert_none_satisfied(param2, [["n", "c", "w", "h"]])
+
+
+def test_nat_param_serialization():
+    """Test a nat parameter can be serialized/deserialized via a dictionary."""
+    param = NatParam(is_zero_included=False)
+    param.add_constraint(
+        EquationConstraint(param.variable, param.variable_expression >= 1)
+    )
+    param.add_constraint(
+        EquationConstraint(param.variable, param.variable_expression <= 10)
+    )
+    param.set_value(5)
+    dictionary = param.serialize_to_dict()
+    assert len(dictionary["__data__"]["constraints"]) == 3
+    param2 = NatParam.deserialize_from_dict(dictionary)
+    assert param2.is_value_set()
+    assert param2.get_value() == 5
+    _assert_all_satisfied(param2, [1, 5, 10])
+    _assert_none_satisfied(param2, [0, 11])
+    dictionary = param2.serialize_to_dict()
+    assert len(dictionary["__data__"]["constraints"]) == 3
+
+
+# TODO: Check serialization structure errors and value errors for all types.
 
 
 # TODO: Test the repr method.
@@ -1140,6 +1245,33 @@ def test_bound_int_param_subtraction_matches_brute_force(lower, upper, lin, u_in
     allowed_z = {a - b for a in allowed_x for b in allowed_y}
     for v in range((lower - 2) - (upper + 2), (upper + 2) - (lower - 2) + 1):
         assert z.is_constraints_satisfied(v) == (v in allowed_z)
+
+
+def test_bound_int_param_serialization():
+    """Test bound int parameter can be serialized/deserialized via a dictionary."""
+    p = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=False)
+    p.set_value(4)
+    dictionary = p.serialize_to_dict()
+    p2 = BoundIntParam.deserialize_from_dict(dictionary)
+    assert p2.is_value_set()
+    assert p2.get_value() == 4
+    _assert_all_satisfied(p2, [3, 4])
+    _assert_none_satisfied(p2, [5])
+
+
+def test_bound_nat_param_serialization():
+    """Test bound nat parameter can be serialized/deserialized via a dictionary."""
+    p = BoundNatParam.with_lower_bound(2, is_inclusive=True)
+    p.set_value(5)
+    dictionary = p.serialize_to_dict()
+    assert len(dictionary["__data__"]["constraints"]) == 2
+    p2 = BoundNatParam.deserialize_from_dict(dictionary)
+    assert p2.is_value_set()
+    assert p2.get_value() == 5
+    _assert_all_satisfied(p2, [2, 5, 100])
+    _assert_none_satisfied(p2, [0, 1])
+    dictionary = p2.serialize_to_dict()
+    assert len(dictionary["__data__"]["constraints"]) == 2
 
 
 # TODO: Update tests that check exceptions to match exception messages.

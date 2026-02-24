@@ -11,6 +11,7 @@
 | Parameter                                | Real, integer, orginal, categorical, and permutation parameters.       |
 | Types                                    | Core type system for the compiler.                                     |
 | Symbol Table                             | Nested symbol table.                                                   |
+| Serializable Trait                       | Trait for serialization to JSON and binary representations.            |
 | _General Utility_ - Python 3.11 Enums    | String and integer enum types only introduced in Python 3.11           |
 | _General Utility_ - Stack                | General stack utility that wraps `deque`.                              |
 | _General Utility_ - POSET                | General partially ordered set utility represented as a directed graph. |
