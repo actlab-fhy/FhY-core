@@ -256,6 +256,7 @@ def _is_valid_not_in_set_constraint_data(
     )
 
 
+@register_serializable
 class NotInSetConstraint(Constraint):
     """Represents a not-in-set constraint."""
 
