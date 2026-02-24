@@ -409,16 +409,18 @@ def test_convert_not_in_set_constraint_to_expression():
 
 def test_equation_constraint_dict_serialization():
     """Test the equation constraint can be serialized/deserialized via a dictionary."""
+    x = mock_identifier("x", 0)
+    x_data = x.serialize_to_dict()
     constraint_expression = BinaryExpression(
         BinaryOperation.EQUAL,
-        IdentifierExpression(mock_identifier("x", 0)),
+        IdentifierExpression(x),
         LiteralExpression(True),
     )
-    constraint = EquationConstraint(mock_identifier("x", 0), constraint_expression)
+    constraint = EquationConstraint(x, constraint_expression)
     expected_dict = {
         "__type__": "fhy_core.constraint.EquationConstraint",
         "__data__": {
-            "variable": mock_identifier("x", 0),
+            "variable": x_data,
             "expression": constraint_expression.serialize_to_dict(),
         },
     }
@@ -426,7 +428,7 @@ def test_equation_constraint_dict_serialization():
     assert dictionary == expected_dict
     constraint_deserialized = EquationConstraint.deserialize_from_dict(dictionary)
     assert isinstance(constraint_deserialized, EquationConstraint)
-    assert constraint_deserialized.variable == mock_identifier("x", 0)
+    assert constraint_deserialized.variable == x
     assert_exact_expression_equality(
         constraint_deserialized._expression, constraint_expression
     )
@@ -434,11 +436,13 @@ def test_equation_constraint_dict_serialization():
 
 def test_in_set_constraint_dict_serialization():
     """Test the in-set constraint can be serialized/deserialized via a dictionary."""
-    constraint = InSetConstraint(mock_identifier("x", 0), {1, 2})
+    x = mock_identifier("x", 0)
+    x_data = x.serialize_to_dict()
+    constraint = InSetConstraint(x, {1, 2})
     expected_dict = {
         "__type__": "fhy_core.constraint.InSetConstraint",
         "__data__": {
-            "variable": mock_identifier("x", 0),
+            "variable": x_data,
             "valid_values": [1, 2],
         },
     }
@@ -446,17 +450,19 @@ def test_in_set_constraint_dict_serialization():
     assert dictionary == expected_dict
     constraint_deserialized = InSetConstraint.deserialize_from_dict(dictionary)
     assert isinstance(constraint_deserialized, InSetConstraint)
-    assert constraint_deserialized.variable == mock_identifier("x", 0)
+    assert constraint_deserialized.variable == x
     assert constraint_deserialized._valid_values == {1, 2}
 
 
 def test_not_in_set_constraint_dict_serialization():
     """Test the NiS constraint can be serialized/deserialized via a dictionary."""
-    constraint = NotInSetConstraint(mock_identifier("x", 0), {1, 2})
+    x = mock_identifier("x", 0)
+    x_data = x.serialize_to_dict()
+    constraint = NotInSetConstraint(x, {1, 2})
     expected_dict = {
         "__type__": "fhy_core.constraint.NotInSetConstraint",
         "__data__": {
-            "variable": mock_identifier("x", 0),
+            "variable": x_data,
             "invalid_values": [1, 2],
         },
     }
@@ -464,7 +470,7 @@ def test_not_in_set_constraint_dict_serialization():
     assert dictionary == expected_dict
     constraint_deserialized = NotInSetConstraint.deserialize_from_dict(dictionary)
     assert isinstance(constraint_deserialized, NotInSetConstraint)
-    assert constraint_deserialized.variable == mock_identifier("x", 0)
+    assert constraint_deserialized.variable == x
     assert constraint_deserialized._invalid_values == {1, 2}
 
 

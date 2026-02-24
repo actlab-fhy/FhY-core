@@ -264,7 +264,7 @@ class Param(WrappedFamilySerializable, ABC, Generic[_T]):
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "variable": self._variable.serialize_to_dict(),
-            "value": self._value,
+            "value": self._value,  # type: ignore[dict-item]
             "constraints": [
                 constraint.serialize_to_dict() for constraint in self._constraints
             ],
@@ -492,7 +492,7 @@ class RealParam(Param[str | float]):
         self.add_constraint(lower_bound_constraint)
 
     @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "RealParam":
         if not _is_valid_param_data(data):
             raise InvalidSerializationDictStructureError(cls, _ParamData, data)
         param = RealParam(Identifier.deserialize_from_dict(data["variable"]))
@@ -639,7 +639,7 @@ class IntParam(Param[int]):
         self.add_constraint(lower_bound_constraint)
 
     @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "IntParam":
         if not _is_valid_param_data(data):
             raise InvalidSerializationDictStructureError(cls, _ParamData, data)
         param = IntParam(Identifier.deserialize_from_dict(data["variable"]))
@@ -719,7 +719,7 @@ class OrdinalParam(Param[Any]):
         return super_dict
 
     @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "OrdinalParam":
         if not _is_valid_ordinal_categorical_perm_param_data(data):
             raise InvalidSerializationDictStructureError(
                 cls, _OrdinalCategorialPermParamData, data
@@ -791,11 +791,11 @@ class CategoricalParam(Param[_H]):
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
-        super_dict["possible_values"] = list(self._categories)
+        super_dict["possible_values"] = list(self._categories)  # type: ignore[arg-type]
         return super_dict
 
     @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "CategoricalParam[_H]":
         if not _is_valid_ordinal_categorical_perm_param_data(data):
             raise InvalidSerializationDictStructureError(
                 cls, _OrdinalCategorialPermParamData, data
@@ -878,7 +878,7 @@ class PermParam(Param[tuple[Any, ...]]):
         return super_dict
 
     @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "PermParam":
         if not _is_valid_ordinal_categorical_perm_param_data(data):
             raise InvalidSerializationDictStructureError(
                 cls, _OrdinalCategorialPermParamData, data

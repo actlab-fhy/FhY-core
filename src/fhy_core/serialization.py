@@ -123,9 +123,9 @@ class SerializationError(Exception):
 class InvalidSerializationDictStructureError(SerializationError):
     """Raised when dictionary provided for deserialization has an invalid structure."""
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self, class_type: type, expected_structure, actual_data: SerializedDict
-    ):  # type: ignore[no-untyped-def]
+    ):
         expected_fields_str = format_comma_separated_list(
             f'"{fld}": {ty}' for fld, ty in expected_structure.__annotations__.items()
         )

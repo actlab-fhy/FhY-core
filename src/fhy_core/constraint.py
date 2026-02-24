@@ -84,7 +84,7 @@ class Constraint(WrappedFamilySerializable, ABC):
 
 
 class _EquationConstraintData(TypedDict):
-    variable: Identifier
+    variable: SerializedDict
     expression: SerializedDict
 
 
@@ -93,7 +93,7 @@ def _is_valid_equation_constraint_data(
 ) -> TypeGuard[_EquationConstraintData]:
     return (
         "variable" in data
-        and isinstance(data["variable"], Identifier)
+        and isinstance(data["variable"], SerializedDictBase)
         and "expression" in data
         and isinstance(data["expression"], SerializedDictBase)
     )
@@ -132,7 +132,7 @@ class EquationConstraint(Constraint):
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
-            "variable": self.variable,
+            "variable": self.variable.serialize_to_dict(),
             "expression": self._expression.serialize_to_dict(),
         }
 
@@ -143,7 +143,7 @@ class EquationConstraint(Constraint):
                 cls, _EquationConstraintData, data
             )
         return cls(
-            data["variable"],
+            Identifier.deserialize_from_dict(data["variable"]),
             Expression.deserialize_from_dict(data["expression"]),
         )
 
@@ -155,7 +155,7 @@ class EquationConstraint(Constraint):
 
 
 class _InSetConstraintData(TypedDict):
-    variable: Identifier
+    variable: SerializedDict
     valid_values: list[Any]
 
 
@@ -164,7 +164,7 @@ def _is_valid_in_set_constraint_data(
 ) -> TypeGuard[_InSetConstraintData]:
     return (
         "variable" in data
-        and isinstance(data["variable"], Identifier)
+        and isinstance(data["variable"], SerializedDictBase)
         and "valid_values" in data
         and isinstance(data["valid_values"], list)
     )
@@ -215,7 +215,7 @@ class InSetConstraint(Constraint):
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
-            "variable": self.variable,
+            "variable": self.variable.serialize_to_dict(),
             "valid_values": list(self._valid_values),
         }
 
@@ -226,7 +226,7 @@ class InSetConstraint(Constraint):
                 cls, _InSetConstraintData, data
             )
         return cls(
-            data["variable"],
+            Identifier.deserialize_from_dict(data["variable"]),
             set(data["valid_values"]),
         )
 
@@ -241,7 +241,7 @@ class InSetConstraint(Constraint):
 
 
 class _NotInSetConstraintData(TypedDict):
-    variable: Identifier
+    variable: SerializedDict
     invalid_values: list[Any]
 
 
@@ -250,7 +250,7 @@ def _is_valid_not_in_set_constraint_data(
 ) -> TypeGuard[_NotInSetConstraintData]:
     return (
         "variable" in data
-        and isinstance(data["variable"], Identifier)
+        and isinstance(data["variable"], SerializedDictBase)
         and "invalid_values" in data
         and isinstance(data["invalid_values"], list)
     )
@@ -300,7 +300,7 @@ class NotInSetConstraint(Constraint):
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
-            "variable": self.variable,
+            "variable": self.variable.serialize_to_dict(),
             "invalid_values": list(self._invalid_values),
         }
 
@@ -311,7 +311,7 @@ class NotInSetConstraint(Constraint):
                 cls, _NotInSetConstraintData, data
             )
         return cls(
-            data["variable"],
+            Identifier.deserialize_from_dict(data["variable"]),
             set(data["invalid_values"]),
         )
 
