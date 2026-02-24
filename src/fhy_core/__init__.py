@@ -71,7 +71,9 @@ __all__ = [
     "WrappedFamilySerializable",
     "SerializedObject",
     "SerializedDict",
-    "SerializedDictItem",
+    "SerializedValue",
+    "is_serialized_value",
+    "is_serialized_dict",
     "SerializationFormat",
     "InvalidSerializationDictStructureError",
     "InvalidSerializationDataValueError",
@@ -123,9 +125,11 @@ from .serialization import (
     Serializable,
     SerializationFormat,
     SerializedDict,
-    SerializedDictItem,
     SerializedObject,
+    SerializedValue,
     WrappedFamilySerializable,
+    is_serialized_dict,
+    is_serialized_value,
     register_serializable,
 )
 from .symbol_table import (

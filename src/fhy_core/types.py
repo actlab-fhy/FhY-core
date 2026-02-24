@@ -24,8 +24,8 @@ from fhy_core.serialization import (
     InvalidSerializationDataValueError,
     InvalidSerializationDictStructureError,
     SerializedDict,
-    SerializedDictBase,
     WrappedFamilySerializable,
+    is_serialized_dict,
     register_serializable,
 )
 
@@ -323,7 +323,7 @@ def _is_valid_numerical_type_data(
 ) -> TypeGuard[_NumericalTypeData]:
     return (
         "data_type" in data
-        and isinstance(data["data_type"], SerializedDictBase)
+        and is_serialized_dict(data["data_type"])
         and "shape" in data
         and isinstance(data["shape"], list)
     )
@@ -387,11 +387,11 @@ class _IndexTypeData(TypedDict):
 def _is_valid_index_type_data(data: SerializedDict) -> TypeGuard[_IndexTypeData]:
     return (
         "lower_bound" in data
-        and isinstance(data["lower_bound"], SerializedDictBase)
+        and is_serialized_dict(data["lower_bound"])
         and "upper_bound" in data
-        and isinstance(data["upper_bound"], SerializedDictBase)
+        and is_serialized_dict(data["upper_bound"])
         and "stride" in data
-        and (isinstance(data["stride"], SerializedDictBase) or data["stride"] is None)
+        and (is_serialized_dict(data["stride"]) or data["stride"] is None)
     )
 
 

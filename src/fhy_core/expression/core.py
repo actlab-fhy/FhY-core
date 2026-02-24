@@ -30,8 +30,8 @@ from fhy_core.serialization import (
     InvalidSerializationDataValueError,
     InvalidSerializationDictStructureError,
     SerializedDict,
-    SerializedDictBase,
     WrappedFamilySerializable,
+    is_serialized_dict,
     register_serializable,
 )
 from fhy_core.utils import invert_frozen_dict
@@ -286,7 +286,7 @@ def _is_valid_unary_expression_data(
         "operation" in data
         and isinstance(data["operation"], str)
         and "operand" in data
-        and isinstance(data["operand"], SerializedDictBase)
+        and is_serialized_dict(data["operand"])
     )
 
 
@@ -401,9 +401,9 @@ def _is_valid_binary_expression_data(
         "operation" in data
         and isinstance(data["operation"], str)
         and "left" in data
-        and isinstance(data["left"], SerializedDictBase)
+        and is_serialized_dict(data["left"])
         and "right" in data
-        and isinstance(data["right"], SerializedDictBase)
+        and is_serialized_dict(data["right"])
     )
 
 
@@ -450,7 +450,7 @@ class _IdentifierExpressionData(TypedDict):
 def _is_valid_identifier_expression_data(
     data: SerializedDict,
 ) -> TypeGuard[_IdentifierExpressionData]:
-    return "identifier" in data and isinstance(data["identifier"], SerializedDictBase)
+    return "identifier" in data and is_serialized_dict(data["identifier"])
 
 
 @register_serializable(type_id="identifier_expression")

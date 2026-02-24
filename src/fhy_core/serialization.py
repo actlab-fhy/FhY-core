@@ -60,10 +60,11 @@ __all__ = [
     "BinaryPayloadCodec",
     "register_serializable",
     "WrappedFamilySerializable",
-    "SerializedDictItem",
     "SerializedDict",
-    "SerializedDictBase",
+    "SerializedValue",
     "SerializedObject",
+    "is_serialized_value",
+    "is_serialized_dict",
     "InvalidSerializationDictStructureError",
     "InvalidSerializationDataValueError",
 ]
@@ -73,19 +74,52 @@ import json
 import struct
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Any, Callable, ClassVar, TypeAlias, TypeVar
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Mapping,
+    TypeAlias,
+    TypeGuard,
+    TypeVar,
+    Union,
+)
 
 from frozendict import frozendict
 
 from .error import register_error
 from .utils import StrEnum, format_comma_separated_list
 
-SerializedDictItem: TypeAlias = (
-    "str | int | float | bool | None | Sequence[SerializedDictItem] | SerializedDict"
-)
-SerializedDictBase: TypeAlias = dict
-SerializedDict: TypeAlias = SerializedDictBase[str, SerializedDictItem]
+SerializedValue: TypeAlias = Union[
+    str, int, float, bool, None, Sequence["SerializedValue"], "SerializedDict"
+]
+SerializedDict: TypeAlias = dict[str, SerializedValue]
 SerializedObject: TypeAlias = SerializedDict | str | bytes
+
+
+def is_serialized_value(v: Any) -> TypeGuard[SerializedValue]:
+    """Return if `v` is a valid `SerializedValue`."""
+    if v is None or isinstance(v, (str, int, float, bool)):
+        return True
+    if isinstance(v, (bytes, bytearray, memoryview)):
+        return False
+    if isinstance(v, Mapping):
+        return is_serialized_dict(v)
+    if isinstance(v, Sequence) and not isinstance(v, (str, bytes, bytearray)):
+        return all(is_serialized_value(x) for x in v)
+    return False
+
+
+def is_serialized_dict(v: Any) -> TypeGuard[SerializedDict]:
+    """Return if `v` is a mapping with `str` keys and `SerializedValue` values."""
+    if not isinstance(v, Mapping):
+        return False
+    for k, val in v.items():
+        if not isinstance(k, str):
+            return False
+        if not is_serialized_value(val):
+            return False
+    return True
 
 
 _T = TypeVar("_T", bound="Serializable")
@@ -460,7 +494,7 @@ class Serializable(ABC):
 
         if codec is BinaryPayloadCodec.JSON:
             payload_obj = json.loads(payload.decode("utf-8"))
-            if not isinstance(payload_obj, SerializedDictBase):
+            if not is_serialized_dict(payload_obj):
                 raise SerializationError("Payload did not decode to an object/dict.")
             return cls.deserialize_from_dict(payload_obj)
 
@@ -506,7 +540,7 @@ class Serializable(ABC):
 
         """
         if fmt is SerializationFormat.DICT:
-            if not isinstance(payload, SerializedDictBase):
+            if not is_serialized_dict(payload):
                 raise SerializationError(
                     "DICT deserialization requires a dictionary payload."
                 )
@@ -561,7 +595,7 @@ class Serializable(ABC):
         if isinstance(payload, (bytes, bytearray)):
             payload = payload.decode("utf-8")
         payload_obj = json.loads(payload)
-        if not isinstance(payload_obj, SerializedDictBase):
+        if not is_serialized_dict(payload_obj):
             raise SerializationError("JSON did not decode to an object/dict.")
         return cls.deserialize_from_dict(payload_obj)
 
@@ -645,9 +679,7 @@ class WrappedFamilySerializable(Serializable, ABC):
     def deserialize_from_dict(cls: type[_F], data: SerializedDict) -> _F:
         class_type_id = data.get("__type__")
         object_data = data.get("__data__")
-        if not isinstance(class_type_id, str) or not isinstance(
-            object_data, SerializedDictBase
-        ):
+        if not isinstance(class_type_id, str) or not is_serialized_dict(object_data):
             raise SerializationError("Not a wrapped dict with __type__ and __data__.")
 
         concrete_class = _resolve_type_id(class_type_id)

@@ -13,8 +13,8 @@ from typing import Any, TypedDict, TypeGuard
 from fhy_core.serialization import (
     InvalidSerializationDictStructureError,
     SerializedDict,
-    SerializedDictBase,
     WrappedFamilySerializable,
+    is_serialized_dict,
     register_serializable,
 )
 from fhy_core.utils import Self, format_comma_separated_list
@@ -93,9 +93,9 @@ def _is_valid_equation_constraint_data(
 ) -> TypeGuard[_EquationConstraintData]:
     return (
         "variable" in data
-        and isinstance(data["variable"], SerializedDictBase)
+        and is_serialized_dict(data["variable"])
         and "expression" in data
-        and isinstance(data["expression"], SerializedDictBase)
+        and is_serialized_dict(data["expression"])
     )
 
 
@@ -164,7 +164,7 @@ def _is_valid_in_set_constraint_data(
 ) -> TypeGuard[_InSetConstraintData]:
     return (
         "variable" in data
-        and isinstance(data["variable"], SerializedDictBase)
+        and is_serialized_dict(data["variable"])
         and "valid_values" in data
         and isinstance(data["valid_values"], list)
     )
@@ -250,7 +250,7 @@ def _is_valid_not_in_set_constraint_data(
 ) -> TypeGuard[_NotInSetConstraintData]:
     return (
         "variable" in data
-        and isinstance(data["variable"], SerializedDictBase)
+        and is_serialized_dict(data["variable"])
         and "invalid_values" in data
         and isinstance(data["invalid_values"], list)
     )

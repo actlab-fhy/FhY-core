@@ -34,8 +34,8 @@ from fhy_core.serialization import (
     InvalidSerializationDataValueError,
     InvalidSerializationDictStructureError,
     SerializedDict,
-    SerializedDictBase,
     WrappedFamilySerializable,
+    is_serialized_dict,
     register_serializable,
 )
 from fhy_core.utils import Self, format_comma_separated_list
@@ -352,7 +352,7 @@ def is_valid_param_data(data: SerializedDict) -> TypeGuard[ParamData]:
     """Return True if the given data is a valid parameter data; False otherwise."""
     return (
         "variable" in data
-        and isinstance(data["variable"], SerializedDictBase)
+        and is_serialized_dict(data["variable"])
         and "value" in data
         and (
             data["value"] is None
@@ -360,6 +360,10 @@ def is_valid_param_data(data: SerializedDict) -> TypeGuard[ParamData]:
         )
         and "constraints" in data
         and isinstance(data["constraints"], list)
+        and all(
+            is_serialized_dict(constraint_data)
+            for constraint_data in data["constraints"]
+        )
     )
 
 
