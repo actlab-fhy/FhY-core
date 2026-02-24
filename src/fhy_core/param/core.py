@@ -11,7 +11,7 @@ __all__ = [
 
 from abc import ABC, abstractmethod
 from collections.abc import Collection, Hashable, Sequence
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypedDict, TypeGuard, TypeVar
 
 from fhy_core.constraint import (
     Constraint,
@@ -27,6 +27,13 @@ from fhy_core.expression import (
     replace_identifiers,
 )
 from fhy_core.identifier import Identifier
+from fhy_core.serialization import (
+    InvalidSerializationDataValueError,
+    InvalidSerializationDictStructureError,
+    SerializedDict,
+    SerializedDictBase,
+    WrappedFamilySerializable,
+)
 from fhy_core.utils import Self, format_comma_separated_list
 
 _H = TypeVar("_H", bound=Hashable)
@@ -49,7 +56,27 @@ def _is_values_unique_in_sequence_with_set(values: Collection[_H]) -> bool:
     return len(values) == len(set(values))
 
 
-class Param(ABC, Generic[_T]):
+class _ParamData(TypedDict):
+    variable: SerializedDict
+    value: Any | None
+    constraints: list[SerializedDict]
+
+
+def _is_valid_param_data(data: SerializedDict) -> TypeGuard[_ParamData]:
+    return (
+        "variable" in data
+        and isinstance(data["variable"], SerializedDictBase)
+        and "value" in data
+        and (
+            data["value"] is None
+            or isinstance(data["value"], (int, float, str, list, tuple, dict))
+        )
+        and "constraints" in data
+        and isinstance(data["constraints"], list)
+    )
+
+
+class Param(WrappedFamilySerializable, ABC, Generic[_T]):
     """Abstract base class for constrained parameters."""
 
     _value: _T | None
@@ -233,6 +260,15 @@ class Param(ABC, Generic[_T]):
 
         """
         self._constraints.append(constraint)
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {
+            "variable": self._variable.serialize_to_dict(),
+            "value": self._value,
+            "constraints": [
+                constraint.serialize_to_dict() for constraint in self._constraints
+            ],
+        }
 
     def copy(self) -> Self:
         """Return a shallow copy of the parameter."""
@@ -455,6 +491,22 @@ class RealParam(Param[str | float]):
         )
         self.add_constraint(lower_bound_constraint)
 
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
+        if not _is_valid_param_data(data):
+            raise InvalidSerializationDictStructureError(cls, _ParamData, data)
+        param = RealParam(Identifier.deserialize_from_dict(data["variable"]))
+        if data["value"] is not None:
+            if not isinstance(data["value"], (str, float)):
+                raise InvalidSerializationDataValueError(
+                    cls, "value", "a string or float", data["value"]
+                )
+            param.set_value(data["value"])
+        for constraint_data in data["constraints"]:
+            constraint = Constraint.deserialize_from_dict(constraint_data)
+            param.add_constraint(constraint)
+        return param
+
 
 class IntParam(Param[int]):
     """Integer-valued parameter."""
@@ -586,6 +638,47 @@ class IntParam(Param[int]):
         )
         self.add_constraint(lower_bound_constraint)
 
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
+        if not _is_valid_param_data(data):
+            raise InvalidSerializationDictStructureError(cls, _ParamData, data)
+        param = IntParam(Identifier.deserialize_from_dict(data["variable"]))
+        if data["value"] is not None:
+            if not isinstance(data["value"], int):
+                raise InvalidSerializationDataValueError(
+                    cls, "value", "an integer", data["value"]
+                )
+            param.set_value(data["value"])
+        for constraint_data in data["constraints"]:
+            constraint = Constraint.deserialize_from_dict(constraint_data)
+            param.add_constraint(constraint)
+        return param
+
+
+class _OrdinalCategorialPermParamData(TypedDict):
+    variable: SerializedDict
+    value: Any | None
+    constraints: list[SerializedDict]
+    possible_values: list[Any]
+
+
+def _is_valid_ordinal_categorical_perm_param_data(
+    data: SerializedDict,
+) -> TypeGuard[_OrdinalCategorialPermParamData]:
+    return (
+        "variable" in data
+        and isinstance(data["variable"], SerializedDictBase)
+        and "value" in data
+        and (
+            data["value"] is None
+            or isinstance(data["value"], (int, float, str, list, tuple, dict))
+        )
+        and "constraints" in data
+        and isinstance(data["constraints"], list)
+        and "possible_values" in data
+        and isinstance(data["possible_values"], list)
+    )
+
 
 class OrdinalParam(Param[Any]):
     """Ordinal-valued parameter.
@@ -595,7 +688,7 @@ class OrdinalParam(Param[Any]):
 
     """
 
-    _all_values: tuple[Any]
+    _all_values: tuple[Any, ...]
 
     def __init__(self, values: Sequence[Any], name: Identifier | None = None):
         super().__init__(name)
@@ -619,6 +712,34 @@ class OrdinalParam(Param[Any]):
                 "ordinal parameters."
             )
         return super().add_constraint(constraint)
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        super_dict = super().serialize_data_to_dict()
+        super_dict["possible_values"] = list(self._all_values)
+        return super_dict
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
+        if not _is_valid_ordinal_categorical_perm_param_data(data):
+            raise InvalidSerializationDictStructureError(
+                cls, _OrdinalCategorialPermParamData, data
+            )
+        param = OrdinalParam(
+            data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
+        )
+        if data["value"] is not None:
+            if data["value"] not in param._all_values:
+                raise InvalidSerializationDataValueError(
+                    cls,
+                    "value",
+                    f"a value in {param._all_values}",
+                    data["value"],
+                )
+            param.set_value(data["value"])
+        for constraint_data in data["constraints"]:
+            constraint = Constraint.deserialize_from_dict(constraint_data)
+            param.add_constraint(constraint)
+        return param
 
     def copy(self) -> "OrdinalParam":
         new_param = OrdinalParam(self._all_values, self._variable)
@@ -667,6 +788,34 @@ class CategoricalParam(Param[_H]):
                 "categorical parameters."
             )
         return super().add_constraint(constraint)
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        super_dict = super().serialize_data_to_dict()
+        super_dict["possible_values"] = list(self._categories)
+        return super_dict
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
+        if not _is_valid_ordinal_categorical_perm_param_data(data):
+            raise InvalidSerializationDictStructureError(
+                cls, _OrdinalCategorialPermParamData, data
+            )
+        param = CategoricalParam(
+            data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
+        )
+        if data["value"] is not None:
+            if data["value"] not in param._categories:
+                raise InvalidSerializationDataValueError(
+                    cls,
+                    "value",
+                    f"a value in {param._categories}",
+                    data["value"],
+                )
+            param.set_value(data["value"])
+        for constraint_data in data["constraints"]:
+            constraint = Constraint.deserialize_from_dict(constraint_data)
+            param.add_constraint(constraint)
+        return param
 
     def copy(self) -> "CategoricalParam[_H]":
         new_param = CategoricalParam[_H](self._categories.copy(), self._variable)
@@ -722,6 +871,41 @@ class PermParam(Param[tuple[Any, ...]]):
                 "permutation parameters."
             )
         return super().add_constraint(constraint)
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        super_dict = super().serialize_data_to_dict()
+        super_dict["possible_values"] = list(self._all_values)
+        return super_dict
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
+        if not _is_valid_ordinal_categorical_perm_param_data(data):
+            raise InvalidSerializationDictStructureError(
+                cls, _OrdinalCategorialPermParamData, data
+            )
+        param = PermParam(
+            data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
+        )
+        if data["value"] is not None:
+            if not isinstance(data["value"], (list, tuple)):
+                raise InvalidSerializationDataValueError(
+                    cls,
+                    "value",
+                    "a list or tuple",
+                    data["value"],
+                )
+            if not param._is_value_valid_permutation(data["value"]):
+                raise InvalidSerializationDataValueError(
+                    cls,
+                    "value",
+                    f"a valid permutation of {param._all_values}",
+                    data["value"],
+                )
+            param.set_value(tuple(data["value"]))
+        for constraint_data in data["constraints"]:
+            constraint = Constraint.deserialize_from_dict(constraint_data)
+            param.add_constraint(constraint)
+        return param
 
     def copy(self) -> "PermParam":
         new_param = PermParam(self._all_values, self._variable)

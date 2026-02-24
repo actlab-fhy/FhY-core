@@ -102,3 +102,5 @@ class NatParam(IntParam):
             )
 
         return super().add_upper_bound_constraint(upper_bound, is_inclusive)
+
+    # TODO: Add deserialization method

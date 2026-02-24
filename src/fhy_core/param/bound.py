@@ -279,6 +279,8 @@ class BoundIntParam(IntParam):
         p.add_upper_bound_constraint(value, is_inclusive=True)
         return p
 
+    # TODO: Add serialization/deserialization method
+
     def _coerce_other(self, other: Any) -> "BoundIntParam":
         if isinstance(other, int):
             return BoundIntParam.exactly(other, prefer_inclusive=self._prefer_inclusive)
@@ -365,3 +367,5 @@ class BoundNatParam(BoundIntParam, NatParam):
             is_zero_included=is_zero_included,
             prefer_inclusive=prefer_inclusive,
         )
+
+    # TODO: Add deserialization method
