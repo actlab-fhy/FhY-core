@@ -219,8 +219,8 @@ class NatParam(IntParam):
             data,
             lambda v: isinstance(v, int) and v >= 0,
             "a non-negative integer",
-            constraint_filter_function=lambda c: not is_the_basic_nat_param_constraint(
-                c, variable, is_zero_included
+            constraint_filter_function=lambda c: (
+                not is_the_basic_nat_param_constraint(c, variable, is_zero_included)
             ),
         )
         return param
