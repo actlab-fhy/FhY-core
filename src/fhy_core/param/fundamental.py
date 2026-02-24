@@ -12,8 +12,17 @@ from fhy_core.expression import (
     LiteralExpression,
 )
 from fhy_core.identifier import Identifier
+from fhy_core.serialization import (
+    InvalidSerializationDictStructureError,
+    SerializedDict,
+)
 
-from .core import IntParam
+from .core import (
+    IntParam,
+    ParamData,
+    finalize_param_construction_from_data,
+    is_valid_param_data,
+)
 
 
 class NatParam(IntParam):
@@ -103,4 +112,15 @@ class NatParam(IntParam):
 
         return super().add_upper_bound_constraint(upper_bound, is_inclusive)
 
-    # TODO: Add deserialization method
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "NatParam":
+        if not is_valid_param_data(data):
+            raise InvalidSerializationDictStructureError(cls, ParamData, data)
+        param = IntParam(Identifier.deserialize_from_dict(data["variable"]))
+        finalize_param_construction_from_data(
+            param,
+            data,
+            lambda v: isinstance(v, int) and v >= 0,
+            "a non-negative integer",
+        )
+        return param

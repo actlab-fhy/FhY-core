@@ -846,6 +846,24 @@ def test_perm_param_serialization(perm_param_nchw: PermParam):
     _assert_none_satisfied(param2, [["n", "c", "w", "h"]])
 
 
+def test_nat_param_serialization():
+    """Test a nat parameter can be serialized/deserialized via a dictionary."""
+    param = NatParam(is_zero_included=False)
+    param.add_constraint(
+        EquationConstraint(param.variable, param.variable_expression >= 1)
+    )
+    param.add_constraint(
+        EquationConstraint(param.variable, param.variable_expression <= 10)
+    )
+    param.set_value(5)
+    dictionary = param.serialize_to_dict()
+    param2 = NatParam.deserialize_from_dict(dictionary)
+    assert param2.is_value_set()
+    assert param2.get_value() == 5
+    _assert_all_satisfied(param2, [1, 5, 10])
+    _assert_none_satisfied(param2, [0, 11])
+
+
 # TODO: Check serialization structure errors and value errors for all types.
 
 
