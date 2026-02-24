@@ -21,8 +21,8 @@ from functools import partial
 from typing import TypedDict, TypeGuard
 
 from fhy_core.serialization import (
-    InvalidDeserializationDataValueError,
-    InvalidDeserializationDictStructureError,
+    DeserializationDictStructureError,
+    DeserializationValueError,
     SerializedDict,
     WrappedFamilySerializable,
     is_serialized_dict,
@@ -250,11 +250,11 @@ class PrimitiveDataType(DataType):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "PrimitiveDataType":
         if not _is_valid_primitive_data_type_data(data):
-            raise InvalidDeserializationDictStructureError(
+            raise DeserializationDictStructureError(
                 cls, _PrimitiveDataTypeData.__annotations__, data
             )
         if data["core_data_type"] not in CoreDataType._value2member_map_:
-            raise InvalidDeserializationDataValueError(
+            raise DeserializationValueError(
                 cls, "core_data_type", "a valid core data type", data["core_data_type"]
             )
         return cls(CoreDataType(data["core_data_type"]))
@@ -361,7 +361,7 @@ class NumericalType(Type):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "NumericalType":
         if not _is_valid_numerical_type_data(data):
-            raise InvalidDeserializationDictStructureError(
+            raise DeserializationDictStructureError(
                 cls, _NumericalTypeData.__annotations__, data
             )
         return cls(
@@ -443,7 +443,7 @@ class IndexType(Type):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "IndexType":
         if not _is_valid_index_type_data(data):
-            raise InvalidDeserializationDictStructureError(
+            raise DeserializationDictStructureError(
                 cls, _IndexTypeData.__annotations__, data
             )
         stride_dict = data["stride"]
@@ -501,7 +501,7 @@ class TupleType(Type):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "TupleType":
         if not _is_valid_tuple_type_data(data):
-            raise InvalidDeserializationDictStructureError(
+            raise DeserializationDictStructureError(
                 cls, _TupleTypeData.__annotations__, data
             )
         return cls([Type.deserialize_from_dict(ty_dict) for ty_dict in data["types"]])

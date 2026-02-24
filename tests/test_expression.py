@@ -13,7 +13,7 @@ from fhy_core.expression import (
     UnaryOperation,
 )
 from fhy_core.identifier import Identifier
-from fhy_core.serialization import InvalidDeserializationDataValueError, SerializedDict
+from fhy_core.serialization import DeserializationValueError, SerializedDict
 
 from .conftest import assert_exact_expression_equality, mock_identifier
 
@@ -314,7 +314,7 @@ def test_dict_deserialization_fails_with_invalid_unary_operation():
         "__type__": "unary_expression",
         "__data__": {"operation": "invalid_operation", "operand": {}},
     }
-    with pytest.raises(InvalidDeserializationDataValueError):
+    with pytest.raises(DeserializationValueError):
         Expression.deserialize_from_dict(data)
 
 
@@ -328,7 +328,7 @@ def test_dict_deserialization_fails_with_invalid_binary_operation():
             "right": {},
         },
     }
-    with pytest.raises(InvalidDeserializationDataValueError):
+    with pytest.raises(DeserializationValueError):
         Expression.deserialize_from_dict(data)
 
 

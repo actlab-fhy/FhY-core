@@ -65,8 +65,8 @@ __all__ = [
     "SerializedObject",
     "is_serialized_value",
     "is_serialized_dict",
-    "InvalidDeserializationDictStructureError",
-    "InvalidDeserializationDataValueError",
+    "DeserializationDictStructureError",
+    "DeserializationValueError",
     "SerializationTypeError",
     "SerializationValueError",
 ]
@@ -226,7 +226,7 @@ class SerializationValueError(SerializationError, ValueError):
 
 
 @register_error
-class InvalidDeserializationDictStructureError(SerializationError):
+class DeserializationDictStructureError(SerializationError):
     """Raised when dictionary provided for deserialization has an invalid structure."""
 
     def __init__(
@@ -248,7 +248,7 @@ class InvalidDeserializationDictStructureError(SerializationError):
 
 
 @register_error
-class InvalidDeserializationDataValueError(SerializationError, ValueError):
+class DeserializationValueError(SerializationError, ValueError):
     """Raised when data provided for deserialization has invalid values."""
 
     def __init__(

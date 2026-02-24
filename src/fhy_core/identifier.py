@@ -5,8 +5,8 @@ __all__ = ["Identifier"]
 from typing import Any, ClassVar, TypedDict, TypeGuard
 
 from .serialization import (
-    InvalidDeserializationDataValueError,
-    InvalidDeserializationDictStructureError,
+    DeserializationDictStructureError,
+    DeserializationValueError,
     Serializable,
     SerializedDict,
     register_serializable,
@@ -55,11 +55,11 @@ class Identifier(Serializable):
     @classmethod
     def deserialize_from_dict(cls, data: SerializedDict) -> "Identifier":
         if not _is_valid_identifier_data(data):
-            raise InvalidDeserializationDictStructureError(
+            raise DeserializationDictStructureError(
                 cls, _IdentifierData.__annotations__, data
             )
         if data["id"] < 0:
-            raise InvalidDeserializationDataValueError(
+            raise DeserializationValueError(
                 cls, "id", "a non-negative integer", data["id"]
             )
         identifier = cls.__new__(cls)

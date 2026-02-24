@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from typing import Any, TypedDict, TypeGuard
 
 from fhy_core.serialization import (
-    InvalidDeserializationDictStructureError,
+    DeserializationDictStructureError,
     SerializedDict,
     WrappedFamilySerializable,
     is_serialized_dict,
@@ -139,7 +139,7 @@ class EquationConstraint(Constraint):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "EquationConstraint":
         if not _is_valid_equation_constraint_data(data):
-            raise InvalidDeserializationDictStructureError(
+            raise DeserializationDictStructureError(
                 cls, _EquationConstraintData.__annotations__, data
             )
         return cls(
@@ -222,7 +222,7 @@ class InSetConstraint(Constraint):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "InSetConstraint":
         if not _is_valid_in_set_constraint_data(data):
-            raise InvalidDeserializationDictStructureError(
+            raise DeserializationDictStructureError(
                 cls, _InSetConstraintData.__annotations__, data
             )
         return cls(
@@ -308,7 +308,7 @@ class NotInSetConstraint(Constraint):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "NotInSetConstraint":
         if not _is_valid_not_in_set_constraint_data(data):
-            raise InvalidDeserializationDictStructureError(
+            raise DeserializationDictStructureError(
                 cls, _NotInSetConstraintData.__annotations__, data
             )
         return cls(
