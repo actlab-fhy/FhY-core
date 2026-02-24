@@ -216,7 +216,7 @@ class InSetConstraint(Constraint):
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "variable": self.variable.serialize_to_dict(),
-            "valid_values": list(self._valid_values),
+            "valid_values": sorted(self._valid_values, key=repr),
         }
 
     @classmethod
@@ -302,7 +302,7 @@ class NotInSetConstraint(Constraint):
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "variable": self.variable.serialize_to_dict(),
-            "invalid_values": list(self._invalid_values),
+            "invalid_values": sorted(self._invalid_values, key=repr),
         }
 
     @classmethod

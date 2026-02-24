@@ -326,6 +326,7 @@ def _is_valid_numerical_type_data(
         and is_serialized_dict(data["data_type"])
         and "shape" in data
         and isinstance(data["shape"], list)
+        and all(is_serialized_dict(dim_dict) for dim_dict in data["shape"])
     )
 
 
@@ -469,7 +470,11 @@ class _TupleTypeData(TypedDict):
 
 
 def _is_valid_tuple_type_data(data: SerializedDict) -> TypeGuard[_TupleTypeData]:
-    return "types" in data and isinstance(data["types"], list)
+    return (
+        "types" in data
+        and isinstance(data["types"], list)
+        and all(is_serialized_dict(ty_dict) for ty_dict in data["types"])
+    )
 
 
 @register_serializable(type_id="tuple_type")

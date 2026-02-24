@@ -248,6 +248,7 @@ class Param(WrappedFamilySerializable, ABC, Generic[_T]):
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "variable": self._variable.serialize_to_dict(),
+            # TODO: narrow this type to be valid
             "value": self._value,  # type: ignore[dict-item]
             "constraints": [
                 constraint.serialize_to_dict() for constraint in self._constraints
