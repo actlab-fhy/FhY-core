@@ -368,6 +368,7 @@ def finalize_param_construction_from_data(
     data: ParamData,
     value_check_function: Callable[[Any], bool],
     value_description_phrase: str,
+    constraint_filter_function: Callable[[Constraint], bool] | None = None,
 ) -> None:
     """Finalize the construction of a parameter from serialized data.
 
@@ -377,6 +378,9 @@ def finalize_param_construction_from_data(
         value_check_function: Function to check if the value in the data is
             valid for the parameter type.
         value_description_phrase: Phrase describing the valid value type.
+        constraint_filter_function: Optional function to filter constraints to add
+            to the parameter. If not provided, all constraints in the data will be
+            added.
 
     """
     if data["value"] is not None:
@@ -387,7 +391,8 @@ def finalize_param_construction_from_data(
         param.set_value(data["value"])
     for constraint_data in data["constraints"]:
         constraint = Constraint.deserialize_from_dict(constraint_data)
-        param.add_constraint(constraint)
+        if constraint_filter_function is None or constraint_filter_function(constraint):
+            param.add_constraint(constraint)
 
 
 @register_serializable

@@ -1261,14 +1261,17 @@ def test_bound_int_param_serialization():
 
 def test_bound_nat_param_serialization():
     """Test bound nat parameter can be serialized/deserialized via a dictionary."""
-    p = BoundNatParam.with_lower_bound(0, is_inclusive=True)
+    p = BoundNatParam.with_lower_bound(2, is_inclusive=True)
     p.set_value(5)
     dictionary = p.serialize_to_dict()
+    assert len(dictionary["__data__"]["constraints"]) == 2
     p2 = BoundNatParam.deserialize_from_dict(dictionary)
     assert p2.is_value_set()
     assert p2.get_value() == 5
-    _assert_all_satisfied(p2, [0, 1, 5, 100])
-    _assert_none_satisfied(p2, [-1])
+    _assert_all_satisfied(p2, [2, 5, 100])
+    _assert_none_satisfied(p2, [0, 1])
+    dictionary = p2.serialize_to_dict()
+    assert len(dictionary["__data__"]["constraints"]) == 2
 
 
 # TODO: Update tests that check exceptions to match exception messages.
