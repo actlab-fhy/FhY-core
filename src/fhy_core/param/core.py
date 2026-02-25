@@ -686,7 +686,9 @@ class IntParam(Param[int]):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "IntParam":
         if not is_valid_param_data(data):
-            raise DeserializationDictStructureError(cls, Param.__annotations__, data)
+            raise DeserializationDictStructureError(
+                cls, ParamData.__annotations__, data
+            )
         param = IntParam(Identifier.deserialize_from_dict(data["variable"]))
         finalize_param_construction_from_data(
             param,

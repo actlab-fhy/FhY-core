@@ -69,6 +69,7 @@ __all__ = [
     "DeserializationValueError",
     "SerializationTypeError",
     "SerializationValueError",
+    "SerializationPayloadTypeError",
 ]
 
 import importlib

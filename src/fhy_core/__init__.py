@@ -79,6 +79,7 @@ __all__ = [
     "DeserializationValueError",
     "SerializationTypeError",
     "SerializationValueError",
+    "SerializationPayloadTypeError",
 ]
 
 
@@ -126,6 +127,7 @@ from .serialization import (
     DeserializationValueError,
     Serializable,
     SerializationFormat,
+    SerializationPayloadTypeError,
     SerializationTypeError,
     SerializationValueError,
     SerializedDict,
