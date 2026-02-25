@@ -17,6 +17,7 @@ __all__ = [
 ]
 
 from abc import ABC
+from collections.abc import Sequence
 from functools import partial
 from typing import TypedDict, TypeGuard
 
@@ -266,22 +267,67 @@ class PrimitiveDataType(DataType):
         return f"{self.__class__.__name__}({repr(self._core_data_type)})"
 
 
+class _TemplateDataTypeData(TypedDict):
+    data_type: SerializedDict
+    widths: list[int] | None
+
+
+def _is_valid_template_data_type_data(
+    data: SerializedDict,
+) -> TypeGuard[_TemplateDataTypeData]:
+    return (
+        "data_type" in data
+        and is_serialized_dict(data["data_type"])
+        and "widths" in data
+        and (isinstance(data["widths"], list) or data["widths"] is None)
+        and (
+            data["widths"] is None
+            or all(isinstance(width, int) for width in data["widths"])
+        )
+    )
+
+
 @register_serializable(type_id="template_data_type")
 class TemplateDataType(DataType):
     """Template data type."""
 
-    # TODO: Fix this class!
-
     _data_type: Identifier
-    widths: list[int] | None
+    _widths: list[int] | None
 
-    def __init__(self, data_type: Identifier, widths: list[int] | None = None) -> None:
+    def __init__(
+        self, data_type: Identifier, widths: Sequence[int] | None = None
+    ) -> None:
         self._data_type = data_type
-        self.widths = widths
+        self._widths = list(widths) if widths is not None else None
 
     @property
-    def template_type(self) -> Identifier:
+    def data_type(self) -> Identifier:
         return self._data_type
+
+    @property
+    def widths(self) -> list[int] | None:
+        return self._widths.copy() if self._widths is not None else None
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {
+            "data_type": self._data_type.serialize_to_dict(),
+            "widths": self._widths,
+        }
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "TemplateDataType":
+        if not _is_valid_template_data_type_data(data):
+            raise DeserializationDictStructureError(
+                cls, _TemplateDataTypeData.__annotations__, data
+            )
+        if data["widths"] is not None and any(width <= 0 for width in data["widths"]):
+            raise DeserializationValueError(
+                cls, "widths", "a list of positive integers or None", data["widths"]
+            )
+        return cls(
+            Identifier.deserialize_from_dict(data["data_type"]),
+            data["widths"],
+        )
 
     def __str__(self) -> str:
         return str(self._data_type)

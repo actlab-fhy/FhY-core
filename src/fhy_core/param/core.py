@@ -388,16 +388,17 @@ def finalize_param_construction_from_data(
             added.
 
     """
+    for constraint_data in data["constraints"]:
+        constraint = Constraint.deserialize_from_dict(constraint_data)
+        if constraint_filter_function is None or constraint_filter_function(constraint):
+            param.add_constraint(constraint)
+
     if data["value"] is not None:
         if not value_check_function(data["value"]):
             raise DeserializationValueError(
                 type(param), "value", value_description_phrase, data["value"]
             )
         param.set_value(data["value"])
-    for constraint_data in data["constraints"]:
-        constraint = Constraint.deserialize_from_dict(constraint_data)
-        if constraint_filter_function is None or constraint_filter_function(constraint):
-            param.add_constraint(constraint)
 
 
 @register_serializable(type_id="real_param")
