@@ -298,7 +298,7 @@ class TemplateDataType(DataType):
         self, data_type: Identifier, widths: Sequence[int] | None = None
     ) -> None:
         self._data_type = data_type
-        self._widths = list(widths)
+        self._widths = list(widths) if widths is not None else None
 
     @property
     def data_type(self) -> Identifier:
@@ -306,7 +306,7 @@ class TemplateDataType(DataType):
 
     @property
     def widths(self) -> list[int] | None:
-        return self._widths.copy()
+        return self._widths.copy() if self._widths is not None else None
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
