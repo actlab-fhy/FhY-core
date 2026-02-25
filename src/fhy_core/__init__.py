@@ -1,6 +1,6 @@
 """FhY compiler core utilities."""
 
-__version__ = "0.0.3"
+__version__ = "0.0.4"
 
 __all__ = [
     "Constraint",
@@ -66,6 +66,24 @@ __all__ = [
     "get_array_size_in_bits",
     "invert_dict",
     "invert_frozen_dict",
+    "register_serializable",
+    "Serializable",
+    "WrappedFamilySerializable",
+    "SerializedObject",
+    "SerializedDict",
+    "SerializedValue",
+    "is_serialized_value",
+    "is_serialized_dict",
+    "SerializationFormat",
+    "DeserializationDictStructureError",
+    "DeserializationValueError",
+    "SerializationTypeError",
+    "SerializationValueError",
+    "SerializationPayloadTypeError",
+    "add_file_handler",
+    "configure_logging",
+    "get_logger",
+    "install_null_handler",
 ]
 
 
@@ -75,7 +93,7 @@ from .constraint import (
     InSetConstraint,
     NotInSetConstraint,
 )
-from .error import FhYCoreTypeError, SymbolTableError, register_error
+from .error import register_error
 from .expression import (
     BinaryExpression,
     BinaryOperation,
@@ -97,6 +115,12 @@ from .expression import (
     substitute_identifiers,
 )
 from .identifier import Identifier
+from .logger import (
+    add_file_handler,
+    configure_logging,
+    get_logger,
+    install_null_handler,
+)
 from .param import (
     BoundIntParam,
     BoundNatParam,
@@ -108,17 +132,35 @@ from .param import (
     PermParam,
     RealParam,
 )
+from .serialization import (
+    DeserializationDictStructureError,
+    DeserializationValueError,
+    Serializable,
+    SerializationFormat,
+    SerializationPayloadTypeError,
+    SerializationTypeError,
+    SerializationValueError,
+    SerializedDict,
+    SerializedObject,
+    SerializedValue,
+    WrappedFamilySerializable,
+    is_serialized_dict,
+    is_serialized_value,
+    register_serializable,
+)
 from .symbol_table import (
     FunctionKeyword,
     FunctionSymbolTableFrame,
     ImportSymbolTableFrame,
     SymbolTable,
+    SymbolTableError,
     SymbolTableFrame,
     VariableSymbolTableFrame,
 )
 from .types import (
     CoreDataType,
     DataType,
+    FhYCoreTypeError,
     IndexType,
     NumericalType,
     PrimitiveDataType,

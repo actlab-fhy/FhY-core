@@ -2,13 +2,36 @@
 
 __all__ = ["Identifier"]
 
-from typing import Any
+from typing import Any, ClassVar, TypedDict, TypeGuard
+
+from .serialization import (
+    DeserializationDictStructureError,
+    DeserializationValueError,
+    Serializable,
+    SerializedDict,
+    register_serializable,
+)
 
 
-class Identifier:
+class _IdentifierData(TypedDict):
+    id: int
+    name_hint: str
+
+
+def _is_valid_identifier_data(data: SerializedDict) -> TypeGuard[_IdentifierData]:
+    return (
+        "id" in data
+        and isinstance(data["id"], int)
+        and "name_hint" in data
+        and isinstance(data["name_hint"], str)
+    )
+
+
+@register_serializable(type_id="id")
+class Identifier(Serializable):
     """Unique name."""
 
-    _next_id: int = 0
+    _next_id: ClassVar[int] = 0
     _id: int
     _name_hint: str
 
@@ -25,6 +48,26 @@ class Identifier:
     @property
     def id(self) -> int:
         return self._id
+
+    def serialize_to_dict(self) -> SerializedDict:
+        return {"id": self._id, "name_hint": self._name_hint}
+
+    @classmethod
+    def deserialize_from_dict(cls, data: SerializedDict) -> "Identifier":
+        if not _is_valid_identifier_data(data):
+            raise DeserializationDictStructureError(
+                cls, _IdentifierData.__annotations__, data
+            )
+        if data["id"] < 0:
+            raise DeserializationValueError(
+                cls, "id", "a non-negative integer", data["id"]
+            )
+        identifier = cls.__new__(cls)
+        identifier._id = data["id"]
+        identifier._name_hint = data["name_hint"]
+        if identifier._id >= cls._next_id:
+            cls._next_id = identifier._id + 1
+        return identifier
 
     def __copy__(self) -> "Identifier":
         identifier = Identifier.__new__(Identifier)

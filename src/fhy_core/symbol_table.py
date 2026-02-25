@@ -4,6 +4,7 @@ __all__ = [
     "FunctionSymbolTableFrame",
     "ImportSymbolTableFrame",
     "SymbolTable",
+    "SymbolTableError",
     "SymbolTableFrame",
     "VariableSymbolTableFrame",
 ]
@@ -16,7 +17,7 @@ from typing import Generic, NoReturn, TypeVar
 
 from fhy_core.identifier import Identifier
 
-from .error import SymbolTableError
+from .error import register_error
 from .types import Type, TypeQualifier
 from .utils import StrEnum
 
@@ -54,6 +55,11 @@ class FunctionSymbolTableFrame(SymbolTableFrame):
 
     keyword: FunctionKeyword
     signature: list[tuple[TypeQualifier, Type]] = field(default_factory=list)
+
+
+@register_error
+class SymbolTableError(Exception):
+    """Symbol table error."""
 
 
 _T = TypeVar("_T")
@@ -183,9 +189,11 @@ class SymbolTable:
 
         """
         return self._search_table_with_action(
-            lambda _, candidate_symbol_name: _SymbolTableSearchResult(True)
-            if symbol_name == candidate_symbol_name
-            else None,
+            lambda _, candidate_symbol_name: (
+                _SymbolTableSearchResult(True)
+                if symbol_name == candidate_symbol_name
+                else None
+            ),
             lambda: False,
         )
 

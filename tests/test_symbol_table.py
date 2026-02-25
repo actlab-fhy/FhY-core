@@ -1,11 +1,11 @@
 """Tests the symbol table."""
 
 import pytest
-from fhy_core.error import SymbolTableError
 from fhy_core.identifier import Identifier
 from fhy_core.symbol_table import (
     ImportSymbolTableFrame,
     SymbolTable,
+    SymbolTableError,
 )
 
 
