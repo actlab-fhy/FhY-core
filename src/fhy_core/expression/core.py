@@ -27,8 +27,8 @@ from frozendict import frozendict
 
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
-    InvalidSerializationDataValueError,
-    InvalidSerializationDictStructureError,
+    DeserializationDictStructureError,
+    DeserializationValueError,
     SerializedDict,
     WrappedFamilySerializable,
     is_serialized_dict,
@@ -307,12 +307,12 @@ class UnaryExpression(Expression):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "UnaryExpression":
         if not _is_valid_unary_expression_data(data):
-            raise InvalidSerializationDictStructureError(
-                cls, _UnaryExpressionData, data
+            raise DeserializationDictStructureError(
+                cls, _UnaryExpressionData.__annotations__, data
             )
         operation_name = data["operation"]
         if operation_name not in UNARY_FUNCTION_NAME_OPERATIONS:
-            raise InvalidSerializationDataValueError(
+            raise DeserializationValueError(
                 cls, "operation", "a valid unary operation name", operation_name
             )
         operand = Expression.deserialize_from_dict(data["operand"])
@@ -426,12 +426,12 @@ class BinaryExpression(Expression):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "BinaryExpression":
         if not _is_valid_binary_expression_data(data):
-            raise InvalidSerializationDictStructureError(
-                cls, _BinaryExpressionData, data
+            raise DeserializationDictStructureError(
+                cls, _BinaryExpressionData.__annotations__, data
             )
         operation_name = data["operation"]
         if operation_name not in BINARY_FUNCTION_NAME_OPERATIONS:
-            raise InvalidSerializationDataValueError(
+            raise DeserializationValueError(
                 cls, "operation", "a valid binary operation name", operation_name
             )
         left = Expression.deserialize_from_dict(data["left"])
@@ -466,8 +466,8 @@ class IdentifierExpression(Expression):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "IdentifierExpression":
         if not _is_valid_identifier_expression_data(data):
-            raise InvalidSerializationDictStructureError(
-                cls, _IdentifierExpressionData, data
+            raise DeserializationDictStructureError(
+                cls, _IdentifierExpressionData.__annotations__, data
             )
         return cls(Identifier.deserialize_from_dict(data["identifier"]))
 
@@ -512,7 +512,7 @@ class LiteralExpression(Expression):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "LiteralExpression":
         if not _is_valid_literal_expression_data(data):
-            raise InvalidSerializationDictStructureError(
-                cls, _LiteralExpressionData, data
+            raise DeserializationDictStructureError(
+                cls, _LiteralExpressionData.__annotations__, data
             )
         return cls(data["value"])

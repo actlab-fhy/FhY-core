@@ -65,8 +65,11 @@ __all__ = [
     "SerializedObject",
     "is_serialized_value",
     "is_serialized_dict",
-    "InvalidSerializationDictStructureError",
-    "InvalidSerializationDataValueError",
+    "DeserializationDictStructureError",
+    "DeserializationValueError",
+    "SerializationTypeError",
+    "SerializationValueError",
+    "SerializationPayloadTypeError",
 ]
 
 import importlib
@@ -74,6 +77,8 @@ import json
 import struct
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from pprint import pformat
+from types import UnionType
 from typing import (
     Any,
     Callable,
@@ -89,7 +94,7 @@ from typing import (
 from frozendict import frozendict
 
 from .error import register_error
-from .utils import StrEnum, format_comma_separated_list
+from .utils import StrEnum
 
 SerializedValue: TypeAlias = Union[
     str, int, float, bool, None, Sequence["SerializedValue"], "SerializedDict"
@@ -156,41 +161,27 @@ class SerializationError(Exception):
     """Base error for serialization failures."""
 
 
-@register_error
-class InvalidSerializationDictStructureError(SerializationError):
-    """Raised when dictionary provided for deserialization has an invalid structure."""
+def _format_type(ty: type | UnionType) -> str:
+    if isinstance(ty, type):
+        return ty.__name__
+    return pformat(ty)
 
-    def __init__(  # type: ignore[no-untyped-def]
-        self, class_type: type, expected_structure, actual_data: SerializedDict
-    ):
-        expected_fields_str = format_comma_separated_list(
-            f'"{fld}": {ty}' for fld, ty in expected_structure.__annotations__.items()
-        )
-        actual_fields_str = format_comma_separated_list(
-            f'"{fld}": {type(val).__name__}' for fld, val in actual_data.items()
-        )
-        super().__init__(
-            f'Invalid dictionary structure for deserializing "{class_type.__name__}". '
-            f"Expected fields: {{{expected_fields_str}}}. "
-            f"Actual fields: {{{actual_fields_str}}}."
-        )
+
+def _format_type_structure(structure: dict[str, type | UnionType]) -> str:
+    return "\n".join(f'\t"{fld}": {_format_type(ty)}' for fld, ty in structure.items())
 
 
 @register_error
-class InvalidSerializationDataValueError(SerializationError, ValueError):
-    """Raised when data provided for deserialization has invalid values."""
+class SerializationPayloadTypeError(SerializationError, TypeError):
+    """Raised when a payload has the wrong Python type for a given format."""
 
     def __init__(
-        self,
-        class_type: type,
-        field_name: str,
-        expected_description: str,
-        actual_value: Any,
-    ):
+        self, fmt: SerializationFormat, expected_type: type | UnionType, actual: Any
+    ) -> None:
         super().__init__(
-            f'Invalid value for field "{field_name}" while deserializing '
-            f'"{class_type.__name__}". Expected: {expected_description}. '
-            f"Actual: {repr(actual_value)}."
+            f'Invalid payload type for format "{fmt.value}". '
+            f'Expected "{_format_type(expected_type)}", got '
+            f'"{_format_type(type(actual))}".'
         )
 
 
@@ -212,6 +203,67 @@ class UnknownCodecError(SerializationError):
 @register_error
 class CodecMismatchError(SerializationError):
     """Raised when the envelope codec does not match the expected codec for a class."""
+
+
+@register_error
+class SerializationTypeError(SerializationError, TypeError):
+    """Raised when serialization fails due to a type error."""
+
+    def __init__(self, actual_type: type) -> None:
+        super().__init__(
+            f'Unable to serialize object of type "{_format_type(actual_type)}".'
+        )
+
+
+@register_error
+class SerializationValueError(SerializationError, ValueError):
+    """Raised when serialization fails due to a value error."""
+
+    def __init__(self, expected_description_phrase: str, actual_value: Any) -> None:
+        super().__init__(
+            f"While serializing, expected {expected_description_phrase}, got "
+            f"{repr(actual_value)}"
+        )
+
+
+@register_error
+class DeserializationDictStructureError(SerializationError):
+    """Raised when dictionary provided for deserialization has an invalid structure."""
+
+    def __init__(
+        self,
+        class_type: type,
+        expected_structure: dict[str, type | UnionType],
+        actual_data: SerializedDict,
+    ) -> None:
+        expected_fields_str = _format_type_structure(expected_structure)
+        actual_fields_str = _format_type_structure(
+            {k: type(v) for k, v in actual_data.items()}
+        )
+        super().__init__(
+            "Invalid dictionary structure for deserializing to "
+            f'"{class_type.__name__}".\nExpected fields: '
+            f"{{\n{expected_fields_str}\n}}\nActual fields: "
+            f"{{\n{actual_fields_str}\n}}"
+        )
+
+
+@register_error
+class DeserializationValueError(SerializationError, ValueError):
+    """Raised when data provided for deserialization has invalid values."""
+
+    def __init__(
+        self,
+        class_type: type,
+        field_name: str,
+        expected_description_phrase: str,
+        actual_value: Any,
+    ) -> None:
+        super().__init__(
+            f'Invalid value for field "{field_name}" while deserializing to '
+            f'"{class_type.__name__}". Expected {expected_description_phrase}, '
+            f"got {repr(actual_value)}"
+        )
 
 
 _TYPE_REGISTRY: dict[str, type["Serializable"]] = {}
@@ -552,20 +604,18 @@ class Serializable(ABC):
         """
         if fmt is SerializationFormat.DICT:
             if not is_serialized_dict(payload):
-                raise SerializationError(
-                    "DICT deserialization requires a dictionary payload."
-                )
+                raise SerializationPayloadTypeError(fmt, dict, payload)
             return cls.deserialize_from_dict(payload)
         elif fmt is SerializationFormat.JSON:
             if not isinstance(payload, (str, bytes, bytearray)):
-                raise SerializationError(
-                    "JSON deserialization requires str/bytes payload."
+                raise SerializationPayloadTypeError(
+                    fmt, str | bytes | bytearray, payload
                 )
             return cls.from_json(payload)
         elif fmt is SerializationFormat.BINARY:
             if not isinstance(payload, (bytes, bytearray, memoryview)):
-                raise SerializationError(
-                    "BINARY deserialization requires bytes-like payload."
+                raise SerializationPayloadTypeError(
+                    fmt, bytes | bytearray | memoryview, payload
                 )
             obj = _loads_from_binary(payload)
             if not isinstance(obj, cls):
