@@ -80,6 +80,10 @@ __all__ = [
     "SerializationTypeError",
     "SerializationValueError",
     "SerializationPayloadTypeError",
+    "add_file_handler",
+    "configure_logging",
+    "get_logger",
+    "install_null_handler",
 ]
 
 
@@ -111,6 +115,12 @@ from .expression import (
     substitute_identifiers,
 )
 from .identifier import Identifier
+from .logger import (
+    add_file_handler,
+    configure_logging,
+    get_logger,
+    install_null_handler,
+)
 from .param import (
     BoundIntParam,
     BoundNatParam,
