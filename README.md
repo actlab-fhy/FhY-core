@@ -8,7 +8,7 @@
 | Error                                    | Custom error registration and core errors for the compiler.            |
 | Expression                               | General expression represented as an AST with a parser and printer.    |
 | Constraint                               | General logical constraint.                                            |
-| Parameter                                | Real, integer, orginal, categorical, and permutation parameters.       |
+| Parameter                                | Real, integer, ordinal, categorical, and permutation parameters.       |
 | Types                                    | Core type system for the compiler.                                     |
 | Symbol Table                             | Nested symbol table.                                                   |
 | Serializable Trait                       | Trait for serialization to JSON and binary representations.            |
