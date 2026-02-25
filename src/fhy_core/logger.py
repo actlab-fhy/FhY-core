@@ -103,7 +103,7 @@ def configure_logging(  # noqa: C901
 
     This should be called once from the CLI entrypoint of the full end-to-end
     compiler, or by any third-party compiler that embeds FhY components.
-    a
+
     Args:
         namespace: The logger namespace to configure (e.g., "moga").
         console_level: Log level for the console (StreamHandler).
@@ -153,11 +153,12 @@ def configure_logging(  # noqa: C901
                         getattr(h, "baseFilename", None),
                         exc,
                     )
-                if existing_path == file_path:
-                    existing = True
-                    h.setLevel(file_level)
-                    h.setFormatter(formatter)
-                    break
+                else:
+                    if existing_path == file_path:
+                        existing = True
+                        h.setLevel(file_level)
+                        h.setFormatter(formatter)
+                        break
 
         if not existing:
             fh = logging.FileHandler(str(file_path), mode="a", encoding="utf-8")
