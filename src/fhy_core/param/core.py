@@ -31,8 +31,8 @@ from fhy_core.expression import (
 )
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
-    InvalidSerializationDataValueError,
-    InvalidSerializationDictStructureError,
+    DeserializationDictStructureError,
+    DeserializationValueError,
     SerializedDict,
     WrappedFamilySerializable,
     is_serialized_dict,
@@ -390,7 +390,7 @@ def finalize_param_construction_from_data(
     """
     if data["value"] is not None:
         if not value_check_function(data["value"]):
-            raise InvalidSerializationDataValueError(
+            raise DeserializationValueError(
                 type(param), "value", value_description_phrase, data["value"]
             )
         param.set_value(data["value"])
@@ -539,7 +539,9 @@ class RealParam(Param[str | float]):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "RealParam":
         if not is_valid_param_data(data):
-            raise InvalidSerializationDictStructureError(cls, ParamData, data)
+            raise DeserializationDictStructureError(
+                cls, ParamData.__annotations__, data
+            )
         param = RealParam(Identifier.deserialize_from_dict(data["variable"]))
         finalize_param_construction_from_data(
             param,
@@ -684,7 +686,9 @@ class IntParam(Param[int]):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "IntParam":
         if not is_valid_param_data(data):
-            raise InvalidSerializationDictStructureError(cls, ParamData, data)
+            raise DeserializationDictStructureError(
+                cls, ParamData.__annotations__, data
+            )
         param = IntParam(Identifier.deserialize_from_dict(data["variable"]))
         finalize_param_construction_from_data(
             param,
@@ -751,8 +755,8 @@ class OrdinalParam(Param[Any]):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "OrdinalParam":
         if not _is_valid_ordinal_categorical_perm_param_data(data):
-            raise InvalidSerializationDictStructureError(
-                cls, _OrdinalCategoricalPermParamData, data
+            raise DeserializationDictStructureError(
+                cls, _OrdinalCategoricalPermParamData.__annotations__, data
             )
         param = OrdinalParam(
             data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
@@ -822,8 +826,8 @@ class CategoricalParam(Param[_H]):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "CategoricalParam[_H]":
         if not _is_valid_ordinal_categorical_perm_param_data(data):
-            raise InvalidSerializationDictStructureError(
-                cls, _OrdinalCategoricalPermParamData, data
+            raise DeserializationDictStructureError(
+                cls, _OrdinalCategoricalPermParamData.__annotations__, data
             )
         param = CategoricalParam(
             data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
@@ -900,8 +904,8 @@ class PermParam(Param[tuple[Any, ...]]):
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "PermParam":
         if not _is_valid_ordinal_categorical_perm_param_data(data):
-            raise InvalidSerializationDictStructureError(
-                cls, _OrdinalCategoricalPermParamData, data
+            raise DeserializationDictStructureError(
+                cls, _OrdinalCategoricalPermParamData.__annotations__, data
             )
         param = PermParam(
             data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
