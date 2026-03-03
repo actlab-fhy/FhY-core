@@ -34,6 +34,12 @@ from fhy_core.serialization import (
     is_serialized_dict,
     register_serializable,
 )
+from fhy_core.trait import (
+    HasOperandsMixin,
+    StructuralEquivalenceMixin,
+    VerifiableMixin,
+    VerificationError,
+)
 from fhy_core.utils import invert_frozen_dict
 
 
@@ -45,8 +51,70 @@ class SymbolType(Enum):
     BOOL = auto()
 
 
-class Expression(WrappedFamilySerializable, ABC):
+class Expression(
+    WrappedFamilySerializable, StructuralEquivalenceMixin, VerifiableMixin, ABC
+):
     """Abstract base class for expressions."""
+
+    def verify(self) -> None:
+        if isinstance(self, UnaryExpression):
+            if not isinstance(self.operand, Expression):
+                raise VerificationError(
+                    f'"operand" must be an `Expression`, got {type(self.operand)}.'
+                )
+            return
+        elif isinstance(self, BinaryExpression):
+            if not isinstance(self.left, Expression):
+                raise VerificationError(
+                    f'"left" must be an `Expression`, got {type(self.left)}.'
+                )
+            if not isinstance(self.right, Expression):
+                raise VerificationError(
+                    f'"right" must be an `Expression`, got {type(self.right)}.'
+                )
+            return
+        elif isinstance(self, IdentifierExpression):
+            if not isinstance(self.identifier, Identifier):
+                raise VerificationError(
+                    '"identifier" must be an `Identifier`, got '
+                    f"{type(self.identifier)}."
+                )
+            return
+        elif isinstance(self, LiteralExpression):
+            if isinstance(self.value, str):
+                try:
+                    float(self.value)
+                except ValueError as exc:
+                    raise VerificationError(
+                        f'Invalid literal string value "{self.value}".'
+                    ) from exc
+            return
+        else:
+            raise VerificationError(f"Unsupported expression subtype: {type(self)}.")
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        if isinstance(self, UnaryExpression) and isinstance(other, UnaryExpression):
+            return (
+                self.operation == other.operation
+                and self.operand.is_structurally_equivalent(other.operand)
+            )
+        elif isinstance(self, BinaryExpression) and isinstance(other, BinaryExpression):
+            return (
+                self.operation == other.operation
+                and self.left.is_structurally_equivalent(other.left)
+                and self.right.is_structurally_equivalent(other.right)
+            )
+        elif isinstance(self, IdentifierExpression) and isinstance(
+            other, IdentifierExpression
+        ):
+            return self.identifier == other.identifier
+
+        elif isinstance(self, LiteralExpression) and isinstance(
+            other, LiteralExpression
+        ):
+            return self.value == other.value
+        else:
+            return False
 
     def __neg__(self) -> "UnaryExpression":
         return UnaryExpression(UnaryOperation.NEGATE, self)
@@ -292,11 +360,15 @@ def _is_valid_unary_expression_data(
 
 @register_serializable(type_id="unary_expression")
 @dataclass(frozen=True, eq=False)
-class UnaryExpression(Expression):
+class UnaryExpression(Expression, HasOperandsMixin[Expression]):
     """Unary expression."""
 
     operation: UnaryOperation
     operand: Expression
+
+    @property
+    def operands(self) -> tuple[Expression]:
+        return (self.operand,)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -409,12 +481,16 @@ def _is_valid_binary_expression_data(
 
 @register_serializable(type_id="binary_expression")
 @dataclass(frozen=True, eq=False)
-class BinaryExpression(Expression):
+class BinaryExpression(Expression, HasOperandsMixin[Expression]):
     """Binary expression."""
 
     operation: BinaryOperation
     left: Expression
     right: Expression
+
+    @property
+    def operands(self) -> tuple[Expression, Expression]:
+        return (self.left, self.right)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {

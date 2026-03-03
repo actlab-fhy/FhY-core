@@ -17,7 +17,7 @@ from fhy_core.expression import (
 )
 from fhy_core.identifier import Identifier
 
-from .conftest import assert_exact_expression_equality, mock_identifier
+from .conftest import mock_identifier
 
 
 @pytest.mark.parametrize(
@@ -333,7 +333,7 @@ def test_copy_equation_constraint():
     constraint = EquationConstraint(mock_identifier("x", 0), LiteralExpression(True))
     copy = constraint.copy()
     assert constraint.variable == copy.variable
-    assert_exact_expression_equality(constraint._expression, copy._expression)
+    assert constraint._expression.is_structurally_equivalent(copy._expression)
     assert constraint is not copy
 
 
@@ -364,7 +364,7 @@ def test_convert_equation_constraint_to_expression():
     )
     constraint = EquationConstraint(mock_identifier("x", 0), constraint_expression)
     expression = constraint.convert_to_expression()
-    assert_exact_expression_equality(constraint_expression, expression)
+    assert constraint_expression.is_structurally_equivalent(expression)
 
 
 def test_convert_in_set_constraint_to_expression():
@@ -384,7 +384,7 @@ def test_convert_in_set_constraint_to_expression():
             LiteralExpression(2),
         ),
     )
-    assert_exact_expression_equality(expected_expression, expression)
+    assert expected_expression.is_structurally_equivalent(expression)
 
 
 def test_convert_not_in_set_constraint_to_expression():
@@ -404,7 +404,7 @@ def test_convert_not_in_set_constraint_to_expression():
             LiteralExpression(2),
         ),
     )
-    assert_exact_expression_equality(expected_expression, expression)
+    assert expected_expression.is_structurally_equivalent(expression)
 
 
 def test_equation_constraint_dict_serialization():
@@ -429,8 +429,8 @@ def test_equation_constraint_dict_serialization():
     constraint_deserialized = EquationConstraint.deserialize_from_dict(dictionary)
     assert isinstance(constraint_deserialized, EquationConstraint)
     assert constraint_deserialized.variable == x
-    assert_exact_expression_equality(
-        constraint_deserialized._expression, constraint_expression
+    assert constraint_deserialized._expression.is_structurally_equivalent(
+        constraint_expression
     )
 
 

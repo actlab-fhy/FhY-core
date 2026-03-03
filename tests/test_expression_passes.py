@@ -32,7 +32,7 @@ from fhy_core.expression.visitor import (
 )
 from fhy_core.identifier import Identifier
 
-from .conftest import assert_exact_expression_equality, mock_identifier
+from .conftest import mock_identifier
 
 
 # TODO: Refactor pformat tests to be together and just alter the parameters
@@ -254,8 +254,7 @@ def test_substitute_identifiers():
     )
     substitutions = {x: LiteralExpression(10), y: LiteralExpression(5)}
     result = substitute_identifiers(expr, substitutions)
-    assert_exact_expression_equality(
-        result,
+    assert result.is_structurally_equivalent(
         BinaryExpression(
             BinaryOperation.ADD,
             LiteralExpression(10),
@@ -264,7 +263,7 @@ def test_substitute_identifiers():
                 LiteralExpression(5),
                 LiteralExpression(5),
             ),
-        ),
+        )
     )
 
 
@@ -279,13 +278,12 @@ def test_replace_identifiers():
     )
     replacements = {x: y}
     result = replace_identifiers(expr, replacements)
-    assert_exact_expression_equality(
-        result,
+    assert result.is_structurally_equivalent(
         BinaryExpression(
             BinaryOperation.ADD,
             IdentifierExpression(y),
             LiteralExpression(5),
-        ),
+        )
     )
 
 
@@ -613,7 +611,7 @@ def test_convert_sympy_expression_to_expression(
 ):
     """Test that the sympy expression is correctly converted to an expression."""
     result = convert_sympy_expression_to_expression(sympy_expression)
-    assert_exact_expression_equality(result, expected_expression)
+    assert result.is_structurally_equivalent(expected_expression)
 
 
 def test_sympy_expression_conversion_fails_when_symbol_is_not_identifier():

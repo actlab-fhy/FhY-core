@@ -17,7 +17,7 @@ from fhy_core.types import (
     promote_type_qualifiers,
 )
 
-from .conftest import assert_exact_expression_equality, mock_identifier
+from .conftest import mock_identifier
 
 
 @pytest.mark.parametrize(
@@ -153,8 +153,8 @@ def test_numerical_type_dict_serialization():
     assert isinstance(numerical_type_deserialized.data_type, PrimitiveDataType)
     assert numerical_type_deserialized.data_type.core_data_type == CoreDataType.INT32
     assert len(numerical_type_deserialized.shape) == 2
-    assert_exact_expression_equality(numerical_type_deserialized.shape[0], shape[0])
-    assert_exact_expression_equality(numerical_type_deserialized.shape[1], shape[1])
+    assert numerical_type_deserialized.shape[0].is_structurally_equivalent(shape[0])
+    assert numerical_type_deserialized.shape[1].is_structurally_equivalent(shape[1])
 
 
 def test_index_type_dict_serialization():
@@ -175,8 +175,8 @@ def test_index_type_dict_serialization():
     assert dictionary == expected_dict
     index_type_deserialized = IndexType.deserialize_from_dict(dictionary)
     assert isinstance(index_type_deserialized, IndexType)
-    assert_exact_expression_equality(index_type_deserialized.lower_bound, lower_bound)
-    assert_exact_expression_equality(index_type_deserialized.upper_bound, upper_bound)
+    assert index_type_deserialized.lower_bound.is_structurally_equivalent(lower_bound)
+    assert index_type_deserialized.upper_bound.is_structurally_equivalent(upper_bound)
 
 
 def test_index_type_with_stride_serialization():
@@ -198,9 +198,10 @@ def test_index_type_with_stride_serialization():
     assert dictionary == expected_dict
     index_type_deserialized = IndexType.deserialize_from_dict(dictionary)
     assert isinstance(index_type_deserialized, IndexType)
-    assert_exact_expression_equality(index_type_deserialized.lower_bound, lower_bound)
-    assert_exact_expression_equality(index_type_deserialized.upper_bound, upper_bound)
-    assert_exact_expression_equality(index_type_deserialized.stride, stride)
+    assert index_type_deserialized.lower_bound.is_structurally_equivalent(lower_bound)
+    assert index_type_deserialized.upper_bound.is_structurally_equivalent(upper_bound)
+    assert index_type_deserialized.stride is not None
+    assert index_type_deserialized.stride.is_structurally_equivalent(stride)
 
 
 def test_tuple_type_dict_serialization():
@@ -231,8 +232,8 @@ def test_tuple_type_dict_serialization():
         assert isinstance(ty.data_type, PrimitiveDataType)
         assert ty.data_type.core_data_type == CoreDataType.INT32
         assert len(ty.shape) == 2
-        assert_exact_expression_equality(ty.shape[0], shape[0])
-        assert_exact_expression_equality(ty.shape[1], shape[1])
+        assert ty.shape[0].is_structurally_equivalent(shape[0])
+        assert ty.shape[1].is_structurally_equivalent(shape[1])
 
 
 # TODO: Check serialization structure errors and value errors for all types.
