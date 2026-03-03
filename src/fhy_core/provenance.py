@@ -258,8 +258,8 @@ class Note(Serializable):
 
 class _ProvenanceData(TypedDict):
     span: _SpanData | None
-    origins: list[_SpanData]
-    notes: list[_NoteData]
+    origins: list[SerializedDict]
+    notes: list[SerializedDict]
     source_ids: list[str]
 
 
