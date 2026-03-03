@@ -29,6 +29,15 @@ __all__ = [
     "simplify_expression",
     "substitute_identifiers",
     "Identifier",
+    "Position",
+    "Span",
+    "NoteKind",
+    "Note",
+    "Provenance",
+    "HasIdentifier",
+    "HasIdentifierMixin",
+    "HasProvenance",
+    "HasProvenanceMixin",
     "CategoricalParam",
     "IntParam",
     "BoundIntParam",
@@ -132,6 +141,7 @@ from .param import (
     PermParam,
     RealParam,
 )
+from .provenance import Note, NoteKind, Position, Provenance, Span
 from .serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -156,6 +166,12 @@ from .symbol_table import (
     SymbolTableError,
     SymbolTableFrame,
     VariableSymbolTableFrame,
+)
+from .trait import (
+    HasIdentifier,
+    HasIdentifierMixin,
+    HasProvenance,
+    HasProvenanceMixin,
 )
 from .types import (
     CoreDataType,
