@@ -252,18 +252,31 @@ class DeserializationDictStructureError(SerializationError):
 class DeserializationValueError(SerializationError, ValueError):
     """Raised when data provided for deserialization has invalid values."""
 
+    @overload
+    def __init__(self, message: str, /) -> None: ...
+
+    @overload
     def __init__(
         self,
         class_type: type,
         field_name: str,
         expected_description_phrase: str,
         actual_value: Any,
-    ) -> None:
-        super().__init__(
-            f'Invalid value for field "{field_name}" while deserializing to '
-            f'"{class_type.__name__}". Expected {expected_description_phrase}, '
-            f"got {repr(actual_value)}"
-        )
+        /,
+    ) -> None: ...
+
+    def __init__(self, *args: Any) -> None:
+        if len(args) == 1 and isinstance(args[0], str):
+            super().__init__(args[0])
+        elif len(args) == 4 and isinstance(args[0], type):  # noqa: PLR2004
+            class_type, field_name, expected_description_phrase, actual_value = args
+            super().__init__(
+                f'Invalid value for field "{field_name}" while deserializing to '
+                f'"{class_type.__name__}". Expected {expected_description_phrase}, '
+                f"got {repr(actual_value)}"
+            )
+        else:
+            raise ValueError('Invalid arguments for "DeserializationValueError".')
 
 
 _TYPE_REGISTRY: dict[str, type["Serializable"]] = {}
