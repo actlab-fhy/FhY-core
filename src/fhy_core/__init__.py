@@ -10,6 +10,15 @@ __all__ = [
     "FhYCoreTypeError",
     "SymbolTableError",
     "register_error",
+    "CompilerPass",
+    "DiagnosticLevel",
+    "PassInfo",
+    "PassDiagnostic",
+    "PassExecutionError",
+    "PassRegistrationError",
+    "PassResult",
+    "PassValidationError",
+    "register_pass",
     "BinaryExpression",
     "BinaryOperation",
     "Expression",
@@ -157,6 +166,17 @@ from .param import (
     Param,
     PermParam,
     RealParam,
+)
+from .pass_infrastructure import (
+    CompilerPass,
+    DiagnosticLevel,
+    PassDiagnostic,
+    PassExecutionError,
+    PassInfo,
+    PassRegistrationError,
+    PassResult,
+    PassValidationError,
+    register_pass,
 )
 from .provenance import Note, NoteKind, Position, Provenance, Span
 from .serialization import (
