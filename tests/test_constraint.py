@@ -1,11 +1,7 @@
 """Tests the constraint utility."""
 
 import pytest
-from fhy_core.constraint import (
-    EquationConstraint,
-    InSetConstraint,
-    NotInSetConstraint,
-)
+from fhy_core.constraint import EquationConstraint, InSetConstraint, NotInSetConstraint
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -16,9 +12,42 @@ from fhy_core.expression import (
     UnaryOperation,
 )
 from fhy_core.identifier import Identifier
+from fhy_core.serialization import Serializable, SerializedDict, register_serializable
 from fhy_core.trait import StructuralEquivalence
 
 from .conftest import mock_identifier
+
+
+@register_serializable(type_id="test_constraint_member")
+class _SerializableConstraintMember(Serializable):
+    """Serializable + hashable test helper value."""
+
+    _value: int
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    @property
+    def value(self) -> int:
+        return self._value
+
+    def serialize_to_dict(self) -> SerializedDict:
+        return {"value": self._value}
+
+    @classmethod
+    def deserialize_from_dict(
+        cls, data: SerializedDict
+    ) -> "_SerializableConstraintMember":
+        return cls(int(data["value"]))
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, _SerializableConstraintMember)
+            and self._value == other._value
+        )
+
+    def __hash__(self) -> int:
+        return hash(self._value)
 
 
 @pytest.mark.parametrize(
@@ -444,7 +473,10 @@ def test_in_set_constraint_dict_serialization():
         "__type__": "in_set_constraint",
         "__data__": {
             "variable": x_data,
-            "valid_values": [1, 2],
+            "valid_values": [
+                {"__type__": "builtins.int", "__data__": 1},
+                {"__type__": "builtins.int", "__data__": 2},
+            ],
         },
     }
     dictionary = constraint.serialize_to_dict()
@@ -464,7 +496,10 @@ def test_not_in_set_constraint_dict_serialization():
         "__type__": "not_in_set_constraint",
         "__data__": {
             "variable": x_data,
-            "invalid_values": [1, 2],
+            "invalid_values": [
+                {"__type__": "builtins.int", "__data__": 1},
+                {"__type__": "builtins.int", "__data__": 2},
+            ],
         },
     }
     dictionary = constraint.serialize_to_dict()
@@ -473,6 +508,44 @@ def test_not_in_set_constraint_dict_serialization():
     assert isinstance(constraint_deserialized, NotInSetConstraint)
     assert constraint_deserialized.variable == x
     assert constraint_deserialized._invalid_values == {1, 2}
+
+
+def test_in_set_constraint_dict_serialization_with_serializable_member():
+    """Test in-set serialization supports serializable+hashable members."""
+    x = mock_identifier("x", 0)
+    member = _SerializableConstraintMember(7)
+    constraint = InSetConstraint(x, {member})
+
+    constraint_deserialized = InSetConstraint.deserialize_from_dict(
+        constraint.serialize_to_dict()
+    )
+
+    assert constraint_deserialized._valid_values == frozenset({member})
+
+
+def test_not_in_set_constraint_dict_serialization_with_serializable_member():
+    """Test not-in-set serialization supports serializable+hashable members."""
+    x = mock_identifier("x", 0)
+    member = _SerializableConstraintMember(8)
+    constraint = NotInSetConstraint(x, {member})
+
+    constraint_deserialized = NotInSetConstraint.deserialize_from_dict(
+        constraint.serialize_to_dict()
+    )
+
+    assert constraint_deserialized._invalid_values == frozenset({member})
+
+
+def test_in_set_constraint_rejects_none_member():
+    """Test in-set constraints reject `None` as a member."""
+    with pytest.raises(ValueError, match="cannot be `None`"):
+        InSetConstraint(mock_identifier("x", 0), {None})
+
+
+def test_not_in_set_constraint_rejects_unserializable_member():
+    """Test not-in-set constraints reject unsupported members."""
+    with pytest.raises(ValueError, match="must be either"):
+        NotInSetConstraint(mock_identifier("x", 0), {(1, 2)})
 
 
 def test_constraint_structural_equivalence_runtime_protocol():

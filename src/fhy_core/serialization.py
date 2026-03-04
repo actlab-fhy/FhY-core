@@ -70,6 +70,8 @@ __all__ = [
     "SerializationTypeError",
     "SerializationValueError",
     "SerializationPayloadTypeError",
+    "deserialize_registry_wrapped_value",
+    "serialize_registry_wrapped_value",
 ]
 
 import importlib
@@ -83,8 +85,10 @@ from typing import (
     Any,
     Callable,
     ClassVar,
+    Final,
     Mapping,
     TypeAlias,
+    TypedDict,
     TypeGuard,
     TypeVar,
     Union,
@@ -101,6 +105,23 @@ SerializedValue: TypeAlias = Union[
 ]
 SerializedDict: TypeAlias = dict[str, SerializedValue]
 SerializedObject: TypeAlias = SerializedDict | str | bytes
+RegistryWrappedValue: TypeAlias = Union[int, bool, str, float, "Serializable"]
+
+
+class _RegistryWrappedValueData(TypedDict):
+    __type__: str
+    __data__: SerializedValue
+
+
+def _is_valid_registry_wrapped_value_data(
+    data: SerializedDict,
+) -> TypeGuard[_RegistryWrappedValueData]:
+    return (
+        "__type__" in data
+        and isinstance(data["__type__"], str)
+        and "__data__" in data
+        and is_serialized_value(data["__data__"])
+    )
 
 
 def is_serialized_value(v: Any) -> TypeGuard[SerializedValue]:
@@ -322,6 +343,74 @@ def _resolve_type_id(
         return obj
     except Exception as e:
         raise UnknownTypeIdError(f'Could not resolve type_id "{type_id}": {e}') from e
+
+
+_REGISTRY_WRAPPED_BOOL_TYPE_ID: Final[str] = "builtins.bool"
+_REGISTRY_WRAPPED_INT_TYPE_ID: Final[str] = "builtins.int"
+_REGISTRY_WRAPPED_STR_TYPE_ID: Final[str] = "builtins.str"
+_REGISTRY_WRAPPED_FLOAT_TYPE_ID: Final[str] = "builtins.float"
+
+
+def serialize_registry_wrapped_value(value: RegistryWrappedValue) -> SerializedDict:
+    """Serialize a scalar/serializable value into a wrapped registry dict."""
+    if isinstance(value, bool):
+        return {"__type__": _REGISTRY_WRAPPED_BOOL_TYPE_ID, "__data__": value}
+    if isinstance(value, int):
+        return {"__type__": _REGISTRY_WRAPPED_INT_TYPE_ID, "__data__": value}
+    if isinstance(value, str):
+        return {"__type__": _REGISTRY_WRAPPED_STR_TYPE_ID, "__data__": value}
+    if isinstance(value, float):
+        return {"__type__": _REGISTRY_WRAPPED_FLOAT_TYPE_ID, "__data__": value}
+    if isinstance(value, Serializable):
+        return {
+            "__type__": value.get_serialization_class_type_id(),
+            "__data__": value.serialize_to_dict(),
+        }
+    raise SerializationTypeError(type(value))
+
+
+def deserialize_registry_wrapped_value(data: SerializedDict) -> RegistryWrappedValue:
+    """Deserialize a wrapped registry dict to scalar/serializable value."""
+    if not _is_valid_registry_wrapped_value_data(data):
+        raise DeserializationDictStructureError(
+            Serializable, _RegistryWrappedValueData.__annotations__, data
+        )
+
+    type_id = data["__type__"]
+    value_data = data["__data__"]
+
+    if type_id == _REGISTRY_WRAPPED_BOOL_TYPE_ID:
+        if not isinstance(value_data, bool):
+            raise DeserializationValueError(
+                "Expected boolean data for wrapped bool value."
+            )
+        return value_data
+    elif type_id == _REGISTRY_WRAPPED_INT_TYPE_ID:
+        if not isinstance(value_data, int) or isinstance(value_data, bool):
+            raise DeserializationValueError(
+                "Expected integer data for wrapped int value."
+            )
+        return value_data
+    elif type_id == _REGISTRY_WRAPPED_STR_TYPE_ID:
+        if not isinstance(value_data, str):
+            raise DeserializationValueError(
+                "Expected string data for wrapped str value."
+            )
+        return value_data
+    elif type_id == _REGISTRY_WRAPPED_FLOAT_TYPE_ID:
+        if not isinstance(value_data, float):
+            raise DeserializationValueError(
+                "Expected float data for wrapped float value."
+            )
+        return value_data
+    elif not is_serialized_dict(value_data):
+        raise DeserializationValueError(
+            "Expected dictionary payload for wrapped object."
+        )
+    else:
+        cls = _resolve_type_id(type_id)
+        obj = cls.deserialize_from_dict(value_data)
+        return obj
 
 
 @overload

@@ -104,6 +104,8 @@ __all__ = [
     "SerializationTypeError",
     "SerializationValueError",
     "SerializationPayloadTypeError",
+    "serialize_registry_wrapped_value",
+    "deserialize_registry_wrapped_value",
     "add_file_handler",
     "configure_logging",
     "get_logger",
@@ -169,9 +171,11 @@ from .serialization import (
     SerializedObject,
     SerializedValue,
     WrappedFamilySerializable,
+    deserialize_registry_wrapped_value,
     is_serialized_dict,
     is_serialized_value,
     register_serializable,
+    serialize_registry_wrapped_value,
 )
 from .symbol_table import (
     FunctionKeyword,
