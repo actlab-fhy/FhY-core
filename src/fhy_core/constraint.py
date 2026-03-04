@@ -160,11 +160,10 @@ def _normalize_constraint_member_collection(
         ) from exc
 
 
-def _are_equivalent_constraint_member_collections(
+def _is_equivalent_constraint_member_collections(
     values_1: Collection[ConstraintMember], values_2: Collection[ConstraintMember]
 ) -> bool:
     return frozenset(values_1) == frozenset(values_2)
-    return True
 
 
 def _serialize_constraint_member(value: ConstraintMember) -> SerializedValue:
@@ -494,7 +493,7 @@ def _(
     return (
         isinstance(other, InSetConstraint)
         and constraint.variable == other.variable
-        and _are_equivalent_constraint_member_collections(
+        and _is_equivalent_constraint_member_collections(
             constraint._valid_values, other._valid_values
         )
     )
@@ -508,7 +507,7 @@ def _(
     return (
         isinstance(other, NotInSetConstraint)
         and constraint.variable == other.variable
-        and _are_equivalent_constraint_member_collections(
+        and _is_equivalent_constraint_member_collections(
             constraint._invalid_values, other._invalid_values
         )
     )

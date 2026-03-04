@@ -437,14 +437,19 @@ def _deserialize_registry_wrapped_container_value(
     for value_item in value_data:
         if not is_serialized_dict(value_item):
             raise DeserializationValueError(
-                "Expected wrapped dictionary items for wrapped tuple/frozenset "
-                "value."
+                "Expected wrapped dictionary items for wrapped tuple/frozenset value."
             )
         wrapped_items.append(deserialize_registry_wrapped_value(value_item))
 
     if type_id == _REGISTRY_WRAPPED_TUPLE_TYPE_ID:
         return tuple(wrapped_items)
-    return frozenset(wrapped_items)
+    else:
+        try:
+            return frozenset(wrapped_items)
+        except TypeError as exc:
+            raise DeserializationValueError(
+                "Wrapped frozenset value contains unhashable items."
+            ) from exc
 
 
 def deserialize_registry_wrapped_value(data: SerializedDict) -> RegistryWrappedValue:
