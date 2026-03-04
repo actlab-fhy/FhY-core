@@ -1,7 +1,5 @@
 """Generic compiler pass infrastructure."""
 
-from __future__ import annotations
-
 __all__ = [
     "CompilerPass",
     "DiagnosticLevel",
@@ -11,6 +9,7 @@ __all__ = [
     "PassRegistrationError",
     "PassResult",
     "PassValidationError",
+    "VisitablePass",
     "register_pass",
 ]
 
@@ -18,15 +17,17 @@ import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any, Callable, ClassVar, Generic, Mapping, TypeVar
+from typing import Any, Callable, ClassVar, Generic, Mapping, TypeVar, cast
 
 from fhy_core.error import register_error
 from fhy_core.provenance import Note
+from fhy_core.trait import Visitable
 from fhy_core.utils.enum import StrEnum
 
-PassInputT = TypeVar("PassInputT")
-PassOutputT = TypeVar("PassOutputT")
-PassClassT = TypeVar("PassClassT", bound=type["CompilerPass[Any, Any]"])
+_PassInputT = TypeVar("_PassInputT")
+_PassOutputT = TypeVar("_PassOutputT")
+_PassClassT = TypeVar("_PassClassT", bound=type["CompilerPass[Any, Any]"])
+_VisitableNodeT = TypeVar("_VisitableNodeT", bound=Visitable)
 
 
 class DiagnosticLevel(StrEnum):
@@ -77,15 +78,15 @@ class PassExecutionError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class PassResult(Generic[PassOutputT]):
+class PassResult(Generic[_PassOutputT]):
     """Result of a pass execution."""
 
-    output: PassOutputT
+    output: _PassOutputT
     changed: bool
     diagnostics: tuple[PassDiagnostic, ...] = ()
 
 
-class CompilerPass(ABC, Generic[PassInputT, PassOutputT]):
+class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
     """Base class for standardized compiler passes."""
 
     _registry: ClassVar[dict[str, PassInfo]] = {}
@@ -154,10 +155,10 @@ class CompilerPass(ABC, Generic[PassInputT, PassOutputT]):
     def diagnostics(self) -> tuple[PassDiagnostic, ...]:
         return tuple(self._diagnostics)
 
-    def __call__(self, ir: PassInputT) -> PassOutputT:
+    def __call__(self, ir: _PassInputT) -> _PassOutputT:
         return self.execute(ir).output
 
-    def execute(self, ir: PassInputT) -> PassResult[PassOutputT]:
+    def execute(self, ir: _PassInputT) -> PassResult[_PassOutputT]:
         """Execute the pass with validation and standardized error handling.
 
         Args:
@@ -176,7 +177,7 @@ class CompilerPass(ABC, Generic[PassInputT, PassOutputT]):
 
         self._record_run()
         if not self.should_run(ir):
-            output = self.noop_output(ir)
+            output = self.get_noop_output(ir)
             return PassResult(
                 output,
                 False,
@@ -223,7 +224,7 @@ class CompilerPass(ABC, Generic[PassInputT, PassOutputT]):
             )
         )
 
-    def validate_input(self, ir: PassInputT) -> None:
+    def validate_input(self, ir: _PassInputT) -> None:
         """Validate input IR before execution.
 
         Args:
@@ -235,16 +236,16 @@ class CompilerPass(ABC, Generic[PassInputT, PassOutputT]):
             self.report(DiagnosticLevel.ERROR, message)
             raise PassValidationError(message)
 
-    def should_run(self, ir: PassInputT) -> bool:
+    def should_run(self, ir: _PassInputT) -> bool:
         """Return whether this pass should run for the input IR."""
         return True
 
-    def noop_output(self, ir: PassInputT) -> PassOutputT:
+    @abstractmethod
+    def get_noop_output(self, ir: _PassInputT) -> _PassOutputT:
         """Return output when pass execution is skipped."""
-        return ir  # type: ignore[return-value]
 
     @abstractmethod
-    def run_pass(self, ir: PassInputT) -> PassOutputT:
+    def run_pass(self, ir: _PassInputT) -> _PassOutputT:
         """Run the pass over IR after validation.
 
         Args:
@@ -258,7 +259,7 @@ class CompilerPass(ABC, Generic[PassInputT, PassOutputT]):
 
         """
 
-    def validate_output(self, input_ir: PassInputT, output: PassOutputT) -> None:
+    def validate_output(self, input_ir: _PassInputT, output: _PassOutputT) -> None:
         """Validate output after execution.
 
         Args:
@@ -267,7 +268,7 @@ class CompilerPass(ABC, Generic[PassInputT, PassOutputT]):
 
         """
 
-    def did_change(self, input_ir: PassInputT, output: PassOutputT) -> bool:
+    def did_change(self, input_ir: _PassInputT, output: _PassOutputT) -> bool:
         """Return whether output differs from input."""
         return input_ir is not output
 
@@ -280,7 +281,50 @@ class CompilerPass(ABC, Generic[PassInputT, PassOutputT]):
             )
 
 
-def register_pass(name: str, description: str) -> Callable[[PassClassT], PassClassT]:
+class VisitablePass(CompilerPass[_VisitableNodeT, _PassOutputT], ABC):
+    """Compiler pass with convention-based visitor dispatch."""
+
+    _VISIT_METHOD_PREFIX: ClassVar[str] = "visit_"
+
+    def run_pass(self, ir: _VisitableNodeT) -> _PassOutputT:
+        return self.visit(ir)
+
+    def visit(self, node: _VisitableNodeT) -> _PassOutputT:
+        """Visit a node by resolving `visit_<node_kind>` dynamically.
+
+        Args:
+            node: The node to visit.
+
+        Returns:
+            The result of visiting the node.
+
+        """
+        method_name = (
+            f"{self._VISIT_METHOD_PREFIX}{type(node).get_visit_method_suffix()}"
+        )
+        candidate = getattr(self, method_name, None)
+        if candidate is None or not callable(candidate):
+            return self.visit_unknown(node)
+        method = cast(Callable[[_VisitableNodeT], _PassOutputT], candidate)
+        return method(node)
+
+    def visit_unknown(self, node: _VisitableNodeT) -> _PassOutputT:
+        """Handle node types without a dedicated visitor method.
+
+        Args:
+            node: The node to visit.
+
+        Returns:
+            The result of visiting the node.
+
+        """
+        raise NotImplementedError(
+            f'"{self.get_pass_name()}" does not implement "{type(node).__name__}"'
+            " handling."
+        )
+
+
+def register_pass(name: str, description: str) -> Callable[[_PassClassT], _PassClassT]:
     """Register a concrete pass class with explicit metadata.
 
     Args:
@@ -297,7 +341,7 @@ def register_pass(name: str, description: str) -> Callable[[PassClassT], PassCla
     if not description.strip():
         raise PassRegistrationError("Pass description cannot be empty.")
 
-    def _decorator(pass_cls: PassClassT) -> PassClassT:
+    def _decorator(pass_cls: _PassClassT) -> _PassClassT:
         if not issubclass(pass_cls, CompilerPass):
             raise PassRegistrationError(
                 f"Cannot register non-CompilerPass type: {pass_cls.__qualname__}."

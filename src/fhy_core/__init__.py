@@ -18,6 +18,7 @@ __all__ = [
     "PassRegistrationError",
     "PassResult",
     "PassValidationError",
+    "VisitablePass",
     "register_pass",
     "BinaryExpression",
     "BinaryOperation",
@@ -57,6 +58,8 @@ __all__ = [
     "CanonicalizableMixin",
     "Verifiable",
     "VerifiableMixin",
+    "Visitable",
+    "VisitableMixin",
     "VerificationError",
     "Foldable",
     "FoldableMixin",
@@ -176,6 +179,7 @@ from .pass_infrastructure import (
     PassRegistrationError,
     PassResult,
     PassValidationError,
+    VisitablePass,
     register_pass,
 )
 from .provenance import Note, NoteKind, Position, Provenance, Span
@@ -226,6 +230,8 @@ from .trait import (
     Verifiable,
     VerifiableMixin,
     VerificationError,
+    Visitable,
+    VisitableMixin,
 )
 from .types import (
     CoreDataType,

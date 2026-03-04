@@ -19,6 +19,8 @@ __all__ = [
     "StructuralEquivalenceMixin",
     "Verifiable",
     "VerifiableMixin",
+    "Visitable",
+    "VisitableMixin",
     "VerificationError",
 ]
 
@@ -34,3 +36,4 @@ from .structural_equivalence import (
     StructuralEquivalenceMixin,
 )
 from .verifiable import Verifiable, VerifiableMixin, VerificationError
+from .visitable import Visitable, VisitableMixin
