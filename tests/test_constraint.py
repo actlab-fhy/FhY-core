@@ -16,6 +16,7 @@ from fhy_core.expression import (
     UnaryOperation,
 )
 from fhy_core.identifier import Identifier
+from fhy_core.trait import StructuralEquivalence
 
 from .conftest import mock_identifier
 
@@ -472,6 +473,36 @@ def test_not_in_set_constraint_dict_serialization():
     assert isinstance(constraint_deserialized, NotInSetConstraint)
     assert constraint_deserialized.variable == x
     assert constraint_deserialized._invalid_values == {1, 2}
+
+
+def test_constraint_structural_equivalence_runtime_protocol():
+    """Test `Constraint` satisfies `StructuralEquivalence` runtime protocol."""
+    constraint = InSetConstraint(mock_identifier("x", 0), {1, 2})
+    assert isinstance(constraint, StructuralEquivalence)
+
+
+def test_equation_constraint_structural_equivalence_true():
+    """Test equation constraints are structurally equivalent when equal."""
+    x = mock_identifier("x", 0)
+    left = EquationConstraint(x, LiteralExpression(True))
+    right = EquationConstraint(x, LiteralExpression(True))
+    assert left.is_structurally_equivalent(right)
+
+
+def test_in_set_constraint_structural_equivalence_false_for_values():
+    """Test in-set constraints differ structurally for distinct value sets."""
+    x = mock_identifier("x", 0)
+    left = InSetConstraint(x, {1, 2})
+    right = InSetConstraint(x, {1, 3})
+    assert not left.is_structurally_equivalent(right)
+
+
+def test_not_in_set_constraint_structural_equivalence_false_for_type():
+    """Test set constraints differ structurally across constraint kinds."""
+    x = mock_identifier("x", 0)
+    left = InSetConstraint(x, {1, 2})
+    right = NotInSetConstraint(x, {1, 2})
+    assert not left.is_structurally_equivalent(right)
 
 
 # TODO: Check serialization structure errors and value errors for all types.

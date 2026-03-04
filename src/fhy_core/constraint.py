@@ -8,6 +8,7 @@ __all__ = [
 ]
 
 from abc import ABC, abstractmethod
+from functools import singledispatch
 from typing import Any, TypedDict, TypeGuard
 
 from fhy_core.serialization import (
@@ -17,6 +18,7 @@ from fhy_core.serialization import (
     is_serialized_dict,
     register_serializable,
 )
+from fhy_core.trait import StructuralEquivalenceMixin
 from fhy_core.utils import Self, format_comma_separated_list
 
 from .expression import (
@@ -33,7 +35,7 @@ from .expression import (
 from .identifier import Identifier
 
 
-class Constraint(WrappedFamilySerializable, ABC):
+class Constraint(WrappedFamilySerializable, StructuralEquivalenceMixin, ABC):
     """Abstract base class for constraints."""
 
     _variable: Identifier
@@ -75,6 +77,9 @@ class Constraint(WrappedFamilySerializable, ABC):
 
     def __copy__(self) -> Self:
         return self.copy()
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return _is_constraint_structurally_equivalent(self, other)
 
     @abstractmethod
     def __repr__(self) -> str: ...
@@ -324,3 +329,43 @@ class NotInSetConstraint(Constraint):
             f"{self.variable} not in {{"
             f"{format_comma_separated_list(self._invalid_values, str_func=str)}}}"
         )
+
+
+@singledispatch
+def _is_constraint_structurally_equivalent(
+    constraint: Constraint, other: object
+) -> bool:
+    return False
+
+
+@_is_constraint_structurally_equivalent.register
+def _is_equation_constraint_structurally_equivalent(
+    constraint: EquationConstraint, other: object
+) -> bool:
+    return (
+        isinstance(other, EquationConstraint)
+        and constraint.variable == other.variable
+        and constraint._expression.is_structurally_equivalent(other._expression)
+    )
+
+
+@_is_constraint_structurally_equivalent.register
+def _is_in_set_constraint_structurally_equivalent(
+    constraint: InSetConstraint, other: object
+) -> bool:
+    return (
+        isinstance(other, InSetConstraint)
+        and constraint.variable == other.variable
+        and constraint._valid_values == other._valid_values
+    )
+
+
+@_is_constraint_structurally_equivalent.register
+def _is_not_in_set_constraint_structurally_equivalent(
+    constraint: NotInSetConstraint, other: object
+) -> bool:
+    return (
+        isinstance(other, NotInSetConstraint)
+        and constraint.variable == other.variable
+        and constraint._invalid_values == other._invalid_values
+    )
