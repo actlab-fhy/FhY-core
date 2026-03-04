@@ -17,8 +17,6 @@ from fhy_core.serialization import DeserializationValueError, SerializedDict
 from fhy_core.trait import (
     HasOperands,
     StructuralEquivalence,
-    Verifiable,
-    VerificationError,
 )
 
 from .conftest import mock_identifier
@@ -129,38 +127,6 @@ def test_expression_structural_equivalence_false_for_different_tree():
         LiteralExpression(2),
     )
     assert not left.is_structurally_equivalent(right)
-
-
-def test_expression_is_verifiable_runtime_protocol():
-    """Test `Expression` satisfies `Verifiable` runtime protocol."""
-    expression = LiteralExpression(7)
-    assert isinstance(expression, Verifiable)
-
-
-def test_expression_verify_valid_expression():
-    """Test expression verification succeeds for valid expression trees."""
-    expression = BinaryExpression(
-        BinaryOperation.ADD,
-        LiteralExpression(1),
-        UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(2)),
-    )
-    assert expression.verify() is None
-
-
-def test_expression_verify_rejects_invalid_unary_operand():
-    """Test expression verification rejects invalid unary operands."""
-    expression = UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1))
-    object.__setattr__(expression, "operand", 1)
-    with pytest.raises(VerificationError):
-        expression.verify()
-
-
-def test_expression_verify_rejects_invalid_identifier():
-    """Test expression verification rejects invalid identifiers."""
-    expression = IdentifierExpression(Identifier("x"))
-    object.__setattr__(expression, "identifier", "x")
-    with pytest.raises(VerificationError):
-        expression.verify()
 
 
 @pytest.mark.parametrize(

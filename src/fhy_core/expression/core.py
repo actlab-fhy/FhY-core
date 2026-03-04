@@ -38,8 +38,6 @@ from fhy_core.serialization import (
 from fhy_core.trait import (
     HasOperandsMixin,
     StructuralEquivalenceMixin,
-    VerifiableMixin,
-    VerificationError,
 )
 from fhy_core.utils import invert_frozen_dict
 
@@ -52,37 +50,11 @@ class SymbolType(Enum):
     BOOL = auto()
 
 
-class Expression(
-    WrappedFamilySerializable, StructuralEquivalenceMixin, VerifiableMixin, ABC
-):
+class Expression(WrappedFamilySerializable, StructuralEquivalenceMixin, ABC):
     """Abstract base class for expressions."""
 
-    def verify(self) -> None:
-        _verify_expression(self)
-
     def is_structurally_equivalent(self, other: object) -> bool:
-        if isinstance(self, UnaryExpression) and isinstance(other, UnaryExpression):
-            return (
-                self.operation == other.operation
-                and self.operand.is_structurally_equivalent(other.operand)
-            )
-        elif isinstance(self, BinaryExpression) and isinstance(other, BinaryExpression):
-            return (
-                self.operation == other.operation
-                and self.left.is_structurally_equivalent(other.left)
-                and self.right.is_structurally_equivalent(other.right)
-            )
-        elif isinstance(self, IdentifierExpression) and isinstance(
-            other, IdentifierExpression
-        ):
-            return self.identifier == other.identifier
-
-        elif isinstance(self, LiteralExpression) and isinstance(
-            other, LiteralExpression
-        ):
-            return self.value == other.value
-        else:
-            return False
+        return _is_expression_structurally_equivalent(self, other)
 
     def __neg__(self) -> "UnaryExpression":
         return UnaryExpression(UnaryOperation.NEGATE, self)
@@ -563,45 +535,47 @@ class LiteralExpression(Expression):
 
 
 @singledispatch
-def _verify_expression(expression: Expression) -> None:
-    raise VerificationError(f"Unsupported expression subtype: {type(expression)}.")
+def _is_expression_structurally_equivalent(
+    expression: Expression, other: object
+) -> bool:
+    return False
 
 
-@_verify_expression.register(UnaryExpression)
-def _(expression: UnaryExpression) -> None:
-    if not isinstance(expression.operand, Expression):
-        raise VerificationError(
-            f'"operand" must be an `Expression`, got {type(expression.operand)}.'
-        )
+@_is_expression_structurally_equivalent.register
+def _is_unary_expression_structurally_equivalent(
+    expression: UnaryExpression, other: object
+) -> bool:
+    return (
+        isinstance(other, UnaryExpression)
+        and expression.operation == other.operation
+        and expression.operand.is_structurally_equivalent(other.operand)
+    )
 
 
-@_verify_expression.register(BinaryExpression)
-def _(expression: BinaryExpression) -> None:
-    if not isinstance(expression.left, Expression):
-        raise VerificationError(
-            f'"left" must be an `Expression`, got {type(expression.left)}.'
-        )
-    if not isinstance(expression.right, Expression):
-        raise VerificationError(
-            f'"right" must be an `Expression`, got {type(expression.right)}.'
-        )
+@_is_expression_structurally_equivalent.register
+def _is_binary_expression_structurally_equivalent(
+    expression: BinaryExpression, other: object
+) -> bool:
+    return (
+        isinstance(other, BinaryExpression)
+        and expression.operation == other.operation
+        and expression.left.is_structurally_equivalent(other.left)
+        and expression.right.is_structurally_equivalent(other.right)
+    )
 
 
-@_verify_expression.register(IdentifierExpression)
-def _(expression: IdentifierExpression) -> None:
-    if not isinstance(expression.identifier, Identifier):
-        raise VerificationError(
-            '"identifier" must be an `Identifier`, got '
-            f"{type(expression.identifier)}."
-        )
+@_is_expression_structurally_equivalent.register
+def _is_identifier_expression_structurally_equivalent(
+    expression: IdentifierExpression, other: object
+) -> bool:
+    return (
+        isinstance(other, IdentifierExpression)
+        and expression.identifier == other.identifier
+    )
 
 
-@_verify_expression.register(LiteralExpression)
-def _(expression: LiteralExpression) -> None:
-    if isinstance(expression.value, str):
-        try:
-            float(expression.value)
-        except ValueError as exc:
-            raise VerificationError(
-                f'Invalid literal string value "{expression.value}".'
-            ) from exc
+@_is_expression_structurally_equivalent.register
+def _is_literal_expression_structurally_equivalent(
+    expression: LiteralExpression, other: object
+) -> bool:
+    return isinstance(other, LiteralExpression) and expression.value == other.value
