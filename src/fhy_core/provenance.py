@@ -1,7 +1,5 @@
 """Provenance tracking utilities for compiler objects."""
 
-from __future__ import annotations
-
 __all__ = [
     "Note",
     "NoteKind",

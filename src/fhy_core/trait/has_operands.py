@@ -1,7 +1,5 @@
 """`HasOperands` trait and mixin."""
 
-from __future__ import annotations
-
 __all__ = ["HasOperands", "HasOperandsMixin"]
 
 from abc import ABC, abstractmethod

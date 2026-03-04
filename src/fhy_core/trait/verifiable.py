@@ -1,7 +1,5 @@
 """`Verifiable` trait and mixin."""
 
-from __future__ import annotations
-
 __all__ = ["Verifiable", "VerifiableMixin", "VerificationError"]
 
 from abc import ABC, abstractmethod

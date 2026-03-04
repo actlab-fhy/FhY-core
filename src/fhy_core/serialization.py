@@ -52,8 +52,6 @@ As a convenience, the module also supports a fallback that resolves classes
 by importing the module portion of the `type_id`.
 """
 
-from __future__ import annotations
-
 __all__ = [
     "Serializable",
     "SerializationFormat",
