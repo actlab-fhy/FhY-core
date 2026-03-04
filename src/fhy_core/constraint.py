@@ -8,7 +8,7 @@ __all__ = [
 ]
 
 from abc import ABC, abstractmethod
-from collections.abc import Hashable
+from collections.abc import Collection, Hashable
 from functools import singledispatch
 from typing import (
     Any,
@@ -104,7 +104,12 @@ class Constraint(WrappedFamilySerializable, StructuralEquivalenceMixin, ABC):
 
 ConstraintPrimitive: TypeAlias = str | int | float | bool
 
-ConstraintMember: TypeAlias = ConstraintPrimitive | Serializable
+ConstraintMember: TypeAlias = (
+    ConstraintPrimitive
+    | Serializable
+    | tuple["ConstraintMember", ...]
+    | frozenset["ConstraintMember"]
+)
 _ConstraintMemberT = TypeVar("_ConstraintMemberT", bound=ConstraintMember)
 
 
@@ -112,22 +117,54 @@ def _is_valid_constraint_primitive(value: Any) -> TypeGuard[ConstraintPrimitive]
     return isinstance(value, (str, int, float, bool))
 
 
-def _is_valid_constraint_member(value: Any) -> TypeGuard[ConstraintMember]:
-    return _is_valid_constraint_primitive(value) or _is_serializable_hashable(value)
-
-
-def _is_serializable_hashable(value: Any) -> TypeGuard[Serializable]:
+def _is_serializable_hashable(value: Any) -> bool:
     return isinstance(value, Serializable) and isinstance(value, Hashable)
 
 
 def _validate_constraint_member(value: Any) -> None:
     if value is None:
         raise ValueError("Constraint members cannot be `None`.")
-    if not _is_valid_constraint_member(value):
+    if isinstance(value, (tuple, frozenset)):
+        for nested_value in value:
+            _validate_constraint_member(nested_value)
+        if not isinstance(value, Hashable):
+            raise ValueError(
+                "Constraint member containers must be hashable, but got "
+                f"value {value} of type {type(value)}.",
+            )
+        return
+    if _is_valid_constraint_primitive(value) or _is_serializable_hashable(value):
+        return
+    raise ValueError(
+        "Constraint member must be either a primitive literal "
+        "(`str`, `int`, `float`, `bool`), both `Serializable` and `Hashable`, "
+        "or a tuple/frozenset containing valid constraint members, but got value "
+        f"{value} of type {type(value)}.",
+    )
+
+
+def _validate_constraint_members(values: Collection[ConstraintMember]) -> None:
+    for value in values:
+        _validate_constraint_member(value)
+
+
+def _normalize_constraint_member_collection(
+    values: Collection[ConstraintMember],
+) -> frozenset[ConstraintMember]:
+    _validate_constraint_members(values)
+    try:
+        return frozenset(values)
+    except TypeError as exc:
         raise ValueError(
-            "Constraint member must be either a primitive literal "
-            "(`str`, `int`, `float`, `bool`) or both `Serializable` and `Hashable`."
-        )
+            "Constraint members must be hashable after validation."
+        ) from exc
+
+
+def _are_equivalent_constraint_member_collections(
+    values_1: Collection[ConstraintMember], values_2: Collection[ConstraintMember]
+) -> bool:
+    return frozenset(values_1) == frozenset(values_2)
+    return True
 
 
 def _serialize_constraint_member(value: ConstraintMember) -> SerializedValue:
@@ -251,12 +288,17 @@ class InSetConstraint(Constraint, Generic[_ConstraintMemberT]):
     _valid_values: frozenset[_ConstraintMemberT]
 
     def __init__(
-        self, constrained_variable: Identifier, valid_values: set[_ConstraintMemberT]
+        self,
+        constrained_variable: Identifier,
+        valid_values: Collection[_ConstraintMemberT],
     ) -> None:
         super().__init__(constrained_variable)
-        for value in valid_values:
-            _validate_constraint_member(value)
-        self._valid_values = frozenset(valid_values)
+        self._valid_values = cast(
+            frozenset[_ConstraintMemberT],
+            _normalize_constraint_member_collection(
+                cast(Collection[ConstraintMember], valid_values)
+            ),
+        )
 
     def is_satisfied(self, value: _ConstraintMemberT) -> bool:
         return value in self._valid_values
@@ -349,12 +391,17 @@ class NotInSetConstraint(Constraint, Generic[_ConstraintMemberT]):
     _invalid_values: frozenset[_ConstraintMemberT]
 
     def __init__(
-        self, constrained_variable: Identifier, invalid_values: set[_ConstraintMemberT]
+        self,
+        constrained_variable: Identifier,
+        invalid_values: Collection[_ConstraintMemberT],
     ) -> None:
         super().__init__(constrained_variable)
-        for value in invalid_values:
-            _validate_constraint_member(value)
-        self._invalid_values = frozenset(invalid_values)
+        self._invalid_values = cast(
+            frozenset[_ConstraintMemberT],
+            _normalize_constraint_member_collection(
+                cast(Collection[ConstraintMember], invalid_values)
+            ),
+        )
 
     def is_satisfied(self, value: _ConstraintMemberT) -> bool:
         return value not in self._invalid_values
@@ -431,9 +478,7 @@ def _is_constraint_structurally_equivalent(
 
 
 @_is_constraint_structurally_equivalent.register
-def _is_equation_constraint_structurally_equivalent(
-    constraint: EquationConstraint, other: object
-) -> bool:
+def _(constraint: EquationConstraint, other: object) -> bool:
     return (
         isinstance(other, EquationConstraint)
         and constraint.variable == other.variable
@@ -442,24 +487,28 @@ def _is_equation_constraint_structurally_equivalent(
 
 
 @_is_constraint_structurally_equivalent.register
-def _is_in_set_constraint_structurally_equivalent(
+def _(
     constraint: InSetConstraint,
-    other: object,  # type: ignore[type-arg]
+    other: object,
 ) -> bool:
     return (
         isinstance(other, InSetConstraint)
         and constraint.variable == other.variable
-        and constraint._valid_values == other._valid_values
+        and _are_equivalent_constraint_member_collections(
+            constraint._valid_values, other._valid_values
+        )
     )
 
 
 @_is_constraint_structurally_equivalent.register
-def _is_not_in_set_constraint_structurally_equivalent(
+def _(
     constraint: NotInSetConstraint,
-    other: object,  # type: ignore[type-arg]
+    other: object,
 ) -> bool:
     return (
         isinstance(other, NotInSetConstraint)
         and constraint.variable == other.variable
-        and constraint._invalid_values == other._invalid_values
+        and _are_equivalent_constraint_member_collections(
+            constraint._invalid_values, other._invalid_values
+        )
     )

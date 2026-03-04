@@ -484,7 +484,7 @@ def test_in_set_constraint_dict_serialization():
     constraint_deserialized = InSetConstraint.deserialize_from_dict(dictionary)
     assert isinstance(constraint_deserialized, InSetConstraint)
     assert constraint_deserialized.variable == x
-    assert constraint_deserialized._valid_values == {1, 2}
+    assert set(constraint_deserialized._valid_values) == {1, 2}
 
 
 def test_not_in_set_constraint_dict_serialization():
@@ -507,7 +507,7 @@ def test_not_in_set_constraint_dict_serialization():
     constraint_deserialized = NotInSetConstraint.deserialize_from_dict(dictionary)
     assert isinstance(constraint_deserialized, NotInSetConstraint)
     assert constraint_deserialized.variable == x
-    assert constraint_deserialized._invalid_values == {1, 2}
+    assert set(constraint_deserialized._invalid_values) == {1, 2}
 
 
 def test_in_set_constraint_dict_serialization_with_serializable_member():
@@ -545,7 +545,32 @@ def test_in_set_constraint_rejects_none_member():
 def test_not_in_set_constraint_rejects_unserializable_member():
     """Test not-in-set constraints reject unsupported members."""
     with pytest.raises(ValueError, match="must be either"):
-        NotInSetConstraint(mock_identifier("x", 0), {(1, 2)})
+        NotInSetConstraint(mock_identifier("x", 0), [{"a": 1}])
+
+
+def test_in_set_constraint_supports_tuple_member():
+    """Test in-set constraints support tuple members."""
+    constraint = InSetConstraint(mock_identifier("x", 0), [(1, "a", True)])
+    assert constraint.is_satisfied((1, "a", True))
+
+
+def test_in_set_constraint_supports_frozenset_member():
+    """Test in-set constraints support frozenset members."""
+    constraint = InSetConstraint(mock_identifier("x", 0), [frozenset({1, 2, 3})])
+    assert constraint.is_satisfied(frozenset({1, 2, 3}))
+
+
+def test_in_set_constraint_serializes_nested_collection_member():
+    """Test in-set constraints serialize nested tuple/frozenset members."""
+    x = mock_identifier("x", 0)
+    nested_member = (1, (2, 3), frozenset({4, 5}))
+    constraint = InSetConstraint(x, [nested_member])
+
+    constraint_deserialized = InSetConstraint.deserialize_from_dict(
+        constraint.serialize_to_dict()
+    )
+
+    assert constraint_deserialized.is_satisfied(nested_member)
 
 
 def test_constraint_structural_equivalence_runtime_protocol():

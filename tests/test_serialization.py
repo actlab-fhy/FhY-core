@@ -597,6 +597,28 @@ def test_registry_wrapped_value_round_trip_for_serializable():
     assert restored == value
 
 
+def test_registry_wrapped_value_round_trip_for_tuple():
+    """Test wrapped-value helpers round-trip tuple values."""
+    wrapped = serialization.serialize_registry_wrapped_value((1, "a", True))
+    restored = serialization.deserialize_registry_wrapped_value(wrapped)
+    assert restored == (1, "a", True)
+
+
+def test_registry_wrapped_value_round_trip_for_frozenset():
+    """Test wrapped-value helpers round-trip frozenset values."""
+    wrapped = serialization.serialize_registry_wrapped_value(frozenset({1, 2, 3}))
+    restored = serialization.deserialize_registry_wrapped_value(wrapped)
+    assert restored == frozenset({1, 2, 3})
+
+
+def test_registry_wrapped_value_round_trip_for_nested_collections():
+    """Test wrapped-value helpers round-trip nested tuple/frozenset values."""
+    value = (1, (2, 3), frozenset({4, 5}), _DummySpan(6, 7))
+    wrapped = serialization.serialize_registry_wrapped_value(value)
+    restored = serialization.deserialize_registry_wrapped_value(wrapped)
+    assert restored == value
+
+
 def test_registry_wrapped_value_deserialization_rejects_bad_structure():
     """Test wrapped-value deserialization rejects invalid wrapped dicts."""
     with pytest.raises(serialization.DeserializationDictStructureError):
