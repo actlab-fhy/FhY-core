@@ -21,6 +21,7 @@ __all__ = [
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum, auto
+from functools import singledispatch
 from typing import Any, TypedDict, TypeGuard
 
 from frozendict import frozendict
@@ -57,40 +58,7 @@ class Expression(
     """Abstract base class for expressions."""
 
     def verify(self) -> None:
-        if isinstance(self, UnaryExpression):
-            if not isinstance(self.operand, Expression):
-                raise VerificationError(
-                    f'"operand" must be an `Expression`, got {type(self.operand)}.'
-                )
-            return
-        elif isinstance(self, BinaryExpression):
-            if not isinstance(self.left, Expression):
-                raise VerificationError(
-                    f'"left" must be an `Expression`, got {type(self.left)}.'
-                )
-            if not isinstance(self.right, Expression):
-                raise VerificationError(
-                    f'"right" must be an `Expression`, got {type(self.right)}.'
-                )
-            return
-        elif isinstance(self, IdentifierExpression):
-            if not isinstance(self.identifier, Identifier):
-                raise VerificationError(
-                    '"identifier" must be an `Identifier`, got '
-                    f"{type(self.identifier)}."
-                )
-            return
-        elif isinstance(self, LiteralExpression):
-            if isinstance(self.value, str):
-                try:
-                    float(self.value)
-                except ValueError as exc:
-                    raise VerificationError(
-                        f'Invalid literal string value "{self.value}".'
-                    ) from exc
-            return
-        else:
-            raise VerificationError(f"Unsupported expression subtype: {type(self)}.")
+        _verify_expression(self)
 
     def is_structurally_equivalent(self, other: object) -> bool:
         if isinstance(self, UnaryExpression) and isinstance(other, UnaryExpression):
@@ -592,3 +560,48 @@ class LiteralExpression(Expression):
                 cls, _LiteralExpressionData.__annotations__, data
             )
         return cls(data["value"])
+
+
+@singledispatch
+def _verify_expression(expression: Expression) -> None:
+    raise VerificationError(f"Unsupported expression subtype: {type(expression)}.")
+
+
+@_verify_expression.register(UnaryExpression)
+def _(expression: UnaryExpression) -> None:
+    if not isinstance(expression.operand, Expression):
+        raise VerificationError(
+            f'"operand" must be an `Expression`, got {type(expression.operand)}.'
+        )
+
+
+@_verify_expression.register(BinaryExpression)
+def _(expression: BinaryExpression) -> None:
+    if not isinstance(expression.left, Expression):
+        raise VerificationError(
+            f'"left" must be an `Expression`, got {type(expression.left)}.'
+        )
+    if not isinstance(expression.right, Expression):
+        raise VerificationError(
+            f'"right" must be an `Expression`, got {type(expression.right)}.'
+        )
+
+
+@_verify_expression.register(IdentifierExpression)
+def _(expression: IdentifierExpression) -> None:
+    if not isinstance(expression.identifier, Identifier):
+        raise VerificationError(
+            '"identifier" must be an `Identifier`, got '
+            f"{type(expression.identifier)}."
+        )
+
+
+@_verify_expression.register(LiteralExpression)
+def _(expression: LiteralExpression) -> None:
+    if isinstance(expression.value, str):
+        try:
+            float(expression.value)
+        except ValueError as exc:
+            raise VerificationError(
+                f'Invalid literal string value "{expression.value}".'
+            ) from exc
