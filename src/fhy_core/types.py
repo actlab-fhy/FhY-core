@@ -18,7 +18,7 @@ __all__ = [
 
 from abc import ABC
 from collections.abc import Sequence
-from functools import partial
+from functools import partial, singledispatch
 from typing import TypedDict, TypeGuard
 
 from fhy_core.serialization import (
@@ -29,6 +29,7 @@ from fhy_core.serialization import (
     is_serialized_dict,
     register_serializable,
 )
+from fhy_core.trait import StructuralEquivalenceMixin
 
 from .error import register_error
 from .expression import Expression, pformat_expression
@@ -36,8 +37,11 @@ from .identifier import Identifier
 from .utils import Lattice, StrEnum, format_comma_separated_list
 
 
-class Type(WrappedFamilySerializable, ABC):
+class Type(WrappedFamilySerializable, StructuralEquivalenceMixin, ABC):
     """Abstract compiler type."""
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return _is_type_structurally_equivalent(self, other)
 
 
 @register_error
@@ -586,3 +590,70 @@ def promote_type_qualifiers(
         return TypeQualifier.PARAM
     else:
         return TypeQualifier.TEMP
+
+
+def _is_data_type_structurally_equivalent(
+    data_type_1: DataType, data_type_2: DataType
+) -> bool:
+    if isinstance(data_type_1, PrimitiveDataType) and isinstance(
+        data_type_2, PrimitiveDataType
+    ):
+        return data_type_1.core_data_type == data_type_2.core_data_type
+    elif isinstance(data_type_1, TemplateDataType) and isinstance(
+        data_type_2, TemplateDataType
+    ):
+        return (
+            data_type_1.data_type == data_type_2.data_type
+            and data_type_1.widths == data_type_2.widths
+        )
+    else:
+        return False
+
+
+@singledispatch
+def _is_type_structurally_equivalent(type_: Type, other: object) -> bool:
+    return False
+
+
+@_is_type_structurally_equivalent.register
+def _(type_: NumericalType, other: object) -> bool:
+    if not isinstance(other, NumericalType):
+        return False
+    elif not _is_data_type_structurally_equivalent(type_.data_type, other.data_type):
+        return False
+    elif len(type_.shape) != len(other.shape):
+        return False
+    else:
+        return all(
+            dim_1.is_structurally_equivalent(dim_2)
+            for dim_1, dim_2 in zip(type_.shape, other.shape, strict=True)
+        )
+
+
+@_is_type_structurally_equivalent.register
+def _(type_: IndexType, other: object) -> bool:
+    if not isinstance(other, IndexType):
+        return False
+    elif not type_.lower_bound.is_structurally_equivalent(other.lower_bound):
+        return False
+    elif not type_.upper_bound.is_structurally_equivalent(other.upper_bound):
+        return False
+    elif type_.stride is None and other.stride is None:
+        return True
+    elif type_.stride is None or other.stride is None:
+        return False
+    else:
+        return type_.stride.is_structurally_equivalent(other.stride)
+
+
+@_is_type_structurally_equivalent.register
+def _(type_: TupleType, other: object) -> bool:
+    if not isinstance(other, TupleType):
+        return False
+    elif len(type_.types) != len(other.types):
+        return False
+    else:
+        return all(
+            ty_1.is_structurally_equivalent(ty_2)
+            for ty_1, ty_2 in zip(type_.types, other.types, strict=True)
+        )

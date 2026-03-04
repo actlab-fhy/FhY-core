@@ -70,6 +70,8 @@ __all__ = [
     "SerializationTypeError",
     "SerializationValueError",
     "SerializationPayloadTypeError",
+    "deserialize_registry_wrapped_value",
+    "serialize_registry_wrapped_value",
 ]
 
 import importlib
@@ -83,8 +85,10 @@ from typing import (
     Any,
     Callable,
     ClassVar,
+    Final,
     Mapping,
     TypeAlias,
+    TypedDict,
     TypeGuard,
     TypeVar,
     Union,
@@ -101,6 +105,28 @@ SerializedValue: TypeAlias = Union[
 ]
 SerializedDict: TypeAlias = dict[str, SerializedValue]
 SerializedObject: TypeAlias = SerializedDict | str | bytes
+RegistryWrappedValueLeaf: TypeAlias = Union[int, bool, str, float, "Serializable"]
+RegistryWrappedValue: TypeAlias = Union[
+    RegistryWrappedValueLeaf,
+    tuple["RegistryWrappedValue", ...],
+    frozenset["RegistryWrappedValue"],
+]
+
+
+class _RegistryWrappedValueData(TypedDict):
+    __type__: str
+    __data__: SerializedValue
+
+
+def _is_valid_registry_wrapped_value_data(
+    data: SerializedDict,
+) -> TypeGuard[_RegistryWrappedValueData]:
+    return (
+        "__type__" in data
+        and isinstance(data["__type__"], str)
+        and "__data__" in data
+        and is_serialized_value(data["__data__"])
+    )
 
 
 def is_serialized_value(v: Any) -> TypeGuard[SerializedValue]:
@@ -252,18 +278,31 @@ class DeserializationDictStructureError(SerializationError):
 class DeserializationValueError(SerializationError, ValueError):
     """Raised when data provided for deserialization has invalid values."""
 
+    @overload
+    def __init__(self, message: str, /) -> None: ...
+
+    @overload
     def __init__(
         self,
         class_type: type,
         field_name: str,
         expected_description_phrase: str,
         actual_value: Any,
-    ) -> None:
-        super().__init__(
-            f'Invalid value for field "{field_name}" while deserializing to '
-            f'"{class_type.__name__}". Expected {expected_description_phrase}, '
-            f"got {repr(actual_value)}"
-        )
+        /,
+    ) -> None: ...
+
+    def __init__(self, *args: Any) -> None:
+        if len(args) == 1 and isinstance(args[0], str):
+            super().__init__(args[0])
+        elif len(args) == 4 and isinstance(args[0], type):  # noqa: PLR2004
+            class_type, field_name, expected_description_phrase, actual_value = args
+            super().__init__(
+                f'Invalid value for field "{field_name}" while deserializing to '
+                f'"{class_type.__name__}". Expected {expected_description_phrase}, '
+                f"got {repr(actual_value)}"
+            )
+        else:
+            raise ValueError('Invalid arguments for "DeserializationValueError".')
 
 
 _TYPE_REGISTRY: dict[str, type["Serializable"]] = {}
@@ -309,6 +348,136 @@ def _resolve_type_id(
         return obj
     except Exception as e:
         raise UnknownTypeIdError(f'Could not resolve type_id "{type_id}": {e}') from e
+
+
+_REGISTRY_WRAPPED_BOOL_TYPE_ID: Final[str] = "builtins.bool"
+_REGISTRY_WRAPPED_INT_TYPE_ID: Final[str] = "builtins.int"
+_REGISTRY_WRAPPED_STR_TYPE_ID: Final[str] = "builtins.str"
+_REGISTRY_WRAPPED_FLOAT_TYPE_ID: Final[str] = "builtins.float"
+_REGISTRY_WRAPPED_TUPLE_TYPE_ID: Final[str] = "builtins.tuple"
+_REGISTRY_WRAPPED_FROZENSET_TYPE_ID: Final[str] = "builtins.frozenset"
+
+
+def serialize_registry_wrapped_value(value: RegistryWrappedValue) -> SerializedDict:
+    """Serialize a scalar/serializable value into a wrapped registry dict."""
+    if isinstance(value, bool):
+        return {"__type__": _REGISTRY_WRAPPED_BOOL_TYPE_ID, "__data__": value}
+    elif isinstance(value, int):
+        return {"__type__": _REGISTRY_WRAPPED_INT_TYPE_ID, "__data__": value}
+    elif isinstance(value, str):
+        return {"__type__": _REGISTRY_WRAPPED_STR_TYPE_ID, "__data__": value}
+    elif isinstance(value, float):
+        return {"__type__": _REGISTRY_WRAPPED_FLOAT_TYPE_ID, "__data__": value}
+    elif isinstance(value, tuple):
+        return {
+            "__type__": _REGISTRY_WRAPPED_TUPLE_TYPE_ID,
+            "__data__": [serialize_registry_wrapped_value(v) for v in value],
+        }
+    elif isinstance(value, frozenset):
+        return {
+            "__type__": _REGISTRY_WRAPPED_FROZENSET_TYPE_ID,
+            "__data__": sorted(
+                [serialize_registry_wrapped_value(v) for v in value], key=repr
+            ),
+        }
+    elif isinstance(value, Serializable):
+        return {
+            "__type__": value.get_serialization_class_type_id(),
+            "__data__": value.serialize_to_dict(),
+        }
+    else:
+        raise SerializationTypeError(type(value))
+
+
+def _deserialize_registry_wrapped_scalar_value(
+    type_id: str, value_data: SerializedValue
+) -> RegistryWrappedValueLeaf | None:
+    if type_id == _REGISTRY_WRAPPED_BOOL_TYPE_ID:
+        if not isinstance(value_data, bool):
+            raise DeserializationValueError(
+                "Expected boolean data for wrapped bool value."
+            )
+        return value_data
+    elif type_id == _REGISTRY_WRAPPED_INT_TYPE_ID:
+        if not isinstance(value_data, int) or isinstance(value_data, bool):
+            raise DeserializationValueError(
+                "Expected integer data for wrapped int value."
+            )
+        return value_data
+    elif type_id == _REGISTRY_WRAPPED_STR_TYPE_ID:
+        if not isinstance(value_data, str):
+            raise DeserializationValueError(
+                "Expected string data for wrapped str value."
+            )
+        return value_data
+    elif type_id == _REGISTRY_WRAPPED_FLOAT_TYPE_ID:
+        if not isinstance(value_data, float):
+            raise DeserializationValueError(
+                "Expected float data for wrapped float value."
+            )
+        return value_data
+    else:
+        return None
+
+
+def _deserialize_registry_wrapped_container_value(
+    type_id: str, value_data: SerializedValue
+) -> tuple[RegistryWrappedValue, ...] | frozenset[RegistryWrappedValue] | None:
+    if type_id not in (
+        _REGISTRY_WRAPPED_TUPLE_TYPE_ID,
+        _REGISTRY_WRAPPED_FROZENSET_TYPE_ID,
+    ):
+        return None
+    if not isinstance(value_data, list):
+        raise DeserializationValueError(
+            "Expected list payload for wrapped tuple/frozenset value."
+        )
+
+    wrapped_items: list[RegistryWrappedValue] = []
+    for value_item in value_data:
+        if not is_serialized_dict(value_item):
+            raise DeserializationValueError(
+                "Expected wrapped dictionary items for wrapped tuple/frozenset value."
+            )
+        wrapped_items.append(deserialize_registry_wrapped_value(value_item))
+
+    if type_id == _REGISTRY_WRAPPED_TUPLE_TYPE_ID:
+        return tuple(wrapped_items)
+    else:
+        try:
+            return frozenset(wrapped_items)
+        except TypeError as exc:
+            raise DeserializationValueError(
+                "Wrapped frozenset value contains unhashable items."
+            ) from exc
+
+
+def deserialize_registry_wrapped_value(data: SerializedDict) -> RegistryWrappedValue:
+    """Deserialize a wrapped registry dict to scalar/serializable value."""
+    if not _is_valid_registry_wrapped_value_data(data):
+        raise DeserializationDictStructureError(
+            Serializable, _RegistryWrappedValueData.__annotations__, data
+        )
+
+    type_id = data["__type__"]
+    value_data = data["__data__"]
+
+    scalar_value = _deserialize_registry_wrapped_scalar_value(type_id, value_data)
+    if scalar_value is not None:
+        return scalar_value
+
+    container_value = _deserialize_registry_wrapped_container_value(type_id, value_data)
+    if container_value is not None:
+        return container_value
+
+    if not is_serialized_dict(value_data):
+        raise DeserializationValueError(
+            "Expected dictionary payload for wrapped object."
+        )
+
+    cls = _resolve_type_id(type_id)
+    obj = cls.deserialize_from_dict(value_data)
+    return obj
 
 
 @overload

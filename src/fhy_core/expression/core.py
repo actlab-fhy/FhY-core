@@ -21,6 +21,7 @@ __all__ = [
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum, auto
+from functools import singledispatch
 from typing import Any, TypedDict, TypeGuard
 
 from frozendict import frozendict
@@ -34,6 +35,10 @@ from fhy_core.serialization import (
     is_serialized_dict,
     register_serializable,
 )
+from fhy_core.trait import (
+    HasOperandsMixin,
+    StructuralEquivalenceMixin,
+)
 from fhy_core.utils import invert_frozen_dict
 
 
@@ -45,8 +50,11 @@ class SymbolType(Enum):
     BOOL = auto()
 
 
-class Expression(WrappedFamilySerializable, ABC):
+class Expression(WrappedFamilySerializable, StructuralEquivalenceMixin, ABC):
     """Abstract base class for expressions."""
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return _is_expression_structurally_equivalent(self, other)
 
     def __neg__(self) -> "UnaryExpression":
         return UnaryExpression(UnaryOperation.NEGATE, self)
@@ -292,11 +300,15 @@ def _is_valid_unary_expression_data(
 
 @register_serializable(type_id="unary_expression")
 @dataclass(frozen=True, eq=False)
-class UnaryExpression(Expression):
+class UnaryExpression(Expression, HasOperandsMixin[Expression]):
     """Unary expression."""
 
     operation: UnaryOperation
     operand: Expression
+
+    @property
+    def operands(self) -> tuple[Expression]:
+        return (self.operand,)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -409,12 +421,16 @@ def _is_valid_binary_expression_data(
 
 @register_serializable(type_id="binary_expression")
 @dataclass(frozen=True, eq=False)
-class BinaryExpression(Expression):
+class BinaryExpression(Expression, HasOperandsMixin[Expression]):
     """Binary expression."""
 
     operation: BinaryOperation
     left: Expression
     right: Expression
+
+    @property
+    def operands(self) -> tuple[Expression, Expression]:
+        return (self.left, self.right)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -516,3 +532,50 @@ class LiteralExpression(Expression):
                 cls, _LiteralExpressionData.__annotations__, data
             )
         return cls(data["value"])
+
+
+@singledispatch
+def _is_expression_structurally_equivalent(
+    expression: Expression, other: object
+) -> bool:
+    return False
+
+
+@_is_expression_structurally_equivalent.register
+def _is_unary_expression_structurally_equivalent(
+    expression: UnaryExpression, other: object
+) -> bool:
+    return (
+        isinstance(other, UnaryExpression)
+        and expression.operation == other.operation
+        and expression.operand.is_structurally_equivalent(other.operand)
+    )
+
+
+@_is_expression_structurally_equivalent.register
+def _is_binary_expression_structurally_equivalent(
+    expression: BinaryExpression, other: object
+) -> bool:
+    return (
+        isinstance(other, BinaryExpression)
+        and expression.operation == other.operation
+        and expression.left.is_structurally_equivalent(other.left)
+        and expression.right.is_structurally_equivalent(other.right)
+    )
+
+
+@_is_expression_structurally_equivalent.register
+def _is_identifier_expression_structurally_equivalent(
+    expression: IdentifierExpression, other: object
+) -> bool:
+    return (
+        isinstance(other, IdentifierExpression)
+        and expression.identifier == other.identifier
+    )
+
+
+@_is_expression_structurally_equivalent.register
+def _is_literal_expression_structurally_equivalent(
+    expression: LiteralExpression, other: object
+) -> bool:
+    return isinstance(other, LiteralExpression) and expression.value == other.value
