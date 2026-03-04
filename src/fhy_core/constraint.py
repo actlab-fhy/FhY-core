@@ -488,7 +488,7 @@ def _(constraint: EquationConstraint, other: object) -> bool:
 
 @_is_constraint_structurally_equivalent.register
 def _(
-    constraint: InSetConstraint,
+    constraint: InSetConstraint[_ConstraintMemberT],
     other: object,
 ) -> bool:
     return (
@@ -502,7 +502,7 @@ def _(
 
 @_is_constraint_structurally_equivalent.register
 def _(
-    constraint: NotInSetConstraint,
+    constraint: NotInSetConstraint[_ConstraintMemberT],
     other: object,
 ) -> bool:
     return (
