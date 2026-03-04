@@ -25,10 +25,20 @@ from fhy_core.serialization import (
     is_serialized_dict,
     register_serializable,
 )
+from fhy_core.trait import (
+    CanonicalizableMixin,
+    StructuralEquivalenceMixin,
+    VerifiableMixin,
+    VerificationError,
+)
 
 from .error import register_error
 from .types import Type, TypeQualifier
 from .utils import StrEnum
+
+
+def _identifier_sort_key(identifier: Identifier) -> tuple[int, str]:
+    return (identifier.id, identifier.name_hint)
 
 
 @dataclass(frozen=True)
@@ -289,7 +299,9 @@ def _is_valid_symbol_table_data(data: SerializedDict) -> TypeGuard[_SymbolTableD
 
 
 @register_serializable(type_id="symbol_table")
-class SymbolTable(Serializable):
+class SymbolTable(
+    Serializable, CanonicalizableMixin, StructuralEquivalenceMixin, VerifiableMixin
+):
     """Core nested symbol table comprised of various frames."""
 
     _table: dict[Identifier, dict[Identifier, SymbolTableFrame]]
@@ -358,6 +370,105 @@ class SymbolTable(Serializable):
     def get_number_of_namespaces(self) -> int:
         """Return the number of namespaces in the symbol table."""
         return len(self._table)
+
+    def canonicalize(self) -> bool:
+        """Canonicalize namespace and symbol ordering in place."""
+        changed = False
+
+        namespace_order = list(self._table.keys())
+        sorted_namespaces = sorted(namespace_order, key=_identifier_sort_key)
+        if namespace_order != sorted_namespaces:
+            changed = True
+
+        canonical_table: dict[Identifier, dict[Identifier, SymbolTableFrame]] = {}
+        for namespace_name in sorted_namespaces:
+            namespace_table = self._table[namespace_name]
+            symbol_order = list(namespace_table.keys())
+            sorted_symbols = sorted(symbol_order, key=_identifier_sort_key)
+            if symbol_order != sorted_symbols:
+                changed = True
+            canonical_table[namespace_name] = {
+                symbol_name: namespace_table[symbol_name]
+                for symbol_name in sorted_symbols
+            }
+
+        parent_order = list(self._parent_namespace.keys())
+        sorted_parents = sorted(parent_order, key=_identifier_sort_key)
+        if parent_order != sorted_parents:
+            changed = True
+
+        self._table = canonical_table
+        self._parent_namespace = {
+            child_namespace: self._parent_namespace[child_namespace]
+            for child_namespace in sorted_parents
+        }
+        return changed
+
+    def verify(self) -> None:
+        """Verify structural invariants of the symbol table.
+
+        Raises:
+            VerificationError: If structural verification fails.
+
+        """
+        for namespace_name in self._parent_namespace:
+            if namespace_name not in self._table:
+                raise VerificationError(
+                    f"Parent namespace mapping references missing namespace "
+                    f"{namespace_name}."
+                )
+
+        for namespace_name, parent_namespace_name in self._parent_namespace.items():
+            if parent_namespace_name not in self._table:
+                raise VerificationError(
+                    f"Namespace {namespace_name} references missing parent "
+                    f"namespace {parent_namespace_name}."
+                )
+            if namespace_name == parent_namespace_name:
+                raise VerificationError(
+                    f"Namespace {namespace_name} cannot be its own parent."
+                )
+
+        for namespace_name in self._table:
+            seen_namespace_names = set()
+            current_namespace_name: Identifier | None = namespace_name
+            while current_namespace_name is not None:
+                if current_namespace_name in seen_namespace_names:
+                    raise VerificationError(
+                        f"Namespace {namespace_name} has a cyclic parent chain."
+                    )
+                seen_namespace_names.add(current_namespace_name)
+                current_namespace_name = self._parent_namespace.get(
+                    current_namespace_name
+                )
+
+        for namespace_name, namespace_symbols in self._table.items():
+            for symbol_name, frame in namespace_symbols.items():
+                if frame.name != symbol_name:
+                    raise VerificationError(
+                        f"Namespace {namespace_name} has symbol entry {symbol_name} "
+                        f"whose frame name is {frame.name}."
+                    )
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        if not isinstance(other, SymbolTable):
+            return False
+
+        if set(self._table.keys()) != set(other._table.keys()):
+            return False
+        if self._parent_namespace != other._parent_namespace:
+            return False
+
+        for namespace_name, namespace_symbols in self._table.items():
+            other_namespace_symbols = other._table.get(namespace_name)
+            if other_namespace_symbols is None:
+                return False
+            if set(namespace_symbols.keys()) != set(other_namespace_symbols.keys()):
+                return False
+            for symbol_name, frame in namespace_symbols.items():
+                if frame != other_namespace_symbols[symbol_name]:
+                    return False
+        return True
 
     def add_namespace(
         self,
