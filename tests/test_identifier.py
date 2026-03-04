@@ -1,5 +1,6 @@
 """Tests the identifier."""
 
+from concurrent.futures import ThreadPoolExecutor
 from copy import copy
 from unittest.mock import patch
 
@@ -28,6 +29,21 @@ def test_unique_id_generation():
     assert id1.id == 0
     assert id2.id == 1
     assert id3.id == 2
+
+
+def test_unique_id_generation_thread_safe():
+    """Test that IDs remain unique under concurrent creation."""
+    num_identifiers = 2000
+    with patch.object(Identifier, "_next_id", 0):
+        with ThreadPoolExecutor(max_workers=32) as executor:
+            identifiers = list(
+                executor.map(lambda _: Identifier(""), range(num_identifiers))
+            )
+
+    ids = [identifier.id for identifier in identifiers]
+    assert len(set(ids)) == num_identifiers
+    assert min(ids) == 0
+    assert max(ids) == num_identifiers - 1
 
 
 def test_equality():

@@ -2,6 +2,7 @@
 
 __all__ = ["Identifier"]
 
+from threading import Lock
 from typing import Any, ClassVar, TypedDict, TypeGuard
 
 from .serialization import (
@@ -32,13 +33,14 @@ class Identifier(Serializable):
     """Unique name."""
 
     _next_id: ClassVar[int] = 0
+    _id_lock = Lock()
     _id: int
     _name_hint: str
 
     def __init__(self, name_hint: str) -> None:
-        # TODO: Add a lock to implement RMW atomicity for _next_id.
-        self._id = Identifier._next_id
-        Identifier._next_id += 1
+        with Identifier._id_lock:
+            self._id = Identifier._next_id
+            Identifier._next_id += 1
         self._name_hint = name_hint
 
     @property
@@ -65,8 +67,9 @@ class Identifier(Serializable):
         identifier = cls.__new__(cls)
         identifier._id = data["id"]
         identifier._name_hint = data["name_hint"]
-        if identifier._id >= cls._next_id:
-            cls._next_id = identifier._id + 1
+        with cls._id_lock:
+            if identifier._id >= cls._next_id:
+                cls._next_id = identifier._id + 1
         return identifier
 
     def __copy__(self) -> "Identifier":
