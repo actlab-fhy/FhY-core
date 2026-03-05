@@ -81,27 +81,52 @@ def test_compiler_pass_rejects_none_input() -> None:
 def test_compiler_pass_registry_create_and_collision() -> None:
     """Test pass creation from registry and duplicate-name rejection."""
 
-    @register_pass("tests.createable_pass", "Increment an integer by one.")
-    class CreateablePass(CompilerPass[int, int]):
+    @register_pass("tests.creatable_pass", "Increment an integer by one.")
+    class CreatablePass(CompilerPass[int, int]):
         def get_noop_output(self, ir: int) -> int:
             return ir
 
         def run_pass(self, ir: int) -> int:
             return ir + 1
 
-    created = CompilerPass.create("tests.createable_pass")
-    assert isinstance(created, CreateablePass)
+    created = CompilerPass.create("tests.creatable_pass")
+    assert isinstance(created, CreatablePass)
     assert created(2) == 3
-    registered = CompilerPass.get_registered_passes()["tests.createable_pass"]
+    registered = CompilerPass.get_registered_passes()["tests.creatable_pass"]
     assert isinstance(registered, PassInfo)
     assert registered.description == "Increment an integer by one."
 
     with pytest.raises(PassRegistrationError):
 
-        @register_pass("tests.createable_pass", "Duplicate named pass.")
+        @register_pass("tests.creatable_pass", "Duplicate named pass.")
         class DuplicatePass(CompilerPass[int, int]):
             def get_noop_output(self, ir: int) -> int:
                 return ir
 
             def run_pass(self, ir: int) -> int:
                 return ir
+
+
+def test_compiler_pass_skip_path_uses_noop_output() -> None:
+    """Test that skipped execution returns noop output and `changed=False`."""
+
+    @register_pass("tests.skipped_pass", "Skip execution and return noop output.")
+    class SkippedPass(CompilerPass[int, int]):
+        def should_run(self, ir: int) -> bool:
+            _ = ir
+            self.report(DiagnosticLevel.INFO, "skip requested")
+            return False
+
+        def get_noop_output(self, ir: int) -> int:
+            return ir + 100
+
+        def run_pass(self, ir: int) -> int:
+            return ir + 1
+
+    result = SkippedPass().execute(2)
+
+    assert result.output == 102
+    assert result.changed is False
+    assert result.diagnostics
+    assert result.diagnostics[0].level == DiagnosticLevel.INFO
+    assert result.diagnostics[0].message_text == "skip requested"

@@ -189,8 +189,7 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
             raise
         except Exception as exc:
             message = (
-                f'Pass "{self.get_pass_name()}" failed with '
-                f"{type(exc).__name__}: {exc}"
+                f'Pass "{self.get_pass_name()}" failed with {type(exc).__name__}: {exc}'
             )
             self.report(DiagnosticLevel.ERROR, message)
             raise PassExecutionError(message) from exc
@@ -268,8 +267,22 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
         """
 
     def did_change(self, input_ir: _PassInputT, output: _PassOutputT) -> bool:
-        """Return whether output differs from input."""
-        return input_ir is not output
+        """Return whether output differs from input.
+
+        This method prefers value semantics (`!=`) when supported by the input/output
+        types, and falls back to identity semantics if value comparison fails.
+
+        Note:
+            In-place mutation that preserves object identity and equality may not be
+            detected by the default implementation; passes with that behavior should
+            override this method.
+
+        """
+        try:
+            comparison = cast(Any, input_ir) != output
+            return bool(comparison)
+        except Exception:
+            return input_ir is not output
 
     def _record_run(self) -> None:
         pass_name = self.get_pass_name()
