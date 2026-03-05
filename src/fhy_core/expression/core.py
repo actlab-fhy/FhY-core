@@ -38,6 +38,7 @@ from fhy_core.serialization import (
 from fhy_core.trait import (
     HasOperandsMixin,
     StructuralEquivalenceMixin,
+    VisitableMixin,
 )
 from fhy_core.utils import invert_frozen_dict
 
@@ -50,7 +51,9 @@ class SymbolType(Enum):
     BOOL = auto()
 
 
-class Expression(WrappedFamilySerializable, StructuralEquivalenceMixin, ABC):
+class Expression(
+    WrappedFamilySerializable, StructuralEquivalenceMixin, VisitableMixin, ABC
+):
     """Abstract base class for expressions."""
 
     def is_structurally_equivalent(self, other: object) -> bool:

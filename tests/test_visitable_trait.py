@@ -13,6 +13,10 @@ class ToyNode(VisitableMixin):
 class ToyNodeConsumer(VisitablePass[ToyNode, int]):
     """Test pass that handles only ToyNode."""
 
+    def get_noop_output(self, ir: ToyNode) -> int:
+        _ = ir
+        return 0
+
     def visit_toy_node(self, node: ToyNode) -> int:
         _ = node
         return 7

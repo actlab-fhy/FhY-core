@@ -2,6 +2,8 @@
 
 __all__ = ["pformat_expression"]
 
+from fhy_core.pass_infrastructure import PassExecutionError, VisitablePass
+
 from .core import (
     BINARY_OPERATION_FUNCTION_NAMES,
     BINARY_OPERATION_SYMBOLS,
@@ -13,10 +15,9 @@ from .core import (
     LiteralExpression,
     UnaryExpression,
 )
-from .visitor import ExpressionBasePass
 
 
-class ExpressionPrettyFormatter(ExpressionBasePass):
+class ExpressionPrettyFormatter(VisitablePass[Expression, str]):
     """Pretty-formatter for expressions."""
 
     _is_id_shown: bool
@@ -75,6 +76,11 @@ class ExpressionPrettyFormatter(ExpressionBasePass):
 
     def visit_literal_expression(self, literal_expression: LiteralExpression) -> str:
         return str(literal_expression.value)
+
+    def get_noop_output(self, ir: Expression) -> str:
+        raise PassExecutionError(
+            f'Pass "{self.get_pass_name()}" does not define noop output.'
+        )
 
 
 def pformat_expression(

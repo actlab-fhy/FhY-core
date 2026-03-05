@@ -18,11 +18,11 @@ def test_compiler_pass_executes_and_tracks_stats() -> None:
 
     @register_pass("tests.append_pass", "Append sentinel value to a list.")
     class AppendPass(CompilerPass[list[int], list[int]]):
-        def run_pass(self, ir: list[int]) -> list[int]:
-            return [*ir, 9]
-
         def get_noop_output(self, ir: list[int]) -> list[int]:
             return ir
+
+        def run_pass(self, ir: list[int]) -> list[int]:
+            return [*ir, 9]
 
     total_before = CompilerPass.get_total_run_count()
     per_before = AppendPass.get_run_count()
@@ -41,11 +41,11 @@ def test_compiler_pass_wraps_internal_exceptions() -> None:
 
     @register_pass("tests.exploding_pass", "Always raises during execution.")
     class ExplodingPass(CompilerPass[list[int], list[int]]):
-        def run_pass(self, ir: list[int]) -> list[int]:
-            raise ValueError("boom")
-
         def get_noop_output(self, ir: list[int]) -> list[int]:
             return ir
+
+        def run_pass(self, ir: list[int]) -> list[int]:
+            raise ValueError("boom")
 
     compiler_pass = ExplodingPass()
     with pytest.raises(PassExecutionError):
@@ -62,10 +62,10 @@ def test_compiler_pass_rejects_none_input() -> None:
 
     @register_pass("tests.identity_pass", "Identity pass for object IR.")
     class IdentityPass(CompilerPass[object, object]):
-        def run_pass(self, ir: object) -> object:
+        def get_noop_output(self, ir: object) -> object:
             return ir
 
-        def get_noop_output(self, ir: object) -> object:
+        def run_pass(self, ir: object) -> object:
             return ir
 
     compiler_pass = IdentityPass()
@@ -83,11 +83,11 @@ def test_compiler_pass_registry_create_and_collision() -> None:
 
     @register_pass("tests.createable_pass", "Increment an integer by one.")
     class CreateablePass(CompilerPass[int, int]):
-        def run_pass(self, ir: int) -> int:
-            return ir + 1
-
         def get_noop_output(self, ir: int) -> int:
             return ir
+
+        def run_pass(self, ir: int) -> int:
+            return ir + 1
 
     created = CompilerPass.create("tests.createable_pass")
     assert isinstance(created, CreateablePass)
@@ -100,5 +100,8 @@ def test_compiler_pass_registry_create_and_collision() -> None:
 
         @register_pass("tests.createable_pass", "Duplicate named pass.")
         class DuplicatePass(CompilerPass[int, int]):
+            def get_noop_output(self, ir: int) -> int:
+                return ir
+
             def run_pass(self, ir: int) -> int:
                 return ir

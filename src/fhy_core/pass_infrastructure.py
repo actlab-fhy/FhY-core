@@ -13,7 +13,6 @@ __all__ = [
     "register_pass",
 ]
 
-import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from threading import Lock
@@ -346,11 +345,6 @@ def register_pass(name: str, description: str) -> Callable[[_PassClassT], _PassC
             raise PassRegistrationError(
                 f"Cannot register non-CompilerPass type: {pass_cls.__qualname__}."
             )
-        if inspect.isabstract(pass_cls):
-            raise PassRegistrationError(
-                f'Cannot register abstract pass "{pass_cls.__qualname__}".'
-            )
-
         with CompilerPass._registry_lock:
             existing = CompilerPass._registry.get(name)
             if existing is not None and existing.pass_type is not pass_cls:

@@ -4,8 +4,6 @@ __all__ = [
     "BinaryExpression",
     "BinaryOperation",
     "Expression",
-    "ExpressionBasePass",
-    "ExpressionVisitor",
     "IdentifierExpression",
     "LiteralExpression",
     "LiteralType",
@@ -52,4 +50,3 @@ from .passes import (
     substitute_sympy_expression_variables,
 )
 from .pprint import pformat_expression
-from .visitor import ExpressionBasePass, ExpressionVisitor
