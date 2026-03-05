@@ -1,24 +1,26 @@
-"""Generic compiler pass infrastructure."""
+"""Core compiler pass abstractions and registration."""
 
 __all__ = [
     "CompilerPass",
     "DiagnosticLevel",
-    "PassInfo",
     "PassDiagnostic",
     "PassExecutionError",
+    "PassInfo",
     "PassRegistrationError",
     "PassResult",
     "PassValidationError",
+    "PreservedAnalyses",
     "VisitablePass",
     "register_pass",
 ]
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any, Callable, ClassVar, Generic, Mapping, TypeVar, cast
 
 from fhy_core.error import register_error
+from fhy_core.identifier import Identifier
 from fhy_core.provenance import Note
 from fhy_core.trait import Visitable
 from fhy_core.utils.enum import StrEnum
@@ -48,8 +50,48 @@ class PassDiagnostic:
 
     @property
     def message_text(self) -> str:
-        """Return the raw message text for convenience."""
         return self.message.message
+
+
+class PreservedAnalyses:
+    """Set of analyses preserved by a pass run."""
+
+    _preserve_all: bool
+    _analysis_names: set[Identifier]
+
+    def __init__(self, preserve_all: bool = False) -> None:
+        self._preserve_all = preserve_all
+        self._analysis_names = set()
+
+    @classmethod
+    def all(cls) -> "PreservedAnalyses":
+        """Create a preserved set representing all analyses."""
+        return cls(preserve_all=True)
+
+    @classmethod
+    def none(cls) -> "PreservedAnalyses":
+        """Create a preserved set representing no analyses."""
+        return cls(preserve_all=False)
+
+    @property
+    def preserves_all(self) -> bool:
+        """Return whether all analyses are preserved."""
+        return self._preserve_all
+
+    @property
+    def analysis_names(self) -> frozenset[Identifier]:
+        """Return explicitly preserved analysis names."""
+        return frozenset(self._analysis_names)
+
+    def preserve(self, analysis_name: Identifier) -> "PreservedAnalyses":
+        """Mark one analysis as preserved."""
+        if not self._preserve_all:
+            self._analysis_names.add(analysis_name)
+        return self
+
+    def is_preserved(self, analysis_name: Identifier) -> bool:
+        """Return whether an analysis is preserved."""
+        return self._preserve_all or analysis_name in self._analysis_names
 
 
 @dataclass(frozen=True)
@@ -83,6 +125,9 @@ class PassResult(Generic[_PassOutputT]):
     output: _PassOutputT
     changed: bool
     diagnostics: tuple[PassDiagnostic, ...] = ()
+    preserved_analyses: PreservedAnalyses = field(
+        default_factory=PreservedAnalyses.none
+    )
 
 
 class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
@@ -130,20 +175,7 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
 
     @staticmethod
     def create(pass_name: str, *args: Any, **kwargs: Any) -> "CompilerPass[Any, Any]":
-        """Create an instance from the global pass registry.
-
-        Args:
-            pass_name: The name of the pass to create.
-            *args: Positional arguments to forward to the pass constructor.
-            **kwargs: Keyword arguments to forward to the pass constructor.
-
-        Returns:
-            An instance of the requested pass.
-
-        Raises:
-            PassRegistrationError: If the pass name is not registered.
-
-        """
+        """Create an instance from the global pass registry."""
         with CompilerPass._registry_lock:
             pass_info = CompilerPass._registry.get(pass_name)
         if pass_info is None:
@@ -152,35 +184,26 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
 
     @property
     def diagnostics(self) -> tuple[PassDiagnostic, ...]:
+        """Return diagnostics emitted during the most recent run."""
         return tuple(self._diagnostics)
 
     def __call__(self, ir: _PassInputT) -> _PassOutputT:
         return self.execute(ir).output
 
     def execute(self, ir: _PassInputT) -> PassResult[_PassOutputT]:
-        """Execute the pass with validation and standardized error handling.
-
-        Args:
-            ir: The input IR to process.
-
-        Returns:
-            A `PassResult` containing the output, change status, and diagnostics.
-
-        Raises:
-            PassValidationError: If input validation fails.
-            PassExecutionError: If an error occurs during execution.
-
-        """
+        """Execute the pass with validation and standardized error handling."""
         self._diagnostics = []
         self.validate_input(ir)
 
         self._record_run()
         if not self.should_run(ir):
             output = self.get_noop_output(ir)
+            preserved = self.get_preserved_analyses(ir, output, changed=False)
             return PassResult(
                 output,
                 False,
                 diagnostics=tuple(self._diagnostics),
+                preserved_analyses=preserved,
             )
 
         try:
@@ -195,40 +218,31 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
             raise PassExecutionError(message) from exc
 
         self.validate_output(ir, output)
+        changed = self.did_change(ir, output)
+        preserved = self.get_preserved_analyses(ir, output, changed=changed)
         return PassResult(
             output=output,
-            changed=self.did_change(ir, output),
+            changed=changed,
             diagnostics=tuple(self._diagnostics),
+            preserved_analyses=preserved,
         )
 
     def report(
         self, level: DiagnosticLevel, message: str | Note, detail: str | None = None
     ) -> None:
-        """Emit a diagnostic for this pass execution.
-
-        Args:
-            level: The severity level of the diagnostic.
-            message: The diagnostic message, either as a raw string or a Note.
-            detail: Optional additional detail to include with the diagnostic.
-
-        """
+        """Emit a diagnostic for this pass execution."""
         note = message if isinstance(message, Note) else Note(message)
         self._diagnostics.append(
             PassDiagnostic(
-                level,
-                note,
-                self.get_pass_name(),
+                level=level,
+                message=note,
+                pass_name=self.get_pass_name(),
                 detail=detail,
             )
         )
 
     def validate_input(self, ir: _PassInputT) -> None:
-        """Validate input IR before execution.
-
-        Args:
-            ir: The input IR to validate.
-
-        """
+        """Validate input IR before execution."""
         if ir is None:
             message = f'Pass "{self.get_pass_name()}" does not accept None input.'
             self.report(DiagnosticLevel.ERROR, message)
@@ -244,45 +258,34 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
 
     @abstractmethod
     def run_pass(self, ir: _PassInputT) -> _PassOutputT:
-        """Run the pass over IR after validation.
-
-        Args:
-            ir: The input IR to process.
-
-        Returns:
-            The output after processing.
-
-        Raises:
-            PassExecutionError: If an error occurs during execution.
-
-        """
+        """Run the pass over IR after validation."""
 
     def validate_output(self, input_ir: _PassInputT, output: _PassOutputT) -> None:
-        """Validate output after execution.
-
-        Args:
-            input_ir: The original input IR.
-            output: The output to validate.
-
-        """
+        """Validate output after execution."""
 
     def did_change(self, input_ir: _PassInputT, output: _PassOutputT) -> bool:
         """Return whether output differs from input.
 
         This method prefers value semantics (`!=`) when supported by the input/output
         types, and falls back to identity semantics if value comparison fails.
-
-        Note:
-            In-place mutation that preserves object identity and equality may not be
-            detected by the default implementation; passes with that behavior should
-            override this method.
-
         """
         try:
-            comparison = cast(Any, input_ir) != output
-            return bool(comparison)
+            return bool(cast(Any, input_ir) != output)
         except Exception:
             return input_ir is not output
+
+    def get_preserved_analyses(
+        self, input_ir: _PassInputT, output: _PassOutputT, *, changed: bool
+    ) -> PreservedAnalyses:
+        """Return analyses preserved by this pass run.
+
+        By default, unchanged passes preserve all analyses; changed passes preserve
+        none.
+        """
+        _ = (input_ir, output)
+        if changed:
+            return PreservedAnalyses.none()
+        return PreservedAnalyses.all()
 
     def _record_run(self) -> None:
         pass_name = self.get_pass_name()
@@ -302,15 +305,7 @@ class VisitablePass(CompilerPass[_VisitableNodeT, _PassOutputT], ABC):
         return self.visit(ir)
 
     def visit(self, node: _VisitableNodeT) -> _PassOutputT:
-        """Visit a node by resolving `visit_<node_kind>` dynamically.
-
-        Args:
-            node: The node to visit.
-
-        Returns:
-            The result of visiting the node.
-
-        """
+        """Visit a node by resolving `visit_<node_kind>` dynamically."""
         method_name = (
             f"{self._VISIT_METHOD_PREFIX}{type(node).get_visit_method_suffix()}"
         )
@@ -321,15 +316,7 @@ class VisitablePass(CompilerPass[_VisitableNodeT, _PassOutputT], ABC):
         return method(node)
 
     def visit_unknown(self, node: _VisitableNodeT) -> _PassOutputT:
-        """Handle node types without a dedicated visitor method.
-
-        Args:
-            node: The node to visit.
-
-        Returns:
-            The result of visiting the node.
-
-        """
+        """Handle node types without a dedicated visitor method."""
         raise NotImplementedError(
             f'"{self.get_pass_name()}" does not implement "{type(node).__name__}"'
             " handling."
@@ -337,17 +324,7 @@ class VisitablePass(CompilerPass[_VisitableNodeT, _PassOutputT], ABC):
 
 
 def register_pass(name: str, description: str) -> Callable[[_PassClassT], _PassClassT]:
-    """Register a concrete pass class with explicit metadata.
-
-    Args:
-        name: A stable name for the pass, used for registration and reporting.
-        description: A human-readable description of the pass for discovery
-            and reporting.
-
-    Returns:
-        A class decorator that registers the pass.
-
-    """
+    """Register a concrete pass class with explicit metadata."""
     if not name.strip():
         raise PassRegistrationError("Pass name cannot be empty.")
     if not description.strip():
@@ -368,11 +345,7 @@ def register_pass(name: str, description: str) -> Callable[[_PassClassT], _PassC
 
             pass_cls._pass_name = name
             pass_cls._pass_description = description
-            CompilerPass._registry[name] = PassInfo(
-                name,
-                description,
-                pass_cls,
-            )
+            CompilerPass._registry[name] = PassInfo(name, description, pass_cls)
             CompilerPass._run_counts.setdefault(name, 0)
 
         return pass_cls

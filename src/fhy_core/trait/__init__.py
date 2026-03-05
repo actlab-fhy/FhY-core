@@ -3,6 +3,10 @@
 __all__ = [
     "Canonicalizable",
     "CanonicalizableMixin",
+    "Frozen",
+    "FrozenMixin",
+    "FrozenMutationError",
+    "FrozenValidationError",
     "Foldable",
     "FoldableMixin",
     "HasIdentifier",
@@ -26,6 +30,7 @@ __all__ = [
 
 from .canonicalizable import Canonicalizable, CanonicalizableMixin
 from .foldable import Foldable, FoldableMixin
+from .frozen import Frozen, FrozenMixin, FrozenMutationError, FrozenValidationError
 from .has_identifier import HasIdentifier, HasIdentifierMixin
 from .has_operands import HasOperands, HasOperandsMixin
 from .has_provenance import HasProvenance, HasProvenanceMixin
