@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from fhy_core.identifier import Identifier
-from fhy_core.trait import Frozen
+from fhy_core.trait import Frozen, HasIdentifierMixin
 
 from .core import CompilerPass, PassExecutionError, PassResult, PreservedAnalyses
 
@@ -33,13 +33,22 @@ class Analysis(ABC, Generic[_IRType, _AnalysisResultT]):
 
     @classmethod
     def get_analysis_name(cls) -> Identifier:
+        """Return the unique identifier for this analysis type."""
         if "_analysis_name" not in cls.__dict__ or cls._analysis_name is None:
             cls._analysis_name = Identifier(f"{cls.__module__}.{cls.__qualname__}")
         return cls._analysis_name
 
     @abstractmethod
     def run(self, ir: _IRType) -> _AnalysisResultT:
-        """Compute analysis results for IR."""
+        """Compute analysis results for IR.
+
+        Args:
+            ir: The IR to analyze.
+
+        Returns:
+            The analysis result for IR.
+
+        """
 
 
 class AnalysisManager(Generic[_IRType]):
@@ -53,7 +62,16 @@ class AnalysisManager(Generic[_IRType]):
     def get(
         self, analysis_type: type[Analysis[_IRType, _AnalysisResultT]], ir: _IRType
     ) -> _AnalysisResultT:
-        """Get analysis results for IR, computing and caching when necessary."""
+        """Get analysis results for IR, computing and caching when necessary.
+
+        Args:
+            analysis_type: The type of analysis to retrieve.
+            ir: The IR to analyze.
+
+        Returns:
+            The analysis result for IR.
+
+        """
         if not self._is_cacheable_ir(ir):
             self._cache.pop(id(ir), None)
             return analysis_type().run(ir)
@@ -68,11 +86,22 @@ class AnalysisManager(Generic[_IRType]):
         return result
 
     def clear(self, ir: _IRType) -> None:
-        """Clear all cached analyses for IR."""
+        """Clear all cached analyses for IR.
+
+        Args:
+            ir: The IR to clear analyses for.
+
+        """
         self._cache.pop(id(ir), None)
 
     def invalidate(self, ir: _IRType, preserved: PreservedAnalyses) -> None:
-        """Invalidate non-preserved analyses for IR."""
+        """Invalidate non-preserved analyses for IR.
+
+        Args:
+            ir: The IR to invalidate analyses for.
+            preserved: The analyses to preserve.
+
+        """
         if not self._is_cacheable_ir(ir):
             self._cache.pop(id(ir), None)
             return
@@ -99,7 +128,14 @@ class AnalysisManager(Generic[_IRType]):
         to_ir: _IRType,
         preserved: PreservedAnalyses,
     ) -> None:
-        """Transfer preserved analysis results across an IR replacement."""
+        """Transfer preserved analysis results across an IR replacement.
+
+        Args:
+            from_ir: The original IR being replaced.
+            to_ir: The new IR replacing from_ir.
+            preserved: The analyses to preserve across the replacement.
+
+        """
         from_cacheable = self._is_cacheable_ir(from_ir)
         to_cacheable = self._is_cacheable_ir(to_ir)
         if not from_cacheable and not to_cacheable:
@@ -162,7 +198,7 @@ class FixpointIterationRecord:
 class FixpointGroupRecord:
     """Execution record for a fixpoint group."""
 
-    group_name: str
+    group_name: Identifier
     iterations: int
     converged: bool
     iteration_records: tuple[FixpointIterationRecord, ...]
@@ -176,57 +212,100 @@ class PassManagerResult(Generic[_IRType]):
     records: tuple[PassRunRecord | FixpointGroupRecord, ...]
 
 
-class FixpointPassGroup(Generic[_IRType]):
+class FixpointPassGroup(HasIdentifierMixin, Generic[_IRType]):
     """A repeatedly executed pass sequence until fixpoint or iteration budget."""
 
     _passes: list[CompilerPass[_IRType, _IRType]]
-    name: str
-    max_iterations: int
-    fail_on_non_convergence: bool
+    _identifier: Identifier
+    _max_iterations: int
+    _fail_on_non_convergence: bool
 
     def __init__(
         self,
+        name: Identifier,
         *,
-        name: str,
         max_iterations: int = 10,
         fail_on_non_convergence: bool = True,
     ) -> None:
         if max_iterations < 1:
             raise ValueError('"max_iterations" must be >= 1.')
-        self.name = name
-        self.max_iterations = max_iterations
-        self.fail_on_non_convergence = fail_on_non_convergence
+        self._identifier = name
+        self._max_iterations = max_iterations
+        self._fail_on_non_convergence = fail_on_non_convergence
         self._passes = []
 
     @property
+    def identifier(self) -> Identifier:
+        return self._identifier
+
+    @property
+    def name(self) -> Identifier:
+        return self._identifier
+
+    @property
+    def max_iterations(self) -> int:
+        return self._max_iterations
+
+    @property
+    def fail_on_non_convergence(self) -> bool:
+        return self._fail_on_non_convergence
+
+    @property
     def passes(self) -> tuple[CompilerPass[_IRType, _IRType], ...]:
-        """Return passes in this fixpoint group."""
         return tuple(self._passes)
 
     def add_pass(
         self, compiler_pass: CompilerPass[_IRType, _IRType]
     ) -> "FixpointPassGroup[_IRType]":
-        """Append a pass to the fixpoint group."""
+        """Append a pass to the fixpoint group.
+
+        Args:
+            compiler_pass: The pass to add.
+
+        Returns:
+            This fixpoint group, for chaining.
+
+        """
         self._passes.append(compiler_pass)
         return self
 
 
-class PassManager(Generic[_IRType]):
+class PassManager(HasIdentifierMixin, Generic[_IRType]):
     """Ordered pass pipeline manager with analysis preservation/invalidation."""
 
     _items: list[CompilerPass[_IRType, _IRType] | FixpointPassGroup[_IRType]]
-    analysis_manager: AnalysisManager[_IRType]
-    name: str
+    _analysis_manager: AnalysisManager[_IRType]
+    _identifier: Identifier
 
-    def __init__(self, name: str = "pipeline") -> None:
-        self.name = name
+    def __init__(self, name: Identifier | None = None) -> None:
+        self._identifier = name if name is not None else Identifier("pipeline")
         self._items = []
-        self.analysis_manager = AnalysisManager()
+        self._analysis_manager = AnalysisManager()
+
+    @property
+    def identifier(self) -> Identifier:
+        return self._identifier
+
+    @property
+    def name(self) -> Identifier:
+        return self._identifier
+
+    @property
+    def analysis_manager(self) -> AnalysisManager[_IRType]:
+        return self._analysis_manager
 
     def add_pass(
         self, compiler_pass: CompilerPass[_IRType, _IRType]
     ) -> "PassManager[_IRType]":
-        """Append one pass to the pipeline."""
+        """Append one pass to the pipeline.
+
+        Args:
+            compiler_pass: The pass to add.
+
+        Returns:
+            This pass manager, for chaining.
+
+        """
         self._items.append(compiler_pass)
         return self
 
@@ -234,12 +313,33 @@ class PassManager(Generic[_IRType]):
         self,
         group: FixpointPassGroup[_IRType],
     ) -> "PassManager[_IRType]":
-        """Append one fixpoint group to the pipeline."""
+        """Append one fixpoint group to the pipeline.
+
+        Args:
+            group: The fixpoint group to add.
+
+        Returns:
+            This pass manager, for chaining.
+
+        """
         self._items.append(group)
         return self
 
     def run(self, ir: _IRType) -> PassManagerResult[_IRType]:
-        """Run the pass pipeline over IR."""
+        """Run the pass pipeline over the IR.
+
+        Args:
+            ir: IR to optimize.
+
+        Returns:
+            The overall pass manager result, including the final IR and execution
+            records.
+
+        Raises:
+            PassExecutionError: If any pass raises an error during execution, or if
+                a fixpoint group fails to converge within its iteration budget.
+
+        """
         current = ir
         records: list[PassRunRecord | FixpointGroupRecord] = []
 

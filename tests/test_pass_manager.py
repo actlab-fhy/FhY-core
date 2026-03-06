@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 import pytest
+from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     Analysis,
     CompilerPass,
@@ -163,9 +164,9 @@ def test_pass_manager_fixpoint_group_converges() -> None:
 
     manager = PassManager[int]()
     manager.add_fixpoint_group(
-        FixpointPassGroup[int](name="decrement-group", max_iterations=10).add_pass(
-            DecrementToZeroPass()
-        )
+        FixpointPassGroup[int](
+            name=Identifier("decrement-group"), max_iterations=10
+        ).add_pass(DecrementToZeroPass())
     )
 
     result = manager.run(3)
@@ -192,7 +193,7 @@ def test_pass_manager_fixpoint_group_raises_on_non_convergence() -> None:
     manager = PassManager[int]()
     manager.add_fixpoint_group(
         FixpointPassGroup[int](
-            name="flip-group",
+            name=Identifier("flip-group"),
             max_iterations=3,
             fail_on_non_convergence=True,
         ).add_pass(FlipBitPass())
@@ -200,3 +201,23 @@ def test_pass_manager_fixpoint_group_raises_on_non_convergence() -> None:
 
     with pytest.raises(PassExecutionError):
         manager.run(0)
+
+
+def test_fixpoint_group_configuration_is_read_only() -> None:
+    """Test fixpoint group configuration fields are read-only after init."""
+    group = FixpointPassGroup[int](name=Identifier("cfg"), max_iterations=2)
+
+    with pytest.raises(AttributeError):
+        group.max_iterations = 10  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        group.fail_on_non_convergence = False  # type: ignore[misc]
+
+
+def test_pass_manager_configuration_is_read_only() -> None:
+    """Test pass manager configuration fields are read-only after init."""
+    manager = PassManager[int](name=Identifier("pipeline"))
+
+    with pytest.raises(AttributeError):
+        setattr(manager, "name", Identifier("other"))
+    with pytest.raises(AttributeError):
+        setattr(manager, "analysis_manager", manager.analysis_manager)
