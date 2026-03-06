@@ -53,25 +53,22 @@ class PassDiagnostic:
         return self.message.message
 
 
+@dataclass(frozen=True)
 class PreservedAnalyses:
     """Set of analyses preserved by a pass run."""
 
-    _preserve_all: bool
-    _analysis_names: set[Identifier]
-
-    def __init__(self, preserve_all: bool = False) -> None:
-        self._preserve_all = preserve_all
-        self._analysis_names = set()
+    _preserve_all: bool = False
+    _analysis_names: frozenset[Identifier] = frozenset()
 
     @classmethod
     def all(cls) -> "PreservedAnalyses":
         """Create a preserved set representing all analyses."""
-        return cls(preserve_all=True)
+        return cls(_preserve_all=True)
 
     @classmethod
     def none(cls) -> "PreservedAnalyses":
         """Create a preserved set representing no analyses."""
-        return cls(preserve_all=False)
+        return cls(_preserve_all=False)
 
     @property
     def preserves_all(self) -> bool:
@@ -85,9 +82,14 @@ class PreservedAnalyses:
 
     def preserve(self, analysis_name: Identifier) -> "PreservedAnalyses":
         """Mark one analysis as preserved."""
-        if not self._preserve_all:
-            self._analysis_names.add(analysis_name)
-        return self
+        if self._preserve_all:
+            return self
+        if analysis_name in self._analysis_names:
+            return self
+        return PreservedAnalyses(
+            _preserve_all=False,
+            _analysis_names=self._analysis_names | {analysis_name},
+        )
 
     def is_preserved(self, analysis_name: Identifier) -> bool:
         """Return whether an analysis is preserved."""

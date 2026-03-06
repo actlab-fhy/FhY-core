@@ -52,13 +52,16 @@ class FrozenMixin(ABC):
 
     def freeze(self, *, deep: bool = False) -> None:
         """Freeze this object and optionally deep-freeze its instance state."""
+        if self._is_marked_frozen():
+            return
+        object.__setattr__(self, _FROZEN_FLAG, True)
         if deep:
+            seen: set[int] = {id(self)}
             for attribute_name, attribute_value in self._iter_instance_state_items():
                 if attribute_name == _FROZEN_FLAG:
                     continue
-                frozen_value = self._freeze_value(attribute_value, set())
+                frozen_value = self._freeze_value(attribute_value, seen)
                 object.__setattr__(self, attribute_name, frozen_value)
-        object.__setattr__(self, _FROZEN_FLAG, True)
 
     def assert_frozen(self, *, deep: bool = False, strict: bool = False) -> None:
         """Assert that this object is frozen.
@@ -154,6 +157,8 @@ class FrozenMixin(ABC):
         elif isinstance(value, bytearray):
             return bytes(value)
         elif isinstance(value, FrozenMixin):
+            if value.is_frozen:
+                return value
             value.freeze(deep=True)
             return value
         else:

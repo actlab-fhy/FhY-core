@@ -65,6 +65,11 @@ class _FrozenMapNode(FrozenMixin):
         self.freeze(deep=True)
 
 
+@dataclass
+class _CyclicFrozenNode(FrozenMixin):
+    peer: object | None = None
+
+
 def test_has_identifier_runtime_protocol():
     """Test `HasIdentifier` runtime protocol."""
     carrier = _IdentifierCarrier(mock_identifier("x", 1))
@@ -141,3 +146,25 @@ def test_frozen_strict_check_detects_unknown_mutable_payload() -> None:
     wrapper.freeze(deep=False)
     with pytest.raises(FrozenValidationError):
         wrapper.assert_frozen(deep=True, strict=True)
+
+
+def test_frozen_deep_freeze_handles_self_reference() -> None:
+    """Test `FrozenMixin.freeze(deep=True)` handles direct self-references."""
+    node = _CyclicFrozenNode()
+    node.peer = node
+    node.freeze(deep=True)
+    assert node.is_frozen
+    assert node.peer is node
+
+
+def test_frozen_deep_freeze_handles_mutually_recursive_nodes() -> None:
+    """Test `FrozenMixin.freeze(deep=True)` handles mutual object cycles."""
+    left = _CyclicFrozenNode()
+    right = _CyclicFrozenNode()
+    left.peer = right
+    right.peer = left
+    left.freeze(deep=True)
+    assert left.is_frozen
+    assert right.is_frozen
+    assert left.peer is right
+    assert right.peer is left

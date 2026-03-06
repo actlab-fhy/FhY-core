@@ -13,6 +13,7 @@ __all__ = [
     "PassRunRecord",
 ]
 
+import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, ClassVar, Generic, TypeVar, cast
@@ -55,9 +56,11 @@ class AnalysisManager(Generic[_IRType]):
     """Caches analysis results and applies preservation/invalidation rules."""
 
     _cache: dict[int, dict[Identifier, Any]]
+    _finalizers: dict[int, Any]
 
     def __init__(self) -> None:
         self._cache = {}
+        self._finalizers = {}
 
     def get(
         self, analysis_type: type[Analysis[_IRType, _AnalysisResultT]], ir: _IRType
@@ -73,12 +76,17 @@ class AnalysisManager(Generic[_IRType]):
 
         """
         if not self._is_cacheable_ir(ir):
-            self._cache.pop(id(ir), None)
+            self._drop_cached_ir(id(ir))
             return analysis_type().run(ir)
 
         ir_id = id(ir)
         analysis_name = analysis_type.get_analysis_name()
-        bucket = self._cache.setdefault(ir_id, {})
+        bucket = self._cache.get(ir_id)
+        if bucket is None:
+            if not self._register_finalizer(ir, ir_id):
+                return analysis_type().run(ir)
+            bucket = {}
+            self._cache[ir_id] = bucket
         if analysis_name in bucket:
             return cast(_AnalysisResultT, bucket[analysis_name])
         result = analysis_type().run(ir)
@@ -92,7 +100,7 @@ class AnalysisManager(Generic[_IRType]):
             ir: The IR to clear analyses for.
 
         """
-        self._cache.pop(id(ir), None)
+        self._drop_cached_ir(id(ir))
 
     def invalidate(self, ir: _IRType, preserved: PreservedAnalyses) -> None:
         """Invalidate non-preserved analyses for IR.
@@ -103,7 +111,7 @@ class AnalysisManager(Generic[_IRType]):
 
         """
         if not self._is_cacheable_ir(ir):
-            self._cache.pop(id(ir), None)
+            self._drop_cached_ir(id(ir))
             return
 
         ir_id = id(ir)
@@ -120,7 +128,7 @@ class AnalysisManager(Generic[_IRType]):
         for analysis_name in analyses_to_drop:
             del bucket[analysis_name]
         if not bucket:
-            self._cache.pop(ir_id, None)
+            self._drop_cached_ir(ir_id)
 
     def transfer(
         self,
@@ -141,7 +149,7 @@ class AnalysisManager(Generic[_IRType]):
         if not from_cacheable and not to_cacheable:
             return
         if not from_cacheable:
-            self._cache.pop(id(to_ir), None)
+            self._drop_cached_ir(id(to_ir))
             return
 
         from_id = id(from_ir)
@@ -151,13 +159,16 @@ class AnalysisManager(Generic[_IRType]):
             return
 
         from_bucket = self._cache.pop(from_id, {})
-        self._cache.pop(to_id, None)
+        self._drop_finalizer(from_id)
+        self._drop_cached_ir(to_id)
         if not from_bucket:
             return
         if not to_cacheable:
             return
 
         if preserved.preserves_all:
+            if not self._register_finalizer(to_ir, to_id):
+                return
             self._cache[to_id] = dict(from_bucket)
             return
 
@@ -167,11 +178,44 @@ class AnalysisManager(Generic[_IRType]):
             if preserved.is_preserved(analysis_name)
         }
         if kept:
+            if not self._register_finalizer(to_ir, to_id):
+                return
             self._cache[to_id] = kept
 
     @staticmethod
     def _is_cacheable_ir(ir: object) -> bool:
         return isinstance(ir, Frozen) and ir.is_frozen
+
+    @staticmethod
+    def _evict_cached_ir(
+        manager_ref: "weakref.ReferenceType[AnalysisManager[Any]]", ir_id: int
+    ) -> None:
+        manager = manager_ref()
+        if manager is None:
+            return
+        manager._cache.pop(ir_id, None)
+        manager._finalizers.pop(ir_id, None)
+
+    def _register_finalizer(self, ir: object, ir_id: int) -> bool:
+        if ir_id in self._finalizers:
+            return True
+        try:
+            weakref.ref(ir)
+        except TypeError:
+            return False
+        self._finalizers[ir_id] = weakref.finalize(
+            ir, AnalysisManager._evict_cached_ir, weakref.ref(self), ir_id
+        )
+        return True
+
+    def _drop_finalizer(self, ir_id: int) -> None:
+        finalizer = self._finalizers.pop(ir_id, None)
+        if finalizer is not None and finalizer.alive:
+            finalizer.detach()
+
+    def _drop_cached_ir(self, ir_id: int) -> None:
+        self._cache.pop(ir_id, None)
+        self._drop_finalizer(ir_id)
 
 
 @dataclass(frozen=True)

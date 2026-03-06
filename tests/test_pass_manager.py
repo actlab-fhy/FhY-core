@@ -1,5 +1,6 @@
 """Tests the pass manager infrastructure."""
 
+import gc
 from dataclasses import dataclass
 
 import pytest
@@ -142,6 +143,24 @@ def test_analysis_manager_does_not_cache_non_frozen_ir() -> None:
     assert manager.analysis_manager.get(MutableBoxDoubleAnalysis, ir) == 6
     assert manager.analysis_manager.get(MutableBoxDoubleAnalysis, ir) == 6
     assert MutableBoxDoubleAnalysis.runs == 2
+
+
+def test_analysis_manager_evicts_cache_after_ir_collection() -> None:
+    """Test that cached analysis entries are evicted after IR collection."""
+    BoxDoubleAnalysis.runs = 0
+    manager = PassManager[Box]()
+    ir = Box(3)
+
+    assert manager.analysis_manager.get(BoxDoubleAnalysis, ir) == 6
+    assert BoxDoubleAnalysis.runs == 1
+
+    ir_id = id(ir)
+    assert ir_id in manager.analysis_manager._cache
+    del ir
+    gc.collect()
+
+    assert ir_id not in manager.analysis_manager._cache
+    assert ir_id not in manager.analysis_manager._finalizers
 
 
 def test_analysis_identifier_is_unique() -> None:

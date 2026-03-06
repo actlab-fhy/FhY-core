@@ -1,13 +1,16 @@
 """Tests for generic compiler pass infrastructure."""
 
 import pytest
+from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     CompilerPass,
     DiagnosticLevel,
     PassExecutionError,
     PassInfo,
     PassRegistrationError,
+    PassResult,
     PassValidationError,
+    PreservedAnalyses,
     register_pass,
 )
 from fhy_core.provenance import Note
@@ -130,3 +133,23 @@ def test_compiler_pass_skip_path_uses_noop_output() -> None:
     assert result.diagnostics
     assert result.diagnostics[0].level == DiagnosticLevel.INFO
     assert result.diagnostics[0].message_text == "skip requested"
+
+
+def test_preserved_analyses_is_immutable() -> None:
+    """Test preserved analyses updates produce new immutable values."""
+    analysis_name = Identifier("tests.analysis")
+    original = PreservedAnalyses.none()
+    updated = original.preserve(analysis_name)
+
+    assert original.is_preserved(analysis_name) is False
+    assert updated.is_preserved(analysis_name) is True
+
+
+def test_pass_result_preserved_analyses_cannot_be_mutated_in_place() -> None:
+    """Test `PassResult` preserved analyses cannot be mutated in place."""
+    analysis_name = Identifier("tests.analysis")
+    result = PassResult(output=0, changed=False)
+    updated = result.preserved_analyses.preserve(analysis_name)
+
+    assert result.preserved_analyses.is_preserved(analysis_name) is False
+    assert updated.is_preserved(analysis_name) is True

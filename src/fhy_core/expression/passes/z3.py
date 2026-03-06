@@ -76,6 +76,7 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
     _identifier_to_z3_expression: dict[Identifier, z3.ExprRef]
 
     def __init__(self, symbol_types: dict[Identifier, SymbolType]) -> None:
+        super().__init__()
         self._symbol_types = symbol_types
         self._identifier_to_z3_expression = {}
 
