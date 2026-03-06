@@ -17,6 +17,7 @@
 | Compiler Traits - Type Carrier           | `HasType` for objects carrying an explicit type.                       |
 | Compiler Traits - Operands               | `HasOperands` for operand-bearing operation/expression nodes.          |
 | Compiler Traits - Results                | `HasResults` for multi-result operation-like nodes.                    |
+| Compiler Traits - Freezing               | `Frozen`/`FrozenMixin`/`frozen_dataclass` for runtime and dataclass immutability. |
 | Compiler Traits - Verification           | `Verifiable` + `VerificationError` for structural invariant checks.    |
 | Compiler Traits - Folding                | `Foldable` for constant-fold-like evaluation hooks.                    |
 | Compiler Traits - Canonicalization       | `Canonicalizable` for local canonical form rewrites.                   |
