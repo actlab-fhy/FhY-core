@@ -6,6 +6,8 @@ import pytest
 from fhy_core.identifier import Identifier
 from fhy_core.provenance import Provenance
 from fhy_core.trait import (
+    Equal,
+    EqualMixin,
     Frozen,
     FrozenMixin,
     FrozenMutationError,
@@ -14,6 +16,12 @@ from fhy_core.trait import (
     HasIdentifierMixin,
     HasProvenance,
     HasProvenanceMixin,
+    Orderable,
+    OrderableMixin,
+    PartialEqual,
+    PartialEqualMixin,
+    PartialOrderable,
+    PartialOrderableMixin,
 )
 from frozendict import frozendict
 
@@ -50,6 +58,54 @@ class _FrozenNode(FrozenMixin):
 class _MutablePayload:
     def __init__(self) -> None:
         self.values = [1, 2, 3]
+
+
+@dataclass(frozen=True)
+class _PartialOrderableValue(PartialOrderableMixin):
+    value: int
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, _PartialOrderableValue):
+            return NotImplemented
+        return self.value < other.value
+
+
+@dataclass(eq=True)
+class _AutoPartialEqualValue(PartialEqualMixin):
+    value: int
+
+
+@dataclass(eq=False)
+class _NoPartialEqualValue(PartialEqualMixin):
+    value: int
+
+
+@dataclass(eq=True)
+class _AutoEqualValue(EqualMixin):
+    value: int
+
+
+@dataclass(eq=True)
+class _ExplicitEqualValue(EqualMixin):
+    value: int
+
+    @property
+    def supports_equality(self) -> bool:
+        return True
+
+
+@dataclass(order=True)
+class _AutoPartialOrderableValue(PartialOrderableMixin):
+    value: int
+
+
+@dataclass(order=True)
+class _ExplicitOrderableValue(OrderableMixin):
+    value: int
+
+    @property
+    def supports_ordering(self) -> bool:
+        return True
 
 
 @dataclass
@@ -91,6 +147,82 @@ def test_has_provenance_runtime_protocol():
     """Test `HasProvenance` runtime protocol."""
     carrier = _ProvenanceCarrier(Provenance.unknown())
     assert isinstance(carrier, HasProvenance)
+
+
+def test_partial_orderable_runtime_protocol() -> None:
+    """Test `PartialOrderable` runtime protocol."""
+    value = _PartialOrderableValue(3)
+    assert isinstance(value, PartialOrderable)
+
+
+def test_partial_orderable_supports_sorting() -> None:
+    """Test `PartialOrderableMixin` implementations can be sorted."""
+    values = [
+        _PartialOrderableValue(3),
+        _PartialOrderableValue(1),
+        _PartialOrderableValue(2),
+    ]
+    sorted_values = sorted(values)
+    assert [value.value for value in sorted_values] == [1, 2, 3]
+
+
+def test_partial_equal_runtime_protocol() -> None:
+    """Test `PartialEqual` runtime protocol."""
+    value = _AutoPartialEqualValue(3)
+    assert isinstance(value, PartialEqual)
+    assert value.supports_partial_equality is True
+
+
+def test_partial_equal_detects_eq_false_dataclass() -> None:
+    """Test `PartialEqualMixin` detects `dataclass(eq=False)` as unsupported."""
+    value = _NoPartialEqualValue(3)
+    assert value.supports_partial_equality is False
+    assert value.__eq__(_NoPartialEqualValue(3)) is NotImplemented
+
+
+def test_equal_runtime_protocol() -> None:
+    """Test `Equal` runtime protocol."""
+    value = _AutoEqualValue(3)
+    assert isinstance(value, Equal)
+    assert value.supports_equality is False
+    assert value.supports_partial_equality is True
+    assert value == _AutoEqualValue(3)
+
+
+def test_equal_mixin_explicit_opt_in() -> None:
+    """Test `EqualMixin` supports explicit total-equality opt-in."""
+    value = _ExplicitEqualValue(3)
+    assert isinstance(value, Equal)
+    assert value.supports_equality is True
+    assert value == _ExplicitEqualValue(3)
+
+
+def test_partial_orderable_detects_ordered_dataclass() -> None:
+    """Test `PartialOrderableMixin` detects `dataclass(order=True)` support."""
+    left = _AutoPartialOrderableValue(1)
+    right = _AutoPartialOrderableValue(2)
+    assert left.supports_partial_ordering is True
+    assert left < right
+
+
+def test_orderable_runtime_protocol() -> None:
+    """Test `Orderable` runtime protocol."""
+    value = _ExplicitOrderableValue(3)
+    assert isinstance(value, Orderable)
+    assert value.supports_ordering is True
+    assert value.supports_partial_ordering is True
+
+
+def test_orderable_mixin_default_is_not_total_order() -> None:
+    """Test `OrderableMixin` requires explicit total-order opt-in."""
+
+    @dataclass(order=True)
+    class _AutoOrderableValue(OrderableMixin):
+        value: int
+
+    value = _AutoOrderableValue(3)
+    assert value.supports_partial_ordering is True
+    assert value.supports_ordering is False
 
 
 def test_identifier_mixin_contract():

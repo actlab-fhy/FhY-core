@@ -18,6 +18,8 @@
 | Compiler Traits - Operands               | `HasOperands` for operand-bearing operation/expression nodes.          |
 | Compiler Traits - Results                | `HasResults` for multi-result operation-like nodes.                    |
 | Compiler Traits - Freezing               | `Frozen`/`FrozenMixin` for runtime and dataclass immutability. |
+| Compiler Traits - Equality               | `PartialEqual`/`Equal` for dataclass-aware equality semantics.         |
+| Compiler Traits - Ordering               | `PartialOrderable`/`Orderable` for dataclass-aware ordering semantics. |
 | Compiler Traits - Verification           | `Verifiable` + `VerificationError` for structural invariant checks.    |
 | Compiler Traits - Folding                | `Foldable` for constant-fold-like evaluation hooks.                    |
 | Compiler Traits - Canonicalization       | `Canonicalizable` for local canonical form rewrites.                   |
