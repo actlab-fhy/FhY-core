@@ -5,22 +5,12 @@ __all__ = [
     "FrozenMixin",
     "FrozenMutationError",
     "FrozenValidationError",
-    "frozen_dataclass",
 ]
 
 from abc import ABC
-from dataclasses import FrozenInstanceError, dataclass, fields, is_dataclass
+from dataclasses import FrozenInstanceError, is_dataclass
 from types import MappingProxyType
-from typing import (
-    Any,
-    Callable,
-    Protocol,
-    TypeVar,
-    cast,
-    dataclass_transform,
-    overload,
-    runtime_checkable,
-)
+from typing import Any, Protocol, runtime_checkable
 
 from frozendict import frozendict
 
@@ -28,7 +18,6 @@ from fhy_core.error import register_error
 
 _FROZEN_FLAG = "_fhy_core_is_frozen"
 _IMMUTABLE_ATOMS = (str, bytes, int, float, complex, bool, type(None))
-_ClassT = TypeVar("_ClassT", bound=type[Any])
 
 
 @register_error
@@ -60,7 +49,7 @@ class FrozenMixin(ABC):
 
     @property
     def is_frozen(self) -> bool:
-        return self._is_marked_frozen()
+        return self._is_native_frozen_dataclass() or self._is_marked_frozen()
 
     def freeze(self, *, deep: bool = False) -> None:
         """Freeze this object and optionally deep-freeze its instance state.
@@ -69,15 +58,26 @@ class FrozenMixin(ABC):
             deep: Whether to recursively freeze nested objects in the instance state.
 
         """
-        if self._is_marked_frozen():
-            return
-        object.__setattr__(self, _FROZEN_FLAG, True)
-        if deep:
+        if self._is_native_frozen_dataclass():
+            if not deep:
+                return
             seen: set[int] = {id(self)}
             for attribute_name, attribute_value in self._iter_instance_state_items():
                 if attribute_name == _FROZEN_FLAG:
                     continue
                 frozen_value = self._freeze_value(attribute_value, seen)
+                object.__setattr__(self, attribute_name, frozen_value)
+            return
+
+        if self._is_marked_frozen():
+            return
+        object.__setattr__(self, _FROZEN_FLAG, True)
+        if deep:
+            seen_local: set[int] = {id(self)}
+            for attribute_name, attribute_value in self._iter_instance_state_items():
+                if attribute_name == _FROZEN_FLAG:
+                    continue
+                frozen_value = self._freeze_value(attribute_value, seen_local)
                 object.__setattr__(self, attribute_name, frozen_value)
 
     def assert_frozen(self, *, deep: bool = False, strict: bool = False) -> None:
@@ -116,6 +116,8 @@ class FrozenMixin(ABC):
         try:
             setattr(self, candidate_name, getattr(self, candidate_name))
         except FrozenMutationError:
+            return
+        except FrozenInstanceError:
             return
         except Exception as exc:
             raise FrozenValidationError(
@@ -251,6 +253,10 @@ class FrozenMixin(ABC):
         except AttributeError:
             return False
 
+    def _is_native_frozen_dataclass(self) -> bool:
+        params = getattr(type(self), "__dataclass_params__", None)
+        return bool(is_dataclass(self) and params is not None and params.frozen)
+
     @staticmethod
     def _has_instance_state(value: Any) -> bool:
         if hasattr(value, "__dict__"):
@@ -265,146 +271,3 @@ class FrozenMixin(ABC):
                     if slot_name not in {"__dict__", "__weakref__"}:
                         return True
         return False
-
-
-def _assert_dataclass_is_frozen(instance: object) -> None:
-    params = getattr(type(instance), "__dataclass_params__", None)
-    if not is_dataclass(instance) or params is None or not params.frozen:
-        raise FrozenValidationError(
-            f"{type(instance).__name__} is not a frozen dataclass."
-        )
-
-
-def _is_deeply_immutable_dataclass_value(
-    value: Any, seen: set[int], *, strict: bool
-) -> bool:
-    value_id = id(value)
-    if value_id in seen:
-        return True
-    seen.add(value_id)
-
-    if isinstance(value, _IMMUTABLE_ATOMS):
-        return True
-    elif isinstance(value, tuple):
-        return all(
-            _is_deeply_immutable_dataclass_value(item, seen, strict=strict)
-            for item in value
-        )
-    elif isinstance(value, frozenset):
-        return all(
-            _is_deeply_immutable_dataclass_value(item, seen, strict=strict)
-            for item in value
-        )
-    elif isinstance(value, (frozendict, MappingProxyType)):
-        return all(
-            _is_deeply_immutable_dataclass_value(key, seen, strict=strict)
-            and _is_deeply_immutable_dataclass_value(item_value, seen, strict=strict)
-            for key, item_value in value.items()
-        )
-    elif isinstance(value, FrozenMixin):
-        return FrozenMixin._is_deeply_immutable(value, seen, strict=strict)
-    elif is_dataclass(value):
-        for data_field in fields(value):
-            if not _is_deeply_immutable_dataclass_value(
-                getattr(value, data_field.name), seen, strict=strict
-            ):
-                return False
-        return True
-    elif isinstance(value, (list, set, dict, bytearray)):
-        return False
-    elif strict and FrozenMixin._has_instance_state(value):
-        return False
-    else:
-        return True
-
-
-def _install_frozen_trait_methods(cls: _ClassT) -> _ClassT:
-    if "is_frozen" not in cls.__dict__:
-        setattr(cls, "is_frozen", property(lambda self: True))
-
-    if "freeze" not in cls.__dict__:
-
-        def _freeze(self: object, *, deep: bool = False) -> None:
-            if deep:
-                cast(Frozen, self).assert_frozen(deep=True)
-
-        setattr(cls, "freeze", _freeze)
-
-    if "assert_write_protected" not in cls.__dict__:
-
-        def _assert_write_protected(self: object) -> None:
-            _assert_dataclass_is_frozen(self)
-            candidate_name: str | None = None
-            for data_field in fields(cast(Any, self)):
-                candidate_name = data_field.name
-                break
-            if candidate_name is None:
-                return
-            try:
-                setattr(self, candidate_name, getattr(self, candidate_name))
-            except FrozenInstanceError:
-                return
-            except Exception as exc:
-                raise FrozenValidationError(
-                    f'"{type(self).__name__}" write-protection probe failed '
-                    f"unexpectedly: {exc}"
-                ) from exc
-            raise FrozenValidationError(
-                f'"{type(self).__name__}" accepted mutation while frozen.'
-            )
-
-        setattr(cls, "assert_write_protected", _assert_write_protected)
-
-    if "assert_frozen" not in cls.__dict__:
-
-        def _assert_frozen(
-            self: object, *, deep: bool = False, strict: bool = False
-        ) -> None:
-            _assert_dataclass_is_frozen(self)
-            cast(Frozen, self).assert_write_protected()
-            if deep and not _is_deeply_immutable_dataclass_value(
-                self, set(), strict=strict
-            ):
-                raise FrozenValidationError(
-                    f'"{type(self).__name__}" failed deep immutability validation.'
-                )
-
-        setattr(cls, "assert_frozen", _assert_frozen)
-
-    return cls
-
-
-@dataclass_transform(frozen_default=True)
-@overload
-def frozen_dataclass(_cls: _ClassT, **kwargs: Any) -> _ClassT: ...
-
-
-@overload
-def frozen_dataclass(**kwargs: Any) -> Callable[[_ClassT], _ClassT]: ...
-
-
-def frozen_dataclass(
-    _cls: _ClassT | None = None, **kwargs: Any
-) -> _ClassT | Callable[[_ClassT], _ClassT]:
-    """Create a frozen dataclass that also conforms to the `Frozen` trait.
-
-    Args:
-        _cls: The class to decorate as a frozen dataclass.
-            If not provided, this function returns a decorator.
-        **kwargs: Additional keyword arguments to pass to `dataclass()`.
-
-    Returns:
-        The decorated frozen dataclass, or a decorator if `_cls` is not provided.
-
-    """
-    if "frozen" in kwargs and kwargs["frozen"] is not True:
-        raise ValueError('"frozen_dataclass" requires frozen=True.')
-    kwargs["frozen"] = True
-
-    def _decorate(cls: _ClassT) -> _ClassT:
-        dataclass_cls = cast(_ClassT, dataclass(**kwargs)(cls))
-        return _install_frozen_trait_methods(dataclass_cls)
-
-    if _cls is not None:
-        return _decorate(_cls)
-    return _decorate

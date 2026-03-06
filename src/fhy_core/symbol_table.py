@@ -12,7 +12,7 @@ __all__ = [
 
 from abc import ABC
 from collections.abc import Callable
-from dataclasses import field
+from dataclasses import dataclass, field
 from typing import Generic, NoReturn, TypedDict, TypeGuard, TypeVar
 
 from fhy_core.identifier import Identifier
@@ -27,10 +27,10 @@ from fhy_core.serialization import (
 )
 from fhy_core.trait import (
     CanonicalizableMixin,
+    FrozenMixin,
     StructuralEquivalenceMixin,
     VerifiableMixin,
     VerificationError,
-    frozen_dataclass,
 )
 
 from .error import register_error
@@ -42,8 +42,8 @@ def _identifier_sort_key(identifier: Identifier) -> tuple[int, str]:
     return (identifier.id, identifier.name_hint)
 
 
-@frozen_dataclass
-class SymbolTableFrame(WrappedFamilySerializable, ABC):
+@dataclass(frozen=True)
+class SymbolTableFrame(WrappedFamilySerializable, FrozenMixin, ABC):
     """Base symbol table frame."""
 
     name: Identifier
@@ -67,7 +67,7 @@ class ImportSymbolTableFrame(SymbolTableFrame):
         return cls(Identifier.deserialize_from_dict(data["name"]))
 
 
-@frozen_dataclass
+@dataclass(frozen=True)
 @register_serializable(type_id="variable_symbol_table_frame")
 class VariableSymbolTableFrame(SymbolTableFrame):
     """Variable symbol frame."""
@@ -110,7 +110,7 @@ class FunctionKeyword(StrEnum):
     NATIVE = "native"
 
 
-@frozen_dataclass
+@dataclass(frozen=True)
 @register_serializable(type_id="function_symbol_table_frame")
 class FunctionSymbolTableFrame(SymbolTableFrame):
     """Functions symbol frame."""
@@ -169,7 +169,7 @@ _SUCC_T = TypeVar("_SUCC_T")
 _FAIL_T = TypeVar("_FAIL_T")
 
 
-@frozen_dataclass
+@dataclass(frozen=True)
 class _SymbolTableSearchResult(Generic[_T]):
     value: _T
 

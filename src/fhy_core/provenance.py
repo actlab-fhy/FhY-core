@@ -20,6 +20,7 @@ from fhy_core.serialization import (
     is_serialized_dict,
     register_serializable,
 )
+from fhy_core.trait import FrozenMixin
 from fhy_core.utils import StrEnum
 
 
@@ -39,7 +40,7 @@ def _is_valid_position_data(data: SerializedDict) -> TypeGuard[_PositionData]:
 
 @register_serializable(type_id="position")
 @dataclass(frozen=True, slots=True, order=True)
-class Position(Serializable):
+class Position(Serializable, FrozenMixin):
     """Line/column position."""
 
     line: int
@@ -116,7 +117,7 @@ def _is_valid_span_data(data: SerializedDict) -> TypeGuard[_SpanData]:
 
 @register_serializable(type_id="span")
 @dataclass(frozen=True, slots=True)
-class Span(Serializable):
+class Span(Serializable, FrozenMixin):
     """A region in a source file."""
 
     file_path: Path
@@ -230,7 +231,7 @@ def _is_valid_note_data(data: SerializedDict) -> TypeGuard[_NoteData]:
 
 @register_serializable(type_id="provenance_note")
 @dataclass(frozen=True, slots=True)
-class Note(Serializable):
+class Note(Serializable, FrozenMixin):
     """A provenance breadcrumb."""
 
     message: str
@@ -290,7 +291,7 @@ def _is_valid_provenance_data(data: SerializedDict) -> TypeGuard[_ProvenanceData
 
 @register_serializable(type_id="provenance")
 @dataclass(frozen=True, slots=True)
-class Provenance(Serializable):
+class Provenance(Serializable, FrozenMixin):
     """Immutable provenance for compiler objects."""
 
     span: Span | None = None

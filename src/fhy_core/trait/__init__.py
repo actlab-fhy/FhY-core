@@ -4,7 +4,6 @@ __all__ = [
     "Canonicalizable",
     "CanonicalizableMixin",
     "Frozen",
-    "frozen_dataclass",
     "FrozenMixin",
     "FrozenMutationError",
     "FrozenValidationError",
@@ -36,7 +35,6 @@ from .frozen import (
     FrozenMixin,
     FrozenMutationError,
     FrozenValidationError,
-    frozen_dataclass,
 )
 from .has_identifier import HasIdentifier, HasIdentifierMixin
 from .has_operands import HasOperands, HasOperandsMixin

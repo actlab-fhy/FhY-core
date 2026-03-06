@@ -14,7 +14,6 @@ from fhy_core.trait import (
     HasIdentifierMixin,
     HasProvenance,
     HasProvenanceMixin,
-    frozen_dataclass,
 )
 from frozendict import frozendict
 
@@ -71,14 +70,14 @@ class _CyclicFrozenNode(FrozenMixin):
     peer: object | None = None
 
 
-@frozen_dataclass
-class _AutoFrozenPoint:
+@dataclass(frozen=True)
+class _AutoFrozenPoint(FrozenMixin):
     x: int
     y: int
 
 
-@frozen_dataclass
-class _AutoFrozenPayload:
+@dataclass(frozen=True)
+class _AutoFrozenPayload(FrozenMixin):
     payload: object
 
 
@@ -182,31 +181,39 @@ def test_frozen_deep_freeze_handles_mutually_recursive_nodes() -> None:
     assert right.peer is left
 
 
-def test_frozen_dataclass_runtime_protocol() -> None:
-    """Test `frozen_dataclass` instances satisfy the `Frozen` protocol."""
+def test_native_frozen_dataclass_runtime_protocol() -> None:
+    """Test native frozen dataclass instances satisfy the `Frozen` protocol."""
     point = _AutoFrozenPoint(1, 2)
     assert isinstance(point, Frozen)
     assert point.is_frozen is True
 
 
-def test_frozen_dataclass_blocks_mutation() -> None:
-    """Test `frozen_dataclass` blocks direct attribute mutation."""
+def test_native_frozen_dataclass_blocks_mutation() -> None:
+    """Test native frozen dataclass blocks direct attribute mutation."""
     point = _AutoFrozenPoint(1, 2)
     with pytest.raises(FrozenInstanceError):
         point.x = 4  # type: ignore[misc]
 
 
-def test_frozen_dataclass_assert_frozen_detects_deep_mutability() -> None:
-    """Test `frozen_dataclass` deep checks reject mutable nested payloads."""
+def test_native_frozen_dataclass_assert_frozen_detects_deep_mutability() -> None:
+    """Test native frozen dataclass deep checks reject mutable nested payloads."""
     payload = _AutoFrozenPayload(payload=[1, 2, 3])
     with pytest.raises(FrozenValidationError):
         payload.assert_frozen(deep=True)
 
 
-def test_frozen_dataclass_requires_frozen_true() -> None:
-    """Test `frozen_dataclass` rejects `frozen=False` configuration."""
-    with pytest.raises(ValueError):
+def test_native_frozen_dataclass_with_frozen_mixin() -> None:
+    """Test native `dataclass(frozen=True)` integrates with `FrozenMixin`."""
 
-        @frozen_dataclass(frozen=False)
-        class _InvalidFrozenDataclass:
-            value: int
+    @dataclass(frozen=True)
+    class _NativeFrozenPoint(FrozenMixin):
+        x: int
+        y: int
+
+    point = _NativeFrozenPoint(1, 2)
+
+    assert isinstance(point, Frozen)
+    assert point.is_frozen is True
+    point.assert_frozen()
+    with pytest.raises(FrozenInstanceError):
+        setattr(point, "x", 4)

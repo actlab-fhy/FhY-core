@@ -19,6 +19,7 @@ __all__ = [
 ]
 
 from abc import ABC
+from dataclasses import dataclass
 from enum import Enum, auto
 from functools import singledispatch
 from typing import Any, TypedDict, TypeGuard
@@ -39,7 +40,6 @@ from fhy_core.trait import (
     HasOperandsMixin,
     StructuralEquivalenceMixin,
     VisitableMixin,
-    frozen_dataclass,
 )
 from fhy_core.utils import invert_frozen_dict
 
@@ -307,7 +307,7 @@ def _is_valid_unary_expression_data(
 
 
 @register_serializable(type_id="unary_expression")
-@frozen_dataclass(eq=False)
+@dataclass(frozen=True, eq=False)
 class UnaryExpression(Expression, HasOperandsMixin[Expression]):
     """Unary expression."""
 
@@ -428,7 +428,7 @@ def _is_valid_binary_expression_data(
 
 
 @register_serializable(type_id="binary_expression")
-@frozen_dataclass(eq=False)
+@dataclass(frozen=True, eq=False)
 class BinaryExpression(Expression, HasOperandsMixin[Expression]):
     """Binary expression."""
 
@@ -478,7 +478,7 @@ def _is_valid_identifier_expression_data(
 
 
 @register_serializable(type_id="identifier_expression")
-@frozen_dataclass(eq=False)
+@dataclass(frozen=True, eq=False)
 class IdentifierExpression(Expression):
     """Identifier expression."""
 
@@ -510,7 +510,7 @@ def _is_valid_literal_expression_data(
 
 
 @register_serializable(type_id="literal_expression")
-@frozen_dataclass(eq=False)
+@dataclass(frozen=True, eq=False)
 class LiteralExpression(Expression):
     """Literal expression."""
 

@@ -15,10 +15,11 @@ __all__ = [
 
 import weakref
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from fhy_core.identifier import Identifier
-from fhy_core.trait import Frozen, HasIdentifierMixin, frozen_dataclass
+from fhy_core.trait import Frozen, FrozenMixin, HasIdentifierMixin
 
 from .core import CompilerPass, PassExecutionError, PassResult, PreservedAnalyses
 
@@ -217,8 +218,8 @@ class AnalysisManager(Generic[_IRType]):
         self._drop_finalizer(ir_id)
 
 
-@frozen_dataclass
-class PassRunRecord:
+@dataclass(frozen=True)
+class PassRunRecord(Frozen):
     """Execution record for one pass run."""
 
     pass_name: str
@@ -228,8 +229,8 @@ class PassRunRecord:
     preserves_all_analyses: bool
 
 
-@frozen_dataclass
-class FixpointIterationRecord:
+@dataclass(frozen=True)
+class FixpointIterationRecord(FrozenMixin):
     """Execution record for one fixpoint iteration."""
 
     iteration: int
@@ -237,8 +238,8 @@ class FixpointIterationRecord:
     pass_runs: tuple[PassRunRecord, ...]
 
 
-@frozen_dataclass
-class FixpointGroupRecord:
+@dataclass(frozen=True)
+class FixpointGroupRecord(FrozenMixin):
     """Execution record for a fixpoint group."""
 
     group_name: Identifier
@@ -247,8 +248,8 @@ class FixpointGroupRecord:
     iteration_records: tuple[FixpointIterationRecord, ...]
 
 
-@frozen_dataclass
-class PassManagerResult(Generic[_IRType]):
+@dataclass(frozen=True)
+class PassManagerResult(FrozenMixin, Generic[_IRType]):
     """Overall pass manager execution result."""
 
     output: _IRType
@@ -424,9 +425,9 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
 
             iteration_records.append(
                 FixpointIterationRecord(
-                    iteration=iteration,
-                    changed=changed_any,
-                    pass_runs=tuple(pass_runs),
+                    iteration,
+                    changed_any,
+                    tuple(pass_runs),
                 )
             )
             if not changed_any:
@@ -440,10 +441,10 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
             )
 
         return current, FixpointGroupRecord(
-            group_name=group.name,
-            iterations=len(iteration_records),
-            converged=converged,
-            iteration_records=tuple(iteration_records),
+            group.name,
+            len(iteration_records),
+            converged,
+            tuple(iteration_records),
         )
 
     @staticmethod
@@ -452,11 +453,11 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
     ) -> PassRunRecord:
         preserved = result.preserved_analyses
         return PassRunRecord(
-            pass_name=compiler_pass.get_pass_name(),
-            changed=result.changed,
-            diagnostics=result.diagnostics,
-            preserved_analyses=tuple(
+            compiler_pass.get_pass_name(),
+            result.changed,
+            result.diagnostics,
+            tuple(
                 sorted(preserved.analysis_names, key=lambda identifier: identifier.id)
             ),
-            preserves_all_analyses=preserved.preserves_all,
+            preserved.preserves_all,
         )

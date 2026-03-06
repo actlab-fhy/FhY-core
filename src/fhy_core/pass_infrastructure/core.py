@@ -15,14 +15,14 @@ __all__ = [
 ]
 
 from abc import ABC, abstractmethod
-from dataclasses import field
+from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any, Callable, ClassVar, Generic, Mapping, TypeVar, cast
 
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
 from fhy_core.provenance import Note
-from fhy_core.trait import Visitable, frozen_dataclass
+from fhy_core.trait import Visitable
 from fhy_core.utils.enum import StrEnum
 
 _PassInputT = TypeVar("_PassInputT")
@@ -39,7 +39,7 @@ class DiagnosticLevel(StrEnum):
     INFO = "info"
 
 
-@frozen_dataclass
+@dataclass(frozen=True)
 class PassDiagnostic:
     """Structured diagnostic emitted by a pass."""
 
@@ -53,7 +53,7 @@ class PassDiagnostic:
         return self.message.message
 
 
-@frozen_dataclass
+@dataclass(frozen=True)
 class PreservedAnalyses:
     """Set of analyses preserved by a pass run."""
 
@@ -96,7 +96,7 @@ class PreservedAnalyses:
         return self._preserve_all or analysis_name in self._analysis_names
 
 
-@frozen_dataclass
+@dataclass(frozen=True)
 class PassInfo:
     """Registered pass metadata."""
 
@@ -120,7 +120,7 @@ class PassExecutionError(RuntimeError):
     """Pass execution failure."""
 
 
-@frozen_dataclass
+@dataclass(frozen=True)
 class PassResult(Generic[_PassOutputT]):
     """Result of a pass execution."""
 
