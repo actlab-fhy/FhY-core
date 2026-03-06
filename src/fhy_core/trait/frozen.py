@@ -11,7 +11,16 @@ __all__ = [
 from abc import ABC
 from dataclasses import FrozenInstanceError, dataclass, fields, is_dataclass
 from types import MappingProxyType
-from typing import Any, Callable, Protocol, TypeVar, cast, overload, runtime_checkable
+from typing import (
+    Any,
+    Callable,
+    Protocol,
+    TypeVar,
+    cast,
+    dataclass_transform,
+    overload,
+    runtime_checkable,
+)
 
 from frozendict import frozendict
 
@@ -54,7 +63,12 @@ class FrozenMixin(ABC):
         return self._is_marked_frozen()
 
     def freeze(self, *, deep: bool = False) -> None:
-        """Freeze this object and optionally deep-freeze its instance state."""
+        """Freeze this object and optionally deep-freeze its instance state.
+
+        Args:
+            deep: Whether to recursively freeze nested objects in the instance state.
+
+        """
         if self._is_marked_frozen():
             return
         object.__setattr__(self, _FROZEN_FLAG, True)
@@ -271,36 +285,37 @@ def _is_deeply_immutable_dataclass_value(
 
     if isinstance(value, _IMMUTABLE_ATOMS):
         return True
-    if isinstance(value, tuple):
+    elif isinstance(value, tuple):
         return all(
             _is_deeply_immutable_dataclass_value(item, seen, strict=strict)
             for item in value
         )
-    if isinstance(value, frozenset):
+    elif isinstance(value, frozenset):
         return all(
             _is_deeply_immutable_dataclass_value(item, seen, strict=strict)
             for item in value
         )
-    if isinstance(value, (frozendict, MappingProxyType)):
+    elif isinstance(value, (frozendict, MappingProxyType)):
         return all(
             _is_deeply_immutable_dataclass_value(key, seen, strict=strict)
             and _is_deeply_immutable_dataclass_value(item_value, seen, strict=strict)
             for key, item_value in value.items()
         )
-    if isinstance(value, FrozenMixin):
+    elif isinstance(value, FrozenMixin):
         return FrozenMixin._is_deeply_immutable(value, seen, strict=strict)
-    if is_dataclass(value):
+    elif is_dataclass(value):
         for data_field in fields(value):
             if not _is_deeply_immutable_dataclass_value(
                 getattr(value, data_field.name), seen, strict=strict
             ):
                 return False
         return True
-    if isinstance(value, (list, set, dict, bytearray)):
+    elif isinstance(value, (list, set, dict, bytearray)):
         return False
-    if strict and FrozenMixin._has_instance_state(value):
+    elif strict and FrozenMixin._has_instance_state(value):
         return False
-    return True
+    else:
+        return True
 
 
 def _install_frozen_trait_methods(cls: _ClassT) -> _ClassT:
@@ -359,6 +374,7 @@ def _install_frozen_trait_methods(cls: _ClassT) -> _ClassT:
     return cls
 
 
+@dataclass_transform(frozen_default=True)
 @overload
 def frozen_dataclass(_cls: _ClassT, **kwargs: Any) -> _ClassT: ...
 
