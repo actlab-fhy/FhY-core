@@ -15,11 +15,10 @@ __all__ = [
 
 import weakref
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from fhy_core.identifier import Identifier
-from fhy_core.trait import Frozen, HasIdentifierMixin
+from fhy_core.trait import Frozen, HasIdentifierMixin, frozen_dataclass
 
 from .core import CompilerPass, PassExecutionError, PassResult, PreservedAnalyses
 
@@ -218,7 +217,7 @@ class AnalysisManager(Generic[_IRType]):
         self._drop_finalizer(ir_id)
 
 
-@dataclass(frozen=True)
+@frozen_dataclass
 class PassRunRecord:
     """Execution record for one pass run."""
 
@@ -229,7 +228,7 @@ class PassRunRecord:
     preserves_all_analyses: bool
 
 
-@dataclass(frozen=True)
+@frozen_dataclass
 class FixpointIterationRecord:
     """Execution record for one fixpoint iteration."""
 
@@ -238,7 +237,7 @@ class FixpointIterationRecord:
     pass_runs: tuple[PassRunRecord, ...]
 
 
-@dataclass(frozen=True)
+@frozen_dataclass
 class FixpointGroupRecord:
     """Execution record for a fixpoint group."""
 
@@ -248,7 +247,7 @@ class FixpointGroupRecord:
     iteration_records: tuple[FixpointIterationRecord, ...]
 
 
-@dataclass(frozen=True)
+@frozen_dataclass
 class PassManagerResult(Generic[_IRType]):
     """Overall pass manager execution result."""
 
