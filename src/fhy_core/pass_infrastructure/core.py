@@ -22,7 +22,7 @@ from typing import Any, Callable, ClassVar, Generic, Mapping, TypeVar, cast
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
 from fhy_core.provenance import Note
-from fhy_core.trait import Visitable
+from fhy_core.trait import FrozenMixin, Visitable
 from fhy_core.utils.enum import StrEnum
 
 _PassInputT = TypeVar("_PassInputT")
@@ -40,7 +40,7 @@ class DiagnosticLevel(StrEnum):
 
 
 @dataclass(frozen=True)
-class PassDiagnostic:
+class PassDiagnostic(FrozenMixin):
     """Structured diagnostic emitted by a pass."""
 
     level: DiagnosticLevel
@@ -54,50 +54,40 @@ class PassDiagnostic:
 
 
 @dataclass(frozen=True)
-class PreservedAnalyses:
+class PreservedAnalyses(FrozenMixin):
     """Set of analyses preserved by a pass run."""
 
-    _preserve_all: bool = False
-    _analysis_names: frozenset[Identifier] = frozenset()
+    preserve_all: bool = field(default=False)
+    analysis_names: frozenset[Identifier] = field(default_factory=frozenset)
 
     @classmethod
     def all(cls) -> "PreservedAnalyses":
         """Create a preserved set representing all analyses."""
-        return cls(_preserve_all=True)
+        return cls(preserve_all=True)
 
     @classmethod
     def none(cls) -> "PreservedAnalyses":
         """Create a preserved set representing no analyses."""
-        return cls(_preserve_all=False)
-
-    @property
-    def preserves_all(self) -> bool:
-        """Return whether all analyses are preserved."""
-        return self._preserve_all
-
-    @property
-    def analysis_names(self) -> frozenset[Identifier]:
-        """Return explicitly preserved analysis names."""
-        return frozenset(self._analysis_names)
+        return cls(preserve_all=False)
 
     def preserve(self, analysis_name: Identifier) -> "PreservedAnalyses":
         """Mark one analysis as preserved."""
-        if self._preserve_all:
+        if self.preserve_all:
             return self
-        if analysis_name in self._analysis_names:
+        if analysis_name in self.analysis_names:
             return self
         return PreservedAnalyses(
-            _preserve_all=False,
-            _analysis_names=self._analysis_names | {analysis_name},
+            preserve_all=False,
+            analysis_names=self.analysis_names | {analysis_name},
         )
 
     def is_preserved(self, analysis_name: Identifier) -> bool:
         """Return whether an analysis is preserved."""
-        return self._preserve_all or analysis_name in self._analysis_names
+        return self.preserve_all or analysis_name in self.analysis_names
 
 
 @dataclass(frozen=True)
-class PassInfo:
+class PassInfo(FrozenMixin):
     """Registered pass metadata."""
 
     name: str
@@ -121,12 +111,12 @@ class PassExecutionError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class PassResult(Generic[_PassOutputT]):
+class PassResult(FrozenMixin, Generic[_PassOutputT]):
     """Result of a pass execution."""
 
     output: _PassOutputT
     changed: bool
-    diagnostics: tuple[PassDiagnostic, ...] = ()
+    diagnostics: tuple[PassDiagnostic, ...] = field(default_factory=tuple)
     preserved_analyses: PreservedAnalyses = field(
         default_factory=PreservedAnalyses.none
     )

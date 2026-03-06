@@ -118,7 +118,7 @@ class AnalysisManager(Generic[_IRType]):
         bucket = self._cache.get(ir_id)
         if bucket is None:
             return
-        if preserved.preserves_all:
+        if preserved.preserve_all:
             return
         analyses_to_drop = [
             analysis_name
@@ -166,7 +166,7 @@ class AnalysisManager(Generic[_IRType]):
         if not to_cacheable:
             return
 
-        if preserved.preserves_all:
+        if preserved.preserve_all:
             if not self._register_finalizer(to_ir, to_id):
                 return
             self._cache[to_id] = dict(from_bucket)
@@ -459,5 +459,5 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
             tuple(
                 sorted(preserved.analysis_names, key=lambda identifier: identifier.id)
             ),
-            preserved.preserves_all,
+            preserved.preserve_all,
         )
