@@ -19,7 +19,6 @@ __all__ = [
 ]
 
 from abc import ABC
-from dataclasses import dataclass
 from enum import Enum, auto
 from functools import singledispatch
 from typing import Any, TypedDict, TypeGuard
@@ -36,9 +35,11 @@ from fhy_core.serialization import (
     register_serializable,
 )
 from fhy_core.trait import (
+    FrozenMixin,
     HasOperandsMixin,
     StructuralEquivalenceMixin,
     VisitableMixin,
+    frozen_dataclass,
 )
 from fhy_core.utils import invert_frozen_dict
 
@@ -52,7 +53,11 @@ class SymbolType(Enum):
 
 
 class Expression(
-    WrappedFamilySerializable, StructuralEquivalenceMixin, VisitableMixin, ABC
+    WrappedFamilySerializable,
+    FrozenMixin,
+    StructuralEquivalenceMixin,
+    VisitableMixin,
+    ABC,
 ):
     """Abstract base class for expressions."""
 
@@ -302,7 +307,7 @@ def _is_valid_unary_expression_data(
 
 
 @register_serializable(type_id="unary_expression")
-@dataclass(frozen=True, eq=False)
+@frozen_dataclass(eq=False)
 class UnaryExpression(Expression, HasOperandsMixin[Expression]):
     """Unary expression."""
 
@@ -423,7 +428,7 @@ def _is_valid_binary_expression_data(
 
 
 @register_serializable(type_id="binary_expression")
-@dataclass(frozen=True, eq=False)
+@frozen_dataclass(eq=False)
 class BinaryExpression(Expression, HasOperandsMixin[Expression]):
     """Binary expression."""
 
@@ -473,7 +478,7 @@ def _is_valid_identifier_expression_data(
 
 
 @register_serializable(type_id="identifier_expression")
-@dataclass(frozen=True, eq=False)
+@frozen_dataclass(eq=False)
 class IdentifierExpression(Expression):
     """Identifier expression."""
 
@@ -505,28 +510,25 @@ def _is_valid_literal_expression_data(
 
 
 @register_serializable(type_id="literal_expression")
+@frozen_dataclass(eq=False)
 class LiteralExpression(Expression):
     """Literal expression."""
 
-    _value: LiteralType
+    value: LiteralType
 
-    def __init__(self, value: LiteralType) -> None:
-        if isinstance(value, str):
-            try:
-                float(value)
-            except ValueError:
-                raise ValueError(
-                    f"Invalid literal expression value: "
-                    f"{value} with type {type(value)}."
-                )
-        self._value = value
-
-    @property
-    def value(self) -> LiteralType:
-        return self._value
+    def __post_init__(self) -> None:
+        if not isinstance(self.value, str):
+            return
+        try:
+            float(self.value)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid literal expression value: "
+                f'{self.value} with type "{type(self.value)}".'
+            ) from exc
 
     def serialize_data_to_dict(self) -> SerializedDict:
-        return {"value": self._value}
+        return {"value": self.value}
 
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "LiteralExpression":
@@ -545,9 +547,7 @@ def _is_expression_structurally_equivalent(
 
 
 @_is_expression_structurally_equivalent.register
-def _is_unary_expression_structurally_equivalent(
-    expression: UnaryExpression, other: object
-) -> bool:
+def _(expression: UnaryExpression, other: object) -> bool:
     return (
         isinstance(other, UnaryExpression)
         and expression.operation == other.operation
@@ -556,9 +556,7 @@ def _is_unary_expression_structurally_equivalent(
 
 
 @_is_expression_structurally_equivalent.register
-def _is_binary_expression_structurally_equivalent(
-    expression: BinaryExpression, other: object
-) -> bool:
+def _(expression: BinaryExpression, other: object) -> bool:
     return (
         isinstance(other, BinaryExpression)
         and expression.operation == other.operation
@@ -568,9 +566,7 @@ def _is_binary_expression_structurally_equivalent(
 
 
 @_is_expression_structurally_equivalent.register
-def _is_identifier_expression_structurally_equivalent(
-    expression: IdentifierExpression, other: object
-) -> bool:
+def _(expression: IdentifierExpression, other: object) -> bool:
     return (
         isinstance(other, IdentifierExpression)
         and expression.identifier == other.identifier
@@ -578,7 +574,5 @@ def _is_identifier_expression_structurally_equivalent(
 
 
 @_is_expression_structurally_equivalent.register
-def _is_literal_expression_structurally_equivalent(
-    expression: LiteralExpression, other: object
-) -> bool:
+def _(expression: LiteralExpression, other: object) -> bool:
     return isinstance(other, LiteralExpression) and expression.value == other.value

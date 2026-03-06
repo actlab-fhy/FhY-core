@@ -51,7 +51,7 @@ def test_identifier_expression():
 def test_literal_expression_valid_values(value):
     """Test that the literal expression is correctly initialized with valid values."""
     expr = LiteralExpression(value)
-    assert expr._value == value if not isinstance(value, str) else complex(value)
+    assert expr.value == value if not isinstance(value, str) else complex(value)
 
 
 def test_literal_expression_invalid_string():
