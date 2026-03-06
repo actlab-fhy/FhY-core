@@ -1,6 +1,6 @@
 """Tests the basic compiler traits."""
 
-from dataclasses import dataclass
+from dataclasses import FrozenInstanceError, dataclass
 
 import pytest
 from fhy_core.identifier import Identifier
@@ -14,6 +14,7 @@ from fhy_core.trait import (
     HasIdentifierMixin,
     HasProvenance,
     HasProvenanceMixin,
+    frozen_dataclass,
 )
 from frozendict import frozendict
 
@@ -68,6 +69,17 @@ class _FrozenMapNode(FrozenMixin):
 @dataclass
 class _CyclicFrozenNode(FrozenMixin):
     peer: object | None = None
+
+
+@frozen_dataclass
+class _AutoFrozenPoint:
+    x: int
+    y: int
+
+
+@frozen_dataclass
+class _AutoFrozenPayload:
+    payload: object
 
 
 def test_has_identifier_runtime_protocol():
@@ -168,3 +180,33 @@ def test_frozen_deep_freeze_handles_mutually_recursive_nodes() -> None:
     assert right.is_frozen
     assert left.peer is right
     assert right.peer is left
+
+
+def test_frozen_dataclass_runtime_protocol() -> None:
+    """Test `frozen_dataclass` instances satisfy the `Frozen` protocol."""
+    point = _AutoFrozenPoint(1, 2)
+    assert isinstance(point, Frozen)
+    assert point.is_frozen is True
+
+
+def test_frozen_dataclass_blocks_mutation() -> None:
+    """Test `frozen_dataclass` blocks direct attribute mutation."""
+    point = _AutoFrozenPoint(1, 2)
+    with pytest.raises(FrozenInstanceError):
+        point.x = 4  # type: ignore[misc]
+
+
+def test_frozen_dataclass_assert_frozen_detects_deep_mutability() -> None:
+    """Test `frozen_dataclass` deep checks reject mutable nested payloads."""
+    payload = _AutoFrozenPayload(payload=[1, 2, 3])
+    with pytest.raises(FrozenValidationError):
+        payload.assert_frozen(deep=True)
+
+
+def test_frozen_dataclass_requires_frozen_true() -> None:
+    """Test `frozen_dataclass` rejects `frozen=False` configuration."""
+    with pytest.raises(ValueError):
+
+        @frozen_dataclass(frozen=False)
+        class _InvalidFrozenDataclass:
+            value: int

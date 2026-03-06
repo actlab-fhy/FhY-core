@@ -54,6 +54,7 @@ __all__ = [
     "HasIdentifier",
     "HasIdentifierMixin",
     "Frozen",
+    "frozen_dataclass",
     "FrozenMixin",
     "FrozenMutationError",
     "FrozenValidationError",
@@ -254,6 +255,7 @@ from .trait import (
     VerificationError,
     Visitable,
     VisitableMixin,
+    frozen_dataclass,
 )
 from .types import (
     CoreDataType,
