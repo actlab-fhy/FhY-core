@@ -219,7 +219,7 @@ class AnalysisManager(Generic[_IRType]):
 
 
 @dataclass(frozen=True)
-class PassRunRecord(Frozen):
+class PassRunRecord(FrozenMixin):
     """Execution record for one pass run."""
 
     pass_name: str
