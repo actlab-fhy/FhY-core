@@ -12,6 +12,7 @@ from .serialization import (
     SerializedDict,
     register_serializable,
 )
+from .trait.equality import EqualMixin
 
 
 class _IdentifierData(TypedDict):
@@ -29,7 +30,7 @@ def _is_valid_identifier_data(data: SerializedDict) -> TypeGuard[_IdentifierData
 
 
 @register_serializable(type_id="id")
-class Identifier(Serializable):
+class Identifier(Serializable, EqualMixin):
     """Unique name."""
 
     _next_id: ClassVar[int] = 0

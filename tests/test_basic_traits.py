@@ -85,27 +85,14 @@ class _AutoEqualValue(EqualMixin):
     value: int
 
 
-@dataclass(eq=True)
-class _ExplicitEqualValue(EqualMixin):
-    value: int
-
-    @property
-    def supports_equality(self) -> bool:
-        return True
-
-
 @dataclass(order=True)
 class _AutoPartialOrderableValue(PartialOrderableMixin):
     value: int
 
 
 @dataclass(order=True)
-class _ExplicitOrderableValue(OrderableMixin):
+class _AutoOrderableValue(OrderableMixin):
     value: int
-
-    @property
-    def supports_ordering(self) -> bool:
-        return True
 
 
 @dataclass
@@ -184,17 +171,9 @@ def test_equal_runtime_protocol() -> None:
     """Test `Equal` runtime protocol."""
     value = _AutoEqualValue(3)
     assert isinstance(value, Equal)
-    assert value.supports_equality is False
+    assert value.supports_equality is True
     assert value.supports_partial_equality is True
     assert value == _AutoEqualValue(3)
-
-
-def test_equal_mixin_explicit_opt_in() -> None:
-    """Test `EqualMixin` supports explicit total-equality opt-in."""
-    value = _ExplicitEqualValue(3)
-    assert isinstance(value, Equal)
-    assert value.supports_equality is True
-    assert value == _ExplicitEqualValue(3)
 
 
 def test_partial_orderable_detects_ordered_dataclass() -> None:
@@ -207,22 +186,17 @@ def test_partial_orderable_detects_ordered_dataclass() -> None:
 
 def test_orderable_runtime_protocol() -> None:
     """Test `Orderable` runtime protocol."""
-    value = _ExplicitOrderableValue(3)
+    value = _AutoOrderableValue(3)
     assert isinstance(value, Orderable)
     assert value.supports_ordering is True
     assert value.supports_partial_ordering is True
 
 
-def test_orderable_mixin_default_is_not_total_order() -> None:
-    """Test `OrderableMixin` requires explicit total-order opt-in."""
-
-    @dataclass(order=True)
-    class _AutoOrderableValue(OrderableMixin):
-        value: int
-
+def test_orderable_mixin_defaults_to_total_order() -> None:
+    """Test `OrderableMixin` defaults to total-order support."""
     value = _AutoOrderableValue(3)
     assert value.supports_partial_ordering is True
-    assert value.supports_ordering is False
+    assert value.supports_ordering is True
 
 
 def test_identifier_mixin_contract():

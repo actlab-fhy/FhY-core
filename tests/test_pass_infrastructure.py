@@ -14,6 +14,7 @@ from fhy_core.pass_infrastructure import (
     register_pass,
 )
 from fhy_core.provenance import Note
+from fhy_core.trait import PartialEqual
 
 
 def test_compiler_pass_executes_and_tracks_stats() -> None:
@@ -153,3 +154,22 @@ def test_pass_result_preserved_analyses_cannot_be_mutated_in_place() -> None:
 
     assert result.preserved_analyses.is_preserved(analysis_name) is False
     assert updated.is_preserved(analysis_name) is True
+
+
+def test_pass_core_records_support_partial_equal_traits() -> None:
+    """Test pass-core records satisfy `PartialEqual` protocol."""
+    info = PassInfo("tests.info", "desc", CompilerPass)
+    result = PassResult(
+        output=0,
+        changed=False,
+        diagnostics=(),
+        preserved_analyses=PreservedAnalyses.none(),
+    )
+    preserved = PreservedAnalyses.none()
+
+    assert isinstance(info, PartialEqual)
+    assert info.supports_partial_equality is True
+    assert isinstance(result, PartialEqual)
+    assert result.supports_partial_equality is True
+    assert isinstance(preserved, PartialEqual)
+    assert preserved.supports_partial_equality is True

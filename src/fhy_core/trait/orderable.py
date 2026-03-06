@@ -57,4 +57,4 @@ class OrderableMixin(PartialOrderableMixin):
 
     @property
     def supports_ordering(self) -> bool:
-        return False
+        return True

@@ -10,6 +10,7 @@ from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
 )
+from fhy_core.trait import Equal, PartialEqual
 
 
 def test_identifier_initialization():
@@ -55,6 +56,15 @@ def test_equality():
     assert id1 == id1  # noqa: PLR0124
     assert id1 != id2
     assert id2 != id3
+
+
+def test_identifier_supports_equal_traits() -> None:
+    """Test `Identifier` satisfies equality trait protocols."""
+    identifier = Identifier("name")
+    assert isinstance(identifier, PartialEqual)
+    assert isinstance(identifier, Equal)
+    assert identifier.supports_partial_equality is True
+    assert identifier.supports_equality is True
 
 
 def test_copy():

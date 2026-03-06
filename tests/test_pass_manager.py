@@ -15,7 +15,7 @@ from fhy_core.pass_infrastructure import (
     PreservedAnalyses,
     register_pass,
 )
-from fhy_core.trait import FrozenMixin
+from fhy_core.trait import FrozenMixin, PartialEqual
 
 
 @dataclass
@@ -194,8 +194,13 @@ def test_pass_manager_fixpoint_group_converges() -> None:
     assert len(result.records) == 1
     record = result.records[0]
     assert isinstance(record, FixpointGroupRecord)
+    assert isinstance(record, PartialEqual)
+    assert record.supports_partial_equality is True
     assert record.converged is True
     assert record.iterations == 4
+    assert record.iteration_records
+    assert isinstance(record.iteration_records[0], PartialEqual)
+    assert record.iteration_records[0].supports_partial_equality is True
 
 
 def test_pass_manager_fixpoint_group_raises_on_non_convergence() -> None:
@@ -240,3 +245,25 @@ def test_pass_manager_configuration_is_read_only() -> None:
         setattr(manager, "name", Identifier("other"))
     with pytest.raises(AttributeError):
         setattr(manager, "analysis_manager", manager.analysis_manager)
+
+
+def test_pass_manager_records_support_partial_equal_traits() -> None:
+    """Test pass-manager records satisfy `PartialEqual` protocol."""
+
+    @register_pass("tests.pm.partial_equal_record", "Identity pass for records.")
+    class IdentityPass(CompilerPass[int, int]):
+        def get_noop_output(self, ir: int) -> int:
+            return ir
+
+        def run_pass(self, ir: int) -> int:
+            return ir
+
+    manager = PassManager[int]()
+    manager.add_pass(IdentityPass())
+    result = manager.run(1)
+    run_record = result.records[0]
+
+    assert isinstance(result, PartialEqual)
+    assert result.supports_partial_equality is True
+    assert isinstance(run_record, PartialEqual)
+    assert run_record.supports_partial_equality is True

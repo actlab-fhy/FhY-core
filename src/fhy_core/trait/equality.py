@@ -50,4 +50,4 @@ class EqualMixin(PartialEqualMixin):
 
     @property
     def supports_equality(self) -> bool:
-        return False
+        return True

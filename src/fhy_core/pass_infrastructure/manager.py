@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from fhy_core.identifier import Identifier
-from fhy_core.trait import Frozen, FrozenMixin, HasIdentifierMixin
+from fhy_core.trait import Frozen, FrozenMixin, HasIdentifierMixin, PartialEqualMixin
 
 from .core import CompilerPass, PassExecutionError, PassResult, PreservedAnalyses
 
@@ -219,7 +219,7 @@ class AnalysisManager(Generic[_IRType]):
 
 
 @dataclass(frozen=True)
-class PassRunRecord(FrozenMixin):
+class PassRunRecord(FrozenMixin, PartialEqualMixin):
     """Execution record for one pass run."""
 
     pass_name: str
@@ -230,7 +230,7 @@ class PassRunRecord(FrozenMixin):
 
 
 @dataclass(frozen=True)
-class FixpointIterationRecord(FrozenMixin):
+class FixpointIterationRecord(FrozenMixin, PartialEqualMixin):
     """Execution record for one fixpoint iteration."""
 
     iteration: int
@@ -239,7 +239,7 @@ class FixpointIterationRecord(FrozenMixin):
 
 
 @dataclass(frozen=True)
-class FixpointGroupRecord(FrozenMixin):
+class FixpointGroupRecord(FrozenMixin, PartialEqualMixin):
     """Execution record for a fixpoint group."""
 
     group_name: Identifier
@@ -249,7 +249,7 @@ class FixpointGroupRecord(FrozenMixin):
 
 
 @dataclass(frozen=True)
-class PassManagerResult(FrozenMixin, Generic[_IRType]):
+class PassManagerResult(FrozenMixin, PartialEqualMixin, Generic[_IRType]):
     """Overall pass manager execution result."""
 
     output: _IRType

@@ -20,7 +20,8 @@ from fhy_core.serialization import (
     is_serialized_dict,
     register_serializable,
 )
-from fhy_core.trait import FrozenMixin
+from fhy_core.trait.equality import EqualMixin
+from fhy_core.trait.frozen import FrozenMixin
 from fhy_core.utils import StrEnum
 
 
@@ -40,11 +41,19 @@ def _is_valid_position_data(data: SerializedDict) -> TypeGuard[_PositionData]:
 
 @register_serializable(type_id="position")
 @dataclass(frozen=True, slots=True, order=True)
-class Position(Serializable, FrozenMixin):
+class Position(Serializable, FrozenMixin, EqualMixin):
     """Line/column position."""
 
     line: int
     column: int
+
+    @property
+    def supports_ordering(self) -> bool:
+        return True
+
+    @property
+    def supports_partial_ordering(self) -> bool:
+        return True
 
     def __post_init__(self) -> None:
         if self.line < 1:
@@ -117,7 +126,7 @@ def _is_valid_span_data(data: SerializedDict) -> TypeGuard[_SpanData]:
 
 @register_serializable(type_id="span")
 @dataclass(frozen=True, slots=True)
-class Span(Serializable, FrozenMixin):
+class Span(Serializable, FrozenMixin, EqualMixin):
     """A region in a source file."""
 
     file_path: Path
@@ -231,7 +240,7 @@ def _is_valid_note_data(data: SerializedDict) -> TypeGuard[_NoteData]:
 
 @register_serializable(type_id="provenance_note")
 @dataclass(frozen=True, slots=True)
-class Note(Serializable, FrozenMixin):
+class Note(Serializable, FrozenMixin, EqualMixin):
     """A provenance breadcrumb."""
 
     message: str
@@ -291,7 +300,7 @@ def _is_valid_provenance_data(data: SerializedDict) -> TypeGuard[_ProvenanceData
 
 @register_serializable(type_id="provenance")
 @dataclass(frozen=True, slots=True)
-class Provenance(Serializable, FrozenMixin):
+class Provenance(Serializable, FrozenMixin, EqualMixin):
     """Immutable provenance for compiler objects."""
 
     span: Span | None = None

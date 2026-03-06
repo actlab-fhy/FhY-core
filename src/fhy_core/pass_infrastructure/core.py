@@ -22,7 +22,7 @@ from typing import Any, Callable, ClassVar, Generic, Mapping, TypeVar, cast
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
 from fhy_core.provenance import Note
-from fhy_core.trait import FrozenMixin, Visitable
+from fhy_core.trait import FrozenMixin, PartialEqualMixin, Visitable
 from fhy_core.utils.enum import StrEnum
 
 _PassInputT = TypeVar("_PassInputT")
@@ -40,7 +40,7 @@ class DiagnosticLevel(StrEnum):
 
 
 @dataclass(frozen=True)
-class PassDiagnostic(FrozenMixin):
+class PassDiagnostic(FrozenMixin, PartialEqualMixin):
     """Structured diagnostic emitted by a pass."""
 
     level: DiagnosticLevel
@@ -54,7 +54,7 @@ class PassDiagnostic(FrozenMixin):
 
 
 @dataclass(frozen=True)
-class PreservedAnalyses(FrozenMixin):
+class PreservedAnalyses(FrozenMixin, PartialEqualMixin):
     """Set of analyses preserved by a pass run."""
 
     preserve_all: bool = field(default=False)
@@ -87,7 +87,7 @@ class PreservedAnalyses(FrozenMixin):
 
 
 @dataclass(frozen=True)
-class PassInfo(FrozenMixin):
+class PassInfo(FrozenMixin, PartialEqualMixin):
     """Registered pass metadata."""
 
     name: str
@@ -111,7 +111,7 @@ class PassExecutionError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class PassResult(FrozenMixin, Generic[_PassOutputT]):
+class PassResult(FrozenMixin, PartialEqualMixin, Generic[_PassOutputT]):
     """Result of a pass execution."""
 
     output: _PassOutputT
