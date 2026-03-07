@@ -13,7 +13,7 @@ from fhy_core.expression import (
 )
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import Serializable, SerializedDict, register_serializable
-from fhy_core.trait import StructuralEquivalence
+from fhy_core.trait import Frozen, FrozenMutationError, StructuralEquivalence
 
 from .conftest import mock_identifier
 
@@ -577,6 +577,20 @@ def test_constraint_structural_equivalence_runtime_protocol():
     """Test `Constraint` satisfies `StructuralEquivalence` runtime protocol."""
     constraint = InSetConstraint(mock_identifier("x", 0), {1, 2})
     assert isinstance(constraint, StructuralEquivalence)
+
+
+def test_constraint_family_is_frozen_on_construction():
+    """Test all core constraint classes are frozen after construction."""
+    x = mock_identifier("x", 0)
+    equation = EquationConstraint(x, LiteralExpression(True))
+    in_set = InSetConstraint(x, {1, 2})
+    not_in_set = NotInSetConstraint(x, {3, 4})
+
+    for constraint in (equation, in_set, not_in_set):
+        assert isinstance(constraint, Frozen)
+        assert constraint.is_frozen
+        with pytest.raises(FrozenMutationError):
+            constraint._freeze_probe = "mutation"
 
 
 def test_equation_constraint_structural_equivalence_true():

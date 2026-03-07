@@ -54,7 +54,7 @@ def test_type_family_is_frozen_on_construction():
         assert isinstance(value, Frozen)
         assert value.is_frozen
         with pytest.raises(FrozenMutationError):
-            value._freeze_probe = "mutation"  # type: ignore[attr-defined]
+            value._freeze_probe = "mutation"
 
 
 def test_numerical_type_structural_equivalence_true():
