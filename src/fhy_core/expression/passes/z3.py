@@ -158,7 +158,7 @@ def convert_expression_to_z3_expression(
 
     """
     converter = ExpressionToZ3Converter(symbol_types or {})
-    z3_expression = converter.visit(expression)
+    z3_expression = converter(expression)
     return z3_expression, converter.identifier_to_z3_expression
 
 

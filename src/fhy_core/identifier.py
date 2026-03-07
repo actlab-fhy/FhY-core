@@ -34,7 +34,7 @@ class Identifier(Serializable, EqualMixin):
     """Unique name."""
 
     _next_id: ClassVar[int] = 0
-    _id_lock = Lock()
+    _id_lock: ClassVar[Lock] = Lock()
     _id: int
     _name_hint: str
 

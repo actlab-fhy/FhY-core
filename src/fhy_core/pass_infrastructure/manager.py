@@ -16,6 +16,7 @@ __all__ = [
 import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from fhy_core.identifier import Identifier
@@ -31,13 +32,22 @@ class Analysis(ABC, Generic[_IRType, _AnalysisResultT]):
     """Base class for reusable analyses cached by the pass manager."""
 
     _analysis_name: ClassVar[Identifier | None] = None
+    _analysis_name_lock: ClassVar[Lock] = Lock()
 
     @classmethod
     def get_analysis_name(cls) -> Identifier:
         """Return the unique identifier for this analysis type."""
-        if "_analysis_name" not in cls.__dict__ or cls._analysis_name is None:
-            cls._analysis_name = Identifier(f"{cls.__module__}.{cls.__qualname__}")
-        return cls._analysis_name
+        if "_analysis_name" in cls.__dict__ and cls._analysis_name is not None:
+            return cls._analysis_name
+
+        with Analysis._analysis_name_lock:
+            if "_analysis_name" not in cls.__dict__ or cls._analysis_name is None:
+                cls._analysis_name = Identifier(f"{cls.__module__}.{cls.__qualname__}")
+            analysis_name = cls._analysis_name
+
+        if analysis_name is None:
+            raise RuntimeError("Failed to initialize analysis name.")
+        return analysis_name
 
     @abstractmethod
     def run(self, ir: _IRType) -> _AnalysisResultT:

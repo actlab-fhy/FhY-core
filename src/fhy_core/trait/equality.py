@@ -11,6 +11,8 @@ from typing import Protocol, runtime_checkable
 class PartialEqual(Protocol):
     """Protocol for objects that define `==` semantics."""
 
+    __hash__ = None
+
     @property
     def supports_partial_equality(self) -> bool: ...
 
@@ -27,6 +29,8 @@ class Equal(PartialEqual, Protocol):
 
 class PartialEqualMixin:
     """Mixin for objects that define `==` semantics."""
+
+    __hash__ = None
 
     @property
     def supports_partial_equality(self) -> bool:
