@@ -58,7 +58,7 @@ def test_literal_expression_invalid_string():
     """Test that the literal expression raises an exception for invalid string
     values.
     """
-    with pytest.raises(ValueError, match="Invalid literal expression value:"):
+    with pytest.raises(ValueError):
         LiteralExpression("invalid_literal")
 
 

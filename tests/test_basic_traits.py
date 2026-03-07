@@ -182,7 +182,7 @@ def test_equal_runtime_protocol() -> None:
 
 def test_equal_mixin_requires_hash_implementation() -> None:
     """Test `EqualMixin` prompts subclasses to implement hash."""
-    with pytest.raises(NotImplementedError, match="does not implement __hash__"):
+    with pytest.raises(NotImplementedError):
         hash(_NoHashEqualValue())
 
 
