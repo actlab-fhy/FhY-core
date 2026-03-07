@@ -1,7 +1,5 @@
 """`Foldable` trait and mixin."""
 
-from __future__ import annotations
-
 __all__ = ["Foldable", "FoldableMixin"]
 
 from abc import ABC, abstractmethod

@@ -29,7 +29,7 @@ from fhy_core.serialization import (
     is_serialized_dict,
     register_serializable,
 )
-from fhy_core.trait import StructuralEquivalenceMixin
+from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
 
 from .error import register_error
 from .expression import Expression, pformat_expression
@@ -37,7 +37,7 @@ from .identifier import Identifier
 from .utils import Lattice, StrEnum, format_comma_separated_list
 
 
-class Type(WrappedFamilySerializable, StructuralEquivalenceMixin, ABC):
+class Type(WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC):
     """Abstract compiler type."""
 
     def is_structurally_equivalent(self, other: object) -> bool:
@@ -49,8 +49,13 @@ class FhYCoreTypeError(TypeError):
     """Core type error."""
 
 
-class DataType(WrappedFamilySerializable, ABC):
+class DataType(WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC):
     """Abstract data type."""
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        if not isinstance(other, DataType):
+            return False
+        return _is_data_type_structurally_equivalent(self, other)
 
 
 class CoreDataType(StrEnum):
@@ -244,6 +249,7 @@ class PrimitiveDataType(DataType):
 
     def __init__(self, core_data_type: CoreDataType) -> None:
         self._core_data_type = core_data_type
+        self.freeze(deep=True)
 
     @property
     def core_data_type(self) -> CoreDataType:
@@ -296,13 +302,14 @@ class TemplateDataType(DataType):
     """Template data type."""
 
     _data_type: Identifier
-    _widths: list[int] | None
+    _widths: tuple[int, ...] | None
 
     def __init__(
         self, data_type: Identifier, widths: Sequence[int] | None = None
     ) -> None:
         self._data_type = data_type
-        self._widths = list(widths) if widths is not None else None
+        self._widths = tuple(widths) if widths is not None else None
+        self.freeze(deep=True)
 
     @property
     def data_type(self) -> Identifier:
@@ -310,12 +317,12 @@ class TemplateDataType(DataType):
 
     @property
     def widths(self) -> list[int] | None:
-        return self._widths.copy() if self._widths is not None else None
+        return list(self._widths) if self._widths is not None else None
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "data_type": self._data_type.serialize_to_dict(),
-            "widths": self._widths,
+            "widths": list(self._widths) if self._widths is not None else None,
         }
 
     @classmethod
@@ -385,14 +392,15 @@ class NumericalType(Type):
     """Numerical multi-dimensional array type; empty shapes indicate scalars."""
 
     _data_type: DataType
-    _shape: list[Expression]
+    _shape: tuple[Expression, ...]
 
     def __init__(
-        self, data_type: DataType, shape: list[Expression] | None = None
+        self, data_type: DataType, shape: Sequence[Expression] | None = None
     ) -> None:
         super().__init__()
         self._data_type = data_type
-        self._shape = shape or []
+        self._shape = tuple(shape) if shape is not None else ()
+        self.freeze(deep=True)
 
     @property
     def data_type(self) -> DataType:
@@ -400,7 +408,7 @@ class NumericalType(Type):
 
     @property
     def shape(self) -> list[Expression]:
-        return self._shape
+        return list(self._shape)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -470,6 +478,7 @@ class IndexType(Type):
         self._lower_bound = lower_bound
         self._upper_bound = upper_bound
         self._stride = stride
+        self.freeze(deep=True)
 
     @property
     def lower_bound(self) -> Expression:
@@ -535,15 +544,16 @@ def _is_valid_tuple_type_data(data: SerializedDict) -> TypeGuard[_TupleTypeData]
 class TupleType(Type):
     """Tuple type."""
 
-    _types: list[Type]
+    _types: tuple[Type, ...]
 
-    def __init__(self, types: list[Type]) -> None:
+    def __init__(self, types: Sequence[Type]) -> None:
         super().__init__()
-        self._types = types
+        self._types = tuple(types)
+        self.freeze(deep=True)
 
     @property
     def types(self) -> list[Type]:
-        return self._types
+        return list(self._types)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {"types": [ty.serialize_to_dict() for ty in self._types]}

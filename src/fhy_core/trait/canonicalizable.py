@@ -1,7 +1,5 @@
 """`Canonicalizable` trait and mixin."""
 
-from __future__ import annotations
-
 __all__ = ["Canonicalizable", "CanonicalizableMixin"]
 
 from abc import ABC, abstractmethod

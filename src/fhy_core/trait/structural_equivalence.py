@@ -1,7 +1,5 @@
 """`StructuralEquivalence` trait and mixin."""
 
-from __future__ import annotations
-
 __all__ = ["StructuralEquivalence", "StructuralEquivalenceMixin"]
 
 from abc import ABC, abstractmethod

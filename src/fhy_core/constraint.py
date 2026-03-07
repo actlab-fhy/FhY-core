@@ -32,7 +32,7 @@ from fhy_core.serialization import (
     register_serializable,
     serialize_registry_wrapped_value,
 )
-from fhy_core.trait import StructuralEquivalenceMixin
+from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
 from fhy_core.utils import Self, format_comma_separated_list
 
 from .expression import (
@@ -49,7 +49,9 @@ from .expression import (
 from .identifier import Identifier
 
 
-class Constraint(WrappedFamilySerializable, StructuralEquivalenceMixin, ABC):
+class Constraint(
+    WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC
+):
     """Abstract base class for constraints."""
 
     _variable: Identifier
@@ -219,6 +221,7 @@ class EquationConstraint(Constraint):
     ) -> None:
         super().__init__(constrained_variable)
         self._expression = expression
+        self.freeze(deep=True)
 
     def is_satisfied(self, value: Expression | LiteralType) -> bool:
         if isinstance(value, (str, float, int, bool)):
@@ -298,6 +301,7 @@ class InSetConstraint(Constraint, Generic[_ConstraintMemberT]):
                 cast(Collection[ConstraintMember], valid_values)
             ),
         )
+        self.freeze(deep=True)
 
     def is_satisfied(self, value: _ConstraintMemberT) -> bool:
         return value in self._valid_values
@@ -401,6 +405,7 @@ class NotInSetConstraint(Constraint, Generic[_ConstraintMemberT]):
                 cast(Collection[ConstraintMember], invalid_values)
             ),
         )
+        self.freeze(deep=True)
 
     def is_satisfied(self, value: _ConstraintMemberT) -> bool:
         return value not in self._invalid_values

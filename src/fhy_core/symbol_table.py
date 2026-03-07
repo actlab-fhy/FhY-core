@@ -27,6 +27,7 @@ from fhy_core.serialization import (
 )
 from fhy_core.trait import (
     CanonicalizableMixin,
+    FrozenMixin,
     StructuralEquivalenceMixin,
     VerifiableMixin,
     VerificationError,
@@ -42,7 +43,7 @@ def _identifier_sort_key(identifier: Identifier) -> tuple[int, str]:
 
 
 @dataclass(frozen=True)
-class SymbolTableFrame(WrappedFamilySerializable, ABC):
+class SymbolTableFrame(WrappedFamilySerializable, FrozenMixin, ABC):
     """Base symbol table frame."""
 
     name: Identifier

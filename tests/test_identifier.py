@@ -1,5 +1,6 @@
 """Tests the identifier."""
 
+from concurrent.futures import ThreadPoolExecutor
 from copy import copy
 from unittest.mock import patch
 
@@ -9,6 +10,7 @@ from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
 )
+from fhy_core.trait import Equal, PartialEqual
 
 
 def test_identifier_initialization():
@@ -30,6 +32,21 @@ def test_unique_id_generation():
     assert id3.id == 2
 
 
+def test_unique_id_generation_thread_safe():
+    """Test that IDs remain unique under concurrent creation."""
+    num_identifiers = 2000
+    with patch.object(Identifier, "_next_id", 0):
+        with ThreadPoolExecutor(max_workers=32) as executor:
+            identifiers = list(
+                executor.map(lambda _: Identifier(""), range(num_identifiers))
+            )
+
+    ids = [identifier.id for identifier in identifiers]
+    assert len(set(ids)) == num_identifiers
+    assert min(ids) == 0
+    assert max(ids) == num_identifiers - 1
+
+
 def test_equality():
     """Test that the identifier equality is based on the ID."""
     id1 = Identifier("name")
@@ -39,6 +56,15 @@ def test_equality():
     assert id1 == id1  # noqa: PLR0124
     assert id1 != id2
     assert id2 != id3
+
+
+def test_identifier_supports_equal_traits() -> None:
+    """Test `Identifier` satisfies equality trait protocols."""
+    identifier = Identifier("name")
+    assert isinstance(identifier, PartialEqual)
+    assert isinstance(identifier, Equal)
+    assert identifier.supports_partial_equality is True
+    assert identifier.supports_equality is True
 
 
 def test_copy():

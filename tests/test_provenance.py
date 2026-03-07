@@ -8,6 +8,7 @@ from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
 )
+from fhy_core.trait import Equal, Orderable, PartialEqual, PartialOrderable
 
 
 def test_position_dict_serialization():
@@ -16,6 +17,19 @@ def test_position_dict_serialization():
     restored = Position.deserialize_from_dict(position.serialize_to_dict())
 
     assert restored == position
+
+
+def test_position_supports_equal_and_orderable_traits() -> None:
+    """Test `Position` satisfies equality and ordering trait protocols."""
+    position = Position(2, 8)
+    assert isinstance(position, PartialEqual)
+    assert isinstance(position, Equal)
+    assert isinstance(position, PartialOrderable)
+    assert isinstance(position, Orderable)
+    assert position.supports_partial_equality is True
+    assert position.supports_equality is True
+    assert position.supports_partial_ordering is True
+    assert position.supports_ordering is True
 
 
 def test_position_dict_deserialization_invalid_value_rejected():
@@ -32,6 +46,15 @@ def test_span_dict_serialization():
     assert restored == span
 
 
+def test_span_supports_equal_traits() -> None:
+    """Test `Span` satisfies equality trait protocols."""
+    span = Span(Path("example.fhy"), 4, 12, Position(1, 5), Position(1, 13))
+    assert isinstance(span, PartialEqual)
+    assert isinstance(span, Equal)
+    assert span.supports_partial_equality is True
+    assert span.supports_equality is True
+
+
 def test_span_deserialization_structure_rejected():
     with pytest.raises(DeserializationDictStructureError):
         Span.deserialize_from_dict({"file_path": "x.fhy"})
@@ -43,6 +66,15 @@ def test_note_dict_serialization():
     restored = Note.deserialize_from_dict(note.serialize_to_dict())
 
     assert restored == note
+
+
+def test_note_supports_equal_traits() -> None:
+    """Test `Note` satisfies equality trait protocols."""
+    note = Note("lowered from ast", NoteKind.OTHER)
+    assert isinstance(note, PartialEqual)
+    assert isinstance(note, Equal)
+    assert note.supports_partial_equality is True
+    assert note.supports_equality is True
 
 
 def test_note_string_representation():
@@ -171,6 +203,15 @@ def test_provenance_dict_serialization():
     restored = Provenance.deserialize_from_dict(provenance.serialize_to_dict())
 
     assert restored == provenance
+
+
+def test_provenance_supports_equal_traits() -> None:
+    """Test `Provenance` satisfies equality trait protocols."""
+    provenance = Provenance.unknown()
+    assert isinstance(provenance, PartialEqual)
+    assert isinstance(provenance, Equal)
+    assert provenance.supports_partial_equality is True
+    assert provenance.supports_equality is True
 
 
 def test_provenance_deserialization_structure_rejected():
