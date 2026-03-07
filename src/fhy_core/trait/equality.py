@@ -8,10 +8,8 @@ from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
-class PartialEqual(Protocol):
+class PartialEqual(Protocol):  # noqa: PLW1641
     """Protocol for objects that define `==` semantics."""
-
-    __hash__ = None
 
     @property
     def supports_partial_equality(self) -> bool: ...
@@ -26,11 +24,11 @@ class Equal(PartialEqual, Protocol):
     @property
     def supports_equality(self) -> bool: ...
 
+    def __hash__(self) -> int: ...
+
 
 class PartialEqualMixin:
     """Mixin for objects that define `==` semantics."""
-
-    __hash__ = None
 
     @property
     def supports_partial_equality(self) -> bool:
@@ -41,6 +39,9 @@ class PartialEqualMixin:
 
     def __eq__(self, other: object) -> bool | NotImplementedType:
         return NotImplemented
+
+    def __hash__(self) -> int:
+        raise TypeError(f'Unhashable type: "{type(self).__name__}"')
 
     def _is_native_equatable_dataclass(self) -> bool:
         if not is_dataclass(self):
@@ -55,3 +56,10 @@ class EqualMixin(PartialEqualMixin):
     @property
     def supports_equality(self) -> bool:
         return True
+
+    def __hash__(self) -> int:
+        raise NotImplementedError(
+            f'"{type(self).__name__}" declares total equality via '
+            f'"{type(self).__name__}" but does not implement "__hash__". '
+            'Implement "__hash__", or use "@dataclass(frozen=True)" to derive one.'
+        )

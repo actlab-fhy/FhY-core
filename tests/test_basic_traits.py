@@ -80,9 +80,13 @@ class _NoPartialEqualValue(PartialEqualMixin):
     value: int
 
 
-@dataclass(eq=True)
+@dataclass(eq=True, frozen=True)
 class _AutoEqualValue(EqualMixin):
     value: int
+
+
+class _NoHashEqualValue(EqualMixin):  # noqa: PLW1641
+    pass
 
 
 @dataclass(order=True)
@@ -174,6 +178,12 @@ def test_equal_runtime_protocol() -> None:
     assert value.supports_equality is True
     assert value.supports_partial_equality is True
     assert value == _AutoEqualValue(3)
+
+
+def test_equal_mixin_requires_hash_implementation() -> None:
+    """Test `EqualMixin` prompts subclasses to implement hash."""
+    with pytest.raises(NotImplementedError, match="does not implement __hash__"):
+        hash(_NoHashEqualValue())
 
 
 def test_partial_orderable_detects_ordered_dataclass() -> None:
