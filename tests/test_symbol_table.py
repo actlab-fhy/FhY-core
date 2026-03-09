@@ -340,6 +340,88 @@ def test_symbol_table_structural_equivalence_true_for_same_content():
     assert left.is_structurally_equivalent(right)
 
 
+def test_symbol_table_structural_equivalence_with_equivalent_variable_frames():
+    """Test structural equivalence with equivalent variable frames."""
+    namespace = mock_identifier("namespace", 0)
+    symbol_name = mock_identifier("symbol", 1)
+
+    left = SymbolTable()
+    left.add_namespace(namespace)
+    left.add_symbol(
+        namespace,
+        symbol_name,
+        VariableSymbolTableFrame(
+            symbol_name,
+            NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+            TypeQualifier.STATE,
+        ),
+    )
+
+    right = SymbolTable()
+    right.add_namespace(namespace)
+    right.add_symbol(
+        namespace,
+        symbol_name,
+        VariableSymbolTableFrame(
+            symbol_name,
+            NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+            TypeQualifier.STATE,
+        ),
+    )
+
+    assert left.is_structurally_equivalent(right)
+
+
+def test_symbol_table_structural_equivalence_with_equivalent_function_frames():
+    """Test structural equivalence with equivalent function frames."""
+    namespace = mock_identifier("namespace", 0)
+    symbol_name = mock_identifier("symbol", 1)
+
+    left = SymbolTable()
+    left.add_namespace(namespace)
+    left.add_symbol(
+        namespace,
+        symbol_name,
+        FunctionSymbolTableFrame(
+            symbol_name,
+            FunctionKeyword.PROCEDURE,
+            signature=[
+                (
+                    TypeQualifier.INPUT,
+                    NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+                ),
+                (
+                    TypeQualifier.OUTPUT,
+                    NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+                ),
+            ],
+        ),
+    )
+
+    right = SymbolTable()
+    right.add_namespace(namespace)
+    right.add_symbol(
+        namespace,
+        symbol_name,
+        FunctionSymbolTableFrame(
+            symbol_name,
+            FunctionKeyword.PROCEDURE,
+            signature=[
+                (
+                    TypeQualifier.INPUT,
+                    NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+                ),
+                (
+                    TypeQualifier.OUTPUT,
+                    NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+                ),
+            ],
+        ),
+    )
+
+    assert left.is_structurally_equivalent(right)
+
+
 def test_symbol_table_structural_equivalence_false_for_different_parent_graph():
     """Test structural equivalence is false for different namespace parent graphs."""
     root = mock_identifier("root", 0)

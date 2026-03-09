@@ -48,7 +48,11 @@ def default_int_param() -> IntParam:
 
 def test_param_is_not_set_after_initialization(default_real_param):
     """Test that the value of a parameter is not set after initialization."""
+    assignment = default_real_param.set_value(1.0)
     assert isinstance(default_real_param, RealParam)
+    assert isinstance(assignment, ParamAssignment)
+    assert assignment.param is default_real_param
+    assert not hasattr(default_real_param, "is_value_set")
 
 
 def test_param_is_set_after_setting_value(default_real_param):

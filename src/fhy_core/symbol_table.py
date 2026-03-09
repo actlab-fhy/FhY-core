@@ -258,6 +258,39 @@ def _is_valid_symbol_entry_data(data: SerializedDict) -> TypeGuard[_SymbolEntryD
     )
 
 
+def _is_symbol_table_frame_structurally_equivalent(
+    frame: SymbolTableFrame, other: SymbolTableFrame
+) -> bool:
+    if isinstance(frame, ImportSymbolTableFrame) and isinstance(
+        other, ImportSymbolTableFrame
+    ):
+        return frame.name == other.name
+    elif isinstance(frame, VariableSymbolTableFrame) and isinstance(
+        other, VariableSymbolTableFrame
+    ):
+        return (
+            frame.name == other.name
+            and frame.type_qualifier == other.type_qualifier
+            and frame.type.is_structurally_equivalent(other.type)
+        )
+    elif isinstance(frame, FunctionSymbolTableFrame) and isinstance(
+        other, FunctionSymbolTableFrame
+    ):
+        if frame.name != other.name or frame.keyword != other.keyword:
+            return False
+        if len(frame.signature) != len(other.signature):
+            return False
+        return all(
+            type_qualifier_1 == type_qualifier_2
+            and type_1.is_structurally_equivalent(type_2)
+            for (type_qualifier_1, type_1), (type_qualifier_2, type_2) in zip(
+                frame.signature, other.signature, strict=True
+            )
+        )
+    else:
+        return False
+
+
 class _NamespaceEntryData(TypedDict):
     namespace_name: SerializedDict
     parent_namespace_name: SerializedDict | None
@@ -467,7 +500,9 @@ class SymbolTable(
             if set(namespace_symbols.keys()) != set(other_namespace_symbols.keys()):
                 return False
             for symbol_name, frame in namespace_symbols.items():
-                if frame != other_namespace_symbols[symbol_name]:
+                if not _is_symbol_table_frame_structurally_equivalent(
+                    frame, other_namespace_symbols[symbol_name]
+                ):
                     return False
         return True
 
