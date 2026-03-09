@@ -2,6 +2,7 @@
 
 __all__ = [
     "Param",
+    "ParamAssignment",
     "RealParam",
     "IntParam",
     "OrdinalParam",
@@ -14,7 +15,7 @@ __all__ = [
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Hashable, Sequence
-from typing import Any, Generic, TypedDict, TypeGuard, TypeVar
+from typing import Any, Generic, TypedDict, TypeGuard, TypeVar, cast
 
 from fhy_core.constraint import (
     Constraint,
@@ -32,12 +33,12 @@ from fhy_core.expression import (
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
     DeserializationDictStructureError,
-    DeserializationValueError,
     SerializedDict,
     WrappedFamilySerializable,
     is_serialized_dict,
     register_serializable,
 )
+from fhy_core.trait import FrozenMixin
 from fhy_core.utils import Self, format_comma_separated_list
 
 _H = TypeVar("_H", bound=Hashable)
@@ -60,17 +61,49 @@ def _is_values_unique_in_sequence_with_set(values: Collection[_H]) -> bool:
     return len(values) == len(set(values))
 
 
-class Param(WrappedFamilySerializable, ABC, Generic[_T]):
+class ParamAssignment(FrozenMixin, Generic[_T]):
+    """Immutable binding of a parameter definition to a concrete value."""
+
+    _param: "Param[_T]"
+    _value: _T
+
+    def __init__(self, param: "Param[_T]", value: _T) -> None:
+        param._assert_value_satisfies_constraints(value)
+        object.__setattr__(self, "_param", param)
+        object.__setattr__(self, "_value", value)
+        self.freeze(deep=True)
+
+    @property
+    def param(self) -> "Param[_T]":
+        return self._param
+
+    @property
+    def value(self) -> _T:
+        return self._value
+
+    def materialize(self) -> "Param[_T]":
+        """Return the parameter definition associated with this assignment."""
+        return self._param
+
+    def is_value_set(self) -> bool:
+        """Return whether this assignment has a value."""
+        return True
+
+    def get_value(self) -> _T:
+        """Return the assigned value."""
+        return self._value
+
+
+class Param(WrappedFamilySerializable, FrozenMixin, ABC, Generic[_T]):
     """Abstract base class for constrained parameters."""
 
-    _value: _T | None
     _variable: Identifier
-    _constraints: list[Constraint]
+    _constraints: tuple[Constraint, ...]
 
     def __init__(self, name: Identifier | None = None) -> None:
-        self._value = None
         self._variable = name or Identifier("param")
-        self._constraints = []
+        self._constraints = ()
+        self.freeze(deep=True)
 
     @property
     def variable(self) -> Identifier:
@@ -84,13 +117,11 @@ class Param(WrappedFamilySerializable, ABC, Generic[_T]):
     def get_symbol_type(self) -> SymbolType:
         """Return the symbol type of the parameter."""
 
-    def is_value_set(self) -> bool:
-        """Return True if the parameter value is set; False otherwise."""
-        return self._value is not None
-
     @classmethod
-    def with_value(cls: type[Self], value: _T, name: Identifier | None = None) -> Self:
-        """Create a parameter with a fixed value.
+    def with_value(
+        cls: type[Self], value: _T, name: Identifier | None = None
+    ) -> ParamAssignment[_T]:
+        """Create a parameter assignment from a parameter definition.
 
         Args:
             value: Parameter value.
@@ -98,12 +129,15 @@ class Param(WrappedFamilySerializable, ABC, Generic[_T]):
                 will be used.
 
         Returns:
-            Parameter with the specified fixed value.
+            Assignment with the specified fixed value.
 
         """
         param = cls(name)
-        param.set_value(value)
-        return param
+        return param.set_value(value)
+
+    def bind(self, value: _T) -> ParamAssignment[_T]:
+        """Bind this parameter definition to a concrete value."""
+        return self.set_value(value)
 
     def is_constraints_satisfied(self, value: Any) -> bool:
         """Check if the value satisfies all constraints.
@@ -130,19 +164,11 @@ class Param(WrappedFamilySerializable, ABC, Generic[_T]):
         if not isinstance(other, self.__class__):
             return False
 
-        if self.is_value_set() and other.is_value_set():
-            return self.get_value() == other.get_value()
-
         constrained_variable = Identifier("var")
 
         def convert_param_constraints(
             param_: Param[_T],
         ) -> Expression | None:
-            if param_.is_value_set():
-                return IdentifierExpression(constrained_variable).equals(
-                    param_.get_value()
-                )
-
             constraint_expressions_: list[Expression] = []
             for constraint_ in param_._constraints:
                 constraint_expression_ = constraint_.convert_to_expression()
@@ -206,22 +232,14 @@ class Param(WrappedFamilySerializable, ABC, Generic[_T]):
         else:
             return True
 
-    def get_value(self) -> _T:
-        """Return the parameter value.
-
-        Raises:
-            ValueError: If the parameter is not set.
-
-        """
-        if self._value is None:
-            raise ValueError("Parameter is not set.")
-        return self._value
-
-    def set_value(self, value: _T) -> None:
-        """Set the parameter value.
+    def set_value(self, value: _T) -> ParamAssignment[_T]:
+        """Create an immutable assignment from this parameter definition.
 
         Args:
             value: New parameter value.
+
+        Returns:
+            A parameter assignment with the provided value.
 
         Raises:
             ValueError: If the value is not valid.
@@ -234,51 +252,55 @@ class Param(WrappedFamilySerializable, ABC, Generic[_T]):
             raise ValueError(
                 f"Value ({value}) does not satisfy the constraint: {failing_constraint}"
             )
-        self._value = value
+        self._assert_value_satisfies_constraints(value)
+        return ParamAssignment(self, value)
 
-    def add_constraint(self, constraint: Constraint) -> None:
-        """Add a constraint to the parameter.
+    def _assert_value_satisfies_constraints(self, value: _T) -> None:
+        """Raise if a value does not satisfy the parameter constraints."""
+        is_constraint_satisfied, failing_constraint = (
+            self._is_constraints_satisfied_with_failing_constraint(value)
+        )
+        if not is_constraint_satisfied:
+            raise ValueError(
+                f"Value ({value}) does not satisfy the constraint: {failing_constraint}"
+            )
+
+    def add_constraint(self, constraint: Constraint) -> Self:
+        """Return a new parameter with an additional constraint.
 
         Args:
             constraint: Constraint to add.
 
+        Returns:
+            A new parameter instance with the added constraint.
+
         """
-        self._constraints.append(constraint)
+        if constraint.variable != self.variable:
+            raise ValueError("Constraint variable must match parameter variable.")
+        new_param = self._clone()
+        object.__setattr__(new_param, "_constraints", self._constraints + (constraint,))
+        return new_param
+
+    def add_constraints(self, constraints: Collection[Constraint]) -> Self:
+        """Return a new parameter with multiple additional constraints."""
+        current_param: Self = self
+        for constraint in constraints:
+            current_param = current_param.add_constraint(constraint)
+        return current_param
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "variable": self._variable.serialize_to_dict(),
-            # TODO: narrow this type to be valid
-            "value": self._value,  # type: ignore[dict-item]
             "constraints": [
                 constraint.serialize_to_dict() for constraint in self._constraints
             ],
         }
 
-    def copy(self) -> Self:
-        """Return a shallow copy of the parameter."""
+    def _clone(self) -> Self:
+        """Create a new parameter with identical definition state."""
         new_param = self.__class__(self._variable)
-        new_param._value = self._value
-        self.copy_constraints_to_new_param(self, new_param)
+        object.__setattr__(new_param, "_constraints", self._constraints)
         return new_param
-
-    @staticmethod
-    def copy_constraints_to_new_param(
-        param: "Param[_T]", new_param: "Param[_T]"
-    ) -> None:
-        """Copy constraints from one parameter to another.
-
-        Args:
-            param: Parameter to copy constraints from.
-            new_param: Parameter to copy constraints to.
-
-        """
-        new_param._constraints = [
-            constraint.copy() for constraint in param._constraints
-        ]
-
-    def __copy__(self) -> Self:
-        return self.copy()
 
     def __repr__(self) -> str:
         param_set_repr = self._get_param_set_repr()
@@ -286,7 +308,7 @@ class Param(WrappedFamilySerializable, ABC, Generic[_T]):
             param_set_repr = f"{param_set_repr}, "
         return (
             f"{self.__class__.__name__}({repr(self._variable)}, {param_set_repr}"
-            f"value={repr(self._value)}, constraints={repr(self._constraints)})"
+            f"constraints={repr(self._constraints)})"
         )
 
     def _get_param_set_repr(self) -> str:
@@ -300,15 +322,12 @@ class Param(WrappedFamilySerializable, ABC, Generic[_T]):
         return ""
 
     def __str__(self) -> str:
-        if self.is_value_set():
-            return f"{{{self.get_value()}}}"
-        else:
-            land = " /\\ "
-            return (
-                "{" + f"{self._variable} in {self._get_param_set_str()} | "
-                f"{land.join(str(c) for c in self._constraints)}"
-                "}"
-            )
+        land = " /\\ "
+        return (
+            "{" + f"{self._variable} in {self._get_param_set_str()} | "
+            f"{land.join(str(c) for c in self._constraints)}"
+            "}"
+        )
 
     @abstractmethod
     def _get_param_set_str(self) -> str:
@@ -345,7 +364,6 @@ class ParamData(TypedDict):
     """Structure of parameter data for serialization."""
 
     variable: SerializedDict
-    value: Any | None
     constraints: list[SerializedDict]
 
 
@@ -354,11 +372,6 @@ def is_valid_param_data(data: SerializedDict) -> TypeGuard[ParamData]:
     return (
         "variable" in data
         and is_serialized_dict(data["variable"])
-        and "value" in data
-        and (
-            data["value"] is None
-            or isinstance(data["value"], (int, float, str, list, tuple, dict))
-        )
         and "constraints" in data
         and isinstance(data["constraints"], list)
         and all(
@@ -371,34 +384,24 @@ def is_valid_param_data(data: SerializedDict) -> TypeGuard[ParamData]:
 def finalize_param_construction_from_data(
     param: Param[Any],
     data: ParamData,
-    value_check_function: Callable[[Any], bool],
-    value_description_phrase: str,
     constraint_filter_function: Callable[[Constraint], bool] | None = None,
-) -> None:
+) -> Param[Any]:
     """Finalize the construction of a parameter from serialized data.
 
     Args:
         param: Parameter to finalize construction for.
         data: Serialized parameter data.
-        value_check_function: Function to check if the value in the data is
-            valid for the parameter type.
-        value_description_phrase: Phrase describing the valid value type.
         constraint_filter_function: Optional function to filter constraints to add
             to the parameter. If not provided, all constraints in the data will be
             added.
 
     """
+    current_param: Param[Any] = param
     for constraint_data in data["constraints"]:
         constraint = Constraint.deserialize_from_dict(constraint_data)
         if constraint_filter_function is None or constraint_filter_function(constraint):
-            param.add_constraint(constraint)
-
-    if data["value"] is not None:
-        if not value_check_function(data["value"]):
-            raise DeserializationValueError(
-                type(param), "value", value_description_phrase, data["value"]
-            )
-        param.set_value(data["value"])
+            current_param = current_param.add_constraint(constraint)
+    return current_param
 
 
 @register_serializable(type_id="real_param")
@@ -411,7 +414,7 @@ class RealParam(Param[str | float]):
     def is_constraints_satisfied(self, value: str | float) -> bool:
         return super().is_constraints_satisfied(value)
 
-    def set_value(self, value: str | float) -> None:
+    def set_value(self, value: str | float) -> ParamAssignment[str | float]:
         if not isinstance(value, (str, float)):
             raise ValueError("Value must be a string or a float.")
         if isinstance(value, str):
@@ -453,8 +456,8 @@ class RealParam(Param[str | float]):
         ):
             raise ValueError("Lower bound must be less than or equal to upper bound.")
         param = cls(name)
-        param.add_lower_bound_constraint(lower_bound, is_lower_inclusive)
-        param.add_upper_bound_constraint(upper_bound, is_upper_inclusive)
+        param = param.add_lower_bound_constraint(lower_bound, is_lower_inclusive)
+        param = param.add_upper_bound_constraint(upper_bound, is_upper_inclusive)
         return param
 
     @classmethod
@@ -477,7 +480,7 @@ class RealParam(Param[str | float]):
 
         """
         param = cls(name)
-        param.add_lower_bound_constraint(lower_bound, is_inclusive)
+        param = param.add_lower_bound_constraint(lower_bound, is_inclusive)
         return param
 
     @classmethod
@@ -500,14 +503,14 @@ class RealParam(Param[str | float]):
 
         """
         param = cls(name)
-        param.add_upper_bound_constraint(upper_bound, is_inclusive)
+        param = param.add_upper_bound_constraint(upper_bound, is_inclusive)
         return param
 
     def add_upper_bound_constraint(
         self,
         upper_bound: float | str,
         is_inclusive: bool = True,
-    ) -> None:
+    ) -> Self:
         """Add an upper bound constraint to the parameter.
 
         Args:
@@ -518,13 +521,13 @@ class RealParam(Param[str | float]):
         upper_bound_constraint = _create_upper_bound_constraint(
             self.variable, upper_bound, is_inclusive
         )
-        self.add_constraint(upper_bound_constraint)
+        return self.add_constraint(upper_bound_constraint)
 
     def add_lower_bound_constraint(
         self,
         lower_bound: float | str,
         is_inclusive: bool = True,
-    ) -> None:
+    ) -> Self:
         """Add a lower bound constraint to the parameter.
 
         Args:
@@ -535,7 +538,7 @@ class RealParam(Param[str | float]):
         lower_bound_constraint = _create_lower_bound_constraint(
             self.variable, lower_bound, is_inclusive
         )
-        self.add_constraint(lower_bound_constraint)
+        return self.add_constraint(lower_bound_constraint)
 
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "RealParam":
@@ -544,11 +547,12 @@ class RealParam(Param[str | float]):
                 cls, ParamData.__annotations__, data
             )
         param = RealParam(Identifier.deserialize_from_dict(data["variable"]))
-        finalize_param_construction_from_data(
-            param,
-            data,
-            lambda v: isinstance(v, (str, float)),
-            "a float or a string representing a number",
+        param = cast(
+            RealParam,
+            finalize_param_construction_from_data(
+                param,
+                data,
+            ),
         )
         return param
 
@@ -563,7 +567,7 @@ class IntParam(Param[int]):
     def is_constraints_satisfied(self, value: int) -> bool:
         return super().is_constraints_satisfied(value)
 
-    def set_value(self, value: int) -> None:
+    def set_value(self, value: int) -> ParamAssignment[int]:
         if not isinstance(value, int):
             raise ValueError("Value must be an integer.")
         return super().set_value(value)
@@ -600,8 +604,8 @@ class IntParam(Param[int]):
         ):
             raise ValueError("Lower bound must be less than or equal to upper bound.")
         param = cls(name)
-        param.add_lower_bound_constraint(lower_bound, is_lower_inclusive)
-        param.add_upper_bound_constraint(upper_bound, is_upper_inclusive)
+        param = param.add_lower_bound_constraint(lower_bound, is_lower_inclusive)
+        param = param.add_upper_bound_constraint(upper_bound, is_upper_inclusive)
         return param
 
     @classmethod
@@ -624,7 +628,7 @@ class IntParam(Param[int]):
 
         """
         param = cls(name)
-        param.add_lower_bound_constraint(lower_bound, is_inclusive)
+        param = param.add_lower_bound_constraint(lower_bound, is_inclusive)
         return param
 
     @classmethod
@@ -647,14 +651,14 @@ class IntParam(Param[int]):
 
         """
         param = cls(name)
-        param.add_upper_bound_constraint(upper_bound, is_inclusive)
+        param = param.add_upper_bound_constraint(upper_bound, is_inclusive)
         return param
 
     def add_upper_bound_constraint(
         self,
         upper_bound: int,
         is_inclusive: bool = True,
-    ) -> None:
+    ) -> Self:
         """Add an upper bound constraint to the parameter.
 
         Args:
@@ -665,13 +669,13 @@ class IntParam(Param[int]):
         upper_bound_constraint = _create_upper_bound_constraint(
             self.variable, upper_bound, is_inclusive
         )
-        self.add_constraint(upper_bound_constraint)
+        return self.add_constraint(upper_bound_constraint)
 
     def add_lower_bound_constraint(
         self,
         lower_bound: int,
         is_inclusive: bool = True,
-    ) -> None:
+    ) -> Self:
         """Add a lower bound constraint to the parameter.
 
         Args:
@@ -682,7 +686,7 @@ class IntParam(Param[int]):
         lower_bound_constraint = _create_lower_bound_constraint(
             self.variable, lower_bound, is_inclusive
         )
-        self.add_constraint(lower_bound_constraint)
+        return self.add_constraint(lower_bound_constraint)
 
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "IntParam":
@@ -691,11 +695,12 @@ class IntParam(Param[int]):
                 cls, ParamData.__annotations__, data
             )
         param = IntParam(Identifier.deserialize_from_dict(data["variable"]))
-        finalize_param_construction_from_data(
-            param,
-            data,
-            lambda v: isinstance(v, int),
-            "an integer",
+        param = cast(
+            IntParam,
+            finalize_param_construction_from_data(
+                param,
+                data,
+            ),
         )
         return param
 
@@ -730,17 +735,17 @@ class OrdinalParam(Param[Any]):
         values = tuple(sorted(values))
         if not _is_values_unique_in_sorted_sequence(values):
             raise ValueError("Values must be unique.")
-        self._all_values = values
+        object.__setattr__(self, "_all_values", values)
 
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.REAL
 
-    def set_value(self, value: Any) -> None:
+    def set_value(self, value: Any) -> ParamAssignment[Any]:
         if value not in self._all_values:
             raise ValueError("Value is not in the set of allowed values.")
         return super().set_value(value)
 
-    def add_constraint(self, constraint: Constraint) -> None:
+    def add_constraint(self, constraint: Constraint) -> Self:
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
             raise ValueError(
                 "Only in-set and not-in-set constraints are allowed for "
@@ -762,17 +767,18 @@ class OrdinalParam(Param[Any]):
         param = OrdinalParam(
             data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
         )
-        finalize_param_construction_from_data(
-            param,
-            data,
-            lambda v: v in param._all_values,
-            f"a value in {param._all_values}",
+        param = cast(
+            OrdinalParam,
+            finalize_param_construction_from_data(
+                param,
+                data,
+            ),
         )
         return param
 
-    def copy(self) -> "OrdinalParam":
+    def _clone(self) -> "OrdinalParam":
         new_param = OrdinalParam(self._all_values, self._variable)
-        self.copy_constraints_to_new_param(self, new_param)
+        object.__setattr__(new_param, "_constraints", self._constraints)
         return new_param
 
     def _get_param_set_repr(self) -> str:
@@ -791,27 +797,27 @@ class CategoricalParam(Param[_H]):
 
     """
 
-    _categories: set[_H]
+    _categories: frozenset[_H]
 
     def __init__(self, categories: Collection[_H], name: Identifier | None = None):
         super().__init__(name)
         if not _is_values_unique_in_sequence_with_set(categories):
             raise ValueError("Values must be unique.")
-        self._categories = set(categories)
+        object.__setattr__(self, "_categories", frozenset(categories))
 
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.REAL
 
-    def set_value(self, value: _H) -> None:
+    def set_value(self, value: _H) -> ParamAssignment[_H]:
         if value not in self._categories:
             raise ValueError("Value is not in the set of allowed categories.")
         return super().set_value(value)
 
     def get_possible_values(self) -> set[_H]:
         """Return the set of possible values for the parameter."""
-        return self._categories.copy()
+        return set(self._categories)
 
-    def add_constraint(self, constraint: Constraint) -> None:
+    def add_constraint(self, constraint: Constraint) -> Self:
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
             raise ValueError(
                 "Only in-set and not-in-set constraints are allowed for "
@@ -833,17 +839,18 @@ class CategoricalParam(Param[_H]):
         param = CategoricalParam(
             data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
         )
-        finalize_param_construction_from_data(
-            param,
-            data,
-            lambda v: v in param._categories,
-            f"a value in {param._categories}",
+        param = cast(
+            CategoricalParam[_H],
+            finalize_param_construction_from_data(
+                param,
+                data,
+            ),
         )
         return param
 
-    def copy(self) -> "CategoricalParam[_H]":
-        new_param = CategoricalParam[_H](self._categories.copy(), self._variable)
-        self.copy_constraints_to_new_param(self, new_param)
+    def _clone(self) -> "CategoricalParam[_H]":
+        new_param = CategoricalParam(self._categories, self._variable)
+        object.__setattr__(new_param, "_constraints", self._constraints)
         return new_param
 
     def _get_param_set_repr(self) -> str:
@@ -868,7 +875,7 @@ class PermParam(Param[tuple[Any, ...]]):
         super().__init__(name)
         if not _is_values_unique_in_sequence_without_set(all_values):
             raise ValueError("Values must be unique.")
-        self._all_values = tuple(all_values)
+        object.__setattr__(self, "_all_values", tuple(all_values))
 
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.REAL
@@ -884,12 +891,12 @@ class PermParam(Param[tuple[Any, ...]]):
         value = tuple(value)
         return super().is_constraints_satisfied(value)
 
-    def set_value(self, value: Sequence[Any]) -> None:
+    def set_value(self, value: Sequence[Any]) -> ParamAssignment[tuple[Any, ...]]:
         if not self._is_value_valid_permutation(value):
             raise ValueError("Value is not a valid permutation.")
         return super().set_value(tuple(value))
 
-    def add_constraint(self, constraint: Constraint) -> None:
+    def add_constraint(self, constraint: Constraint) -> Self:
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
             raise ValueError(
                 "Only in-set and not-in-set constraints are allowed for "
@@ -911,17 +918,18 @@ class PermParam(Param[tuple[Any, ...]]):
         param = PermParam(
             data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
         )
-        finalize_param_construction_from_data(
-            param,
-            data,
-            param._is_value_valid_permutation,
-            f"a permutation of {param._all_values}",
+        param = cast(
+            PermParam,
+            finalize_param_construction_from_data(
+                param,
+                data,
+            ),
         )
         return param
 
-    def copy(self) -> "PermParam":
+    def _clone(self) -> "PermParam":
         new_param = PermParam(self._all_values, self._variable)
-        self.copy_constraints_to_new_param(self, new_param)
+        object.__setattr__(new_param, "_constraints", self._constraints)
         return new_param
 
     def _get_param_set_repr(self) -> str:

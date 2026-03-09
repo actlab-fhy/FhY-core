@@ -8,7 +8,7 @@ __all__ = [
 ]
 
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
 from fhy_core.constraint import Constraint, EquationConstraint
 from fhy_core.expression import (
@@ -115,33 +115,32 @@ class NatParam(IntParam):
         **kwargs: Any,
     ) -> None:
         super().__init__(name)
-        self._is_zero_included = is_zero_included
+        object.__setattr__(self, "_is_zero_included", is_zero_included)
         if self._is_zero_included:
-            self.add_constraint(
-                EquationConstraint(
-                    self.variable,
-                    BinaryExpression(
-                        BinaryOperation.GREATER_EQUAL,
-                        IdentifierExpression(self.variable),
-                        LiteralExpression(0),
-                    ),
-                )
+            basic_constraint = EquationConstraint(
+                self.variable,
+                BinaryExpression(
+                    BinaryOperation.GREATER_EQUAL,
+                    IdentifierExpression(self.variable),
+                    LiteralExpression(0),
+                ),
             )
         else:
-            self.add_constraint(
-                EquationConstraint(
-                    self.variable,
-                    BinaryExpression(
-                        BinaryOperation.GREATER,
-                        IdentifierExpression(self.variable),
-                        LiteralExpression(0),
-                    ),
-                )
+            basic_constraint = EquationConstraint(
+                self.variable,
+                BinaryExpression(
+                    BinaryOperation.GREATER,
+                    IdentifierExpression(self.variable),
+                    LiteralExpression(0),
+                ),
             )
+        object.__setattr__(
+            self, "_constraints", self._constraints + (basic_constraint,)
+        )
 
     def add_lower_bound_constraint(
         self, lower_bound: int, is_inclusive: bool = True
-    ) -> None:
+    ) -> "NatParam":
         if self._is_zero_included:
             if lower_bound < 0:
                 raise ValueError("Lower bound must be non-negative.")
@@ -165,7 +164,7 @@ class NatParam(IntParam):
 
     def add_upper_bound_constraint(
         self, upper_bound: int, is_inclusive: bool = True
-    ) -> None:
+    ) -> "NatParam":
         if self._is_zero_included:
             if is_inclusive:
                 if upper_bound < 0:
@@ -216,13 +215,13 @@ class NatParam(IntParam):
             )
 
         param = NatParam(variable, is_zero_included)
-        finalize_param_construction_from_data(
-            param,
-            data,
-            lambda v: isinstance(v, int) and v >= 0,
-            "a non-negative integer",
-            constraint_filter_function=lambda c: (
-                not is_the_basic_nat_param_constraint(c, variable, is_zero_included)
+        return cast(
+            NatParam,
+            finalize_param_construction_from_data(
+                param,
+                data,
+                constraint_filter_function=lambda c: (
+                    not is_the_basic_nat_param_constraint(c, variable, is_zero_included)
+                ),
             ),
         )
-        return param
