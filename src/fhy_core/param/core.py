@@ -89,10 +89,6 @@ class ParamAssignment(FrozenMixin, Generic[_T]):
         """Return whether this assignment has a value."""
         return True
 
-    def get_value(self) -> _T:
-        """Return the assigned value."""
-        return self._value
-
 
 class Param(WrappedFamilySerializable, FrozenMixin, ABC, Generic[_T]):
     """Abstract base class for constrained parameters."""
@@ -100,7 +96,7 @@ class Param(WrappedFamilySerializable, FrozenMixin, ABC, Generic[_T]):
     _variable: Identifier
     _constraints: tuple[Constraint, ...]
 
-    def __init__(self, name: Identifier | None = None) -> None:
+    def __init__(self, *, name: Identifier | None = None) -> None:
         self._variable = name or Identifier("param")
         self._constraints = ()
         self.freeze(deep=True)
@@ -119,7 +115,7 @@ class Param(WrappedFamilySerializable, FrozenMixin, ABC, Generic[_T]):
 
     @classmethod
     def with_value(
-        cls: type[Self], value: _T, name: Identifier | None = None
+        cls: type[Self], value: _T, *, name: Identifier | None = None
     ) -> ParamAssignment[_T]:
         """Create a parameter assignment from a parameter definition.
 
@@ -132,7 +128,7 @@ class Param(WrappedFamilySerializable, FrozenMixin, ABC, Generic[_T]):
             Assignment with the specified fixed value.
 
         """
-        param = cls(name)
+        param = cls(name=name)
         return param.set_value(value)
 
     def bind(self, value: _T) -> ParamAssignment[_T]:
@@ -298,7 +294,7 @@ class Param(WrappedFamilySerializable, FrozenMixin, ABC, Generic[_T]):
 
     def _clone(self) -> Self:
         """Create a new parameter with identical definition state."""
-        new_param = self.__class__(self._variable)
+        new_param = self.__class__(name=self._variable)
         object.__setattr__(new_param, "_constraints", self._constraints)
         return new_param
 
@@ -432,6 +428,7 @@ class RealParam(Param[str | float]):
         cls: type[Self],
         lower_bound: float | str,
         upper_bound: float | str,
+        *,
         name: Identifier | None = None,
         is_lower_inclusive: bool = True,
         is_upper_inclusive: bool = True,
@@ -455,15 +452,20 @@ class RealParam(Param[str | float]):
             and not (is_lower_inclusive and is_upper_inclusive)
         ):
             raise ValueError("Lower bound must be less than or equal to upper bound.")
-        param = cls(name)
-        param = param.add_lower_bound_constraint(lower_bound, is_lower_inclusive)
-        param = param.add_upper_bound_constraint(upper_bound, is_upper_inclusive)
+        param = cls(name=name)
+        param = param.add_lower_bound_constraint(
+            lower_bound, is_inclusive=is_lower_inclusive
+        )
+        param = param.add_upper_bound_constraint(
+            upper_bound, is_inclusive=is_upper_inclusive
+        )
         return param
 
     @classmethod
     def with_lower_bound(
         cls: type[Self],
         lower_bound: float | str,
+        *,
         name: Identifier | None = None,
         is_inclusive: bool = True,
     ) -> Self:
@@ -479,14 +481,15 @@ class RealParam(Param[str | float]):
             Real-valued parameter with a lower bound.
 
         """
-        param = cls(name)
-        param = param.add_lower_bound_constraint(lower_bound, is_inclusive)
+        param = cls(name=name)
+        param = param.add_lower_bound_constraint(lower_bound, is_inclusive=is_inclusive)
         return param
 
     @classmethod
     def with_upper_bound(
         cls: type[Self],
         upper_bound: float | str,
+        *,
         name: Identifier | None = None,
         is_inclusive: bool = True,
     ) -> Self:
@@ -502,13 +505,14 @@ class RealParam(Param[str | float]):
             Real-valued parameter with an upper bound.
 
         """
-        param = cls(name)
-        param = param.add_upper_bound_constraint(upper_bound, is_inclusive)
+        param = cls(name=name)
+        param = param.add_upper_bound_constraint(upper_bound, is_inclusive=is_inclusive)
         return param
 
     def add_upper_bound_constraint(
         self,
         upper_bound: float | str,
+        *,
         is_inclusive: bool = True,
     ) -> Self:
         """Add an upper bound constraint to the parameter.
@@ -526,6 +530,7 @@ class RealParam(Param[str | float]):
     def add_lower_bound_constraint(
         self,
         lower_bound: float | str,
+        *,
         is_inclusive: bool = True,
     ) -> Self:
         """Add a lower bound constraint to the parameter.
@@ -546,7 +551,7 @@ class RealParam(Param[str | float]):
             raise DeserializationDictStructureError(
                 cls, ParamData.__annotations__, data
             )
-        param = RealParam(Identifier.deserialize_from_dict(data["variable"]))
+        param = RealParam(name=Identifier.deserialize_from_dict(data["variable"]))
         param = cast(
             RealParam,
             finalize_param_construction_from_data(
@@ -580,6 +585,7 @@ class IntParam(Param[int]):
         cls: type[Self],
         lower_bound: int,
         upper_bound: int,
+        *,
         name: Identifier | None = None,
         is_lower_inclusive: bool = True,
         is_upper_inclusive: bool = True,
@@ -603,15 +609,20 @@ class IntParam(Param[int]):
             and not (is_lower_inclusive and is_upper_inclusive)
         ):
             raise ValueError("Lower bound must be less than or equal to upper bound.")
-        param = cls(name)
-        param = param.add_lower_bound_constraint(lower_bound, is_lower_inclusive)
-        param = param.add_upper_bound_constraint(upper_bound, is_upper_inclusive)
+        param = cls(name=name)
+        param = param.add_lower_bound_constraint(
+            lower_bound, is_inclusive=is_lower_inclusive
+        )
+        param = param.add_upper_bound_constraint(
+            upper_bound, is_inclusive=is_upper_inclusive
+        )
         return param
 
     @classmethod
     def with_lower_bound(
         cls: type[Self],
         lower_bound: int,
+        *,
         name: Identifier | None = None,
         is_inclusive: bool = True,
     ) -> Self:
@@ -627,14 +638,15 @@ class IntParam(Param[int]):
             Integer-valued parameter with a lower bound.
 
         """
-        param = cls(name)
-        param = param.add_lower_bound_constraint(lower_bound, is_inclusive)
+        param = cls(name=name)
+        param = param.add_lower_bound_constraint(lower_bound, is_inclusive=is_inclusive)
         return param
 
     @classmethod
     def with_upper_bound(
         cls: type[Self],
         upper_bound: int,
+        *,
         name: Identifier | None = None,
         is_inclusive: bool = True,
     ) -> Self:
@@ -650,13 +662,14 @@ class IntParam(Param[int]):
             Integer-valued parameter with an upper bound.
 
         """
-        param = cls(name)
-        param = param.add_upper_bound_constraint(upper_bound, is_inclusive)
+        param = cls(name=name)
+        param = param.add_upper_bound_constraint(upper_bound, is_inclusive=is_inclusive)
         return param
 
     def add_upper_bound_constraint(
         self,
         upper_bound: int,
+        *,
         is_inclusive: bool = True,
     ) -> Self:
         """Add an upper bound constraint to the parameter.
@@ -674,6 +687,7 @@ class IntParam(Param[int]):
     def add_lower_bound_constraint(
         self,
         lower_bound: int,
+        *,
         is_inclusive: bool = True,
     ) -> Self:
         """Add a lower bound constraint to the parameter.
@@ -694,7 +708,7 @@ class IntParam(Param[int]):
             raise DeserializationDictStructureError(
                 cls, ParamData.__annotations__, data
             )
-        param = IntParam(Identifier.deserialize_from_dict(data["variable"]))
+        param = IntParam(name=Identifier.deserialize_from_dict(data["variable"]))
         param = cast(
             IntParam,
             finalize_param_construction_from_data(
@@ -730,8 +744,8 @@ class OrdinalParam(Param[Any]):
 
     _all_values: tuple[Any, ...]
 
-    def __init__(self, values: Sequence[Any], name: Identifier | None = None):
-        super().__init__(name)
+    def __init__(self, values: Sequence[Any], *, name: Identifier | None = None):
+        super().__init__(name=name)
         values = tuple(sorted(values))
         if not _is_values_unique_in_sorted_sequence(values):
             raise ValueError("Values must be unique.")
@@ -765,7 +779,8 @@ class OrdinalParam(Param[Any]):
                 cls, _OrdinalCategoricalPermParamData.__annotations__, data
             )
         param = OrdinalParam(
-            data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
+            data["possible_values"],
+            name=Identifier.deserialize_from_dict(data["variable"]),
         )
         param = cast(
             OrdinalParam,
@@ -777,7 +792,7 @@ class OrdinalParam(Param[Any]):
         return param
 
     def _clone(self) -> "OrdinalParam":
-        new_param = OrdinalParam(self._all_values, self._variable)
+        new_param = OrdinalParam(self._all_values, name=self._variable)
         object.__setattr__(new_param, "_constraints", self._constraints)
         return new_param
 
@@ -799,8 +814,8 @@ class CategoricalParam(Param[_H]):
 
     _categories: frozenset[_H]
 
-    def __init__(self, categories: Collection[_H], name: Identifier | None = None):
-        super().__init__(name)
+    def __init__(self, categories: Collection[_H], *, name: Identifier | None = None):
+        super().__init__(name=name)
         if not _is_values_unique_in_sequence_with_set(categories):
             raise ValueError("Values must be unique.")
         object.__setattr__(self, "_categories", frozenset(categories))
@@ -837,7 +852,8 @@ class CategoricalParam(Param[_H]):
                 cls, _OrdinalCategoricalPermParamData.__annotations__, data
             )
         param = CategoricalParam(
-            data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
+            data["possible_values"],
+            name=Identifier.deserialize_from_dict(data["variable"]),
         )
         param = cast(
             CategoricalParam[_H],
@@ -849,7 +865,7 @@ class CategoricalParam(Param[_H]):
         return param
 
     def _clone(self) -> "CategoricalParam[_H]":
-        new_param = CategoricalParam(self._categories, self._variable)
+        new_param = CategoricalParam(self._categories, name=self._variable)
         object.__setattr__(new_param, "_constraints", self._constraints)
         return new_param
 
@@ -858,6 +874,13 @@ class CategoricalParam(Param[_H]):
 
     def _get_param_set_str(self) -> str:
         return f"{{{format_comma_separated_list(self._categories, str_func=str)}}}"
+
+
+def create_single_valid_value_param(
+    value: _H, *, name: Identifier | None = None
+) -> CategoricalParam[_H]:
+    """Return a parameter that can only take a single valid value."""
+    return CategoricalParam([value], name=name)
 
 
 @register_serializable(type_id="perm_param")
@@ -871,8 +894,8 @@ class PermParam(Param[tuple[Any, ...]]):
 
     _all_values: tuple[Any, ...]
 
-    def __init__(self, all_values: Sequence[Any], name: Identifier | None = None):
-        super().__init__(name)
+    def __init__(self, all_values: Sequence[Any], *, name: Identifier | None = None):
+        super().__init__(name=name)
         if not _is_values_unique_in_sequence_without_set(all_values):
             raise ValueError("Values must be unique.")
         object.__setattr__(self, "_all_values", tuple(all_values))
@@ -916,7 +939,8 @@ class PermParam(Param[tuple[Any, ...]]):
                 cls, _OrdinalCategoricalPermParamData.__annotations__, data
             )
         param = PermParam(
-            data["possible_values"], Identifier.deserialize_from_dict(data["variable"])
+            data["possible_values"],
+            name=Identifier.deserialize_from_dict(data["variable"]),
         )
         param = cast(
             PermParam,
@@ -928,7 +952,7 @@ class PermParam(Param[tuple[Any, ...]]):
         return param
 
     def _clone(self) -> "PermParam":
-        new_param = PermParam(self._all_values, self._variable)
+        new_param = PermParam(self._all_values, name=self._variable)
         object.__setattr__(new_param, "_constraints", self._constraints)
         return new_param
 

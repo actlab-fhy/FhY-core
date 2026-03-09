@@ -110,11 +110,12 @@ class NatParam(IntParam):
 
     def __init__(
         self,
+        *,
         name: Identifier | None = None,
         is_zero_included: bool = True,
         **kwargs: Any,
     ) -> None:
-        super().__init__(name)
+        super().__init__(name=name)
         object.__setattr__(self, "_is_zero_included", is_zero_included)
         if self._is_zero_included:
             basic_constraint = EquationConstraint(
@@ -139,7 +140,7 @@ class NatParam(IntParam):
         )
 
     def add_lower_bound_constraint(
-        self, lower_bound: int, is_inclusive: bool = True
+        self, lower_bound: int, *, is_inclusive: bool = True
     ) -> "NatParam":
         if self._is_zero_included:
             if lower_bound < 0:
@@ -160,10 +161,12 @@ class NatParam(IntParam):
                 "and bound is exclusive."
             )
 
-        return super().add_lower_bound_constraint(lower_bound, is_inclusive)
+        return super().add_lower_bound_constraint(
+            lower_bound, is_inclusive=is_inclusive
+        )
 
     def add_upper_bound_constraint(
-        self, upper_bound: int, is_inclusive: bool = True
+        self, upper_bound: int, *, is_inclusive: bool = True
     ) -> "NatParam":
         if self._is_zero_included:
             if is_inclusive:
@@ -187,7 +190,9 @@ class NatParam(IntParam):
                 "and bound is exclusive."
             )
 
-        return super().add_upper_bound_constraint(upper_bound, is_inclusive)
+        return super().add_upper_bound_constraint(
+            upper_bound, is_inclusive=is_inclusive
+        )
 
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "NatParam":
@@ -214,7 +219,7 @@ class NatParam(IntParam):
                 data["constraints"],
             )
 
-        param = NatParam(variable, is_zero_included)
+        param = NatParam(name=variable, is_zero_included=is_zero_included)
         return cast(
             NatParam,
             finalize_param_construction_from_data(

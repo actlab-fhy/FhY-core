@@ -65,8 +65,8 @@ def test_param_get_value_fails_when_not_set(default_real_param):
 
 def test_get_param_value_after_setting_value(default_real_param):
     """Test that the value of a parameter can be retrieved after setting a value."""
-    default_real_param = default_real_param.set_value(1.0)
-    assert default_real_param.get_value() == 1.0
+    assignment = default_real_param.set_value(1.0)
+    assert assignment.value == 1.0
 
 
 def test_real_param_get_symbol_type(default_real_param):
@@ -95,7 +95,7 @@ def test_create_real_param_with_value():
     """Test that a real parameter can be created with a value."""
     param = RealParam.with_value(1.0)
     assert param.is_value_set()
-    assert param.get_value() == 1.0
+    assert param.value == 1.0
 
 
 def test_create_real_param_with_value_fails_with_invalid_value():
@@ -108,7 +108,7 @@ def test_create_int_param_with_value():
     """Test that an integer parameter can be created with a value."""
     param = IntParam.with_value(1)
     assert param.is_value_set()
-    assert param.get_value() == 1
+    assert param.value == 1
 
 
 def test_create_int_param_with_value_fails_with_invalid_value():
@@ -185,8 +185,8 @@ def test_set_real_param_and_real_param_is_subset():
     param1 = RealParam()
     assignment_1 = param1.set_value(1.0)
     assignment_2 = param1.set_value(1.0)
-    assert assignment_1.get_value() == 1.0
-    assert assignment_2.get_value() == 1.0
+    assert assignment_1.value == 1.0
+    assert assignment_2.value == 1.0
     assert assignment_1.param is param1
     assert assignment_2.param is param1
 
@@ -961,7 +961,7 @@ def test_bound_int_param_set_value_accepts_int_only():
     """Test that BoundIntParam.set_value only accepts integer values."""
     p = BoundIntParam.with_lower_bound(0)
     assignment = p.set_value(1)
-    assert assignment.get_value() == 1
+    assert assignment.value == 1
     with pytest.raises(ValueError):
         p.set_value(1.0)
     with pytest.raises(ValueError):
@@ -976,7 +976,7 @@ def test_bound_int_param_set_value_rejects_value_outside_constraints():
     with pytest.raises(ValueError):
         p.set_value(6)
     assignment = p.set_value(4)
-    assert assignment.get_value() == 4
+    assert assignment.value == 4
 
 
 def test_bound_int_param_addition_of_singletons_is_singleton():

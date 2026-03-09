@@ -123,11 +123,12 @@ class BoundIntParam(IntParam):
 
     def __init__(
         self,
+        *,
         name: Identifier | None = None,
         prefer_inclusive: bool = True,
         **kwargs: Any,
     ) -> None:
-        super().__init__(name, **kwargs)
+        super().__init__(name=name, **kwargs)
         object.__setattr__(self, "_prefer_inclusive", prefer_inclusive)
 
     def add_constraint(self, constraint: Constraint) -> Self:
@@ -243,15 +244,15 @@ class BoundIntParam(IntParam):
         )
         if min_int is not None:
             if out._prefer_inclusive:
-                out = out.add_lower_bound_constraint(min_int, True)
+                out = out.add_lower_bound_constraint(min_int, is_inclusive=True)
             else:
-                out = out.add_lower_bound_constraint(min_int - 1, False)
+                out = out.add_lower_bound_constraint(min_int - 1, is_inclusive=False)
 
         if max_int is not None:
             if out._prefer_inclusive:
-                out = out.add_upper_bound_constraint(max_int, True)
+                out = out.add_upper_bound_constraint(max_int, is_inclusive=True)
             else:
-                out = out.add_upper_bound_constraint(max_int + 1, False)
+                out = out.add_upper_bound_constraint(max_int + 1, is_inclusive=False)
         return out
 
     @classmethod
@@ -259,14 +260,15 @@ class BoundIntParam(IntParam):
         cls: type[Self],
         lower_bound: int,
         upper_bound: int,
+        *,
         name: Identifier | None = None,
         is_lower_inclusive: bool = True,
         is_upper_inclusive: bool = True,
         prefer_inclusive: bool = True,
     ) -> "BoundIntParam":
-        p = cls(name, prefer_inclusive=prefer_inclusive)
-        p = p.add_lower_bound_constraint(lower_bound, is_lower_inclusive)
-        p = p.add_upper_bound_constraint(upper_bound, is_upper_inclusive)
+        p = cls(name=name, prefer_inclusive=prefer_inclusive)
+        p = p.add_lower_bound_constraint(lower_bound, is_inclusive=is_lower_inclusive)
+        p = p.add_upper_bound_constraint(upper_bound, is_inclusive=is_upper_inclusive)
         p._get_effective_min_max()
         return p
 
@@ -274,36 +276,37 @@ class BoundIntParam(IntParam):
     def with_lower_bound(
         cls: type[Self],
         lower_bound: int,
+        *,
         name: Identifier | None = None,
         is_inclusive: bool = True,
         prefer_inclusive: bool = True,
     ) -> "BoundIntParam":
-        p = cls(name, prefer_inclusive=prefer_inclusive)
-        p = p.add_lower_bound_constraint(lower_bound, is_inclusive)
-        p._get_effective_min_max()
+        p = cls(name=name, prefer_inclusive=prefer_inclusive)
+        p = p.add_lower_bound_constraint(lower_bound, is_inclusive=is_inclusive)
         return p
 
     @classmethod
     def with_upper_bound(
         cls: type[Self],
         upper_bound: int,
+        *,
         name: Identifier | None = None,
         is_inclusive: bool = True,
         prefer_inclusive: bool = True,
     ) -> "BoundIntParam":
-        p = cls(name, prefer_inclusive=prefer_inclusive)
-        p = p.add_upper_bound_constraint(upper_bound, is_inclusive)
-        p._get_effective_min_max()
+        p = cls(name=name, prefer_inclusive=prefer_inclusive)
+        p = p.add_upper_bound_constraint(upper_bound, is_inclusive=is_inclusive)
         return p
 
     @classmethod
     def exactly(
         cls: type[Self],
         value: int,
+        *,
         name: Identifier | None = None,
         prefer_inclusive: bool = True,
     ) -> "BoundIntParam":
-        p = cls(name, prefer_inclusive=prefer_inclusive)
+        p = cls(name=name, prefer_inclusive=prefer_inclusive)
         p = p.add_lower_bound_constraint(value, is_inclusive=True)
         p = p.add_upper_bound_constraint(value, is_inclusive=True)
         return p
@@ -331,7 +334,8 @@ class BoundIntParam(IntParam):
                 cls, _BoundParamData.__annotations__, data
             )
         param = BoundIntParam(
-            Identifier.deserialize_from_dict(data["variable"]), data["prefer_inclusive"]
+            name=Identifier.deserialize_from_dict(data["variable"]),
+            prefer_inclusive=data["prefer_inclusive"],
         )
         return cast(
             BoundIntParam,
@@ -353,7 +357,7 @@ class BoundIntParam(IntParam):
                         "to BoundIntParam."
                     )
             wrapper_param = BoundIntParam(
-                other.variable, prefer_inclusive=self._prefer_inclusive
+                name=other.variable, prefer_inclusive=self._prefer_inclusive
             )
             object.__setattr__(wrapper_param, "_constraints", other._constraints)
             return wrapper_param
@@ -404,6 +408,7 @@ class BoundNatParam(BoundIntParam, NatParam):
 
     def __init__(
         self,
+        *,
         name: Identifier | None = None,
         is_zero_included: bool = True,
         prefer_inclusive: bool = True,
