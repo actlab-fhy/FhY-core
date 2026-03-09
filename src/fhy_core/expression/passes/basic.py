@@ -2,7 +2,6 @@
 
 __all__ = [
     "collect_identifiers",
-    "copy_expression",
     "substitute_identifiers",
 ]
 
@@ -66,51 +65,6 @@ def collect_identifiers(expression: Expression) -> set[Identifier]:
     collector = IdentifierCollector()
     collector(expression)
     return collector.identifiers
-
-
-@register_pass(
-    "fhy_core.expression.copy_expression",
-    "Create a structural copy of an expression tree.",
-)
-class ExpressionCopier(VisitablePass[Expression, Expression]):
-    """Shallow copier for an expression tree."""
-
-    def visit_unary_expression(self, unary_expression: UnaryExpression) -> Expression:
-        new_expression = self.visit(unary_expression.operand)
-        return UnaryExpression(unary_expression.operation, new_expression)
-
-    def visit_binary_expression(
-        self, binary_expression: BinaryExpression
-    ) -> Expression:
-        new_left = self.visit(binary_expression.left)
-        new_right = self.visit(binary_expression.right)
-        return BinaryExpression(binary_expression.operation, new_left, new_right)
-
-    def visit_identifier_expression(
-        self, identifier_expression: IdentifierExpression
-    ) -> Expression:
-        return IdentifierExpression(identifier_expression.identifier)
-
-    def visit_literal_expression(
-        self, literal_expression: LiteralExpression
-    ) -> Expression:
-        return LiteralExpression(literal_expression.value)
-
-    def get_noop_output(self, ir: Expression) -> Expression:
-        return ir
-
-
-def copy_expression(expression: Expression) -> Expression:
-    """Shallow-copy an expression.
-
-    Args:
-        expression: Expression to copy.
-
-    Returns:
-        Copied expression.
-
-    """
-    return ExpressionCopier()(expression)
 
 
 @register_pass(

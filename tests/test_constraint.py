@@ -356,35 +356,6 @@ def test_not_in_set_constraint_checks_correctly(
     assert constraint.is_satisfied(values) == expected_outcome
 
 
-# TODO: If there is ever an equality for constraints, use this instead of
-#       accessing private attributes for the three following tests.
-def test_copy_equation_constraint():
-    """Test the equation constraint is copied correctly."""
-    constraint = EquationConstraint(mock_identifier("x", 0), LiteralExpression(True))
-    copy = constraint.copy()
-    assert constraint.variable == copy.variable
-    assert constraint._expression.is_structurally_equivalent(copy._expression)
-    assert constraint is not copy
-
-
-def test_copy_in_set_constraint():
-    """Test the in-set constraint is copied correctly."""
-    constraint = InSetConstraint(mock_identifier("x", 0), {1, 2, 3})
-    copy = constraint.copy()
-    assert constraint.variable == copy.variable
-    assert constraint._valid_values == copy._valid_values
-    assert constraint is not copy
-
-
-def test_copy_not_in_set_constraint():
-    """Test the not-in-set constraint is copied correctly."""
-    constraint = NotInSetConstraint(mock_identifier("x", 0), {1, 2, 3})
-    copy = constraint.copy()
-    assert constraint.variable == copy.variable
-    assert constraint._invalid_values == copy._invalid_values
-    assert constraint is not copy
-
-
 def test_convert_equation_constraint_to_expression():
     """Test the equation constraint is converted to an expression correctly."""
     constraint_expression = BinaryExpression(

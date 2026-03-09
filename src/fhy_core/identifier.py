@@ -73,13 +73,6 @@ class Identifier(Serializable, EqualMixin):
                 cls._next_id = identifier._id + 1
         return identifier
 
-    def __copy__(self) -> "Identifier":
-        identifier = Identifier.__new__(Identifier)
-        identifier._id = self._id
-        identifier._name_hint = self._name_hint
-
-        return identifier
-
     def __eq__(self, other: Any) -> bool:
         return isinstance(other, Identifier) and self._id == other._id
 
