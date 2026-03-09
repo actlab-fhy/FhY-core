@@ -68,6 +68,7 @@ class ParamAssignment(FrozenMixin, Generic[_T]):
     _value: _T
 
     def __init__(self, param: "Param[_T]", value: _T) -> None:
+        """Create an assignment after validating value against parameter constraints."""
         param._assert_value_satisfies_constraints(value)
         object.__setattr__(self, "_param", param)
         object.__setattr__(self, "_value", value)
@@ -241,14 +242,6 @@ class Param(WrappedFamilySerializable, FrozenMixin, ABC, Generic[_T]):
             ValueError: If the value is not valid.
 
         """
-        is_constraint_satisfied, failing_constraint = (
-            self._is_constraints_satisfied_with_failing_constraint(value)
-        )
-        if not is_constraint_satisfied:
-            raise ValueError(
-                f"Value ({value}) does not satisfy the constraint: {failing_constraint}"
-            )
-        self._assert_value_satisfies_constraints(value)
         return ParamAssignment(self, value)
 
     def _assert_value_satisfies_constraints(self, value: _T) -> None:
@@ -271,18 +264,28 @@ class Param(WrappedFamilySerializable, FrozenMixin, ABC, Generic[_T]):
             A new parameter instance with the added constraint.
 
         """
-        if constraint.variable != self.variable:
-            raise ValueError("Constraint variable must match parameter variable.")
+        self._validate_constraint(constraint)
         new_param = self._clone()
         object.__setattr__(new_param, "_constraints", self._constraints + (constraint,))
         return new_param
 
     def add_constraints(self, constraints: Collection[Constraint]) -> Self:
         """Return a new parameter with multiple additional constraints."""
-        current_param: Self = self
-        for constraint in constraints:
-            current_param = current_param.add_constraint(constraint)
-        return current_param
+        constraints_tuple = tuple(constraints)
+        if not constraints_tuple:
+            return self
+        for constraint in constraints_tuple:
+            self._validate_constraint(constraint)
+        new_param = self._clone()
+        object.__setattr__(
+            new_param, "_constraints", self._constraints + constraints_tuple
+        )
+        return new_param
+
+    def _validate_constraint(self, constraint: Constraint) -> None:
+        """Validate whether a constraint can be added to this parameter."""
+        if constraint.variable != self.variable:
+            raise ValueError("Constraint variable must match parameter variable.")
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -392,12 +395,12 @@ def finalize_param_construction_from_data(
             added.
 
     """
-    current_param: Param[Any] = param
+    constraints_to_add: list[Constraint] = []
     for constraint_data in data["constraints"]:
         constraint = Constraint.deserialize_from_dict(constraint_data)
         if constraint_filter_function is None or constraint_filter_function(constraint):
-            current_param = current_param.add_constraint(constraint)
-    return current_param
+            constraints_to_add.append(constraint)
+    return param.add_constraints(constraints_to_add)
 
 
 @register_serializable(type_id="real_param")
@@ -759,13 +762,13 @@ class OrdinalParam(Param[Any]):
             raise ValueError("Value is not in the set of allowed values.")
         return super().set_value(value)
 
-    def add_constraint(self, constraint: Constraint) -> Self:
+    def _validate_constraint(self, constraint: Constraint) -> None:
+        super()._validate_constraint(constraint)
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
             raise ValueError(
                 "Only in-set and not-in-set constraints are allowed for "
                 "ordinal parameters."
             )
-        return super().add_constraint(constraint)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
@@ -832,13 +835,13 @@ class CategoricalParam(Param[_H]):
         """Return the set of possible values for the parameter."""
         return set(self._categories)
 
-    def add_constraint(self, constraint: Constraint) -> Self:
+    def _validate_constraint(self, constraint: Constraint) -> None:
+        super()._validate_constraint(constraint)
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
             raise ValueError(
                 "Only in-set and not-in-set constraints are allowed for "
                 "categorical parameters."
             )
-        return super().add_constraint(constraint)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
@@ -919,13 +922,13 @@ class PermParam(Param[tuple[Any, ...]]):
             raise ValueError("Value is not a valid permutation.")
         return super().set_value(tuple(value))
 
-    def add_constraint(self, constraint: Constraint) -> Self:
+    def _validate_constraint(self, constraint: Constraint) -> None:
+        super()._validate_constraint(constraint)
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
             raise ValueError(
                 "Only in-set and not-in-set constraints are allowed for "
                 "permutation parameters."
             )
-        return super().add_constraint(constraint)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()

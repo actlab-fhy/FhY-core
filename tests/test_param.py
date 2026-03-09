@@ -162,6 +162,18 @@ def test_add_multiple_constraints_at_once():
     _assert_none_satisfied(param, [0.5, 3.5])
 
 
+def test_add_multiple_constraints_validates_subclass_constraint_rules():
+    """Test that add_constraints enforces subclass-specific constraint checks."""
+    param = OrdinalParam([1, 2, 3])
+    with pytest.raises(ValueError):
+        param.add_constraints(
+            [
+                InSetConstraint(param.variable, {1, 2}),
+                EquationConstraint(param.variable, param.variable_expression > 1),
+            ]
+        )
+
+
 def test_add_and_check_int_param_constraints(default_int_param):
     """Test that an integer constraint can be added and checked."""
     default_int_param = default_int_param.add_constraint(
@@ -250,6 +262,14 @@ def test_nat_param_zero_excluded():
         param.set_value(0)
     with pytest.raises(ValueError):
         param.set_value(-1)
+
+
+def test_nat_param_add_constraint_preserves_zero_excluded_state():
+    """Test that adding constraints preserves zero-excluded NatParam semantics."""
+    param = NatParam(is_zero_included=False)
+    updated = param.add_lower_bound_constraint(2, is_inclusive=True)
+    with pytest.raises(ValueError):
+        updated.add_lower_bound_constraint(0, is_inclusive=True)
 
 
 def test_ordinal_param_initialization():

@@ -131,7 +131,8 @@ class BoundIntParam(IntParam):
         super().__init__(name=name, **kwargs)
         object.__setattr__(self, "_prefer_inclusive", prefer_inclusive)
 
-    def add_constraint(self, constraint: Constraint) -> Self:
+    def _validate_constraint(self, constraint: Constraint) -> None:
+        super()._validate_constraint(constraint)
         if not isinstance(constraint, EquationConstraint):
             raise TypeError(
                 "BoundIntParam only supports EquationConstraint constraints."
@@ -141,7 +142,6 @@ class BoundIntParam(IntParam):
                 "BoundIntParam only supports bound expressions of the form "
                 '"x >= k", "x > k", "x <= k", or "x < k" where k is an integer.'
             )
-        return super().add_constraint(constraint)
 
     def _iter_bounds(self) -> Iterable[Tuple[bool, int, bool]]:
         """Yield (is_lower, bound_value, inclusive) for constraints.
@@ -316,7 +316,7 @@ class BoundIntParam(IntParam):
         super_dict["prefer_inclusive"] = self._prefer_inclusive
         return super_dict
 
-    def _clone(self) -> "BoundIntParam":
+    def _clone(self) -> Self:
         init_kwargs: dict[str, Any] = {
             "name": self._variable,
             "prefer_inclusive": self._prefer_inclusive,

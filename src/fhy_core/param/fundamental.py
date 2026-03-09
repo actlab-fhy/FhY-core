@@ -24,6 +24,7 @@ from fhy_core.serialization import (
     SerializedDict,
     register_serializable,
 )
+from fhy_core.utils import Self
 
 from .core import (
     IntParam,
@@ -193,6 +194,13 @@ class NatParam(IntParam):
         return super().add_upper_bound_constraint(
             upper_bound, is_inclusive=is_inclusive
         )
+
+    def _clone(self) -> Self:
+        new_param = self.__class__(
+            name=self._variable, is_zero_included=self._is_zero_included
+        )
+        object.__setattr__(new_param, "_constraints", self._constraints)
+        return new_param
 
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "NatParam":
