@@ -69,6 +69,16 @@
     pip install ".[dev]"
     ```
 
+4. Generate documentation.
+
+    ```bash
+    # Build with Sphinx directly
+    sphinx-build -b html docs docs/_build/html
+
+    # Or via tox
+    tox -e docs
+    ```
+
 ## Contributing - For Developers
 Want to start contributing the *FhY* Core? Please take a look at our
 [contribution guide](CONTRIBUTING.md)
