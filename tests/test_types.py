@@ -5,11 +5,13 @@ from fhy_core.expression import (
     IdentifierExpression,
     LiteralExpression,
 )
+from fhy_core.trait import Frozen, FrozenMutationError, StructuralEquivalence
 from fhy_core.types import (
     CoreDataType,
     IndexType,
     NumericalType,
     PrimitiveDataType,
+    TemplateDataType,
     TupleType,
     TypeQualifier,
     get_core_data_type_bit_width,
@@ -17,7 +19,77 @@ from fhy_core.types import (
     promote_type_qualifiers,
 )
 
-from .conftest import assert_exact_expression_equality, mock_identifier
+from .conftest import mock_identifier
+
+
+def test_type_structural_equivalence_runtime_protocol():
+    """Test `Type` implementations satisfy `StructuralEquivalence` protocol."""
+    ty = NumericalType(PrimitiveDataType(CoreDataType.INT32))
+    assert isinstance(ty, StructuralEquivalence)
+
+
+def test_data_type_structural_equivalence_runtime_protocol():
+    """Test `DataType` implementations satisfy `StructuralEquivalence` protocol."""
+    data_type = PrimitiveDataType(CoreDataType.INT32)
+    assert isinstance(data_type, StructuralEquivalence)
+
+
+def test_type_family_is_frozen_on_construction():
+    """Test all core type-family classes are frozen after construction."""
+    N = mock_identifier("N", 1)
+    shape = [IdentifierExpression(N), LiteralExpression(4)]
+    data_type = PrimitiveDataType(CoreDataType.INT32)
+    template_data_type = TemplateDataType(N, widths=[8, 16])
+    numerical_type = NumericalType(data_type, shape)
+    index_type = IndexType(LiteralExpression(0), LiteralExpression(10), None)
+    tuple_type = TupleType([numerical_type, index_type])
+
+    for value in (
+        data_type,
+        template_data_type,
+        numerical_type,
+        index_type,
+        tuple_type,
+    ):
+        assert isinstance(value, Frozen)
+        assert value.is_frozen
+        with pytest.raises(FrozenMutationError):
+            value._freeze_probe = "mutation"
+
+
+def test_numerical_type_structural_equivalence_true():
+    """Test structural equivalence is true for matching numerical types."""
+    shape_1 = [LiteralExpression(4), LiteralExpression(8)]
+    shape_2 = [LiteralExpression(4), LiteralExpression(8)]
+    left = NumericalType(PrimitiveDataType(CoreDataType.INT32), shape_1)
+    right = NumericalType(PrimitiveDataType(CoreDataType.INT32), shape_2)
+    assert left.is_structurally_equivalent(right)
+
+
+def test_numerical_type_structural_equivalence_false_for_data_type():
+    """Test structural equivalence is false for differing numerical data types."""
+    shape = [LiteralExpression(4)]
+    left = NumericalType(PrimitiveDataType(CoreDataType.INT16), shape)
+    right = NumericalType(PrimitiveDataType(CoreDataType.INT32), shape)
+    assert not left.is_structurally_equivalent(right)
+
+
+def test_index_type_structural_equivalence_false_for_stride():
+    """Test structural equivalence is false for differing index stride values."""
+    lower_bound = LiteralExpression(0)
+    upper_bound = LiteralExpression(10)
+    left = IndexType(lower_bound, upper_bound, LiteralExpression(1))
+    right = IndexType(lower_bound, upper_bound, LiteralExpression(2))
+    assert not left.is_structurally_equivalent(right)
+
+
+def test_tuple_type_structural_equivalence_false_for_element_order():
+    """Test structural equivalence is false for differing tuple type order."""
+    int_type = NumericalType(PrimitiveDataType(CoreDataType.INT32))
+    float_type = NumericalType(PrimitiveDataType(CoreDataType.FLOAT32))
+    left = TupleType([int_type, float_type])
+    right = TupleType([float_type, int_type])
+    assert not left.is_structurally_equivalent(right)
 
 
 @pytest.mark.parametrize(
@@ -153,8 +225,8 @@ def test_numerical_type_dict_serialization():
     assert isinstance(numerical_type_deserialized.data_type, PrimitiveDataType)
     assert numerical_type_deserialized.data_type.core_data_type == CoreDataType.INT32
     assert len(numerical_type_deserialized.shape) == 2
-    assert_exact_expression_equality(numerical_type_deserialized.shape[0], shape[0])
-    assert_exact_expression_equality(numerical_type_deserialized.shape[1], shape[1])
+    assert numerical_type_deserialized.shape[0].is_structurally_equivalent(shape[0])
+    assert numerical_type_deserialized.shape[1].is_structurally_equivalent(shape[1])
 
 
 def test_index_type_dict_serialization():
@@ -175,8 +247,8 @@ def test_index_type_dict_serialization():
     assert dictionary == expected_dict
     index_type_deserialized = IndexType.deserialize_from_dict(dictionary)
     assert isinstance(index_type_deserialized, IndexType)
-    assert_exact_expression_equality(index_type_deserialized.lower_bound, lower_bound)
-    assert_exact_expression_equality(index_type_deserialized.upper_bound, upper_bound)
+    assert index_type_deserialized.lower_bound.is_structurally_equivalent(lower_bound)
+    assert index_type_deserialized.upper_bound.is_structurally_equivalent(upper_bound)
 
 
 def test_index_type_with_stride_serialization():
@@ -198,9 +270,10 @@ def test_index_type_with_stride_serialization():
     assert dictionary == expected_dict
     index_type_deserialized = IndexType.deserialize_from_dict(dictionary)
     assert isinstance(index_type_deserialized, IndexType)
-    assert_exact_expression_equality(index_type_deserialized.lower_bound, lower_bound)
-    assert_exact_expression_equality(index_type_deserialized.upper_bound, upper_bound)
-    assert_exact_expression_equality(index_type_deserialized.stride, stride)
+    assert index_type_deserialized.lower_bound.is_structurally_equivalent(lower_bound)
+    assert index_type_deserialized.upper_bound.is_structurally_equivalent(upper_bound)
+    assert index_type_deserialized.stride is not None
+    assert index_type_deserialized.stride.is_structurally_equivalent(stride)
 
 
 def test_tuple_type_dict_serialization():
@@ -231,8 +304,8 @@ def test_tuple_type_dict_serialization():
         assert isinstance(ty.data_type, PrimitiveDataType)
         assert ty.data_type.core_data_type == CoreDataType.INT32
         assert len(ty.shape) == 2
-        assert_exact_expression_equality(ty.shape[0], shape[0])
-        assert_exact_expression_equality(ty.shape[1], shape[1])
+        assert ty.shape[0].is_structurally_equivalent(shape[0])
+        assert ty.shape[1].is_structurally_equivalent(shape[1])
 
 
 # TODO: Check serialization structure errors and value errors for all types.

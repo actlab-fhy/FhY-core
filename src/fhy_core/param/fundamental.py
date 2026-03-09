@@ -8,7 +8,7 @@ __all__ = [
 ]
 
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
 from fhy_core.constraint import Constraint, EquationConstraint
 from fhy_core.expression import (
@@ -24,6 +24,7 @@ from fhy_core.serialization import (
     SerializedDict,
     register_serializable,
 )
+from fhy_core.utils import Self
 
 from .core import (
     IntParam,
@@ -110,38 +111,38 @@ class NatParam(IntParam):
 
     def __init__(
         self,
+        *,
         name: Identifier | None = None,
         is_zero_included: bool = True,
         **kwargs: Any,
     ) -> None:
-        super().__init__(name)
-        self._is_zero_included = is_zero_included
+        super().__init__(name=name)
+        object.__setattr__(self, "_is_zero_included", is_zero_included)
         if self._is_zero_included:
-            self.add_constraint(
-                EquationConstraint(
-                    self.variable,
-                    BinaryExpression(
-                        BinaryOperation.GREATER_EQUAL,
-                        IdentifierExpression(self.variable),
-                        LiteralExpression(0),
-                    ),
-                )
+            basic_constraint = EquationConstraint(
+                self.variable,
+                BinaryExpression(
+                    BinaryOperation.GREATER_EQUAL,
+                    IdentifierExpression(self.variable),
+                    LiteralExpression(0),
+                ),
             )
         else:
-            self.add_constraint(
-                EquationConstraint(
-                    self.variable,
-                    BinaryExpression(
-                        BinaryOperation.GREATER,
-                        IdentifierExpression(self.variable),
-                        LiteralExpression(0),
-                    ),
-                )
+            basic_constraint = EquationConstraint(
+                self.variable,
+                BinaryExpression(
+                    BinaryOperation.GREATER,
+                    IdentifierExpression(self.variable),
+                    LiteralExpression(0),
+                ),
             )
+        object.__setattr__(
+            self, "_constraints", self._constraints + (basic_constraint,)
+        )
 
     def add_lower_bound_constraint(
-        self, lower_bound: int, is_inclusive: bool = True
-    ) -> None:
+        self, lower_bound: int, *, is_inclusive: bool = True
+    ) -> "NatParam":
         if self._is_zero_included:
             if lower_bound < 0:
                 raise ValueError("Lower bound must be non-negative.")
@@ -161,11 +162,13 @@ class NatParam(IntParam):
                 "and bound is exclusive."
             )
 
-        return super().add_lower_bound_constraint(lower_bound, is_inclusive)
+        return super().add_lower_bound_constraint(
+            lower_bound, is_inclusive=is_inclusive
+        )
 
     def add_upper_bound_constraint(
-        self, upper_bound: int, is_inclusive: bool = True
-    ) -> None:
+        self, upper_bound: int, *, is_inclusive: bool = True
+    ) -> "NatParam":
         if self._is_zero_included:
             if is_inclusive:
                 if upper_bound < 0:
@@ -188,7 +191,16 @@ class NatParam(IntParam):
                 "and bound is exclusive."
             )
 
-        return super().add_upper_bound_constraint(upper_bound, is_inclusive)
+        return super().add_upper_bound_constraint(
+            upper_bound, is_inclusive=is_inclusive
+        )
+
+    def _clone(self) -> Self:
+        new_param = self.__class__(
+            name=self._variable, is_zero_included=self._is_zero_included
+        )
+        object.__setattr__(new_param, "_constraints", self._constraints)
+        return new_param
 
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "NatParam":
@@ -215,14 +227,14 @@ class NatParam(IntParam):
                 data["constraints"],
             )
 
-        param = NatParam(variable, is_zero_included)
-        finalize_param_construction_from_data(
-            param,
-            data,
-            lambda v: isinstance(v, int) and v >= 0,
-            "a non-negative integer",
-            constraint_filter_function=lambda c: (
-                not is_the_basic_nat_param_constraint(c, variable, is_zero_included)
+        param = NatParam(name=variable, is_zero_included=is_zero_included)
+        return cast(
+            NatParam,
+            finalize_param_construction_from_data(
+                param,
+                data,
+                constraint_filter_function=lambda c: (
+                    not is_the_basic_nat_param_constraint(c, variable, is_zero_included)
+                ),
             ),
         )
-        return param

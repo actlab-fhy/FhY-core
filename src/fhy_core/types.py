@@ -18,7 +18,7 @@ __all__ = [
 
 from abc import ABC
 from collections.abc import Sequence
-from functools import partial
+from functools import partial, singledispatch
 from typing import TypedDict, TypeGuard
 
 from fhy_core.serialization import (
@@ -29,6 +29,7 @@ from fhy_core.serialization import (
     is_serialized_dict,
     register_serializable,
 )
+from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
 
 from .error import register_error
 from .expression import Expression, pformat_expression
@@ -36,8 +37,11 @@ from .identifier import Identifier
 from .utils import Lattice, StrEnum, format_comma_separated_list
 
 
-class Type(WrappedFamilySerializable, ABC):
+class Type(WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC):
     """Abstract compiler type."""
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return _is_type_structurally_equivalent(self, other)
 
 
 @register_error
@@ -45,8 +49,13 @@ class FhYCoreTypeError(TypeError):
     """Core type error."""
 
 
-class DataType(WrappedFamilySerializable, ABC):
+class DataType(WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC):
     """Abstract data type."""
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        if not isinstance(other, DataType):
+            return False
+        return _is_data_type_structurally_equivalent(self, other)
 
 
 class CoreDataType(StrEnum):
@@ -240,6 +249,7 @@ class PrimitiveDataType(DataType):
 
     def __init__(self, core_data_type: CoreDataType) -> None:
         self._core_data_type = core_data_type
+        self.freeze(deep=True)
 
     @property
     def core_data_type(self) -> CoreDataType:
@@ -292,13 +302,14 @@ class TemplateDataType(DataType):
     """Template data type."""
 
     _data_type: Identifier
-    _widths: list[int] | None
+    _widths: tuple[int, ...] | None
 
     def __init__(
         self, data_type: Identifier, widths: Sequence[int] | None = None
     ) -> None:
         self._data_type = data_type
-        self._widths = list(widths) if widths is not None else None
+        self._widths = tuple(widths) if widths is not None else None
+        self.freeze(deep=True)
 
     @property
     def data_type(self) -> Identifier:
@@ -306,12 +317,12 @@ class TemplateDataType(DataType):
 
     @property
     def widths(self) -> list[int] | None:
-        return self._widths.copy() if self._widths is not None else None
+        return list(self._widths) if self._widths is not None else None
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "data_type": self._data_type.serialize_to_dict(),
-            "widths": self._widths,
+            "widths": list(self._widths) if self._widths is not None else None,
         }
 
     @classmethod
@@ -381,14 +392,15 @@ class NumericalType(Type):
     """Numerical multi-dimensional array type; empty shapes indicate scalars."""
 
     _data_type: DataType
-    _shape: list[Expression]
+    _shape: tuple[Expression, ...]
 
     def __init__(
-        self, data_type: DataType, shape: list[Expression] | None = None
+        self, data_type: DataType, shape: Sequence[Expression] | None = None
     ) -> None:
         super().__init__()
         self._data_type = data_type
-        self._shape = shape or []
+        self._shape = tuple(shape) if shape is not None else ()
+        self.freeze(deep=True)
 
     @property
     def data_type(self) -> DataType:
@@ -396,7 +408,7 @@ class NumericalType(Type):
 
     @property
     def shape(self) -> list[Expression]:
-        return self._shape
+        return list(self._shape)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -466,6 +478,7 @@ class IndexType(Type):
         self._lower_bound = lower_bound
         self._upper_bound = upper_bound
         self._stride = stride
+        self.freeze(deep=True)
 
     @property
     def lower_bound(self) -> Expression:
@@ -531,15 +544,16 @@ def _is_valid_tuple_type_data(data: SerializedDict) -> TypeGuard[_TupleTypeData]
 class TupleType(Type):
     """Tuple type."""
 
-    _types: list[Type]
+    _types: tuple[Type, ...]
 
-    def __init__(self, types: list[Type]) -> None:
+    def __init__(self, types: Sequence[Type]) -> None:
         super().__init__()
-        self._types = types
+        self._types = tuple(types)
+        self.freeze(deep=True)
 
     @property
     def types(self) -> list[Type]:
-        return self._types
+        return list(self._types)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {"types": [ty.serialize_to_dict() for ty in self._types]}
@@ -586,3 +600,70 @@ def promote_type_qualifiers(
         return TypeQualifier.PARAM
     else:
         return TypeQualifier.TEMP
+
+
+def _is_data_type_structurally_equivalent(
+    data_type_1: DataType, data_type_2: DataType
+) -> bool:
+    if isinstance(data_type_1, PrimitiveDataType) and isinstance(
+        data_type_2, PrimitiveDataType
+    ):
+        return data_type_1.core_data_type == data_type_2.core_data_type
+    elif isinstance(data_type_1, TemplateDataType) and isinstance(
+        data_type_2, TemplateDataType
+    ):
+        return (
+            data_type_1.data_type == data_type_2.data_type
+            and data_type_1.widths == data_type_2.widths
+        )
+    else:
+        return False
+
+
+@singledispatch
+def _is_type_structurally_equivalent(type_: Type, other: object) -> bool:
+    return False
+
+
+@_is_type_structurally_equivalent.register
+def _(type_: NumericalType, other: object) -> bool:
+    if not isinstance(other, NumericalType):
+        return False
+    elif not _is_data_type_structurally_equivalent(type_.data_type, other.data_type):
+        return False
+    elif len(type_.shape) != len(other.shape):
+        return False
+    else:
+        return all(
+            dim_1.is_structurally_equivalent(dim_2)
+            for dim_1, dim_2 in zip(type_.shape, other.shape, strict=True)
+        )
+
+
+@_is_type_structurally_equivalent.register
+def _(type_: IndexType, other: object) -> bool:
+    if not isinstance(other, IndexType):
+        return False
+    elif not type_.lower_bound.is_structurally_equivalent(other.lower_bound):
+        return False
+    elif not type_.upper_bound.is_structurally_equivalent(other.upper_bound):
+        return False
+    elif type_.stride is None and other.stride is None:
+        return True
+    elif type_.stride is None or other.stride is None:
+        return False
+    else:
+        return type_.stride.is_structurally_equivalent(other.stride)
+
+
+@_is_type_structurally_equivalent.register
+def _(type_: TupleType, other: object) -> bool:
+    if not isinstance(other, TupleType):
+        return False
+    elif len(type_.types) != len(other.types):
+        return False
+    else:
+        return all(
+            ty_1.is_structurally_equivalent(ty_2)
+            for ty_1, ty_2 in zip(type_.types, other.types, strict=True)
+        )

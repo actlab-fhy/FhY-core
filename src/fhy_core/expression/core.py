@@ -21,6 +21,7 @@ __all__ = [
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum, auto
+from functools import singledispatch
 from typing import Any, TypedDict, TypeGuard
 
 from frozendict import frozendict
@@ -34,6 +35,12 @@ from fhy_core.serialization import (
     is_serialized_dict,
     register_serializable,
 )
+from fhy_core.trait import (
+    FrozenMixin,
+    HasOperandsMixin,
+    StructuralEquivalenceMixin,
+    VisitableMixin,
+)
 from fhy_core.utils import invert_frozen_dict
 
 
@@ -45,8 +52,17 @@ class SymbolType(Enum):
     BOOL = auto()
 
 
-class Expression(WrappedFamilySerializable, ABC):
+class Expression(
+    WrappedFamilySerializable,
+    FrozenMixin,
+    StructuralEquivalenceMixin,
+    VisitableMixin,
+    ABC,
+):
     """Abstract base class for expressions."""
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return _is_expression_structurally_equivalent(self, other)
 
     def __neg__(self) -> "UnaryExpression":
         return UnaryExpression(UnaryOperation.NEGATE, self)
@@ -292,11 +308,15 @@ def _is_valid_unary_expression_data(
 
 @register_serializable(type_id="unary_expression")
 @dataclass(frozen=True, eq=False)
-class UnaryExpression(Expression):
+class UnaryExpression(Expression, HasOperandsMixin[Expression]):
     """Unary expression."""
 
     operation: UnaryOperation
     operand: Expression
+
+    @property
+    def operands(self) -> tuple[Expression]:
+        return (self.operand,)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -409,12 +429,16 @@ def _is_valid_binary_expression_data(
 
 @register_serializable(type_id="binary_expression")
 @dataclass(frozen=True, eq=False)
-class BinaryExpression(Expression):
+class BinaryExpression(Expression, HasOperandsMixin[Expression]):
     """Binary expression."""
 
     operation: BinaryOperation
     left: Expression
     right: Expression
+
+    @property
+    def operands(self) -> tuple[Expression, Expression]:
+        return (self.left, self.right)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -486,28 +510,25 @@ def _is_valid_literal_expression_data(
 
 
 @register_serializable(type_id="literal_expression")
+@dataclass(frozen=True, eq=False)
 class LiteralExpression(Expression):
     """Literal expression."""
 
-    _value: LiteralType
+    value: LiteralType
 
-    def __init__(self, value: LiteralType) -> None:
-        if isinstance(value, str):
-            try:
-                float(value)
-            except ValueError:
-                raise ValueError(
-                    f"Invalid literal expression value: "
-                    f"{value} with type {type(value)}."
-                )
-        self._value = value
-
-    @property
-    def value(self) -> LiteralType:
-        return self._value
+    def __post_init__(self) -> None:
+        if not isinstance(self.value, str):
+            return
+        try:
+            float(self.value)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid literal expression value: "
+                f'{self.value} with type "{type(self.value)}".'
+            ) from exc
 
     def serialize_data_to_dict(self) -> SerializedDict:
-        return {"value": self._value}
+        return {"value": self.value}
 
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "LiteralExpression":
@@ -516,3 +537,42 @@ class LiteralExpression(Expression):
                 cls, _LiteralExpressionData.__annotations__, data
             )
         return cls(data["value"])
+
+
+@singledispatch
+def _is_expression_structurally_equivalent(
+    expression: Expression, other: object
+) -> bool:
+    return False
+
+
+@_is_expression_structurally_equivalent.register
+def _(expression: UnaryExpression, other: object) -> bool:
+    return (
+        isinstance(other, UnaryExpression)
+        and expression.operation == other.operation
+        and expression.operand.is_structurally_equivalent(other.operand)
+    )
+
+
+@_is_expression_structurally_equivalent.register
+def _(expression: BinaryExpression, other: object) -> bool:
+    return (
+        isinstance(other, BinaryExpression)
+        and expression.operation == other.operation
+        and expression.left.is_structurally_equivalent(other.left)
+        and expression.right.is_structurally_equivalent(other.right)
+    )
+
+
+@_is_expression_structurally_equivalent.register
+def _(expression: IdentifierExpression, other: object) -> bool:
+    return (
+        isinstance(other, IdentifierExpression)
+        and expression.identifier == other.identifier
+    )
+
+
+@_is_expression_structurally_equivalent.register
+def _(expression: LiteralExpression, other: object) -> bool:
+    return isinstance(other, LiteralExpression) and expression.value == other.value

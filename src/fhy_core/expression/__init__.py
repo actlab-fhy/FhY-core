@@ -4,8 +4,6 @@ __all__ = [
     "BinaryExpression",
     "BinaryOperation",
     "Expression",
-    "ExpressionBasePass",
-    "ExpressionVisitor",
     "IdentifierExpression",
     "LiteralExpression",
     "LiteralType",
@@ -15,7 +13,6 @@ __all__ = [
     "convert_expression_to_sympy_expression",
     "convert_expression_to_z3_expression",
     "convert_sympy_expression_to_expression",
-    "copy_expression",
     "is_satisfiable",
     "parse_expression",
     "pformat_expression",
@@ -44,7 +41,6 @@ from .passes import (
     convert_expression_to_sympy_expression,
     convert_expression_to_z3_expression,
     convert_sympy_expression_to_expression,
-    copy_expression,
     is_satisfiable,
     replace_identifiers,
     simplify_expression,
@@ -52,4 +48,3 @@ from .passes import (
     substitute_sympy_expression_variables,
 )
 from .pprint import pformat_expression
-from .visitor import ExpressionBasePass, ExpressionVisitor
