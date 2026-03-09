@@ -129,7 +129,10 @@ class FrozenMixin(ABC):
         )
 
     def __setattr__(self, name: str, value: Any) -> None:
-        if name != _FROZEN_FLAG and self._is_marked_frozen():
+        if name in {_FROZEN_FLAG, "__orig_class__"}:
+            object.__setattr__(self, name, value)
+            return
+        if self._is_marked_frozen():
             raise FrozenMutationError(
                 f'Cannot modify "{name}" on frozen {type(self).__name__}.'
             )

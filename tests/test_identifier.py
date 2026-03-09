@@ -1,7 +1,6 @@
 """Tests the identifier."""
 
 from concurrent.futures import ThreadPoolExecutor
-from copy import copy
 from unittest.mock import patch
 
 import pytest
@@ -65,16 +64,6 @@ def test_identifier_supports_equal_traits() -> None:
     assert isinstance(identifier, Equal)
     assert identifier.supports_partial_equality is True
     assert identifier.supports_equality is True
-
-
-def test_copy():
-    """Test that the identifier can be copied."""
-    identifier = Identifier("copy_test")
-    copy_identifier = copy(identifier)
-
-    assert copy_identifier.id == identifier.id
-    assert copy_identifier.name_hint == identifier.name_hint
-    assert copy_identifier == identifier
 
 
 def test_string_representation():

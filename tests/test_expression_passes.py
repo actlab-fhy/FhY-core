@@ -16,7 +16,6 @@ from fhy_core.expression import (
     convert_expression_to_sympy_expression,
     convert_expression_to_z3_expression,
     convert_sympy_expression_to_expression,
-    copy_expression,
     is_satisfiable,
     pformat_expression,
     replace_identifiers,
@@ -120,48 +119,6 @@ def test_collect_expression_identifiers():
         ),
     )
     assert collect_identifiers(expr) == {x, y}
-
-
-def test_copy_literal_expression():
-    """Test that the literal expression is correctly copied."""
-    expr = LiteralExpression(42)
-    copy = copy_expression(expr)
-    assert copy is not expr
-    assert copy.value == expr.value
-
-
-def test_copy_identifier_expression():
-    """Test that the identifier expression is correctly copied."""
-    expr = IdentifierExpression(Identifier("x"))
-    copy = copy_expression(expr)
-    assert copy is not expr
-    assert copy.identifier == expr.identifier
-
-
-def test_copy_unary_expression():
-    """Test that the unary expression is correctly copied."""
-    operand = LiteralExpression(42)
-    expr = UnaryExpression(UnaryOperation.NEGATE, operand)
-    copy = copy_expression(expr)
-    assert copy is not expr
-    assert isinstance(copy, UnaryExpression)
-    assert copy.operation == expr.operation
-    assert copy.operand is not expr.operand
-    assert copy.operand.value == operand.value
-
-
-def test_copy_binary_expression():
-    """Test that the binary expression is correctly copied."""
-    left = LiteralExpression(2)
-    right = LiteralExpression(24)
-    expr = BinaryExpression(BinaryOperation.ADD, left, right)
-    copy = copy_expression(expr)
-    assert copy is not expr
-    assert copy.operation == expr.operation
-    assert copy.left is not left
-    assert copy.left.value == left.value
-    assert copy.right is not right
-    assert copy.right.value == right.value
 
 
 def test_substitute_identifiers():

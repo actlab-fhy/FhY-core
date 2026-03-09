@@ -33,7 +33,7 @@ from fhy_core.serialization import (
     serialize_registry_wrapped_value,
 )
 from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
-from fhy_core.utils import Self, format_comma_separated_list
+from fhy_core.utils import format_comma_separated_list
 
 from .expression import (
     BinaryExpression,
@@ -42,7 +42,6 @@ from .expression import (
     IdentifierExpression,
     LiteralExpression,
     LiteralType,
-    copy_expression,
     pformat_expression,
     simplify_expression,
 )
@@ -79,10 +78,6 @@ class Constraint(
         """
 
     @abstractmethod
-    def copy(self) -> Self:
-        """Return a shallow copy of the constraint."""
-
-    @abstractmethod
     def convert_to_expression(self) -> Expression:
         """Return an expression equivalent to the constraint.
 
@@ -90,9 +85,6 @@ class Constraint(
             ValueError: If the constraint cannot be converted to an expression.
 
         """
-
-    def __copy__(self) -> Self:
-        return self.copy()
 
     def is_structurally_equivalent(self, other: object) -> bool:
         return _is_constraint_structurally_equivalent(self, other)
@@ -233,14 +225,8 @@ class EquationConstraint(Constraint):
             and result.value
         )
 
-    def copy(self) -> "EquationConstraint":
-        new_constraint = EquationConstraint(
-            self.variable, copy_expression(self._expression)
-        )
-        return new_constraint
-
     def convert_to_expression(self) -> Expression:
-        return copy_expression(self._expression)
+        return self._expression
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -305,10 +291,6 @@ class InSetConstraint(Constraint, Generic[_ConstraintMemberT]):
 
     def is_satisfied(self, value: _ConstraintMemberT) -> bool:
         return value in self._valid_values
-
-    def copy(self) -> "InSetConstraint[_ConstraintMemberT]":
-        new_constraint = InSetConstraint(self.variable, set(self._valid_values))
-        return new_constraint
 
     def convert_to_expression(self) -> Expression:
         if len(self._valid_values) == 0:
@@ -409,10 +391,6 @@ class NotInSetConstraint(Constraint, Generic[_ConstraintMemberT]):
 
     def is_satisfied(self, value: _ConstraintMemberT) -> bool:
         return value not in self._invalid_values
-
-    def copy(self) -> "NotInSetConstraint[_ConstraintMemberT]":
-        new_constraint = NotInSetConstraint(self.variable, set(self._invalid_values))
-        return new_constraint
 
     def convert_to_expression(self) -> Expression:
         if len(self._invalid_values) == 0:
