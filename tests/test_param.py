@@ -6,6 +6,7 @@ from typing import TypeVar
 import pytest
 from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.expression import SymbolType
+from fhy_core.identifier import Identifier
 from fhy_core.param import (
     BoundIntParam,
     BoundNatParam,
@@ -18,6 +19,7 @@ from fhy_core.param import (
     PermParam,
     RealParam,
 )
+from fhy_core.trait import StructuralEquivalence
 
 T = TypeVar("T")
 
@@ -44,6 +46,70 @@ def default_real_param() -> RealParam:
 @pytest.fixture
 def default_int_param() -> IntParam:
     return IntParam()
+
+
+def test_param_structural_equivalence_runtime_protocol():
+    """Test `Param` implementations satisfy `StructuralEquivalence` protocol."""
+    param = IntParam()
+    assert isinstance(param, StructuralEquivalence)
+
+
+def test_param_structural_equivalence_true_for_constraint_reordering():
+    """Test params compare structurally when equivalent constraints are reordered."""
+    shared_name = Identifier("x")
+    shared_name_copy = Identifier.deserialize_from_dict(shared_name.serialize_to_dict())
+
+    left_base = IntParam(name=shared_name)
+    right_base = IntParam(name=shared_name_copy)
+
+    left = left_base.add_constraints(
+        [
+            EquationConstraint(left_base.variable, left_base.variable_expression >= 0),
+            EquationConstraint(left_base.variable, left_base.variable_expression <= 10),
+        ]
+    )
+    right = right_base.add_constraints(
+        [
+            EquationConstraint(
+                right_base.variable,
+                right_base.variable_expression <= 10,
+            ),
+            EquationConstraint(
+                right_base.variable,
+                right_base.variable_expression >= 0,
+            ),
+        ]
+    )
+
+    assert left.is_structurally_equivalent(right)
+
+
+def test_param_structural_equivalence_false_for_different_constraints():
+    """Test params are not structurally equivalent with different constraints."""
+    shared_name = Identifier("x")
+    shared_name_copy = Identifier.deserialize_from_dict(shared_name.serialize_to_dict())
+
+    left_base = IntParam(name=shared_name)
+    right_base = IntParam(name=shared_name_copy)
+
+    left = left_base.add_constraints(
+        [
+            EquationConstraint(left_base.variable, left_base.variable_expression >= 0),
+            EquationConstraint(left_base.variable, left_base.variable_expression <= 10),
+        ]
+    )
+    right = right_base.add_constraints(
+        [
+            EquationConstraint(
+                right_base.variable, right_base.variable_expression >= 1
+            ),
+            EquationConstraint(
+                right_base.variable, right_base.variable_expression <= 10
+            ),
+        ]
+    )
+
+    assert not left.is_structurally_equivalent(right)
 
 
 def test_param_is_not_set_after_initialization(default_real_param):

@@ -202,6 +202,13 @@ class NatParam(IntParam):
         object.__setattr__(new_param, "_constraints", self._constraints)
         return new_param
 
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return (
+            isinstance(other, NatParam)
+            and super().is_structurally_equivalent(other)
+            and self._is_zero_included == other._is_zero_included
+        )
+
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "NatParam":
         if not is_valid_param_data(data):
