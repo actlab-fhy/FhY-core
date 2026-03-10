@@ -1,6 +1,7 @@
 """Compiler pass infrastructure package."""
 
 from .core import (
+    AnalysisVisitablePass,
     CompilerPass,
     DiagnosticLevel,
     PassDiagnostic,
@@ -10,6 +11,7 @@ from .core import (
     PassResult,
     PassValidationError,
     PreservedAnalyses,
+    TraversalOrder,
     VisitablePass,
     register_pass,
 )
@@ -27,6 +29,7 @@ from .manager import (
 __all__ = [
     "Analysis",
     "AnalysisManager",
+    "AnalysisVisitablePass",
     "CompilerPass",
     "DiagnosticLevel",
     "FixpointGroupRecord",
@@ -42,6 +45,7 @@ __all__ = [
     "PassRunRecord",
     "PassValidationError",
     "PreservedAnalyses",
+    "TraversalOrder",
     "VisitablePass",
     "register_pass",
 ]
