@@ -115,7 +115,7 @@ def test_param_structural_equivalence_false_for_different_constraints():
 
 def test_param_is_not_set_after_initialization(default_real_param):
     """Test that the value of a parameter is not set after initialization."""
-    assignment = default_real_param.set_value(1.0)
+    assignment = default_real_param.assign(1.0)
     assert isinstance(default_real_param, RealParam)
     assert isinstance(assignment, ParamAssignment)
     assert assignment.param is default_real_param
@@ -124,7 +124,7 @@ def test_param_is_not_set_after_initialization(default_real_param):
 
 def test_param_is_set_after_setting_value(default_real_param):
     """Test that the value of a parameter is set after setting a value."""
-    default_real_param = default_real_param.set_value(1.0)
+    default_real_param = default_real_param.assign(1.0)
     assert default_real_param.is_value_set()
 
 
@@ -136,7 +136,7 @@ def test_param_get_value_fails_when_not_set(default_real_param):
 
 def test_get_param_value_after_setting_value(default_real_param):
     """Test that the value of a parameter can be retrieved after setting a value."""
-    assignment = default_real_param.set_value(1.0)
+    assignment = default_real_param.assign(1.0)
     assert assignment.value == 1.0
 
 
@@ -153,13 +153,13 @@ def test_int_param_get_symbol_type(default_int_param):
 def test_real_param_value_set_fails_with_invalid_value(default_real_param):
     """Test that setting a real parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        default_real_param = default_real_param.set_value([])
+        default_real_param = default_real_param.assign([])
 
 
 def test_int_param_value_set_fails_with_invalid_value(default_int_param):
     """Test that setting an integer parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        default_int_param = default_int_param.set_value(1.0)
+        default_int_param = default_int_param.assign(1.0)
 
 
 def test_create_real_param_with_value():
@@ -188,10 +188,10 @@ def test_create_int_param_with_value_fails_with_invalid_value():
         IntParam.with_value(1.2)
 
 
-def test_param_bind_creates_assignment():
-    """Test that binding a parameter creates an immutable assignment."""
+def test_param_assign_creates_assignment():
+    """Test that assigning a parameter creates an immutable assignment."""
     param = IntParam.with_lower_bound(0)
-    assignment = param.bind(3)
+    assignment = param.assign(3)
     assert isinstance(assignment, ParamAssignment)
     assert assignment.value == 3
     assert assignment.param is param
@@ -222,7 +222,7 @@ def test_param_is_value_valid_checks_type_and_constraints(
 
 def test_param_assignment_materialize_returns_bound_param():
     """Test that materialize returns the parameter definition."""
-    assignment = RealParam.with_upper_bound(2.0).bind(1.5)
+    assignment = RealParam.with_upper_bound(2.0).assign(1.5)
     bound_param = assignment.materialize()
     assert bound_param is assignment.param
 
@@ -283,14 +283,14 @@ def test_add_and_check_int_param_constraints(default_int_param):
     )
     assert default_int_param.is_constraints_satisfied(15)
     with pytest.raises(ValueError):
-        default_int_param = default_int_param.set_value(12)
+        default_int_param = default_int_param.assign(12)
 
 
 def test_set_real_param_and_real_param_is_subset():
     """Test assignment values can be set independently from the same parameter."""
     param1 = RealParam()
-    assignment_1 = param1.set_value(1.0)
-    assignment_2 = param1.set_value(1.0)
+    assignment_1 = param1.assign(1.0)
+    assignment_2 = param1.assign(1.0)
     assert assignment_1.value == 1.0
     assert assignment_2.value == 1.0
     assert assignment_1.param is param1
@@ -339,23 +339,23 @@ def test_interval_real_param_and_interval_real_param_is_subset():
 def test_nat_param_zero_included():
     """Test that a natural number parameter with zero included can be set."""
     param = NatParam()
-    assignment_0 = param.set_value(0)
+    assignment_0 = param.assign(0)
     assert assignment_0.is_value_set()
-    assignment_1 = param.set_value(1)
+    assignment_1 = param.assign(1)
     assert assignment_1.is_value_set()
     with pytest.raises(ValueError):
-        param.set_value(-1)
+        param.assign(-1)
 
 
 def test_nat_param_zero_excluded():
     """Test that a natural number parameter with zero excluded can be set."""
     param = NatParam(is_zero_included=False)
-    assignment_1 = param.set_value(1)
+    assignment_1 = param.assign(1)
     assert assignment_1.is_value_set()
     with pytest.raises(ValueError):
-        param.set_value(0)
+        param.assign(0)
     with pytest.raises(ValueError):
-        param.set_value(-1)
+        param.assign(-1)
 
 
 def test_nat_param_add_constraint_preserves_zero_excluded_state():
@@ -385,9 +385,9 @@ def ordinal_param_123() -> OrdinalParam:
 
 def test_set_ordinal_param_value(ordinal_param_123: OrdinalParam):
     """Test that an ordinal parameter value can be set."""
-    assignment_1 = ordinal_param_123.set_value(1)
+    assignment_1 = ordinal_param_123.assign(1)
     assert assignment_1.is_value_set()
-    assignment_3 = ordinal_param_123.set_value(3)
+    assignment_3 = ordinal_param_123.assign(3)
     assert assignment_3.is_value_set()
 
 
@@ -396,7 +396,7 @@ def test_set_ordinal_param_value_fails_with_invalid_value(
 ):
     """Test that setting an ordinal parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        ordinal_param_123 = ordinal_param_123.set_value(4)
+        ordinal_param_123 = ordinal_param_123.assign(4)
 
 
 def test_add_and_check_ordinal_param_constraints(ordinal_param_123: OrdinalParam):
@@ -437,19 +437,19 @@ def test_create_single_valid_value_param():
     assert isinstance(param, CategoricalParam)
     assert param.get_possible_values() == {"only"}
 
-    assignment = param.set_value("only")
+    assignment = param.assign("only")
     assert assignment.is_value_set()
     assert assignment.value == "only"
 
     with pytest.raises(ValueError):
-        param.set_value("different")
+        param.assign("different")
 
 
 def test_set_categorical_param_value(categorical_param_abc: CategoricalParam):
     """Test that a categorical parameter value can be set."""
-    assignment_a = categorical_param_abc.set_value("a")
+    assignment_a = categorical_param_abc.assign("a")
     assert assignment_a.is_value_set()
-    assignment_c = categorical_param_abc.set_value("c")
+    assignment_c = categorical_param_abc.assign("c")
     assert assignment_c.is_value_set()
 
 
@@ -458,7 +458,7 @@ def test_set_categorical_param_value_fails_with_invalid_value(
 ):
     """Test that setting a categorical parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        categorical_param_abc = categorical_param_abc.set_value("d")
+        categorical_param_abc = categorical_param_abc.assign("d")
 
 
 def test_add_and_check_categorical_param_constraints(
@@ -504,14 +504,14 @@ def perm_param_nchw() -> PermParam:
 
 def test_set_perm_param_value(perm_param_nchw: PermParam):
     """Test that a permutation parameter value can be set."""
-    assignment = perm_param_nchw.set_value(["c", "n", "w", "h"])
+    assignment = perm_param_nchw.assign(["c", "n", "w", "h"])
     assert assignment.is_value_set()
 
 
 def test_set_perm_param_value_fails_with_invalid_value(perm_param_nchw: PermParam):
     """Test that setting a permutation parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        perm_param_nchw = perm_param_nchw.set_value(["n", "c", "h", "n"])
+        perm_param_nchw = perm_param_nchw.assign(["n", "c", "h", "n"])
 
 
 def test_add_and_check_perm_param_constraints(perm_param_nchw: PermParam):
@@ -1085,25 +1085,25 @@ def test_bound_int_param_prefer_inclusive_flag_does_not_change_satisfiable_set()
         assert p1.is_constraints_satisfied(v) == p2.is_constraints_satisfied(v)
 
 
-def test_bound_int_param_set_value_accepts_int_only():
-    """Test that BoundIntParam.set_value only accepts integer values."""
+def test_bound_int_param_assign_accepts_int_only():
+    """Test that BoundIntParam.assign only accepts integer values."""
     p = BoundIntParam.with_lower_bound(0)
-    assignment = p.set_value(1)
+    assignment = p.assign(1)
     assert assignment.value == 1
     with pytest.raises(ValueError):
-        p.set_value(1.0)
+        p.assign(1.0)
     with pytest.raises(ValueError):
-        p.set_value("1")
+        p.assign("1")
 
 
-def test_bound_int_param_set_value_rejects_value_outside_constraints():
-    """Test that ``set_value'' rejects values outside constraints."""
+def test_bound_int_param_assign_rejects_value_outside_constraints():
+    """Test that ``assign'' rejects values outside constraints."""
     p = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
     with pytest.raises(ValueError):
-        p.set_value(2)
+        p.assign(2)
     with pytest.raises(ValueError):
-        p.set_value(6)
-    assignment = p.set_value(4)
+        p.assign(6)
+    assignment = p.assign(4)
     assert assignment.value == 4
 
 

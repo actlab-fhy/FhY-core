@@ -75,7 +75,8 @@ class ParamAssignment(FrozenMixin, Generic[_T]):
 
     def __init__(self, param: "Param[_T]", value: _T) -> None:
         """Create an assignment after validating value against parameter constraints."""
-        param._assert_value_satisfies_constraints(value)
+        if not param.is_value_valid(value):
+            raise ValueError(f"Value {value} does not satisfy constraints: {param}")
         object.__setattr__(self, "_param", param)
         object.__setattr__(self, "_value", value)
         self.freeze(deep=True)
@@ -138,19 +139,15 @@ class Param(
 
         """
         param = cls(name=name)
-        return param.set_value(value)
-
-    def bind(self, value: _T) -> ParamAssignment[_T]:
-        """Bind this parameter definition to a concrete value."""
-        return self.set_value(value)
+        return param.assign(value)
 
     def is_value_valid(self, value: Any) -> bool:
-        """Return whether `value` is valid for this parameter."""
-        try:
-            self.set_value(cast(_T, value))
-        except (TypeError, ValueError):
-            return False
-        return True
+        """Return whether a value is valid for this parameter."""
+        return self.is_value_admissible(value) and self.is_constraints_satisfied(value)
+
+    @abstractmethod
+    def is_value_admissible(self, value: Any) -> bool:
+        """Return whether a value is admissible for this parameter kind."""
 
     def is_constraints_satisfied(self, value: Any) -> bool:
         """Check if the value satisfies all constraints.
@@ -266,11 +263,11 @@ class Param(
         else:
             return True
 
-    def set_value(self, value: _T) -> ParamAssignment[_T]:
-        """Create an immutable assignment from this parameter definition.
+    def assign(self, value: _T) -> ParamAssignment[_T]:
+        """Assign a value to the parameter, returning a parameter assignment.
 
         Args:
-            value: New parameter value.
+            value: Value to assign to the parameter.
 
         Returns:
             A parameter assignment with the provided value.
@@ -280,16 +277,6 @@ class Param(
 
         """
         return ParamAssignment(self, value)
-
-    def _assert_value_satisfies_constraints(self, value: _T) -> None:
-        """Raise if a value does not satisfy the parameter constraints."""
-        is_constraint_satisfied, failing_constraint = (
-            self._is_constraints_satisfied_with_failing_constraint(value)
-        )
-        if not is_constraint_satisfied:
-            raise ValueError(
-                f"Value ({value}) does not satisfy the constraint: {failing_constraint}"
-            )
 
     def add_constraint(self, constraint: Constraint) -> Self:
         """Return a new parameter with an additional constraint.
@@ -301,7 +288,7 @@ class Param(
             A new parameter instance with the added constraint.
 
         """
-        self._validate_constraint(constraint)
+        self.validate_constraint(constraint)
         new_param = self._clone()
         object.__setattr__(new_param, "_constraints", self._constraints + (constraint,))
         return new_param
@@ -312,15 +299,23 @@ class Param(
         if not constraints_tuple:
             return self
         for constraint in constraints_tuple:
-            self._validate_constraint(constraint)
+            self.validate_constraint(constraint)
         new_param = self._clone()
         object.__setattr__(
             new_param, "_constraints", self._constraints + constraints_tuple
         )
         return new_param
 
-    def _validate_constraint(self, constraint: Constraint) -> None:
-        """Validate whether a constraint can be added to this parameter."""
+    def validate_constraint(self, constraint: Constraint) -> None:
+        """Validate whether a constraint can be added to this parameter.
+
+        Args:
+            constraint: Constraint to validate.
+
+        Raises:
+            ValueError: If the constraint is not valid for this parameter.
+
+        """
         if constraint.variable != self.variable:
             raise ValueError("Constraint variable must match parameter variable.")
 
@@ -447,18 +442,18 @@ class RealParam(Param[str | float]):
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.REAL
 
+    def is_value_admissible(self, value: Any) -> bool:
+        try:
+            float(value)
+            return True
+        except (TypeError, ValueError):
+            return False
+
     def is_constraints_satisfied(self, value: str | float) -> bool:
         return super().is_constraints_satisfied(value)
 
-    def set_value(self, value: str | float) -> ParamAssignment[str | float]:
-        if not isinstance(value, (str, float)):
-            raise ValueError("Value must be a string or a float.")
-        if isinstance(value, str):
-            try:
-                float(value)
-            except ValueError as e:
-                raise ValueError("String value must be a number.") from e
-        return super().set_value(value)
+    def assign(self, value: str | float) -> ParamAssignment[str | float]:
+        return super().assign(value)
 
     def _get_param_set_str(self) -> str:
         return "R"
@@ -614,13 +609,14 @@ class IntParam(Param[int]):
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.INT
 
+    def is_value_admissible(self, value: Any) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool)
+
     def is_constraints_satisfied(self, value: int) -> bool:
         return super().is_constraints_satisfied(value)
 
-    def set_value(self, value: int) -> ParamAssignment[int]:
-        if not isinstance(value, int):
-            raise ValueError("Value must be an integer.")
-        return super().set_value(value)
+    def assign(self, value: int) -> ParamAssignment[int]:
+        return super().assign(value)
 
     def _get_param_set_str(self) -> str:
         return "Z"
@@ -799,16 +795,17 @@ class OrdinalParam(Param[Any]):
             raise ValueError("Values must be unique.")
         object.__setattr__(self, "_all_values", values)
 
+    def is_value_admissible(self, value: Any) -> bool:
+        return value in self._all_values
+
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.REAL
 
-    def set_value(self, value: Any) -> ParamAssignment[Any]:
-        if value not in self._all_values:
-            raise ValueError("Value is not in the set of allowed values.")
-        return super().set_value(value)
+    def assign(self, value: Any) -> ParamAssignment[Any]:
+        return super().assign(value)
 
-    def _validate_constraint(self, constraint: Constraint) -> None:
-        super()._validate_constraint(constraint)
+    def validate_constraint(self, constraint: Constraint) -> None:
+        super().validate_constraint(constraint)
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
             raise ValueError(
                 "Only in-set and not-in-set constraints are allowed for "
@@ -878,17 +875,18 @@ class CategoricalParam(Param[_H]):
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.REAL
 
-    def set_value(self, value: _H) -> ParamAssignment[_H]:
-        if value not in self._categories:
-            raise ValueError("Value is not in the set of allowed categories.")
-        return super().set_value(value)
+    def is_value_admissible(self, value: _H) -> bool:
+        return value in self._categories
+
+    def assign(self, value: _H) -> ParamAssignment[_H]:
+        return super().assign(value)
 
     def get_possible_values(self) -> set[_H]:
         """Return the set of possible values for the parameter."""
         return set(self._categories)
 
-    def _validate_constraint(self, constraint: Constraint) -> None:
-        super()._validate_constraint(constraint)
+    def validate_constraint(self, constraint: Constraint) -> None:
+        super().validate_constraint(constraint)
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
             raise ValueError(
                 "Only in-set and not-in-set constraints are allowed for "
@@ -965,6 +963,9 @@ class PermParam(Param[tuple[Any, ...]]):
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.REAL
 
+    def is_value_admissible(self, value: Any) -> bool:
+        return isinstance(value, Sequence) and self._is_value_valid_permutation(value)
+
     def _is_value_valid_permutation(self, value: Sequence[Any]) -> bool:
         return (
             all(value_element in self._all_values for value_element in value)
@@ -976,13 +977,11 @@ class PermParam(Param[tuple[Any, ...]]):
         value = tuple(value)
         return super().is_constraints_satisfied(value)
 
-    def set_value(self, value: Sequence[Any]) -> ParamAssignment[tuple[Any, ...]]:
-        if not self._is_value_valid_permutation(value):
-            raise ValueError("Value is not a valid permutation.")
-        return super().set_value(tuple(value))
+    def assign(self, value: Sequence[Any]) -> ParamAssignment[tuple[Any, ...]]:
+        return super().assign(tuple(value))
 
-    def _validate_constraint(self, constraint: Constraint) -> None:
-        super()._validate_constraint(constraint)
+    def validate_constraint(self, constraint: Constraint) -> None:
+        super().validate_constraint(constraint)
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
             raise ValueError(
                 "Only in-set and not-in-set constraints are allowed for "

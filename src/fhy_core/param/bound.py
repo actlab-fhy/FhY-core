@@ -131,8 +131,8 @@ class BoundIntParam(IntParam):
         super().__init__(name=name, **kwargs)
         object.__setattr__(self, "_prefer_inclusive", prefer_inclusive)
 
-    def _validate_constraint(self, constraint: Constraint) -> None:
-        super()._validate_constraint(constraint)
+    def validate_constraint(self, constraint: Constraint) -> None:
+        super().validate_constraint(constraint)
         if not isinstance(constraint, EquationConstraint):
             raise TypeError(
                 "BoundIntParam only supports EquationConstraint constraints."
