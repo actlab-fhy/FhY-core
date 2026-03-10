@@ -34,10 +34,14 @@ from fhy_core.expression import (
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
     DeserializationDictStructureError,
+    DeserializationValueError,
+    Serializable,
     SerializedDict,
     WrappedFamilySerializable,
+    deserialize_registry_wrapped_value,
     is_serialized_dict,
     register_serializable,
+    serialize_registry_wrapped_value,
 )
 from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
 from fhy_core.utils import Self, format_comma_separated_list
@@ -67,7 +71,24 @@ def _constraint_structural_ordering_key(constraint: Constraint) -> str:
     return repr(constraint.serialize_to_dict())
 
 
-class ParamAssignment(FrozenMixin, Generic[_T]):
+class _ParamAssignmentData(TypedDict):
+    param: SerializedDict
+    value: SerializedDict
+
+
+def _is_valid_param_assignment_data(
+    data: SerializedDict,
+) -> TypeGuard[_ParamAssignmentData]:
+    return (
+        "param" in data
+        and is_serialized_dict(data["param"])
+        and "value" in data
+        and is_serialized_dict(data["value"])
+    )
+
+
+@register_serializable(type_id="param_assignment")
+class ParamAssignment(Serializable, FrozenMixin, Generic[_T]):
     """Immutable binding of a parameter definition to a concrete value."""
 
     _param: "Param[_T]"
@@ -108,6 +129,34 @@ class ParamAssignment(FrozenMixin, Generic[_T]):
     def is_value_set(self) -> bool:
         """Return whether this assignment has a value."""
         return True
+
+    def serialize_to_dict(self) -> SerializedDict:
+        return {
+            "param": self._param.serialize_to_dict(),
+            "value": serialize_registry_wrapped_value(cast(Any, self._value)),
+        }
+
+    @classmethod
+    def deserialize_from_dict(cls, data: SerializedDict) -> "ParamAssignment[Any]":
+        if not _is_valid_param_assignment_data(data):
+            raise DeserializationDictStructureError(
+                cls, _ParamAssignmentData.__annotations__, data
+            )
+
+        param = Param.deserialize_from_dict(data["param"])
+        try:
+            value = deserialize_registry_wrapped_value(data["value"])
+        except (DeserializationDictStructureError, DeserializationValueError) as exc:
+            raise DeserializationValueError(
+                cls, "value", "a wrapped serializable value", data["value"]
+            ) from exc
+
+        try:
+            return cls(cast(Param[Any], param), cast(Any, value))
+        except ValueError as exc:
+            raise DeserializationValueError(
+                f"Invalid parameter assignment values: {exc}"
+            ) from exc
 
 
 class Param(

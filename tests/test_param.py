@@ -20,6 +20,11 @@ from fhy_core.param import (
     RealParam,
     create_single_valid_value_param,
 )
+from fhy_core.serialization import (
+    DeserializationValueError,
+    SerializationFormat,
+    serialize_registry_wrapped_value,
+)
 from fhy_core.trait import StructuralEquivalence
 
 T = TypeVar("T")
@@ -966,6 +971,47 @@ def test_nat_param_serialization():
     _assert_none_satisfied(param2, [0, 11])
     dictionary = param2.serialize_to_dict()
     assert len(dictionary["__data__"]["constraints"]) == 3
+
+
+def test_param_assignment_serialization_dict_roundtrip():
+    """Test parameter assignments round-trip via dictionary serialization."""
+    assignment = IntParam.with_lower_bound(0).assign(3)
+    dictionary = assignment.serialize_to_dict()
+
+    assignment2 = ParamAssignment.deserialize_from_dict(dictionary)
+    assert assignment2.value == assignment.value
+    assert assignment2.param.is_structurally_equivalent(assignment.param)
+    assert assignment2.serialize_to_dict() == dictionary
+
+
+def test_param_assignment_serialization_json_and_binary_roundtrip():
+    """Test parameter assignments round-trip via JSON and binary serialization."""
+    assignment = PermParam(["n", "c", "h", "w"]).assign(["n", "c", "h", "w"])
+
+    json_payload = assignment.serialize(SerializationFormat.JSON)
+    assignment_from_json = ParamAssignment.deserialize(
+        json_payload, SerializationFormat.JSON
+    )
+    assert isinstance(assignment_from_json.param, PermParam)
+    assert assignment_from_json.value == ("n", "c", "h", "w")
+
+    binary_payload = assignment.serialize(SerializationFormat.BINARY)
+    assignment_from_binary = ParamAssignment.deserialize(
+        binary_payload, SerializationFormat.BINARY
+    )
+    assert isinstance(assignment_from_binary.param, PermParam)
+    assert assignment_from_binary.value == ("n", "c", "h", "w")
+
+
+def test_param_assignment_deserialization_rejects_value_invalid_for_param():
+    """Test assignment deserialization fails if payload value violates constraints."""
+    param = RealParam.with_lower_bound(0.0)
+    payload = {
+        "param": param.serialize_to_dict(),
+        "value": serialize_registry_wrapped_value(-1.0),
+    }
+    with pytest.raises(DeserializationValueError):
+        ParamAssignment.deserialize_from_dict(payload)
 
 
 # TODO: Check serialization structure errors and value errors for all types.
