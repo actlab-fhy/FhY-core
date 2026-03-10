@@ -143,7 +143,7 @@ class ParamAssignment(Serializable, FrozenMixin, Generic[_T]):
                 cls, _ParamAssignmentData.__annotations__, data
             )
 
-        param = Param.deserialize_from_dict(data["param"])
+        param: Param[Any] = Param.deserialize_from_dict(data["param"])
         try:
             value = deserialize_registry_wrapped_value(data["value"])
         except (DeserializationDictStructureError, DeserializationValueError) as exc:
@@ -152,7 +152,7 @@ class ParamAssignment(Serializable, FrozenMixin, Generic[_T]):
             ) from exc
 
         try:
-            return cls(cast(Param[Any], param), cast(Any, value))
+            return cls(param, cast(Any, value))
         except ValueError as exc:
             raise DeserializationValueError(
                 f"Invalid parameter assignment values: {exc}"
