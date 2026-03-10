@@ -75,8 +75,20 @@ class ParamAssignment(FrozenMixin, Generic[_T]):
 
     def __init__(self, param: "Param[_T]", value: _T) -> None:
         """Create an assignment after validating value against parameter constraints."""
-        if not param.is_value_valid(value):
-            raise ValueError(f"Value {value} does not satisfy constraints: {param}")
+        if not param.is_value_admissible(value):
+            raise ValueError(
+                f"Value {value!r} is not admissible for parameter {param!r}."
+            )
+
+        is_constraint_satisfied, failing_constraint = (
+            param._is_constraints_satisfied_with_failing_constraint(value)
+        )
+        if not is_constraint_satisfied:
+            raise ValueError(
+                f"Value {value!r} violates constraint {failing_constraint!r} "
+                f"for parameter {param!r}."
+            )
+
         object.__setattr__(self, "_param", param)
         object.__setattr__(self, "_value", value)
         self.freeze(deep=True)
@@ -314,6 +326,8 @@ class Param(
 
         Raises:
             ValueError: If the constraint is not valid for this parameter.
+            TypeError: If the constraint type is not supported by this parameter
+                (may be raised by subclasses).
 
         """
         if constraint.variable != self.variable:
@@ -443,11 +457,17 @@ class RealParam(Param[str | float]):
         return SymbolType.REAL
 
     def is_value_admissible(self, value: Any) -> bool:
-        try:
-            float(value)
-            return True
-        except (TypeError, ValueError):
+        if isinstance(value, bool):
             return False
+        if isinstance(value, float):
+            return True
+        if isinstance(value, str):
+            try:
+                float(value)
+            except ValueError:
+                return False
+            return True
+        return False
 
     def is_constraints_satisfied(self, value: str | float) -> bool:
         return super().is_constraints_satisfied(value)
