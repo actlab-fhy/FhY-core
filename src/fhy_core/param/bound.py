@@ -327,6 +327,13 @@ class BoundIntParam(IntParam):
         object.__setattr__(new_param, "_constraints", self._constraints)
         return new_param
 
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return (
+            isinstance(other, BoundIntParam)
+            and super().is_structurally_equivalent(other)
+            and self._prefer_inclusive == other._prefer_inclusive
+        )
+
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "BoundIntParam":
         if not _is_valid_bound_param_data(data):

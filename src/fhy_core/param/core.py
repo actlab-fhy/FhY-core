@@ -11,6 +11,7 @@ __all__ = [
     "ParamData",
     "is_valid_param_data",
     "finalize_param_construction_from_data",
+    "create_single_valid_value_param",
 ]
 
 from abc import ABC, abstractmethod
@@ -38,7 +39,7 @@ from fhy_core.serialization import (
     is_serialized_dict,
     register_serializable,
 )
-from fhy_core.trait import FrozenMixin
+from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
 from fhy_core.utils import Self, format_comma_separated_list
 
 _H = TypeVar("_H", bound=Hashable)
@@ -59,6 +60,11 @@ def _is_values_unique_in_sorted_sequence(values: Sequence[Any]) -> bool:
 
 def _is_values_unique_in_sequence_with_set(values: Collection[_H]) -> bool:
     return len(values) == len(set(values))
+
+
+def _constraint_structural_ordering_key(constraint: Constraint) -> str:
+    """Return a deterministic key for canonical constraint ordering."""
+    return repr(constraint.serialize_to_dict())
 
 
 class ParamAssignment(FrozenMixin, Generic[_T]):
@@ -91,7 +97,9 @@ class ParamAssignment(FrozenMixin, Generic[_T]):
         return True
 
 
-class Param(WrappedFamilySerializable, FrozenMixin, ABC, Generic[_T]):
+class Param(
+    WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC, Generic[_T]
+):
     """Abstract base class for constrained parameters."""
 
     _variable: Identifier
@@ -147,6 +155,27 @@ class Param(WrappedFamilySerializable, FrozenMixin, ABC, Generic[_T]):
 
         """
         return self._is_constraints_satisfied_with_failing_constraint(value)[0]
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        if not isinstance(other, Param):
+            return False
+        if self.variable != other.variable:
+            return False
+
+        self_constraints = self._get_constraints_in_structural_order()
+        other_constraints = other._get_constraints_in_structural_order()
+        if len(self_constraints) != len(other_constraints):
+            return False
+
+        return all(
+            left_constraint.is_structurally_equivalent(right_constraint)
+            for left_constraint, right_constraint in zip(
+                self_constraints, other_constraints, strict=True
+            )
+        )
+
+    def _get_constraints_in_structural_order(self) -> tuple[Constraint, ...]:
+        return tuple(sorted(self._constraints, key=_constraint_structural_ordering_key))
 
     def _is_constraints_satisfied_with_failing_constraint(
         self, value: Any
@@ -548,6 +577,11 @@ class RealParam(Param[str | float]):
         )
         return self.add_constraint(lower_bound_constraint)
 
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return isinstance(other, RealParam) and super().is_structurally_equivalent(
+            other
+        )
+
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "RealParam":
         if not is_valid_param_data(data):
@@ -705,6 +739,9 @@ class IntParam(Param[int]):
         )
         return self.add_constraint(lower_bound_constraint)
 
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return isinstance(other, IntParam) and super().is_structurally_equivalent(other)
+
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "IntParam":
         if not is_valid_param_data(data):
@@ -769,6 +806,13 @@ class OrdinalParam(Param[Any]):
                 "Only in-set and not-in-set constraints are allowed for "
                 "ordinal parameters."
             )
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return (
+            isinstance(other, OrdinalParam)
+            and super().is_structurally_equivalent(other)
+            and self._all_values == other._all_values
+        )
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
@@ -842,6 +886,13 @@ class CategoricalParam(Param[_H]):
                 "Only in-set and not-in-set constraints are allowed for "
                 "categorical parameters."
             )
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return (
+            isinstance(other, CategoricalParam)
+            and super().is_structurally_equivalent(other)
+            and self._categories == other._categories
+        )
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
@@ -929,6 +980,13 @@ class PermParam(Param[tuple[Any, ...]]):
                 "Only in-set and not-in-set constraints are allowed for "
                 "permutation parameters."
             )
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return (
+            isinstance(other, PermParam)
+            and super().is_structurally_equivalent(other)
+            and self._all_values == other._all_values
+        )
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
