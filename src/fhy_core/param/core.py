@@ -148,7 +148,10 @@ class ParamAssignment(Serializable, FrozenMixin, Generic[_T]):
             value = deserialize_registry_wrapped_value(data["value"])
         except (DeserializationDictStructureError, DeserializationValueError) as exc:
             raise DeserializationValueError(
-                cls, "value", "a wrapped serializable value", data["value"]
+                cls,
+                "value",
+                f"a wrapped serializable value (underlying error: {exc})",
+                data["value"],
             ) from exc
 
         try:
