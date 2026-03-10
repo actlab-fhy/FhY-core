@@ -144,6 +144,14 @@ class Param(
         """Bind this parameter definition to a concrete value."""
         return self.set_value(value)
 
+    def is_value_valid(self, value: Any) -> bool:
+        """Return whether `value` is valid for this parameter."""
+        try:
+            self.set_value(cast(_T, value))
+        except (TypeError, ValueError):
+            return False
+        return True
+
     def is_constraints_satisfied(self, value: Any) -> bool:
         """Check if the value satisfies all constraints.
 

@@ -197,6 +197,29 @@ def test_param_bind_creates_assignment():
     assert assignment.param is param
 
 
+@pytest.mark.parametrize(
+    ("param", "valid_value", "invalid_type_or_shape_value", "constraint_fail_value"),
+    [
+        (RealParam.with_lower_bound(0.0), 1.5, [], -1.0),
+        (IntParam.with_lower_bound(0), 3, 1.2, -1),
+        (NatParam(is_zero_included=False), 2, 1.5, 0),
+        (OrdinalParam([1, 2, 3]), 2, "2", 4),
+        (CategoricalParam({"a", "b"}), "a", 3, "z"),
+        (PermParam(["n", "c", "h", "w"]), ("n", "c", "h", "w"), 7, ("n", "c")),
+    ],
+)
+def test_param_is_value_valid_checks_type_and_constraints(
+    param: Param[object],
+    valid_value: object,
+    invalid_type_or_shape_value: object,
+    constraint_fail_value: object,
+):
+    """Test `is_value_valid` checks subclass admissibility and constraints."""
+    assert param.is_value_valid(valid_value)
+    assert not param.is_value_valid(invalid_type_or_shape_value)
+    assert not param.is_value_valid(constraint_fail_value)
+
+
 def test_param_assignment_materialize_returns_bound_param():
     """Test that materialize returns the parameter definition."""
     assignment = RealParam.with_upper_bound(2.0).bind(1.5)
