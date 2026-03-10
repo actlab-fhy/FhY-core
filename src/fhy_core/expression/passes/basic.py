@@ -13,14 +13,18 @@ from fhy_core.expression.core import (
     UnaryExpression,
 )
 from fhy_core.identifier import Identifier
-from fhy_core.pass_infrastructure import VisitablePass, register_pass
+from fhy_core.pass_infrastructure import (
+    AnalysisVisitablePass,
+    VisitablePass,
+    register_pass,
+)
 
 
 @register_pass(
     "fhy_core.expression.collect_identifiers",
     "Collect identifier references from an expression tree.",
 )
-class IdentifierCollector(VisitablePass[Expression, None]):
+class IdentifierCollector(AnalysisVisitablePass[Expression]):
     """Collect all identifiers in an expression tree."""
 
     _identifiers: set[Identifier]
@@ -37,19 +41,6 @@ class IdentifierCollector(VisitablePass[Expression, None]):
         self, identifier_expression: IdentifierExpression
     ) -> None:
         self._identifiers.add(identifier_expression.identifier)
-
-    def visit_unary_expression(self, unary_expression: UnaryExpression) -> None:
-        self.visit(unary_expression.operand)
-
-    def visit_binary_expression(self, binary_expression: BinaryExpression) -> None:
-        self.visit(binary_expression.left)
-        self.visit(binary_expression.right)
-
-    def visit_literal_expression(self, literal_expression: LiteralExpression) -> None:
-        _ = literal_expression
-
-    def get_noop_output(self, ir: Expression) -> None:
-        return None
 
 
 def collect_identifiers(expression: Expression) -> set[Identifier]:

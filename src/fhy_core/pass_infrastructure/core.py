@@ -307,7 +307,15 @@ class VisitablePass(CompilerPass[_VisitableNodeT, _PassOutputT], ABC):
         return self.visit(ir)
 
     def visit(self, node: _VisitableNodeT) -> _PassOutputT:
-        """Visit a node by resolving `visit_<node_kind>` dynamically."""
+        """Visit a node by resolving `visit_<node_kind>` dynamically.
+
+        Args:
+            node: Node to visit.
+
+        Returns:
+            Result of visiting the node.
+
+        """
         method_name = (
             f"{self._VISIT_METHOD_PREFIX}{type(node).get_visit_method_suffix()}"
         )
@@ -370,6 +378,8 @@ class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
         must be done manually in visit methods.
         """
         return cast(Sequence[_VisitableNodeT], node.get_visit_children())
+
+    def visit_unknown(self, node: _VisitableNodeT) -> None: ...
 
 
 def register_pass(name: str, description: str) -> Callable[[_PassClassT], _PassClassT]:
