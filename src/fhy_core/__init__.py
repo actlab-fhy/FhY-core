@@ -93,6 +93,7 @@ __all__ = [
     "ParamAssignment",
     "PermParam",
     "RealParam",
+    "create_single_valid_value_param",
     "FunctionKeyword",
     "FunctionSymbolTableFrame",
     "ImportSymbolTableFrame",
@@ -186,6 +187,7 @@ from .param import (
     ParamAssignment,
     PermParam,
     RealParam,
+    create_single_valid_value_param,
 )
 from .pass_infrastructure import (
     Analysis,

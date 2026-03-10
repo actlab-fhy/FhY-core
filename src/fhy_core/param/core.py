@@ -11,6 +11,7 @@ __all__ = [
     "ParamData",
     "is_valid_param_data",
     "finalize_param_construction_from_data",
+    "create_single_valid_value_param",
 ]
 
 from abc import ABC, abstractmethod
