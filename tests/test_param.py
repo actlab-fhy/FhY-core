@@ -18,6 +18,7 @@ from fhy_core.param import (
     ParamAssignment,
     PermParam,
     RealParam,
+    create_single_valid_value_param,
 )
 from fhy_core.trait import StructuralEquivalence
 
@@ -405,6 +406,20 @@ def test_categorical_param_initialization():
 @pytest.fixture()
 def categorical_param_abc() -> CategoricalParam:
     return CategoricalParam({"a", "b", "c"})
+
+
+def test_create_single_valid_value_param():
+    """Test helper creates a categorical param constrained to one value."""
+    param = create_single_valid_value_param("only")
+    assert isinstance(param, CategoricalParam)
+    assert param.get_possible_values() == {"only"}
+
+    assignment = param.set_value("only")
+    assert assignment.is_value_set()
+    assert assignment.value == "only"
+
+    with pytest.raises(ValueError):
+        param.set_value("different")
 
 
 def test_set_categorical_param_value(categorical_param_abc: CategoricalParam):
