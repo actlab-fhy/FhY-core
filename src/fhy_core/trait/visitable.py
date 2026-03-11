@@ -3,6 +3,7 @@
 __all__ = ["Visitable", "VisitableMixin"]
 
 from abc import ABC
+from collections.abc import Sequence
 from typing import Any, Protocol
 
 
@@ -38,6 +39,15 @@ class Visitable(ABC):
 
         """
         return visitor.visit(self)
+
+    def get_visit_children(self) -> Sequence["Visitable"]:
+        """Return child nodes for traversal-aware visitors.
+
+        Nodes can override this to expose ordered children for automatic
+        pre-order/post-order traversal. The default implementation reports no
+        children.
+        """
+        return ()
 
 
 class VisitableMixin(Visitable):
