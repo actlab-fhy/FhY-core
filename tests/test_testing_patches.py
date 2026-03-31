@@ -35,7 +35,7 @@ def test_compare_identifiers_by_name_hint():
     identifier_a_2 = Identifier("a")
 
     assert identifier_a != identifier_a_2
-    with compare_identifiers_by_name_hint(Identifier):
+    with compare_identifiers_by_name_hint():
         assert identifier_a == identifier_a_2
 
 
