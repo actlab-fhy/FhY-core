@@ -3,7 +3,7 @@
 import pytest
 from fhy_core.identifier import Identifier
 from fhy_core.testing_patches import (
-    compare_identifiers_by_name_hint,
+    deterministic_identifiers_by_name_hint,
     fail_fast_structural_equivalence,
 )
 from fhy_core.trait import StructuralEquivalenceMixin
@@ -29,14 +29,32 @@ class _TestClass2(StructuralEquivalenceMixin):
         return self.test.is_structurally_equivalent(other.test)
 
 
-def test_compare_identifiers_by_name_hint():
-    """Test the compare identifiers by name hint patch works."""
+@deterministic_identifiers_by_name_hint
+def test_deterministic_identifiers_by_name_hint():
+    """Test deterministic identifiers support hashed containers in tests."""
     identifier_a = Identifier("a")
     identifier_a_2 = Identifier("a")
+    identifier_b = Identifier("b")
 
-    assert identifier_a != identifier_a_2
-    with compare_identifiers_by_name_hint():
+    assert identifier_a == identifier_a_2
+    assert hash(identifier_a) == hash(identifier_a_2)
+    assert identifier_a != identifier_b
+
+    identifier_set = {identifier_a, identifier_b}
+    identifier_dict = {identifier_a: "left", identifier_b: "right"}
+
+    assert identifier_a_2 in identifier_set
+    assert identifier_dict[identifier_a_2] == "left"
+
+
+def test_deterministic_identifiers_by_name_hint_with_block():
+    """Test deterministic identifiers patch supports `with` usage."""
+    with deterministic_identifiers_by_name_hint:
+        identifier_a = Identifier("a")
+        identifier_a_2 = Identifier("a")
+
         assert identifier_a == identifier_a_2
+        assert hash(identifier_a) == hash(identifier_a_2)
 
 
 def test_fail_fast_structural_equivalence():

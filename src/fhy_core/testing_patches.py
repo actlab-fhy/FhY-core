@@ -2,13 +2,14 @@
 
 __all__ = [
     "fail_fast_structural_equivalence",
-    "compare_identifiers_by_name_hint",
+    "deterministic_identifiers_by_name_hint",
 ]
 
 import contextlib
 import functools
 import inspect
 import sys
+from contextlib import ContextDecorator
 from typing import Any, Generator
 
 from fhy_core.identifier import Identifier
@@ -54,18 +55,71 @@ def fail_fast_structural_equivalence() -> Generator[None, None, None]:
             setattr(cls, method_name, orig)
 
 
-@contextlib.contextmanager
-def compare_identifiers_by_name_hint() -> Generator[None, None, None]:
-    """Patch the identifier equality method to compare by name hint."""
-    original_eq = Identifier.__eq__
+class _DeterministicIdentifiersByNameHint(ContextDecorator):
+    """Test patch that assigns deterministic IDs from `name_hint`.
 
-    def patched_eq(self: Identifier, other: object) -> bool:
-        if not isinstance(other, Identifier):
-            return False
-        return self.name_hint == other.name_hint
+    This is intended for tests that compare object graphs containing
+    internally-created identifiers, including when those identifiers are used as
+    dictionary keys or set members. Within the patch, all identifiers sharing
+    the same `name_hint` receive the same ID, so equality and hashing remain
+    consistent.
 
-    Identifier.__eq__ = patched_eq  # type: ignore
-    try:
-        yield
-    finally:
-        Identifier.__eq__ = original_eq  # type: ignore
+    Note:
+        This is only safe when every semantically distinct identifier created
+        within the patched scope has a unique `name_hint`.
+
+    """
+
+    _active_count: int
+    _name_hint_to_id: dict[str, int]
+    _original_init: Any
+    _patched_init_func: Any
+
+    def __init__(self) -> None:
+        self._active_count = 0
+        self._name_hint_to_id = {}
+        self._original_init = None
+        self._patched_init_func = None
+
+    def __call__(self, func: Any = None) -> Any:
+        if func is None:
+            return self
+        return super().__call__(func)
+
+    def __enter__(self) -> "_DeterministicIdentifiersByNameHint":
+        if self._active_count == 0:
+            self._name_hint_to_id = {}
+            self._original_init = Identifier.__init__
+            self._patched_init_func = self._make_patched_init()
+            Identifier.__init__ = self._patched_init_func  # type: ignore
+        self._active_count += 1
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: Any,
+    ) -> None:
+        self._active_count -= 1
+        if self._active_count == 0:
+            Identifier.__init__ = self._original_init  # type: ignore
+            self._name_hint_to_id = {}
+            self._original_init = None
+            self._patched_init_func = None
+
+    def _make_patched_init(self) -> Any:
+        def patched_init(identifier: Identifier, name_hint: str) -> None:
+            with Identifier._id_lock:
+                identifier_id = self._name_hint_to_id.get(name_hint)
+                if identifier_id is None:
+                    identifier_id = Identifier._next_id
+                    self._name_hint_to_id[name_hint] = identifier_id
+                    Identifier._next_id += 1
+            identifier._id = identifier_id
+            identifier._name_hint = name_hint
+
+        return patched_init
+
+
+deterministic_identifiers_by_name_hint = _DeterministicIdentifiersByNameHint()
