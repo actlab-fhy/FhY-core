@@ -1,7 +1,7 @@
 """Tests the parameter utility."""
 
 from functools import partial
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import pytest
 from fhy_core.constraint import EquationConstraint, InSetConstraint
@@ -22,12 +22,59 @@ from fhy_core.param import (
 )
 from fhy_core.serialization import (
     DeserializationValueError,
+    Serializable,
     SerializationFormat,
+    register_serializable,
     serialize_registry_wrapped_value,
 )
 from fhy_core.trait import StructuralEquivalence
 
 T = TypeVar("T")
+
+
+@register_serializable(type_id="tests.param.serializable_hash_only")
+class _SerializableHashOnly(Serializable):
+    """Serializable value that is hashable but has identity equality semantics."""
+
+    _value: int
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    def __hash__(self) -> int:
+        return hash(self._value)
+
+    def serialize_to_dict(self) -> dict[str, Any]:
+        return {"value": self._value}
+
+    @classmethod
+    def deserialize_from_dict(cls, data: dict[str, Any]) -> "_SerializableHashOnly":
+        return cls(value=int(data["value"]))
+
+
+@register_serializable(type_id="tests.param.serializable_equal_no_order")
+class _SerializableEqualNoOrder(Serializable):
+    """Serializable value with equality semantics but no ordering semantics."""
+
+    _value: int
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    def __hash__(self) -> int:
+        return hash(self._value)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _SerializableEqualNoOrder) and (
+            self._value == other._value
+        )
+
+    def serialize_to_dict(self) -> dict[str, Any]:
+        return {"value": self._value}
+
+    @classmethod
+    def deserialize_from_dict(cls, data: dict[str, Any]) -> "_SerializableEqualNoOrder":
+        return cls(value=int(data["value"]))
 
 
 def _assert_all_satisfied(param: Param[T], values: list[T]) -> None:
@@ -383,6 +430,12 @@ def test_ordinal_param_initialization_fails_with_non_unique_values():
         OrdinalParam([1, 2, 1])
 
 
+def test_ordinal_param_initialization_requires_orderable_values():
+    """Test ordinal params reject wrapped-leaf values without ordering semantics."""
+    with pytest.raises(TypeError):
+        OrdinalParam([_SerializableEqualNoOrder(1), _SerializableEqualNoOrder(2)])
+
+
 @pytest.fixture()
 def ordinal_param_123() -> OrdinalParam:
     return OrdinalParam([1, 2, 3])
@@ -429,6 +482,12 @@ def test_categorical_param_initialization():
     """Test that a categorical parameter can be initialized."""
     param = CategoricalParam({"a", "b", "c"})
     assert isinstance(param, CategoricalParam)
+
+
+def test_categorical_param_initialization_requires_equal_values():
+    """Test categorical params reject wrapped-leaf values without equal semantics."""
+    with pytest.raises(TypeError):
+        CategoricalParam({_SerializableHashOnly(1), _SerializableHashOnly(2)})
 
 
 @pytest.fixture()
@@ -931,6 +990,14 @@ def test_ordinal_param_serialization(ordinal_param_123: OrdinalParam):
     _assert_none_satisfied(param2, [3])
 
 
+def test_ordinal_param_deserialization_rejects_unwrapped_possible_values():
+    """Test ordinal deserialization rejects raw unwrapped possible values."""
+    payload = OrdinalParam([1, 2, 3]).serialize_to_dict()
+    payload["__data__"]["possible_values"] = [1, 2, 3]
+    with pytest.raises(DeserializationValueError):
+        OrdinalParam.deserialize_from_dict(payload)
+
+
 def test_categorical_param_serialization(categorical_param_abc: CategoricalParam):
     """Test a categorical parameter can be serialized/deserialized via a dictionary."""
     categorical_param_abc = categorical_param_abc.add_constraint(
@@ -940,6 +1007,24 @@ def test_categorical_param_serialization(categorical_param_abc: CategoricalParam
     param2 = CategoricalParam.deserialize_from_dict(dictionary)
     _assert_all_satisfied(param2, ["a", "b"])
     _assert_none_satisfied(param2, ["c"])
+
+
+def test_categorical_param_deserialization_rejects_wrapped_non_leaf_values():
+    """Test categorical deserialization rejects wrapped container values."""
+    payload = CategoricalParam({"a", "b"}).serialize_to_dict()
+    payload["__data__"]["possible_values"] = [
+        serialize_registry_wrapped_value(("a", "b"))
+    ]
+    with pytest.raises(DeserializationValueError):
+        CategoricalParam.deserialize_from_dict(payload)
+
+
+def test_categorical_param_round_trip_serialization() -> None:
+    """Test a categorical parameter can be serialized/deserialized via a dictionary."""
+    param = CategoricalParam([Identifier("a"), Identifier("b")])
+    data = param.serialize_to_dict()
+    param2 = CategoricalParam.deserialize_from_dict(data)
+    assert param.is_structurally_equivalent(param2)
 
 
 def test_perm_param_serialization(perm_param_nchw: PermParam):

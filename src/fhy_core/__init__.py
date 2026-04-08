@@ -1,6 +1,6 @@
 """FhY compiler core utilities."""
 
-__version__ = "0.0.5"
+__version__ = "0.0.6"
 
 __all__ = [
     "Constraint",
@@ -83,16 +83,21 @@ __all__ = [
     "FoldableMixin",
     "HasProvenance",
     "HasProvenanceMixin",
+    "CategoricalValue",
     "CategoricalParam",
     "IntParam",
     "BoundIntParam",
     "NatParam",
     "BoundNatParam",
     "OrdinalParam",
+    "OrdinalValue",
     "Param",
     "ParamAssignment",
     "PermParam",
+    "PermutationMemberValue",
     "RealParam",
+    "SerializableEqualValue",
+    "SerializableOrderableValue",
     "create_single_valid_value_param",
     "FunctionKeyword",
     "FunctionSymbolTableFrame",
@@ -125,6 +130,10 @@ __all__ = [
     "register_serializable",
     "Serializable",
     "WrappedFamilySerializable",
+    "RegistryWrappedValue",
+    "RegistryWrappedValueLeaf",
+    "is_registry_wrapped_value_leaf",
+    "is_registry_wrapped_value",
     "SerializedObject",
     "SerializedDict",
     "SerializedValue",
@@ -180,13 +189,18 @@ from .param import (
     BoundIntParam,
     BoundNatParam,
     CategoricalParam,
+    CategoricalValue,
     IntParam,
     NatParam,
     OrdinalParam,
+    OrdinalValue,
     Param,
     ParamAssignment,
     PermParam,
+    PermutationMemberValue,
     RealParam,
+    SerializableEqualValue,
+    SerializableOrderableValue,
     create_single_valid_value_param,
 )
 from .pass_infrastructure import (
@@ -214,6 +228,8 @@ from .provenance import Note, NoteKind, Position, Provenance, Span
 from .serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
+    RegistryWrappedValue,
+    RegistryWrappedValueLeaf,
     Serializable,
     SerializationFormat,
     SerializationPayloadTypeError,
@@ -224,6 +240,8 @@ from .serialization import (
     SerializedValue,
     WrappedFamilySerializable,
     deserialize_registry_wrapped_value,
+    is_registry_wrapped_value,
+    is_registry_wrapped_value_leaf,
     is_serialized_dict,
     is_serialized_value,
     register_serializable,

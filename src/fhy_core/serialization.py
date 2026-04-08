@@ -68,6 +68,10 @@ __all__ = [
     "SerializationTypeError",
     "SerializationValueError",
     "SerializationPayloadTypeError",
+    "RegistryWrappedValueLeaf",
+    "RegistryWrappedValue",
+    "is_registry_wrapped_value_leaf",
+    "is_registry_wrapped_value",
     "deserialize_registry_wrapped_value",
     "serialize_registry_wrapped_value",
 ]
@@ -76,15 +80,13 @@ import importlib
 import json
 import struct
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pprint import pformat
 from types import UnionType
 from typing import (
     Any,
-    Callable,
     ClassVar,
     Final,
-    Mapping,
     TypeAlias,
     TypedDict,
     TypeGuard,
@@ -109,22 +111,6 @@ RegistryWrappedValue: TypeAlias = Union[
     tuple["RegistryWrappedValue", ...],
     frozenset["RegistryWrappedValue"],
 ]
-
-
-class _RegistryWrappedValueData(TypedDict):
-    __type__: str
-    __data__: SerializedValue
-
-
-def _is_valid_registry_wrapped_value_data(
-    data: SerializedDict,
-) -> TypeGuard[_RegistryWrappedValueData]:
-    return (
-        "__type__" in data
-        and isinstance(data["__type__"], str)
-        and "__data__" in data
-        and is_serialized_value(data["__data__"])
-    )
 
 
 def is_serialized_value(v: Any) -> TypeGuard[SerializedValue]:
@@ -346,6 +332,40 @@ def _resolve_type_id(
         return obj
     except Exception as e:
         raise UnknownTypeIdError(f'Could not resolve type_id "{type_id}": {e}') from e
+
+
+class _RegistryWrappedValueData(TypedDict):
+    __type__: str
+    __data__: SerializedValue
+
+
+def _is_valid_registry_wrapped_value_data(
+    data: SerializedDict,
+) -> TypeGuard[_RegistryWrappedValueData]:
+    return (
+        "__type__" in data
+        and isinstance(data["__type__"], str)
+        and "__data__" in data
+        and is_serialized_value(data["__data__"])
+    )
+
+
+def is_registry_wrapped_value_leaf(v: Any) -> TypeGuard[RegistryWrappedValueLeaf]:
+    """Return if `v` is a valid `RegistryWrappedValueLeaf`."""
+    return isinstance(v, (bool, int, str, float, Serializable))
+
+
+def is_registry_wrapped_value(v: Any) -> TypeGuard[RegistryWrappedValue]:
+    """Return if `v` is a valid `RegistryWrappedValue`."""
+    if is_registry_wrapped_value_leaf(v):
+        return True
+    if isinstance(v, tuple):
+        return all(is_registry_wrapped_value(x) for x in v)
+    if isinstance(v, frozenset):
+        return all(is_registry_wrapped_value(x) for x in v)
+    if isinstance(v, Serializable):
+        return True
+    return False
 
 
 _REGISTRY_WRAPPED_BOOL_TYPE_ID: Final[str] = "builtins.bool"
