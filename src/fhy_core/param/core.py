@@ -1151,7 +1151,7 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
             cls,
             data["possible_values"],
             _is_categorical_value,
-            ("a list of equal serializable values or primitive " "bool/int/str values"),
+            ("a list of equal serializable values or primitive bool/int/str values"),
         )
         param = CategoricalParam(
             values,
