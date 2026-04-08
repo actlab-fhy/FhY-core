@@ -363,8 +363,6 @@ def is_registry_wrapped_value(v: Any) -> TypeGuard[RegistryWrappedValue]:
         return all(is_registry_wrapped_value(x) for x in v)
     if isinstance(v, frozenset):
         return all(is_registry_wrapped_value(x) for x in v)
-    if isinstance(v, Serializable):
-        return True
     return False
 
 

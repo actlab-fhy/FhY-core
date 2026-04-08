@@ -910,6 +910,33 @@ def _is_permutation_member_value(value: Any) -> TypeGuard[PermutationMemberValue
     )
 
 
+def _has_bool_numeric_mismatch(value_1: Any, value_2: Any) -> bool:
+    return (
+        isinstance(value_1, bool)
+        and isinstance(value_2, (int, float))
+        and not isinstance(value_2, bool)
+    ) or (
+        isinstance(value_2, bool)
+        and isinstance(value_1, (int, float))
+        and not isinstance(value_1, bool)
+    )
+
+
+def _param_values_match(candidate: Any, allowed_value: Any) -> bool:
+    if _has_bool_numeric_mismatch(candidate, allowed_value):
+        return False
+    return cast(bool, candidate == allowed_value)
+
+
+def _contains_param_value(
+    allowed_values: Collection[Any] | Sequence[Any], candidate: Any
+) -> bool:
+    return any(
+        _param_values_match(candidate, allowed_value)
+        for allowed_value in allowed_values
+    )
+
+
 _ParamValueT = TypeVar("_ParamValueT")
 
 
@@ -1007,7 +1034,9 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
         return self._all_values
 
     def is_value_admissible(self, value: Any) -> bool:
-        return value in self._all_values
+        return _is_ordinal_value(value) and _contains_param_value(
+            self._all_values, value
+        )
 
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.REAL
@@ -1108,8 +1137,10 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.REAL
 
-    def is_value_admissible(self, value: _CategoricalValueT) -> bool:
-        return value in self._categories
+    def is_value_admissible(self, value: Any) -> bool:
+        return _is_categorical_value(value) and _contains_param_value(
+            self._categories, value
+        )
 
     def assign(self, value: _CategoricalValueT) -> ParamAssignment[_CategoricalValueT]:
         return super().assign(value)
@@ -1218,13 +1249,19 @@ class PermParam(
         return SymbolType.REAL
 
     def is_value_admissible(self, value: Any) -> bool:
-        return isinstance(value, Sequence) and self._is_value_valid_permutation(value)
-
-    def _is_value_valid_permutation(
-        self, value: Sequence[_PermutationMemberValueT]
-    ) -> bool:
         return (
-            all(value_element in self._all_values for value_element in value)
+            isinstance(value, Sequence)
+            and not isinstance(value, (str, bytes, bytearray))
+            and self._is_value_valid_permutation(value)
+        )
+
+    def _is_value_valid_permutation(self, value: Sequence[Any]) -> bool:
+        return (
+            all(
+                _is_permutation_member_value(value_element)
+                and _contains_param_value(self._all_values, value_element)
+                for value_element in value
+            )
             and len(value) == len(self._all_values)
             and _is_values_unique_in_sequence_without_set(value)
         )
