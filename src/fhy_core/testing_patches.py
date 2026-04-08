@@ -19,7 +19,8 @@ from fhy_core.trait import StructuralEquivalence
 @contextlib.contextmanager
 def fail_fast_structural_equivalence() -> Generator[None, None, None]:
     """Patch the structural equivalence methods to fail fast."""
-    original_methods = []
+    original_methods: list[tuple[type[StructuralEquivalence], str, Any]] = []
+    seen_classes: set[type[Any]] = set()
 
     def wrap_method(cls: type[StructuralEquivalence], method_name: str) -> None:
         orig = getattr(cls, method_name)
@@ -38,15 +39,22 @@ def fail_fast_structural_equivalence() -> Generator[None, None, None]:
         setattr(cls, method_name, wrapped)
 
     for module in list(sys.modules.values()):
-        if not module:
+        if not module or not hasattr(module, "__name__"):
             continue
 
         for _, obj in inspect.getmembers(module, inspect.isclass):
-            if isinstance(obj, StructuralEquivalence):
-                try:
-                    wrap_method(obj, "is_structurally_equivalent")
-                except Exception:
-                    pass
+            if obj in seen_classes or obj.__module__ != module.__name__:
+                continue
+            try:
+                if not issubclass(obj, StructuralEquivalence):
+                    continue
+            except TypeError:
+                continue
+            try:
+                wrap_method(obj, "is_structurally_equivalent")
+            except AttributeError:
+                continue
+            seen_classes.add(obj)
 
     try:
         yield

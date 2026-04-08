@@ -29,6 +29,9 @@ class _TestClass2(StructuralEquivalenceMixin):
         return self.test.is_structurally_equivalent(other.test)
 
 
+_TestClass1Alias = _TestClass1
+
+
 @deterministic_identifiers_by_name_hint
 def test_deterministic_identifiers_by_name_hint():
     """Test deterministic identifiers support hashed containers in tests."""
@@ -76,3 +79,19 @@ def test_fail_fast_structural_equivalence():
     with pytest.raises(AssertionError):
         with fail_fast_structural_equivalence():
             test_class1_a.is_structurally_equivalent(test_class1_c)
+
+
+def test_fail_fast_structural_equivalence_wraps_each_class_once() -> None:
+    """Test structural-equivalence patching does not double-wrap aliased classes."""
+    original_method = _TestClass1.is_structurally_equivalent
+    alias_method = _TestClass1Alias.is_structurally_equivalent
+
+    assert original_method is alias_method
+
+    with fail_fast_structural_equivalence():
+        patched_method = _TestClass1.is_structurally_equivalent
+        assert patched_method is _TestClass1Alias.is_structurally_equivalent
+        assert getattr(patched_method, "__wrapped__", None) is original_method
+        assert getattr(original_method, "__wrapped__", None) is None
+
+    assert _TestClass1.is_structurally_equivalent is original_method

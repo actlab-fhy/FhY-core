@@ -995,7 +995,7 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
         try:
             all_values = tuple(sorted(all_values))
         except TypeError as exc:
-            raise ValueError(
+            raise TypeError(
                 "Ordinal values must be mutually comparable for sorting."
             ) from exc
         if not _is_values_unique_in_sorted_sequence(all_values):
@@ -1202,7 +1202,7 @@ class PermParam(
         all_member_values = tuple(all_values)
         for value in all_member_values:
             if not _is_permutation_member_value(value):
-                raise ValueError(
+                raise TypeError(
                     "Permutation members must satisfy equal semantics and be "
                     "serializable, or be primitive bool/int/float/str values."
                 )
