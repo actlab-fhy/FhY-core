@@ -1019,6 +1019,14 @@ def test_categorical_param_deserialization_rejects_wrapped_non_leaf_values():
         CategoricalParam.deserialize_from_dict(payload)
 
 
+def test_categorical_param_round_trip_serialization() -> None:
+    """Test a categorical parameter can be serialized/deserialized via a dictionary."""
+    param = CategoricalParam([Identifier("a"), Identifier("b")])
+    data = param.serialize_to_dict()
+    param2 = CategoricalParam.deserialize_from_dict(data)
+    assert param.is_structurally_equivalent(param2)
+
+
 def test_perm_param_serialization(perm_param_nchw: PermParam):
     """Test a permutation parameter can be serialized/deserialized via a dictionary."""
     perm_param_nchw = perm_param_nchw.add_constraint(
