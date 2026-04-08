@@ -5,6 +5,11 @@ __all__ = [
     "ParamAssignment",
     "RealParam",
     "IntParam",
+    "SerializableEqualValue",
+    "SerializableOrderableValue",
+    "CategoricalValue",
+    "OrdinalValue",
+    "PermutationMemberValue",
     "OrdinalParam",
     "CategoricalParam",
     "PermParam",
@@ -16,7 +21,16 @@ __all__ = [
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Hashable, Sequence
-from typing import Any, Generic, TypedDict, TypeGuard, TypeVar, cast
+from typing import (
+    Any,
+    Generic,
+    Protocol,
+    TypeAlias,
+    TypedDict,
+    TypeGuard,
+    TypeVar,
+    cast,
+)
 
 from fhy_core.constraint import (
     Constraint,
@@ -43,27 +57,10 @@ from fhy_core.serialization import (
     register_serializable,
     serialize_registry_wrapped_value,
 )
-from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
+from fhy_core.trait import Equal, FrozenMixin, Orderable, StructuralEquivalenceMixin
 from fhy_core.utils import Self, format_comma_separated_list
 
-_H = TypeVar("_H", bound=Hashable)
 _T = TypeVar("_T")
-
-
-def _is_values_unique_in_sequence_without_set(values: Sequence[Any]) -> bool:
-    for i, value_1 in enumerate(values):
-        for value_2 in values[i + 1 :]:
-            if value_1 == value_2:
-                return False
-    return True
-
-
-def _is_values_unique_in_sorted_sequence(values: Sequence[Any]) -> bool:
-    return all(values[i] != values[i + 1] for i in range(len(values) - 1))
-
-
-def _is_values_unique_in_sequence_with_set(values: Collection[_H]) -> bool:
-    return len(values) == len(set(values))
 
 
 def _constraint_structural_ordering_key(constraint: Constraint) -> str:
@@ -835,6 +832,116 @@ class IntParam(Param[int]):
         return param
 
 
+class _SerializableValueLike(Protocol):
+    """Structural instance-side serialization contract for param values."""
+
+    @classmethod
+    def get_serialization_class_type_id(cls) -> str: ...
+
+    def serialize_to_dict(self) -> SerializedDict: ...
+
+
+class SerializableEqualValue(Equal, _SerializableValueLike, Protocol):
+    """Value with equality semantics and serializable instance behavior."""
+
+
+class SerializableOrderableValue(Orderable, _SerializableValueLike, Protocol):
+    """Value with ordering semantics and serializable instance behavior."""
+
+
+CategoricalValue: TypeAlias = bool | int | str | SerializableEqualValue
+OrdinalValue: TypeAlias = bool | int | float | str | SerializableOrderableValue
+PermutationMemberValue: TypeAlias = bool | int | float | str | SerializableEqualValue
+
+_CategoricalValueT = TypeVar("_CategoricalValueT", bound=CategoricalValue)
+_OrdinalValueT = TypeVar("_OrdinalValueT", bound=OrdinalValue)
+_PermutationMemberValueT = TypeVar(
+    "_PermutationMemberValueT", bound=PermutationMemberValue
+)
+
+
+def _is_values_unique_in_sequence_without_set(values: Sequence[Any]) -> bool:
+    for i, value_1 in enumerate(values):
+        for value_2 in values[i + 1 :]:
+            if value_1 == value_2:
+                return False
+    return True
+
+
+def _is_values_unique_in_sorted_sequence(values: Sequence[Any]) -> bool:
+    return all(values[i] != values[i + 1] for i in range(len(values) - 1))
+
+
+def _is_values_unique_in_sequence_with_set(values: Collection[Hashable]) -> bool:
+    return len(values) == len(set(values))
+
+
+def _supports_equal_value_semantics(value: Any) -> bool:
+    if isinstance(value, Equal):
+        return value.supports_equality
+    value_type = type(value)
+    return (
+        getattr(value_type, "__eq__", object.__eq__) is not object.__eq__
+        and getattr(value_type, "__hash__", None) is not None
+    )
+
+
+def _supports_orderable_value_semantics(value: Any) -> bool:
+    if isinstance(value, Orderable):
+        return value.supports_ordering
+    return any("__lt__" in cls.__dict__ for cls in type(value).__mro__[:-1])
+
+
+def _is_categorical_value(value: Any) -> TypeGuard[CategoricalValue]:
+    return isinstance(value, (bool, int, str)) or (
+        isinstance(value, Serializable) and _supports_equal_value_semantics(value)
+    )
+
+
+def _is_ordinal_value(value: Any) -> TypeGuard[OrdinalValue]:
+    return isinstance(value, (bool, int, float, str)) or (
+        isinstance(value, Serializable) and _supports_orderable_value_semantics(value)
+    )
+
+
+def _is_permutation_member_value(value: Any) -> TypeGuard[PermutationMemberValue]:
+    return isinstance(value, (bool, int, float, str)) or (
+        isinstance(value, Serializable) and _supports_equal_value_semantics(value)
+    )
+
+
+_ParamValueT = TypeVar("_ParamValueT")
+
+
+def _deserialize_typed_wrapped_leaf_values(
+    owner_cls: type[Any],
+    serialized_values: Sequence[Any],
+    value_type_guard: Callable[[Any], TypeGuard[_ParamValueT]],
+    expected_description: str,
+) -> list[_ParamValueT]:
+    if not all(is_serialized_dict(value) for value in serialized_values):
+        raise DeserializationValueError(
+            owner_cls,
+            "possible_values",
+            expected_description,
+            serialized_values,
+        )
+    wrapped_values = [
+        deserialize_registry_wrapped_value(value) for value in serialized_values
+    ]
+    typed_values: list[_ParamValueT] = []
+    for value in wrapped_values:
+        if not value_type_guard(value):
+            raise DeserializationValueError(
+                owner_cls,
+                "possible_values",
+                expected_description,
+                value,
+            )
+        typed_values.append(value)
+    return typed_values
+
+
 class _OrdinalCategoricalPermParamData(ParamData):
     possible_values: list[Any]
 
@@ -850,22 +957,40 @@ def _is_valid_ordinal_categorical_perm_param_data(
 
 
 @register_serializable(type_id="ordinal_param")
-class OrdinalParam(Param[Any]):
+class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
     """Ordinal-valued parameter.
 
     Note:
-        All values must be of the same type and comparable.
+        All values must be wrapped-leaf serializable and orderable.
 
     """
 
-    _all_values: tuple[Any, ...]
+    _all_values: tuple[_OrdinalValueT, ...]
 
-    def __init__(self, values: Sequence[Any], *, name: Identifier | None = None):
+    def __init__(
+        self, values: Sequence[_OrdinalValueT], *, name: Identifier | None = None
+    ) -> None:
         super().__init__(name=name)
-        values = tuple(sorted(values))
-        if not _is_values_unique_in_sorted_sequence(values):
+        all_values = tuple(values)
+        for value in all_values:
+            if not _is_ordinal_value(value):
+                raise TypeError(
+                    "Ordinal values must satisfy orderable semantics and be "
+                    "serializable, or be primitive bool/int/float/str values."
+                )
+        try:
+            all_values = tuple(sorted(all_values))
+        except TypeError as exc:
+            raise ValueError(
+                "Ordinal values must be mutually comparable for sorting."
+            ) from exc
+        if not _is_values_unique_in_sorted_sequence(all_values):
             raise ValueError("Values must be unique.")
-        object.__setattr__(self, "_all_values", values)
+        object.__setattr__(self, "_all_values", all_values)
+
+    @property
+    def possible_values(self) -> tuple[_OrdinalValueT, ...]:
+        return self._all_values
 
     def is_value_admissible(self, value: Any) -> bool:
         return value in self._all_values
@@ -873,7 +998,7 @@ class OrdinalParam(Param[Any]):
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.REAL
 
-    def assign(self, value: Any) -> ParamAssignment[Any]:
+    def assign(self, value: _OrdinalValueT) -> ParamAssignment[_OrdinalValueT]:
         return super().assign(value)
 
     def validate_constraint(self, constraint: Constraint) -> None:
@@ -893,29 +1018,34 @@ class OrdinalParam(Param[Any]):
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
-        super_dict["possible_values"] = list(self._all_values)
+        super_dict["possible_values"] = [
+            serialize_registry_wrapped_value(value) for value in self._all_values
+        ]
         return super_dict
 
     @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> "OrdinalParam":
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
         if not _is_valid_ordinal_categorical_perm_param_data(data):
             raise DeserializationDictStructureError(
                 cls, _OrdinalCategoricalPermParamData.__annotations__, data
             )
-        param = OrdinalParam(
+        values = _deserialize_typed_wrapped_leaf_values(
+            cls,
             data["possible_values"],
-            name=Identifier.deserialize_from_dict(data["variable"]),
-        )
-        param = cast(
-            OrdinalParam,
-            finalize_param_construction_from_data(
-                param,
-                data,
+            _is_ordinal_value,
+            (
+                "a list of orderable serializable values or primitive "
+                "bool/int/float/str values"
             ),
         )
-        return param
+        param = OrdinalParam(
+            values,
+            name=Identifier.deserialize_from_dict(data["variable"]),
+        )
+        final_param = cast(Self, finalize_param_construction_from_data(param, data))
+        return final_param
 
-    def _clone(self) -> "OrdinalParam":
+    def _clone(self) -> "OrdinalParam[_OrdinalValueT]":
         new_param = OrdinalParam(self._all_values, name=self._variable)
         object.__setattr__(new_param, "_constraints", self._constraints)
         return new_param
@@ -928,32 +1058,49 @@ class OrdinalParam(Param[Any]):
 
 
 @register_serializable(type_id="categorical_param")
-class CategoricalParam(Param[_H]):
+class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
     """Categorical parameter.
 
     Note:
-        All values must be hashable.
+        All values must be wrapped-leaf serializable, hashable, and support
+        equality semantics.
 
     """
 
-    _categories: frozenset[_H]
+    _categories: frozenset[_CategoricalValueT]
 
-    def __init__(self, categories: Collection[_H], *, name: Identifier | None = None):
+    def __init__(
+        self,
+        categories: Collection[_CategoricalValueT],
+        *,
+        name: Identifier | None = None,
+    ) -> None:
         super().__init__(name=name)
-        if not _is_values_unique_in_sequence_with_set(categories):
+        category_values = tuple(categories)
+        for category in category_values:
+            if not _is_categorical_value(category):
+                raise TypeError(
+                    "Categorical values must satisfy equal semantics and be "
+                    "serializable, or be primitive bool/int/str values."
+                )
+        if not _is_values_unique_in_sequence_with_set(category_values):
             raise ValueError("Values must be unique.")
-        object.__setattr__(self, "_categories", frozenset(categories))
+        object.__setattr__(self, "_categories", frozenset(category_values))
+
+    @property
+    def categories(self) -> frozenset[_CategoricalValueT]:
+        return self._categories
 
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.REAL
 
-    def is_value_admissible(self, value: _H) -> bool:
+    def is_value_admissible(self, value: _CategoricalValueT) -> bool:
         return value in self._categories
 
-    def assign(self, value: _H) -> ParamAssignment[_H]:
+    def assign(self, value: _CategoricalValueT) -> ParamAssignment[_CategoricalValueT]:
         return super().assign(value)
 
-    def get_possible_values(self) -> set[_H]:
+    def get_possible_values(self) -> set[_CategoricalValueT]:
         """Return the set of possible values for the parameter."""
         return set(self._categories)
 
@@ -974,29 +1121,31 @@ class CategoricalParam(Param[_H]):
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
-        super_dict["possible_values"] = list(self._categories)  # type: ignore[arg-type]
+        super_dict["possible_values"] = [
+            serialize_registry_wrapped_value(category) for category in self._categories
+        ]
         return super_dict
 
     @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> "CategoricalParam[_H]":
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
         if not _is_valid_ordinal_categorical_perm_param_data(data):
             raise DeserializationDictStructureError(
                 cls, _OrdinalCategoricalPermParamData.__annotations__, data
             )
-        param = CategoricalParam(
+        values = _deserialize_typed_wrapped_leaf_values(
+            cls,
             data["possible_values"],
+            _is_categorical_value,
+            ("a list of equal serializable values or primitive " "bool/int/str values"),
+        )
+        param = CategoricalParam(
+            values,
             name=Identifier.deserialize_from_dict(data["variable"]),
         )
-        param = cast(
-            CategoricalParam[_H],
-            finalize_param_construction_from_data(
-                param,
-                data,
-            ),
-        )
-        return param
+        final_param = cast(Self, finalize_param_construction_from_data(param, data))
+        return final_param
 
-    def _clone(self) -> "CategoricalParam[_H]":
+    def _clone(self) -> "CategoricalParam[_CategoricalValueT]":
         new_param = CategoricalParam(self._categories, name=self._variable)
         object.__setattr__(new_param, "_constraints", self._constraints)
         return new_param
@@ -1009,14 +1158,16 @@ class CategoricalParam(Param[_H]):
 
 
 def create_single_valid_value_param(
-    value: _H, *, name: Identifier | None = None
-) -> CategoricalParam[_H]:
+    value: _CategoricalValueT, *, name: Identifier | None = None
+) -> CategoricalParam[_CategoricalValueT]:
     """Return a parameter that can only take a single valid value."""
     return CategoricalParam([value], name=name)
 
 
 @register_serializable(type_id="perm_param")
-class PermParam(Param[tuple[Any, ...]]):
+class PermParam(
+    Param[tuple[_PermutationMemberValueT, ...]], Generic[_PermutationMemberValueT]
+):
     """Permutation parameter.
 
     Note:
@@ -1024,13 +1175,29 @@ class PermParam(Param[tuple[Any, ...]]):
 
     """
 
-    _all_values: tuple[Any, ...]
+    _all_values: tuple[_PermutationMemberValueT, ...]
 
-    def __init__(self, all_values: Sequence[Any], *, name: Identifier | None = None):
+    def __init__(
+        self,
+        all_values: Sequence[_PermutationMemberValueT],
+        *,
+        name: Identifier | None = None,
+    ) -> None:
         super().__init__(name=name)
+        all_member_values = tuple(all_values)
+        for value in all_member_values:
+            if not _is_permutation_member_value(value):
+                raise ValueError(
+                    "Permutation members must satisfy equal semantics and be "
+                    "serializable, or be primitive bool/int/float/str values."
+                )
         if not _is_values_unique_in_sequence_without_set(all_values):
             raise ValueError("Values must be unique.")
-        object.__setattr__(self, "_all_values", tuple(all_values))
+        object.__setattr__(self, "_all_values", all_member_values)
+
+    @property
+    def members(self) -> tuple[_PermutationMemberValueT, ...]:
+        return self._all_values
 
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.REAL
@@ -1038,18 +1205,24 @@ class PermParam(Param[tuple[Any, ...]]):
     def is_value_admissible(self, value: Any) -> bool:
         return isinstance(value, Sequence) and self._is_value_valid_permutation(value)
 
-    def _is_value_valid_permutation(self, value: Sequence[Any]) -> bool:
+    def _is_value_valid_permutation(
+        self, value: Sequence[_PermutationMemberValueT]
+    ) -> bool:
         return (
             all(value_element in self._all_values for value_element in value)
             and len(value) == len(self._all_values)
             and _is_values_unique_in_sequence_without_set(value)
         )
 
-    def is_constraints_satisfied(self, value: Sequence[Any]) -> bool:
+    def is_constraints_satisfied(
+        self, value: Sequence[_PermutationMemberValueT]
+    ) -> bool:
         value = tuple(value)
         return super().is_constraints_satisfied(value)
 
-    def assign(self, value: Sequence[Any]) -> ParamAssignment[tuple[Any, ...]]:
+    def assign(
+        self, value: Sequence[_PermutationMemberValueT]
+    ) -> ParamAssignment[tuple[_PermutationMemberValueT, ...]]:
         return super().assign(tuple(value))
 
     def validate_constraint(self, constraint: Constraint) -> None:
@@ -1069,29 +1242,34 @@ class PermParam(Param[tuple[Any, ...]]):
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
-        super_dict["possible_values"] = list(self._all_values)
+        super_dict["possible_values"] = [
+            serialize_registry_wrapped_value(value) for value in self._all_values
+        ]
         return super_dict
 
     @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> "PermParam":
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
         if not _is_valid_ordinal_categorical_perm_param_data(data):
             raise DeserializationDictStructureError(
                 cls, _OrdinalCategoricalPermParamData.__annotations__, data
             )
-        param = PermParam(
+        values = _deserialize_typed_wrapped_leaf_values(
+            cls,
             data["possible_values"],
-            name=Identifier.deserialize_from_dict(data["variable"]),
-        )
-        param = cast(
-            PermParam,
-            finalize_param_construction_from_data(
-                param,
-                data,
+            _is_permutation_member_value,
+            (
+                "a list of equal serializable values or primitive "
+                "bool/int/float/str values"
             ),
         )
-        return param
+        param = PermParam(
+            values,
+            name=Identifier.deserialize_from_dict(data["variable"]),
+        )
+        final_param = cast(Self, finalize_param_construction_from_data(param, data))
+        return final_param
 
-    def _clone(self) -> "PermParam":
+    def _clone(self) -> "PermParam[_PermutationMemberValueT]":
         new_param = PermParam(self._all_values, name=self._variable)
         object.__setattr__(new_param, "_constraints", self._constraints)
         return new_param
