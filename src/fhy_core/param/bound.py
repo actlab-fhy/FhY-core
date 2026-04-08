@@ -131,8 +131,8 @@ class BoundIntParam(IntParam):
         super().__init__(name=name, **kwargs)
         object.__setattr__(self, "_prefer_inclusive", prefer_inclusive)
 
-    def _validate_constraint(self, constraint: Constraint) -> None:
-        super()._validate_constraint(constraint)
+    def validate_constraint(self, constraint: Constraint) -> None:
+        super().validate_constraint(constraint)
         if not isinstance(constraint, EquationConstraint):
             raise TypeError(
                 "BoundIntParam only supports EquationConstraint constraints."
@@ -326,6 +326,13 @@ class BoundIntParam(IntParam):
         new_param = self.__class__(**init_kwargs)
         object.__setattr__(new_param, "_constraints", self._constraints)
         return new_param
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return (
+            isinstance(other, BoundIntParam)
+            and super().is_structurally_equivalent(other)
+            and self._prefer_inclusive == other._prefer_inclusive
+        )
 
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "BoundIntParam":

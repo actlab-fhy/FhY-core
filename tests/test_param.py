@@ -1,11 +1,12 @@
 """Tests the parameter utility."""
 
 from functools import partial
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import pytest
 from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.expression import SymbolType
+from fhy_core.identifier import Identifier
 from fhy_core.param import (
     BoundIntParam,
     BoundNatParam,
@@ -17,9 +18,63 @@ from fhy_core.param import (
     ParamAssignment,
     PermParam,
     RealParam,
+    create_single_valid_value_param,
 )
+from fhy_core.serialization import (
+    DeserializationValueError,
+    Serializable,
+    SerializationFormat,
+    register_serializable,
+    serialize_registry_wrapped_value,
+)
+from fhy_core.trait import StructuralEquivalence
 
 T = TypeVar("T")
+
+
+@register_serializable(type_id="tests.param.serializable_hash_only")
+class _SerializableHashOnly(Serializable):
+    """Serializable value that is hashable but has identity equality semantics."""
+
+    _value: int
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    def __hash__(self) -> int:
+        return hash(self._value)
+
+    def serialize_to_dict(self) -> dict[str, Any]:
+        return {"value": self._value}
+
+    @classmethod
+    def deserialize_from_dict(cls, data: dict[str, Any]) -> "_SerializableHashOnly":
+        return cls(value=int(data["value"]))
+
+
+@register_serializable(type_id="tests.param.serializable_equal_no_order")
+class _SerializableEqualNoOrder(Serializable):
+    """Serializable value with equality semantics but no ordering semantics."""
+
+    _value: int
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    def __hash__(self) -> int:
+        return hash(self._value)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _SerializableEqualNoOrder) and (
+            self._value == other._value
+        )
+
+    def serialize_to_dict(self) -> dict[str, Any]:
+        return {"value": self._value}
+
+    @classmethod
+    def deserialize_from_dict(cls, data: dict[str, Any]) -> "_SerializableEqualNoOrder":
+        return cls(value=int(data["value"]))
 
 
 def _assert_all_satisfied(param: Param[T], values: list[T]) -> None:
@@ -46,9 +101,73 @@ def default_int_param() -> IntParam:
     return IntParam()
 
 
+def test_param_structural_equivalence_runtime_protocol():
+    """Test `Param` implementations satisfy `StructuralEquivalence` protocol."""
+    param = IntParam()
+    assert isinstance(param, StructuralEquivalence)
+
+
+def test_param_structural_equivalence_true_for_constraint_reordering():
+    """Test params compare structurally when equivalent constraints are reordered."""
+    shared_name = Identifier("x")
+    shared_name_copy = Identifier.deserialize_from_dict(shared_name.serialize_to_dict())
+
+    left_base = IntParam(name=shared_name)
+    right_base = IntParam(name=shared_name_copy)
+
+    left = left_base.add_constraints(
+        [
+            EquationConstraint(left_base.variable, left_base.variable_expression >= 0),
+            EquationConstraint(left_base.variable, left_base.variable_expression <= 10),
+        ]
+    )
+    right = right_base.add_constraints(
+        [
+            EquationConstraint(
+                right_base.variable,
+                right_base.variable_expression <= 10,
+            ),
+            EquationConstraint(
+                right_base.variable,
+                right_base.variable_expression >= 0,
+            ),
+        ]
+    )
+
+    assert left.is_structurally_equivalent(right)
+
+
+def test_param_structural_equivalence_false_for_different_constraints():
+    """Test params are not structurally equivalent with different constraints."""
+    shared_name = Identifier("x")
+    shared_name_copy = Identifier.deserialize_from_dict(shared_name.serialize_to_dict())
+
+    left_base = IntParam(name=shared_name)
+    right_base = IntParam(name=shared_name_copy)
+
+    left = left_base.add_constraints(
+        [
+            EquationConstraint(left_base.variable, left_base.variable_expression >= 0),
+            EquationConstraint(left_base.variable, left_base.variable_expression <= 10),
+        ]
+    )
+    right = right_base.add_constraints(
+        [
+            EquationConstraint(
+                right_base.variable, right_base.variable_expression >= 1
+            ),
+            EquationConstraint(
+                right_base.variable, right_base.variable_expression <= 10
+            ),
+        ]
+    )
+
+    assert not left.is_structurally_equivalent(right)
+
+
 def test_param_is_not_set_after_initialization(default_real_param):
     """Test that the value of a parameter is not set after initialization."""
-    assignment = default_real_param.set_value(1.0)
+    assignment = default_real_param.assign(1.0)
     assert isinstance(default_real_param, RealParam)
     assert isinstance(assignment, ParamAssignment)
     assert assignment.param is default_real_param
@@ -57,7 +176,7 @@ def test_param_is_not_set_after_initialization(default_real_param):
 
 def test_param_is_set_after_setting_value(default_real_param):
     """Test that the value of a parameter is set after setting a value."""
-    default_real_param = default_real_param.set_value(1.0)
+    default_real_param = default_real_param.assign(1.0)
     assert default_real_param.is_value_set()
 
 
@@ -69,7 +188,7 @@ def test_param_get_value_fails_when_not_set(default_real_param):
 
 def test_get_param_value_after_setting_value(default_real_param):
     """Test that the value of a parameter can be retrieved after setting a value."""
-    assignment = default_real_param.set_value(1.0)
+    assignment = default_real_param.assign(1.0)
     assert assignment.value == 1.0
 
 
@@ -86,13 +205,13 @@ def test_int_param_get_symbol_type(default_int_param):
 def test_real_param_value_set_fails_with_invalid_value(default_real_param):
     """Test that setting a real parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        default_real_param = default_real_param.set_value([])
+        default_real_param = default_real_param.assign([])
 
 
 def test_int_param_value_set_fails_with_invalid_value(default_int_param):
     """Test that setting an integer parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        default_int_param = default_int_param.set_value(1.0)
+        default_int_param = default_int_param.assign(1.0)
 
 
 def test_create_real_param_with_value():
@@ -121,18 +240,41 @@ def test_create_int_param_with_value_fails_with_invalid_value():
         IntParam.with_value(1.2)
 
 
-def test_param_bind_creates_assignment():
-    """Test that binding a parameter creates an immutable assignment."""
+def test_param_assign_creates_assignment():
+    """Test that assigning a parameter creates an immutable assignment."""
     param = IntParam.with_lower_bound(0)
-    assignment = param.bind(3)
+    assignment = param.assign(3)
     assert isinstance(assignment, ParamAssignment)
     assert assignment.value == 3
     assert assignment.param is param
 
 
+@pytest.mark.parametrize(
+    ("param", "valid_value", "invalid_type_or_shape_value", "constraint_fail_value"),
+    [
+        (RealParam.with_lower_bound(0.0), 1.5, [], -1.0),
+        (IntParam.with_lower_bound(0), 3, 1.2, -1),
+        (NatParam(is_zero_included=False), 2, 1.5, 0),
+        (OrdinalParam([1, 2, 3]), 2, "2", 4),
+        (CategoricalParam({"a", "b"}), "a", 3, "z"),
+        (PermParam(["n", "c", "h", "w"]), ("n", "c", "h", "w"), 7, ("n", "c")),
+    ],
+)
+def test_param_is_value_valid_checks_type_and_constraints(
+    param: Param[object],
+    valid_value: object,
+    invalid_type_or_shape_value: object,
+    constraint_fail_value: object,
+):
+    """Test `is_value_valid` checks subclass admissibility and constraints."""
+    assert param.is_value_valid(valid_value)
+    assert not param.is_value_valid(invalid_type_or_shape_value)
+    assert not param.is_value_valid(constraint_fail_value)
+
+
 def test_param_assignment_materialize_returns_bound_param():
     """Test that materialize returns the parameter definition."""
-    assignment = RealParam.with_upper_bound(2.0).bind(1.5)
+    assignment = RealParam.with_upper_bound(2.0).assign(1.5)
     bound_param = assignment.materialize()
     assert bound_param is assignment.param
 
@@ -193,14 +335,14 @@ def test_add_and_check_int_param_constraints(default_int_param):
     )
     assert default_int_param.is_constraints_satisfied(15)
     with pytest.raises(ValueError):
-        default_int_param = default_int_param.set_value(12)
+        default_int_param = default_int_param.assign(12)
 
 
 def test_set_real_param_and_real_param_is_subset():
     """Test assignment values can be set independently from the same parameter."""
     param1 = RealParam()
-    assignment_1 = param1.set_value(1.0)
-    assignment_2 = param1.set_value(1.0)
+    assignment_1 = param1.assign(1.0)
+    assignment_2 = param1.assign(1.0)
     assert assignment_1.value == 1.0
     assert assignment_2.value == 1.0
     assert assignment_1.param is param1
@@ -249,23 +391,23 @@ def test_interval_real_param_and_interval_real_param_is_subset():
 def test_nat_param_zero_included():
     """Test that a natural number parameter with zero included can be set."""
     param = NatParam()
-    assignment_0 = param.set_value(0)
+    assignment_0 = param.assign(0)
     assert assignment_0.is_value_set()
-    assignment_1 = param.set_value(1)
+    assignment_1 = param.assign(1)
     assert assignment_1.is_value_set()
     with pytest.raises(ValueError):
-        param.set_value(-1)
+        param.assign(-1)
 
 
 def test_nat_param_zero_excluded():
     """Test that a natural number parameter with zero excluded can be set."""
     param = NatParam(is_zero_included=False)
-    assignment_1 = param.set_value(1)
+    assignment_1 = param.assign(1)
     assert assignment_1.is_value_set()
     with pytest.raises(ValueError):
-        param.set_value(0)
+        param.assign(0)
     with pytest.raises(ValueError):
-        param.set_value(-1)
+        param.assign(-1)
 
 
 def test_nat_param_add_constraint_preserves_zero_excluded_state():
@@ -288,6 +430,12 @@ def test_ordinal_param_initialization_fails_with_non_unique_values():
         OrdinalParam([1, 2, 1])
 
 
+def test_ordinal_param_initialization_requires_orderable_values():
+    """Test ordinal params reject wrapped-leaf values without ordering semantics."""
+    with pytest.raises(TypeError):
+        OrdinalParam([_SerializableEqualNoOrder(1), _SerializableEqualNoOrder(2)])
+
+
 @pytest.fixture()
 def ordinal_param_123() -> OrdinalParam:
     return OrdinalParam([1, 2, 3])
@@ -295,9 +443,9 @@ def ordinal_param_123() -> OrdinalParam:
 
 def test_set_ordinal_param_value(ordinal_param_123: OrdinalParam):
     """Test that an ordinal parameter value can be set."""
-    assignment_1 = ordinal_param_123.set_value(1)
+    assignment_1 = ordinal_param_123.assign(1)
     assert assignment_1.is_value_set()
-    assignment_3 = ordinal_param_123.set_value(3)
+    assignment_3 = ordinal_param_123.assign(3)
     assert assignment_3.is_value_set()
 
 
@@ -306,7 +454,13 @@ def test_set_ordinal_param_value_fails_with_invalid_value(
 ):
     """Test that setting an ordinal parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        ordinal_param_123 = ordinal_param_123.set_value(4)
+        ordinal_param_123 = ordinal_param_123.assign(4)
+
+
+def test_ordinal_param_distinguishes_bool_from_numeric_values() -> None:
+    """Test ordinal params do not treat bools as interchangeable with numerics."""
+    param = OrdinalParam([1, 2, 3])
+    assert not param.is_value_admissible(True)
 
 
 def test_add_and_check_ordinal_param_constraints(ordinal_param_123: OrdinalParam):
@@ -336,16 +490,36 @@ def test_categorical_param_initialization():
     assert isinstance(param, CategoricalParam)
 
 
+def test_categorical_param_initialization_requires_equal_values():
+    """Test categorical params reject wrapped-leaf values without equal semantics."""
+    with pytest.raises(TypeError):
+        CategoricalParam({_SerializableHashOnly(1), _SerializableHashOnly(2)})
+
+
 @pytest.fixture()
 def categorical_param_abc() -> CategoricalParam:
     return CategoricalParam({"a", "b", "c"})
 
 
+def test_create_single_valid_value_param():
+    """Test helper creates a categorical param constrained to one value."""
+    param = create_single_valid_value_param("only")
+    assert isinstance(param, CategoricalParam)
+    assert param.get_possible_values() == {"only"}
+
+    assignment = param.assign("only")
+    assert assignment.is_value_set()
+    assert assignment.value == "only"
+
+    with pytest.raises(ValueError):
+        param.assign("different")
+
+
 def test_set_categorical_param_value(categorical_param_abc: CategoricalParam):
     """Test that a categorical parameter value can be set."""
-    assignment_a = categorical_param_abc.set_value("a")
+    assignment_a = categorical_param_abc.assign("a")
     assert assignment_a.is_value_set()
-    assignment_c = categorical_param_abc.set_value("c")
+    assignment_c = categorical_param_abc.assign("c")
     assert assignment_c.is_value_set()
 
 
@@ -354,7 +528,13 @@ def test_set_categorical_param_value_fails_with_invalid_value(
 ):
     """Test that setting a categorical parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        categorical_param_abc = categorical_param_abc.set_value("d")
+        categorical_param_abc = categorical_param_abc.assign("d")
+
+
+def test_categorical_param_distinguishes_bool_from_int_values() -> None:
+    """Test categorical params do not treat bools as interchangeable with ints."""
+    param = CategoricalParam([1, 2, 3])
+    assert not param.is_value_admissible(True)
 
 
 def test_add_and_check_categorical_param_constraints(
@@ -400,14 +580,20 @@ def perm_param_nchw() -> PermParam:
 
 def test_set_perm_param_value(perm_param_nchw: PermParam):
     """Test that a permutation parameter value can be set."""
-    assignment = perm_param_nchw.set_value(["c", "n", "w", "h"])
+    assignment = perm_param_nchw.assign(["c", "n", "w", "h"])
     assert assignment.is_value_set()
 
 
 def test_set_perm_param_value_fails_with_invalid_value(perm_param_nchw: PermParam):
     """Test that setting a permutation parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        perm_param_nchw = perm_param_nchw.set_value(["n", "c", "h", "n"])
+        perm_param_nchw = perm_param_nchw.assign(["n", "c", "h", "n"])
+
+
+def test_perm_param_rejects_string_like_sequences() -> None:
+    """Test permutation params reject plain strings as permutation values."""
+    param = PermParam(["n", "c", "h", "w"])
+    assert not param.is_value_admissible("nchw")
 
 
 def test_add_and_check_perm_param_constraints(perm_param_nchw: PermParam):
@@ -822,6 +1008,14 @@ def test_ordinal_param_serialization(ordinal_param_123: OrdinalParam):
     _assert_none_satisfied(param2, [3])
 
 
+def test_ordinal_param_deserialization_rejects_unwrapped_possible_values():
+    """Test ordinal deserialization rejects raw unwrapped possible values."""
+    payload = OrdinalParam([1, 2, 3]).serialize_to_dict()
+    payload["__data__"]["possible_values"] = [1, 2, 3]
+    with pytest.raises(DeserializationValueError):
+        OrdinalParam.deserialize_from_dict(payload)
+
+
 def test_categorical_param_serialization(categorical_param_abc: CategoricalParam):
     """Test a categorical parameter can be serialized/deserialized via a dictionary."""
     categorical_param_abc = categorical_param_abc.add_constraint(
@@ -831,6 +1025,24 @@ def test_categorical_param_serialization(categorical_param_abc: CategoricalParam
     param2 = CategoricalParam.deserialize_from_dict(dictionary)
     _assert_all_satisfied(param2, ["a", "b"])
     _assert_none_satisfied(param2, ["c"])
+
+
+def test_categorical_param_deserialization_rejects_wrapped_non_leaf_values():
+    """Test categorical deserialization rejects wrapped container values."""
+    payload = CategoricalParam({"a", "b"}).serialize_to_dict()
+    payload["__data__"]["possible_values"] = [
+        serialize_registry_wrapped_value(("a", "b"))
+    ]
+    with pytest.raises(DeserializationValueError):
+        CategoricalParam.deserialize_from_dict(payload)
+
+
+def test_categorical_param_round_trip_serialization() -> None:
+    """Test a categorical parameter can be serialized/deserialized via a dictionary."""
+    param = CategoricalParam([Identifier("a"), Identifier("b")])
+    data = param.serialize_to_dict()
+    param2 = CategoricalParam.deserialize_from_dict(data)
+    assert param.is_structurally_equivalent(param2)
 
 
 def test_perm_param_serialization(perm_param_nchw: PermParam):
@@ -862,6 +1074,47 @@ def test_nat_param_serialization():
     _assert_none_satisfied(param2, [0, 11])
     dictionary = param2.serialize_to_dict()
     assert len(dictionary["__data__"]["constraints"]) == 3
+
+
+def test_param_assignment_serialization_dict_roundtrip():
+    """Test parameter assignments round-trip via dictionary serialization."""
+    assignment = IntParam.with_lower_bound(0).assign(3)
+    dictionary = assignment.serialize_to_dict()
+
+    assignment2 = ParamAssignment.deserialize_from_dict(dictionary)
+    assert assignment2.value == assignment.value
+    assert assignment2.param.is_structurally_equivalent(assignment.param)
+    assert assignment2.serialize_to_dict() == dictionary
+
+
+def test_param_assignment_serialization_json_and_binary_roundtrip():
+    """Test parameter assignments round-trip via JSON and binary serialization."""
+    assignment = PermParam(["n", "c", "h", "w"]).assign(["n", "c", "h", "w"])
+
+    json_payload = assignment.serialize(SerializationFormat.JSON)
+    assignment_from_json = ParamAssignment.deserialize(
+        json_payload, SerializationFormat.JSON
+    )
+    assert isinstance(assignment_from_json.param, PermParam)
+    assert assignment_from_json.value == ("n", "c", "h", "w")
+
+    binary_payload = assignment.serialize(SerializationFormat.BINARY)
+    assignment_from_binary = ParamAssignment.deserialize(
+        binary_payload, SerializationFormat.BINARY
+    )
+    assert isinstance(assignment_from_binary.param, PermParam)
+    assert assignment_from_binary.value == ("n", "c", "h", "w")
+
+
+def test_param_assignment_deserialization_rejects_value_invalid_for_param():
+    """Test assignment deserialization fails if payload value violates constraints."""
+    param = RealParam.with_lower_bound(0.0)
+    payload = {
+        "param": param.serialize_to_dict(),
+        "value": serialize_registry_wrapped_value(-1.0),
+    }
+    with pytest.raises(DeserializationValueError):
+        ParamAssignment.deserialize_from_dict(payload)
 
 
 # TODO: Check serialization structure errors and value errors for all types.
@@ -981,25 +1234,25 @@ def test_bound_int_param_prefer_inclusive_flag_does_not_change_satisfiable_set()
         assert p1.is_constraints_satisfied(v) == p2.is_constraints_satisfied(v)
 
 
-def test_bound_int_param_set_value_accepts_int_only():
-    """Test that BoundIntParam.set_value only accepts integer values."""
+def test_bound_int_param_assign_accepts_int_only():
+    """Test that BoundIntParam.assign only accepts integer values."""
     p = BoundIntParam.with_lower_bound(0)
-    assignment = p.set_value(1)
+    assignment = p.assign(1)
     assert assignment.value == 1
     with pytest.raises(ValueError):
-        p.set_value(1.0)
+        p.assign(1.0)
     with pytest.raises(ValueError):
-        p.set_value("1")
+        p.assign("1")
 
 
-def test_bound_int_param_set_value_rejects_value_outside_constraints():
-    """Test that ``set_value'' rejects values outside constraints."""
+def test_bound_int_param_assign_rejects_value_outside_constraints():
+    """Test that ``assign'' rejects values outside constraints."""
     p = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
     with pytest.raises(ValueError):
-        p.set_value(2)
+        p.assign(2)
     with pytest.raises(ValueError):
-        p.set_value(6)
-    assignment = p.set_value(4)
+        p.assign(6)
+    assignment = p.assign(4)
     assert assignment.value == 4
 
 

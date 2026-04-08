@@ -318,6 +318,9 @@ class UnaryExpression(Expression, HasOperandsMixin[Expression]):
     def operands(self) -> tuple[Expression]:
         return (self.operand,)
 
+    def get_visit_children(self) -> tuple["Expression", ...]:
+        return (self.operand,)
+
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "operation": UNARY_OPERATION_FUNCTION_NAMES[self.operation],
@@ -438,6 +441,9 @@ class BinaryExpression(Expression, HasOperandsMixin[Expression]):
 
     @property
     def operands(self) -> tuple[Expression, Expression]:
+        return (self.left, self.right)
+
+    def get_visit_children(self) -> tuple["Expression", ...]:
         return (self.left, self.right)
 
     def serialize_data_to_dict(self) -> SerializedDict:

@@ -1,6 +1,7 @@
 """Core compiler pass abstractions and registration."""
 
 __all__ = [
+    "AnalysisVisitablePass",
     "CompilerPass",
     "DiagnosticLevel",
     "PassDiagnostic",
@@ -10,11 +11,13 @@ __all__ = [
     "PassResult",
     "PassValidationError",
     "PreservedAnalyses",
+    "TraversalOrder",
     "VisitablePass",
     "register_pass",
 ]
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any, Callable, ClassVar, Generic, Mapping, TypeVar, cast
@@ -37,6 +40,13 @@ class DiagnosticLevel(StrEnum):
     ERROR = "error"
     WARNING = "warning"
     INFO = "info"
+
+
+class TraversalOrder(StrEnum):
+    """Traversal order for automatic visitable analysis passes."""
+
+    PRE = "pre"
+    POST = "post"
 
 
 @dataclass(frozen=True)
@@ -297,7 +307,15 @@ class VisitablePass(CompilerPass[_VisitableNodeT, _PassOutputT], ABC):
         return self.visit(ir)
 
     def visit(self, node: _VisitableNodeT) -> _PassOutputT:
-        """Visit a node by resolving `visit_<node_kind>` dynamically."""
+        """Visit a node by resolving `visit_<node_kind>` dynamically.
+
+        Args:
+            node: Node to visit.
+
+        Returns:
+            Result of visiting the node.
+
+        """
         method_name = (
             f"{self._VISIT_METHOD_PREFIX}{type(node).get_visit_method_suffix()}"
         )
@@ -315,8 +333,79 @@ class VisitablePass(CompilerPass[_VisitableNodeT, _PassOutputT], ABC):
         )
 
 
+class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
+    """Analysis-only visitable pass with optional automatic traversal."""
+
+    _traversal_order: TraversalOrder
+
+    def __init__(
+        self, traversal_order: TraversalOrder | str = TraversalOrder.PRE
+    ) -> None:
+        super().__init__()
+        self._traversal_order = TraversalOrder(traversal_order)
+
+    @property
+    def traversal_order(self) -> TraversalOrder:
+        return self._traversal_order
+
+    def run_pass(self, ir: _VisitableNodeT) -> None:
+        self.walk(ir)
+
+    def get_noop_output(self, ir: _VisitableNodeT) -> None:
+        _ = ir
+
+    def did_change(self, input_ir: _VisitableNodeT, output: None) -> bool:
+        return False
+
+    def walk(self, node: _VisitableNodeT) -> None:
+        """Visit a node and, when provided, recursively visit its children.
+
+        Args:
+            node: Node to visit.
+
+        """
+        if self._traversal_order == TraversalOrder.PRE:
+            self.visit(node)
+            self.walk_children(node)
+        else:
+            self.walk_children(node)
+            self.visit(node)
+
+    def walk_children(self, node: _VisitableNodeT) -> None:
+        """Visit all children declared by the node.
+
+        Args:
+            node: Node whose children to visit.
+
+        """
+        for child in self.get_visit_children(node):
+            self.walk(child)
+
+    def get_visit_children(self, node: _VisitableNodeT) -> Sequence[_VisitableNodeT]:
+        """Return children for automatic traversal.
+
+        By default, this uses optional node-provided child enumeration via
+        `Visitable.get_visit_children()`. If a node does not override that
+        method, no child recursion is performed for that node and traversal
+        must be done manually in visit methods.
+        """
+        return cast(Sequence[_VisitableNodeT], node.get_visit_children())
+
+    def visit_unknown(self, node: _VisitableNodeT) -> None: ...
+
+
 def register_pass(name: str, description: str) -> Callable[[_PassClassT], _PassClassT]:
-    """Register a concrete pass class with explicit metadata."""
+    """Register a concrete pass class with explicit metadata.
+
+    Args:
+        name: Stable pass name for registration and reporting.
+        description: Human-readable pass description for discovery/reporting.
+
+    Raises:
+        PassRegistrationError: If the pass class is invalid or the name is already
+            registered by a different class.
+
+    """
     if not name.strip():
         raise PassRegistrationError("Pass name cannot be empty.")
     if not description.strip():
