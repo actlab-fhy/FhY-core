@@ -457,6 +457,12 @@ def test_set_ordinal_param_value_fails_with_invalid_value(
         ordinal_param_123 = ordinal_param_123.assign(4)
 
 
+def test_ordinal_param_distinguishes_bool_from_numeric_values() -> None:
+    """Test ordinal params do not treat bools as interchangeable with numerics."""
+    param = OrdinalParam([1, 2, 3])
+    assert not param.is_value_admissible(True)
+
+
 def test_add_and_check_ordinal_param_constraints(ordinal_param_123: OrdinalParam):
     """Test that ordinal parameter constraints can be added and checked."""
     ordinal_param_123 = ordinal_param_123.add_constraint(
@@ -525,6 +531,12 @@ def test_set_categorical_param_value_fails_with_invalid_value(
         categorical_param_abc = categorical_param_abc.assign("d")
 
 
+def test_categorical_param_distinguishes_bool_from_int_values() -> None:
+    """Test categorical params do not treat bools as interchangeable with ints."""
+    param = CategoricalParam([1, 2, 3])
+    assert not param.is_value_admissible(True)
+
+
 def test_add_and_check_categorical_param_constraints(
     categorical_param_abc: CategoricalParam,
 ):
@@ -576,6 +588,12 @@ def test_set_perm_param_value_fails_with_invalid_value(perm_param_nchw: PermPara
     """Test that setting a permutation parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
         perm_param_nchw = perm_param_nchw.assign(["n", "c", "h", "n"])
+
+
+def test_perm_param_rejects_string_like_sequences() -> None:
+    """Test permutation params reject plain strings as permutation values."""
+    param = PermParam(["n", "c", "h", "w"])
+    assert not param.is_value_admissible("nchw")
 
 
 def test_add_and_check_perm_param_constraints(perm_param_nchw: PermParam):
