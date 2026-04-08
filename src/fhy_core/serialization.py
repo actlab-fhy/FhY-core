@@ -357,7 +357,7 @@ def is_registry_wrapped_value_leaf(v: Any) -> TypeGuard[RegistryWrappedValueLeaf
 
 def is_registry_wrapped_value(v: Any) -> TypeGuard[RegistryWrappedValue]:
     """Return if `v` is a valid `RegistryWrappedValue`."""
-    if isinstance(v, RegistryWrappedValueLeaf):
+    if is_registry_wrapped_value_leaf(v):
         return True
     if isinstance(v, tuple):
         return all(is_registry_wrapped_value(x) for x in v)

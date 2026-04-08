@@ -942,6 +942,20 @@ def _deserialize_typed_wrapped_leaf_values(
     return typed_values
 
 
+def _serialize_typed_wrapped_leaf_value(value: object) -> SerializedDict:
+    """Serialize a validated leaf value through the wrapped registry.
+
+    Param generics are stricter than the wrapped-registry alias, so we validate
+    the runtime shape here and then hand the value to the shared serializer.
+    """
+    if not isinstance(value, (bool, int, float, str, Serializable)):
+        raise ValueError(
+            "Parameter values must be serializable leaf values "
+            "(bool/int/float/str/Serializable)."
+        )
+    return serialize_registry_wrapped_value(cast(Any, value))
+
+
 class _OrdinalCategoricalPermParamData(ParamData):
     possible_values: list[Any]
 
@@ -1019,7 +1033,7 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
         super_dict["possible_values"] = [
-            serialize_registry_wrapped_value(value) for value in self._all_values
+            _serialize_typed_wrapped_leaf_value(value) for value in self._all_values
         ]
         return super_dict
 
@@ -1122,7 +1136,8 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
         super_dict["possible_values"] = [
-            serialize_registry_wrapped_value(category) for category in self._categories
+            _serialize_typed_wrapped_leaf_value(category)
+            for category in self._categories
         ]
         return super_dict
 
@@ -1243,7 +1258,7 @@ class PermParam(
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
         super_dict["possible_values"] = [
-            serialize_registry_wrapped_value(value) for value in self._all_values
+            _serialize_typed_wrapped_leaf_value(value) for value in self._all_values
         ]
         return super_dict
 
