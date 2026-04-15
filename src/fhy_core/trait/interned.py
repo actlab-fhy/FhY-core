@@ -11,14 +11,15 @@ from .frozen import Frozen
 from .verifiable import Verifiable
 
 _K = TypeVar("_K", bound=Hashable)
+_K_co = TypeVar("_K_co", bound=Hashable, covariant=True)
 _I = TypeVar("_I", bound="InternedMixin[Any]")
 
 
 @runtime_checkable
-class Interned(Protocol[_K]):
+class Interned(Protocol[_K_co]):
     """Protocol for objects that register a canonical instance by key."""
 
-    def get_intern_key(self) -> _K:
+    def get_intern_key(self) -> _K_co:
         """Return the stable key used to look up the canonical instance."""
 
 
@@ -75,10 +76,11 @@ class InternedMixin(ABC, Generic[_K]):
 
     @classmethod
     def _get_interned_registry(cls) -> dict[Hashable, "InternedMixin[Any]"]:
-        registry = getattr(cls, "_interned_instances", None)
-        if registry is None:
-            raise RuntimeError(f"{cls.__name__} does not have an intern registry.")
-        return registry
+        for base in cls.__mro__:
+            registry = base.__dict__.get("_interned_instances")
+            if registry is not None:
+                return cast(dict[Hashable, "InternedMixin[Any]"], registry)
+        raise RuntimeError(f"{cls.__name__} does not have an intern registry.")
 
     @classmethod
     def _register_interned_instance(cls, instance: "InternedMixin[Any]") -> None:
@@ -105,7 +107,7 @@ class InternedMixin(ABC, Generic[_K]):
         instance = cls._get_interned_registry().get(key)
         if instance is None or not isinstance(instance, cls):
             return None
-        return cast(_I, instance)
+        return instance
 
     @classmethod
     def require_interned(cls: type[_I], key: _K) -> _I:
