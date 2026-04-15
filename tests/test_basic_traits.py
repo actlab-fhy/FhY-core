@@ -171,6 +171,15 @@ class _VerifiedFrozenInternedValue(InternedMixin[str], FrozenMixin, VerifiableMi
             raise VerificationError("missing intern key")
 
 
+class _RaisingInternedValue(InternedMixin[str]):
+    def __init__(self, key: str) -> None:
+        self.key = key
+        raise RuntimeError("init failed")
+
+    def get_intern_key(self) -> str:
+        return self.key
+
+
 @dataclass
 class _DataclassInternedValue(InternedMixin[str]):
     key: str
@@ -445,3 +454,13 @@ def test_interned_finalize_propagates_verification_errors() -> None:
         _VerifiedFrozenInternedValue("", [1])
 
     assert _VerifiedFrozenInternedValue.get_interned("") is None
+
+
+def test_interned_does_not_register_when_init_raises() -> None:
+    """Test failed initialization prevents partial interned registration."""
+    _RaisingInternedValue.clear_interned_registry()
+
+    with pytest.raises(RuntimeError, match="init failed"):
+        _RaisingInternedValue("boom")
+
+    assert _RaisingInternedValue.get_interned("boom") is None

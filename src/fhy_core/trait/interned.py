@@ -55,12 +55,14 @@ class InternedMixin(ABC, Generic[_K]):
         ) -> None:
             init_depth = getattr(self, "_intern_init_depth", 0)
             object.__setattr__(self, "_intern_init_depth", init_depth + 1)
+            init_completed = False
             try:
                 init_method(self, *args, **init_kwargs)
+                init_completed = True
             finally:
                 new_depth = self._intern_init_depth - 1
                 object.__setattr__(self, "_intern_init_depth", new_depth)
-                if new_depth == 0:
+                if init_completed and new_depth == 0:
                     self.register_interned_instance()
 
         setattr(_wrapped_init, "__interned_registry_wrapper__", True)
