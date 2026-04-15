@@ -34,7 +34,9 @@ from fhy_core.types import (
     TupleType,
     Type,
     TypeQualifier,
+    get_core_data_type_bit_width,
     is_weak_core_data_type,
+    promote_core_data_types,
     promote_primitive_data_types,
     promote_type_qualifiers,
     resolve_literal_core_data_type,
@@ -42,15 +44,58 @@ from fhy_core.types import (
 
 ExpressionValueType: TypeAlias = NumericalType | IndexType
 
-_ARITHMETIC_OPERATIONS = {
-    BinaryOperation.ADD,
-    BinaryOperation.SUBTRACT,
-    BinaryOperation.MULTIPLY,
-    BinaryOperation.DIVIDE,
-    BinaryOperation.FLOOR_DIVIDE,
-    BinaryOperation.MODULO,
-    BinaryOperation.POWER,
-}
+_ARITHMETIC_OPERATIONS = frozenset(
+    {
+        BinaryOperation.ADD,
+        BinaryOperation.SUBTRACT,
+        BinaryOperation.MULTIPLY,
+        BinaryOperation.DIVIDE,
+        BinaryOperation.FLOOR_DIVIDE,
+        BinaryOperation.MODULO,
+        BinaryOperation.POWER,
+    }
+)
+
+_UNSIGNED_CORE_DATA_TYPES = frozenset(
+    {
+        CoreDataType.UINT,
+        CoreDataType.UINT8,
+        CoreDataType.UINT16,
+        CoreDataType.UINT32,
+        CoreDataType.UINT64,
+    }
+)
+
+_SIGNED_CORE_DATA_TYPES = frozenset(
+    {
+        CoreDataType.INT,
+        CoreDataType.INT8,
+        CoreDataType.INT16,
+        CoreDataType.INT32,
+        CoreDataType.INT64,
+    }
+)
+
+_INTEGRAL_CORE_DATA_TYPES = _UNSIGNED_CORE_DATA_TYPES | _SIGNED_CORE_DATA_TYPES
+
+_REAL_FLOAT_CORE_DATA_TYPES = frozenset(
+    {
+        CoreDataType.FLOAT,
+        CoreDataType.FLOAT16,
+        CoreDataType.FLOAT32,
+        CoreDataType.FLOAT64,
+    }
+)
+
+_COMPLEX_CORE_DATA_TYPES = frozenset(
+    {
+        CoreDataType.COMPLEX32,
+        CoreDataType.COMPLEX64,
+        CoreDataType.COMPLEX128,
+    }
+)
+
+_FLOAT_LIKE_CORE_DATA_TYPES = _REAL_FLOAT_CORE_DATA_TYPES | _COMPLEX_CORE_DATA_TYPES
 
 
 def get_core_data_type_from_literal_type(literal: LiteralType) -> CoreDataType:
@@ -126,18 +171,116 @@ def _get_numeric_literal_value(literal_expression: LiteralExpression) -> int | f
 
 
 def _is_integral_numerical_type(numerical_type: NumericalType) -> bool:
-    return _get_primitive_data_type(numerical_type).core_data_type in {
-        CoreDataType.UINT,
-        CoreDataType.UINT8,
-        CoreDataType.UINT16,
-        CoreDataType.UINT32,
-        CoreDataType.UINT64,
-        CoreDataType.INT,
-        CoreDataType.INT8,
-        CoreDataType.INT16,
-        CoreDataType.INT32,
-        CoreDataType.INT64,
-    }
+    return (
+        _get_primitive_data_type(numerical_type).core_data_type
+        in _INTEGRAL_CORE_DATA_TYPES
+    )
+
+
+def _get_real_float_core_data_type_for_bit_width(bit_width: int | None) -> CoreDataType:
+    core_data_type_bit_widths: list[tuple[int, CoreDataType]] = []
+    for core_data_type in _REAL_FLOAT_CORE_DATA_TYPES:
+        core_data_type_bit_width = get_core_data_type_bit_width(core_data_type)
+        if core_data_type_bit_width is not None:
+            core_data_type_bit_widths.append((core_data_type_bit_width, core_data_type))
+    core_data_type_bit_widths = sorted(core_data_type_bit_widths)
+
+    if bit_width is None:
+        return CoreDataType.FLOAT
+    else:
+        for core_data_type_bit_width, core_data_type in core_data_type_bit_widths:
+            if core_data_type_bit_width >= bit_width:
+                return core_data_type
+        raise FhYCoreTypeError(
+            f"No real float core data type found for bit width {bit_width}."
+        )
+
+
+def _get_division_primitive_data_type(
+    left_type: NumericalType, right_type: NumericalType
+) -> PrimitiveDataType:
+    left_core_data_type = _get_primitive_data_type(left_type).core_data_type
+    right_core_data_type = _get_primitive_data_type(right_type).core_data_type
+
+    if (
+        left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+        and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+    ):
+        concrete_bit_widths = [
+            bit_width
+            for bit_width in (
+                get_core_data_type_bit_width(left_core_data_type),
+                get_core_data_type_bit_width(right_core_data_type),
+            )
+            if bit_width is not None
+        ]
+        return PrimitiveDataType(
+            _get_real_float_core_data_type_for_bit_width(
+                max(concrete_bit_widths) if concrete_bit_widths else None
+            )
+        )
+
+    if (
+        left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+        and right_core_data_type in _FLOAT_LIKE_CORE_DATA_TYPES
+    ):
+        left_core_data_type = _get_real_float_core_data_type_for_bit_width(
+            get_core_data_type_bit_width(left_core_data_type)
+        )
+    elif (
+        left_core_data_type in _FLOAT_LIKE_CORE_DATA_TYPES
+        and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+    ):
+        right_core_data_type = _get_real_float_core_data_type_for_bit_width(
+            get_core_data_type_bit_width(right_core_data_type)
+        )
+
+    return PrimitiveDataType(
+        promote_core_data_types(left_core_data_type, right_core_data_type)
+    )
+
+
+def _get_floor_division_primitive_data_type(
+    left_type: NumericalType, right_type: NumericalType
+) -> PrimitiveDataType:
+    left_core_data_type = _get_primitive_data_type(left_type).core_data_type
+    right_core_data_type = _get_primitive_data_type(right_type).core_data_type
+
+    if (
+        left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+        and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+    ):
+        return promote_primitive_data_types(
+            _get_primitive_data_type(left_type),
+            _get_primitive_data_type(right_type),
+        )
+
+    if (
+        left_core_data_type in _COMPLEX_CORE_DATA_TYPES
+        or right_core_data_type in _COMPLEX_CORE_DATA_TYPES
+    ):
+        raise FhYCoreTypeError(
+            "Floor division is not supported for complex numerical types."
+        )
+
+    if (
+        left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+        and right_core_data_type in _REAL_FLOAT_CORE_DATA_TYPES
+    ):
+        left_core_data_type = _get_real_float_core_data_type_for_bit_width(
+            get_core_data_type_bit_width(left_core_data_type)
+        )
+    elif (
+        left_core_data_type in _REAL_FLOAT_CORE_DATA_TYPES
+        and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+    ):
+        right_core_data_type = _get_real_float_core_data_type_for_bit_width(
+            get_core_data_type_bit_width(right_core_data_type)
+        )
+
+    return PrimitiveDataType(
+        promote_core_data_types(left_core_data_type, right_core_data_type)
+    )
 
 
 def _check_expected_type(
@@ -417,6 +560,26 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             if isinstance(left_value_type, NumericalType) and isinstance(
                 right_value_type, NumericalType
             ):
+                if binary_expression.operation == BinaryOperation.DIVIDE:
+                    return (
+                        NumericalType(
+                            _get_division_primitive_data_type(
+                                left_value_type,
+                                right_value_type,
+                            )
+                        ),
+                        promote_type_qualifiers(left_qualifier, right_qualifier),
+                    )
+                if binary_expression.operation == BinaryOperation.FLOOR_DIVIDE:
+                    return (
+                        NumericalType(
+                            _get_floor_division_primitive_data_type(
+                                left_value_type,
+                                right_value_type,
+                            )
+                        ),
+                        promote_type_qualifiers(left_qualifier, right_qualifier),
+                    )
                 return (
                     NumericalType(
                         promote_primitive_data_types(
@@ -426,6 +589,14 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                     ),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
+            if binary_expression.operation in {
+                BinaryOperation.DIVIDE,
+                BinaryOperation.FLOOR_DIVIDE,
+            } and (
+                isinstance(left_value_type, IndexType)
+                or isinstance(right_value_type, IndexType)
+            ):
+                raise FhYCoreTypeError("Division is not supported for index types.")
             if (
                 binary_expression.operation == BinaryOperation.ADD
                 and isinstance(left_value_type, IndexType)

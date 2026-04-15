@@ -169,6 +169,106 @@ def test_check_binary_expression_uses_expected_type_bidirectionally():
     assert result_qualifier == TypeQualifier.PARAM
 
 
+def test_integer_division_produces_float_type():
+    """Test that integer division produces a float result type."""
+    left_identifier = Identifier("left")
+    right_identifier = Identifier("right")
+    checker = ExpressionTypeChecker(
+        lambda seen_identifier: (
+            NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+            TypeQualifier.PARAM,
+        )
+        if seen_identifier in {left_identifier, right_identifier}
+        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    )
+
+    result_type, result_qualifier = checker.visit(
+        BinaryExpression(
+            BinaryOperation.DIVIDE,
+            IdentifierExpression(left_identifier),
+            IdentifierExpression(right_identifier),
+        )
+    )
+
+    _assert_core_data_type(result_type, CoreDataType.FLOAT32)
+    assert result_qualifier == TypeQualifier.PARAM
+
+
+def test_weak_integer_division_produces_weak_float_type():
+    """Test that weak integer division stays weakly typed as float."""
+    checker = ExpressionTypeChecker(
+        lambda _: (
+            NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+            TypeQualifier.PARAM,
+        )
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.DIVIDE,
+            LiteralExpression(4),
+            LiteralExpression(2),
+        )
+    )
+
+    _assert_core_data_type(result_type, CoreDataType.FLOAT)
+
+
+def test_floor_division_of_integers_produces_integer_type():
+    """Test that integer floor division produces an integer result type."""
+    left_identifier = Identifier("left")
+    right_identifier = Identifier("right")
+    checker = ExpressionTypeChecker(
+        lambda seen_identifier: (
+            NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+            TypeQualifier.PARAM,
+        )
+        if seen_identifier in {left_identifier, right_identifier}
+        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    )
+
+    result_type, result_qualifier = checker.visit(
+        BinaryExpression(
+            BinaryOperation.FLOOR_DIVIDE,
+            IdentifierExpression(left_identifier),
+            IdentifierExpression(right_identifier),
+        )
+    )
+
+    _assert_core_data_type(result_type, CoreDataType.INT32)
+    assert result_qualifier == TypeQualifier.PARAM
+
+
+def test_floor_division_of_float_and_int_produces_float_type():
+    """Test that floor division preserves float typing when a float is present."""
+    left_identifier = Identifier("left")
+    right_identifier = Identifier("right")
+    checker = ExpressionTypeChecker(
+        lambda seen_identifier: (
+            NumericalType(PrimitiveDataType(CoreDataType.FLOAT32)),
+            TypeQualifier.PARAM,
+        )
+        if seen_identifier == left_identifier
+        else (
+            NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+            TypeQualifier.PARAM,
+        )
+        if seen_identifier == right_identifier
+        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    )
+
+    result_type, result_qualifier = checker.visit(
+        BinaryExpression(
+            BinaryOperation.FLOOR_DIVIDE,
+            IdentifierExpression(left_identifier),
+            IdentifierExpression(right_identifier),
+        )
+    )
+
+    _assert_core_data_type(result_type, CoreDataType.FLOAT32)
+    assert result_qualifier == TypeQualifier.PARAM
+
+
 def test_tensor_type_is_rejected_in_expression_typing():
     """Test that tensor-valued expressions are rejected in expression typing."""
     identifier = Identifier("tensor")
@@ -385,6 +485,30 @@ def test_index_multiplication_is_rejected():
         checker.visit(
             BinaryExpression(
                 BinaryOperation.MULTIPLY,
+                IdentifierExpression(identifier),
+                LiteralExpression(2),
+            )
+        )
+
+
+def test_index_division_is_rejected():
+    """Test that index division is rejected explicitly."""
+    identifier = Identifier("idx")
+    index_type = IndexType(
+        LiteralExpression(0),
+        LiteralExpression(8),
+        None,
+    )
+    checker = ExpressionTypeChecker(
+        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
+        if seen_identifier == identifier
+        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    )
+
+    with pytest.raises(FhYCoreTypeError):
+        checker.visit(
+            BinaryExpression(
+                BinaryOperation.DIVIDE,
                 IdentifierExpression(identifier),
                 LiteralExpression(2),
             )
