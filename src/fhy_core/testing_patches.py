@@ -23,7 +23,10 @@ def fail_fast_structural_equivalence() -> Generator[None, None, None]:
     seen_classes: set[type[Any]] = set()
 
     def wrap_method(cls: type[StructuralEquivalence], method_name: str) -> None:
-        orig = getattr(cls, method_name)
+        if method_name not in cls.__dict__:
+            return
+
+        orig = cls.__dict__[method_name]
 
         @functools.wraps(orig)
         def wrapped(self: StructuralEquivalence, *args: Any, **kwargs: Any) -> Any:
