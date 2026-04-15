@@ -9,7 +9,7 @@
 | Expression                               | General expression represented as an AST with a parser and printer.    |
 | Constraint                               | General logical constraint.                                            |
 | Parameter                                | Real, integer, ordinal, categorical, and permutation parameters.       |
-| Types                                    | Core type system for the compiler.                                     |
+| Types                                    | Core type system for the compiler w/ type checking for expressions.    |
 | Symbol Table                             | Nested symbol table.                                                   |
 | Serializable Trait                       | `Serializable`/`WrappedFamilySerializable` with dict, JSON, and binary formats plus registered type IDs. |
 | Compiler Traits - Identity               | `HasIdentifier` for stable object identity.                            |
@@ -24,6 +24,7 @@
 | Compiler Traits - Folding                | `Foldable` for constant-fold-like evaluation hooks.                    |
 | Compiler Traits - Canonicalization       | `Canonicalizable` for local canonical form rewrites.                   |
 | Compiler Traits - Structural Equivalence | `StructuralEquivalence` for shape/value-level IR comparisons.          |
+| Compiler Traits - Interned               | `Interned` for interned components.                                    |
 | _General Utility_ - Logging              | Core logging utilities for all compiler components.                    |
 | _General Utility_ - Python 3.11 Enums    | String and integer enum types only introduced in Python 3.11           |
 | _General Utility_ - Stack                | General stack utility that wraps `deque`.                              |
