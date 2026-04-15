@@ -13,6 +13,8 @@ __all__ = [
     "FoldableMixin",
     "HasIdentifier",
     "HasIdentifierMixin",
+    "Interned",
+    "InternedMixin",
     "HasOperands",
     "HasOperandsMixin",
     "HasProvenance",
@@ -50,6 +52,7 @@ from .has_operands import HasOperands, HasOperandsMixin
 from .has_provenance import HasProvenance, HasProvenanceMixin
 from .has_results import HasResults, HasResultsMixin
 from .has_type import HasType, HasTypeMixin
+from .interned import Interned, InternedMixin
 from .orderable import (
     Orderable,
     OrderableMixin,

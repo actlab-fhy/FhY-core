@@ -16,12 +16,16 @@ from fhy_core.trait import (
     HasIdentifierMixin,
     HasProvenance,
     HasProvenanceMixin,
+    Interned,
+    InternedMixin,
     Orderable,
     OrderableMixin,
     PartialEqual,
     PartialEqualMixin,
     PartialOrderable,
     PartialOrderableMixin,
+    VerifiableMixin,
+    VerificationError,
 )
 from frozendict import frozendict
 
@@ -126,6 +130,57 @@ class _AutoFrozenPoint(FrozenMixin):
 @dataclass(frozen=True)
 class _AutoFrozenPayload(FrozenMixin):
     payload: object
+
+
+class _InternedValue(InternedMixin[str]):
+    def __init__(self, key: str, value: int) -> None:
+        self.key = key
+        self.value = value
+
+    def get_intern_key(self) -> str:
+        return self.key
+
+
+class _BaseInternedValue(InternedMixin[str]):
+    def __init__(self, key: str) -> None:
+        self.key = key
+
+    def get_intern_key(self) -> str:
+        return self.key
+
+
+class _DerivedInternedValue(_BaseInternedValue):
+    def __init__(self, key: str, payload: int) -> None:
+        super().__init__(key)
+        self.payload = payload
+
+
+class _VerifiedFrozenInternedValue(InternedMixin[str], FrozenMixin, VerifiableMixin):
+    verify_calls = 0
+
+    def __init__(self, key: str, payload: list[int]) -> None:
+        self.key = key
+        self.payload = payload
+
+    def get_intern_key(self) -> str:
+        return self.key
+
+    def verify(self) -> None:
+        type(self).verify_calls += 1
+        if not self.key:
+            raise VerificationError("missing intern key")
+
+
+@dataclass
+class _DataclassInternedValue(InternedMixin[str]):
+    key: str
+    value: int
+
+    def __post_init__(self) -> None:
+        self.register_interned_instance()
+
+    def get_intern_key(self) -> str:
+        return self.key
 
 
 def test_has_identifier_runtime_protocol():
@@ -333,3 +388,60 @@ def test_native_frozen_dataclass_with_frozen_mixin() -> None:
     point.assert_frozen()
     with pytest.raises(FrozenInstanceError):
         setattr(point, "x", 4)
+
+
+def test_interned_runtime_protocol() -> None:
+    """Test `Interned` runtime protocol."""
+    _InternedValue.clear_interned_registry()
+    value = _InternedValue("x", 1)
+    assert isinstance(value, Interned)
+
+
+def test_interned_returns_first_registered_instance_for_key() -> None:
+    """Test duplicate intern keys preserve the first registered instance."""
+    _InternedValue.clear_interned_registry()
+    first = _InternedValue("x", 1)
+    second = _InternedValue("x", 2)
+
+    assert _InternedValue.get_interned("x") is first
+    assert _InternedValue.require_interned("x") is first
+    assert second is not first
+
+
+def test_interned_subclasses_share_family_registry() -> None:
+    """Test descendants register into the same family registry as their base."""
+    _BaseInternedValue.clear_interned_registry()
+    value = _DerivedInternedValue("child", 7)
+
+    assert _BaseInternedValue.get_interned("child") is value
+    assert _DerivedInternedValue.get_interned("child") is value
+
+
+def test_interned_supports_manual_registration_from_dataclass_post_init() -> None:
+    """Test dataclass users can register canonical instances from `__post_init__`."""
+    _DataclassInternedValue.clear_interned_registry()
+    value = _DataclassInternedValue("dc", 9)
+
+    assert _DataclassInternedValue.get_interned("dc") is value
+
+
+def test_interned_finalize_verifies_and_freezes_once() -> None:
+    """Test `InternedMixin` verifies/freezes exactly once per full init chain."""
+    _VerifiedFrozenInternedValue.clear_interned_registry()
+    _VerifiedFrozenInternedValue.verify_calls = 0
+    value = _VerifiedFrozenInternedValue("frozen", [1, 2, 3])
+
+    assert _VerifiedFrozenInternedValue.verify_calls == 1
+    assert value.is_frozen is True
+    assert value.payload == (1, 2, 3)
+
+
+def test_interned_finalize_propagates_verification_errors() -> None:
+    """Test failed verification prevents invalid interned registration."""
+    _VerifiedFrozenInternedValue.clear_interned_registry()
+    _VerifiedFrozenInternedValue.verify_calls = 0
+
+    with pytest.raises(VerificationError):
+        _VerifiedFrozenInternedValue("", [1])
+
+    assert _VerifiedFrozenInternedValue.get_interned("") is None
