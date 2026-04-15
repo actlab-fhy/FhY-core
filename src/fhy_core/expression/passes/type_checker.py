@@ -106,7 +106,23 @@ def _as_expression_value_type(
 
 
 def _is_weak_numerical_type(numerical_type: NumericalType) -> bool:
-    return is_weak_core_data_type(numerical_type.data_type.core_data_type)
+    return is_weak_core_data_type(
+        _get_primitive_data_type(numerical_type).core_data_type
+    )
+
+
+def _get_primitive_data_type(numerical_type: NumericalType) -> PrimitiveDataType:
+    data_type = numerical_type.data_type
+    if not isinstance(data_type, PrimitiveDataType):
+        raise FhYCoreTypeError(f"Expected primitive data type, got {data_type}.")
+    return data_type
+
+
+def _get_numeric_literal_value(literal_expression: LiteralExpression) -> int | float:
+    literal_value = literal_expression.value
+    if isinstance(literal_value, bool | str):
+        raise FhYCoreTypeError(f"Unsupported numeric literal value: {literal_value!r}.")
+    return literal_value
 
 
 def _check_expected_type(
@@ -131,10 +147,13 @@ def _check_expected_type(
         )
 
     promoted_type = promote_primitive_data_types(
-        actual_value_type.data_type,
-        expected_value_type.data_type,
+        _get_primitive_data_type(actual_value_type),
+        _get_primitive_data_type(expected_value_type),
     )
-    if promoted_type.core_data_type != expected_value_type.data_type.core_data_type:
+    if (
+        promoted_type.core_data_type
+        != _get_primitive_data_type(expected_value_type).core_data_type
+    ):
         raise FhYCoreTypeError(
             f"Expression {_format_expression(expression)} has type {actual_type}, "
             f"which is incompatible with expected type {expected_type}."
@@ -260,7 +279,8 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             )
 
         resolved_core_data_type = resolve_literal_core_data_type(
-            literal_expression.value, expected_value_type.data_type.core_data_type
+            _get_numeric_literal_value(literal_expression),
+            _get_primitive_data_type(expected_value_type).core_data_type,
         )
         return (
             NumericalType(PrimitiveDataType(resolved_core_data_type)),
@@ -296,7 +316,9 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                         NumericalType(
                             PrimitiveDataType(
                                 get_core_data_type_from_literal_type(
-                                    -unary_expression.operand.value
+                                    -_get_numeric_literal_value(
+                                        unary_expression.operand
+                                    )
                                 )
                             )
                         ),
@@ -345,8 +367,11 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             and isinstance(right_value_type, NumericalType)
             and not _is_weak_numerical_type(right_value_type)
         ):
-            left_value_type, left_qualifier = self.check(
+            checked_left_type, left_qualifier = self.check(
                 binary_expression.left, right_value_type
+            )
+            left_value_type = _as_expression_value_type(
+                binary_expression.left, checked_left_type
             )
         if (
             binary_expression.operation in _ARITHMETIC_OPERATIONS
@@ -356,8 +381,11 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             and isinstance(left_value_type, NumericalType)
             and not _is_weak_numerical_type(left_value_type)
         ):
-            right_value_type, right_qualifier = self.check(
+            checked_right_type, right_qualifier = self.check(
                 binary_expression.right, left_value_type
+            )
+            right_value_type = _as_expression_value_type(
+                binary_expression.right, checked_right_type
             )
 
         left_value_type = _as_expression_value_type(
@@ -374,7 +402,8 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 return (
                     NumericalType(
                         promote_primitive_data_types(
-                            left_value_type.data_type, right_value_type.data_type
+                            _get_primitive_data_type(left_value_type),
+                            _get_primitive_data_type(right_value_type),
                         )
                     ),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
