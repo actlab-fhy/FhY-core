@@ -16,10 +16,12 @@ from fhy_core.expression.core import (
     UnaryExpression,
     UnaryOperation,
 )
-from fhy_core.expression.visitor import (
-    ExpressionBasePass,
-)
 from fhy_core.identifier import Identifier
+from fhy_core.pass_infrastructure import (
+    PassExecutionError,
+    VisitablePass,
+    register_pass,
+)
 
 
 def _z3_floor_divide(left: z3.ExprRef, right: z3.ExprRef) -> z3.ExprRef:
@@ -32,7 +34,11 @@ def _z3_floor_divide(left: z3.ExprRef, right: z3.ExprRef) -> z3.ExprRef:
         raise ValueError(f"Unsupported floor divide expression type: {expr}")
 
 
-class ExpressionToZ3Converter(ExpressionBasePass):
+@register_pass(
+    "fhy_core.expression.to_z3",
+    "Lower expression IR into an equivalent Z3 expression.",
+)
+class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
     """Transforms an expression into a Z3 expression."""
 
     _UNARY_OPERATION_Z3_OPERATORS: frozendict[UnaryOperation, Callable[[Any], Any]] = (
@@ -40,7 +46,7 @@ class ExpressionToZ3Converter(ExpressionBasePass):
             {
                 UnaryOperation.NEGATE: operator.neg,
                 UnaryOperation.POSITIVE: operator.pos,
-                UnaryOperation.LOGICAL_NOT: lambda operand: z3.Not(operand),
+                UnaryOperation.LOGICAL_NOT: z3.Not,
             }
         )
     )
@@ -55,8 +61,8 @@ class ExpressionToZ3Converter(ExpressionBasePass):
             BinaryOperation.FLOOR_DIVIDE: _z3_floor_divide,
             BinaryOperation.MODULO: operator.mod,
             BinaryOperation.POWER: operator.pow,
-            BinaryOperation.LOGICAL_AND: operator.and_,
-            BinaryOperation.LOGICAL_OR: operator.or_,
+            BinaryOperation.LOGICAL_AND: z3.And,
+            BinaryOperation.LOGICAL_OR: z3.Or,
             BinaryOperation.EQUAL: operator.eq,
             BinaryOperation.NOT_EQUAL: operator.ne,
             BinaryOperation.LESS: operator.lt,
@@ -70,6 +76,7 @@ class ExpressionToZ3Converter(ExpressionBasePass):
     _identifier_to_z3_expression: dict[Identifier, z3.ExprRef]
 
     def __init__(self, symbol_types: dict[Identifier, SymbolType]) -> None:
+        super().__init__()
         self._symbol_types = symbol_types
         self._identifier_to_z3_expression = {}
 
@@ -131,6 +138,11 @@ class ExpressionToZ3Converter(ExpressionBasePass):
     def format_identifier(identifier: Identifier) -> str:
         return f"{identifier.name_hint}_{identifier.id}"
 
+    def get_noop_output(self, ir: Expression) -> z3.ExprRef:
+        raise PassExecutionError(
+            f'Pass "{self.get_pass_name()}" does not define noop output.'
+        )
+
 
 def convert_expression_to_z3_expression(
     expression: Expression, symbol_types: dict[Identifier, SymbolType] | None = None
@@ -146,7 +158,7 @@ def convert_expression_to_z3_expression(
 
     """
     converter = ExpressionToZ3Converter(symbol_types or {})
-    z3_expression = converter.visit(expression)
+    z3_expression = converter(expression)
     return z3_expression, converter.identifier_to_z3_expression
 
 

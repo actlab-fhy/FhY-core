@@ -15,7 +15,7 @@ from fhy_core.expression import (
     tokenize_expression,
 )
 
-from .utils import assert_exact_expression_equality, mock_identifier
+from .conftest import mock_identifier
 
 
 # TODO: More tests for tokenization!
@@ -111,4 +111,4 @@ def test_tokenize_expression(expression_str: str, expected_tokens: list[str]):
 def test_parse_expression(expression_str: str, expected_tree: Expression):
     """Test that the expression is correctly parsed."""
     result = parse_expression(expression_str)
-    assert_exact_expression_equality(result, expected_tree)
+    assert result.is_structurally_equivalent(expected_tree)

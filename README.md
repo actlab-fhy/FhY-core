@@ -8,9 +8,23 @@
 | Error                                    | Custom error registration and core errors for the compiler.            |
 | Expression                               | General expression represented as an AST with a parser and printer.    |
 | Constraint                               | General logical constraint.                                            |
-| Parameter                                | Real, integer, orginal, categorical, and permutation parameters.       |
+| Parameter                                | Real, integer, ordinal, categorical, and permutation parameters.       |
 | Types                                    | Core type system for the compiler.                                     |
 | Symbol Table                             | Nested symbol table.                                                   |
+| Serializable Trait                       | `Serializable`/`WrappedFamilySerializable` with dict, JSON, and binary formats plus registered type IDs. |
+| Compiler Traits - Identity               | `HasIdentifier` for stable object identity.                            |
+| Compiler Traits - Provenance             | `HasProvenance` for source/origin tracking.                            |
+| Compiler Traits - Type Carrier           | `HasType` for objects carrying an explicit type.                       |
+| Compiler Traits - Operands               | `HasOperands` for operand-bearing operation/expression nodes.          |
+| Compiler Traits - Results                | `HasResults` for multi-result operation-like nodes.                    |
+| Compiler Traits - Freezing               | `Frozen`/`FrozenMixin` for runtime and dataclass immutability. |
+| Compiler Traits - Equality               | `PartialEqual`/`Equal` for dataclass-aware equality semantics.         |
+| Compiler Traits - Ordering               | `PartialOrderable`/`Orderable` for dataclass-aware ordering semantics. |
+| Compiler Traits - Verification           | `Verifiable` + `VerificationError` for structural invariant checks.    |
+| Compiler Traits - Folding                | `Foldable` for constant-fold-like evaluation hooks.                    |
+| Compiler Traits - Canonicalization       | `Canonicalizable` for local canonical form rewrites.                   |
+| Compiler Traits - Structural Equivalence | `StructuralEquivalence` for shape/value-level IR comparisons.          |
+| _General Utility_ - Logging              | Core logging utilities for all compiler components.                    |
 | _General Utility_ - Python 3.11 Enums    | String and integer enum types only introduced in Python 3.11           |
 | _General Utility_ - Stack                | General stack utility that wraps `deque`.                              |
 | _General Utility_ - POSET                | General partially ordered set utility represented as a directed graph. |

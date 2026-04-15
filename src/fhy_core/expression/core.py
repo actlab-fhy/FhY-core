@@ -21,11 +21,26 @@ __all__ = [
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any
+from functools import singledispatch
+from typing import Any, TypedDict, TypeGuard
 
 from frozendict import frozendict
 
 from fhy_core.identifier import Identifier
+from fhy_core.serialization import (
+    DeserializationDictStructureError,
+    DeserializationValueError,
+    SerializedDict,
+    WrappedFamilySerializable,
+    is_serialized_dict,
+    register_serializable,
+)
+from fhy_core.trait import (
+    FrozenMixin,
+    HasOperandsMixin,
+    StructuralEquivalenceMixin,
+    VisitableMixin,
+)
 from fhy_core.utils import invert_frozen_dict
 
 
@@ -37,8 +52,17 @@ class SymbolType(Enum):
     BOOL = auto()
 
 
-class Expression(ABC):
+class Expression(
+    WrappedFamilySerializable,
+    FrozenMixin,
+    StructuralEquivalenceMixin,
+    VisitableMixin,
+    ABC,
+):
     """Abstract base class for expressions."""
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return _is_expression_structurally_equivalent(self, other)
 
     def __neg__(self) -> "UnaryExpression":
         return UnaryExpression(UnaryOperation.NEGATE, self)
@@ -266,12 +290,59 @@ UNARY_SYMBOL_OPERATIONS: frozendict[str, UnaryOperation] = invert_frozen_dict(
 )
 
 
+class _UnaryExpressionData(TypedDict):
+    operation: str
+    operand: SerializedDict
+
+
+def _is_valid_unary_expression_data(
+    data: SerializedDict,
+) -> TypeGuard[_UnaryExpressionData]:
+    return (
+        "operation" in data
+        and isinstance(data["operation"], str)
+        and "operand" in data
+        and is_serialized_dict(data["operand"])
+    )
+
+
+@register_serializable(type_id="unary_expression")
 @dataclass(frozen=True, eq=False)
-class UnaryExpression(Expression):
+class UnaryExpression(Expression, HasOperandsMixin[Expression]):
     """Unary expression."""
 
     operation: UnaryOperation
     operand: Expression
+
+    @property
+    def operands(self) -> tuple[Expression]:
+        return (self.operand,)
+
+    def get_visit_children(self) -> tuple["Expression", ...]:
+        return (self.operand,)
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {
+            "operation": UNARY_OPERATION_FUNCTION_NAMES[self.operation],
+            "operand": self.operand.serialize_to_dict(),
+        }
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "UnaryExpression":
+        if not _is_valid_unary_expression_data(data):
+            raise DeserializationDictStructureError(
+                cls, _UnaryExpressionData.__annotations__, data
+            )
+        operation_name = data["operation"]
+        if operation_name not in UNARY_FUNCTION_NAME_OPERATIONS:
+            raise DeserializationValueError(
+                cls, "operation", "a valid unary operation name", operation_name
+            )
+        operand = Expression.deserialize_from_dict(data["operand"])
+        return cls(
+            UNARY_FUNCTION_NAME_OPERATIONS[operation_name],
+            operand,
+        )
 
 
 class BinaryOperation(Enum):
@@ -340,41 +411,174 @@ BINARY_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = invert_frozen_dict(
 )
 
 
+class _BinaryExpressionData(TypedDict):
+    operation: str
+    left: SerializedDict
+    right: SerializedDict
+
+
+def _is_valid_binary_expression_data(
+    data: SerializedDict,
+) -> TypeGuard[_BinaryExpressionData]:
+    return (
+        "operation" in data
+        and isinstance(data["operation"], str)
+        and "left" in data
+        and is_serialized_dict(data["left"])
+        and "right" in data
+        and is_serialized_dict(data["right"])
+    )
+
+
+@register_serializable(type_id="binary_expression")
 @dataclass(frozen=True, eq=False)
-class BinaryExpression(Expression):
+class BinaryExpression(Expression, HasOperandsMixin[Expression]):
     """Binary expression."""
 
     operation: BinaryOperation
     left: Expression
     right: Expression
 
+    @property
+    def operands(self) -> tuple[Expression, Expression]:
+        return (self.left, self.right)
 
+    def get_visit_children(self) -> tuple["Expression", ...]:
+        return (self.left, self.right)
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {
+            "operation": BINARY_OPERATION_FUNCTION_NAMES[self.operation],
+            "left": self.left.serialize_to_dict(),
+            "right": self.right.serialize_to_dict(),
+        }
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "BinaryExpression":
+        if not _is_valid_binary_expression_data(data):
+            raise DeserializationDictStructureError(
+                cls, _BinaryExpressionData.__annotations__, data
+            )
+        operation_name = data["operation"]
+        if operation_name not in BINARY_FUNCTION_NAME_OPERATIONS:
+            raise DeserializationValueError(
+                cls, "operation", "a valid binary operation name", operation_name
+            )
+        left = Expression.deserialize_from_dict(data["left"])
+        right = Expression.deserialize_from_dict(data["right"])
+        return cls(
+            BINARY_FUNCTION_NAME_OPERATIONS[operation_name],
+            left,
+            right,
+        )
+
+
+class _IdentifierExpressionData(TypedDict):
+    identifier: SerializedDict
+
+
+def _is_valid_identifier_expression_data(
+    data: SerializedDict,
+) -> TypeGuard[_IdentifierExpressionData]:
+    return "identifier" in data and is_serialized_dict(data["identifier"])
+
+
+@register_serializable(type_id="identifier_expression")
 @dataclass(frozen=True, eq=False)
 class IdentifierExpression(Expression):
     """Identifier expression."""
 
     identifier: Identifier
 
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {"identifier": self.identifier.serialize_to_dict()}
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "IdentifierExpression":
+        if not _is_valid_identifier_expression_data(data):
+            raise DeserializationDictStructureError(
+                cls, _IdentifierExpressionData.__annotations__, data
+            )
+        return cls(Identifier.deserialize_from_dict(data["identifier"]))
+
 
 LiteralType = str | float | int | bool
 
 
+class _LiteralExpressionData(TypedDict):
+    value: LiteralType
+
+
+def _is_valid_literal_expression_data(
+    data: SerializedDict,
+) -> TypeGuard[_LiteralExpressionData]:
+    return "value" in data and isinstance(data["value"], (str, float, int, bool))
+
+
+@register_serializable(type_id="literal_expression")
+@dataclass(frozen=True, eq=False)
 class LiteralExpression(Expression):
     """Literal expression."""
 
-    _value: LiteralType
+    value: LiteralType
 
-    def __init__(self, value: LiteralType) -> None:
-        if isinstance(value, str):
-            try:
-                float(value)
-            except ValueError:
-                raise ValueError(
-                    f"Invalid literal expression value: "
-                    f"{value} with type {type(value)}."
-                )
-        self._value = value
+    def __post_init__(self) -> None:
+        if not isinstance(self.value, str):
+            return
+        try:
+            float(self.value)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid literal expression value: "
+                f'{self.value} with type "{type(self.value)}".'
+            ) from exc
 
-    @property
-    def value(self) -> LiteralType:
-        return self._value
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {"value": self.value}
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "LiteralExpression":
+        if not _is_valid_literal_expression_data(data):
+            raise DeserializationDictStructureError(
+                cls, _LiteralExpressionData.__annotations__, data
+            )
+        return cls(data["value"])
+
+
+@singledispatch
+def _is_expression_structurally_equivalent(
+    expression: Expression, other: object
+) -> bool:
+    return False
+
+
+@_is_expression_structurally_equivalent.register
+def _(expression: UnaryExpression, other: object) -> bool:
+    return (
+        isinstance(other, UnaryExpression)
+        and expression.operation == other.operation
+        and expression.operand.is_structurally_equivalent(other.operand)
+    )
+
+
+@_is_expression_structurally_equivalent.register
+def _(expression: BinaryExpression, other: object) -> bool:
+    return (
+        isinstance(other, BinaryExpression)
+        and expression.operation == other.operation
+        and expression.left.is_structurally_equivalent(other.left)
+        and expression.right.is_structurally_equivalent(other.right)
+    )
+
+
+@_is_expression_structurally_equivalent.register
+def _(expression: IdentifierExpression, other: object) -> bool:
+    return (
+        isinstance(other, IdentifierExpression)
+        and expression.identifier == other.identifier
+    )
+
+
+@_is_expression_structurally_equivalent.register
+def _(expression: LiteralExpression, other: object) -> bool:
+    return isinstance(other, LiteralExpression) and expression.value == other.value

@@ -24,13 +24,19 @@ from fhy_core.expression.core import (
     UnaryExpression,
     UnaryOperation,
 )
-from fhy_core.expression.visitor import (
-    ExpressionBasePass,
-)
 from fhy_core.identifier import Identifier
+from fhy_core.pass_infrastructure import (
+    PassExecutionError,
+    VisitablePass,
+    register_pass,
+)
 
 
-class ExpressionToSympyConverter(ExpressionBasePass):
+@register_pass(
+    "fhy_core.expression.to_sympy",
+    "Lower expression IR into an equivalent SymPy expression.",
+)
+class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
     """Transforms an expression to SymPy expression."""
 
     _UNARY_OPERATION_SYMPY_OPERATORS: frozendict[
@@ -55,8 +61,8 @@ class ExpressionToSympyConverter(ExpressionBasePass):
             BinaryOperation.POWER: operator.pow,
             BinaryOperation.LOGICAL_AND: operator.and_,
             BinaryOperation.LOGICAL_OR: operator.or_,
-            BinaryOperation.EQUAL: lambda x, y: sympy.Eq(x, y),
-            BinaryOperation.NOT_EQUAL: lambda x, y: sympy.Ne(x, y),
+            BinaryOperation.EQUAL: sympy.Eq,
+            BinaryOperation.NOT_EQUAL: sympy.Ne,
             BinaryOperation.LESS: operator.lt,
             BinaryOperation.LESS_EQUAL: operator.le,
             BinaryOperation.GREATER: operator.gt,
@@ -114,6 +120,11 @@ class ExpressionToSympyConverter(ExpressionBasePass):
     @staticmethod
     def format_identifier(identifier: Identifier) -> str:
         return f"{identifier.name_hint}_{identifier.id}"
+
+    def get_noop_output(self, ir: Expression) -> Any:
+        raise PassExecutionError(
+            f'Pass "{self.get_pass_name()}" does not define noop output.'
+        )
 
 
 def convert_expression_to_sympy_expression(

@@ -13,8 +13,13 @@ from fhy_core.expression import (
     UnaryOperation,
 )
 from fhy_core.identifier import Identifier
+from fhy_core.serialization import DeserializationValueError, SerializedDict
+from fhy_core.trait import (
+    HasOperands,
+    StructuralEquivalence,
+)
 
-from .utils import assert_exact_expression_equality, mock_identifier
+from .conftest import mock_identifier
 
 
 def test_unary_expression():
@@ -42,19 +47,86 @@ def test_identifier_expression():
     assert expr.identifier == identifier
 
 
-@pytest.mark.parametrize("value", [5, 3.14, True])
+@pytest.mark.parametrize("value", [5, 3.14, True, "3.14"])
 def test_literal_expression_valid_values(value):
     """Test that the literal expression is correctly initialized with valid values."""
     expr = LiteralExpression(value)
-    assert expr._value == value if not isinstance(value, str) else complex(value)
+    assert expr.value == value
 
 
 def test_literal_expression_invalid_string():
     """Test that the literal expression raises an exception for invalid string
     values.
     """
-    with pytest.raises(ValueError, match="Invalid literal expression value:"):
+    with pytest.raises(ValueError):
         LiteralExpression("invalid_literal")
+
+
+def test_unary_expression_has_operands_runtime_protocol():
+    """Test `UnaryExpression` satisfies the `HasOperands` runtime protocol."""
+    expression = UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1))
+    assert isinstance(expression, HasOperands)
+
+
+def test_unary_expression_operands_contract():
+    """Test `UnaryExpression` operands property."""
+    operand = LiteralExpression(1)
+    expression = UnaryExpression(UnaryOperation.NEGATE, operand)
+    assert expression.operands == (operand,)
+
+
+def test_binary_expression_has_operands_runtime_protocol():
+    """Test `BinaryExpression` satisfies the `HasOperands` runtime protocol."""
+    expression = BinaryExpression(
+        BinaryOperation.ADD,
+        LiteralExpression(1),
+        LiteralExpression(2),
+    )
+    assert isinstance(expression, HasOperands)
+
+
+def test_binary_expression_operands_contract():
+    """Test `BinaryExpression` operands property."""
+    left = LiteralExpression(1)
+    right = LiteralExpression(2)
+    expression = BinaryExpression(BinaryOperation.ADD, left, right)
+    assert expression.operands == (left, right)
+
+
+def test_expression_is_structural_equivalence_runtime_protocol():
+    """Test `Expression` satisfies `StructuralEquivalence` runtime protocol."""
+    expression = LiteralExpression(7)
+    assert isinstance(expression, StructuralEquivalence)
+
+
+def test_expression_structural_equivalence_true_for_same_tree():
+    """Test expression structural equivalence for identical trees."""
+    left = BinaryExpression(
+        BinaryOperation.ADD,
+        LiteralExpression(1),
+        LiteralExpression(2),
+    )
+    right = BinaryExpression(
+        BinaryOperation.ADD,
+        LiteralExpression(1),
+        LiteralExpression(2),
+    )
+    assert left.is_structurally_equivalent(right)
+
+
+def test_expression_structural_equivalence_false_for_different_tree():
+    """Test expression structural equivalence for different trees."""
+    left = BinaryExpression(
+        BinaryOperation.ADD,
+        LiteralExpression(1),
+        LiteralExpression(2),
+    )
+    right = BinaryExpression(
+        BinaryOperation.SUBTRACT,
+        LiteralExpression(1),
+        LiteralExpression(2),
+    )
+    assert not left.is_structurally_equivalent(right)
 
 
 @pytest.mark.parametrize(
@@ -73,7 +145,7 @@ def test_unary_operator_dunder_methods(
     """
     operand = LiteralExpression(5)
     expected_expr = UnaryExpression(expected_operation, operand)
-    assert_exact_expression_equality(unary_operator(operand), expected_expr)
+    assert unary_operator(operand).is_structurally_equivalent(expected_expr)
 
 
 _binary_operator_operations_pairs = pytest.mark.parametrize(
@@ -103,7 +175,7 @@ def test_binary_operation_dunder_methods(
     left = LiteralExpression(5)
     right = LiteralExpression(10)
     expected_expr = BinaryExpression(expected_operation, left, right)
-    assert_exact_expression_equality(binary_operator(left, right), expected_expr)
+    assert binary_operator(left, right).is_structurally_equivalent(expected_expr)
 
 
 @_binary_operator_operations_pairs
@@ -140,7 +212,7 @@ def test_binary_operation_left_dunder_methods_for_literals(
     expected_expr = BinaryExpression(
         expected_operation, left, expected_right_type(right)
     )
-    assert_exact_expression_equality(binary_operator(left, right), expected_expr)
+    assert binary_operator(left, right).is_structurally_equivalent(expected_expr)
 
 
 @pytest.mark.parametrize(
@@ -191,7 +263,7 @@ def test_binary_operation_right_dunder_methods_for_literals(
     expected_expr = BinaryExpression(
         expected_operation, expected_left_type(left), right
     )
-    assert_exact_expression_equality(binary_operator(left, right), expected_expr)
+    assert binary_operator(left, right).is_structurally_equivalent(expected_expr)
 
 
 def test_binary_operation_dunder_method_fails_to_create_expression_with_unknown_type():
@@ -217,7 +289,7 @@ def test_logical_and():
             BinaryOperation.LOGICAL_AND, expression_2, LiteralExpression(expression_3)
         ),
     )
-    assert_exact_expression_equality(result, expected_expression)
+    assert result.is_structurally_equivalent(expected_expression)
 
 
 def test_logical_or():
@@ -235,4 +307,100 @@ def test_logical_or():
             BinaryOperation.LOGICAL_OR, LiteralExpression(expression_2), expression_3
         ),
     )
-    assert_exact_expression_equality(result, expected_expression)
+    assert result.is_structurally_equivalent(expected_expression)
+
+
+@pytest.mark.parametrize(
+    "expression, expected_dict",
+    [
+        (
+            LiteralExpression(True),
+            {
+                "__type__": "literal_expression",
+                "__data__": {"value": True},
+            },
+        ),
+        (
+            IdentifierExpression(mock_identifier("x", 1)),
+            {
+                "__type__": "identifier_expression",
+                "__data__": {"identifier": {"id": 1, "name_hint": "x"}},
+            },
+        ),
+        (
+            UnaryExpression(
+                UnaryOperation.NEGATE, IdentifierExpression(mock_identifier("y", 2))
+            ),
+            {
+                "__type__": "unary_expression",
+                "__data__": {
+                    "operation": "negate",
+                    "operand": {
+                        "__type__": "identifier_expression",
+                        "__data__": {
+                            "identifier": {"id": 2, "name_hint": "y"},
+                        },
+                    },
+                },
+            },
+        ),
+        (
+            BinaryExpression(
+                BinaryOperation.ADD,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression(5),
+            ),
+            {
+                "__type__": "binary_expression",
+                "__data__": {
+                    "operation": "add",
+                    "left": {
+                        "__type__": "identifier_expression",
+                        "__data__": {
+                            "identifier": {"id": 0, "name_hint": "x"},
+                        },
+                    },
+                    "right": {
+                        "__type__": "literal_expression",
+                        "__data__": {
+                            "value": 5,
+                        },
+                    },
+                },
+            },
+        ),
+    ],
+)
+def test_dict_serialization(expression: Expression, expected_dict: SerializedDict):
+    """Test that expressions can be serialized/deserialized via a dictionary."""
+    assert expression.serialize_to_dict() == expected_dict
+    assert Expression.deserialize_from_dict(expected_dict).is_structurally_equivalent(
+        expression
+    )
+
+
+def test_dict_deserialization_fails_with_invalid_unary_operation():
+    """Test dictionary deserialization fails with invalid unary operation name."""
+    data = {
+        "__type__": "unary_expression",
+        "__data__": {"operation": "invalid_operation", "operand": {}},
+    }
+    with pytest.raises(DeserializationValueError):
+        Expression.deserialize_from_dict(data)
+
+
+def test_dict_deserialization_fails_with_invalid_binary_operation():
+    """Test dictionary deserialization fails with invalid binary operation name."""
+    data = {
+        "__type__": "binary_expression",
+        "__data__": {
+            "operation": "invalid_operation",
+            "left": {},
+            "right": {},
+        },
+    }
+    with pytest.raises(DeserializationValueError):
+        Expression.deserialize_from_dict(data)
+
+
+# TODO: Check serialization structure errors and value errors for all types.

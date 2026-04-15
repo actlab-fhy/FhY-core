@@ -1,7 +1,5 @@
 """Tests the expression tree analysis and transformation passes."""
 
-from unittest.mock import MagicMock
-
 import pytest
 import sympy
 import z3
@@ -18,7 +16,6 @@ from fhy_core.expression import (
     convert_expression_to_sympy_expression,
     convert_expression_to_z3_expression,
     convert_sympy_expression_to_expression,
-    copy_expression,
     is_satisfiable,
     pformat_expression,
     replace_identifiers,
@@ -27,12 +24,9 @@ from fhy_core.expression import (
     substitute_sympy_expression_variables,
 )
 from fhy_core.expression.core import LiteralType
-from fhy_core.expression.visitor import (
-    ExpressionBasePass,
-)
 from fhy_core.identifier import Identifier
 
-from .utils import assert_exact_expression_equality, mock_identifier
+from .conftest import mock_identifier
 
 
 # TODO: Refactor pformat tests to be together and just alter the parameters
@@ -127,118 +121,6 @@ def test_collect_expression_identifiers():
     assert collect_identifiers(expr) == {x, y}
 
 
-# TODO: Revisit the use of MagicMock here and in the following tests.
-@pytest.fixture
-def base_pass():
-    class ConcreteBasePass(ExpressionBasePass):
-        """Concrete base pass for testing"""
-
-    base_pass = ConcreteBasePass()
-    base_pass.visit_unary_expression = MagicMock()
-    base_pass.visit_binary_expression = MagicMock()
-    base_pass.visit_identifier_expression = MagicMock()
-    base_pass.visit_literal_expression = MagicMock()
-    return base_pass
-
-
-def test_base_pass_call_calls_visit(base_pass: ExpressionBasePass):
-    """Test that the visit method calls the correct visit method for
-    Expression.
-    """
-    base_pass.visit = MagicMock()
-    expr = MagicMock()
-    base_pass(expr)
-    base_pass.visit.assert_called_once_with(expr)
-
-
-def test_base_pass_calls_unary_expression_visitor(base_pass: ExpressionBasePass):
-    """Test that the visit method calls the correct visit method for
-    UnaryExpression.
-    """
-    expr = UnaryExpression(operation=UnaryOperation.NEGATE, operand=MagicMock())
-    base_pass.visit(expr)
-    base_pass.visit_unary_expression.assert_called_once_with(expr)
-
-
-def test_base_pass_calls_binary_expression_visitor(base_pass: ExpressionBasePass):
-    """Test that the visit method calls the correct visit method for
-    BinaryExpression.
-    """
-    expr = BinaryExpression(
-        operation=BinaryOperation.ADD, left=MagicMock(), right=MagicMock()
-    )
-    base_pass.visit(expr)
-    base_pass.visit_binary_expression.assert_called_once_with(expr)
-
-
-def test_base_pass_calls_identifier_expression_visitor(base_pass: ExpressionBasePass):
-    """Test that the visit method calls the correct visit method for
-    IdentifierExpression.
-    """
-    expr = IdentifierExpression(identifier=Identifier("x"))
-    base_pass.visit(expr)
-    base_pass.visit_identifier_expression.assert_called_once_with(expr)
-
-
-def test_base_pass_calls_literal_visitor(base_pass: ExpressionBasePass):
-    """Test that the visit method calls the correct visit method for
-    LiteralExpression.
-    """
-    expr = LiteralExpression(value=42)
-    base_pass.visit(expr)
-    base_pass.visit_literal_expression.assert_called_once_with(expr)
-
-
-def test_base_pass_with_unsupported_expression(base_pass: ExpressionBasePass):
-    """Test that the visit method raises an exception for unsupported
-    expressions.
-    """
-    with pytest.raises(NotImplementedError, match="Unsupported expression type:"):
-        base_pass.visit(MagicMock())
-
-
-def test_copy_literal_expression():
-    """Test that the literal expression is correctly copied."""
-    expr = LiteralExpression(42)
-    copy = copy_expression(expr)
-    assert copy is not expr
-    assert copy.value == expr.value
-
-
-def test_copy_identifier_expression():
-    """Test that the identifier expression is correctly copied."""
-    expr = IdentifierExpression(Identifier("x"))
-    copy = copy_expression(expr)
-    assert copy is not expr
-    assert copy.identifier == expr.identifier
-
-
-def test_copy_unary_expression():
-    """Test that the unary expression is correctly copied."""
-    operand = LiteralExpression(42)
-    expr = UnaryExpression(UnaryOperation.NEGATE, operand)
-    copy = copy_expression(expr)
-    assert copy is not expr
-    assert isinstance(copy, UnaryExpression)
-    assert copy.operation == expr.operation
-    assert copy.operand is not expr.operand
-    assert copy.operand.value == operand.value
-
-
-def test_copy_binary_expression():
-    """Test that the binary expression is correctly copied."""
-    left = LiteralExpression(2)
-    right = LiteralExpression(24)
-    expr = BinaryExpression(BinaryOperation.ADD, left, right)
-    copy = copy_expression(expr)
-    assert copy is not expr
-    assert copy.operation == expr.operation
-    assert copy.left is not left
-    assert copy.left.value == left.value
-    assert copy.right is not right
-    assert copy.right.value == right.value
-
-
 def test_substitute_identifiers():
     """Test that the identifiers are correctly substituted in an expression."""
     x = Identifier("x")
@@ -254,8 +136,7 @@ def test_substitute_identifiers():
     )
     substitutions = {x: LiteralExpression(10), y: LiteralExpression(5)}
     result = substitute_identifiers(expr, substitutions)
-    assert_exact_expression_equality(
-        result,
+    assert result.is_structurally_equivalent(
         BinaryExpression(
             BinaryOperation.ADD,
             LiteralExpression(10),
@@ -264,7 +145,7 @@ def test_substitute_identifiers():
                 LiteralExpression(5),
                 LiteralExpression(5),
             ),
-        ),
+        )
     )
 
 
@@ -279,13 +160,12 @@ def test_replace_identifiers():
     )
     replacements = {x: y}
     result = replace_identifiers(expr, replacements)
-    assert_exact_expression_equality(
-        result,
+    assert result.is_structurally_equivalent(
         BinaryExpression(
             BinaryOperation.ADD,
             IdentifierExpression(y),
             LiteralExpression(5),
-        ),
+        )
     )
 
 
@@ -613,7 +493,7 @@ def test_convert_sympy_expression_to_expression(
 ):
     """Test that the sympy expression is correctly converted to an expression."""
     result = convert_sympy_expression_to_expression(sympy_expression)
-    assert_exact_expression_equality(result, expected_expression)
+    assert result.is_structurally_equivalent(expected_expression)
 
 
 def test_sympy_expression_conversion_fails_when_symbol_is_not_identifier():
