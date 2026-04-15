@@ -78,7 +78,7 @@ def _as_expression_value_type(
     expression: Expression, type_: Type
 ) -> ExpressionValueType:
     if isinstance(type_, TupleType):
-        raise FhYCoreTypeError(
+        raise NotImplementedError(
             f"Expression {_format_expression(expression)} resolves to tuple type "
             f"{type_}, which is not valid here."
         )
@@ -96,7 +96,7 @@ def _as_expression_value_type(
             f"numerical type, not {type_}."
         )
     elif not type_.is_scalar():
-        raise FhYCoreTypeError(
+        raise NotImplementedError(
             f"Expression {_format_expression(expression)} resolves to tensor type "
             f"{type_}, but only scalar numerical and index types are allowed in "
             "expressions."
@@ -123,6 +123,21 @@ def _get_numeric_literal_value(literal_expression: LiteralExpression) -> int | f
     if isinstance(literal_value, bool | str):
         raise FhYCoreTypeError(f"Unsupported numeric literal value: {literal_value!r}.")
     return literal_value
+
+
+def _is_integral_numerical_type(numerical_type: NumericalType) -> bool:
+    return _get_primitive_data_type(numerical_type).core_data_type in {
+        CoreDataType.UINT,
+        CoreDataType.UINT8,
+        CoreDataType.UINT16,
+        CoreDataType.UINT32,
+        CoreDataType.UINT64,
+        CoreDataType.INT,
+        CoreDataType.INT8,
+        CoreDataType.INT16,
+        CoreDataType.INT32,
+        CoreDataType.INT64,
+    }
 
 
 def _check_expected_type(
@@ -225,7 +240,10 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 f'"{_format_expression(identifier_expression)}" '
                 'with "output" type qualifier.'
             )
-        return identifier_type, identifier_qualifier
+        return (
+            _as_expression_value_type(identifier_expression, identifier_type),
+            identifier_qualifier,
+        )
 
     def visit_literal_expression(
         self, literal_expression: LiteralExpression
@@ -328,7 +346,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             case UnaryOperation.LOGICAL_NOT:
                 raise NotImplementedError("Boolean result types are not yet supported.")
 
-    def _infer_binary_expression(
+    def _infer_binary_expression(  # noqa: PLR0912
         self,
         binary_expression: BinaryExpression,
         expected_type: Type | None = None,
@@ -413,6 +431,10 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 and isinstance(left_value_type, IndexType)
                 and isinstance(right_value_type, NumericalType)
             ):
+                if not _is_integral_numerical_type(right_value_type):
+                    raise FhYCoreTypeError(
+                        "Index arithmetic requires an integral scalar offset."
+                    )
                 return (
                     _shift_index_type(left_value_type, binary_expression.right),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
@@ -422,6 +444,10 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 and isinstance(left_value_type, NumericalType)
                 and isinstance(right_value_type, IndexType)
             ):
+                if not _is_integral_numerical_type(left_value_type):
+                    raise FhYCoreTypeError(
+                        "Index arithmetic requires an integral scalar offset."
+                    )
                 return (
                     _shift_index_type(right_value_type, binary_expression.left),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
@@ -431,6 +457,10 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 and isinstance(left_value_type, IndexType)
                 and isinstance(right_value_type, NumericalType)
             ):
+                if not _is_integral_numerical_type(right_value_type):
+                    raise FhYCoreTypeError(
+                        "Index arithmetic requires an integral scalar offset."
+                    )
                 return (
                     _shift_index_type(
                         left_value_type,

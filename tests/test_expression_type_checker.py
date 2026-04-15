@@ -20,6 +20,7 @@ from fhy_core.types import (
     IndexType,
     NumericalType,
     PrimitiveDataType,
+    TupleType,
     TypeQualifier,
 )
 
@@ -183,7 +184,7 @@ def test_tensor_type_is_rejected_in_expression_typing():
         else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
     )
 
-    with pytest.raises(FhYCoreTypeError):
+    with pytest.raises(NotImplementedError):
         checker.visit(
             BinaryExpression(
                 BinaryOperation.ADD,
@@ -191,6 +192,46 @@ def test_tensor_type_is_rejected_in_expression_typing():
                 LiteralExpression(1),
             )
         )
+
+
+def test_tensor_identifier_is_rejected_immediately():
+    """Test that tensor identifiers are rejected outside compound expressions."""
+    identifier = Identifier("tensor")
+    checker = ExpressionTypeChecker(
+        lambda seen_identifier: (
+            NumericalType(
+                PrimitiveDataType(CoreDataType.FLOAT32),
+                [LiteralExpression(4)],
+            ),
+            TypeQualifier.PARAM,
+        )
+        if seen_identifier == identifier
+        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    )
+
+    with pytest.raises(NotImplementedError):
+        checker.visit(IdentifierExpression(identifier))
+
+
+def test_tuple_identifier_is_rejected_immediately():
+    """Test that tuple identifiers are rejected in expressions."""
+    identifier = Identifier("pair")
+    checker = ExpressionTypeChecker(
+        lambda seen_identifier: (
+            TupleType(
+                [
+                    NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+                    NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+                ]
+            ),
+            TypeQualifier.PARAM,
+        )
+        if seen_identifier == identifier
+        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    )
+
+    with pytest.raises(NotImplementedError):
+        checker.visit(IdentifierExpression(identifier))
 
 
 def test_index_plus_scalar_produces_shifted_index_type():
@@ -346,6 +387,30 @@ def test_index_multiplication_is_rejected():
                 BinaryOperation.MULTIPLY,
                 IdentifierExpression(identifier),
                 LiteralExpression(2),
+            )
+        )
+
+
+def test_index_plus_float_is_rejected():
+    """Test that index offsets must be integral scalars."""
+    identifier = Identifier("idx")
+    index_type = IndexType(
+        LiteralExpression(0),
+        LiteralExpression(8),
+        None,
+    )
+    checker = ExpressionTypeChecker(
+        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
+        if seen_identifier == identifier
+        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    )
+
+    with pytest.raises(FhYCoreTypeError):
+        checker.visit(
+            BinaryExpression(
+                BinaryOperation.ADD,
+                IdentifierExpression(identifier),
+                LiteralExpression(1.5),
             )
         )
 
