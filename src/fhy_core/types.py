@@ -5,11 +5,13 @@ __all__ = [
     "DataType",
     "FhYCoreTypeError",
     "IndexType",
+    "is_weak_core_data_type",
     "NumericalType",
     "PrimitiveDataType",
     "promote_core_data_types",
     "promote_primitive_data_types",
     "promote_type_qualifiers",
+    "resolve_literal_core_data_type",
     "TemplateDataType",
     "TupleType",
     "Type",
@@ -32,7 +34,8 @@ from fhy_core.serialization import (
 from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
 
 from .error import register_error
-from .expression import Expression, pformat_expression
+from .expression.core import Expression
+from .expression.pprint import pformat_expression
 from .identifier import Identifier
 from .utils import Lattice, StrEnum, format_comma_separated_list
 
@@ -61,6 +64,9 @@ class DataType(WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixi
 class CoreDataType(StrEnum):
     """Core data type primitives."""
 
+    UINT = "uint"
+    INT = "int"
+    FLOAT = "float"
     UINT8 = "uint8"
     UINT16 = "uint16"
     UINT32 = "uint32"
@@ -77,7 +83,7 @@ class CoreDataType(StrEnum):
     COMPLEX128 = "complex128"
 
 
-def get_core_data_type_bit_width(core_data_type: CoreDataType) -> int:
+def get_core_data_type_bit_width(core_data_type: CoreDataType) -> int | None:
     """Get the bit width of a core data type.
 
     Args:
@@ -88,6 +94,8 @@ def get_core_data_type_bit_width(core_data_type: CoreDataType) -> int:
 
     """
     match core_data_type:
+        case CoreDataType.UINT | CoreDataType.INT | CoreDataType.FLOAT:
+            return None
         case CoreDataType.UINT8 | CoreDataType.INT8:
             return 8
         case CoreDataType.UINT16 | CoreDataType.INT16 | CoreDataType.FLOAT16:
@@ -110,13 +118,24 @@ def get_core_data_type_bit_width(core_data_type: CoreDataType) -> int:
             return 128
 
 
+def is_weak_core_data_type(core_data_type: CoreDataType) -> bool:
+    """Return True when the core data type is a weak literal type."""
+    return core_data_type in {
+        CoreDataType.UINT,
+        CoreDataType.INT,
+        CoreDataType.FLOAT,
+    }
+
+
 def _define_uint_data_type_lattice() -> Lattice[CoreDataType]:
     lattice = Lattice[CoreDataType]()
+    lattice.add_element(CoreDataType.UINT)
     lattice.add_element(CoreDataType.UINT8)
     lattice.add_element(CoreDataType.UINT16)
     lattice.add_element(CoreDataType.UINT32)
     lattice.add_element(CoreDataType.UINT64)
 
+    lattice.add_order(CoreDataType.UINT, CoreDataType.UINT8)
     lattice.add_order(CoreDataType.UINT8, CoreDataType.UINT16)
     lattice.add_order(CoreDataType.UINT16, CoreDataType.UINT32)
     lattice.add_order(CoreDataType.UINT32, CoreDataType.UINT64)
@@ -129,11 +148,13 @@ def _define_uint_data_type_lattice() -> Lattice[CoreDataType]:
 
 def _define_int_data_type_lattice() -> Lattice[CoreDataType]:
     lattice = Lattice[CoreDataType]()
+    lattice.add_element(CoreDataType.INT)
     lattice.add_element(CoreDataType.INT8)
     lattice.add_element(CoreDataType.INT16)
     lattice.add_element(CoreDataType.INT32)
     lattice.add_element(CoreDataType.INT64)
 
+    lattice.add_order(CoreDataType.INT, CoreDataType.INT8)
     lattice.add_order(CoreDataType.INT8, CoreDataType.INT16)
     lattice.add_order(CoreDataType.INT16, CoreDataType.INT32)
     lattice.add_order(CoreDataType.INT32, CoreDataType.INT64)
@@ -146,6 +167,7 @@ def _define_int_data_type_lattice() -> Lattice[CoreDataType]:
 
 def _define_float_complex_data_type_lattice() -> Lattice[CoreDataType]:
     lattice = Lattice[CoreDataType]()
+    lattice.add_element(CoreDataType.FLOAT)
     lattice.add_element(CoreDataType.FLOAT16)
     lattice.add_element(CoreDataType.FLOAT32)
     lattice.add_element(CoreDataType.FLOAT64)
@@ -153,6 +175,7 @@ def _define_float_complex_data_type_lattice() -> Lattice[CoreDataType]:
     lattice.add_element(CoreDataType.COMPLEX64)
     lattice.add_element(CoreDataType.COMPLEX128)
 
+    lattice.add_order(CoreDataType.FLOAT, CoreDataType.FLOAT16)
     lattice.add_order(CoreDataType.FLOAT16, CoreDataType.FLOAT32)
     lattice.add_order(CoreDataType.FLOAT32, CoreDataType.FLOAT64)
     lattice.add_order(CoreDataType.FLOAT16, CoreDataType.COMPLEX32)
@@ -189,18 +212,21 @@ def promote_core_data_types(
 
     """
     _UINT_DATA_TYPES = {
+        CoreDataType.UINT,
         CoreDataType.UINT8,
         CoreDataType.UINT16,
         CoreDataType.UINT32,
         CoreDataType.UINT64,
     }
     _INT_DATA_TYPES = {
+        CoreDataType.INT,
         CoreDataType.INT8,
         CoreDataType.INT16,
         CoreDataType.INT32,
         CoreDataType.INT64,
     }
     _FLOAT_COMPLEX_DATA_TYPES = {
+        CoreDataType.FLOAT,
         CoreDataType.FLOAT16,
         CoreDataType.FLOAT32,
         CoreDataType.FLOAT64,
@@ -229,6 +255,137 @@ def promote_core_data_types(
             "Unsupported primitive data type promotion: "
             f"{core_data_type1}, {core_data_type2}"
         )
+
+
+def _get_smallest_uint_core_data_type(literal: int) -> CoreDataType:
+    for core_data_type, upper_bound in (
+        (CoreDataType.UINT8, 2**8 - 1),
+        (CoreDataType.UINT16, 2**16 - 1),
+        (CoreDataType.UINT32, 2**32 - 1),
+        (CoreDataType.UINT64, 2**64 - 1),
+    ):
+        if literal <= upper_bound:
+            return core_data_type
+    raise FhYCoreTypeError(f"Literal {literal} does not fit in a supported uint type.")
+
+
+def _get_smallest_int_core_data_type(literal: int) -> CoreDataType:
+    for core_data_type, lower_bound, upper_bound in (
+        (CoreDataType.INT8, -(2**7), 2**7 - 1),
+        (CoreDataType.INT16, -(2**15), 2**15 - 1),
+        (CoreDataType.INT32, -(2**31), 2**31 - 1),
+        (CoreDataType.INT64, -(2**63), 2**63 - 1),
+    ):
+        if lower_bound <= literal <= upper_bound:
+            return core_data_type
+    raise FhYCoreTypeError(f"Literal {literal} does not fit in a supported int type.")
+
+
+def resolve_literal_core_data_type(
+    literal: int | float, core_data_type: CoreDataType
+) -> CoreDataType:
+    """Resolve a weak literal type to the narrowest compatible concrete type.
+
+    Args:
+        literal: Literal value whose concrete type should be resolved.
+        core_data_type: Target or contextual core data type.
+
+    Returns:
+        A concrete core data type compatible with both the literal value and
+        the requested context.
+
+    Raises:
+        FhYCoreTypeError: If the literal cannot be represented in the requested
+            type family.
+
+    """
+    if isinstance(literal, bool):
+        raise NotImplementedError("Boolean literals are not yet supported.")
+    elif isinstance(literal, float):
+        if core_data_type in {
+            CoreDataType.FLOAT,
+            CoreDataType.FLOAT16,
+            CoreDataType.FLOAT32,
+            CoreDataType.FLOAT64,
+            CoreDataType.COMPLEX32,
+            CoreDataType.COMPLEX64,
+            CoreDataType.COMPLEX128,
+        }:
+            return (
+                CoreDataType.FLOAT16
+                if core_data_type == CoreDataType.FLOAT
+                else core_data_type
+            )
+        else:
+            raise FhYCoreTypeError(
+                f"Float literal {literal} is incompatible with {core_data_type}."
+            )
+    elif literal >= 0:
+        minimal_uint = _get_smallest_uint_core_data_type(literal)
+        minimal_int = _get_smallest_int_core_data_type(literal)
+        if core_data_type in {
+            CoreDataType.UINT,
+            CoreDataType.UINT8,
+            CoreDataType.UINT16,
+            CoreDataType.UINT32,
+            CoreDataType.UINT64,
+        }:
+            return promote_core_data_types(
+                minimal_uint,
+                CoreDataType.UINT8
+                if core_data_type == CoreDataType.UINT
+                else core_data_type,
+            )
+        elif core_data_type in {
+            CoreDataType.INT,
+            CoreDataType.INT8,
+            CoreDataType.INT16,
+            CoreDataType.INT32,
+            CoreDataType.INT64,
+        }:
+            return promote_core_data_types(
+                minimal_int,
+                CoreDataType.INT8
+                if core_data_type == CoreDataType.INT
+                else core_data_type,
+            )
+        elif core_data_type in {
+            CoreDataType.FLOAT,
+            CoreDataType.FLOAT16,
+            CoreDataType.FLOAT32,
+            CoreDataType.FLOAT64,
+            CoreDataType.COMPLEX32,
+            CoreDataType.COMPLEX64,
+            CoreDataType.COMPLEX128,
+        }:
+            return CoreDataType.FLOAT16
+    else:
+        minimal_int = _get_smallest_int_core_data_type(literal)
+        if core_data_type in {
+            CoreDataType.INT,
+            CoreDataType.INT8,
+            CoreDataType.INT16,
+            CoreDataType.INT32,
+            CoreDataType.INT64,
+        }:
+            return promote_core_data_types(
+                minimal_int,
+                CoreDataType.INT8
+                if core_data_type == CoreDataType.INT
+                else core_data_type,
+            )
+        elif core_data_type in {
+            CoreDataType.FLOAT,
+            CoreDataType.FLOAT16,
+            CoreDataType.FLOAT32,
+            CoreDataType.FLOAT64,
+            CoreDataType.COMPLEX32,
+            CoreDataType.COMPLEX64,
+            CoreDataType.COMPLEX128,
+        }:
+            return CoreDataType.FLOAT16
+
+    raise FhYCoreTypeError(f"Literal {literal} is incompatible with {core_data_type}.")
 
 
 class _PrimitiveDataTypeData(TypedDict):
@@ -409,6 +566,10 @@ class NumericalType(Type):
     @property
     def shape(self) -> list[Expression]:
         return list(self._shape)
+
+    def is_scalar(self) -> bool:
+        """Return True when the numerical type is a scalar."""
+        return not self._shape
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
