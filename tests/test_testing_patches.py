@@ -1,6 +1,7 @@
 """Tests the testing patches."""
 
 import pytest
+from fhy_core.expression.core import LiteralExpression
 from fhy_core.identifier import Identifier
 from fhy_core.testing_patches import (
     deterministic_identifiers_by_name_hint,
@@ -95,3 +96,16 @@ def test_fail_fast_structural_equivalence_wraps_each_class_once() -> None:
         assert getattr(original_method, "__wrapped__", None) is None
 
     assert _TestClass1.is_structurally_equivalent is original_method
+
+
+def test_fail_fast_structural_equivalence_restores_inherited_methods() -> None:
+    """Inherited structural-equivalence methods should be restored after patching."""
+    original_method = LiteralExpression.is_structurally_equivalent
+
+    with pytest.raises(AssertionError):
+        with fail_fast_structural_equivalence():
+            LiteralExpression(1).is_structurally_equivalent(LiteralExpression(2))
+
+    restored_method = LiteralExpression.is_structurally_equivalent
+    assert restored_method is original_method
+    assert getattr(restored_method, "__wrapped__", None) is None

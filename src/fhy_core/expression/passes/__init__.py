@@ -10,6 +10,9 @@ __all__ = [
     "simplify_expression",
     "substitute_identifiers",
     "substitute_sympy_expression_variables",
+    "synthesize_expression_type",
+    "check_expression_type",
+    "get_core_data_type_from_literal_type",
 ]
 
 from .basic import (
@@ -22,6 +25,11 @@ from .sympy import (
     convert_sympy_expression_to_expression,
     simplify_expression,
     substitute_sympy_expression_variables,
+)
+from .type_checker import (
+    check_expression_type,
+    get_core_data_type_from_literal_type,
+    synthesize_expression_type,
 )
 from .z3 import (
     convert_expression_to_z3_expression,

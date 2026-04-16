@@ -1,6 +1,6 @@
 """FhY compiler core utilities."""
 
-__version__ = "0.0.6"
+__version__ = "0.0.7"
 
 __all__ = [
     "Constraint",
@@ -52,6 +52,8 @@ __all__ = [
     "Provenance",
     "HasIdentifier",
     "HasIdentifierMixin",
+    "Interned",
+    "InternedMixin",
     "Frozen",
     "FrozenMixin",
     "FrozenMutationError",
@@ -70,6 +72,8 @@ __all__ = [
     "StructuralEquivalenceMixin",
     "Canonicalizable",
     "CanonicalizableMixin",
+    "synthesize_expression_type",
+    "check_expression_type",
     "PartialOrderable",
     "PartialOrderableMixin",
     "Orderable",
@@ -108,6 +112,7 @@ __all__ = [
     "CoreDataType",
     "DataType",
     "IndexType",
+    "is_weak_core_data_type",
     "NumericalType",
     "PrimitiveDataType",
     "TemplateDataType",
@@ -118,6 +123,7 @@ __all__ = [
     "promote_core_data_types",
     "promote_primitive_data_types",
     "promote_type_qualifiers",
+    "resolve_literal_core_data_type",
     "IntEnum",
     "Lattice",
     "PartiallyOrderedSet",
@@ -170,6 +176,7 @@ from .expression import (
     SymbolType,
     UnaryExpression,
     UnaryOperation,
+    check_expression_type,
     collect_identifiers,
     is_satisfiable,
     parse_expression,
@@ -177,6 +184,7 @@ from .expression import (
     replace_identifiers,
     simplify_expression,
     substitute_identifiers,
+    synthesize_expression_type,
 )
 from .identifier import Identifier
 from .logger import (
@@ -277,6 +285,8 @@ from .trait import (
     HasResultsMixin,
     HasType,
     HasTypeMixin,
+    Interned,
+    InternedMixin,
     Orderable,
     OrderableMixin,
     PartialEqual,
@@ -303,9 +313,11 @@ from .types import (
     Type,
     TypeQualifier,
     get_core_data_type_bit_width,
+    is_weak_core_data_type,
     promote_core_data_types,
     promote_primitive_data_types,
     promote_type_qualifiers,
+    resolve_literal_core_data_type,
 )
 from .utils import (
     IntEnum,
