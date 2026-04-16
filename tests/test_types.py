@@ -189,9 +189,12 @@ def test_is_weak_core_data_type(core_data_type, expected_is_weak):
         (255, CoreDataType.UINT, CoreDataType.UINT8),
         (256, CoreDataType.UINT, CoreDataType.UINT16),
         (1, CoreDataType.INT32, CoreDataType.INT32),
+        (1, CoreDataType.FLOAT32, CoreDataType.FLOAT32),
+        (1, CoreDataType.COMPLEX64, CoreDataType.COMPLEX64),
         (255, CoreDataType.INT8, CoreDataType.INT16),
         (-1, CoreDataType.INT, CoreDataType.INT8),
         (-129, CoreDataType.INT, CoreDataType.INT16),
+        (-1, CoreDataType.FLOAT64, CoreDataType.FLOAT64),
         (1.5, CoreDataType.FLOAT, CoreDataType.FLOAT16),
     ],
 )

@@ -359,7 +359,11 @@ def resolve_literal_core_data_type(
             CoreDataType.COMPLEX64,
             CoreDataType.COMPLEX128,
         }:
-            return CoreDataType.FLOAT16
+            return (
+                CoreDataType.FLOAT16
+                if core_data_type == CoreDataType.FLOAT
+                else core_data_type
+            )
     else:
         minimal_int = _get_smallest_int_core_data_type(literal)
         if core_data_type in {
@@ -384,7 +388,11 @@ def resolve_literal_core_data_type(
             CoreDataType.COMPLEX64,
             CoreDataType.COMPLEX128,
         }:
-            return CoreDataType.FLOAT16
+            return (
+                CoreDataType.FLOAT16
+                if core_data_type == CoreDataType.FLOAT
+                else core_data_type
+            )
 
     raise FhYCoreTypeError(f"Literal {literal} is incompatible with {core_data_type}.")
 

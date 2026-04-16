@@ -147,6 +147,24 @@ def test_check_literal_against_expected_type_resolves_weak_literal():
     assert result_qualifier == TypeQualifier.PARAM
 
 
+def test_check_integer_literal_against_float_context_uses_context_type():
+    """Test integer literal checking preserves concrete float context."""
+    checker = ExpressionTypeChecker(
+        lambda _: (
+            NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+            TypeQualifier.PARAM,
+        )
+    )
+
+    result_type, result_qualifier = checker.check(
+        LiteralExpression(1),
+        NumericalType(PrimitiveDataType(CoreDataType.FLOAT32)),
+    )
+
+    _assert_core_data_type(result_type, CoreDataType.FLOAT32)
+    assert result_qualifier == TypeQualifier.PARAM
+
+
 def test_check_binary_expression_uses_expected_type_bidirectionally():
     """Test checking an arithmetic expression uses expected type bidirectionally."""
     checker = ExpressionTypeChecker(
