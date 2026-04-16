@@ -15,8 +15,10 @@ from fhy_core.types import (
     TupleType,
     TypeQualifier,
     get_core_data_type_bit_width,
+    is_weak_core_data_type,
     promote_core_data_types,
     promote_type_qualifiers,
+    resolve_literal_core_data_type,
 )
 
 from .conftest import mock_identifier
@@ -95,6 +97,9 @@ def test_tuple_type_structural_equivalence_false_for_element_order():
 @pytest.mark.parametrize(
     "core_data_type, expected_bit_width",
     [
+        (CoreDataType.UINT, None),
+        (CoreDataType.INT, None),
+        (CoreDataType.FLOAT, None),
         (CoreDataType.UINT8, 8),
         (CoreDataType.UINT16, 16),
         (CoreDataType.UINT32, 32),
@@ -122,6 +127,9 @@ def test_get_core_data_type_bit_width(core_data_type, expected_bit_width):
         (CoreDataType.UINT8, CoreDataType.UINT8, CoreDataType.UINT8),
         (CoreDataType.UINT8, CoreDataType.UINT16, CoreDataType.UINT16),
         (CoreDataType.UINT16, CoreDataType.UINT8, CoreDataType.UINT16),
+        (CoreDataType.UINT, CoreDataType.UINT8, CoreDataType.UINT8),
+        (CoreDataType.INT, CoreDataType.INT16, CoreDataType.INT16),
+        (CoreDataType.FLOAT, CoreDataType.FLOAT16, CoreDataType.FLOAT16),
         (CoreDataType.INT32, CoreDataType.INT64, CoreDataType.INT64),
         (
             CoreDataType.FLOAT16,
@@ -155,6 +163,56 @@ def test_promote_primitive_data_type(
     ), (
         f"Expected the promotion of {core_data_type1} and {core_data_type2} "
         f"to be {expected_core_data_type}."
+    )
+
+
+@pytest.mark.parametrize(
+    ("core_data_type", "expected_is_weak"),
+    [
+        (CoreDataType.UINT, True),
+        (CoreDataType.INT, True),
+        (CoreDataType.FLOAT, True),
+        (CoreDataType.UINT8, False),
+        (CoreDataType.INT8, False),
+        (CoreDataType.FLOAT16, False),
+    ],
+)
+def test_is_weak_core_data_type(core_data_type, expected_is_weak):
+    """Test detection of weak literal core data types."""
+    assert is_weak_core_data_type(core_data_type) is expected_is_weak
+
+
+@pytest.mark.parametrize(
+    ("literal", "core_data_type", "expected_core_data_type"),
+    [
+        (0, CoreDataType.UINT, CoreDataType.UINT8),
+        (255, CoreDataType.UINT, CoreDataType.UINT8),
+        (256, CoreDataType.UINT, CoreDataType.UINT16),
+        (1, CoreDataType.INT32, CoreDataType.INT32),
+        (1, CoreDataType.FLOAT32, CoreDataType.FLOAT32),
+        (1, CoreDataType.COMPLEX64, CoreDataType.COMPLEX64),
+        (255, CoreDataType.INT8, CoreDataType.INT16),
+        (-1, CoreDataType.INT, CoreDataType.INT8),
+        (-129, CoreDataType.INT, CoreDataType.INT16),
+        (-1, CoreDataType.FLOAT64, CoreDataType.FLOAT64),
+        (1.5, CoreDataType.FLOAT, CoreDataType.FLOAT16),
+    ],
+)
+def test_resolve_literal_core_data_type(
+    literal, core_data_type, expected_core_data_type
+):
+    """Weak literal types should resolve to the narrowest compatible concrete type."""
+    assert (
+        resolve_literal_core_data_type(literal, core_data_type)
+        == expected_core_data_type
+    )
+
+
+def test_resolve_large_positive_literal_to_uint64_without_signed_context():
+    """Large positive literals should resolve in unsigned contexts lazily."""
+    assert (
+        resolve_literal_core_data_type(2**63, CoreDataType.UINT64)
+        == CoreDataType.UINT64
     )
 
 
