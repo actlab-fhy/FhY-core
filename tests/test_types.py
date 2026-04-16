@@ -205,6 +205,14 @@ def test_resolve_literal_core_data_type(
     )
 
 
+def test_resolve_large_positive_literal_to_uint64_without_signed_context():
+    """Large positive literals should resolve in unsigned contexts lazily."""
+    assert (
+        resolve_literal_core_data_type(2**63, CoreDataType.UINT64)
+        == CoreDataType.UINT64
+    )
+
+
 @pytest.mark.parametrize(
     ("type_qualifer1", "type_qualifer2", "expected_type_qualifer"),
     [

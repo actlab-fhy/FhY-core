@@ -90,7 +90,8 @@ def get_core_data_type_bit_width(core_data_type: CoreDataType) -> int | None:
         core_data_type: Core data type.
 
     Returns:
-        Bit width of the core data type
+        Bit width of the core data type, or ``None`` for weak literal types
+        that do not yet have a concrete width.
 
     """
     match core_data_type:
@@ -322,7 +323,6 @@ def resolve_literal_core_data_type(
             )
     elif literal >= 0:
         minimal_uint = _get_smallest_uint_core_data_type(literal)
-        minimal_int = _get_smallest_int_core_data_type(literal)
         if core_data_type in {
             CoreDataType.UINT,
             CoreDataType.UINT8,
@@ -343,6 +343,7 @@ def resolve_literal_core_data_type(
             CoreDataType.INT32,
             CoreDataType.INT64,
         }:
+            minimal_int = _get_smallest_int_core_data_type(literal)
             return promote_core_data_types(
                 minimal_int,
                 CoreDataType.INT8
