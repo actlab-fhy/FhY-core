@@ -13,13 +13,11 @@ _OperandT_co = TypeVar("_OperandT_co", covariant=True)
 class HasOperands(Protocol[_OperandT_co]):
     """Protocol for operation-like objects with ordered operands."""
 
-    @property
-    def operands(self) -> Sequence[_OperandT_co]: ...
+    def get_operands(self) -> Sequence[_OperandT_co]: ...
 
 
 class HasOperandsMixin(ABC, Generic[_OperandT_co]):
     """Mixin for operation-like objects with ordered operands."""
 
-    @property
     @abstractmethod
-    def operands(self) -> Sequence[_OperandT_co]: ...
+    def get_operands(self) -> Sequence[_OperandT_co]: ...

@@ -288,8 +288,7 @@ class FixpointPassGroup(HasIdentifierMixin, Generic[_IRType]):
         self._fail_on_non_convergence = fail_on_non_convergence
         self._passes = []
 
-    @property
-    def identifier(self) -> Identifier:
+    def get_identifier(self) -> Identifier:
         return self._identifier
 
     @property
@@ -336,8 +335,7 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
         self._items = []
         self._analysis_manager = AnalysisManager()
 
-    @property
-    def identifier(self) -> Identifier:
+    def get_identifier(self) -> Identifier:
         return self._identifier
 
     @property
