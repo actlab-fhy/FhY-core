@@ -69,10 +69,10 @@ def test_unary_expression_has_operands_runtime_protocol():
 
 
 def test_unary_expression_operands_contract():
-    """Test `UnaryExpression` operands property."""
+    """Test `UnaryExpression` operands method."""
     operand = LiteralExpression(1)
     expression = UnaryExpression(UnaryOperation.NEGATE, operand)
-    assert expression.operands == (operand,)
+    assert expression.get_operands() == (operand,)
 
 
 def test_binary_expression_has_operands_runtime_protocol():
@@ -86,11 +86,11 @@ def test_binary_expression_has_operands_runtime_protocol():
 
 
 def test_binary_expression_operands_contract():
-    """Test `BinaryExpression` operands property."""
+    """Test `BinaryExpression` operands method."""
     left = LiteralExpression(1)
     right = LiteralExpression(2)
     expression = BinaryExpression(BinaryOperation.ADD, left, right)
-    assert expression.operands == (left, right)
+    assert expression.get_operands() == (left, right)
 
 
 def test_expression_is_structural_equivalence_runtime_protocol():

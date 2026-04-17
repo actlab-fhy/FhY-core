@@ -314,8 +314,7 @@ class UnaryExpression(Expression, HasOperandsMixin[Expression]):
     operation: UnaryOperation
     operand: Expression
 
-    @property
-    def operands(self) -> tuple[Expression]:
+    def get_operands(self) -> tuple[Expression]:
         return (self.operand,)
 
     def get_visit_children(self) -> tuple["Expression", ...]:
@@ -439,8 +438,7 @@ class BinaryExpression(Expression, HasOperandsMixin[Expression]):
     left: Expression
     right: Expression
 
-    @property
-    def operands(self) -> tuple[Expression, Expression]:
+    def get_operands(self) -> tuple[Expression, Expression]:
         return (self.left, self.right)
 
     def get_visit_children(self) -> tuple["Expression", ...]:

@@ -1,6 +1,6 @@
 """FhY compiler core utilities."""
 
-__version__ = "0.0.7"
+__version__ = "0.0.8"
 
 __all__ = [
     "Constraint",
@@ -21,6 +21,7 @@ __all__ = [
     "PassValidationError",
     "Analysis",
     "AnalysisManager",
+    "AnalysisVisitablePass",
     "PassManager",
     "PassManagerResult",
     "PassRunRecord",
@@ -214,6 +215,7 @@ from .param import (
 from .pass_infrastructure import (
     Analysis,
     AnalysisManager,
+    AnalysisVisitablePass,
     CompilerPass,
     DiagnosticLevel,
     FixpointGroupRecord,

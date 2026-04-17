@@ -36,8 +36,7 @@ from .conftest import mock_identifier
 class _IdentifierCarrier(HasIdentifierMixin):
     _identifier: Identifier
 
-    @property
-    def identifier(self) -> Identifier:
+    def get_identifier(self) -> Identifier:
         return self._identifier
 
 
@@ -45,8 +44,7 @@ class _IdentifierCarrier(HasIdentifierMixin):
 class _ProvenanceCarrier(HasProvenanceMixin):
     _provenance: Provenance
 
-    @property
-    def provenance(self) -> Provenance:
+    def get_provenance(self) -> Provenance:
         return self._provenance
 
 
@@ -276,14 +274,14 @@ def test_orderable_mixin_defaults_to_total_order() -> None:
 def test_identifier_mixin_contract():
     """Test `HasIdentifierMixin` contract."""
     carrier = _IdentifierCarrier(mock_identifier("field", 2))
-    assert carrier.identifier.name_hint == "field"
-    assert carrier.identifier.id == 2
+    assert carrier.get_identifier().name_hint == "field"
+    assert carrier.get_identifier().id == 2
 
 
 def test_provenance_mixin_contract():
     """Test `HasProvenanceMixin` contract."""
     carrier = _ProvenanceCarrier(Provenance.unknown())
-    assert carrier.provenance == Provenance.unknown()
+    assert carrier.get_provenance() == Provenance.unknown()
 
 
 def test_frozen_runtime_protocol() -> None:

@@ -12,13 +12,11 @@ from fhy_core.identifier import Identifier
 class HasIdentifier(Protocol):
     """Protocol for objects that have a stable identifier."""
 
-    @property
-    def identifier(self) -> Identifier: ...
+    def get_identifier(self) -> Identifier: ...
 
 
 class HasIdentifierMixin(ABC):
     """Mixin for objects that have a stable identifier."""
 
-    @property
     @abstractmethod
-    def identifier(self) -> Identifier: ...
+    def get_identifier(self) -> Identifier: ...

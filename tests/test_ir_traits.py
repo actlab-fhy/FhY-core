@@ -20,8 +20,7 @@ from fhy_core.trait import (
 class _OperandNode(HasOperandsMixin[int]):
     _operands: tuple[int, ...]
 
-    @property
-    def operands(self) -> tuple[int, ...]:
+    def get_operands(self) -> tuple[int, ...]:
         return self._operands
 
 
@@ -29,8 +28,7 @@ class _OperandNode(HasOperandsMixin[int]):
 class _ResultNode(HasResultsMixin[int]):
     _results: tuple[int, ...]
 
-    @property
-    def results(self) -> tuple[int, ...]:
+    def get_results(self) -> tuple[int, ...]:
         return self._results
 
 
@@ -75,7 +73,7 @@ def test_has_operands_runtime_protocol():
 def test_has_operands_mixin_contract():
     """Test `HasOperandsMixin` contract."""
     node = _OperandNode((1, 2, 3))
-    assert node.operands == (1, 2, 3)
+    assert node.get_operands() == (1, 2, 3)
 
 
 def test_has_results_runtime_protocol():
@@ -87,7 +85,7 @@ def test_has_results_runtime_protocol():
 def test_has_results_mixin_contract():
     """Test `HasResultsMixin` contract."""
     node = _ResultNode((7, 8))
-    assert node.results == (7, 8)
+    assert node.get_results() == (7, 8)
 
 
 def test_foldable_runtime_protocol():
