@@ -26,6 +26,10 @@ def empty_symbol_table() -> SymbolTable:
     return SymbolTable()
 
 
+# TODO: Move structural equivalence tests and serialization tests first.
+# TODO: Also, write separate tests for just the frames.
+
+
 def test_add_and_check_namespace(empty_symbol_table: SymbolTable):
     """Test that a namespace can be added and checked."""
     namespace = mock_identifier("test_namespace", 0)
