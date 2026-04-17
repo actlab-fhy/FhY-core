@@ -26,6 +26,7 @@ __all__ = [
     "PassManagerResult",
     "PassRunRecord",
     "FixpointPassGroup",
+    "TraversalOrder",
     "FixpointIterationRecord",
     "FixpointGroupRecord",
     "VisitablePass",
@@ -231,6 +232,7 @@ from .pass_infrastructure import (
     PassRunRecord,
     PassValidationError,
     PreservedAnalyses,
+    TraversalOrder,
     VisitablePass,
     register_pass,
 )
