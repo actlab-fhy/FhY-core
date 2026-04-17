@@ -12,13 +12,11 @@ _TypeT_co = TypeVar("_TypeT_co", covariant=True)
 class HasType(Protocol[_TypeT_co]):
     """Protocol for values and operations that carry a type."""
 
-    @property
-    def type(self) -> _TypeT_co: ...
+    def get_type(self) -> _TypeT_co: ...
 
 
 class HasTypeMixin(ABC, Generic[_TypeT_co]):
     """Mixin for values and operations that carry a type."""
 
-    @property
     @abstractmethod
-    def type(self) -> _TypeT_co: ...
+    def get_type(self) -> _TypeT_co: ...

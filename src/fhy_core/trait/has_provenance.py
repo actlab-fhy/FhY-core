@@ -12,13 +12,11 @@ from fhy_core.provenance import Provenance
 class HasProvenance(Protocol):
     """Tracks origin: source span, lowering steps, original node, etc."""
 
-    @property
-    def provenance(self) -> Provenance: ...
+    def get_provenance(self) -> Provenance: ...
 
 
 class HasProvenanceMixin(ABC):
     """Mixin for objects with provenance metadata."""
 
-    @property
     @abstractmethod
-    def provenance(self) -> Provenance: ...
+    def get_provenance(self) -> Provenance: ...

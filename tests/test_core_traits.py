@@ -16,8 +16,7 @@ from fhy_core.trait import (
 class _TypedValue(HasTypeMixin[str]):
     _type: str
 
-    @property
-    def type(self) -> str:
+    def get_type(self) -> str:
         return self._type
 
 
@@ -39,7 +38,7 @@ def test_has_type_runtime_protocol():
 def test_has_type_mixin_contract():
     """Test `HasTypeMixin` contract."""
     value = _TypedValue("index")
-    assert value.type == "index"
+    assert value.get_type() == "index"
 
 
 def test_verifiable_runtime_protocol():

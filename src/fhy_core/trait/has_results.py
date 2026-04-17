@@ -13,13 +13,11 @@ _ResultT_co = TypeVar("_ResultT_co", covariant=True)
 class HasResults(Protocol[_ResultT_co]):
     """Protocol for operation-like objects with ordered results."""
 
-    @property
-    def results(self) -> Sequence[_ResultT_co]: ...
+    def get_results(self) -> Sequence[_ResultT_co]: ...
 
 
 class HasResultsMixin(ABC, Generic[_ResultT_co]):
     """Mixin for operation-like objects with ordered results."""
 
-    @property
     @abstractmethod
-    def results(self) -> Sequence[_ResultT_co]: ...
+    def get_results(self) -> Sequence[_ResultT_co]: ...
