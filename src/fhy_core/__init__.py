@@ -21,6 +21,7 @@ __all__ = [
     "PassValidationError",
     "Analysis",
     "AnalysisManager",
+    "AnalysisVisitablePass",
     "PassManager",
     "PassManagerResult",
     "PassRunRecord",
@@ -214,6 +215,7 @@ from .param import (
 from .pass_infrastructure import (
     Analysis,
     AnalysisManager,
+    AnalysisVisitablePass,
     CompilerPass,
     DiagnosticLevel,
     FixpointGroupRecord,
