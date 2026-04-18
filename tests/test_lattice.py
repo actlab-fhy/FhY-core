@@ -3,7 +3,8 @@
 from typing import Any
 
 import pytest
-from fhy_core.utils.lattice import Lattice
+from fhy_core.lattice import Lattice
+from fhy_core.trait.verifiable import Verifiable, VerificationError
 
 
 @pytest.fixture()
@@ -276,3 +277,88 @@ def test_basic_non_lattice_has_no_least_upper_bound(
     """
     with pytest.raises(RuntimeError):
         basic_non_lattice_poset.get_least_upper_bound(3, 4)
+
+
+@pytest.fixture()
+def non_lattice_with_bottom_and_multiple_upper_bounds():
+    """A poset that is a lattice for meets but not for joins.
+
+    Structure:
+        3   4
+        |\\ /|
+        | X |
+        |/ \\|
+        1   2
+          \\ /
+           0
+
+    Every pair has a meet (a common lower bound chain exists through 0), but
+    the pair (1, 2) has two incomparable minimal upper bounds {3, 4} and thus
+    no unique join.
+    """
+    lattice = Lattice[int]()
+    for element in range(5):
+        lattice.add_element(element)
+    lattice.add_order(0, 1)
+    lattice.add_order(0, 2)
+    lattice.add_order(1, 3)
+    lattice.add_order(1, 4)
+    lattice.add_order(2, 3)
+    lattice.add_order(2, 4)
+    return lattice
+
+
+def test_non_lattice_with_multiple_minimal_upper_bounds_get_join_returns_none(
+    non_lattice_with_bottom_and_multiple_upper_bounds: Lattice[int],
+):
+    """Test a non-lattice with multiple minimal upper bounds join() returns None."""
+    assert non_lattice_with_bottom_and_multiple_upper_bounds.get_join(1, 2) is None
+
+
+def test_non_lattice_with_multiple_maximal_lower_bounds_get_meet_returns_none(
+    non_lattice_with_bottom_and_multiple_upper_bounds: Lattice[int],
+):
+    """Test a non-lattice with multiple maximal lower bounds get_meet() returns None."""
+    assert non_lattice_with_bottom_and_multiple_upper_bounds.get_meet(3, 4) is None
+
+
+def test_non_lattice_is_lattice_returns_false(
+    non_lattice_with_bottom_and_multiple_upper_bounds: Lattice[int],
+):
+    """Test a non-lattice is_lattice() returns False."""
+    assert non_lattice_with_bottom_and_multiple_upper_bounds.is_lattice() is False
+
+
+def test_lattice_satisfies_verifiable_protocol(
+    two_element_lattice: Lattice[int],
+):
+    """Test that a two element lattice is a Verifiable."""
+    assert isinstance(two_element_lattice, Verifiable)
+
+
+def test_verify_passes_on_valid_lattice(
+    subsets_of_xyz_lattice: Lattice[str],
+):
+    """Test that a subsets of XYZ lattice is a valid lattice."""
+    subsets_of_xyz_lattice.verify()
+
+
+def test_verify_passes_on_empty_lattice(empty_lattice: Lattice[Any]):
+    """Test that an empty lattice is a valid lattice."""
+    empty_lattice.verify()
+
+
+def test_verify_raises_when_join_is_not_unique(
+    non_lattice_with_bottom_and_multiple_upper_bounds: Lattice[int],
+):
+    """Test that a non-lattice verify() raises a VerificationError."""
+    with pytest.raises(VerificationError):
+        non_lattice_with_bottom_and_multiple_upper_bounds.verify()
+
+
+def test_verify_raises_when_meet_is_not_defined(
+    basic_non_lattice_poset: Lattice[int],
+):
+    """Test that a non-lattice raises a VerificationError when verifying."""
+    with pytest.raises(VerificationError):
+        basic_non_lattice_poset.verify()

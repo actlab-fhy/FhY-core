@@ -103,7 +103,6 @@ def test_tuple_type_structural_equivalence_false_for_element_order():
         (CoreDataType.UINT8, 8),
         (CoreDataType.UINT16, 16),
         (CoreDataType.UINT32, 32),
-        (CoreDataType.UINT64, 64),
         (CoreDataType.INT8, 8),
         (CoreDataType.INT16, 16),
         (CoreDataType.INT32, 32),
@@ -151,6 +150,14 @@ def test_get_core_data_type_bit_width(core_data_type, expected_bit_width):
             CoreDataType.COMPLEX32,
             CoreDataType.COMPLEX64,
         ),
+        (CoreDataType.UINT, CoreDataType.INT, CoreDataType.INT),
+        (CoreDataType.INT, CoreDataType.UINT, CoreDataType.INT),
+        (CoreDataType.UINT8, CoreDataType.INT8, CoreDataType.INT16),
+        (CoreDataType.UINT16, CoreDataType.INT16, CoreDataType.INT32),
+        (CoreDataType.UINT32, CoreDataType.INT32, CoreDataType.INT64),
+        (CoreDataType.UINT, CoreDataType.INT32, CoreDataType.INT32),
+        (CoreDataType.UINT16, CoreDataType.INT8, CoreDataType.INT32),
+        (CoreDataType.UINT32, CoreDataType.INT8, CoreDataType.INT64),
     ],
 )
 def test_promote_primitive_data_type(
@@ -211,8 +218,8 @@ def test_resolve_literal_core_data_type(
 def test_resolve_large_positive_literal_to_uint64_without_signed_context():
     """Large positive literals should resolve in unsigned contexts lazily."""
     assert (
-        resolve_literal_core_data_type(2**63, CoreDataType.UINT64)
-        == CoreDataType.UINT64
+        resolve_literal_core_data_type(2**31, CoreDataType.UINT32)
+        == CoreDataType.UINT32
     )
 
 

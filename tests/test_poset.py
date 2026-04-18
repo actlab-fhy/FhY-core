@@ -1,7 +1,7 @@
 """Tests the partially ordered set utility."""
 
 import pytest
-from fhy_core.utils.lattice import Lattice
+from fhy_core.lattice import Lattice
 from fhy_core.utils.poset import PartiallyOrderedSet
 
 

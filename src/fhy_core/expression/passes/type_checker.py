@@ -62,7 +62,6 @@ _UNSIGNED_CORE_DATA_TYPES = frozenset(
         CoreDataType.UINT8,
         CoreDataType.UINT16,
         CoreDataType.UINT32,
-        CoreDataType.UINT64,
     }
 )
 

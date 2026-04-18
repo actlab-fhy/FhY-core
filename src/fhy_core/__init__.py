@@ -192,6 +192,7 @@ from .expression import (
     synthesize_expression_type,
 )
 from .identifier import Identifier
+from .lattice import Lattice
 from .logger import (
     add_file_handler,
     configure_logging,
@@ -329,7 +330,6 @@ from .types import (
 )
 from .utils import (
     IntEnum,
-    Lattice,
     PartiallyOrderedSet,
     Stack,
     StrEnum,

@@ -25,11 +25,11 @@
 | Compiler Traits - Canonicalization       | `Canonicalizable` for local canonical form rewrites.                   |
 | Compiler Traits - Structural Equivalence | `StructuralEquivalence` for shape/value-level IR comparisons.          |
 | Compiler Traits - Interned               | `Interned` for interned components.                                    |
+| Data Structure - Lattice                 | Lattice (order theory) data structure represented with a POSET.        |
 | _General Utility_ - Logging              | Core logging utilities for all compiler components.                    |
 | _General Utility_ - Python 3.11 Enums    | String and integer enum types only introduced in Python 3.11           |
 | _General Utility_ - Stack                | General stack utility that wraps `deque`.                              |
 | _General Utility_ - POSET                | General partially ordered set utility represented as a directed graph. |
-| _General Utility_ - Lattice              | General lattice (order theory) utility represented with a POSET.       |
 | _General Utility_ - Dictionary Utilities | Additional dictionary helper functions.                                |
 
 
