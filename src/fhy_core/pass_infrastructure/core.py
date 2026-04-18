@@ -315,21 +315,9 @@ class VisitablePass(CompilerPass[_VisitableNodeT, _PassOutputT], ABC):
         dispatch falls back to ``visit_unknown``, which by default raises
         ``NotImplementedError``. Subclasses may override ``visit_unknown`` to
         provide a generic handler.
-
-        Traversal-aware subclasses (see ``AnalysisVisitablePass``) additionally
-        dispatch per-node ``before_visit_<suffix>`` and ``after_visit_<suffix>``
-        hooks around the walk of every node (both the root and each descendant),
-        using the same ``<suffix>`` convention as ``visit_<suffix>``. When a
-        hook method is not defined for a given node type, dispatch falls back
-        to ``before_visit_unknown`` / ``after_visit_unknown`` (both no-ops by
-        default). This enables subclasses to inject node-type-specific pre/post
-        processing (e.g., pushing/popping a scope for a ``FunctionDefinition``)
-        independent of traversal order, without overriding the walk itself.
     """
 
     _VISIT_METHOD_PREFIX: ClassVar[str] = "visit_"
-    _BEFORE_VISIT_METHOD_PREFIX: ClassVar[str] = "before_visit_"
-    _AFTER_VISIT_METHOD_PREFIX: ClassVar[str] = "after_visit_"
 
     def run_pass(self, ir: _VisitableNodeT) -> _PassOutputT:
         return self.visit(ir)
@@ -362,7 +350,33 @@ class VisitablePass(CompilerPass[_VisitableNodeT, _PassOutputT], ABC):
 
 
 class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
-    """Analysis-only visitable pass with optional automatic traversal."""
+    """Analysis-only visitable pass with optional automatic traversal.
+
+    Per-node pre/post hook convention:
+        In addition to ``visit_<suffix>`` dispatch inherited from
+        ``VisitablePass``, this class dispatches per-node
+        ``before_visit_<suffix>`` and ``after_visit_<suffix>`` hooks around
+        the walk of every node (both the root and each descendant), using
+        the same ``<suffix>`` convention as ``visit_<suffix>``. The pre-hook
+        runs before the node's visit method and any child traversal; the
+        post-hook runs after both have completed, regardless of traversal
+        order. When a hook method is not defined for a given node type,
+        dispatch falls back to ``before_visit_unknown`` /
+        ``after_visit_unknown`` (both no-ops by default). This enables
+        subclasses to inject node-type-specific pre/post processing (e.g.,
+        pushing/popping a scope for a ``FunctionDefinition``) independent
+        of traversal order, without overriding the walk itself.
+
+    Unknown-node handling:
+        Unlike ``VisitablePass.visit_unknown`` (which raises
+        ``NotImplementedError``), ``AnalysisVisitablePass.visit_unknown`` is
+        a no-op by default. This lets analysis passes quietly skip node
+        types they do not care about during a full-tree walk. Override
+        ``visit_unknown`` if strict handling is required.
+    """
+
+    _BEFORE_VISIT_METHOD_PREFIX: ClassVar[str] = "before_visit_"
+    _AFTER_VISIT_METHOD_PREFIX: ClassVar[str] = "after_visit_"
 
     _traversal_order: TraversalOrder
 
