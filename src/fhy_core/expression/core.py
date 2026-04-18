@@ -2,6 +2,8 @@
 
 __all__ = [
     "Expression",
+    "SymbolType",
+    "LiteralType",
     "UnaryOperation",
     "UNARY_OPERATION_FUNCTION_NAMES",
     "UNARY_FUNCTION_NAME_OPERATIONS",

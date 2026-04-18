@@ -157,9 +157,10 @@ def substitute_sympy_expression_variables(
         SymPy expression with substituted variables.
 
     """
-    # TODO: Figure out why this is necessary...
-    #       The sympy expression should only take on the two types in the type hint,
-    #       but it seems that it can also be a bool.
+    # SymPy can fold boolean-valued subexpressions to plain Python `bool`
+    # instances (notably ``True``/``False`` after simplification of a
+    # ``sympy.logic.boolalg.Boolean``). These instances lack ``.subs`` and
+    # also have nothing to substitute, so we short-circuit the no-op case.
     if isinstance(sympy_expression, bool):
         return sympy_expression
     return sympy_expression.subs(

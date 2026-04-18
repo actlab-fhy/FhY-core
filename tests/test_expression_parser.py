@@ -105,6 +105,46 @@ def test_tokenize_expression(expression_str: str, expected_tokens: list[str]):
                 LiteralExpression("1"),
             ),
         ),
+        (
+            "a == b",
+            BinaryExpression(
+                BinaryOperation.EQUAL,
+                IdentifierExpression(mock_identifier("a", 0)),
+                IdentifierExpression(mock_identifier("b", 1)),
+            ),
+        ),
+        (
+            "a != b",
+            BinaryExpression(
+                BinaryOperation.NOT_EQUAL,
+                IdentifierExpression(mock_identifier("a", 0)),
+                IdentifierExpression(mock_identifier("b", 1)),
+            ),
+        ),
+        (
+            "a < b == c",
+            BinaryExpression(
+                BinaryOperation.EQUAL,
+                BinaryExpression(
+                    BinaryOperation.LESS,
+                    IdentifierExpression(mock_identifier("a", 0)),
+                    IdentifierExpression(mock_identifier("b", 1)),
+                ),
+                IdentifierExpression(mock_identifier("c", 2)),
+            ),
+        ),
+        (
+            "a && b == c",
+            BinaryExpression(
+                BinaryOperation.LOGICAL_AND,
+                IdentifierExpression(mock_identifier("a", 0)),
+                BinaryExpression(
+                    BinaryOperation.EQUAL,
+                    IdentifierExpression(mock_identifier("b", 1)),
+                    IdentifierExpression(mock_identifier("c", 2)),
+                ),
+            ),
+        ),
     ],
 )
 @patch("fhy_core.identifier.Identifier._next_id", 0)

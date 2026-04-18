@@ -32,6 +32,14 @@ class InternedMixin(ABC, Generic[_K]):
 
     If an instance also implements `Verifiable` and/or `Frozen`, the mixin
     verifies and deep-freezes it before registration.
+
+    Thread safety:
+        The registry is not guarded by a lock. Concurrent construction of
+        interned instances from multiple threads may race on
+        ``register_interned_instance``, causing one of two otherwise-equivalent
+        instances to shadow the other in the registry. Single-threaded use is
+        assumed; synchronize externally if instances are constructed
+        concurrently.
     """
 
     _interned_instances: ClassVar[dict[Hashable, "InternedMixin[Any]"] | None] = None

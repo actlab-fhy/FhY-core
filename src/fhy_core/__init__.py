@@ -4,6 +4,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "Constraint",
+    "ConstraintError",
     "EquationConstraint",
     "InSetConstraint",
     "NotInSetConstraint",
@@ -99,6 +100,7 @@ __all__ = [
     "OrdinalValue",
     "Param",
     "ParamAssignment",
+    "ParamError",
     "PermParam",
     "PermutationMemberValue",
     "RealParam",
@@ -164,6 +166,7 @@ __all__ = [
 
 from .constraint import (
     Constraint,
+    ConstraintError,
     EquationConstraint,
     InSetConstraint,
     NotInSetConstraint,
@@ -206,6 +209,7 @@ from .param import (
     OrdinalValue,
     Param,
     ParamAssignment,
+    ParamError,
     PermParam,
     PermutationMemberValue,
     RealParam,
