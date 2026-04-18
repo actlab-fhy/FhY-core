@@ -318,6 +318,44 @@ def _check_expected_type(
         )
 
 
+def _get_literal_stride_value(stride: Expression | None) -> int:
+    """Return the integer value of a stride, treating None as 1.
+
+    Raises:
+        FhYCoreTypeError: If the stride is not a literal integer expression,
+            since non-literal strides cannot be combined.
+
+    """
+    if stride is None:
+        return 1
+    elif not isinstance(stride, LiteralExpression):
+        raise FhYCoreTypeError(
+            "Index arithmetic on two index types requires literal integer strides, "
+            f"got non-literal stride {_format_expression(stride)}."
+        )
+    value = stride.value
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise FhYCoreTypeError(
+            f"Index stride literal must be an integer, got {value!r}."
+        )
+    return value
+
+
+def _get_literal_stride_expression(value: int) -> Expression | None:
+    return None if value == 1 else LiteralExpression(value)
+
+
+def _combine_index_strides_for_add(
+    left_stride: Expression | None, right_stride: Expression | None
+) -> Expression | None:
+    return _get_literal_stride_expression(
+        min(
+            _get_literal_stride_value(left_stride),
+            _get_literal_stride_value(right_stride),
+        )
+    )
+
+
 def _shift_index_type(
     index_type: IndexType, offset_expression: Expression, *, subtract: bool = False
 ) -> IndexType:
@@ -589,7 +627,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                     ),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
-            if binary_expression.operation in {
+            elif binary_expression.operation in {
                 BinaryOperation.DIVIDE,
                 BinaryOperation.FLOOR_DIVIDE,
             } and (
@@ -597,7 +635,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 or isinstance(right_value_type, IndexType)
             ):
                 raise FhYCoreTypeError("Division is not supported for index types.")
-            if (
+            elif (
                 binary_expression.operation == BinaryOperation.ADD
                 and isinstance(left_value_type, IndexType)
                 and isinstance(right_value_type, NumericalType)
@@ -610,7 +648,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                     _shift_index_type(left_value_type, binary_expression.right),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
-            if (
+            elif (
                 binary_expression.operation == BinaryOperation.ADD
                 and isinstance(left_value_type, NumericalType)
                 and isinstance(right_value_type, IndexType)
@@ -623,7 +661,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                     _shift_index_type(right_value_type, binary_expression.left),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
-            if (
+            elif (
                 binary_expression.operation == BinaryOperation.SUBTRACT
                 and isinstance(left_value_type, IndexType)
                 and isinstance(right_value_type, NumericalType)
@@ -640,12 +678,37 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                     ),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
-            raise FhYCoreTypeError(
-                "This operation is not supported for index types because the "
-                "resulting index bounds/stride are not inferred safely."
-            )
-
-        raise NotImplementedError("Boolean result types are not yet supported.")
+            elif isinstance(left_value_type, IndexType) and isinstance(
+                right_value_type, IndexType
+            ):
+                if binary_expression.operation == BinaryOperation.ADD:
+                    return (
+                        IndexType(
+                            left_value_type.lower_bound + right_value_type.lower_bound,
+                            left_value_type.upper_bound + right_value_type.upper_bound,
+                            _combine_index_strides_for_add(
+                                left_value_type.stride, right_value_type.stride
+                            ),
+                        ),
+                        promote_type_qualifiers(left_qualifier, right_qualifier),
+                    )
+                elif binary_expression.operation == BinaryOperation.SUBTRACT:
+                    raise FhYCoreTypeError(
+                        "Subtraction of two index types is not supported: the "
+                        "resulting stride semantics have not been defined."
+                    )
+                else:
+                    raise FhYCoreTypeError(
+                        "Index arithmetic is not supported for "
+                        f"{binary_expression.operation} operation."
+                    )
+            else:
+                raise FhYCoreTypeError(
+                    "This operation is not supported for index types because the "
+                    "resulting index bounds/stride are not inferred safely."
+                )
+        else:
+            raise NotImplementedError("Boolean result types are not yet supported.")
 
 
 def synthesize_expression_type(

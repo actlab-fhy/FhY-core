@@ -557,26 +557,313 @@ def test_index_plus_float_is_rejected():
         )
 
 
-def test_index_plus_index_is_rejected():
-    """Test that index plus index is rejected."""
-    left_identifier = Identifier("left_idx")
-    right_identifier = Identifier("right_idx")
-    index_type = IndexType(
-        LiteralExpression(0),
-        LiteralExpression(8),
+def _make_index_checker(
+    bindings: dict[Identifier, tuple[IndexType, TypeQualifier]],
+) -> ExpressionTypeChecker:
+    def lookup(seen: Identifier) -> tuple[IndexType, TypeQualifier]:
+        if seen in bindings:
+            return bindings[seen]
+        raise AssertionError(f"Unexpected identifier lookup: {seen}")
+
+    return ExpressionTypeChecker(lookup)
+
+
+def test_index_plus_index_combines_bounds_when_strides_are_none():
+    """i ∈ [0, 10] + j ∈ [1, 5] ⟹ [0+1, 10+5] = [1, 15] with unit stride."""
+    left = Identifier("i")
+    right = Identifier("j")
+    left_index = IndexType(LiteralExpression(0), LiteralExpression(10), None)
+    right_index = IndexType(LiteralExpression(1), LiteralExpression(5), None)
+    checker = _make_index_checker(
+        {
+            left: (left_index, TypeQualifier.PARAM),
+            right: (right_index, TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, result_qualifier = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            IdentifierExpression(left),
+            IdentifierExpression(right),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(0) + LiteralExpression(1),
+        LiteralExpression(10) + LiteralExpression(5),
         None,
     )
-    checker = ExpressionTypeChecker(
-        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
-        if seen_identifier in {left_identifier, right_identifier}
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    _assert_index_type(result_type, expected)
+    assert result_qualifier == TypeQualifier.PARAM
+
+
+def test_index_plus_index_preserves_matching_stride():
+    """Matching literal strides combine via min; min(s, s) = s preserves them."""
+    left = Identifier("i")
+    right = Identifier("j")
+    left_index = IndexType(
+        LiteralExpression(0), LiteralExpression(10), LiteralExpression(2)
+    )
+    right_index = IndexType(
+        LiteralExpression(0), LiteralExpression(6), LiteralExpression(2)
+    )
+    checker = _make_index_checker(
+        {
+            left: (left_index, TypeQualifier.PARAM),
+            right: (right_index, TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            IdentifierExpression(left),
+            IdentifierExpression(right),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(0) + LiteralExpression(0),
+        LiteralExpression(10) + LiteralExpression(6),
+        LiteralExpression(2),
+    )
+    _assert_index_type(result_type, expected)
+
+
+def test_index_plus_index_treats_literal_one_stride_as_none():
+    """An explicit stride of LiteralExpression(1) is equivalent to None (unit)."""
+    left = Identifier("i")
+    right = Identifier("j")
+    left_index = IndexType(
+        LiteralExpression(0), LiteralExpression(10), LiteralExpression(1)
+    )
+    right_index = IndexType(LiteralExpression(0), LiteralExpression(6), None)
+    checker = _make_index_checker(
+        {
+            left: (left_index, TypeQualifier.PARAM),
+            right: (right_index, TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            IdentifierExpression(left),
+            IdentifierExpression(right),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(0) + LiteralExpression(0),
+        LiteralExpression(10) + LiteralExpression(6),
+        None,
+    )
+    _assert_index_type(result_type, expected)
+
+
+def test_index_plus_index_canonicalizes_matching_unit_literal_stride():
+    """Two LiteralExpression(1) strides canonicalize to None in the result."""
+    left = Identifier("i")
+    right = Identifier("j")
+    unit = LiteralExpression(1)
+    left_index = IndexType(LiteralExpression(0), LiteralExpression(10), unit)
+    right_index = IndexType(LiteralExpression(0), LiteralExpression(6), unit)
+    checker = _make_index_checker(
+        {
+            left: (left_index, TypeQualifier.PARAM),
+            right: (right_index, TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            IdentifierExpression(left),
+            IdentifierExpression(right),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(0) + LiteralExpression(0),
+        LiteralExpression(10) + LiteralExpression(6),
+        None,
+    )
+    _assert_index_type(result_type, expected)
+
+
+def test_index_plus_index_unit_stride_dominates_non_unit_stride():
+    """gcd(1, s) = 1 — combining unit stride with stride 2 yields unit stride."""
+    left = Identifier("i")
+    right = Identifier("j")
+    left_index = IndexType(LiteralExpression(0), LiteralExpression(10), None)
+    right_index = IndexType(
+        LiteralExpression(0), LiteralExpression(6), LiteralExpression(2)
+    )
+    checker = _make_index_checker(
+        {
+            left: (left_index, TypeQualifier.PARAM),
+            right: (right_index, TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            IdentifierExpression(left),
+            IdentifierExpression(right),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(0) + LiteralExpression(0),
+        LiteralExpression(10) + LiteralExpression(6),
+        None,
+    )
+    _assert_index_type(result_type, expected)
+
+
+def test_index_plus_index_uses_min_of_literal_strides():
+    """Mismatched literal strides combine via min: min(2, 3) = 2."""
+    left = Identifier("i")
+    right = Identifier("j")
+    left_index = IndexType(
+        LiteralExpression(0), LiteralExpression(10), LiteralExpression(2)
+    )
+    right_index = IndexType(
+        LiteralExpression(0), LiteralExpression(9), LiteralExpression(3)
+    )
+    checker = _make_index_checker(
+        {
+            left: (left_index, TypeQualifier.PARAM),
+            right: (right_index, TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            IdentifierExpression(left),
+            IdentifierExpression(right),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(0) + LiteralExpression(0),
+        LiteralExpression(10) + LiteralExpression(9),
+        LiteralExpression(2),
+    )
+    _assert_index_type(result_type, expected)
+
+
+def test_index_plus_index_rejects_non_literal_stride():
+    """Non-literal strides cannot be combined and must fail synthesis."""
+    left = Identifier("i")
+    right = Identifier("j")
+    stride_identifier = Identifier("s")
+    left_index = IndexType(
+        LiteralExpression(0),
+        LiteralExpression(10),
+        IdentifierExpression(stride_identifier),
+    )
+    right_index = IndexType(LiteralExpression(0), LiteralExpression(6), None)
+    checker = _make_index_checker(
+        {
+            left: (left_index, TypeQualifier.PARAM),
+            right: (right_index, TypeQualifier.PARAM),
+        }
     )
 
     with pytest.raises(FhYCoreTypeError):
         checker.visit(
             BinaryExpression(
                 BinaryOperation.ADD,
-                IdentifierExpression(left_identifier),
-                IdentifierExpression(right_identifier),
+                IdentifierExpression(left),
+                IdentifierExpression(right),
+            )
+        )
+
+
+def test_index_minus_index_is_rejected():
+    """Subtraction of two index types is not yet supported (stride semantics TBD)."""
+    left = Identifier("i")
+    right = Identifier("j")
+    index_type = IndexType(LiteralExpression(0), LiteralExpression(10), None)
+    checker = _make_index_checker(
+        {
+            left: (index_type, TypeQualifier.PARAM),
+            right: (index_type, TypeQualifier.PARAM),
+        }
+    )
+
+    with pytest.raises(FhYCoreTypeError):
+        checker.visit(
+            BinaryExpression(
+                BinaryOperation.SUBTRACT,
+                IdentifierExpression(left),
+                IdentifierExpression(right),
+            )
+        )
+
+
+def test_index_plus_index_with_symbolic_bounds():
+    """i ∈ [0, N] + j ∈ [0, M] ⟹ [0, N + M] with symbolic upper bounds."""
+    left = Identifier("i")
+    right = Identifier("j")
+    upper_n = Identifier("N")
+    upper_m = Identifier("M")
+    left_index = IndexType(LiteralExpression(0), IdentifierExpression(upper_n), None)
+    right_index = IndexType(LiteralExpression(0), IdentifierExpression(upper_m), None)
+    checker = _make_index_checker(
+        {
+            left: (left_index, TypeQualifier.PARAM),
+            right: (right_index, TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            IdentifierExpression(left),
+            IdentifierExpression(right),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(0) + LiteralExpression(0),
+        IdentifierExpression(upper_n) + IdentifierExpression(upper_m),
+        None,
+    )
+    _assert_index_type(result_type, expected)
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        BinaryOperation.MULTIPLY,
+        BinaryOperation.DIVIDE,
+        BinaryOperation.FLOOR_DIVIDE,
+        BinaryOperation.MODULO,
+        BinaryOperation.POWER,
+    ],
+)
+def test_non_additive_index_index_operations_are_rejected(operation):
+    """Only ADD and SUBTRACT are supported between two index operands."""
+    left = Identifier("i")
+    right = Identifier("j")
+    index_type = IndexType(LiteralExpression(0), LiteralExpression(8), None)
+    checker = _make_index_checker(
+        {
+            left: (index_type, TypeQualifier.PARAM),
+            right: (index_type, TypeQualifier.PARAM),
+        }
+    )
+
+    with pytest.raises(FhYCoreTypeError):
+        checker.visit(
+            BinaryExpression(
+                operation,
+                IdentifierExpression(left),
+                IdentifierExpression(right),
             )
         )
