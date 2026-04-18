@@ -299,9 +299,37 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
 
 
 class VisitablePass(CompilerPass[_VisitableNodeT, _PassOutputT], ABC):
-    """Compiler pass with convention-based visitor dispatch."""
+    """Compiler pass with convention-based visitor dispatch.
+
+    Visitor method naming convention:
+        Subclasses implement per-node-type visitor methods named
+        ``visit_<suffix>``, where ``<suffix>`` is produced by
+        ``Visitable.get_visit_method_suffix()``. By default, that suffix is the
+        node class name converted from ``CamelCase`` to ``snake_case``. For
+        example, a node class named ``BinaryExpression`` dispatches to
+        ``visit_binary_expression``, and a node named ``IntLiteral`` dispatches
+        to ``visit_int_literal``. A node type may override
+        ``get_visit_method_suffix()`` to customize this mapping.
+
+        When no matching ``visit_<suffix>`` method is defined on the pass,
+        dispatch falls back to ``visit_unknown``, which by default raises
+        ``NotImplementedError``. Subclasses may override ``visit_unknown`` to
+        provide a generic handler.
+
+        Traversal-aware subclasses (see ``AnalysisVisitablePass``) additionally
+        dispatch per-node ``before_visit_<suffix>`` and ``after_visit_<suffix>``
+        hooks around the walk of every node (both the root and each descendant),
+        using the same ``<suffix>`` convention as ``visit_<suffix>``. When a
+        hook method is not defined for a given node type, dispatch falls back
+        to ``before_visit_unknown`` / ``after_visit_unknown`` (both no-ops by
+        default). This enables subclasses to inject node-type-specific pre/post
+        processing (e.g., pushing/popping a scope for a ``FunctionDefinition``)
+        independent of traversal order, without overriding the walk itself.
+    """
 
     _VISIT_METHOD_PREFIX: ClassVar[str] = "visit_"
+    _BEFORE_VISIT_METHOD_PREFIX: ClassVar[str] = "before_visit_"
+    _AFTER_VISIT_METHOD_PREFIX: ClassVar[str] = "after_visit_"
 
     def run_pass(self, ir: _VisitableNodeT) -> _PassOutputT:
         return self.visit(ir)
@@ -360,16 +388,24 @@ class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
     def walk(self, node: _VisitableNodeT) -> None:
         """Visit a node and, when provided, recursively visit its children.
 
+        Each walked node is bracketed by dispatch-based ``before_visit_*`` and
+        ``after_visit_*`` hooks. The pre-hook runs before any visit or child
+        traversal for the node, and the post-hook runs after both the node's
+        visit method and its child traversal have completed, regardless of
+        traversal order. See the class docstring for dispatch details.
+
         Args:
             node: Node to visit.
 
         """
+        self.before_visit(node)
         if self._traversal_order == TraversalOrder.PRE:
             self.visit(node)
             self.walk_children(node)
         else:
             self.walk_children(node)
             self.visit(node)
+        self.after_visit(node)
 
     def walk_children(self, node: _VisitableNodeT) -> None:
         """Visit all children declared by the node.
@@ -380,6 +416,58 @@ class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
         """
         for child in self.get_visit_children(node):
             self.walk(child)
+
+    def before_visit(self, node: _VisitableNodeT) -> None:
+        """Dispatch the pre-visit hook for ``node``.
+
+        Resolves ``before_visit_<suffix>`` using the same naming convention as
+        ``visit``. Falls back to ``before_visit_unknown`` when no dedicated
+        method is defined.
+
+        Args:
+            node: Node about to be walked.
+
+        """
+        method_name = (
+            f"{self._BEFORE_VISIT_METHOD_PREFIX}"
+            f"{type(node).get_visit_method_suffix()}"
+        )
+        candidate = getattr(self, method_name, None)
+        if candidate is None or not callable(candidate):
+            self.before_visit_unknown(node)
+            return
+        method = cast(Callable[[_VisitableNodeT], None], candidate)
+        method(node)
+
+    def after_visit(self, node: _VisitableNodeT) -> None:
+        """Dispatch the post-visit hook for ``node``.
+
+        Resolves ``after_visit_<suffix>`` using the same naming convention as
+        ``visit``. Falls back to ``after_visit_unknown`` when no dedicated
+        method is defined.
+
+        Args:
+            node: Node that was just walked.
+
+        """
+        method_name = (
+            f"{self._AFTER_VISIT_METHOD_PREFIX}"
+            f"{type(node).get_visit_method_suffix()}"
+        )
+        candidate = getattr(self, method_name, None)
+        if candidate is None or not callable(candidate):
+            self.after_visit_unknown(node)
+            return
+        method = cast(Callable[[_VisitableNodeT], None], candidate)
+        method(node)
+
+    def before_visit_unknown(self, node: _VisitableNodeT) -> None:
+        """Default pre-visit handler for node types without a dedicated hook."""
+        _ = node
+
+    def after_visit_unknown(self, node: _VisitableNodeT) -> None:
+        """Default post-visit handler for node types without a dedicated hook."""
+        _ = node
 
     def get_visit_children(self, node: _VisitableNodeT) -> Sequence[_VisitableNodeT]:
         """Return children for automatic traversal.
