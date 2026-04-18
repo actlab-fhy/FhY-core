@@ -564,6 +564,60 @@ class SymbolTable(
 
         return self._table[namespace_name]
 
+    def remove_namespace(self, namespace_name: Identifier) -> None:
+        """Remove a namespace from the symbol table.
+
+        Args:
+            namespace_name: Name of the namespace to remove.
+
+        Raises:
+            SymbolTableError: If the namespace is not defined in the symbol table
+                or if any other namespace declares it as a parent.
+
+        """
+        if not self.is_namespace_defined(namespace_name):
+            raise SymbolTableError(
+                f"Namespace {namespace_name} not found in the symbol table."
+            )
+        child_namespace_names = [
+            child_namespace_name
+            for child_namespace_name, parent_namespace_name in (
+                self._parent_namespace.items()
+            )
+            if parent_namespace_name == namespace_name
+        ]
+        if child_namespace_names:
+            raise SymbolTableError(
+                f"Namespace {namespace_name} cannot be removed because it is the "
+                f"parent of: {child_namespace_names}."
+            )
+        del self._table[namespace_name]
+        self._parent_namespace.pop(namespace_name, None)
+
+    def remove_symbol(
+        self, namespace_name: Identifier, symbol_name: Identifier
+    ) -> None:
+        """Remove a symbol from a namespace in the symbol table.
+
+        Args:
+            namespace_name: Name of the namespace containing the symbol.
+            symbol_name: Name of the symbol to remove.
+
+        Raises:
+            SymbolTableError: If the namespace is not defined or the symbol is
+                not directly defined in that namespace.
+
+        """
+        if not self.is_namespace_defined(namespace_name):
+            raise SymbolTableError(
+                f"Namespace {namespace_name} not found in the symbol table."
+            )
+        if symbol_name not in self._table[namespace_name]:
+            raise SymbolTableError(
+                f"Symbol {symbol_name} not defined in namespace {namespace_name}."
+            )
+        del self._table[namespace_name][symbol_name]
+
     def update_namespaces(self, other_symbol_table: "SymbolTable") -> None:
         """Update the symbol table with new namespaces from another symbol table.
 

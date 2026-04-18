@@ -634,6 +634,106 @@ def test_cyclic_namespace_fails(empty_symbol_table: SymbolTable):
         )
 
 
+def test_remove_namespace(empty_symbol_table: SymbolTable):
+    """Test that a namespace can be removed from the symbol table."""
+    namespace = mock_identifier("test_namespace", 0)
+    empty_symbol_table.add_namespace(namespace)
+
+    empty_symbol_table.remove_namespace(namespace)
+
+    assert not empty_symbol_table.is_namespace_defined(namespace)
+    assert empty_symbol_table.get_number_of_namespaces() == 0
+
+
+def test_remove_namespace_clears_parent_mapping(empty_symbol_table: SymbolTable):
+    """Test that removing a namespace drops its parent mapping entry."""
+    parent_namespace = mock_identifier("parent", 0)
+    child_namespace = mock_identifier("child", 1)
+    empty_symbol_table.add_namespace(parent_namespace)
+    empty_symbol_table.add_namespace(child_namespace, parent_namespace)
+
+    empty_symbol_table.remove_namespace(child_namespace)
+
+    assert not empty_symbol_table.is_namespace_defined(child_namespace)
+    assert empty_symbol_table.is_namespace_defined(parent_namespace)
+    empty_symbol_table.verify()
+
+
+def test_remove_undefined_namespace_fails(empty_symbol_table: SymbolTable):
+    """Test removing an undefined namespace raises a SymbolTableError."""
+    undefined_namespace = mock_identifier("undefined_namespace", 0)
+
+    with pytest.raises(SymbolTableError):
+        empty_symbol_table.remove_namespace(undefined_namespace)
+
+
+def test_remove_namespace_with_children_fails(empty_symbol_table: SymbolTable):
+    """Test removing a namespace with child namespaces raises a SymbolTableError."""
+    parent_namespace = mock_identifier("parent", 0)
+    child_namespace = mock_identifier("child", 1)
+    empty_symbol_table.add_namespace(parent_namespace)
+    empty_symbol_table.add_namespace(child_namespace, parent_namespace)
+
+    with pytest.raises(SymbolTableError):
+        empty_symbol_table.remove_namespace(parent_namespace)
+
+
+def test_remove_symbol(empty_symbol_table: SymbolTable):
+    """Test that a symbol can be removed from a namespace."""
+    namespace = mock_identifier("test_namespace", 0)
+    symbol_name = mock_identifier("test_symbol", 1)
+    empty_symbol_table.add_namespace(namespace)
+    empty_symbol_table.add_symbol(
+        namespace, symbol_name, ImportSymbolTableFrame(symbol_name)
+    )
+
+    empty_symbol_table.remove_symbol(namespace, symbol_name)
+
+    assert not empty_symbol_table.is_symbol_defined_in_namespace(namespace, symbol_name)
+
+
+def test_remove_symbol_from_undefined_namespace_fails(empty_symbol_table: SymbolTable):
+    """Test removing a symbol from an undefined namespace raises a
+    SymbolTableError.
+    """
+    undefined_namespace = mock_identifier("undefined_namespace", 0)
+    symbol_name = mock_identifier("symbol", 1)
+
+    with pytest.raises(SymbolTableError):
+        empty_symbol_table.remove_symbol(undefined_namespace, symbol_name)
+
+
+def test_remove_undefined_symbol_fails(empty_symbol_table: SymbolTable):
+    """Test removing an undefined symbol raises a SymbolTableError."""
+    namespace = mock_identifier("test_namespace", 0)
+    undefined_symbol = mock_identifier("undefined_symbol", 1)
+    empty_symbol_table.add_namespace(namespace)
+
+    with pytest.raises(SymbolTableError):
+        empty_symbol_table.remove_symbol(namespace, undefined_symbol)
+
+
+def test_remove_symbol_only_removes_from_target_namespace(
+    empty_symbol_table: SymbolTable,
+):
+    """Test removing a symbol does not remove it from a parent namespace."""
+    parent_namespace = mock_identifier("parent", 0)
+    child_namespace = mock_identifier("child", 1)
+    symbol_name = mock_identifier("symbol", 2)
+    empty_symbol_table.add_namespace(parent_namespace)
+    empty_symbol_table.add_namespace(child_namespace, parent_namespace)
+    empty_symbol_table.add_symbol(
+        parent_namespace, symbol_name, ImportSymbolTableFrame(symbol_name)
+    )
+
+    with pytest.raises(SymbolTableError):
+        empty_symbol_table.remove_symbol(child_namespace, symbol_name)
+
+    assert empty_symbol_table.is_symbol_defined_in_namespace(
+        parent_namespace, symbol_name
+    )
+
+
 def test_update_namespaces():
     """Test that namespaces can be merged."""
     symbol_table_1 = SymbolTable()
