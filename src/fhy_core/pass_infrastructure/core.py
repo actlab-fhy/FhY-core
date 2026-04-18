@@ -443,8 +443,7 @@ class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
 
         """
         method_name = (
-            f"{self._BEFORE_VISIT_METHOD_PREFIX}"
-            f"{type(node).get_visit_method_suffix()}"
+            f"{self._BEFORE_VISIT_METHOD_PREFIX}{type(node).get_visit_method_suffix()}"
         )
         candidate = getattr(self, method_name, None)
         if candidate is None or not callable(candidate):
@@ -465,8 +464,7 @@ class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
 
         """
         method_name = (
-            f"{self._AFTER_VISIT_METHOD_PREFIX}"
-            f"{type(node).get_visit_method_suffix()}"
+            f"{self._AFTER_VISIT_METHOD_PREFIX}{type(node).get_visit_method_suffix()}"
         )
         candidate = getattr(self, method_name, None)
         if candidate is None or not callable(candidate):
