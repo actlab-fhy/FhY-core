@@ -182,11 +182,11 @@ def test_pass_manager_fixpoint_group_converges() -> None:
             return max(ir - 1, 0)
 
     manager = PassManager[int]()
-    manager.add_fixpoint_group(
-        FixpointPassGroup[int](
-            name=Identifier("decrement-group"), max_iterations=10
-        ).add_pass(DecrementToZeroPass())
+    fixpoint_group = FixpointPassGroup[int](
+        name=Identifier("decrement-group"), max_iterations=10
     )
+    fixpoint_group.add_pass(DecrementToZeroPass())
+    manager.add_fixpoint_group(fixpoint_group)
 
     result = manager.run(3)
 
@@ -215,13 +215,13 @@ def test_pass_manager_fixpoint_group_raises_on_non_convergence() -> None:
             return 1 - ir
 
     manager = PassManager[int]()
-    manager.add_fixpoint_group(
-        FixpointPassGroup[int](
-            name=Identifier("flip-group"),
-            max_iterations=3,
-            fail_on_non_convergence=True,
-        ).add_pass(FlipBitPass())
+    fixpoint_group = FixpointPassGroup[int](
+        name=Identifier("flip-group"),
+        max_iterations=3,
+        fail_on_non_convergence=True,
     )
+    fixpoint_group.add_pass(FlipBitPass())
+    manager.add_fixpoint_group(fixpoint_group)
 
     with pytest.raises(PassExecutionError):
         manager.run(0)

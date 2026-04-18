@@ -307,20 +307,14 @@ class FixpointPassGroup(HasIdentifierMixin, Generic[_IRType]):
     def passes(self) -> tuple[CompilerPass[_IRType, _IRType], ...]:
         return tuple(self._passes)
 
-    def add_pass(
-        self, compiler_pass: CompilerPass[_IRType, _IRType]
-    ) -> "FixpointPassGroup[_IRType]":
+    def add_pass(self, compiler_pass: CompilerPass[_IRType, _IRType]) -> None:
         """Append a pass to the fixpoint group.
 
         Args:
             compiler_pass: The pass to add.
 
-        Returns:
-            This fixpoint group, for chaining.
-
         """
         self._passes.append(compiler_pass)
-        return self
 
 
 class PassManager(HasIdentifierMixin, Generic[_IRType]):
