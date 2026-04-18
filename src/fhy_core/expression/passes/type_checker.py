@@ -356,6 +356,34 @@ def _combine_index_strides_for_add(
     )
 
 
+def _scale_index_type(index_type: IndexType, scalar: LiteralExpression) -> IndexType:
+    """Scale an index type by a positive integer literal scalar.
+
+    Raises:
+        FhYCoreTypeError: If the scalar is not a positive integer literal.
+
+    """
+    value = scalar.value
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise FhYCoreTypeError(
+            f"Index scaling requires an integer literal, got {value!r}."
+        )
+    if value <= 0:
+        raise FhYCoreTypeError(
+            f"Index scaling requires a positive integer literal, got {value}."
+        )
+    new_stride: Expression | None
+    if index_type.stride is None:
+        new_stride = None if value == 1 else LiteralExpression(value)
+    else:
+        new_stride = scalar * index_type.stride
+    return IndexType(
+        scalar * index_type.lower_bound,
+        scalar * index_type.upper_bound,
+        new_stride,
+    )
+
+
 def _shift_index_type(
     index_type: IndexType, offset_expression: Expression, *, subtract: bool = False
 ) -> IndexType:
@@ -527,7 +555,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             case UnaryOperation.LOGICAL_NOT:
                 raise NotImplementedError("Boolean result types are not yet supported.")
 
-    def _infer_binary_expression(  # noqa: PLR0912
+    def _infer_binary_expression(  # noqa: PLR0912, PLR0915
         self,
         binary_expression: BinaryExpression,
         expected_type: Type | None = None,
@@ -676,6 +704,40 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                         binary_expression.right,
                         subtract=True,
                     ),
+                    promote_type_qualifiers(left_qualifier, right_qualifier),
+                )
+            elif (
+                binary_expression.operation == BinaryOperation.MULTIPLY
+                and isinstance(left_value_type, IndexType)
+                and isinstance(right_value_type, NumericalType)
+            ):
+                if not isinstance(binary_expression.right, LiteralExpression):
+                    raise FhYCoreTypeError(
+                        "Index scaling requires a positive integer literal scalar."
+                    )
+                if not _is_integral_numerical_type(right_value_type):
+                    raise FhYCoreTypeError(
+                        "Index scaling requires a positive integer literal scalar."
+                    )
+                return (
+                    _scale_index_type(left_value_type, binary_expression.right),
+                    promote_type_qualifiers(left_qualifier, right_qualifier),
+                )
+            elif (
+                binary_expression.operation == BinaryOperation.MULTIPLY
+                and isinstance(left_value_type, NumericalType)
+                and isinstance(right_value_type, IndexType)
+            ):
+                if not isinstance(binary_expression.left, LiteralExpression):
+                    raise FhYCoreTypeError(
+                        "Index scaling requires a positive integer literal scalar."
+                    )
+                if not _is_integral_numerical_type(left_value_type):
+                    raise FhYCoreTypeError(
+                        "Index scaling requires a positive integer literal scalar."
+                    )
+                return (
+                    _scale_index_type(right_value_type, binary_expression.left),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
             elif isinstance(left_value_type, IndexType) and isinstance(

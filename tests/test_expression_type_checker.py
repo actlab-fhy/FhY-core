@@ -485,14 +485,90 @@ def test_unary_negation_of_index_is_rejected():
         )
 
 
-def test_index_multiplication_is_rejected():
-    """Test that index multiplication is rejected."""
+def test_index_times_positive_integer_literal_scales_bounds_and_stride():
+    """idx * k scales bounds and stride by a positive integer literal k."""
     identifier = Identifier("idx")
     index_type = IndexType(
-        LiteralExpression(0),
-        LiteralExpression(8),
+        LiteralExpression(0), LiteralExpression(8), LiteralExpression(2)
+    )
+    checker = ExpressionTypeChecker(
+        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
+        if seen_identifier == identifier
+        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.MULTIPLY,
+            IdentifierExpression(identifier),
+            LiteralExpression(3),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(3) * LiteralExpression(0),
+        LiteralExpression(3) * LiteralExpression(8),
+        LiteralExpression(3) * LiteralExpression(2),
+    )
+    _assert_index_type(result_type, expected)
+
+
+def test_positive_integer_literal_times_index_scales_symmetrically():
+    """k * idx produces the same shifted type as idx * k."""
+    identifier = Identifier("idx")
+    index_type = IndexType(LiteralExpression(0), LiteralExpression(8), None)
+    checker = ExpressionTypeChecker(
+        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
+        if seen_identifier == identifier
+        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.MULTIPLY,
+            LiteralExpression(3),
+            IdentifierExpression(identifier),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(3) * LiteralExpression(0),
+        LiteralExpression(3) * LiteralExpression(8),
+        LiteralExpression(3),
+    )
+    _assert_index_type(result_type, expected)
+
+
+def test_index_scaling_by_one_preserves_unit_stride():
+    """k=1 keeps stride=None (unit) since there is no real scaling."""
+    identifier = Identifier("idx")
+    index_type = IndexType(LiteralExpression(0), LiteralExpression(8), None)
+    checker = ExpressionTypeChecker(
+        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
+        if seen_identifier == identifier
+        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.MULTIPLY,
+            LiteralExpression(1),
+            IdentifierExpression(identifier),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(1) * LiteralExpression(0),
+        LiteralExpression(1) * LiteralExpression(8),
         None,
     )
+    _assert_index_type(result_type, expected)
+
+
+def test_index_times_non_positive_integer_literal_is_rejected():
+    """Index scaling requires a positive integer literal (zero rejected)."""
+    identifier = Identifier("idx")
+    index_type = IndexType(LiteralExpression(0), LiteralExpression(8), None)
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (index_type, TypeQualifier.PARAM)
         if seen_identifier == identifier
@@ -504,7 +580,51 @@ def test_index_multiplication_is_rejected():
             BinaryExpression(
                 BinaryOperation.MULTIPLY,
                 IdentifierExpression(identifier),
-                LiteralExpression(2),
+                LiteralExpression(0),
+            )
+        )
+
+
+def test_index_times_non_literal_scalar_is_rejected():
+    """Index scaling fails if the scalar is not a literal integer."""
+    identifier = Identifier("idx")
+    scalar = Identifier("k")
+    index_type = IndexType(LiteralExpression(0), LiteralExpression(8), None)
+    scalar_type = NumericalType(PrimitiveDataType(CoreDataType.INT32))
+    checker = ExpressionTypeChecker(
+        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
+        if seen_identifier == identifier
+        else (scalar_type, TypeQualifier.PARAM)
+        if seen_identifier == scalar
+        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    )
+
+    with pytest.raises(FhYCoreTypeError):
+        checker.visit(
+            BinaryExpression(
+                BinaryOperation.MULTIPLY,
+                IdentifierExpression(scalar),
+                IdentifierExpression(identifier),
+            )
+        )
+
+
+def test_index_times_float_literal_is_rejected():
+    """Index scaling requires an integer literal, not a float."""
+    identifier = Identifier("idx")
+    index_type = IndexType(LiteralExpression(0), LiteralExpression(8), None)
+    checker = ExpressionTypeChecker(
+        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
+        if seen_identifier == identifier
+        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    )
+
+    with pytest.raises(FhYCoreTypeError):
+        checker.visit(
+            BinaryExpression(
+                BinaryOperation.MULTIPLY,
+                IdentifierExpression(identifier),
+                LiteralExpression(2.0),
             )
         )
 
@@ -833,6 +953,160 @@ def test_index_plus_index_with_symbolic_bounds():
         LiteralExpression(0) + LiteralExpression(0),
         IdentifierExpression(upper_n) + IdentifierExpression(upper_m),
         None,
+    )
+    _assert_index_type(result_type, expected)
+
+
+def test_nested_index_plus_index_synthesizes_bottom_up_on_left():
+    """(idx_a + idx_b) + idx_c synthesizes leaves first, combining strides bottom-up.
+
+    Left subexpression yields IndexType with stride min(2, 3) = 2; the outer
+    combine then takes min(2, 6) = 2 and chains the bounds.
+    """
+    a = Identifier("a")
+    b = Identifier("b")
+    c = Identifier("c")
+    idx_a = IndexType(LiteralExpression(0), LiteralExpression(10), LiteralExpression(2))
+    idx_b = IndexType(LiteralExpression(0), LiteralExpression(10), LiteralExpression(3))
+    idx_c = IndexType(LiteralExpression(0), LiteralExpression(10), LiteralExpression(6))
+    checker = _make_index_checker(
+        {
+            a: (idx_a, TypeQualifier.PARAM),
+            b: (idx_b, TypeQualifier.PARAM),
+            c: (idx_c, TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            BinaryExpression(
+                BinaryOperation.ADD,
+                IdentifierExpression(a),
+                IdentifierExpression(b),
+            ),
+            IdentifierExpression(c),
+        )
+    )
+
+    expected = IndexType(
+        (LiteralExpression(0) + LiteralExpression(0)) + LiteralExpression(0),
+        (LiteralExpression(10) + LiteralExpression(10)) + LiteralExpression(10),
+        LiteralExpression(2),
+    )
+    _assert_index_type(result_type, expected)
+
+
+def test_nested_index_plus_index_synthesizes_bottom_up_on_right():
+    """idx_a + (idx_b + idx_c): right subtree synthesized first, then combined."""
+    a = Identifier("a")
+    b = Identifier("b")
+    c = Identifier("c")
+    idx_a = IndexType(LiteralExpression(0), LiteralExpression(10), LiteralExpression(6))
+    idx_b = IndexType(LiteralExpression(0), LiteralExpression(10), LiteralExpression(2))
+    idx_c = IndexType(LiteralExpression(0), LiteralExpression(10), LiteralExpression(3))
+    checker = _make_index_checker(
+        {
+            a: (idx_a, TypeQualifier.PARAM),
+            b: (idx_b, TypeQualifier.PARAM),
+            c: (idx_c, TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            IdentifierExpression(a),
+            BinaryExpression(
+                BinaryOperation.ADD,
+                IdentifierExpression(b),
+                IdentifierExpression(c),
+            ),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(0) + (LiteralExpression(0) + LiteralExpression(0)),
+        LiteralExpression(10) + (LiteralExpression(10) + LiteralExpression(10)),
+        LiteralExpression(2),
+    )
+    _assert_index_type(result_type, expected)
+
+
+def test_scaled_shifted_index_plus_index_synthesizes_bottom_up():
+    """2 * (i1 - 1) + i2: scale of a shifted index, added to another index.
+
+    Synthesis chain:
+      (i1 - 1) → IndexType(0-1, 10-1, None) (stride 1)
+      2 * (i1 - 1) → IndexType(2*(0-1), 2*(10-1), LiteralExpression(2))
+      ... + i2 → IndexType(..., min(2, 1) = 1 = None)
+    """
+    i1 = Identifier("i1")
+    i2 = Identifier("i2")
+    index_type = IndexType(LiteralExpression(0), LiteralExpression(10), None)
+    checker = _make_index_checker(
+        {
+            i1: (index_type, TypeQualifier.PARAM),
+            i2: (index_type, TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            BinaryExpression(
+                BinaryOperation.MULTIPLY,
+                LiteralExpression(2),
+                BinaryExpression(
+                    BinaryOperation.SUBTRACT,
+                    IdentifierExpression(i1),
+                    LiteralExpression(1),
+                ),
+            ),
+            IdentifierExpression(i2),
+        )
+    )
+
+    expected = IndexType(
+        (LiteralExpression(2) * (LiteralExpression(0) - LiteralExpression(1)))
+        + LiteralExpression(0),
+        (LiteralExpression(2) * (LiteralExpression(10) - LiteralExpression(1)))
+        + LiteralExpression(10),
+        None,
+    )
+    _assert_index_type(result_type, expected)
+
+
+def test_shifted_index_plus_index_propagates_stride_bottom_up():
+    """(idx_a + 1) + idx_b: the scalar shift preserves idx_a's stride, which then
+    combines with idx_b's stride in the outer node."""
+    a = Identifier("a")
+    b = Identifier("b")
+    idx_a = IndexType(LiteralExpression(0), LiteralExpression(10), LiteralExpression(2))
+    idx_b = IndexType(LiteralExpression(0), LiteralExpression(10), LiteralExpression(3))
+    checker = _make_index_checker(
+        {
+            a: (idx_a, TypeQualifier.PARAM),
+            b: (idx_b, TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            BinaryExpression(
+                BinaryOperation.ADD,
+                IdentifierExpression(a),
+                LiteralExpression(1),
+            ),
+            IdentifierExpression(b),
+        )
+    )
+
+    expected = IndexType(
+        (LiteralExpression(0) + LiteralExpression(1)) + LiteralExpression(0),
+        (LiteralExpression(10) + LiteralExpression(1)) + LiteralExpression(10),
+        LiteralExpression(2),
     )
     _assert_index_type(result_type, expected)
 
