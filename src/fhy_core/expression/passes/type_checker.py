@@ -393,11 +393,12 @@ def _shift_index_type(
             index_type.upper_bound - offset_expression,
             index_type.stride,
         )
-    return IndexType(
-        index_type.lower_bound + offset_expression,
-        index_type.upper_bound + offset_expression,
-        index_type.stride,
-    )
+    else:
+        return IndexType(
+            index_type.lower_bound + offset_expression,
+            index_type.upper_bound + offset_expression,
+            index_type.stride,
+        )
 
 
 @register_pass(
