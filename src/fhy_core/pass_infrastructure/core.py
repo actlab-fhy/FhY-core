@@ -20,7 +20,16 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Any, Callable, ClassVar, Generic, Mapping, TypeVar, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ClassVar,
+    Generic,
+    Mapping,
+    TypeVar,
+    cast,
+)
 
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
@@ -28,10 +37,15 @@ from fhy_core.provenance import Note
 from fhy_core.trait import FrozenMixin, PartialEqualMixin, Visitable
 from fhy_core.utils.enum import StrEnum
 
+if TYPE_CHECKING:
+    from .manager import Analysis, AnalysisManager
+
 _PassInputT = TypeVar("_PassInputT")
 _PassOutputT = TypeVar("_PassOutputT")
 _PassClassT = TypeVar("_PassClassT", bound=type["CompilerPass[Any, Any]"])
 _VisitableNodeT = TypeVar("_VisitableNodeT", bound=Visitable)
+_AnalysisIRT = TypeVar("_AnalysisIRT")
+_AnalysisResultT = TypeVar("_AnalysisResultT")
 
 
 class DiagnosticLevel(StrEnum):
@@ -143,9 +157,11 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
     _pass_name: ClassVar[str | None] = None
     _pass_description: ClassVar[str] = ""
     _diagnostics: list[PassDiagnostic]
+    _analysis_manager: "AnalysisManager[Any] | None"
 
     def __init__(self) -> None:
         self._diagnostics = []
+        self._analysis_manager = None
 
     @classmethod
     def get_pass_name(cls) -> str:
@@ -228,6 +244,49 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
             diagnostics=tuple(self._diagnostics),
             preserved_analyses=preserved,
         )
+
+    def get_analysis_manager(self) -> "AnalysisManager[Any] | None":
+        """Return the analysis manager currently bound to this pass, if any."""
+        return self._analysis_manager
+
+    def bind_analysis_manager(
+        self, analysis_manager: "AnalysisManager[Any] | None"
+    ) -> None:
+        """Attach (or detach, with ``None``) an analysis manager to this pass.
+
+        Typically called by :class:`PassManager` before and after executing
+        this pass, so that :meth:`get_analysis` resolves against the cache.
+        Passing ``None`` returns the pass to standalone mode, in which
+        :meth:`get_analysis` recomputes results every call.
+        """
+        self._analysis_manager = analysis_manager
+
+    def get_analysis(
+        self,
+        analysis_type: "type[Analysis[_AnalysisIRT, _AnalysisResultT]]",
+        ir: _AnalysisIRT,
+    ) -> _AnalysisResultT:
+        """Obtain an analysis result for ``ir``.
+
+        When this pass is executed under a :class:`PassManager`, results are
+        fetched from the manager's :class:`AnalysisManager`, which caches them
+        and preserves/invalidates across passes based on each pass's
+        ``get_preserved_analyses`` return value. When the pass is executed
+        standalone (no manager has been bound), the analysis is computed fresh
+        on every call.
+
+        Args:
+            analysis_type: The analysis class to obtain results for.
+            ir: The IR instance to analyze. Typically the same IR being passed
+                to the current pass, but sub-IR is also accepted.
+
+        Returns:
+            The analysis result, cached when possible.
+
+        """
+        if self._analysis_manager is None:
+            return analysis_type().run(ir)
+        return self._analysis_manager.get(analysis_type, ir)
 
     def report(
         self, level: DiagnosticLevel, message: str | Note, detail: str | None = None

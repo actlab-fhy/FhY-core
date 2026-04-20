@@ -247,6 +247,237 @@ def test_pass_manager_configuration_is_read_only() -> None:
         setattr(manager, "analysis_manager", manager.analysis_manager)
 
 
+def test_get_analysis_runs_uncached_when_pass_is_standalone() -> None:
+    """Test that get_analysis computes fresh each call when no manager is bound."""
+    BoxDoubleAnalysis.runs = 0
+
+    @register_pass("tests.pm.standalone_get_analysis", "Reads analysis standalone.")
+    class ReadAnalysisPass(CompilerPass[Box, Box]):
+        observed: list[int] = []
+
+        def get_noop_output(self, ir: Box) -> Box:
+            return ir
+
+        def run_pass(self, ir: Box) -> Box:
+            ReadAnalysisPass.observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
+            ReadAnalysisPass.observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
+            return ir
+
+    pass_ = ReadAnalysisPass()
+    pass_.execute(Box(5))
+
+    # Two calls → two runs (no cache available when standalone).
+    assert ReadAnalysisPass.observed == [10, 10]
+    assert BoxDoubleAnalysis.runs == 2
+
+
+def test_get_analysis_uses_cache_when_bound_by_pass_manager() -> None:
+    """Test that get_analysis hits the manager's cache for duplicate requests."""
+    BoxDoubleAnalysis.runs = 0
+
+    @register_pass(
+        "tests.pm.cached_get_analysis", "Reads analysis twice under a manager."
+    )
+    class TwiceReadPass(CompilerPass[Box, Box]):
+        observed: list[int] = []
+
+        def get_noop_output(self, ir: Box) -> Box:
+            return ir
+
+        def run_pass(self, ir: Box) -> Box:
+            TwiceReadPass.observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
+            TwiceReadPass.observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
+            return ir
+
+    manager = PassManager[Box]()
+    manager.add_pass(TwiceReadPass())
+    manager.run(Box(5))
+
+    assert TwiceReadPass.observed == [10, 10]
+    assert BoxDoubleAnalysis.runs == 1
+
+
+def test_get_analysis_reuses_cache_across_preserving_passes() -> None:
+    """Test that get_analysis reuses the cache across passes that preserve it."""
+    BoxDoubleAnalysis.runs = 0
+
+    @register_pass(
+        "tests.pm.compute_analysis", "Triggers the analysis in its first run."
+    )
+    class ComputeAnalysisPass(CompilerPass[Box, Box]):
+        def get_noop_output(self, ir: Box) -> Box:
+            return ir
+
+        def run_pass(self, ir: Box) -> Box:
+            self.get_analysis(BoxDoubleAnalysis, ir)
+            return ir  # identity — preserves all by default (no change)
+
+    @register_pass("tests.pm.read_analysis_again", "Reads the analysis a second time.")
+    class ReadAgainPass(CompilerPass[Box, Box]):
+        observed: list[int] = []
+
+        def get_noop_output(self, ir: Box) -> Box:
+            return ir
+
+        def run_pass(self, ir: Box) -> Box:
+            ReadAgainPass.observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
+            return ir
+
+    manager = PassManager[Box]()
+    manager.add_pass(ComputeAnalysisPass())
+    manager.add_pass(ReadAgainPass())
+    manager.run(Box(5))
+
+    assert ReadAgainPass.observed == [10]
+    # One run across both passes, because the first pass didn't change the IR.
+    assert BoxDoubleAnalysis.runs == 1
+
+
+def test_get_analysis_recomputes_after_non_preserving_pass() -> None:
+    """Test that get_analysis recomputes when an earlier pass did not preserve it."""
+    BoxDoubleAnalysis.runs = 0
+
+    @register_pass(
+        "tests.pm.seed_analysis", "Computes the analysis before the mutating pass."
+    )
+    class SeedAnalysisPass(CompilerPass[Box, Box]):
+        def get_noop_output(self, ir: Box) -> Box:
+            return ir
+
+        def run_pass(self, ir: Box) -> Box:
+            self.get_analysis(BoxDoubleAnalysis, ir)
+            return ir
+
+    @register_pass(
+        "tests.pm.mutate_without_preserve",
+        "Changes the IR and preserves no analyses (default).",
+    )
+    class MutateNoPreservePass(CompilerPass[Box, Box]):
+        def get_noop_output(self, ir: Box) -> Box:
+            return ir
+
+        def run_pass(self, ir: Box) -> Box:
+            return Box(ir.value + 1)
+
+    @register_pass(
+        "tests.pm.reread_after_mutation", "Re-reads the analysis after mutation."
+    )
+    class RereadPass(CompilerPass[Box, Box]):
+        observed: list[int] = []
+
+        def get_noop_output(self, ir: Box) -> Box:
+            return ir
+
+        def run_pass(self, ir: Box) -> Box:
+            RereadPass.observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
+            return ir
+
+    manager = PassManager[Box]()
+    manager.add_pass(SeedAnalysisPass())
+    manager.add_pass(MutateNoPreservePass())
+    manager.add_pass(RereadPass())
+    manager.run(Box(5))
+
+    # First run computed on Box(5) → 10. Mutation invalidated it.
+    # Second run computed on Box(6) → 12.
+    assert RereadPass.observed == [12]
+    assert BoxDoubleAnalysis.runs == 2
+
+
+def test_bind_and_get_analysis_manager_are_public_accessors() -> None:
+    """Test that bind_analysis_manager / get_analysis_manager expose the binding."""
+    BoxDoubleAnalysis.runs = 0
+
+    @register_pass(
+        "tests.pm.public_bind_accessors", "Identity pass for accessor testing."
+    )
+    class AccessorPass(CompilerPass[Box, Box]):
+        def get_noop_output(self, ir: Box) -> Box:
+            return ir
+
+        def run_pass(self, ir: Box) -> Box:
+            return ir
+
+    compiler_pass = AccessorPass()
+    assert compiler_pass.get_analysis_manager() is None
+
+    manager = PassManager[Box]()
+    compiler_pass.bind_analysis_manager(manager.analysis_manager)
+    assert compiler_pass.get_analysis_manager() is manager.analysis_manager
+
+    # The pass now sees the manager's cache on get_analysis calls for the
+    # same IR instance (cache is keyed on object identity).
+    ir = Box(3)
+    compiler_pass.get_analysis(BoxDoubleAnalysis, ir)
+    compiler_pass.get_analysis(BoxDoubleAnalysis, ir)
+    assert BoxDoubleAnalysis.runs == 1
+
+    compiler_pass.bind_analysis_manager(None)
+    assert compiler_pass.get_analysis_manager() is None
+
+
+def test_get_analysis_works_inside_fixpoint_group() -> None:
+    """Test that get_analysis is available to passes within a fixpoint group."""
+    BoxDoubleAnalysis.runs = 0
+
+    @register_pass(
+        "tests.pm.fixpoint_reader",
+        "Reads analysis and decrements until fixed-point.",
+    )
+    class FixpointReaderPass(CompilerPass[Box, Box]):
+        observed: list[int] = []
+
+        def get_noop_output(self, ir: Box) -> Box:
+            return ir
+
+        def run_pass(self, ir: Box) -> Box:
+            FixpointReaderPass.observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
+            return Box(max(ir.value - 1, 0))
+
+    manager = PassManager[Box]()
+    fixpoint_group = FixpointPassGroup[Box](
+        name=Identifier("read-then-decrement"), max_iterations=10
+    )
+    fixpoint_group.add_pass(FixpointReaderPass())
+    manager.add_fixpoint_group(fixpoint_group)
+    manager.run(Box(2))
+
+    # Iteration 1: Box(2) → observes 4 → returns Box(1)
+    # Iteration 2: Box(1) → observes 2 → returns Box(0)
+    # Iteration 3: Box(0) → observes 0 → returns Box(0); converged.
+    assert FixpointReaderPass.observed == [4, 2, 0]
+
+
+def test_get_analysis_restores_pass_state_between_runs() -> None:
+    """Test that a manager-bound pass has no dangling analysis manager after the run."""
+    BoxDoubleAnalysis.runs = 0
+
+    @register_pass(
+        "tests.pm.state_restoration", "Identity pass that reads an analysis."
+    )
+    class StateCheckPass(CompilerPass[Box, Box]):
+        def get_noop_output(self, ir: Box) -> Box:
+            return ir
+
+        def run_pass(self, ir: Box) -> Box:
+            self.get_analysis(BoxDoubleAnalysis, ir)
+            return ir
+
+    compiler_pass = StateCheckPass()
+    manager = PassManager[Box]()
+    manager.add_pass(compiler_pass)
+    manager.run(Box(5))
+
+    # After the run the pass should no longer be bound to the manager.
+    assert compiler_pass.get_analysis_manager() is None
+
+    # Using the pass standalone afterward must fall back to uncached execution.
+    compiler_pass.execute(Box(7))
+    compiler_pass.execute(Box(7))
+    # Standalone re-runs (no cache) → total runs == 1 (managed) + 2 (standalone) = 3.
+    assert BoxDoubleAnalysis.runs == 3
+
+
 def test_pass_manager_records_support_partial_equal_traits() -> None:
     """Test pass-manager records satisfy `PartialEqual` protocol."""
 

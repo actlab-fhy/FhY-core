@@ -25,6 +25,11 @@ from .manager import (
     PassManagerResult,
     PassRunRecord,
 )
+from .validation import (
+    ValidationFailedError,
+    ValidationManager,
+    ValidationReport,
+)
 
 __all__ = [
     "Analysis",
@@ -46,6 +51,9 @@ __all__ = [
     "PassValidationError",
     "PreservedAnalyses",
     "TraversalOrder",
+    "ValidationFailedError",
+    "ValidationManager",
+    "ValidationReport",
     "VisitablePass",
     "register_pass",
 ]
