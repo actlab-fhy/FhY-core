@@ -43,15 +43,35 @@ def _identifier_sort_key(identifier: Identifier) -> tuple[int, str]:
 
 
 @dataclass(frozen=True)
-class SymbolTableFrame(WrappedFamilySerializable, FrozenMixin, ABC):
+class SymbolTableFrame(
+    WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC
+):
     """Base symbol table frame."""
 
     name: Identifier
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return isinstance(other, SymbolTableFrame) and self.name == other.name
+
+
+class _ImportSymbolTableFrameData(TypedDict):
+    name: SerializedDict
+
+
+def _is_valid_import_symbol_table_frame_data(
+    data: SerializedDict,
+) -> TypeGuard[_ImportSymbolTableFrameData]:
+    return "name" in data and is_serialized_dict(data["name"])
 
 
 @register_serializable(type_id="import_symbol_table_frame")
 class ImportSymbolTableFrame(SymbolTableFrame):
     """Imported symbol frame."""
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return isinstance(
+            other, ImportSymbolTableFrame
+        ) and super().is_structurally_equivalent(other)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {"name": self.name.serialize_to_dict()}
@@ -67,6 +87,25 @@ class ImportSymbolTableFrame(SymbolTableFrame):
         return cls(Identifier.deserialize_from_dict(data["name"]))
 
 
+class _VariableSymbolTableFrameData(TypedDict):
+    name: SerializedDict
+    type: SerializedDict
+    type_qualifier: str
+
+
+def _is_valid_variable_symbol_table_frame_data(
+    data: SerializedDict,
+) -> TypeGuard[_VariableSymbolTableFrameData]:
+    return (
+        "name" in data
+        and is_serialized_dict(data["name"])
+        and "type" in data
+        and is_serialized_dict(data["type"])
+        and "type_qualifier" in data
+        and isinstance(data["type_qualifier"], str)
+    )
+
+
 @dataclass(frozen=True)
 @register_serializable(type_id="variable_symbol_table_frame")
 class VariableSymbolTableFrame(SymbolTableFrame):
@@ -74,6 +113,14 @@ class VariableSymbolTableFrame(SymbolTableFrame):
 
     type: Type
     type_qualifier: TypeQualifier
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return (
+            isinstance(other, VariableSymbolTableFrame)
+            and super().is_structurally_equivalent(other)
+            and self.type.is_structurally_equivalent(other.type)
+            and self.type_qualifier == other.type_qualifier
+        )
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -108,99 +155,6 @@ class FunctionKeyword(StrEnum):
     PROCEDURE = "proc"
     OPERATION = "op"
     NATIVE = "native"
-
-
-@dataclass(frozen=True)
-@register_serializable(type_id="function_symbol_table_frame")
-class FunctionSymbolTableFrame(SymbolTableFrame):
-    """Functions symbol frame."""
-
-    keyword: FunctionKeyword
-    signature: list[tuple[TypeQualifier, Type]] = field(default_factory=list)
-
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {
-            "name": self.name.serialize_to_dict(),
-            "keyword": self.keyword.value,
-            "signature": [
-                {
-                    "type_qualifier": type_qualifier.value,
-                    "type": ty.serialize_to_dict(),
-                }
-                for type_qualifier, ty in self.signature
-            ],
-        }
-
-    @classmethod
-    def deserialize_data_from_dict(
-        cls, data: SerializedDict
-    ) -> "FunctionSymbolTableFrame":
-        if not _is_valid_function_symbol_table_frame_data(data):
-            raise DeserializationDictStructureError(
-                cls, _FunctionSymbolTableFrameData.__annotations__, data
-            )
-
-        try:
-            signature = [
-                (
-                    TypeQualifier(signature_entry["type_qualifier"]),
-                    Type.deserialize_from_dict(signature_entry["type"]),
-                )
-                for signature_entry in data["signature"]
-            ]
-            return cls(
-                Identifier.deserialize_from_dict(data["name"]),
-                FunctionKeyword(data["keyword"]),
-                signature=signature,
-            )
-        except ValueError as exc:
-            raise DeserializationValueError(
-                f"Invalid function frame values: {exc}"
-            ) from exc
-
-
-@register_error
-class SymbolTableError(Exception):
-    """Symbol table error."""
-
-
-_T = TypeVar("_T")
-_SUCC_T = TypeVar("_SUCC_T")
-_FAIL_T = TypeVar("_FAIL_T")
-
-
-@dataclass(frozen=True)
-class _SymbolTableSearchResult(Generic[_T]):
-    value: _T
-
-
-class _ImportSymbolTableFrameData(TypedDict):
-    name: SerializedDict
-
-
-def _is_valid_import_symbol_table_frame_data(
-    data: SerializedDict,
-) -> TypeGuard[_ImportSymbolTableFrameData]:
-    return "name" in data and is_serialized_dict(data["name"])
-
-
-class _VariableSymbolTableFrameData(TypedDict):
-    name: SerializedDict
-    type: SerializedDict
-    type_qualifier: str
-
-
-def _is_valid_variable_symbol_table_frame_data(
-    data: SerializedDict,
-) -> TypeGuard[_VariableSymbolTableFrameData]:
-    return (
-        "name" in data
-        and is_serialized_dict(data["name"])
-        and "type" in data
-        and is_serialized_dict(data["type"])
-        and "type_qualifier" in data
-        and isinstance(data["type_qualifier"], str)
-    )
 
 
 class _FunctionSignatureEntryData(TypedDict):
@@ -244,6 +198,85 @@ def _is_valid_function_symbol_table_frame_data(
     )
 
 
+@dataclass(frozen=True)
+@register_serializable(type_id="function_symbol_table_frame")
+class FunctionSymbolTableFrame(SymbolTableFrame):
+    """Functions symbol frame."""
+
+    keyword: FunctionKeyword
+    signature: tuple[tuple[TypeQualifier, Type], ...] = field(default_factory=tuple)
+
+    def is_structurally_equivalent(self, other: object) -> bool:
+        return (
+            isinstance(other, FunctionSymbolTableFrame)
+            and super().is_structurally_equivalent(other)
+            and self.keyword == other.keyword
+            and len(self.signature) == len(other.signature)
+            and all(
+                type_qualifier_1 == type_qualifier_2
+                and type_1.is_structurally_equivalent(type_2)
+                for (type_qualifier_1, type_1), (type_qualifier_2, type_2) in zip(
+                    self.signature, other.signature, strict=True
+                )
+            )
+        )
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {
+            "name": self.name.serialize_to_dict(),
+            "keyword": self.keyword.value,
+            "signature": [
+                {
+                    "type_qualifier": type_qualifier.value,
+                    "type": ty.serialize_to_dict(),
+                }
+                for type_qualifier, ty in self.signature
+            ],
+        }
+
+    @classmethod
+    def deserialize_data_from_dict(
+        cls, data: SerializedDict
+    ) -> "FunctionSymbolTableFrame":
+        if not _is_valid_function_symbol_table_frame_data(data):
+            raise DeserializationDictStructureError(
+                cls, _FunctionSymbolTableFrameData.__annotations__, data
+            )
+
+        try:
+            signature = tuple(
+                (
+                    TypeQualifier(signature_entry["type_qualifier"]),
+                    Type.deserialize_from_dict(signature_entry["type"]),
+                )
+                for signature_entry in data["signature"]
+            )
+            return cls(
+                Identifier.deserialize_from_dict(data["name"]),
+                FunctionKeyword(data["keyword"]),
+                signature=signature,
+            )
+        except ValueError as exc:
+            raise DeserializationValueError(
+                f"Invalid function frame values: {exc}"
+            ) from exc
+
+
+@register_error
+class SymbolTableError(Exception):
+    """Symbol table error."""
+
+
+_T = TypeVar("_T")
+_SUCC_T = TypeVar("_SUCC_T")
+_FAIL_T = TypeVar("_FAIL_T")
+
+
+@dataclass(frozen=True)
+class _SymbolTableSearchResult(Generic[_T]):
+    value: _T
+
+
 class _SymbolEntryData(TypedDict):
     symbol_name: SerializedDict
     frame: SerializedDict
@@ -256,39 +289,6 @@ def _is_valid_symbol_entry_data(data: SerializedDict) -> TypeGuard[_SymbolEntryD
         and "frame" in data
         and is_serialized_dict(data["frame"])
     )
-
-
-def _is_symbol_table_frame_structurally_equivalent(
-    frame: SymbolTableFrame, other: SymbolTableFrame
-) -> bool:
-    if isinstance(frame, ImportSymbolTableFrame) and isinstance(
-        other, ImportSymbolTableFrame
-    ):
-        return frame.name == other.name
-    elif isinstance(frame, VariableSymbolTableFrame) and isinstance(
-        other, VariableSymbolTableFrame
-    ):
-        return (
-            frame.name == other.name
-            and frame.type_qualifier == other.type_qualifier
-            and frame.type.is_structurally_equivalent(other.type)
-        )
-    elif isinstance(frame, FunctionSymbolTableFrame) and isinstance(
-        other, FunctionSymbolTableFrame
-    ):
-        if frame.name != other.name or frame.keyword != other.keyword:
-            return False
-        if len(frame.signature) != len(other.signature):
-            return False
-        return all(
-            type_qualifier_1 == type_qualifier_2
-            and type_1.is_structurally_equivalent(type_2)
-            for (type_qualifier_1, type_1), (type_qualifier_2, type_2) in zip(
-                frame.signature, other.signature, strict=True
-            )
-        )
-    else:
-        return False
 
 
 class _NamespaceEntryData(TypedDict):
@@ -500,8 +500,8 @@ class SymbolTable(
             if set(namespace_symbols.keys()) != set(other_namespace_symbols.keys()):
                 return False
             for symbol_name, frame in namespace_symbols.items():
-                if not _is_symbol_table_frame_structurally_equivalent(
-                    frame, other_namespace_symbols[symbol_name]
+                if not frame.is_structurally_equivalent(
+                    other_namespace_symbols[symbol_name]
                 ):
                     return False
         return True
@@ -563,6 +563,60 @@ class SymbolTable(
             )
 
         return self._table[namespace_name]
+
+    def remove_namespace(self, namespace_name: Identifier) -> None:
+        """Remove a namespace from the symbol table.
+
+        Args:
+            namespace_name: Name of the namespace to remove.
+
+        Raises:
+            SymbolTableError: If the namespace is not defined in the symbol table
+                or if any other namespace declares it as a parent.
+
+        """
+        if not self.is_namespace_defined(namespace_name):
+            raise SymbolTableError(
+                f"Namespace {namespace_name} not found in the symbol table."
+            )
+        child_namespace_names = [
+            child_namespace_name
+            for child_namespace_name, parent_namespace_name in (
+                self._parent_namespace.items()
+            )
+            if parent_namespace_name == namespace_name
+        ]
+        if child_namespace_names:
+            raise SymbolTableError(
+                f"Namespace {namespace_name} cannot be removed because it is the "
+                f"parent of: {child_namespace_names}."
+            )
+        del self._table[namespace_name]
+        self._parent_namespace.pop(namespace_name, None)
+
+    def remove_symbol(
+        self, namespace_name: Identifier, symbol_name: Identifier
+    ) -> None:
+        """Remove a symbol from a namespace in the symbol table.
+
+        Args:
+            namespace_name: Name of the namespace containing the symbol.
+            symbol_name: Name of the symbol to remove.
+
+        Raises:
+            SymbolTableError: If the namespace is not defined or the symbol is
+                not directly defined in that namespace.
+
+        """
+        if not self.is_namespace_defined(namespace_name):
+            raise SymbolTableError(
+                f"Namespace {namespace_name} not found in the symbol table."
+            )
+        if symbol_name not in self._table[namespace_name]:
+            raise SymbolTableError(
+                f"Symbol {symbol_name} not defined in namespace {namespace_name}."
+            )
+        del self._table[namespace_name][symbol_name]
 
     def update_namespaces(self, other_symbol_table: "SymbolTable") -> None:
         """Update the symbol table with new namespaces from another symbol table.

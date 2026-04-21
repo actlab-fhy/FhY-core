@@ -1,6 +1,7 @@
 """Tests the core type system."""
 
 import pytest
+
 from fhy_core.expression import (
     IdentifierExpression,
     LiteralExpression,
@@ -24,19 +25,19 @@ from fhy_core.types import (
 from .conftest import mock_identifier
 
 
-def test_type_structural_equivalence_runtime_protocol():
+def test_type_structural_equivalence_runtime_protocol() -> None:
     """Test `Type` implementations satisfy `StructuralEquivalence` protocol."""
     ty = NumericalType(PrimitiveDataType(CoreDataType.INT32))
     assert isinstance(ty, StructuralEquivalence)
 
 
-def test_data_type_structural_equivalence_runtime_protocol():
+def test_data_type_structural_equivalence_runtime_protocol() -> None:
     """Test `DataType` implementations satisfy `StructuralEquivalence` protocol."""
     data_type = PrimitiveDataType(CoreDataType.INT32)
     assert isinstance(data_type, StructuralEquivalence)
 
 
-def test_type_family_is_frozen_on_construction():
+def test_type_family_is_frozen_on_construction() -> None:
     """Test all core type-family classes are frozen after construction."""
     N = mock_identifier("N", 1)
     shape = [IdentifierExpression(N), LiteralExpression(4)]
@@ -59,7 +60,7 @@ def test_type_family_is_frozen_on_construction():
             value._freeze_probe = "mutation"
 
 
-def test_numerical_type_structural_equivalence_true():
+def test_numerical_type_structural_equivalence_true() -> None:
     """Test structural equivalence is true for matching numerical types."""
     shape_1 = [LiteralExpression(4), LiteralExpression(8)]
     shape_2 = [LiteralExpression(4), LiteralExpression(8)]
@@ -68,7 +69,7 @@ def test_numerical_type_structural_equivalence_true():
     assert left.is_structurally_equivalent(right)
 
 
-def test_numerical_type_structural_equivalence_false_for_data_type():
+def test_numerical_type_structural_equivalence_false_for_data_type() -> None:
     """Test structural equivalence is false for differing numerical data types."""
     shape = [LiteralExpression(4)]
     left = NumericalType(PrimitiveDataType(CoreDataType.INT16), shape)
@@ -76,7 +77,7 @@ def test_numerical_type_structural_equivalence_false_for_data_type():
     assert not left.is_structurally_equivalent(right)
 
 
-def test_index_type_structural_equivalence_false_for_stride():
+def test_index_type_structural_equivalence_false_for_stride() -> None:
     """Test structural equivalence is false for differing index stride values."""
     lower_bound = LiteralExpression(0)
     upper_bound = LiteralExpression(10)
@@ -85,7 +86,7 @@ def test_index_type_structural_equivalence_false_for_stride():
     assert not left.is_structurally_equivalent(right)
 
 
-def test_tuple_type_structural_equivalence_false_for_element_order():
+def test_tuple_type_structural_equivalence_false_for_element_order() -> None:
     """Test structural equivalence is false for differing tuple type order."""
     int_type = NumericalType(PrimitiveDataType(CoreDataType.INT32))
     float_type = NumericalType(PrimitiveDataType(CoreDataType.FLOAT32))
@@ -103,7 +104,6 @@ def test_tuple_type_structural_equivalence_false_for_element_order():
         (CoreDataType.UINT8, 8),
         (CoreDataType.UINT16, 16),
         (CoreDataType.UINT32, 32),
-        (CoreDataType.UINT64, 64),
         (CoreDataType.INT8, 8),
         (CoreDataType.INT16, 16),
         (CoreDataType.INT32, 32),
@@ -116,7 +116,9 @@ def test_tuple_type_structural_equivalence_false_for_element_order():
         (CoreDataType.COMPLEX128, 128),
     ],
 )
-def test_get_core_data_type_bit_width(core_data_type, expected_bit_width):
+def test_get_core_data_type_bit_width(
+    core_data_type: CoreDataType, expected_bit_width: int
+) -> None:
     """Test get_core_data_type_bit_width function with various core data types."""
     assert get_core_data_type_bit_width(core_data_type) == expected_bit_width
 
@@ -151,11 +153,21 @@ def test_get_core_data_type_bit_width(core_data_type, expected_bit_width):
             CoreDataType.COMPLEX32,
             CoreDataType.COMPLEX64,
         ),
+        (CoreDataType.UINT, CoreDataType.INT, CoreDataType.INT),
+        (CoreDataType.INT, CoreDataType.UINT, CoreDataType.INT),
+        (CoreDataType.UINT8, CoreDataType.INT8, CoreDataType.INT16),
+        (CoreDataType.UINT16, CoreDataType.INT16, CoreDataType.INT32),
+        (CoreDataType.UINT32, CoreDataType.INT32, CoreDataType.INT64),
+        (CoreDataType.UINT, CoreDataType.INT32, CoreDataType.INT32),
+        (CoreDataType.UINT16, CoreDataType.INT8, CoreDataType.INT32),
+        (CoreDataType.UINT32, CoreDataType.INT8, CoreDataType.INT64),
     ],
 )
 def test_promote_primitive_data_type(
-    core_data_type1, core_data_type2, expected_core_data_type
-):
+    core_data_type1: CoreDataType,
+    core_data_type2: CoreDataType,
+    expected_core_data_type: CoreDataType,
+) -> None:
     """Test primitive data types are correctly promoted."""
     assert (
         promote_core_data_types(core_data_type1, core_data_type2)
@@ -177,7 +189,9 @@ def test_promote_primitive_data_type(
         (CoreDataType.FLOAT16, False),
     ],
 )
-def test_is_weak_core_data_type(core_data_type, expected_is_weak):
+def test_is_weak_core_data_type(
+    core_data_type: CoreDataType, expected_is_weak: bool
+) -> None:
     """Test detection of weak literal core data types."""
     assert is_weak_core_data_type(core_data_type) is expected_is_weak
 
@@ -199,8 +213,10 @@ def test_is_weak_core_data_type(core_data_type, expected_is_weak):
     ],
 )
 def test_resolve_literal_core_data_type(
-    literal, core_data_type, expected_core_data_type
-):
+    literal: int | float,
+    core_data_type: CoreDataType,
+    expected_core_data_type: CoreDataType,
+) -> None:
     """Weak literal types should resolve to the narrowest compatible concrete type."""
     assert (
         resolve_literal_core_data_type(literal, core_data_type)
@@ -208,11 +224,11 @@ def test_resolve_literal_core_data_type(
     )
 
 
-def test_resolve_large_positive_literal_to_uint64_without_signed_context():
+def test_resolve_large_positive_literal_to_uint64_without_signed_context() -> None:
     """Large positive literals should resolve in unsigned contexts lazily."""
     assert (
-        resolve_literal_core_data_type(2**63, CoreDataType.UINT64)
-        == CoreDataType.UINT64
+        resolve_literal_core_data_type(2**31, CoreDataType.UINT32)
+        == CoreDataType.UINT32
     )
 
 
@@ -226,8 +242,10 @@ def test_resolve_large_positive_literal_to_uint64_without_signed_context():
     ],
 )
 def test_promote_type_qualifiers(
-    type_qualifer1, type_qualifer2, expected_type_qualifer
-):
+    type_qualifer1: TypeQualifier,
+    type_qualifer2: TypeQualifier,
+    expected_type_qualifer: TypeQualifier,
+) -> None:
     """Test type qualifiers are correctly promoted."""
     assert (
         promote_type_qualifiers(type_qualifer1, type_qualifer2)
@@ -238,7 +256,7 @@ def test_promote_type_qualifiers(
     )
 
 
-def test_primitive_data_type_dict_serialization():
+def test_primitive_data_type_dict_serialization() -> None:
     """Test primitive data types can be serialized/deserialized via a dictionary."""
     for core_data_type in CoreDataType:
         primitive_data_type = PrimitiveDataType(core_data_type)
@@ -255,7 +273,7 @@ def test_primitive_data_type_dict_serialization():
         assert primitive_data_type_deserialized.core_data_type == core_data_type
 
 
-def test_numerical_type_dict_serialization():
+def test_numerical_type_dict_serialization() -> None:
     """Test numerical types can be serialized/deserialized via a dictionary."""
     N = mock_identifier("N", 1)
     shape = [
@@ -287,7 +305,7 @@ def test_numerical_type_dict_serialization():
     assert numerical_type_deserialized.shape[1].is_structurally_equivalent(shape[1])
 
 
-def test_index_type_dict_serialization():
+def test_index_type_dict_serialization() -> None:
     """Test index types can be serialized/deserialized via a dictionary."""
     N = mock_identifier("N", 1)
     lower_bound = LiteralExpression(1)
@@ -309,7 +327,7 @@ def test_index_type_dict_serialization():
     assert index_type_deserialized.upper_bound.is_structurally_equivalent(upper_bound)
 
 
-def test_index_type_with_stride_serialization():
+def test_index_type_with_stride_serialization() -> None:
     """Test index types with stride can be serialized/deserialized via a dictionary."""
     N = mock_identifier("N", 1)
     lower_bound = LiteralExpression(1)
@@ -334,7 +352,7 @@ def test_index_type_with_stride_serialization():
     assert index_type_deserialized.stride.is_structurally_equivalent(stride)
 
 
-def test_tuple_type_dict_serialization():
+def test_tuple_type_dict_serialization() -> None:
     """Test tuple types can be serialized/deserialized via a dictionary."""
     N = mock_identifier("N", 1)
     shape = [

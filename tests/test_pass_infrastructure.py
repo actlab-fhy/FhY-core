@@ -1,6 +1,7 @@
 """Tests for generic compiler pass infrastructure."""
 
 import pytest
+
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     CompilerPass,
@@ -158,7 +159,7 @@ def test_pass_result_preserved_analyses_cannot_be_mutated_in_place() -> None:
 
 def test_pass_core_records_support_partial_equal_traits() -> None:
     """Test pass-core records satisfy `PartialEqual` protocol."""
-    info = PassInfo("tests.info", "desc", CompilerPass)
+    info = PassInfo("tests.info", "desc", CompilerPass)  # type: ignore[type-abstract]  # test: abstract class used as placeholder
     result = PassResult(
         output=0,
         changed=False,

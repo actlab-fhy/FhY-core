@@ -1,6 +1,7 @@
 """Tests the testing patches."""
 
 import pytest
+
 from fhy_core.expression.core import LiteralExpression
 from fhy_core.identifier import Identifier
 from fhy_core.testing_patches import (
@@ -17,6 +18,7 @@ class _TestClass1(StructuralEquivalenceMixin):
         self.num = num
 
     def is_structurally_equivalent(self, other: object) -> bool:
+        assert isinstance(other, _TestClass1)
         return self.num == other.num
 
 
@@ -27,6 +29,7 @@ class _TestClass2(StructuralEquivalenceMixin):
         self.test = test
 
     def is_structurally_equivalent(self, other: object) -> bool:
+        assert isinstance(other, _TestClass2)
         return self.test.is_structurally_equivalent(other.test)
 
 
@@ -34,7 +37,7 @@ _TestClass1Alias = _TestClass1
 
 
 @deterministic_identifiers_by_name_hint
-def test_deterministic_identifiers_by_name_hint():
+def test_deterministic_identifiers_by_name_hint() -> None:
     """Test deterministic identifiers support hashed containers in tests."""
     identifier_a = Identifier("a")
     identifier_a_2 = Identifier("a")
@@ -51,7 +54,7 @@ def test_deterministic_identifiers_by_name_hint():
     assert identifier_dict[identifier_a_2] == "left"
 
 
-def test_deterministic_identifiers_by_name_hint_with_block():
+def test_deterministic_identifiers_by_name_hint_with_block() -> None:
     """Test deterministic identifiers patch supports `with` usage."""
     with deterministic_identifiers_by_name_hint:
         identifier_a = Identifier("a")
@@ -61,7 +64,7 @@ def test_deterministic_identifiers_by_name_hint_with_block():
         assert hash(identifier_a) == hash(identifier_a_2)
 
 
-def test_fail_fast_structural_equivalence():
+def test_fail_fast_structural_equivalence() -> None:
     """Test the fail fast structural equivalence patch works."""
 
     test_class1_a = _TestClass1(1)
@@ -109,3 +112,49 @@ def test_fail_fast_structural_equivalence_restores_inherited_methods() -> None:
     restored_method = LiteralExpression.is_structurally_equivalent
     assert restored_method is original_method
     assert getattr(restored_method, "__wrapped__", None) is None
+
+
+def test_fail_fast_structural_equivalence_restores_methods_on_body_exception() -> None:
+    """Test that patched methods are restored when the body raises."""
+    original_method = _TestClass1.is_structurally_equivalent
+
+    with pytest.raises(RuntimeError):
+        with fail_fast_structural_equivalence():
+            raise RuntimeError("user-raised")
+
+    assert _TestClass1.is_structurally_equivalent is original_method
+
+
+def test_deterministic_identifiers_by_name_hint_restores_on_body_exception() -> None:
+    """Test that Identifier.__init__ is restored when the body raises."""
+    original_init = Identifier.__init__
+
+    with pytest.raises(RuntimeError):
+        with deterministic_identifiers_by_name_hint:
+            raise RuntimeError("user-raised")
+
+    assert Identifier.__init__ is original_init
+
+
+def test_deterministic_identifiers_by_name_hint_supports_nested_usage() -> None:
+    """Test nested entries reuse the patch and only restore at the outermost exit."""
+    original_init = Identifier.__init__
+
+    with deterministic_identifiers_by_name_hint:
+        outer_patched_init = Identifier.__init__
+        assert outer_patched_init is not original_init
+
+        with deterministic_identifiers_by_name_hint:
+            inner_a = Identifier("shared")
+            inner_b = Identifier("shared")
+            assert inner_a == inner_b
+            assert Identifier.__init__ is outer_patched_init
+
+        # Inner exit must NOT restore the original while the outer scope is alive.
+        assert Identifier.__init__ is outer_patched_init
+
+        outer_a = Identifier("shared")
+        outer_b = Identifier("shared")
+        assert outer_a == outer_b
+
+    assert Identifier.__init__ is original_init

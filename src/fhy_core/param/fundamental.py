@@ -29,6 +29,7 @@ from fhy_core.utils import Self
 from .core import (
     IntParam,
     ParamData,
+    ParamError,
     finalize_param_construction_from_data,
     is_valid_param_data,
 )
@@ -145,19 +146,19 @@ class NatParam(IntParam):
     ) -> "NatParam":
         if self._is_zero_included:
             if lower_bound < 0:
-                raise ValueError("Lower bound must be non-negative.")
+                raise ParamError("Lower bound must be non-negative.")
             if not is_inclusive and lower_bound < 1:
-                raise ValueError(
+                raise ParamError(
                     "Lower bound must be at least 1 if zero is included and "
                     "bound is exclusive."
                 )
         elif is_inclusive:
             if lower_bound < 1:
-                raise ValueError(
+                raise ParamError(
                     "Lower bound must be at least 1 when zero is not included."
                 )
         elif lower_bound < 0:
-            raise ValueError(
+            raise ParamError(
                 "Lower bound must be non-negative when zero is not included "
                 "and bound is exclusive."
             )
@@ -172,21 +173,21 @@ class NatParam(IntParam):
         if self._is_zero_included:
             if is_inclusive:
                 if upper_bound < 0:
-                    raise ValueError(
+                    raise ParamError(
                         "Upper bound must be non-negative when zero is included."
                     )
             elif upper_bound < 1:
-                raise ValueError(
+                raise ParamError(
                     "Upper bound must be at least 1 if zero is included and "
                     "bound is exclusive."
                 )
         elif is_inclusive:
             if upper_bound < 1:
-                raise ValueError(
+                raise ParamError(
                     "Upper bound must be at least 1 when zero is not included."
                 )
         elif upper_bound < 2:  # noqa: PLR2004
-            raise ValueError(
+            raise ParamError(
                 "Upper bound must be at least 2 when zero is not included "
                 "and bound is exclusive."
             )

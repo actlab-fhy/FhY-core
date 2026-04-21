@@ -24,6 +24,7 @@ from fhy_core.utils import Self
 from .core import (
     IntParam,
     ParamData,
+    ParamError,
     finalize_param_construction_from_data,
     is_valid_param_data,
 )
@@ -138,7 +139,7 @@ class BoundIntParam(IntParam):
                 "BoundIntParam only supports EquationConstraint constraints."
             )
         if not _is_valid_bound_expression(constraint.convert_to_expression()):
-            raise ValueError(
+            raise ParamError(
                 "BoundIntParam only supports bound expressions of the form "
                 '"x >= k", "x > k", "x <= k", or "x < k" where k is an integer.'
             )
@@ -222,7 +223,7 @@ class BoundIntParam(IntParam):
                 max_int = eff if max_int is None else min(max_int, eff)
 
         if min_int is not None and max_int is not None and min_int > max_int:
-            raise ValueError(
+            raise ParamError(
                 "Empty integer interval represented by constraints for "
                 f"{self.variable}."
             )

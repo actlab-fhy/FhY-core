@@ -4,12 +4,13 @@ __all__ = ["Lattice"]
 
 from typing import Generic, TypeVar
 
-from .poset import PartiallyOrderedSet
+from fhy_core.trait.verifiable import VerifiableMixin, VerificationError
+from fhy_core.utils.poset import PartiallyOrderedSet
 
 T = TypeVar("T")
 
 
-class Lattice(Generic[T]):
+class Lattice(Generic[T], VerifiableMixin):
     """Lattice (order theory)."""
 
     _poset: PartiallyOrderedSet[T]
@@ -54,6 +55,29 @@ class Lattice(Generic[T]):
                 if not self.has_meet(x, y) or not self.has_join(x, y):
                     return False
         return True
+
+    def verify(self) -> None:
+        """Verify that this structure is a valid lattice.
+
+        A valid lattice is a poset in which every pair of elements has both a
+        unique greatest lower bound (meet) and a unique least upper bound
+        (join).
+
+        Raises:
+            VerificationError: If some pair of elements lacks a unique meet or
+                a unique join.
+
+        """
+        for x in self._poset:
+            for y in self._poset:
+                if self.get_meet(x, y) is None:
+                    raise VerificationError(
+                        f"Lattice has no unique meet for elements {x!r} and {y!r}."
+                    )
+                if self.get_join(x, y) is None:
+                    raise VerificationError(
+                        f"Lattice has no unique join for elements {x!r} and {y!r}."
+                    )
 
     def has_meet(self, x: T, y: T) -> bool:
         """Check if two elements have a greatest lower bound.
@@ -110,15 +134,23 @@ class Lattice(Generic[T]):
             y: The second element.
 
         Returns:
-            The greatest lower bound of x and y, or None if it does not exist.
+            The greatest lower bound of x and y, or None if none exists or if
+            multiple incomparable maximal lower bounds exist.
 
         """
-        meet = None
-        for z in self._poset:
-            if self._poset.is_less_than(z, x) and self._poset.is_less_than(z, y):
-                if meet is None or self._poset.is_less_than(meet, z):
-                    meet = z
-        return meet
+        lower_bounds = [
+            z
+            for z in self._poset
+            if self._poset.is_less_than(z, x) and self._poset.is_less_than(z, y)
+        ]
+        maximal = [
+            z
+            for z in lower_bounds
+            if not any(z != w and self._poset.is_less_than(z, w) for w in lower_bounds)
+        ]
+        if len(maximal) == 1:
+            return maximal[0]
+        return None
 
     def get_join(self, x: T, y: T) -> T | None:
         """Get the least upper bound of two elements.
@@ -128,12 +160,22 @@ class Lattice(Generic[T]):
             y: The second element.
 
         Returns:
-            The least upper bound of x and y, or None if it does not exist.
+            The least upper bound of x and y, or None if none exists or if
+            multiple incomparable minimal upper bounds exist.
 
         """
-        join = None
-        for z in self._poset:
-            if self._poset.is_greater_than(z, x) and self._poset.is_greater_than(z, y):
-                if join is None or self._poset.is_greater_than(join, z):
-                    join = z
-        return join
+        upper_bounds = [
+            z
+            for z in self._poset
+            if self._poset.is_greater_than(z, x) and self._poset.is_greater_than(z, y)
+        ]
+        minimal = [
+            z
+            for z in upper_bounds
+            if not any(
+                z != w and self._poset.is_greater_than(z, w) for w in upper_bounds
+            )
+        ]
+        if len(minimal) == 1:
+            return minimal[0]
+        return None

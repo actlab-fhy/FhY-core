@@ -4,6 +4,7 @@ from functools import partial
 from typing import Any, TypeVar
 
 import pytest
+
 from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.expression import SymbolType
 from fhy_core.identifier import Identifier
@@ -77,18 +78,18 @@ class _SerializableEqualNoOrder(Serializable):
         return cls(value=int(data["value"]))
 
 
-def _assert_all_satisfied(param: Param[T], values: list[T]) -> None:
+def _assert_all_satisfied(param: Param[Any], values: list[Any]) -> None:
     for v in values:
-        assert param.is_constraints_satisfied(
-            v
-        ), f"Value {v} should satisfy constraints of parameter {param}"
+        assert param.is_constraints_satisfied(v), (
+            f"Value {v} should satisfy constraints of parameter {param}"
+        )
 
 
-def _assert_none_satisfied(param: Param[T], values: list[T]) -> None:
+def _assert_none_satisfied(param: Param[Any], values: list[Any]) -> None:
     for v in values:
-        assert not param.is_constraints_satisfied(
-            v
-        ), f"Value {v} should not satisfy constraints of parameter {param}"
+        assert not param.is_constraints_satisfied(v), (
+            f"Value {v} should not satisfy constraints of parameter {param}"
+        )
 
 
 @pytest.fixture
@@ -101,13 +102,13 @@ def default_int_param() -> IntParam:
     return IntParam()
 
 
-def test_param_structural_equivalence_runtime_protocol():
+def test_param_structural_equivalence_runtime_protocol() -> None:
     """Test `Param` implementations satisfy `StructuralEquivalence` protocol."""
     param = IntParam()
     assert isinstance(param, StructuralEquivalence)
 
 
-def test_param_structural_equivalence_true_for_constraint_reordering():
+def test_param_structural_equivalence_true_for_constraint_reordering() -> None:
     """Test params compare structurally when equivalent constraints are reordered."""
     shared_name = Identifier("x")
     shared_name_copy = Identifier.deserialize_from_dict(shared_name.serialize_to_dict())
@@ -137,7 +138,7 @@ def test_param_structural_equivalence_true_for_constraint_reordering():
     assert left.is_structurally_equivalent(right)
 
 
-def test_param_structural_equivalence_false_for_different_constraints():
+def test_param_structural_equivalence_false_for_different_constraints() -> None:
     """Test params are not structurally equivalent with different constraints."""
     shared_name = Identifier("x")
     shared_name_copy = Identifier.deserialize_from_dict(shared_name.serialize_to_dict())
@@ -165,7 +166,7 @@ def test_param_structural_equivalence_false_for_different_constraints():
     assert not left.is_structurally_equivalent(right)
 
 
-def test_param_is_not_set_after_initialization(default_real_param):
+def test_param_is_not_set_after_initialization(default_real_param: RealParam) -> None:
     """Test that the value of a parameter is not set after initialization."""
     assignment = default_real_param.assign(1.0)
     assert isinstance(default_real_param, RealParam)
@@ -174,73 +175,77 @@ def test_param_is_not_set_after_initialization(default_real_param):
     assert not hasattr(default_real_param, "is_value_set")
 
 
-def test_param_is_set_after_setting_value(default_real_param):
+def test_param_is_set_after_setting_value(default_real_param: RealParam) -> None:
     """Test that the value of a parameter is set after setting a value."""
-    default_real_param = default_real_param.assign(1.0)
-    assert default_real_param.is_value_set()
+    assignment = default_real_param.assign(1.0)
+    assert assignment.is_value_set()
 
 
-def test_param_get_value_fails_when_not_set(default_real_param):
+def test_param_get_value_fails_when_not_set(default_real_param: RealParam) -> None:
     """Test that parameters no longer expose direct value access."""
     with pytest.raises(AttributeError):
-        default_real_param.get_value()
+        default_real_param.get_value()  # type: ignore[attr-defined]  # test: method removed
 
 
-def test_get_param_value_after_setting_value(default_real_param):
+def test_get_param_value_after_setting_value(default_real_param: RealParam) -> None:
     """Test that the value of a parameter can be retrieved after setting a value."""
     assignment = default_real_param.assign(1.0)
     assert assignment.value == 1.0
 
 
-def test_real_param_get_symbol_type(default_real_param):
+def test_real_param_get_symbol_type(default_real_param: RealParam) -> None:
     """Test that the symbol type of a real parameter is correct."""
     assert default_real_param.get_symbol_type() == SymbolType.REAL
 
 
-def test_int_param_get_symbol_type(default_int_param):
+def test_int_param_get_symbol_type(default_int_param: IntParam) -> None:
     """Test that the symbol type of an integer parameter is correct."""
     assert default_int_param.get_symbol_type() == SymbolType.INT
 
 
-def test_real_param_value_set_fails_with_invalid_value(default_real_param):
+def test_real_param_value_set_fails_with_invalid_value(
+    default_real_param: RealParam,
+) -> None:
     """Test that setting a real parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        default_real_param = default_real_param.assign([])
+        default_real_param.assign([])  # type: ignore[arg-type]  # test: invalid input
 
 
-def test_int_param_value_set_fails_with_invalid_value(default_int_param):
+def test_int_param_value_set_fails_with_invalid_value(
+    default_int_param: IntParam,
+) -> None:
     """Test that setting an integer parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        default_int_param = default_int_param.assign(1.0)
+        default_int_param.assign(1.0)  # type: ignore[arg-type]  # test: invalid input
 
 
-def test_create_real_param_with_value():
+def test_create_real_param_with_value() -> None:
     """Test that a real parameter can be created with a value."""
     param = RealParam.with_value(1.0)
     assert param.is_value_set()
     assert param.value == 1.0
 
 
-def test_create_real_param_with_value_fails_with_invalid_value():
+def test_create_real_param_with_value_fails_with_invalid_value() -> None:
     """Test that creating a real parameter with an invalid value fails."""
     with pytest.raises(ValueError):
         RealParam.with_value("invalid")
 
 
-def test_create_int_param_with_value():
+def test_create_int_param_with_value() -> None:
     """Test that an integer parameter can be created with a value."""
     param = IntParam.with_value(1)
     assert param.is_value_set()
     assert param.value == 1
 
 
-def test_create_int_param_with_value_fails_with_invalid_value():
+def test_create_int_param_with_value_fails_with_invalid_value() -> None:
     """Test that creating an integer parameter with an invalid value fails."""
     with pytest.raises(ValueError):
-        IntParam.with_value(1.2)
+        IntParam.with_value(1.2)  # type: ignore[arg-type]  # test: invalid input
 
 
-def test_param_assign_creates_assignment():
+def test_param_assign_creates_assignment() -> None:
     """Test that assigning a parameter creates an immutable assignment."""
     param = IntParam.with_lower_bound(0)
     assignment = param.assign(3)
@@ -265,21 +270,21 @@ def test_param_is_value_valid_checks_type_and_constraints(
     valid_value: object,
     invalid_type_or_shape_value: object,
     constraint_fail_value: object,
-):
+) -> None:
     """Test `is_value_valid` checks subclass admissibility and constraints."""
     assert param.is_value_valid(valid_value)
     assert not param.is_value_valid(invalid_type_or_shape_value)
     assert not param.is_value_valid(constraint_fail_value)
 
 
-def test_param_assignment_materialize_returns_bound_param():
+def test_param_assignment_materialize_returns_bound_param() -> None:
     """Test that materialize returns the parameter definition."""
     assignment = RealParam.with_upper_bound(2.0).assign(1.5)
     bound_param = assignment.materialize()
     assert bound_param is assignment.param
 
 
-def test_add_and_check_real_param_constraints(default_real_param):
+def test_add_and_check_real_param_constraints(default_real_param: RealParam) -> None:
     """Test that a real constraint can be added and checked."""
     default_real_param = default_real_param.add_constraint(
         EquationConstraint(
@@ -296,7 +301,7 @@ def test_add_and_check_real_param_constraints(default_real_param):
     _assert_none_satisfied(default_real_param, [0.5, 7.0])
 
 
-def test_add_multiple_constraints_at_once():
+def test_add_multiple_constraints_at_once() -> None:
     """Test that multiple constraints can be added in one call."""
     param = RealParam()
     constraints = [
@@ -308,7 +313,7 @@ def test_add_multiple_constraints_at_once():
     _assert_none_satisfied(param, [0.5, 3.5])
 
 
-def test_add_multiple_constraints_validates_subclass_constraint_rules():
+def test_add_multiple_constraints_validates_subclass_constraint_rules() -> None:
     """Test that add_constraints enforces subclass-specific constraint checks."""
     param = OrdinalParam([1, 2, 3])
     with pytest.raises(ValueError):
@@ -320,7 +325,7 @@ def test_add_multiple_constraints_validates_subclass_constraint_rules():
         )
 
 
-def test_add_and_check_int_param_constraints(default_int_param):
+def test_add_and_check_int_param_constraints(default_int_param: IntParam) -> None:
     """Test that an integer constraint can be added and checked."""
     default_int_param = default_int_param.add_constraint(
         EquationConstraint(
@@ -335,10 +340,10 @@ def test_add_and_check_int_param_constraints(default_int_param):
     )
     assert default_int_param.is_constraints_satisfied(15)
     with pytest.raises(ValueError):
-        default_int_param = default_int_param.assign(12)
+        default_int_param.assign(12)
 
 
-def test_set_real_param_and_real_param_is_subset():
+def test_set_real_param_and_real_param_is_subset() -> None:
     """Test assignment values can be set independently from the same parameter."""
     param1 = RealParam()
     assignment_1 = param1.assign(1.0)
@@ -349,7 +354,7 @@ def test_set_real_param_and_real_param_is_subset():
     assert assignment_2.param is param1
 
 
-def test_real_param_is_subset_of_real_param():
+def test_real_param_is_subset_of_real_param() -> None:
     """Test that a real parameter is a subset of another real parameter."""
     param1 = RealParam()
     param2 = RealParam()
@@ -357,7 +362,7 @@ def test_real_param_is_subset_of_real_param():
     assert param2.is_subset(param1)
 
 
-def test_positive_real_param_and_real_param_is_subset():
+def test_positive_real_param_and_real_param_is_subset() -> None:
     """Test subset relationship between positive real parameter and real parameter."""
     param1 = RealParam()
     param1 = param1.add_constraint(
@@ -368,7 +373,7 @@ def test_positive_real_param_and_real_param_is_subset():
     assert not param2.is_subset(param1)
 
 
-def test_interval_real_param_and_interval_real_param_is_subset():
+def test_interval_real_param_and_interval_real_param_is_subset() -> None:
     """Test subset relationship between interval real parameters."""
     param1 = RealParam()
     param1 = param1.add_constraint(
@@ -388,7 +393,7 @@ def test_interval_real_param_and_interval_real_param_is_subset():
     assert param2.is_subset(param1)
 
 
-def test_nat_param_zero_included():
+def test_nat_param_zero_included() -> None:
     """Test that a natural number parameter with zero included can be set."""
     param = NatParam()
     assignment_0 = param.assign(0)
@@ -399,7 +404,7 @@ def test_nat_param_zero_included():
         param.assign(-1)
 
 
-def test_nat_param_zero_excluded():
+def test_nat_param_zero_excluded() -> None:
     """Test that a natural number parameter with zero excluded can be set."""
     param = NatParam(is_zero_included=False)
     assignment_1 = param.assign(1)
@@ -410,7 +415,7 @@ def test_nat_param_zero_excluded():
         param.assign(-1)
 
 
-def test_nat_param_add_constraint_preserves_zero_excluded_state():
+def test_nat_param_add_constraint_preserves_zero_excluded_state() -> None:
     """Test that adding constraints preserves zero-excluded NatParam semantics."""
     param = NatParam(is_zero_included=False)
     updated = param.add_lower_bound_constraint(2, is_inclusive=True)
@@ -418,30 +423,30 @@ def test_nat_param_add_constraint_preserves_zero_excluded_state():
         updated.add_lower_bound_constraint(0, is_inclusive=True)
 
 
-def test_ordinal_param_initialization():
+def test_ordinal_param_initialization() -> None:
     """Test that an ordinal parameter can be initialized."""
     param = OrdinalParam([5, 6, 7])
     assert isinstance(param, OrdinalParam)
 
 
-def test_ordinal_param_initialization_fails_with_non_unique_values():
+def test_ordinal_param_initialization_fails_with_non_unique_values() -> None:
     """Test that an ordinal parameter initialization fails with non-unique values."""
     with pytest.raises(ValueError):
         OrdinalParam([1, 2, 1])
 
 
-def test_ordinal_param_initialization_requires_orderable_values():
+def test_ordinal_param_initialization_requires_orderable_values() -> None:
     """Test ordinal params reject wrapped-leaf values without ordering semantics."""
     with pytest.raises(TypeError):
-        OrdinalParam([_SerializableEqualNoOrder(1), _SerializableEqualNoOrder(2)])
+        OrdinalParam([_SerializableEqualNoOrder(1), _SerializableEqualNoOrder(2)])  # type: ignore[type-var]  # test: invalid input
 
 
 @pytest.fixture()
-def ordinal_param_123() -> OrdinalParam:
+def ordinal_param_123() -> OrdinalParam[int]:
     return OrdinalParam([1, 2, 3])
 
 
-def test_set_ordinal_param_value(ordinal_param_123: OrdinalParam):
+def test_set_ordinal_param_value(ordinal_param_123: OrdinalParam[int]) -> None:
     """Test that an ordinal parameter value can be set."""
     assignment_1 = ordinal_param_123.assign(1)
     assert assignment_1.is_value_set()
@@ -450,11 +455,11 @@ def test_set_ordinal_param_value(ordinal_param_123: OrdinalParam):
 
 
 def test_set_ordinal_param_value_fails_with_invalid_value(
-    ordinal_param_123: OrdinalParam,
-):
+    ordinal_param_123: OrdinalParam[int],
+) -> None:
     """Test that setting an ordinal parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        ordinal_param_123 = ordinal_param_123.assign(4)
+        ordinal_param_123.assign(4)
 
 
 def test_ordinal_param_distinguishes_bool_from_numeric_values() -> None:
@@ -463,7 +468,9 @@ def test_ordinal_param_distinguishes_bool_from_numeric_values() -> None:
     assert not param.is_value_admissible(True)
 
 
-def test_add_and_check_ordinal_param_constraints(ordinal_param_123: OrdinalParam):
+def test_add_and_check_ordinal_param_constraints(
+    ordinal_param_123: OrdinalParam[int],
+) -> None:
     """Test that ordinal parameter constraints can be added and checked."""
     ordinal_param_123 = ordinal_param_123.add_constraint(
         InSetConstraint(ordinal_param_123.variable, {1, 2})
@@ -473,35 +480,35 @@ def test_add_and_check_ordinal_param_constraints(ordinal_param_123: OrdinalParam
 
 
 def test_adding_invalid_constraint_to_ordinal_param_fails(
-    ordinal_param_123: OrdinalParam,
-):
+    ordinal_param_123: OrdinalParam[int],
+) -> None:
     """Test that adding an invalid constraint to an ordinal parameter fails."""
     with pytest.raises(ValueError):
-        ordinal_param_123 = ordinal_param_123.add_constraint(
+        ordinal_param_123.add_constraint(
             EquationConstraint(
                 ordinal_param_123.variable, ordinal_param_123.variable_expression > 1
             )
         )
 
 
-def test_categorical_param_initialization():
+def test_categorical_param_initialization() -> None:
     """Test that a categorical parameter can be initialized."""
     param = CategoricalParam({"a", "b", "c"})
     assert isinstance(param, CategoricalParam)
 
 
-def test_categorical_param_initialization_requires_equal_values():
+def test_categorical_param_initialization_requires_equal_values() -> None:
     """Test categorical params reject wrapped-leaf values without equal semantics."""
     with pytest.raises(TypeError):
-        CategoricalParam({_SerializableHashOnly(1), _SerializableHashOnly(2)})
+        CategoricalParam({_SerializableHashOnly(1), _SerializableHashOnly(2)})  # type: ignore[type-var]  # test: invalid input
 
 
 @pytest.fixture()
-def categorical_param_abc() -> CategoricalParam:
+def categorical_param_abc() -> CategoricalParam[str]:
     return CategoricalParam({"a", "b", "c"})
 
 
-def test_create_single_valid_value_param():
+def test_create_single_valid_value_param() -> None:
     """Test helper creates a categorical param constrained to one value."""
     param = create_single_valid_value_param("only")
     assert isinstance(param, CategoricalParam)
@@ -515,7 +522,9 @@ def test_create_single_valid_value_param():
         param.assign("different")
 
 
-def test_set_categorical_param_value(categorical_param_abc: CategoricalParam):
+def test_set_categorical_param_value(
+    categorical_param_abc: CategoricalParam[str],
+) -> None:
     """Test that a categorical parameter value can be set."""
     assignment_a = categorical_param_abc.assign("a")
     assert assignment_a.is_value_set()
@@ -524,11 +533,11 @@ def test_set_categorical_param_value(categorical_param_abc: CategoricalParam):
 
 
 def test_set_categorical_param_value_fails_with_invalid_value(
-    categorical_param_abc: CategoricalParam,
-):
+    categorical_param_abc: CategoricalParam[str],
+) -> None:
     """Test that setting a categorical parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        categorical_param_abc = categorical_param_abc.assign("d")
+        categorical_param_abc.assign("d")
 
 
 def test_categorical_param_distinguishes_bool_from_int_values() -> None:
@@ -538,8 +547,8 @@ def test_categorical_param_distinguishes_bool_from_int_values() -> None:
 
 
 def test_add_and_check_categorical_param_constraints(
-    categorical_param_abc: CategoricalParam,
-):
+    categorical_param_abc: CategoricalParam[str],
+) -> None:
     """Test that categorical parameter constraints can be added and checked."""
     categorical_param_abc = categorical_param_abc.add_constraint(
         InSetConstraint(categorical_param_abc.variable, {"a", "b"})
@@ -549,11 +558,11 @@ def test_add_and_check_categorical_param_constraints(
 
 
 def test_adding_invalid_constraint_to_categorical_param_fails(
-    categorical_param_abc: CategoricalParam,
-):
+    categorical_param_abc: CategoricalParam[str],
+) -> None:
     """Test that adding an invalid constraint to a categorical parameter fails."""
     with pytest.raises(ValueError):
-        categorical_param_abc = categorical_param_abc.add_constraint(
+        categorical_param_abc.add_constraint(
             EquationConstraint(
                 categorical_param_abc.variable,
                 categorical_param_abc.variable_expression > "a",
@@ -561,33 +570,35 @@ def test_adding_invalid_constraint_to_categorical_param_fails(
         )
 
 
-def test_perm_param_initialization():
+def test_perm_param_initialization() -> None:
     """Test that a permutation parameter can be initialized."""
     param = PermParam(["n", "c", "h", "w"])
     assert isinstance(param, PermParam)
 
 
-def test_perm_param_initialization_fails_with_non_unique_values():
+def test_perm_param_initialization_fails_with_non_unique_values() -> None:
     """Test that a permutation parameter initialization fails with non-unique values."""
     with pytest.raises(ValueError):
         PermParam(["n", "c", "h", "n"])
 
 
 @pytest.fixture()
-def perm_param_nchw() -> PermParam:
+def perm_param_nchw() -> PermParam[str]:
     return PermParam(["n", "c", "h", "w"])
 
 
-def test_set_perm_param_value(perm_param_nchw: PermParam):
+def test_set_perm_param_value(perm_param_nchw: PermParam[str]) -> None:
     """Test that a permutation parameter value can be set."""
     assignment = perm_param_nchw.assign(["c", "n", "w", "h"])
     assert assignment.is_value_set()
 
 
-def test_set_perm_param_value_fails_with_invalid_value(perm_param_nchw: PermParam):
+def test_set_perm_param_value_fails_with_invalid_value(
+    perm_param_nchw: PermParam[str],
+) -> None:
     """Test that setting a permutation parameter value fails with an invalid value."""
     with pytest.raises(ValueError):
-        perm_param_nchw = perm_param_nchw.assign(["n", "c", "h", "n"])
+        perm_param_nchw.assign(["n", "c", "h", "n"])
 
 
 def test_perm_param_rejects_string_like_sequences() -> None:
@@ -596,7 +607,7 @@ def test_perm_param_rejects_string_like_sequences() -> None:
     assert not param.is_value_admissible("nchw")
 
 
-def test_add_and_check_perm_param_constraints(perm_param_nchw: PermParam):
+def test_add_and_check_perm_param_constraints(perm_param_nchw: PermParam[str]) -> None:
     """Test that permutation parameter constraints can be added and checked."""
     perm_param_nchw = perm_param_nchw.add_constraint(
         InSetConstraint(
@@ -607,7 +618,9 @@ def test_add_and_check_perm_param_constraints(perm_param_nchw: PermParam):
     _assert_none_satisfied(perm_param_nchw, [["n", "c", "w", "h"]])
 
 
-def test_adding_invalid_constraint_to_perm_param_fails(perm_param_nchw: PermParam):
+def test_adding_invalid_constraint_to_perm_param_fails(
+    perm_param_nchw: PermParam[str],
+) -> None:
     """Test that adding an invalid constraint to a permutation parameter fails."""
     with pytest.raises(ValueError):
         perm_param_nchw = perm_param_nchw.add_constraint(
@@ -617,7 +630,7 @@ def test_adding_invalid_constraint_to_perm_param_fails(perm_param_nchw: PermPara
         )
 
 
-def test_add_constraint_returns_new_param_without_mutating_original():
+def test_add_constraint_returns_new_param_without_mutating_original() -> None:
     """Test that adding constraints returns a new parameter definition."""
     param = OrdinalParam([1, 2, 3])
     updated = param.add_constraint(InSetConstraint(param.variable, {1, 2}))
@@ -852,8 +865,8 @@ def test_add_constraint_returns_new_param_without_mutating_original():
     ],
 )
 def test_numeric_params_adding_lower_and_upper_bounds(
-    factory, ops, pass_values, fail_values
-):
+    factory: Any, ops: Any, pass_values: Any, fail_values: Any
+) -> None:
     """Test adding lower and upper bound constraints to int and real parameters."""
     param = factory()
     for name, args, kwargs in ops:
@@ -949,14 +962,16 @@ def test_numeric_params_adding_lower_and_upper_bounds(
         ),
     ],
 )
-def test_numeric_params_adding_invalid_lower_and_upper_bounds_fails(factory, ops):
+def test_numeric_params_adding_invalid_lower_and_upper_bounds_fails(
+    factory: Any, ops: Any
+) -> None:
     with pytest.raises(ValueError):
         param = factory()
         for name, args, kwargs in ops:
             param = getattr(param, name)(*args, **kwargs)
 
 
-def test_zero_included_in_nat_param_with_lower_bound_inclusive_at_zero():
+def test_zero_included_in_nat_param_with_lower_bound_inclusive_at_zero() -> None:
     """Test that creating a NatParam with lower bound 0 inclusive works.
 
     This is specifically to test the constructor argument for including zero
@@ -967,7 +982,7 @@ def test_zero_included_in_nat_param_with_lower_bound_inclusive_at_zero():
     _assert_all_satisfied(param, [0, 1, 2, 100])
 
 
-def test_real_param_serialization():
+def test_real_param_serialization() -> None:
     """Test a real parameter can be serialized/deserialized via a dictionary."""
     param = RealParam()
     param = param.add_constraint(
@@ -982,7 +997,7 @@ def test_real_param_serialization():
     _assert_none_satisfied(param2, [0.0, 10.0])
 
 
-def test_int_param_serialization():
+def test_int_param_serialization() -> None:
     """Test an int parameter can be serialized/deserialized via a dictionary."""
     param = IntParam()
     param = param.add_constraint(
@@ -997,40 +1012,42 @@ def test_int_param_serialization():
     _assert_none_satisfied(param2, [0, 10])
 
 
-def test_ordinal_param_serialization(ordinal_param_123: OrdinalParam):
+def test_ordinal_param_serialization(ordinal_param_123: OrdinalParam[int]) -> None:
     """Test an ordinal parameter can be serialized/deserialized via a dictionary."""
     ordinal_param_123 = ordinal_param_123.add_constraint(
         InSetConstraint(ordinal_param_123.variable, {1, 2})
     )
     dictionary = ordinal_param_123.serialize_to_dict()
-    param2 = OrdinalParam.deserialize_from_dict(dictionary)
+    param2: OrdinalParam[int] = OrdinalParam.deserialize_from_dict(dictionary)
     _assert_all_satisfied(param2, [1, 2])
     _assert_none_satisfied(param2, [3])
 
 
-def test_ordinal_param_deserialization_rejects_unwrapped_possible_values():
+def test_ordinal_param_deserialization_rejects_unwrapped_possible_values() -> None:
     """Test ordinal deserialization rejects raw unwrapped possible values."""
     payload = OrdinalParam([1, 2, 3]).serialize_to_dict()
-    payload["__data__"]["possible_values"] = [1, 2, 3]
+    payload["__data__"]["possible_values"] = [1, 2, 3]  # type: ignore[index]  # test: modify serialized
     with pytest.raises(DeserializationValueError):
         OrdinalParam.deserialize_from_dict(payload)
 
 
-def test_categorical_param_serialization(categorical_param_abc: CategoricalParam):
+def test_categorical_param_serialization(
+    categorical_param_abc: CategoricalParam[str],
+) -> None:
     """Test a categorical parameter can be serialized/deserialized via a dictionary."""
     categorical_param_abc = categorical_param_abc.add_constraint(
         InSetConstraint(categorical_param_abc.variable, {"a", "b"})
     )
     dictionary = categorical_param_abc.serialize_to_dict()
-    param2 = CategoricalParam.deserialize_from_dict(dictionary)
+    param2: CategoricalParam[str] = CategoricalParam.deserialize_from_dict(dictionary)
     _assert_all_satisfied(param2, ["a", "b"])
     _assert_none_satisfied(param2, ["c"])
 
 
-def test_categorical_param_deserialization_rejects_wrapped_non_leaf_values():
+def test_categorical_param_deserialization_rejects_wrapped_non_leaf_values() -> None:
     """Test categorical deserialization rejects wrapped container values."""
     payload = CategoricalParam({"a", "b"}).serialize_to_dict()
-    payload["__data__"]["possible_values"] = [
+    payload["__data__"]["possible_values"] = [  # type: ignore[index]  # test: modify serialized
         serialize_registry_wrapped_value(("a", "b"))
     ]
     with pytest.raises(DeserializationValueError):
@@ -1041,11 +1058,11 @@ def test_categorical_param_round_trip_serialization() -> None:
     """Test a categorical parameter can be serialized/deserialized via a dictionary."""
     param = CategoricalParam([Identifier("a"), Identifier("b")])
     data = param.serialize_to_dict()
-    param2 = CategoricalParam.deserialize_from_dict(data)
+    param2: CategoricalParam[Identifier] = CategoricalParam.deserialize_from_dict(data)
     assert param.is_structurally_equivalent(param2)
 
 
-def test_perm_param_serialization(perm_param_nchw: PermParam):
+def test_perm_param_serialization(perm_param_nchw: PermParam[str]) -> None:
     """Test a permutation parameter can be serialized/deserialized via a dictionary."""
     perm_param_nchw = perm_param_nchw.add_constraint(
         InSetConstraint(
@@ -1053,12 +1070,12 @@ def test_perm_param_serialization(perm_param_nchw: PermParam):
         )
     )
     dictionary = perm_param_nchw.serialize_to_dict()
-    param2 = PermParam.deserialize_from_dict(dictionary)
+    param2: PermParam[str] = PermParam.deserialize_from_dict(dictionary)
     _assert_all_satisfied(param2, [["n", "c", "h", "w"], ["c", "n", "w", "h"]])
     _assert_none_satisfied(param2, [["n", "c", "w", "h"]])
 
 
-def test_nat_param_serialization():
+def test_nat_param_serialization() -> None:
     """Test a nat parameter can be serialized/deserialized via a dictionary."""
     param = NatParam(is_zero_included=False)
     param = param.add_constraint(
@@ -1068,15 +1085,15 @@ def test_nat_param_serialization():
         EquationConstraint(param.variable, param.variable_expression <= 10)
     )
     dictionary = param.serialize_to_dict()
-    assert len(dictionary["__data__"]["constraints"]) == 3
+    assert len(dictionary["__data__"]["constraints"]) == 3  # type: ignore[index,arg-type,call-overload]  # test: dict shape known
     param2 = NatParam.deserialize_from_dict(dictionary)
     _assert_all_satisfied(param2, [1, 5, 10])
     _assert_none_satisfied(param2, [0, 11])
     dictionary = param2.serialize_to_dict()
-    assert len(dictionary["__data__"]["constraints"]) == 3
+    assert len(dictionary["__data__"]["constraints"]) == 3  # type: ignore[index,arg-type,call-overload]  # test: dict shape known
 
 
-def test_param_assignment_serialization_dict_roundtrip():
+def test_param_assignment_serialization_dict_roundtrip() -> None:
     """Test parameter assignments round-trip via dictionary serialization."""
     assignment = IntParam.with_lower_bound(0).assign(3)
     dictionary = assignment.serialize_to_dict()
@@ -1087,26 +1104,26 @@ def test_param_assignment_serialization_dict_roundtrip():
     assert assignment2.serialize_to_dict() == dictionary
 
 
-def test_param_assignment_serialization_json_and_binary_roundtrip():
+def test_param_assignment_serialization_json_and_binary_roundtrip() -> None:
     """Test parameter assignments round-trip via JSON and binary serialization."""
     assignment = PermParam(["n", "c", "h", "w"]).assign(["n", "c", "h", "w"])
 
     json_payload = assignment.serialize(SerializationFormat.JSON)
-    assignment_from_json = ParamAssignment.deserialize(
+    assignment_from_json: ParamAssignment[Any] = ParamAssignment.deserialize(
         json_payload, SerializationFormat.JSON
     )
     assert isinstance(assignment_from_json.param, PermParam)
     assert assignment_from_json.value == ("n", "c", "h", "w")
 
     binary_payload = assignment.serialize(SerializationFormat.BINARY)
-    assignment_from_binary = ParamAssignment.deserialize(
+    assignment_from_binary: ParamAssignment[Any] = ParamAssignment.deserialize(
         binary_payload, SerializationFormat.BINARY
     )
     assert isinstance(assignment_from_binary.param, PermParam)
     assert assignment_from_binary.value == ("n", "c", "h", "w")
 
 
-def test_param_assignment_deserialization_rejects_value_invalid_for_param():
+def test_param_assignment_deserialization_rejects_value_invalid_for_param() -> None:
     """Test assignment deserialization fails if payload value violates constraints."""
     param = RealParam.with_lower_bound(0.0)
     payload = {
@@ -1114,7 +1131,7 @@ def test_param_assignment_deserialization_rejects_value_invalid_for_param():
         "value": serialize_registry_wrapped_value(-1.0),
     }
     with pytest.raises(DeserializationValueError):
-        ParamAssignment.deserialize_from_dict(payload)
+        ParamAssignment.deserialize_from_dict(payload)  # type: ignore[arg-type]  # test: dict shape
 
 
 # TODO: Check serialization structure errors and value errors for all types.
@@ -1123,7 +1140,7 @@ def test_param_assignment_deserialization_rejects_value_invalid_for_param():
 # TODO: Test the repr method.
 
 
-def test_bound_int_param_between_inclusive_inclusive_constraints_satisfied():
+def test_bound_int_param_between_inclusive_inclusive_constraints_satisfied() -> None:
     """Test ``between'' with inclusive bounds.
 
     Integer semantics: [3,5] => {3,4,5}
@@ -1133,7 +1150,7 @@ def test_bound_int_param_between_inclusive_inclusive_constraints_satisfied():
     _assert_none_satisfied(p, [2, 6])
 
 
-def test_bound_int_param_between_exclusive_exclusive_constraints_satisfied():
+def test_bound_int_param_between_exclusive_exclusive_constraints_satisfied() -> None:
     """Test ``between'' with exclusive bounds.
 
     Integer semantics: (3,5) => only {4}
@@ -1143,7 +1160,7 @@ def test_bound_int_param_between_exclusive_exclusive_constraints_satisfied():
     _assert_none_satisfied(p, [3, 5, 2, 6])
 
 
-def test_bound_int_param_between_exclusive_inclusive_constraints_satisfied():
+def test_bound_int_param_between_exclusive_inclusive_constraints_satisfied() -> None:
     """Test ``between'' with exclusive lower bound and inclusive upper bound.
 
     Integer semantics: (3,5] => {4,5}
@@ -1153,7 +1170,7 @@ def test_bound_int_param_between_exclusive_inclusive_constraints_satisfied():
     _assert_none_satisfied(p, [3, 2, 6])
 
 
-def test_bound_int_param_between_inclusive_exclusive_constraints_satisfied():
+def test_bound_int_param_between_inclusive_exclusive_constraints_satisfied() -> None:
     """Test ``between'' with inclusive lower bound and exclusive upper bound.
 
     Integer semantics: [3,5) => {3,4}
@@ -1163,33 +1180,35 @@ def test_bound_int_param_between_inclusive_exclusive_constraints_satisfied():
     _assert_none_satisfied(p, [5, 2, 6])
 
 
-def test_bound_int_param_between_invalid_interval_raises_for_strict_equal_bounds():
+def test_bound_int_param_between_invalid_interval_raises_for_strict_equal_bounds() -> (
+    None
+):
     """Test that ``between'' raises for intervals with strict equal bounds."""
     with pytest.raises(ValueError):
         BoundIntParam.between(3, 3, is_lower_inclusive=False, is_upper_inclusive=False)
 
 
-def test_bound_int_param_between_equal_bounds_inclusive_is_singleton():
+def test_bound_int_param_between_equal_bounds_inclusive_is_singleton() -> None:
     """Test that ``between'' with equal inclusive bounds is a singleton."""
     p = BoundIntParam.between(3, 3, is_lower_inclusive=True, is_upper_inclusive=True)
     _assert_all_satisfied(p, [3])
     _assert_none_satisfied(p, [2, 4])
 
 
-def test_bound_int_param_between_invalid_order_raises_error():
+def test_bound_int_param_between_invalid_order_raises_error() -> None:
     """Test that ``between'' raises for intervals with reversed bounds."""
     with pytest.raises(ValueError):
         BoundIntParam.between(5, 3)
 
 
-def test_bound_int_param_with_lower_bound_inclusive():
+def test_bound_int_param_with_lower_bound_inclusive() -> None:
     """Test ``with_lower_bound'' with inclusive bound."""
     p = BoundIntParam.with_lower_bound(3, is_inclusive=True)
     _assert_all_satisfied(p, [3, 4, 100])
     _assert_none_satisfied(p, [2, -1])
 
 
-def test_bound_int_param_with_lower_bound_exclusive_integer_semantics():
+def test_bound_int_param_with_lower_bound_exclusive_integer_semantics() -> None:
     """Test ``with_lower_bound'' with exclusive bound.
 
     Integer semantics: x > 3 => ints {4,5,...}
@@ -1199,13 +1218,13 @@ def test_bound_int_param_with_lower_bound_exclusive_integer_semantics():
     _assert_none_satisfied(p, [3, 2, -10])
 
 
-def test_bound_int_param_with_upper_bound_inclusive():
+def test_bound_int_param_with_upper_bound_inclusive() -> None:
     p = BoundIntParam.with_upper_bound(5, is_inclusive=True)
     _assert_all_satisfied(p, [5, 4, -100])
     _assert_none_satisfied(p, [6, 7])
 
 
-def test_bound_int_param_with_upper_bound_exclusive_integer_semantics():
+def test_bound_int_param_with_upper_bound_exclusive_integer_semantics() -> None:
     """Test ``with_upper_bound'' with exclusive bound.
 
     Integer semantics: x < 5 => ints {...,3,4}
@@ -1215,14 +1234,16 @@ def test_bound_int_param_with_upper_bound_exclusive_integer_semantics():
     _assert_none_satisfied(p, [5, 6])
 
 
-def test_bound_int_param_exactly_satisfies_only_that_value():
+def test_bound_int_param_exactly_satisfies_only_that_value() -> None:
     """Test ``exactly'' creates a singleton parameter."""
     p = BoundIntParam.exactly(7)
     _assert_all_satisfied(p, [7])
     _assert_none_satisfied(p, [6, 8, 0])
 
 
-def test_bound_int_param_prefer_inclusive_flag_does_not_change_satisfiable_set():
+def test_bound_int_param_prefer_inclusive_flag_does_not_change_satisfiable_set() -> (
+    None
+):
     """Test that prefer_inclusive flag does not change satisfiable set."""
     p1 = BoundIntParam.between(
         3, 5, is_lower_inclusive=False, is_upper_inclusive=False, prefer_inclusive=True
@@ -1234,18 +1255,18 @@ def test_bound_int_param_prefer_inclusive_flag_does_not_change_satisfiable_set()
         assert p1.is_constraints_satisfied(v) == p2.is_constraints_satisfied(v)
 
 
-def test_bound_int_param_assign_accepts_int_only():
+def test_bound_int_param_assign_accepts_int_only() -> None:
     """Test that BoundIntParam.assign only accepts integer values."""
     p = BoundIntParam.with_lower_bound(0)
     assignment = p.assign(1)
     assert assignment.value == 1
     with pytest.raises(ValueError):
-        p.assign(1.0)
+        p.assign(1.0)  # type: ignore[arg-type]  # test: invalid input
     with pytest.raises(ValueError):
-        p.assign("1")
+        p.assign("1")  # type: ignore[arg-type]  # test: invalid input
 
 
-def test_bound_int_param_assign_rejects_value_outside_constraints():
+def test_bound_int_param_assign_rejects_value_outside_constraints() -> None:
     """Test that ``assign'' rejects values outside constraints."""
     p = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
     with pytest.raises(ValueError):
@@ -1256,7 +1277,7 @@ def test_bound_int_param_assign_rejects_value_outside_constraints():
     assert assignment.value == 4
 
 
-def test_bound_int_param_addition_of_singletons_is_singleton():
+def test_bound_int_param_addition_of_singletons_is_singleton() -> None:
     """Test addition of two singleton BoundIntParams results in a singleton."""
     x = BoundIntParam.exactly(4)
     y = BoundIntParam.exactly(6)
@@ -1265,7 +1286,7 @@ def test_bound_int_param_addition_of_singletons_is_singleton():
     _assert_none_satisfied(z, [9, 11])
 
 
-def test_bound_int_param_addition_with_int_rhs():
+def test_bound_int_param_addition_with_int_rhs() -> None:
     """Test addition of BoundIntParam with an integer on the right-hand side."""
     x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
     z = x + 2
@@ -1273,7 +1294,7 @@ def test_bound_int_param_addition_with_int_rhs():
     _assert_none_satisfied(z, [4, 8])
 
 
-def test_bound_int_param_addition_with_int_lhs():
+def test_bound_int_param_addition_with_int_lhs() -> None:
     """Test addition of BoundIntParam with an integer on the left-hand side."""
     x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
     z = 2 + x
@@ -1281,7 +1302,9 @@ def test_bound_int_param_addition_with_int_lhs():
     _assert_none_satisfied(z, [4, 8])
 
 
-def test_bound_int_param_addition_bounds_propagate_semantics_from_strict_inputs():
+def test_bound_int_param_addition_bounds_propagate_semantics_from_strict_inputs() -> (
+    None
+):
     """Test addition bounds propagation with strict intervals.
 
     Integer semantics:
@@ -1296,7 +1319,9 @@ def test_bound_int_param_addition_bounds_propagate_semantics_from_strict_inputs(
     _assert_none_satisfied(z, [9, 14])
 
 
-def test_bound_int_param_addition_unbounded_lower_or_upper_propagates_unboundedness():
+def test_bound_int_param_addition_unbounded_lower_upper_propagates_unboundedness() -> (
+    None
+):
     """Test addition bounds propagation with unbounded inputs.
 
     Integer semantics:
@@ -1308,7 +1333,7 @@ def test_bound_int_param_addition_unbounded_lower_or_upper_propagates_unboundedn
     _assert_all_satisfied(z, [-(10**6), 0, 10**6])
 
 
-def test_bound_int_param_subtraction_of_singletons_is_singleton():
+def test_bound_int_param_subtraction_of_singletons_is_singleton() -> None:
     """Test subtraction of two singleton BoundIntParams results in a singleton."""
     x = BoundIntParam.exactly(10)
     y = BoundIntParam.exactly(6)
@@ -1317,7 +1342,7 @@ def test_bound_int_param_subtraction_of_singletons_is_singleton():
     _assert_none_satisfied(z, [3, 5])
 
 
-def test_bound_int_param_subtraction_with_int_rhs():
+def test_bound_int_param_subtraction_with_int_rhs() -> None:
     """Test subtraction of BoundIntParam with an integer on the right-hand side."""
     x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
     z = x - 2
@@ -1325,7 +1350,7 @@ def test_bound_int_param_subtraction_with_int_rhs():
     _assert_none_satisfied(z, [0, 4])
 
 
-def test_bound_int_param_subtraction_with_int_lhs():
+def test_bound_int_param_subtraction_with_int_lhs() -> None:
     """Test subtraction of BoundIntParam with an integer on the left-hand side."""
     x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
     z = 10 - x
@@ -1333,7 +1358,7 @@ def test_bound_int_param_subtraction_with_int_lhs():
     _assert_none_satisfied(z, [4, 8])
 
 
-def test_bound_int_param_subtraction_bounds_propagate_semantics_from_strict_inputs():
+def test_bound_int_param_subtraction_bounds_propagate_semantics_from_inputs() -> None:
     """Test subtraction bounds propagation with strict intervals.
 
     Integer semantics:
@@ -1348,7 +1373,7 @@ def test_bound_int_param_subtraction_bounds_propagate_semantics_from_strict_inpu
     _assert_none_satisfied(z, [-6, -1, 0])
 
 
-def test_bound_int_param_negation_of_singleton():
+def test_bound_int_param_negation_of_singleton() -> None:
     """Test negation of a singleton BoundIntParam results in a singleton."""
     x = BoundIntParam.exactly(4)
     z = -x
@@ -1356,7 +1381,7 @@ def test_bound_int_param_negation_of_singleton():
     _assert_none_satisfied(z, [-3, -5])
 
 
-def test_bound_int_param_negation_of_interval():
+def test_bound_int_param_negation_of_interval() -> None:
     """Test negation of an interval BoundIntParam."""
     x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
     z = -x
@@ -1364,7 +1389,7 @@ def test_bound_int_param_negation_of_interval():
     _assert_none_satisfied(z, [-6, -2])
 
 
-def test_bound_int_param_negation_of_strict_interval_integer_semantics():
+def test_bound_int_param_negation_of_strict_interval_integer_semantics() -> None:
     """Test negation of a strict interval BoundIntParam."""
     x = BoundIntParam.between(3, 5, is_lower_inclusive=False, is_upper_inclusive=False)
     z = -x
@@ -1372,7 +1397,9 @@ def test_bound_int_param_negation_of_strict_interval_integer_semantics():
     _assert_none_satisfied(z, [-5, -3])
 
 
-def test_bound_int_param_prefer_inclusive_changes_str_not_membership_for_addition():
+def test_bound_int_param_prefer_inclusive_changes_str_not_membership_for_addition() -> (
+    None
+):
     """Test that prefer_inclusive changes string but not membership for addition."""
     x_incl = BoundIntParam.between(
         3, 5, is_lower_inclusive=False, is_upper_inclusive=False, prefer_inclusive=True
@@ -1400,7 +1427,7 @@ def test_bound_int_param_prefer_inclusive_changes_str_not_membership_for_additio
     assert str(z_incl) != str(z_excl)
 
 
-def test_bound_int_param_addition_accepts_int_param():
+def test_bound_int_param_addition_accepts_int_param() -> None:
     """Test addition of BoundIntParam with IntParam on the right-hand side."""
     x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
     y = IntParam.between(5, 10, is_lower_inclusive=True, is_upper_inclusive=True)
@@ -1409,7 +1436,7 @@ def test_bound_int_param_addition_accepts_int_param():
     _assert_none_satisfied(z, [7, 16])
 
 
-def test_bound_int_param_subtraction_accepts_int_param():
+def test_bound_int_param_subtraction_accepts_int_param() -> None:
     """Test subtraction of BoundIntParam with IntParam on the right-hand side."""
     x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
     y = IntParam.between(5, 10, is_lower_inclusive=True, is_upper_inclusive=True)
@@ -1418,7 +1445,7 @@ def test_bound_int_param_subtraction_accepts_int_param():
     _assert_none_satisfied(z, [-8, 1])
 
 
-def test_bound_int_param_rsub_accepts_int_param_on_left():
+def test_bound_int_param_rsub_accepts_int_param_on_left() -> None:
     """Test subtraction of BoundIntParam with IntParam on the left-hand side."""
     x = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
     y = IntParam.between(5, 10, is_lower_inclusive=True, is_upper_inclusive=True)
@@ -1427,7 +1454,7 @@ def test_bound_int_param_rsub_accepts_int_param_on_left():
     _assert_none_satisfied(z, [-1, 8])
 
 
-def test_bound_int_param_addition_with_unsupported_type_raises_error():
+def test_bound_int_param_addition_with_unsupported_type_raises_error() -> None:
     """Test that addition of BoundIntParam with unsupported type raises TypeError."""
     x = BoundIntParam.between(0, 1)
     with pytest.raises(TypeError):
@@ -1446,7 +1473,9 @@ def test_bound_int_param_addition_with_unsupported_type_raises_error():
         (-3, 3, False, False),
     ],
 )
-def test_bound_int_param_addition_matches_brute_force(lower, upper, lin, u_in):
+def test_bound_int_param_addition_matches_brute_force(
+    lower: int, upper: int, lin: bool, u_in: bool
+) -> None:
     """Test that addition matches brute-force set addition."""
     x = BoundIntParam.between(
         lower, upper, is_lower_inclusive=lin, is_upper_inclusive=u_in
@@ -1476,7 +1505,9 @@ def test_bound_int_param_addition_matches_brute_force(lower, upper, lin, u_in):
         (-2, 2, False, False),
     ],
 )
-def test_bound_int_param_subtraction_matches_brute_force(lower, upper, lin, u_in):
+def test_bound_int_param_subtraction_matches_brute_force(
+    lower: int, upper: int, lin: bool, u_in: bool
+) -> None:
     """Test that subtraction matches brute-force set subtraction."""
     x = BoundIntParam.between(
         lower, upper, is_lower_inclusive=lin, is_upper_inclusive=u_in
@@ -1496,7 +1527,7 @@ def test_bound_int_param_subtraction_matches_brute_force(lower, upper, lin, u_in
         assert z.is_constraints_satisfied(v) == (v in allowed_z)
 
 
-def test_bound_int_param_serialization():
+def test_bound_int_param_serialization() -> None:
     """Test bound int parameter can be serialized/deserialized via a dictionary."""
     p = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=False)
     dictionary = p.serialize_to_dict()
@@ -1505,16 +1536,16 @@ def test_bound_int_param_serialization():
     _assert_none_satisfied(p2, [5])
 
 
-def test_bound_nat_param_serialization():
+def test_bound_nat_param_serialization() -> None:
     """Test bound nat parameter can be serialized/deserialized via a dictionary."""
     p = BoundNatParam.with_lower_bound(2, is_inclusive=True)
     dictionary = p.serialize_to_dict()
-    assert len(dictionary["__data__"]["constraints"]) == 2
+    assert len(dictionary["__data__"]["constraints"]) == 2  # type: ignore[index,arg-type,call-overload]  # test: dict shape known
     p2 = BoundNatParam.deserialize_from_dict(dictionary)
     _assert_all_satisfied(p2, [2, 5, 100])
     _assert_none_satisfied(p2, [0, 1])
     dictionary = p2.serialize_to_dict()
-    assert len(dictionary["__data__"]["constraints"]) == 2
+    assert len(dictionary["__data__"]["constraints"]) == 2  # type: ignore[index,arg-type,call-overload]  # test: dict shape known
 
 
 # TODO: Update tests that check exceptions to match exception messages.

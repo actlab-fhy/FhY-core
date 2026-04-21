@@ -21,8 +21,8 @@ def mock_identifier(name_hint: str, identifier_id: int) -> Identifier:
     identifier._id = identifier_id
     identifier.name_hint = name_hint
     identifier.id = identifier_id
-    identifier.__eq__ = lambda self, other: self.id == other.id
-    identifier.__hash__ = lambda self: hash(self.id)
+    identifier.__eq__ = lambda self, other: self.id == other.id  # type: ignore[method-assign,assignment,misc]
+    identifier.__hash__ = lambda self: hash(self.id)  # type: ignore[method-assign,assignment,misc]
     identifier.serialize_to_dict = lambda: {
         "id": identifier.id,
         "name_hint": identifier.name_hint,

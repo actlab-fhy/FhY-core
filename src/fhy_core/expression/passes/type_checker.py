@@ -62,7 +62,6 @@ _UNSIGNED_CORE_DATA_TYPES = frozenset(
         CoreDataType.UINT8,
         CoreDataType.UINT16,
         CoreDataType.UINT32,
-        CoreDataType.UINT64,
     }
 )
 
@@ -99,7 +98,21 @@ _FLOAT_LIKE_CORE_DATA_TYPES = _REAL_FLOAT_CORE_DATA_TYPES | _COMPLEX_CORE_DATA_T
 
 
 def get_core_data_type_from_literal_type(literal: LiteralType) -> CoreDataType:
-    """Return the weak core data type assigned to a literal."""
+    """Return the weak core data type assigned to a literal.
+
+    Only numeric literals (``int`` and ``float``) participate in the type
+    system; ``bool`` and ``str`` values are accepted by
+    :class:`~fhy_core.expression.core.LiteralExpression` for other purposes
+    (e.g. serialization round-trips) but have no numeric core data type and
+    are rejected here with :class:`NotImplementedError`. Callers that may
+    receive non-numeric literals should either filter them earlier or catch
+    ``NotImplementedError`` explicitly.
+
+    Raises:
+        NotImplementedError: If ``literal`` is a ``bool`` or ``str``.
+        ValueError: If ``literal`` is none of the supported literal types.
+
+    """
     match literal:
         case bool():
             raise NotImplementedError("Boolean literals are not yet supported.")
@@ -318,6 +331,72 @@ def _check_expected_type(
         )
 
 
+def _get_literal_stride_value(stride: Expression | None) -> int:
+    """Return the integer value of a stride, treating None as 1.
+
+    Raises:
+        FhYCoreTypeError: If the stride is not a literal integer expression,
+            since non-literal strides cannot be combined.
+
+    """
+    if stride is None:
+        return 1
+    elif not isinstance(stride, LiteralExpression):
+        raise FhYCoreTypeError(
+            "Index arithmetic on two index types requires literal integer strides, "
+            f"got non-literal stride {_format_expression(stride)}."
+        )
+    value = stride.value
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise FhYCoreTypeError(
+            f"Index stride literal must be an integer, got {value!r}."
+        )
+    return value
+
+
+def _get_literal_stride_expression(value: int) -> Expression | None:
+    return None if value == 1 else LiteralExpression(value)
+
+
+def _combine_index_strides_for_add(
+    left_stride: Expression | None, right_stride: Expression | None
+) -> Expression | None:
+    return _get_literal_stride_expression(
+        min(
+            _get_literal_stride_value(left_stride),
+            _get_literal_stride_value(right_stride),
+        )
+    )
+
+
+def _scale_index_type(index_type: IndexType, scalar: LiteralExpression) -> IndexType:
+    """Scale an index type by a positive integer literal scalar.
+
+    Raises:
+        FhYCoreTypeError: If the scalar is not a positive integer literal.
+
+    """
+    value = scalar.value
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise FhYCoreTypeError(
+            f"Index scaling requires an integer literal, got {value!r}."
+        )
+    if value <= 0:
+        raise FhYCoreTypeError(
+            f"Index scaling requires a positive integer literal, got {value}."
+        )
+    new_stride: Expression | None
+    if index_type.stride is None:
+        new_stride = None if value == 1 else LiteralExpression(value)
+    else:
+        new_stride = scalar * index_type.stride
+    return IndexType(
+        scalar * index_type.lower_bound,
+        scalar * index_type.upper_bound,
+        new_stride,
+    )
+
+
 def _shift_index_type(
     index_type: IndexType, offset_expression: Expression, *, subtract: bool = False
 ) -> IndexType:
@@ -327,11 +406,12 @@ def _shift_index_type(
             index_type.upper_bound - offset_expression,
             index_type.stride,
         )
-    return IndexType(
-        index_type.lower_bound + offset_expression,
-        index_type.upper_bound + offset_expression,
-        index_type.stride,
-    )
+    else:
+        return IndexType(
+            index_type.lower_bound + offset_expression,
+            index_type.upper_bound + offset_expression,
+            index_type.stride,
+        )
 
 
 @register_pass(
@@ -489,7 +569,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             case UnaryOperation.LOGICAL_NOT:
                 raise NotImplementedError("Boolean result types are not yet supported.")
 
-    def _infer_binary_expression(  # noqa: PLR0912
+    def _infer_binary_expression(  # noqa: PLR0912, PLR0915
         self,
         binary_expression: BinaryExpression,
         expected_type: Type | None = None,
@@ -589,7 +669,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                     ),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
-            if binary_expression.operation in {
+            elif binary_expression.operation in {
                 BinaryOperation.DIVIDE,
                 BinaryOperation.FLOOR_DIVIDE,
             } and (
@@ -597,7 +677,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 or isinstance(right_value_type, IndexType)
             ):
                 raise FhYCoreTypeError("Division is not supported for index types.")
-            if (
+            elif (
                 binary_expression.operation == BinaryOperation.ADD
                 and isinstance(left_value_type, IndexType)
                 and isinstance(right_value_type, NumericalType)
@@ -610,7 +690,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                     _shift_index_type(left_value_type, binary_expression.right),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
-            if (
+            elif (
                 binary_expression.operation == BinaryOperation.ADD
                 and isinstance(left_value_type, NumericalType)
                 and isinstance(right_value_type, IndexType)
@@ -623,7 +703,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                     _shift_index_type(right_value_type, binary_expression.left),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
-            if (
+            elif (
                 binary_expression.operation == BinaryOperation.SUBTRACT
                 and isinstance(left_value_type, IndexType)
                 and isinstance(right_value_type, NumericalType)
@@ -640,12 +720,71 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                     ),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
-            raise FhYCoreTypeError(
-                "This operation is not supported for index types because the "
-                "resulting index bounds/stride are not inferred safely."
-            )
-
-        raise NotImplementedError("Boolean result types are not yet supported.")
+            elif (
+                binary_expression.operation == BinaryOperation.MULTIPLY
+                and isinstance(left_value_type, IndexType)
+                and isinstance(right_value_type, NumericalType)
+            ):
+                if not isinstance(binary_expression.right, LiteralExpression):
+                    raise FhYCoreTypeError(
+                        "Index scaling requires a positive integer literal scalar."
+                    )
+                if not _is_integral_numerical_type(right_value_type):
+                    raise FhYCoreTypeError(
+                        "Index scaling requires a positive integer literal scalar."
+                    )
+                return (
+                    _scale_index_type(left_value_type, binary_expression.right),
+                    promote_type_qualifiers(left_qualifier, right_qualifier),
+                )
+            elif (
+                binary_expression.operation == BinaryOperation.MULTIPLY
+                and isinstance(left_value_type, NumericalType)
+                and isinstance(right_value_type, IndexType)
+            ):
+                if not isinstance(binary_expression.left, LiteralExpression):
+                    raise FhYCoreTypeError(
+                        "Index scaling requires a positive integer literal scalar."
+                    )
+                if not _is_integral_numerical_type(left_value_type):
+                    raise FhYCoreTypeError(
+                        "Index scaling requires a positive integer literal scalar."
+                    )
+                return (
+                    _scale_index_type(right_value_type, binary_expression.left),
+                    promote_type_qualifiers(left_qualifier, right_qualifier),
+                )
+            elif isinstance(left_value_type, IndexType) and isinstance(
+                right_value_type, IndexType
+            ):
+                if binary_expression.operation == BinaryOperation.ADD:
+                    return (
+                        IndexType(
+                            left_value_type.lower_bound + right_value_type.lower_bound,
+                            left_value_type.upper_bound + right_value_type.upper_bound,
+                            _combine_index_strides_for_add(
+                                left_value_type.stride, right_value_type.stride
+                            ),
+                        ),
+                        promote_type_qualifiers(left_qualifier, right_qualifier),
+                    )
+                elif binary_expression.operation == BinaryOperation.SUBTRACT:
+                    raise FhYCoreTypeError(
+                        "Subtraction of two index types is not supported: the "
+                        "resulting stride semantics have not been defined."
+                    )
+                else:
+                    raise FhYCoreTypeError(
+                        "Index arithmetic is not supported for "
+                        f"{binary_expression.operation} operation."
+                    )
+            else:
+                raise FhYCoreTypeError(
+                    "This operation is not supported for index types because the "
+                    "resulting index bounds/stride are not inferred safely."
+                )
+        else:
+            raise NotImplementedError("Boolean result types are not yet supported.")
 
 
 def synthesize_expression_type(

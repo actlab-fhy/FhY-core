@@ -37,7 +37,8 @@ from .error import register_error
 from .expression.core import Expression
 from .expression.pprint import pformat_expression
 from .identifier import Identifier
-from .utils import Lattice, StrEnum, format_comma_separated_list
+from .lattice import Lattice
+from .utils import StrEnum, format_comma_separated_list
 
 
 class Type(WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC):
@@ -70,7 +71,6 @@ class CoreDataType(StrEnum):
     UINT8 = "uint8"
     UINT16 = "uint16"
     UINT32 = "uint32"
-    UINT64 = "uint64"
     INT8 = "int8"
     INT16 = "int16"
     INT32 = "int32"
@@ -108,12 +108,7 @@ def get_core_data_type_bit_width(core_data_type: CoreDataType) -> int | None:
             | CoreDataType.COMPLEX32
         ):
             return 32
-        case (
-            CoreDataType.UINT64
-            | CoreDataType.INT64
-            | CoreDataType.FLOAT64
-            | CoreDataType.COMPLEX64
-        ):
+        case CoreDataType.INT64 | CoreDataType.FLOAT64 | CoreDataType.COMPLEX64:
             return 64
         case CoreDataType.COMPLEX128:
             return 128
@@ -128,41 +123,47 @@ def is_weak_core_data_type(core_data_type: CoreDataType) -> bool:
     }
 
 
-def _define_uint_data_type_lattice() -> Lattice[CoreDataType]:
+def _define_integer_data_type_lattice() -> Lattice[CoreDataType]:
+    """Define the unified lattice over unsigned and signed integer types.
+
+    The lattice links the unsigned chain (UINT < UINT8 < ... < UINT32) and the
+    signed chain (INT < INT8 < ... < INT64) so that any UINT/INT pair has a
+    well-defined promotion target:
+
+      - UINT -> INT (weak promotion of weak unsigned to weak signed)
+      - UINT_N -> INT_{2N} for N in {8, 16, 32} (concrete unsigned promotes to
+        the next-wider signed type that can represent all of its values)
+
+    """
     lattice = Lattice[CoreDataType]()
-    lattice.add_element(CoreDataType.UINT)
-    lattice.add_element(CoreDataType.UINT8)
-    lattice.add_element(CoreDataType.UINT16)
-    lattice.add_element(CoreDataType.UINT32)
-    lattice.add_element(CoreDataType.UINT64)
+    for element in (
+        CoreDataType.UINT,
+        CoreDataType.UINT8,
+        CoreDataType.UINT16,
+        CoreDataType.UINT32,
+        CoreDataType.INT,
+        CoreDataType.INT8,
+        CoreDataType.INT16,
+        CoreDataType.INT32,
+        CoreDataType.INT64,
+    ):
+        lattice.add_element(element)
 
     lattice.add_order(CoreDataType.UINT, CoreDataType.UINT8)
     lattice.add_order(CoreDataType.UINT8, CoreDataType.UINT16)
     lattice.add_order(CoreDataType.UINT16, CoreDataType.UINT32)
-    lattice.add_order(CoreDataType.UINT32, CoreDataType.UINT64)
-
-    if not lattice.is_lattice():
-        raise RuntimeError("Unsigned integer lattice is not a lattice.")
-
-    return lattice
-
-
-def _define_int_data_type_lattice() -> Lattice[CoreDataType]:
-    lattice = Lattice[CoreDataType]()
-    lattice.add_element(CoreDataType.INT)
-    lattice.add_element(CoreDataType.INT8)
-    lattice.add_element(CoreDataType.INT16)
-    lattice.add_element(CoreDataType.INT32)
-    lattice.add_element(CoreDataType.INT64)
 
     lattice.add_order(CoreDataType.INT, CoreDataType.INT8)
     lattice.add_order(CoreDataType.INT8, CoreDataType.INT16)
     lattice.add_order(CoreDataType.INT16, CoreDataType.INT32)
     lattice.add_order(CoreDataType.INT32, CoreDataType.INT64)
 
-    if not lattice.is_lattice():
-        raise RuntimeError("Integer lattice is not a lattice.")
+    lattice.add_order(CoreDataType.UINT, CoreDataType.INT)
+    lattice.add_order(CoreDataType.UINT8, CoreDataType.INT16)
+    lattice.add_order(CoreDataType.UINT16, CoreDataType.INT32)
+    lattice.add_order(CoreDataType.UINT32, CoreDataType.INT64)
 
+    lattice.verify()
     return lattice
 
 
@@ -185,14 +186,11 @@ def _define_float_complex_data_type_lattice() -> Lattice[CoreDataType]:
     lattice.add_order(CoreDataType.COMPLEX32, CoreDataType.COMPLEX64)
     lattice.add_order(CoreDataType.COMPLEX64, CoreDataType.COMPLEX128)
 
-    if not lattice.is_lattice():
-        raise RuntimeError("Floating point and complex lattice is not a lattice.")
-
+    lattice.verify()
     return lattice
 
 
-_UINT_DATA_TYPE_LATTICE = _define_uint_data_type_lattice()
-_INT_DATA_TYPE_LATTICE = _define_int_data_type_lattice()
+_INTEGER_DATA_TYPE_LATTICE = _define_integer_data_type_lattice()
 _FLOAT_COMPLEX_DATA_TYPE_LATTICE = _define_float_complex_data_type_lattice()
 
 
@@ -212,14 +210,11 @@ def promote_core_data_types(
         FhYTypeError: If the promotion is not supported.
 
     """
-    _UINT_DATA_TYPES = {
+    _INTEGER_DATA_TYPES = {
         CoreDataType.UINT,
         CoreDataType.UINT8,
         CoreDataType.UINT16,
         CoreDataType.UINT32,
-        CoreDataType.UINT64,
-    }
-    _INT_DATA_TYPES = {
         CoreDataType.INT,
         CoreDataType.INT8,
         CoreDataType.INT16,
@@ -236,12 +231,11 @@ def promote_core_data_types(
         CoreDataType.COMPLEX128,
     }
 
-    if core_data_type1 in _UINT_DATA_TYPES and core_data_type2 in _UINT_DATA_TYPES:
-        return _UINT_DATA_TYPE_LATTICE.get_least_upper_bound(
-            core_data_type1, core_data_type2
-        )
-    elif core_data_type1 in _INT_DATA_TYPES and core_data_type2 in _INT_DATA_TYPES:
-        return _INT_DATA_TYPE_LATTICE.get_least_upper_bound(
+    if (
+        core_data_type1 in _INTEGER_DATA_TYPES
+        and core_data_type2 in _INTEGER_DATA_TYPES
+    ):
+        return _INTEGER_DATA_TYPE_LATTICE.get_least_upper_bound(
             core_data_type1, core_data_type2
         )
     elif (
@@ -263,7 +257,6 @@ def _get_smallest_uint_core_data_type(literal: int) -> CoreDataType:
         (CoreDataType.UINT8, 2**8 - 1),
         (CoreDataType.UINT16, 2**16 - 1),
         (CoreDataType.UINT32, 2**32 - 1),
-        (CoreDataType.UINT64, 2**64 - 1),
     ):
         if literal <= upper_bound:
             return core_data_type
@@ -328,7 +321,6 @@ def resolve_literal_core_data_type(
             CoreDataType.UINT8,
             CoreDataType.UINT16,
             CoreDataType.UINT32,
-            CoreDataType.UINT64,
         }:
             return promote_core_data_types(
                 minimal_uint,

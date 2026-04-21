@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 import pytest
+
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -39,7 +40,7 @@ from .conftest import mock_identifier
         ),
     ],
 )
-def test_tokenize_expression(expression_str: str, expected_tokens: list[str]):
+def test_tokenize_expression(expression_str: str, expected_tokens: list[str]) -> None:
     """Test that the expression is correctly tokenized."""
     assert tokenize_expression(expression_str) == expected_tokens
 
@@ -105,10 +106,50 @@ def test_tokenize_expression(expression_str: str, expected_tokens: list[str]):
                 LiteralExpression("1"),
             ),
         ),
+        (
+            "a == b",
+            BinaryExpression(
+                BinaryOperation.EQUAL,
+                IdentifierExpression(mock_identifier("a", 0)),
+                IdentifierExpression(mock_identifier("b", 1)),
+            ),
+        ),
+        (
+            "a != b",
+            BinaryExpression(
+                BinaryOperation.NOT_EQUAL,
+                IdentifierExpression(mock_identifier("a", 0)),
+                IdentifierExpression(mock_identifier("b", 1)),
+            ),
+        ),
+        (
+            "a < b == c",
+            BinaryExpression(
+                BinaryOperation.EQUAL,
+                BinaryExpression(
+                    BinaryOperation.LESS,
+                    IdentifierExpression(mock_identifier("a", 0)),
+                    IdentifierExpression(mock_identifier("b", 1)),
+                ),
+                IdentifierExpression(mock_identifier("c", 2)),
+            ),
+        ),
+        (
+            "a && b == c",
+            BinaryExpression(
+                BinaryOperation.LOGICAL_AND,
+                IdentifierExpression(mock_identifier("a", 0)),
+                BinaryExpression(
+                    BinaryOperation.EQUAL,
+                    IdentifierExpression(mock_identifier("b", 1)),
+                    IdentifierExpression(mock_identifier("c", 2)),
+                ),
+            ),
+        ),
     ],
 )
 @patch("fhy_core.identifier.Identifier._next_id", 0)
-def test_parse_expression(expression_str: str, expected_tree: Expression):
+def test_parse_expression(expression_str: str, expected_tree: Expression) -> None:
     """Test that the expression is correctly parsed."""
     result = parse_expression(expression_str)
     assert result.is_structurally_equivalent(expected_tree)

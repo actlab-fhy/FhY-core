@@ -1,8 +1,11 @@
 """Tests the expression utility."""
 
 import operator
+from collections.abc import Callable
+from typing import Any
 
 import pytest
+
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -22,7 +25,7 @@ from fhy_core.trait import (
 from .conftest import mock_identifier
 
 
-def test_unary_expression():
+def test_unary_expression() -> None:
     """Test that the unary expression is correctly initialized."""
     operand = LiteralExpression(5)
     expr = UnaryExpression(operation=UnaryOperation.NEGATE, operand=operand)
@@ -30,7 +33,7 @@ def test_unary_expression():
     assert expr.operand is operand
 
 
-def test_binary_expression():
+def test_binary_expression() -> None:
     """Test that the binary expression is correctly initialized."""
     left = LiteralExpression(5)
     right = LiteralExpression(10)
@@ -40,7 +43,7 @@ def test_binary_expression():
     assert expr.right is right
 
 
-def test_identifier_expression():
+def test_identifier_expression() -> None:
     """Test that the identifier expression is correctly initialized."""
     identifier = Identifier("test_identifier")
     expr = IdentifierExpression(identifier)
@@ -48,13 +51,13 @@ def test_identifier_expression():
 
 
 @pytest.mark.parametrize("value", [5, 3.14, True, "3.14"])
-def test_literal_expression_valid_values(value):
+def test_literal_expression_valid_values(value: int | float | bool | str) -> None:
     """Test that the literal expression is correctly initialized with valid values."""
     expr = LiteralExpression(value)
     assert expr.value == value
 
 
-def test_literal_expression_invalid_string():
+def test_literal_expression_invalid_string() -> None:
     """Test that the literal expression raises an exception for invalid string
     values.
     """
@@ -62,20 +65,20 @@ def test_literal_expression_invalid_string():
         LiteralExpression("invalid_literal")
 
 
-def test_unary_expression_has_operands_runtime_protocol():
+def test_unary_expression_has_operands_runtime_protocol() -> None:
     """Test `UnaryExpression` satisfies the `HasOperands` runtime protocol."""
     expression = UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1))
     assert isinstance(expression, HasOperands)
 
 
-def test_unary_expression_operands_contract():
+def test_unary_expression_operands_contract() -> None:
     """Test `UnaryExpression` operands method."""
     operand = LiteralExpression(1)
     expression = UnaryExpression(UnaryOperation.NEGATE, operand)
     assert expression.get_operands() == (operand,)
 
 
-def test_binary_expression_has_operands_runtime_protocol():
+def test_binary_expression_has_operands_runtime_protocol() -> None:
     """Test `BinaryExpression` satisfies the `HasOperands` runtime protocol."""
     expression = BinaryExpression(
         BinaryOperation.ADD,
@@ -85,7 +88,7 @@ def test_binary_expression_has_operands_runtime_protocol():
     assert isinstance(expression, HasOperands)
 
 
-def test_binary_expression_operands_contract():
+def test_binary_expression_operands_contract() -> None:
     """Test `BinaryExpression` operands method."""
     left = LiteralExpression(1)
     right = LiteralExpression(2)
@@ -93,13 +96,13 @@ def test_binary_expression_operands_contract():
     assert expression.get_operands() == (left, right)
 
 
-def test_expression_is_structural_equivalence_runtime_protocol():
+def test_expression_is_structural_equivalence_runtime_protocol() -> None:
     """Test `Expression` satisfies `StructuralEquivalence` runtime protocol."""
     expression = LiteralExpression(7)
     assert isinstance(expression, StructuralEquivalence)
 
 
-def test_expression_structural_equivalence_true_for_same_tree():
+def test_expression_structural_equivalence_true_for_same_tree() -> None:
     """Test expression structural equivalence for identical trees."""
     left = BinaryExpression(
         BinaryOperation.ADD,
@@ -114,7 +117,7 @@ def test_expression_structural_equivalence_true_for_same_tree():
     assert left.is_structurally_equivalent(right)
 
 
-def test_expression_structural_equivalence_false_for_different_tree():
+def test_expression_structural_equivalence_false_for_different_tree() -> None:
     """Test expression structural equivalence for different trees."""
     left = BinaryExpression(
         BinaryOperation.ADD,
@@ -138,8 +141,9 @@ def test_expression_structural_equivalence_false_for_different_tree():
     ],
 )
 def test_unary_operator_dunder_methods(
-    unary_operator, expected_operation: UnaryOperation
-):
+    unary_operator: Callable[[Expression], Expression],
+    expected_operation: UnaryOperation,
+) -> None:
     """Test that the unary operation dunder methods correctly create unary
     expressions.
     """
@@ -169,8 +173,9 @@ _binary_operator_operations_pairs = pytest.mark.parametrize(
 
 @_binary_operator_operations_pairs
 def test_binary_operation_dunder_methods(
-    binary_operator, expected_operation: BinaryOperation
-):
+    binary_operator: Callable[[Expression, Expression], Expression],
+    expected_operation: BinaryOperation,
+) -> None:
     """Test that the binary operation dunder methods correctly create binary"""
     left = LiteralExpression(5)
     right = LiteralExpression(10)
@@ -200,17 +205,19 @@ def test_binary_operation_dunder_methods(
     ],
 )
 def test_binary_operation_left_dunder_methods_for_literals(
-    binary_operator,
+    binary_operator: Callable[[Any, Any], Expression],
     expected_operation: BinaryOperation,
     left: Expression,
     right: Identifier | str | float | int | bool,
     expected_right_type: type[Expression],
-):
+) -> None:
     """Test that the binary operation left dunder methods correctly create
     literal expressions.
     """
     expected_expr = BinaryExpression(
-        expected_operation, left, expected_right_type(right)
+        expected_operation,
+        left,
+        expected_right_type(right),  # type: ignore[call-arg]  # test: Expression subclass constructors vary
     )
     assert binary_operator(left, right).is_structurally_equivalent(expected_expr)
 
@@ -247,12 +254,12 @@ def test_binary_operation_left_dunder_methods_for_literals(
     ],
 )
 def test_binary_operation_right_dunder_methods_for_literals(
-    binary_operator,
+    binary_operator: Callable[[Any, Any], Expression],
     expected_operation: BinaryOperation,
     left: Identifier | str | float | int | bool,
     expected_left_type: type[Expression],
     right: Expression,
-):
+) -> None:
     """Test that the binary operation right dunder methods correctly create
     literal expressions.
     """
@@ -261,12 +268,14 @@ def test_binary_operation_right_dunder_methods_for_literals(
             "Modulo operation with string on the left is reserved for formatting."
         )
     expected_expr = BinaryExpression(
-        expected_operation, expected_left_type(left), right
+        expected_operation,
+        expected_left_type(left),  # type: ignore[call-arg]  # test: Expression subclass constructors vary
+        right,
     )
     assert binary_operator(left, right).is_structurally_equivalent(expected_expr)
 
 
-def test_binary_operation_dunder_method_fails_to_create_expression_with_unknown_type():
+def test_binary_operation_dunder_fails_to_create_expression_with_unknown_type() -> None:
     """Test that the binary operation dunder methods fail to create an expression
     with an unknown type.
     """
@@ -274,13 +283,13 @@ def test_binary_operation_dunder_method_fails_to_create_expression_with_unknown_
         operator.add(LiteralExpression(5), [])
 
 
-def test_logical_and():
+def test_logical_and() -> None:
     """Test that the logical and static method creates an AND tree."""
     expression_1 = LiteralExpression(True)
     expression_2 = LiteralExpression(False)
     expression_3 = True
 
-    result = Expression.logical_and(expression_1, expression_2, expression_3)
+    result = Expression.logical_and(expression_1, expression_2, expression_3)  # type: ignore[arg-type]  # test: accepts coerceable literals
 
     expected_expression = BinaryExpression(
         BinaryOperation.LOGICAL_AND,
@@ -292,13 +301,13 @@ def test_logical_and():
     assert result.is_structurally_equivalent(expected_expression)
 
 
-def test_logical_or():
+def test_logical_or() -> None:
     """Test that the logical or static method creates an OR tree."""
     expression_1 = LiteralExpression(True)
     expression_2 = False
     expression_3 = LiteralExpression(True)
 
-    result = Expression.logical_or(expression_1, expression_2, expression_3)
+    result = Expression.logical_or(expression_1, expression_2, expression_3)  # type: ignore[arg-type]  # test: accepts coerceable literals
 
     expected_expression = BinaryExpression(
         BinaryOperation.LOGICAL_OR,
@@ -371,7 +380,9 @@ def test_logical_or():
         ),
     ],
 )
-def test_dict_serialization(expression: Expression, expected_dict: SerializedDict):
+def test_dict_serialization(
+    expression: Expression, expected_dict: SerializedDict
+) -> None:
     """Test that expressions can be serialized/deserialized via a dictionary."""
     assert expression.serialize_to_dict() == expected_dict
     assert Expression.deserialize_from_dict(expected_dict).is_structurally_equivalent(
@@ -379,17 +390,17 @@ def test_dict_serialization(expression: Expression, expected_dict: SerializedDic
     )
 
 
-def test_dict_deserialization_fails_with_invalid_unary_operation():
+def test_dict_deserialization_fails_with_invalid_unary_operation() -> None:
     """Test dictionary deserialization fails with invalid unary operation name."""
     data = {
         "__type__": "unary_expression",
         "__data__": {"operation": "invalid_operation", "operand": {}},
     }
     with pytest.raises(DeserializationValueError):
-        Expression.deserialize_from_dict(data)
+        Expression.deserialize_from_dict(data)  # type: ignore[arg-type]  # test: invalid input
 
 
-def test_dict_deserialization_fails_with_invalid_binary_operation():
+def test_dict_deserialization_fails_with_invalid_binary_operation() -> None:
     """Test dictionary deserialization fails with invalid binary operation name."""
     data = {
         "__type__": "binary_expression",
@@ -400,7 +411,7 @@ def test_dict_deserialization_fails_with_invalid_binary_operation():
         },
     }
     with pytest.raises(DeserializationValueError):
-        Expression.deserialize_from_dict(data)
+        Expression.deserialize_from_dict(data)  # type: ignore[arg-type]  # test: invalid input
 
 
 # TODO: Check serialization structure errors and value errors for all types.
