@@ -268,8 +268,8 @@ def test_binary_operation_right_dunder_methods_for_literals(
         )
     expected_expr = BinaryExpression(
         expected_operation,
-        expected_left_type(left),
-        right,  # type: ignore[call-arg]  # test: Expression subclass constructors vary
+        expected_left_type(left),  # type: ignore[call-arg]  # test: Expression subclass constructors vary
+        right,
     )
     assert binary_operator(left, right).is_structurally_equivalent(expected_expr)
 

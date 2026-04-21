@@ -49,7 +49,7 @@ fhy_core = ["py.typed"]
 dev = ["fhy_core[test,lint,type,docs]", "tox"]
 test = ["pytest", "coverage", "pytest-xdist"]
 lint = ["ruff", "pylint"]
-type = ["mypy"]
+type = ["fhy_core[test]", "mypy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
