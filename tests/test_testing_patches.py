@@ -109,3 +109,49 @@ def test_fail_fast_structural_equivalence_restores_inherited_methods() -> None:
     restored_method = LiteralExpression.is_structurally_equivalent
     assert restored_method is original_method
     assert getattr(restored_method, "__wrapped__", None) is None
+
+
+def test_fail_fast_structural_equivalence_restores_methods_on_body_exception() -> None:
+    """Test that patched methods are restored when the body raises."""
+    original_method = _TestClass1.is_structurally_equivalent
+
+    with pytest.raises(RuntimeError):
+        with fail_fast_structural_equivalence():
+            raise RuntimeError("user-raised")
+
+    assert _TestClass1.is_structurally_equivalent is original_method
+
+
+def test_deterministic_identifiers_by_name_hint_restores_on_body_exception() -> None:
+    """Test that Identifier.__init__ is restored when the body raises."""
+    original_init = Identifier.__init__
+
+    with pytest.raises(RuntimeError):
+        with deterministic_identifiers_by_name_hint:
+            raise RuntimeError("user-raised")
+
+    assert Identifier.__init__ is original_init
+
+
+def test_deterministic_identifiers_by_name_hint_supports_nested_usage() -> None:
+    """Test nested entries reuse the patch and only restore at the outermost exit."""
+    original_init = Identifier.__init__
+
+    with deterministic_identifiers_by_name_hint:
+        outer_patched_init = Identifier.__init__
+        assert outer_patched_init is not original_init
+
+        with deterministic_identifiers_by_name_hint:
+            inner_a = Identifier("shared")
+            inner_b = Identifier("shared")
+            assert inner_a == inner_b
+            assert Identifier.__init__ is outer_patched_init
+
+        # Inner exit must NOT restore the original while the outer scope is alive.
+        assert Identifier.__init__ is outer_patched_init
+
+        outer_a = Identifier("shared")
+        outer_b = Identifier("shared")
+        assert outer_a == outer_b
+
+    assert Identifier.__init__ is original_init

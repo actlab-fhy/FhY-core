@@ -63,6 +63,18 @@ def _single_warning_validator(
     return _Validator()
 
 
+def _single_info_validator(
+    pass_name: str, message: str
+) -> CompilerPass[ValueBox, None]:
+    @register_pass(pass_name, f"Emits a single INFO: {message}")
+    class _Validator(AnalysisVisitablePass[ValueBox]):
+        def visit_value_box(self, node: ValueBox) -> None:
+            _ = node
+            self.report(DiagnosticLevel.INFO, message)
+
+    return _Validator()
+
+
 def _clean_validator(pass_name: str) -> CompilerPass[ValueBox, None]:
     @register_pass(pass_name, "Emits nothing; always succeeds.")
     class _Validator(AnalysisVisitablePass[ValueBox]):
@@ -130,6 +142,14 @@ def test_raise_if_failed_is_noop_when_only_warnings_present() -> None:
     """Test that raise_if_failed does not raise when no ERROR diagnostics exist."""
     report = ValidationReport(
         diagnostics=(PassDiagnostic(DiagnosticLevel.WARNING, Note("ok-ish"), "v"),)
+    )
+    report.raise_if_failed()
+
+
+def test_raise_if_failed_is_noop_when_only_infos_present() -> None:
+    """Test that raise_if_failed does not raise on INFO-only reports."""
+    report = ValidationReport(
+        diagnostics=(PassDiagnostic(DiagnosticLevel.INFO, Note("fyi"), "v"),)
     )
     report.raise_if_failed()
 
@@ -401,3 +421,64 @@ def test_validation_manager_does_not_suppress_pass_validation_error_diagnostics(
     # no synthetic "raised without reporting" fallback.
     assert "real-error" in messages
     assert not any("raised without reporting" in m for m in messages)
+
+
+def test_validation_manager_aggregates_mixed_severity_levels_through_pipeline() -> None:
+    """Test that INFO/WARNING/ERROR all propagate through the manager in order."""
+    manager = ValidationManager[ValueBox]()
+    manager.add(_single_info_validator("tests.vm.mixed.info", "note-me"))
+    manager.add(_single_warning_validator("tests.vm.mixed.warn", "watch-me"))
+    manager.add(_single_error_validator("tests.vm.mixed.err", "fix-me"))
+
+    report = manager.validate(ValueBox(0))
+
+    assert [d.message_text for d in report.diagnostics] == [
+        "note-me",
+        "watch-me",
+        "fix-me",
+    ]
+    assert tuple(d.message_text for d in report.infos()) == ("note-me",)
+    assert tuple(d.message_text for d in report.warnings()) == ("watch-me",)
+    assert tuple(d.message_text for d in report.errors()) == ("fix-me",)
+
+
+def test_validation_manager_attributes_each_diagnostic_to_emitting_validator() -> None:
+    """Test that `pass_name` on each diagnostic identifies its emitter."""
+    manager = ValidationManager[ValueBox]()
+    manager.add(_single_warning_validator("tests.vm.attr.first", "first-msg"))
+    manager.add(_single_error_validator("tests.vm.attr.second", "second-msg"))
+
+    report = manager.validate(ValueBox(0))
+
+    assert [(d.pass_name, d.message_text) for d in report.diagnostics] == [
+        ("tests.vm.attr.first", "first-msg"),
+        ("tests.vm.attr.second", "second-msg"),
+    ]
+
+
+def test_validation_manager_preserves_multiple_diagnostics_from_single_validator() -> (
+    None
+):
+    """Test that all diagnostics from one validator are kept in emission order."""
+
+    @register_pass("tests.vm.multi_emit", "Reports multiple diagnostics in one visit.")
+    class _MultiEmit(AnalysisVisitablePass[ValueBox]):
+        def visit_value_box(self, node: ValueBox) -> None:
+            _ = node
+            self.report(DiagnosticLevel.INFO, "info-1")
+            self.report(DiagnosticLevel.WARNING, "warn-1")
+            self.report(DiagnosticLevel.ERROR, "err-1")
+            self.report(DiagnosticLevel.WARNING, "warn-2")
+
+    manager = ValidationManager[ValueBox]()
+    manager.add(_MultiEmit())
+    report = manager.validate(ValueBox(0))
+
+    assert [d.message_text for d in report.diagnostics] == [
+        "info-1",
+        "warn-1",
+        "err-1",
+        "warn-2",
+    ]
+    assert len(report.records) == 1
+    assert len(report.records[0].diagnostics) == 4

@@ -98,7 +98,21 @@ _FLOAT_LIKE_CORE_DATA_TYPES = _REAL_FLOAT_CORE_DATA_TYPES | _COMPLEX_CORE_DATA_T
 
 
 def get_core_data_type_from_literal_type(literal: LiteralType) -> CoreDataType:
-    """Return the weak core data type assigned to a literal."""
+    """Return the weak core data type assigned to a literal.
+
+    Only numeric literals (``int`` and ``float``) participate in the type
+    system; ``bool`` and ``str`` values are accepted by
+    :class:`~fhy_core.expression.core.LiteralExpression` for other purposes
+    (e.g. serialization round-trips) but have no numeric core data type and
+    are rejected here with :class:`NotImplementedError`. Callers that may
+    receive non-numeric literals should either filter them earlier or catch
+    ``NotImplementedError`` explicitly.
+
+    Raises:
+        NotImplementedError: If ``literal`` is a ``bool`` or ``str``.
+        ValueError: If ``literal`` is none of the supported literal types.
+
+    """
     match literal:
         case bool():
             raise NotImplementedError("Boolean literals are not yet supported.")

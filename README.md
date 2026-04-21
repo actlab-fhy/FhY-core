@@ -11,6 +11,10 @@
 | Parameter                                | Real, integer, ordinal, categorical, and permutation parameters.       |
 | Types                                    | Core type system for the compiler w/ type checking for expressions.    |
 | Symbol Table                             | Nested symbol table.                                                   |
+| Pass Infrastructure                      | `CompilerPass`, `VisitablePass`, and `register_pass` for building IR passes with diagnostics (`PassDiagnostic`, `DiagnosticLevel`) and preserved-analysis tracking. |
+| Pass Manager                             | `PassManager` sequences transformations and returns `PassManagerResult`/`PassRunRecord`; `FixpointPassGroup` drives until-fixpoint iteration. |
+| Analysis Manager                         | `Analysis`/`AnalysisVisitablePass` with `AnalysisManager` for caching and invalidating analysis results across pass runs. |
+| Validation Manager                       | `ValidationManager` runs every validator against the IR (collect-all, never fail-fast) and returns a `ValidationReport`; `ValidationFailedError` surfaces ERROR diagnostics. |
 | Serializable Trait                       | `Serializable`/`WrappedFamilySerializable` with dict, JSON, and binary formats plus registered type IDs. |
 | Compiler Traits - Identity               | `HasIdentifier` for stable object identity.                            |
 | Compiler Traits - Provenance             | `HasProvenance` for source/origin tracking.                            |

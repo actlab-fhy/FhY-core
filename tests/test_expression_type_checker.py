@@ -43,6 +43,38 @@ def test_get_core_data_type_from_literal_type_returns_weak_types():
     assert get_core_data_type_from_literal_type(1.5) == CoreDataType.FLOAT
 
 
+def test_get_core_data_type_from_literal_type_rejects_bool_literal():
+    """Test that boolean literals are rejected with NotImplementedError."""
+    with pytest.raises(NotImplementedError):
+        get_core_data_type_from_literal_type(True)
+    with pytest.raises(NotImplementedError):
+        get_core_data_type_from_literal_type(False)
+
+
+def test_get_core_data_type_from_literal_type_rejects_string_literal():
+    """Test that string literals are rejected with NotImplementedError."""
+    with pytest.raises(NotImplementedError):
+        get_core_data_type_from_literal_type("1")
+
+
+def test_synthesize_bool_literal_expression_is_rejected():
+    """Test that bool LiteralExpression is rejected during type synthesis."""
+    checker = ExpressionTypeChecker(
+        lambda _: (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    )
+    with pytest.raises(NotImplementedError):
+        checker.visit(LiteralExpression(True))
+
+
+def test_synthesize_string_literal_expression_is_rejected():
+    """Test that string LiteralExpression is rejected during type synthesis."""
+    checker = ExpressionTypeChecker(
+        lambda _: (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+    )
+    with pytest.raises(NotImplementedError):
+        checker.visit(LiteralExpression("1"))
+
+
 def test_unary_negation_of_positive_integer_literal_becomes_weak_int():
     """Test unary negation of positive integer literal."""
     checker = ExpressionTypeChecker(
