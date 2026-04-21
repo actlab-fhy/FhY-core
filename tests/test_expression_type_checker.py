@@ -25,7 +25,9 @@ from fhy_core.types import (
 )
 
 
-def _assert_core_data_type(type_, expected_core_data_type: CoreDataType) -> None:
+def _assert_core_data_type(
+    type_: object, expected_core_data_type: CoreDataType
+) -> None:
     assert isinstance(type_, NumericalType)
     assert isinstance(type_.data_type, PrimitiveDataType)
     assert type_.data_type.core_data_type == expected_core_data_type
@@ -36,14 +38,14 @@ def _assert_index_type(type_: object, expected_type: IndexType) -> None:
     assert type_.is_structurally_equivalent(expected_type)
 
 
-def test_get_core_data_type_from_literal_type_returns_weak_types():
+def test_get_core_data_type_from_literal_type_returns_weak_types() -> None:
     """Test get_core_data_type_from_literal_type function with various literals."""
     assert get_core_data_type_from_literal_type(1) == CoreDataType.UINT
     assert get_core_data_type_from_literal_type(-1) == CoreDataType.INT
     assert get_core_data_type_from_literal_type(1.5) == CoreDataType.FLOAT
 
 
-def test_get_core_data_type_from_literal_type_rejects_bool_literal():
+def test_get_core_data_type_from_literal_type_rejects_bool_literal() -> None:
     """Test that boolean literals are rejected with NotImplementedError."""
     with pytest.raises(NotImplementedError):
         get_core_data_type_from_literal_type(True)
@@ -51,13 +53,13 @@ def test_get_core_data_type_from_literal_type_rejects_bool_literal():
         get_core_data_type_from_literal_type(False)
 
 
-def test_get_core_data_type_from_literal_type_rejects_string_literal():
+def test_get_core_data_type_from_literal_type_rejects_string_literal() -> None:
     """Test that string literals are rejected with NotImplementedError."""
     with pytest.raises(NotImplementedError):
         get_core_data_type_from_literal_type("1")
 
 
-def test_synthesize_bool_literal_expression_is_rejected():
+def test_synthesize_bool_literal_expression_is_rejected() -> None:
     """Test that bool LiteralExpression is rejected during type synthesis."""
     checker = ExpressionTypeChecker(
         lambda _: (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
@@ -66,7 +68,7 @@ def test_synthesize_bool_literal_expression_is_rejected():
         checker.visit(LiteralExpression(True))
 
 
-def test_synthesize_string_literal_expression_is_rejected():
+def test_synthesize_string_literal_expression_is_rejected() -> None:
     """Test that string LiteralExpression is rejected during type synthesis."""
     checker = ExpressionTypeChecker(
         lambda _: (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
@@ -75,7 +77,7 @@ def test_synthesize_string_literal_expression_is_rejected():
         checker.visit(LiteralExpression("1"))
 
 
-def test_unary_negation_of_positive_integer_literal_becomes_weak_int():
+def test_unary_negation_of_positive_integer_literal_becomes_weak_int() -> None:
     """Test unary negation of positive integer literal."""
     checker = ExpressionTypeChecker(
         lambda _: (
@@ -92,16 +94,18 @@ def test_unary_negation_of_positive_integer_literal_becomes_weak_int():
     assert result_qualifier == TypeQualifier.PARAM
 
 
-def test_positive_integer_literal_upgrades_to_signed_context():
+def test_positive_integer_literal_upgrades_to_signed_context() -> None:
     """Test positive integer literal upgrades to signed context."""
     identifier = Identifier("x")
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
-            NumericalType(PrimitiveDataType(CoreDataType.INT32)),
-            TypeQualifier.PARAM,
+            (
+                NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+                TypeQualifier.PARAM,
+            )
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
         )
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
     )
 
     result_type, result_qualifier = checker.visit(
@@ -116,7 +120,7 @@ def test_positive_integer_literal_upgrades_to_signed_context():
     assert result_qualifier == TypeQualifier.PARAM
 
 
-def test_integer_literals_remain_weak_without_context():
+def test_integer_literals_remain_weak_without_context() -> None:
     """Test that integer literals remain weak without context."""
     checker = ExpressionTypeChecker(
         lambda _: (
@@ -137,16 +141,18 @@ def test_integer_literals_remain_weak_without_context():
     assert result_qualifier == TypeQualifier.PARAM
 
 
-def test_integer_literal_can_upgrade_to_float_context():
+def test_integer_literal_can_upgrade_to_float_context() -> None:
     """Test that integer literals can upgrade to float context."""
     identifier = Identifier("y")
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
-            NumericalType(PrimitiveDataType(CoreDataType.FLOAT32)),
-            TypeQualifier.PARAM,
+            (
+                NumericalType(PrimitiveDataType(CoreDataType.FLOAT32)),
+                TypeQualifier.PARAM,
+            )
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
         )
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
     )
 
     result_type, result_qualifier = checker.visit(
@@ -161,7 +167,7 @@ def test_integer_literal_can_upgrade_to_float_context():
     assert result_qualifier == TypeQualifier.PARAM
 
 
-def test_check_literal_against_expected_type_resolves_weak_literal():
+def test_check_literal_against_expected_type_resolves_weak_literal() -> None:
     """Test that checking a literal against an expected type resolves weak literal."""
     checker = ExpressionTypeChecker(
         lambda _: (
@@ -179,7 +185,7 @@ def test_check_literal_against_expected_type_resolves_weak_literal():
     assert result_qualifier == TypeQualifier.PARAM
 
 
-def test_check_integer_literal_against_float_context_uses_context_type():
+def test_check_integer_literal_against_float_context_uses_context_type() -> None:
     """Test integer literal checking preserves concrete float context."""
     checker = ExpressionTypeChecker(
         lambda _: (
@@ -197,7 +203,7 @@ def test_check_integer_literal_against_float_context_uses_context_type():
     assert result_qualifier == TypeQualifier.PARAM
 
 
-def test_check_binary_expression_uses_expected_type_bidirectionally():
+def test_check_binary_expression_uses_expected_type_bidirectionally() -> None:
     """Test checking an arithmetic expression uses expected type bidirectionally."""
     checker = ExpressionTypeChecker(
         lambda _: (
@@ -219,17 +225,19 @@ def test_check_binary_expression_uses_expected_type_bidirectionally():
     assert result_qualifier == TypeQualifier.PARAM
 
 
-def test_integer_division_produces_float_type():
+def test_integer_division_produces_float_type() -> None:
     """Test that integer division produces a float result type."""
     left_identifier = Identifier("left")
     right_identifier = Identifier("right")
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
-            NumericalType(PrimitiveDataType(CoreDataType.INT32)),
-            TypeQualifier.PARAM,
+            (
+                NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+                TypeQualifier.PARAM,
+            )
+            if seen_identifier in {left_identifier, right_identifier}
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
         )
-        if seen_identifier in {left_identifier, right_identifier}
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
     )
 
     result_type, result_qualifier = checker.visit(
@@ -244,7 +252,7 @@ def test_integer_division_produces_float_type():
     assert result_qualifier == TypeQualifier.PARAM
 
 
-def test_weak_integer_division_produces_weak_float_type():
+def test_weak_integer_division_produces_weak_float_type() -> None:
     """Test that weak integer division stays weakly typed as float."""
     checker = ExpressionTypeChecker(
         lambda _: (
@@ -264,17 +272,19 @@ def test_weak_integer_division_produces_weak_float_type():
     _assert_core_data_type(result_type, CoreDataType.FLOAT)
 
 
-def test_floor_division_of_integers_produces_integer_type():
+def test_floor_division_of_integers_produces_integer_type() -> None:
     """Test that integer floor division produces an integer result type."""
     left_identifier = Identifier("left")
     right_identifier = Identifier("right")
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
-            NumericalType(PrimitiveDataType(CoreDataType.INT32)),
-            TypeQualifier.PARAM,
+            (
+                NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+                TypeQualifier.PARAM,
+            )
+            if seen_identifier in {left_identifier, right_identifier}
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
         )
-        if seen_identifier in {left_identifier, right_identifier}
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
     )
 
     result_type, result_qualifier = checker.visit(
@@ -289,22 +299,24 @@ def test_floor_division_of_integers_produces_integer_type():
     assert result_qualifier == TypeQualifier.PARAM
 
 
-def test_floor_division_of_float_and_int_produces_float_type():
+def test_floor_division_of_float_and_int_produces_float_type() -> None:
     """Test that floor division preserves float typing when a float is present."""
     left_identifier = Identifier("left")
     right_identifier = Identifier("right")
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
-            NumericalType(PrimitiveDataType(CoreDataType.FLOAT32)),
-            TypeQualifier.PARAM,
+            (
+                NumericalType(PrimitiveDataType(CoreDataType.FLOAT32)),
+                TypeQualifier.PARAM,
+            )
+            if seen_identifier == left_identifier
+            else (
+                NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+                TypeQualifier.PARAM,
+            )
+            if seen_identifier == right_identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
         )
-        if seen_identifier == left_identifier
-        else (
-            NumericalType(PrimitiveDataType(CoreDataType.INT32)),
-            TypeQualifier.PARAM,
-        )
-        if seen_identifier == right_identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
     )
 
     result_type, result_qualifier = checker.visit(
@@ -319,19 +331,21 @@ def test_floor_division_of_float_and_int_produces_float_type():
     assert result_qualifier == TypeQualifier.PARAM
 
 
-def test_tensor_type_is_rejected_in_expression_typing():
+def test_tensor_type_is_rejected_in_expression_typing() -> None:
     """Test that tensor-valued expressions are rejected in expression typing."""
     identifier = Identifier("tensor")
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
-            NumericalType(
-                PrimitiveDataType(CoreDataType.FLOAT32),
-                [LiteralExpression(4)],
-            ),
-            TypeQualifier.PARAM,
+            (
+                NumericalType(
+                    PrimitiveDataType(CoreDataType.FLOAT32),
+                    [LiteralExpression(4)],
+                ),
+                TypeQualifier.PARAM,
+            )
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
         )
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
     )
 
     with pytest.raises(NotImplementedError):
@@ -344,47 +358,51 @@ def test_tensor_type_is_rejected_in_expression_typing():
         )
 
 
-def test_tensor_identifier_is_rejected_immediately():
+def test_tensor_identifier_is_rejected_immediately() -> None:
     """Test that tensor identifiers are rejected outside compound expressions."""
     identifier = Identifier("tensor")
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
-            NumericalType(
-                PrimitiveDataType(CoreDataType.FLOAT32),
-                [LiteralExpression(4)],
-            ),
-            TypeQualifier.PARAM,
+            (
+                NumericalType(
+                    PrimitiveDataType(CoreDataType.FLOAT32),
+                    [LiteralExpression(4)],
+                ),
+                TypeQualifier.PARAM,
+            )
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
         )
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
     )
 
     with pytest.raises(NotImplementedError):
         checker.visit(IdentifierExpression(identifier))
 
 
-def test_tuple_identifier_is_rejected_immediately():
+def test_tuple_identifier_is_rejected_immediately() -> None:
     """Test that tuple identifiers are rejected in expressions."""
     identifier = Identifier("pair")
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
-            TupleType(
-                [
-                    NumericalType(PrimitiveDataType(CoreDataType.INT32)),
-                    NumericalType(PrimitiveDataType(CoreDataType.INT32)),
-                ]
-            ),
-            TypeQualifier.PARAM,
+            (
+                TupleType(
+                    [
+                        NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+                        NumericalType(PrimitiveDataType(CoreDataType.INT32)),
+                    ]
+                ),
+                TypeQualifier.PARAM,
+            )
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
         )
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
     )
 
     with pytest.raises(NotImplementedError):
         checker.visit(IdentifierExpression(identifier))
 
 
-def test_index_plus_scalar_produces_shifted_index_type():
+def test_index_plus_scalar_produces_shifted_index_type() -> None:
     """Test that adding a scalar to an index produces shifted index type."""
     identifier = Identifier("idx")
     upper_bound_identifier = Identifier("N")
@@ -394,9 +412,11 @@ def test_index_plus_scalar_produces_shifted_index_type():
         LiteralExpression(2),
     )
     checker = ExpressionTypeChecker(
-        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        lambda seen_identifier: (
+            (index_type, TypeQualifier.PARAM)
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        )
     )
 
     result_type, result_qualifier = checker.visit(
@@ -416,7 +436,7 @@ def test_index_plus_scalar_produces_shifted_index_type():
     assert result_qualifier == TypeQualifier.PARAM
 
 
-def test_scalar_plus_index_produces_shifted_index_type():
+def test_scalar_plus_index_produces_shifted_index_type() -> None:
     """Test that adding an index to a scalar produces shifted index type."""
     identifier = Identifier("idx")
     index_type = IndexType(
@@ -425,9 +445,11 @@ def test_scalar_plus_index_produces_shifted_index_type():
         None,
     )
     checker = ExpressionTypeChecker(
-        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        lambda seen_identifier: (
+            (index_type, TypeQualifier.PARAM)
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        )
     )
 
     result_type, _ = checker.visit(
@@ -446,7 +468,7 @@ def test_scalar_plus_index_produces_shifted_index_type():
     _assert_index_type(result_type, expected_type)
 
 
-def test_index_minus_scalar_produces_shifted_index_type():
+def test_index_minus_scalar_produces_shifted_index_type() -> None:
     """Test that subtracting a scalar from an index produces shifted index type."""
     identifier = Identifier("idx")
     index_type = IndexType(
@@ -455,9 +477,11 @@ def test_index_minus_scalar_produces_shifted_index_type():
         LiteralExpression(3),
     )
     checker = ExpressionTypeChecker(
-        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        lambda seen_identifier: (
+            (index_type, TypeQualifier.PARAM)
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        )
     )
 
     result_type, _ = checker.visit(
@@ -476,7 +500,7 @@ def test_index_minus_scalar_produces_shifted_index_type():
     _assert_index_type(result_type, expected_type)
 
 
-def test_unary_positive_index_preserves_index_type():
+def test_unary_positive_index_preserves_index_type() -> None:
     """Test that unary positive preserves index types."""
     identifier = Identifier("idx")
     index_type = IndexType(
@@ -485,9 +509,11 @@ def test_unary_positive_index_preserves_index_type():
         None,
     )
     checker = ExpressionTypeChecker(
-        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        lambda seen_identifier: (
+            (index_type, TypeQualifier.PARAM)
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        )
     )
 
     result_type, _ = checker.visit(
@@ -497,7 +523,7 @@ def test_unary_positive_index_preserves_index_type():
     _assert_index_type(result_type, index_type)
 
 
-def test_unary_negation_of_index_is_rejected():
+def test_unary_negation_of_index_is_rejected() -> None:
     """Test that unary negation of index types is rejected."""
     identifier = Identifier("idx")
     index_type = IndexType(
@@ -506,9 +532,11 @@ def test_unary_negation_of_index_is_rejected():
         None,
     )
     checker = ExpressionTypeChecker(
-        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        lambda seen_identifier: (
+            (index_type, TypeQualifier.PARAM)
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        )
     )
 
     with pytest.raises(FhYCoreTypeError):
@@ -517,16 +545,18 @@ def test_unary_negation_of_index_is_rejected():
         )
 
 
-def test_index_times_positive_integer_literal_scales_bounds_and_stride():
+def test_index_times_positive_integer_literal_scales_bounds_and_stride() -> None:
     """idx * k scales bounds and stride by a positive integer literal k."""
     identifier = Identifier("idx")
     index_type = IndexType(
         LiteralExpression(1), LiteralExpression(8), LiteralExpression(2)
     )
     checker = ExpressionTypeChecker(
-        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        lambda seen_identifier: (
+            (index_type, TypeQualifier.PARAM)
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        )
     )
 
     result_type, _ = checker.visit(
@@ -545,14 +575,16 @@ def test_index_times_positive_integer_literal_scales_bounds_and_stride():
     _assert_index_type(result_type, expected)
 
 
-def test_positive_integer_literal_times_index_scales_symmetrically():
+def test_positive_integer_literal_times_index_scales_symmetrically() -> None:
     """k * idx produces the same shifted type as idx * k."""
     identifier = Identifier("idx")
     index_type = IndexType(LiteralExpression(1), LiteralExpression(8), None)
     checker = ExpressionTypeChecker(
-        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        lambda seen_identifier: (
+            (index_type, TypeQualifier.PARAM)
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        )
     )
 
     result_type, _ = checker.visit(
@@ -571,14 +603,16 @@ def test_positive_integer_literal_times_index_scales_symmetrically():
     _assert_index_type(result_type, expected)
 
 
-def test_index_scaling_by_one_preserves_unit_stride():
+def test_index_scaling_by_one_preserves_unit_stride() -> None:
     """k=1 keeps stride=None (unit) since there is no real scaling."""
     identifier = Identifier("idx")
     index_type = IndexType(LiteralExpression(1), LiteralExpression(8), None)
     checker = ExpressionTypeChecker(
-        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        lambda seen_identifier: (
+            (index_type, TypeQualifier.PARAM)
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        )
     )
 
     result_type, _ = checker.visit(
@@ -597,14 +631,16 @@ def test_index_scaling_by_one_preserves_unit_stride():
     _assert_index_type(result_type, expected)
 
 
-def test_index_times_non_positive_integer_literal_is_rejected():
+def test_index_times_non_positive_integer_literal_is_rejected() -> None:
     """Index scaling requires a positive integer literal (zero rejected)."""
     identifier = Identifier("idx")
     index_type = IndexType(LiteralExpression(1), LiteralExpression(8), None)
     checker = ExpressionTypeChecker(
-        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        lambda seen_identifier: (
+            (index_type, TypeQualifier.PARAM)
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        )
     )
 
     with pytest.raises(FhYCoreTypeError):
@@ -617,18 +653,20 @@ def test_index_times_non_positive_integer_literal_is_rejected():
         )
 
 
-def test_index_times_non_literal_scalar_is_rejected():
+def test_index_times_non_literal_scalar_is_rejected() -> None:
     """Index scaling fails if the scalar is not a literal integer."""
     identifier = Identifier("idx")
     scalar = Identifier("k")
     index_type = IndexType(LiteralExpression(1), LiteralExpression(8), None)
     scalar_type = NumericalType(PrimitiveDataType(CoreDataType.INT32))
     checker = ExpressionTypeChecker(
-        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
-        if seen_identifier == identifier
-        else (scalar_type, TypeQualifier.PARAM)
-        if seen_identifier == scalar
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        lambda seen_identifier: (
+            (index_type, TypeQualifier.PARAM)
+            if seen_identifier == identifier
+            else (scalar_type, TypeQualifier.PARAM)
+            if seen_identifier == scalar
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        )
     )
 
     with pytest.raises(FhYCoreTypeError):
@@ -641,14 +679,16 @@ def test_index_times_non_literal_scalar_is_rejected():
         )
 
 
-def test_index_times_float_literal_is_rejected():
+def test_index_times_float_literal_is_rejected() -> None:
     """Index scaling requires an integer literal, not a float."""
     identifier = Identifier("idx")
     index_type = IndexType(LiteralExpression(1), LiteralExpression(8), None)
     checker = ExpressionTypeChecker(
-        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        lambda seen_identifier: (
+            (index_type, TypeQualifier.PARAM)
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        )
     )
 
     with pytest.raises(FhYCoreTypeError):
@@ -661,7 +701,7 @@ def test_index_times_float_literal_is_rejected():
         )
 
 
-def test_index_division_is_rejected():
+def test_index_division_is_rejected() -> None:
     """Test that index division is rejected explicitly."""
     identifier = Identifier("idx")
     index_type = IndexType(
@@ -670,9 +710,11 @@ def test_index_division_is_rejected():
         None,
     )
     checker = ExpressionTypeChecker(
-        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        lambda seen_identifier: (
+            (index_type, TypeQualifier.PARAM)
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        )
     )
 
     with pytest.raises(FhYCoreTypeError):
@@ -685,7 +727,7 @@ def test_index_division_is_rejected():
         )
 
 
-def test_index_plus_float_is_rejected():
+def test_index_plus_float_is_rejected() -> None:
     """Test that index offsets must be integral scalars."""
     identifier = Identifier("idx")
     index_type = IndexType(
@@ -694,9 +736,11 @@ def test_index_plus_float_is_rejected():
         None,
     )
     checker = ExpressionTypeChecker(
-        lambda seen_identifier: (index_type, TypeQualifier.PARAM)
-        if seen_identifier == identifier
-        else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        lambda seen_identifier: (
+            (index_type, TypeQualifier.PARAM)
+            if seen_identifier == identifier
+            else (_ for _ in ()).throw(AssertionError("Unexpected identifier lookup"))
+        )
     )
 
     with pytest.raises(FhYCoreTypeError):
@@ -720,7 +764,7 @@ def _make_index_checker(
     return ExpressionTypeChecker(lookup)
 
 
-def test_index_plus_index_combines_bounds_when_strides_are_none():
+def test_index_plus_index_combines_bounds_when_strides_are_none() -> None:
     """i ∈ [0, 10] + j ∈ [1, 5] ⟹ [0+1, 10+5] = [1, 15] with unit stride."""
     left = Identifier("i")
     right = Identifier("j")
@@ -750,7 +794,7 @@ def test_index_plus_index_combines_bounds_when_strides_are_none():
     assert result_qualifier == TypeQualifier.PARAM
 
 
-def test_index_plus_index_preserves_matching_stride():
+def test_index_plus_index_preserves_matching_stride() -> None:
     """Matching literal strides combine via min; min(s, s) = s preserves them."""
     left = Identifier("i")
     right = Identifier("j")
@@ -783,7 +827,7 @@ def test_index_plus_index_preserves_matching_stride():
     _assert_index_type(result_type, expected)
 
 
-def test_index_plus_index_treats_literal_one_stride_as_none():
+def test_index_plus_index_treats_literal_one_stride_as_none() -> None:
     """An explicit stride of LiteralExpression(1) is equivalent to None (unit)."""
     left = Identifier("i")
     right = Identifier("j")
@@ -814,7 +858,7 @@ def test_index_plus_index_treats_literal_one_stride_as_none():
     _assert_index_type(result_type, expected)
 
 
-def test_index_plus_index_canonicalizes_matching_unit_literal_stride():
+def test_index_plus_index_canonicalizes_matching_unit_literal_stride() -> None:
     """Two LiteralExpression(1) strides canonicalize to None in the result."""
     left = Identifier("i")
     right = Identifier("j")
@@ -844,7 +888,7 @@ def test_index_plus_index_canonicalizes_matching_unit_literal_stride():
     _assert_index_type(result_type, expected)
 
 
-def test_index_plus_index_unit_stride_dominates_non_unit_stride():
+def test_index_plus_index_unit_stride_dominates_non_unit_stride() -> None:
     """gcd(1, s) = 1 — combining unit stride with stride 2 yields unit stride."""
     left = Identifier("i")
     right = Identifier("j")
@@ -875,7 +919,7 @@ def test_index_plus_index_unit_stride_dominates_non_unit_stride():
     _assert_index_type(result_type, expected)
 
 
-def test_index_plus_index_uses_min_of_literal_strides():
+def test_index_plus_index_uses_min_of_literal_strides() -> None:
     """Mismatched literal strides combine via min: min(2, 3) = 2."""
     left = Identifier("i")
     right = Identifier("j")
@@ -908,7 +952,7 @@ def test_index_plus_index_uses_min_of_literal_strides():
     _assert_index_type(result_type, expected)
 
 
-def test_index_plus_index_rejects_non_literal_stride():
+def test_index_plus_index_rejects_non_literal_stride() -> None:
     """Non-literal strides cannot be combined and must fail synthesis."""
     left = Identifier("i")
     right = Identifier("j")
@@ -936,7 +980,7 @@ def test_index_plus_index_rejects_non_literal_stride():
         )
 
 
-def test_index_minus_index_is_rejected():
+def test_index_minus_index_is_rejected() -> None:
     """Subtraction of two index types is not yet supported (stride semantics TBD)."""
     left = Identifier("i")
     right = Identifier("j")
@@ -958,7 +1002,7 @@ def test_index_minus_index_is_rejected():
         )
 
 
-def test_index_plus_index_with_symbolic_bounds():
+def test_index_plus_index_with_symbolic_bounds() -> None:
     """i ∈ [0, N] + j ∈ [0, M] ⟹ [0, N + M] with symbolic upper bounds."""
     left = Identifier("i")
     right = Identifier("j")
@@ -989,7 +1033,7 @@ def test_index_plus_index_with_symbolic_bounds():
     _assert_index_type(result_type, expected)
 
 
-def test_nested_index_plus_index_synthesizes_bottom_up_on_left():
+def test_nested_index_plus_index_synthesizes_bottom_up_on_left() -> None:
     """(idx_a + idx_b) + idx_c synthesizes leaves first, combining strides bottom-up.
 
     Left subexpression yields IndexType with stride min(2, 3) = 2; the outer
@@ -1029,7 +1073,7 @@ def test_nested_index_plus_index_synthesizes_bottom_up_on_left():
     _assert_index_type(result_type, expected)
 
 
-def test_nested_index_plus_index_synthesizes_bottom_up_on_right():
+def test_nested_index_plus_index_synthesizes_bottom_up_on_right() -> None:
     """idx_a + (idx_b + idx_c): right subtree synthesized first, then combined."""
     a = Identifier("a")
     b = Identifier("b")
@@ -1065,7 +1109,7 @@ def test_nested_index_plus_index_synthesizes_bottom_up_on_right():
     _assert_index_type(result_type, expected)
 
 
-def test_scaled_shifted_index_plus_index_synthesizes_bottom_up():
+def test_scaled_shifted_index_plus_index_synthesizes_bottom_up() -> None:
     """2 * (i1 - 1) + i2: scale of a shifted index, added to another index.
 
     Synthesis chain:
@@ -1109,7 +1153,7 @@ def test_scaled_shifted_index_plus_index_synthesizes_bottom_up():
     _assert_index_type(result_type, expected)
 
 
-def test_shifted_index_plus_index_propagates_stride_bottom_up():
+def test_shifted_index_plus_index_propagates_stride_bottom_up() -> None:
     """(idx_a + 1) + idx_b: the scalar shift preserves idx_a's stride, which then
     combines with idx_b's stride in the outer node."""
     a = Identifier("a")
@@ -1153,7 +1197,9 @@ def test_shifted_index_plus_index_propagates_stride_bottom_up():
         BinaryOperation.POWER,
     ],
 )
-def test_non_additive_index_index_operations_are_rejected(operation):
+def test_non_additive_index_index_operations_are_rejected(
+    operation: BinaryOperation,
+) -> None:
     """Only ADD and SUBTRACT are supported between two index operands."""
     left = Identifier("i")
     right = Identifier("j")

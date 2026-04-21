@@ -37,13 +37,13 @@ def _make_int32_numerical_type() -> NumericalType:
 # ---------------------------------------------------------------------------
 
 
-def test_import_frame_is_frozen_runtime_protocol():
+def test_import_frame_is_frozen_runtime_protocol() -> None:
     """Test `ImportSymbolTableFrame` satisfies `Frozen` runtime protocol."""
     frame = ImportSymbolTableFrame(mock_identifier("symbol", 0))
     assert isinstance(frame, Frozen)
 
 
-def test_import_frame_is_structural_equivalence_runtime_protocol():
+def test_import_frame_is_structural_equivalence_runtime_protocol() -> None:
     """Test `ImportSymbolTableFrame` satisfies `StructuralEquivalence` runtime
     protocol.
     """
@@ -51,7 +51,7 @@ def test_import_frame_is_structural_equivalence_runtime_protocol():
     assert isinstance(frame, StructuralEquivalence)
 
 
-def test_import_frame_structural_equivalence_true_for_same_name():
+def test_import_frame_structural_equivalence_true_for_same_name() -> None:
     """Test structural equivalence is true for import frames with the same name."""
     name = mock_identifier("symbol", 0)
     assert ImportSymbolTableFrame(name).is_structurally_equivalent(
@@ -59,7 +59,7 @@ def test_import_frame_structural_equivalence_true_for_same_name():
     )
 
 
-def test_import_frame_structural_equivalence_false_for_different_name():
+def test_import_frame_structural_equivalence_false_for_different_name() -> None:
     """Test structural equivalence is false for import frames with different
     names.
     """
@@ -68,7 +68,7 @@ def test_import_frame_structural_equivalence_false_for_different_name():
     assert not left.is_structurally_equivalent(right)
 
 
-def test_import_frame_structural_equivalence_false_for_other_frame_type():
+def test_import_frame_structural_equivalence_false_for_other_frame_type() -> None:
     """Test structural equivalence is false when compared to a different frame
     type.
     """
@@ -80,7 +80,7 @@ def test_import_frame_structural_equivalence_false_for_other_frame_type():
     assert not import_frame.is_structurally_equivalent(variable_frame)
 
 
-def test_import_frame_dict_serialization_round_trip():
+def test_import_frame_dict_serialization_round_trip() -> None:
     """Test `ImportSymbolTableFrame` round-trips through dict serialization."""
     frame = ImportSymbolTableFrame(mock_identifier("imported", 0))
 
@@ -90,7 +90,7 @@ def test_import_frame_dict_serialization_round_trip():
     assert frame.is_structurally_equivalent(restored)
 
 
-def test_variable_frame_is_frozen_runtime_protocol():
+def test_variable_frame_is_frozen_runtime_protocol() -> None:
     """Test `VariableSymbolTableFrame` satisfies `Frozen` runtime protocol."""
     frame = VariableSymbolTableFrame(
         mock_identifier("var", 0), _make_int32_numerical_type(), TypeQualifier.STATE
@@ -98,7 +98,7 @@ def test_variable_frame_is_frozen_runtime_protocol():
     assert isinstance(frame, Frozen)
 
 
-def test_variable_frame_is_structural_equivalence_runtime_protocol():
+def test_variable_frame_is_structural_equivalence_runtime_protocol() -> None:
     """Test `VariableSymbolTableFrame` satisfies `StructuralEquivalence` runtime
     protocol.
     """
@@ -108,7 +108,7 @@ def test_variable_frame_is_structural_equivalence_runtime_protocol():
     assert isinstance(frame, StructuralEquivalence)
 
 
-def test_variable_frame_structural_equivalence_true_for_same_content():
+def test_variable_frame_structural_equivalence_true_for_same_content() -> None:
     """Test structural equivalence is true for variable frames with the same
     content.
     """
@@ -122,7 +122,9 @@ def test_variable_frame_structural_equivalence_true_for_same_content():
     assert left.is_structurally_equivalent(right)
 
 
-def test_variable_frame_structural_equivalence_false_for_different_type_qualifier():
+def test_variable_frame_structural_equivalence_false_for_different_type_qualifier() -> (
+    None
+):
     """Test structural equivalence is false for variable frames with different
     type qualifiers.
     """
@@ -136,7 +138,7 @@ def test_variable_frame_structural_equivalence_false_for_different_type_qualifie
     assert not left.is_structurally_equivalent(right)
 
 
-def test_variable_frame_dict_serialization_round_trip():
+def test_variable_frame_dict_serialization_round_trip() -> None:
     """Test `VariableSymbolTableFrame` round-trips through dict serialization."""
     frame = VariableSymbolTableFrame(
         mock_identifier("var", 0), _make_int32_numerical_type(), TypeQualifier.STATE
@@ -148,7 +150,7 @@ def test_variable_frame_dict_serialization_round_trip():
     assert frame.is_structurally_equivalent(restored)
 
 
-def test_function_frame_is_frozen_runtime_protocol():
+def test_function_frame_is_frozen_runtime_protocol() -> None:
     """Test `FunctionSymbolTableFrame` satisfies `Frozen` runtime protocol."""
     frame = FunctionSymbolTableFrame(
         mock_identifier("fn", 0), FunctionKeyword.PROCEDURE
@@ -156,7 +158,7 @@ def test_function_frame_is_frozen_runtime_protocol():
     assert isinstance(frame, Frozen)
 
 
-def test_function_frame_is_structural_equivalence_runtime_protocol():
+def test_function_frame_is_structural_equivalence_runtime_protocol() -> None:
     """Test `FunctionSymbolTableFrame` satisfies `StructuralEquivalence` runtime
     protocol.
     """
@@ -166,7 +168,7 @@ def test_function_frame_is_structural_equivalence_runtime_protocol():
     assert isinstance(frame, StructuralEquivalence)
 
 
-def test_function_frame_structural_equivalence_true_for_same_content():
+def test_function_frame_structural_equivalence_true_for_same_content() -> None:
     """Test structural equivalence is true for function frames with the same
     content.
     """
@@ -184,7 +186,7 @@ def test_function_frame_structural_equivalence_true_for_same_content():
     assert left.is_structurally_equivalent(right)
 
 
-def test_function_frame_structural_equivalence_false_for_different_keyword():
+def test_function_frame_structural_equivalence_false_for_different_keyword() -> None:
     """Test structural equivalence is false for function frames with different
     keywords.
     """
@@ -194,7 +196,9 @@ def test_function_frame_structural_equivalence_false_for_different_keyword():
     assert not left.is_structurally_equivalent(right)
 
 
-def test_function_frame_structural_equivalence_false_for_different_signature_length():
+def test_function_frame_structural_equivalence_false_different_signature_length() -> (
+    None
+):
     """Test structural equivalence is false for function frames with different
     signature lengths.
     """
@@ -208,7 +212,7 @@ def test_function_frame_structural_equivalence_false_for_different_signature_len
     assert not left.is_structurally_equivalent(right)
 
 
-def test_function_frame_dict_serialization_round_trip():
+def test_function_frame_dict_serialization_round_trip() -> None:
     """Test `FunctionSymbolTableFrame` round-trips through dict serialization."""
     frame = FunctionSymbolTableFrame(
         mock_identifier("fn", 0),
@@ -230,7 +234,7 @@ def test_function_frame_dict_serialization_round_trip():
 # ---------------------------------------------------------------------------
 
 
-def test_symbol_table_structural_equivalence_true_for_same_content():
+def test_symbol_table_structural_equivalence_true_for_same_content() -> None:
     """Test structural equivalence is true for symbol tables with same content."""
     namespace = mock_identifier("namespace", 0)
     symbol_name = mock_identifier("symbol", 1)
@@ -247,7 +251,7 @@ def test_symbol_table_structural_equivalence_true_for_same_content():
     assert left.is_structurally_equivalent(right)
 
 
-def test_symbol_table_structural_equivalence_with_equivalent_variable_frames():
+def test_symbol_table_structural_equivalence_with_equivalent_variable_frames() -> None:
     """Test structural equivalence with equivalent variable frames."""
     namespace = mock_identifier("namespace", 0)
     symbol_name = mock_identifier("symbol", 1)
@@ -279,7 +283,7 @@ def test_symbol_table_structural_equivalence_with_equivalent_variable_frames():
     assert left.is_structurally_equivalent(right)
 
 
-def test_symbol_table_structural_equivalence_with_equivalent_function_frames():
+def test_symbol_table_structural_equivalence_with_equivalent_function_frames() -> None:
     """Test structural equivalence with equivalent function frames."""
     namespace = mock_identifier("namespace", 0)
     symbol_name = mock_identifier("symbol", 1)
@@ -292,10 +296,10 @@ def test_symbol_table_structural_equivalence_with_equivalent_function_frames():
         FunctionSymbolTableFrame(
             symbol_name,
             FunctionKeyword.PROCEDURE,
-            signature=[
+            signature=(
                 (TypeQualifier.INPUT, _make_int32_numerical_type()),
                 (TypeQualifier.OUTPUT, _make_int32_numerical_type()),
-            ],
+            ),
         ),
     )
 
@@ -307,17 +311,17 @@ def test_symbol_table_structural_equivalence_with_equivalent_function_frames():
         FunctionSymbolTableFrame(
             symbol_name,
             FunctionKeyword.PROCEDURE,
-            signature=[
+            signature=(
                 (TypeQualifier.INPUT, _make_int32_numerical_type()),
                 (TypeQualifier.OUTPUT, _make_int32_numerical_type()),
-            ],
+            ),
         ),
     )
 
     assert left.is_structurally_equivalent(right)
 
 
-def test_symbol_table_structural_equivalence_false_for_different_parent_graph():
+def test_symbol_table_structural_equivalence_false_for_different_parent_graph() -> None:
     """Test structural equivalence is false for different namespace parent graphs."""
     root = mock_identifier("root", 0)
     child = mock_identifier("child", 1)
@@ -337,7 +341,7 @@ def test_symbol_table_structural_equivalence_false_for_different_parent_graph():
     assert not left.is_structurally_equivalent(right)
 
 
-def test_symbol_table_structural_equivalence_false_for_other_python_type():
+def test_symbol_table_structural_equivalence_false_for_other_python_type() -> None:
     """Test structural equivalence is false for non-symbol-table objects."""
     symbol_table = SymbolTable()
     assert not symbol_table.is_structurally_equivalent({})
@@ -348,7 +352,7 @@ def test_symbol_table_structural_equivalence_false_for_other_python_type():
 # ---------------------------------------------------------------------------
 
 
-def test_symbol_table_dict_serialization_with_import_frame():
+def test_symbol_table_dict_serialization_with_import_frame() -> None:
     """Test `SymbolTable` can serialize/deserialize import frames."""
     symbol_table = SymbolTable()
     namespace = mock_identifier("namespace", 0)
@@ -363,7 +367,7 @@ def test_symbol_table_dict_serialization_with_import_frame():
     assert isinstance(restored_frame, ImportSymbolTableFrame)
 
 
-def test_symbol_table_dict_serialization_with_variable_frame():
+def test_symbol_table_dict_serialization_with_variable_frame() -> None:
     """Test `SymbolTable` can serialize/deserialize variable frames."""
     symbol_table = SymbolTable()
     namespace = mock_identifier("namespace", 0)
@@ -382,7 +386,7 @@ def test_symbol_table_dict_serialization_with_variable_frame():
     assert isinstance(restored_frame, VariableSymbolTableFrame)
 
 
-def test_symbol_table_dict_serialization_with_function_frame():
+def test_symbol_table_dict_serialization_with_function_frame() -> None:
     """Test `SymbolTable` can serialize/deserialize function frames."""
     symbol_table = SymbolTable()
     namespace = mock_identifier("namespace", 0)
@@ -390,10 +394,10 @@ def test_symbol_table_dict_serialization_with_function_frame():
     frame = FunctionSymbolTableFrame(
         symbol_name,
         FunctionKeyword.PROCEDURE,
-        signature=[
+        signature=(
             (TypeQualifier.INPUT, _make_int32_numerical_type()),
             (TypeQualifier.OUTPUT, _make_int32_numerical_type()),
-        ],
+        ),
     )
     symbol_table.add_namespace(namespace)
     symbol_table.add_symbol(namespace, symbol_name, frame)
@@ -404,7 +408,7 @@ def test_symbol_table_dict_serialization_with_function_frame():
     assert isinstance(restored_frame, FunctionSymbolTableFrame)
 
 
-def test_symbol_table_deserialization_structure_rejected():
+def test_symbol_table_deserialization_structure_rejected() -> None:
     """Test invalid `SymbolTable` serialization structures are rejected."""
     with pytest.raises(DeserializationDictStructureError):
         SymbolTable.deserialize_from_dict({"bad": "data"})
@@ -415,25 +419,25 @@ def test_symbol_table_deserialization_structure_rejected():
 # ---------------------------------------------------------------------------
 
 
-def test_symbol_table_is_canonicalizable_runtime_protocol():
+def test_symbol_table_is_canonicalizable_runtime_protocol() -> None:
     """Test `SymbolTable` satisfies `Canonicalizable` runtime protocol."""
     symbol_table = SymbolTable()
     assert isinstance(symbol_table, Canonicalizable)
 
 
-def test_symbol_table_is_verifiable_runtime_protocol():
+def test_symbol_table_is_verifiable_runtime_protocol() -> None:
     """Test `SymbolTable` satisfies `Verifiable` runtime protocol."""
     symbol_table = SymbolTable()
     assert isinstance(symbol_table, Verifiable)
 
 
-def test_symbol_table_is_structural_equivalence_runtime_protocol():
+def test_symbol_table_is_structural_equivalence_runtime_protocol() -> None:
     """Test `SymbolTable` satisfies `StructuralEquivalence` runtime protocol."""
     symbol_table = SymbolTable()
     assert isinstance(symbol_table, StructuralEquivalence)
 
 
-def test_symbol_table_verify_returns_none_for_valid_table():
+def test_symbol_table_verify_returns_none_for_valid_table() -> None:
     """Test symbol table verification passes for valid tables."""
     symbol_table = SymbolTable()
     namespace = mock_identifier("namespace", 0)
@@ -441,10 +445,10 @@ def test_symbol_table_verify_returns_none_for_valid_table():
     symbol_table.add_namespace(namespace)
     symbol_table.add_symbol(namespace, symbol_name, ImportSymbolTableFrame(symbol_name))
 
-    assert symbol_table.verify() is None
+    symbol_table.verify()
 
 
-def test_symbol_table_verify_raises_for_missing_parent_namespace():
+def test_symbol_table_verify_raises_for_missing_parent_namespace() -> None:
     """Test verification raises when a parent namespace is missing."""
     symbol_table = SymbolTable()
     child_namespace = mock_identifier("child", 0)
@@ -455,7 +459,7 @@ def test_symbol_table_verify_raises_for_missing_parent_namespace():
         symbol_table.verify()
 
 
-def test_symbol_table_verify_raises_for_cyclic_parent_chain():
+def test_symbol_table_verify_raises_for_cyclic_parent_chain() -> None:
     """Test verification raises when parent namespace graph has a cycle."""
     symbol_table = SymbolTable()
     namespace_a = mock_identifier("namespace_a", 0)
@@ -467,7 +471,7 @@ def test_symbol_table_verify_raises_for_cyclic_parent_chain():
         symbol_table.verify()
 
 
-def test_symbol_table_verify_raises_for_mismatched_frame_identifier():
+def test_symbol_table_verify_raises_for_mismatched_frame_identifier() -> None:
     """Test verification raises when symbol key and frame identifier mismatch."""
     symbol_table = SymbolTable()
     namespace = mock_identifier("namespace", 0)
@@ -480,7 +484,7 @@ def test_symbol_table_verify_raises_for_mismatched_frame_identifier():
         symbol_table.verify()
 
 
-def test_symbol_table_canonicalize_reports_change_when_order_unsorted():
+def test_symbol_table_canonicalize_reports_change_when_order_unsorted() -> None:
     """Test canonicalization reports change when namespace order is unsorted."""
     symbol_table = SymbolTable()
     namespace_high = mock_identifier("high", 2)
@@ -491,7 +495,7 @@ def test_symbol_table_canonicalize_reports_change_when_order_unsorted():
     assert symbol_table.canonicalize()
 
 
-def test_symbol_table_canonicalize_reports_no_change_when_already_sorted():
+def test_symbol_table_canonicalize_reports_no_change_when_already_sorted() -> None:
     """Test canonicalization reports no change when table is already sorted."""
     symbol_table = SymbolTable()
     namespace_low = mock_identifier("low", 1)
@@ -507,7 +511,7 @@ def test_symbol_table_canonicalize_reports_no_change_when_already_sorted():
 # ---------------------------------------------------------------------------
 
 
-def test_add_and_check_namespace(empty_symbol_table: SymbolTable):
+def test_add_and_check_namespace(empty_symbol_table: SymbolTable) -> None:
     """Test that a namespace can be added and checked."""
     namespace = mock_identifier("test_namespace", 0)
 
@@ -517,7 +521,7 @@ def test_add_and_check_namespace(empty_symbol_table: SymbolTable):
     assert empty_symbol_table.get_number_of_namespaces() == 1
 
 
-def test_add_duplicate_namespace_fails(empty_symbol_table: SymbolTable):
+def test_add_duplicate_namespace_fails(empty_symbol_table: SymbolTable) -> None:
     """Test that adding a duplicate namespace raises a SymbolTableError."""
     namespace = mock_identifier("test_namespace", 0)
 
@@ -527,7 +531,7 @@ def test_add_duplicate_namespace_fails(empty_symbol_table: SymbolTable):
         empty_symbol_table.add_namespace(namespace)
 
 
-def test_get_undefined_namespace_fails(empty_symbol_table: SymbolTable):
+def test_get_undefined_namespace_fails(empty_symbol_table: SymbolTable) -> None:
     """Test that an undefined namespace raises a SymbolTableError."""
     undefined_namespace = mock_identifier("undefined_namespace", 0)
 
@@ -535,7 +539,7 @@ def test_get_undefined_namespace_fails(empty_symbol_table: SymbolTable):
         empty_symbol_table.get_namespace(undefined_namespace)
 
 
-def test_add_and_get_symbol(empty_symbol_table: SymbolTable):
+def test_add_and_get_symbol(empty_symbol_table: SymbolTable) -> None:
     """Test that a symbol can be added and retrieved."""
     namespace = mock_identifier("test_namespace", 0)
     symbol_name = mock_identifier("test_symbol", 1)
@@ -548,7 +552,7 @@ def test_add_and_get_symbol(empty_symbol_table: SymbolTable):
     assert empty_symbol_table.get_frame(symbol_name) == frame
 
 
-def test_add_and_get_symbol_in_namespace(empty_symbol_table: SymbolTable):
+def test_add_and_get_symbol_in_namespace(empty_symbol_table: SymbolTable) -> None:
     """Test that a symbol can be added and retrieved from a namespace."""
     namespace = mock_identifier("test_namespace", 0)
     symbol_name = mock_identifier("test_symbol", 1)
@@ -561,7 +565,7 @@ def test_add_and_get_symbol_in_namespace(empty_symbol_table: SymbolTable):
     assert empty_symbol_table.get_frame_from_namespace(namespace, symbol_name) == frame
 
 
-def test_add_duplicate_symbol_fails(empty_symbol_table: SymbolTable):
+def test_add_duplicate_symbol_fails(empty_symbol_table: SymbolTable) -> None:
     """Test that adding a duplicate symbol raises a SymbolTableError."""
     namespace = mock_identifier("test_namespace", 0)
     symbol_name = mock_identifier("test_symbol", 1)
@@ -574,7 +578,9 @@ def test_add_duplicate_symbol_fails(empty_symbol_table: SymbolTable):
         empty_symbol_table.add_symbol(namespace, symbol_name, frame)
 
 
-def test_get_undefined_symbol_from_namespace_fails(empty_symbol_table: SymbolTable):
+def test_get_undefined_symbol_from_namespace_fails(
+    empty_symbol_table: SymbolTable,
+) -> None:
     """Test that getting an undefined symbol from a namespace raises a
     SymbolTableError.
     """
@@ -587,7 +593,7 @@ def test_get_undefined_symbol_from_namespace_fails(empty_symbol_table: SymbolTab
         empty_symbol_table.get_frame_from_namespace(namespace, symbol_name)
 
 
-def test_add_namespace_with_parent(empty_symbol_table: SymbolTable):
+def test_add_namespace_with_parent(empty_symbol_table: SymbolTable) -> None:
     """Test that a namespace can be added with a parent namespace."""
     parent_namespace = mock_identifier("parent_namespace", 0)
     child_namespace = mock_identifier("child_namespace", 1)
@@ -600,7 +606,7 @@ def test_add_namespace_with_parent(empty_symbol_table: SymbolTable):
 
 def test_get_symbol_from_namespace_inherited_from_parent(
     empty_symbol_table: SymbolTable,
-):
+) -> None:
     """Test that a child namespace can access a symbol from a parent namespace."""
     parent_namespace = mock_identifier("parent_namespace", 0)
     child_namespace = mock_identifier("child_namespace", 1)
@@ -620,7 +626,7 @@ def test_get_symbol_from_namespace_inherited_from_parent(
     )
 
 
-def test_cyclic_namespace_fails(empty_symbol_table: SymbolTable):
+def test_cyclic_namespace_fails(empty_symbol_table: SymbolTable) -> None:
     """Test that adding a cyclic namespace raises a RuntimeError."""
     namespace_a = mock_identifier("namespace_a", 0)
     namespace_b = mock_identifier("namespace_b", 1)
@@ -634,7 +640,7 @@ def test_cyclic_namespace_fails(empty_symbol_table: SymbolTable):
         )
 
 
-def test_remove_namespace(empty_symbol_table: SymbolTable):
+def test_remove_namespace(empty_symbol_table: SymbolTable) -> None:
     """Test that a namespace can be removed from the symbol table."""
     namespace = mock_identifier("test_namespace", 0)
     empty_symbol_table.add_namespace(namespace)
@@ -645,7 +651,9 @@ def test_remove_namespace(empty_symbol_table: SymbolTable):
     assert empty_symbol_table.get_number_of_namespaces() == 0
 
 
-def test_remove_namespace_clears_parent_mapping(empty_symbol_table: SymbolTable):
+def test_remove_namespace_clears_parent_mapping(
+    empty_symbol_table: SymbolTable,
+) -> None:
     """Test that removing a namespace drops its parent mapping entry."""
     parent_namespace = mock_identifier("parent", 0)
     child_namespace = mock_identifier("child", 1)
@@ -659,7 +667,7 @@ def test_remove_namespace_clears_parent_mapping(empty_symbol_table: SymbolTable)
     empty_symbol_table.verify()
 
 
-def test_remove_undefined_namespace_fails(empty_symbol_table: SymbolTable):
+def test_remove_undefined_namespace_fails(empty_symbol_table: SymbolTable) -> None:
     """Test removing an undefined namespace raises a SymbolTableError."""
     undefined_namespace = mock_identifier("undefined_namespace", 0)
 
@@ -667,7 +675,7 @@ def test_remove_undefined_namespace_fails(empty_symbol_table: SymbolTable):
         empty_symbol_table.remove_namespace(undefined_namespace)
 
 
-def test_remove_namespace_with_children_fails(empty_symbol_table: SymbolTable):
+def test_remove_namespace_with_children_fails(empty_symbol_table: SymbolTable) -> None:
     """Test removing a namespace with child namespaces raises a SymbolTableError."""
     parent_namespace = mock_identifier("parent", 0)
     child_namespace = mock_identifier("child", 1)
@@ -678,7 +686,7 @@ def test_remove_namespace_with_children_fails(empty_symbol_table: SymbolTable):
         empty_symbol_table.remove_namespace(parent_namespace)
 
 
-def test_remove_symbol(empty_symbol_table: SymbolTable):
+def test_remove_symbol(empty_symbol_table: SymbolTable) -> None:
     """Test that a symbol can be removed from a namespace."""
     namespace = mock_identifier("test_namespace", 0)
     symbol_name = mock_identifier("test_symbol", 1)
@@ -692,7 +700,9 @@ def test_remove_symbol(empty_symbol_table: SymbolTable):
     assert not empty_symbol_table.is_symbol_defined_in_namespace(namespace, symbol_name)
 
 
-def test_remove_symbol_from_undefined_namespace_fails(empty_symbol_table: SymbolTable):
+def test_remove_symbol_from_undefined_namespace_fails(
+    empty_symbol_table: SymbolTable,
+) -> None:
     """Test removing a symbol from an undefined namespace raises a
     SymbolTableError.
     """
@@ -703,7 +713,7 @@ def test_remove_symbol_from_undefined_namespace_fails(empty_symbol_table: Symbol
         empty_symbol_table.remove_symbol(undefined_namespace, symbol_name)
 
 
-def test_remove_undefined_symbol_fails(empty_symbol_table: SymbolTable):
+def test_remove_undefined_symbol_fails(empty_symbol_table: SymbolTable) -> None:
     """Test removing an undefined symbol raises a SymbolTableError."""
     namespace = mock_identifier("test_namespace", 0)
     undefined_symbol = mock_identifier("undefined_symbol", 1)
@@ -715,7 +725,7 @@ def test_remove_undefined_symbol_fails(empty_symbol_table: SymbolTable):
 
 def test_remove_symbol_only_removes_from_target_namespace(
     empty_symbol_table: SymbolTable,
-):
+) -> None:
     """Test removing a symbol does not remove it from a parent namespace."""
     parent_namespace = mock_identifier("parent", 0)
     child_namespace = mock_identifier("child", 1)
@@ -734,7 +744,7 @@ def test_remove_symbol_only_removes_from_target_namespace(
     )
 
 
-def test_update_namespaces():
+def test_update_namespaces() -> None:
     """Test that namespaces can be merged."""
     symbol_table_1 = SymbolTable()
     symbol_table_2 = SymbolTable()

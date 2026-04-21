@@ -64,101 +64,101 @@ class _StructEqNode(StructuralEquivalenceMixin):
         )
 
 
-def test_has_operands_runtime_protocol():
+def test_has_operands_runtime_protocol() -> None:
     """Test `HasOperands` runtime protocol."""
     node = _OperandNode((1, 2))
     assert isinstance(node, HasOperands)
 
 
-def test_has_operands_mixin_contract():
+def test_has_operands_mixin_contract() -> None:
     """Test `HasOperandsMixin` contract."""
     node = _OperandNode((1, 2, 3))
     assert node.get_operands() == (1, 2, 3)
 
 
-def test_has_results_runtime_protocol():
+def test_has_results_runtime_protocol() -> None:
     """Test `HasResults` runtime protocol."""
     node = _ResultNode((7,))
     assert isinstance(node, HasResults)
 
 
-def test_has_results_mixin_contract():
+def test_has_results_mixin_contract() -> None:
     """Test `HasResultsMixin` contract."""
     node = _ResultNode((7, 8))
     assert node.get_results() == (7, 8)
 
 
-def test_foldable_runtime_protocol():
+def test_foldable_runtime_protocol() -> None:
     """Test `Foldable` runtime protocol."""
     node = _FoldableNode(42)
     assert isinstance(node, Foldable)
 
 
-def test_foldable_fold_returns_value():
+def test_foldable_fold_returns_value() -> None:
     """Test `FoldableMixin.fold` returns a value when available."""
     node = _FoldableNode(42)
     assert node.fold() == 42
 
 
-def test_foldable_fold_returns_none():
+def test_foldable_fold_returns_none() -> None:
     """Test `FoldableMixin.fold` returns `None` when not foldable."""
     node = _FoldableNode(None)
     assert node.fold() is None
 
 
-def test_canonicalizable_runtime_protocol():
+def test_canonicalizable_runtime_protocol() -> None:
     """Test `Canonicalizable` runtime protocol."""
     node = _CanonicalNode(-3)
     assert isinstance(node, Canonicalizable)
 
 
-def test_canonicalizable_applies_change():
+def test_canonicalizable_applies_change() -> None:
     """Test `CanonicalizableMixin.canonicalize` reports applied change."""
     node = _CanonicalNode(-3)
     assert node.canonicalize()
 
 
-def test_canonicalizable_updates_value():
+def test_canonicalizable_updates_value() -> None:
     """Test `CanonicalizableMixin.canonicalize` updates node state."""
     node = _CanonicalNode(-3)
     node.canonicalize()
     assert node.value == 3
 
 
-def test_canonicalizable_reports_no_change():
+def test_canonicalizable_reports_no_change() -> None:
     """Test `CanonicalizableMixin.canonicalize` reports no change."""
     node = _CanonicalNode(5)
     assert not node.canonicalize()
 
 
-def test_structural_equivalence_runtime_protocol():
+def test_structural_equivalence_runtime_protocol() -> None:
     """Test `StructuralEquivalence` runtime protocol."""
     node = _StructEqNode("add", (1, 2))
     assert isinstance(node, StructuralEquivalence)
 
 
-def test_structural_equivalence_true_for_same_structure():
+def test_structural_equivalence_true_for_same_structure() -> None:
     """Test structural equivalence is true for identical structure."""
     left = _StructEqNode("add", (1, 2))
     right = _StructEqNode("add", (1, 2))
     assert left.is_structurally_equivalent(right)
 
 
-def test_structural_equivalence_false_for_different_opcode():
+def test_structural_equivalence_false_for_different_opcode() -> None:
     """Test structural equivalence is false for different opcodes."""
     left = _StructEqNode("add", (1, 2))
     right = _StructEqNode("mul", (1, 2))
     assert not left.is_structurally_equivalent(right)
 
 
-def test_structural_equivalence_false_for_different_operands():
+def test_structural_equivalence_false_for_different_operands() -> None:
     """Test structural equivalence is false for different operands."""
     left = _StructEqNode("add", (1, 2))
     right = _StructEqNode("add", (2, 3))
     assert not left.is_structurally_equivalent(right)
 
 
-def test_structural_equivalence_false_for_different_type():
+def test_structural_equivalence_false_for_different_type() -> None:
     """Test structural equivalence is false for different Python types."""
     node = _StructEqNode("add", (1, 2))
     assert not node.is_structurally_equivalent((1, 2))

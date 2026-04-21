@@ -1,5 +1,7 @@
 """Tests the constraint utility."""
 
+from typing import Any
+
 import pytest
 from fhy_core.constraint import EquationConstraint, InSetConstraint, NotInSetConstraint
 from fhy_core.expression import (
@@ -38,7 +40,7 @@ class _SerializableConstraintMember(Serializable):
     def deserialize_from_dict(
         cls, data: SerializedDict
     ) -> "_SerializableConstraintMember":
-        return cls(int(data["value"]))
+        return cls(int(data["value"]))  # type: ignore[arg-type]
 
     def __eq__(self, other: object) -> bool:
         return (
@@ -283,7 +285,7 @@ def test_equation_constraint_checks_correctly(
     constraint: EquationConstraint,
     value: LiteralExpression,
     expected_outcome: bool,
-):
+) -> None:
     """Test the equation constraint evaluates correctly when checked."""
     assert constraint.is_satisfied(value) == expected_outcome
 
@@ -314,10 +316,10 @@ def test_equation_constraint_checks_correctly(
     ],
 )
 def test_in_set_constraint_checks_correctly(
-    constraint: InSetConstraint,
+    constraint: InSetConstraint[Any],
     value: LiteralExpression,
     expected_outcome: bool,
-):
+) -> None:
     """Test the in-set constraint evaluates correctly when checked."""
     assert constraint.is_satisfied(value) == expected_outcome
 
@@ -348,15 +350,15 @@ def test_in_set_constraint_checks_correctly(
     ],
 )
 def test_not_in_set_constraint_checks_correctly(
-    constraint: NotInSetConstraint,
+    constraint: NotInSetConstraint[Any],
     values: dict[Identifier, LiteralType],
     expected_outcome: bool,
-):
+) -> None:
     """Test the not-in-set constraint evaluates correctly when checked."""
     assert constraint.is_satisfied(values) == expected_outcome
 
 
-def test_convert_equation_constraint_to_expression():
+def test_convert_equation_constraint_to_expression() -> None:
     """Test the equation constraint is converted to an expression correctly."""
     constraint_expression = BinaryExpression(
         BinaryOperation.EQUAL,
@@ -368,7 +370,7 @@ def test_convert_equation_constraint_to_expression():
     assert constraint_expression.is_structurally_equivalent(expression)
 
 
-def test_convert_in_set_constraint_to_expression():
+def test_convert_in_set_constraint_to_expression() -> None:
     """Test the in-set constraint is converted to an expression correctly."""
     constraint = InSetConstraint(mock_identifier("x", 0), {1, 2})
     expression = constraint.convert_to_expression()
@@ -388,7 +390,7 @@ def test_convert_in_set_constraint_to_expression():
     assert expected_expression.is_structurally_equivalent(expression)
 
 
-def test_convert_not_in_set_constraint_to_expression():
+def test_convert_not_in_set_constraint_to_expression() -> None:
     """Test the not-in-set constraint is converted to an expression correctly."""
     constraint = NotInSetConstraint(mock_identifier("x", 0), {1, 2})
     expression = constraint.convert_to_expression()
@@ -408,7 +410,7 @@ def test_convert_not_in_set_constraint_to_expression():
     assert expected_expression.is_structurally_equivalent(expression)
 
 
-def test_equation_constraint_dict_serialization():
+def test_equation_constraint_dict_serialization() -> None:
     """Test the equation constraint can be serialized/deserialized via a dictionary."""
     x = mock_identifier("x", 0)
     x_data = x.serialize_to_dict()
@@ -435,7 +437,7 @@ def test_equation_constraint_dict_serialization():
     )
 
 
-def test_in_set_constraint_dict_serialization():
+def test_in_set_constraint_dict_serialization() -> None:
     """Test the in-set constraint can be serialized/deserialized via a dictionary."""
     x = mock_identifier("x", 0)
     x_data = x.serialize_to_dict()
@@ -452,13 +454,15 @@ def test_in_set_constraint_dict_serialization():
     }
     dictionary = constraint.serialize_to_dict()
     assert dictionary == expected_dict
-    constraint_deserialized = InSetConstraint.deserialize_from_dict(dictionary)
+    constraint_deserialized: InSetConstraint[Any] = (
+        InSetConstraint.deserialize_from_dict(dictionary)
+    )
     assert isinstance(constraint_deserialized, InSetConstraint)
     assert constraint_deserialized.variable == x
     assert set(constraint_deserialized._valid_values) == {1, 2}
 
 
-def test_not_in_set_constraint_dict_serialization():
+def test_not_in_set_constraint_dict_serialization() -> None:
     """Test the NiS constraint can be serialized/deserialized via a dictionary."""
     x = mock_identifier("x", 0)
     x_data = x.serialize_to_dict()
@@ -475,82 +479,84 @@ def test_not_in_set_constraint_dict_serialization():
     }
     dictionary = constraint.serialize_to_dict()
     assert dictionary == expected_dict
-    constraint_deserialized = NotInSetConstraint.deserialize_from_dict(dictionary)
+    constraint_deserialized: NotInSetConstraint[Any] = (
+        NotInSetConstraint.deserialize_from_dict(dictionary)
+    )
     assert isinstance(constraint_deserialized, NotInSetConstraint)
     assert constraint_deserialized.variable == x
     assert set(constraint_deserialized._invalid_values) == {1, 2}
 
 
-def test_in_set_constraint_dict_serialization_with_serializable_member():
+def test_in_set_constraint_dict_serialization_with_serializable_member() -> None:
     """Test in-set serialization supports serializable+hashable members."""
     x = mock_identifier("x", 0)
     member = _SerializableConstraintMember(7)
     constraint = InSetConstraint(x, {member})
 
-    constraint_deserialized = InSetConstraint.deserialize_from_dict(
-        constraint.serialize_to_dict()
+    constraint_deserialized: InSetConstraint[Any] = (
+        InSetConstraint.deserialize_from_dict(constraint.serialize_to_dict())
     )
 
     assert constraint_deserialized._valid_values == frozenset({member})
 
 
-def test_not_in_set_constraint_dict_serialization_with_serializable_member():
+def test_not_in_set_constraint_dict_serialization_with_serializable_member() -> None:
     """Test not-in-set serialization supports serializable+hashable members."""
     x = mock_identifier("x", 0)
     member = _SerializableConstraintMember(8)
     constraint = NotInSetConstraint(x, {member})
 
-    constraint_deserialized = NotInSetConstraint.deserialize_from_dict(
-        constraint.serialize_to_dict()
+    constraint_deserialized: NotInSetConstraint[Any] = (
+        NotInSetConstraint.deserialize_from_dict(constraint.serialize_to_dict())
     )
 
     assert constraint_deserialized._invalid_values == frozenset({member})
 
 
-def test_in_set_constraint_rejects_none_member():
+def test_in_set_constraint_rejects_none_member() -> None:
     """Test in-set constraints reject `None` as a member."""
     with pytest.raises(ValueError):
-        InSetConstraint(mock_identifier("x", 0), {None})
+        InSetConstraint(mock_identifier("x", 0), {None})  # type: ignore[type-var]  # test: invalid input
 
 
-def test_not_in_set_constraint_rejects_unserializable_member():
+def test_not_in_set_constraint_rejects_unserializable_member() -> None:
     """Test not-in-set constraints reject unsupported members."""
     with pytest.raises(ValueError):
-        NotInSetConstraint(mock_identifier("x", 0), [{"a": 1}])
+        NotInSetConstraint(mock_identifier("x", 0), [{"a": 1}])  # type: ignore[type-var]  # test: invalid input
 
 
-def test_in_set_constraint_supports_tuple_member():
+def test_in_set_constraint_supports_tuple_member() -> None:
     """Test in-set constraints support tuple members."""
     constraint = InSetConstraint(mock_identifier("x", 0), [(1, "a", True)])
     assert constraint.is_satisfied((1, "a", True))
 
 
-def test_in_set_constraint_supports_frozenset_member():
+def test_in_set_constraint_supports_frozenset_member() -> None:
     """Test in-set constraints support frozenset members."""
     constraint = InSetConstraint(mock_identifier("x", 0), [frozenset({1, 2, 3})])
     assert constraint.is_satisfied(frozenset({1, 2, 3}))
 
 
-def test_in_set_constraint_serializes_nested_collection_member():
+def test_in_set_constraint_serializes_nested_collection_member() -> None:
     """Test in-set constraints serialize nested tuple/frozenset members."""
     x = mock_identifier("x", 0)
     nested_member = (1, (2, 3), frozenset({4, 5}))
     constraint = InSetConstraint(x, [nested_member])
 
-    constraint_deserialized = InSetConstraint.deserialize_from_dict(
-        constraint.serialize_to_dict()
+    constraint_deserialized: InSetConstraint[Any] = (
+        InSetConstraint.deserialize_from_dict(constraint.serialize_to_dict())
     )
 
     assert constraint_deserialized.is_satisfied(nested_member)
 
 
-def test_constraint_structural_equivalence_runtime_protocol():
+def test_constraint_structural_equivalence_runtime_protocol() -> None:
     """Test `Constraint` satisfies `StructuralEquivalence` runtime protocol."""
     constraint = InSetConstraint(mock_identifier("x", 0), {1, 2})
     assert isinstance(constraint, StructuralEquivalence)
 
 
-def test_constraint_family_is_frozen_on_construction():
+def test_constraint_family_is_frozen_on_construction() -> None:
     """Test all core constraint classes are frozen after construction."""
     x = mock_identifier("x", 0)
     equation = EquationConstraint(x, LiteralExpression(True))
@@ -564,7 +570,7 @@ def test_constraint_family_is_frozen_on_construction():
             constraint._freeze_probe = "mutation"
 
 
-def test_equation_constraint_structural_equivalence_true():
+def test_equation_constraint_structural_equivalence_true() -> None:
     """Test equation constraints are structurally equivalent when equal."""
     x = mock_identifier("x", 0)
     left = EquationConstraint(x, LiteralExpression(True))
@@ -572,7 +578,7 @@ def test_equation_constraint_structural_equivalence_true():
     assert left.is_structurally_equivalent(right)
 
 
-def test_in_set_constraint_structural_equivalence_false_for_values():
+def test_in_set_constraint_structural_equivalence_false_for_values() -> None:
     """Test in-set constraints differ structurally for distinct value sets."""
     x = mock_identifier("x", 0)
     left = InSetConstraint(x, {1, 2})
@@ -580,7 +586,7 @@ def test_in_set_constraint_structural_equivalence_false_for_values():
     assert not left.is_structurally_equivalent(right)
 
 
-def test_not_in_set_constraint_structural_equivalence_false_for_type():
+def test_not_in_set_constraint_structural_equivalence_false_for_type() -> None:
     """Test set constraints differ structurally across constraint kinds."""
     x = mock_identifier("x", 0)
     left = InSetConstraint(x, {1, 2})

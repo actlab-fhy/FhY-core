@@ -97,7 +97,7 @@ class _CustomNode(_CustomNodeBase):
         return cls(data["value"])
 
 
-def test_register_serializable_refuses_override_by_default():
+def test_register_serializable_refuses_override_by_default() -> None:
     """Test registering a different class under an existing type_id is rejected."""
 
     @serialization.register_serializable(type_id="test.DuplicateId")
@@ -121,7 +121,7 @@ def test_register_serializable_refuses_override_by_default():
                 return cls()
 
 
-def test_register_serializable_canonical_conflict_rejected():
+def test_register_serializable_canonical_conflict_rejected() -> None:
     """Test registering a class with a conflicting canonical type_id is rejected."""
 
     @serialization.register_serializable(type_id="test.CanonicalA")
@@ -137,7 +137,7 @@ def test_register_serializable_canonical_conflict_rejected():
         serialization.register_serializable(_Canon, type_id="test.CanonicalB")
 
 
-def test_register_serializable_allows_alias_without_changing_canonical_id():
+def test_register_serializable_allows_alias_without_changing_canonical_id() -> None:
     """Test alias registration works without changing the class' canonical type id."""
 
     @serialization.register_serializable(type_id="test.CanonicalMain")
@@ -158,7 +158,7 @@ def test_register_serializable_allows_alias_without_changing_canonical_id():
     assert serialization._resolve_type_id("test.LegacyAlias") is _Aliased
 
 
-def test_binary_deserialization_accepts_alias_type_id():
+def test_binary_deserialization_accepts_alias_type_id() -> None:
     """Test binary deserialization accepts a legacy alias type_id in the envelope."""
     span = _DummySpan(11, 22)
     blob = span.to_bytes()
@@ -182,19 +182,19 @@ def test_binary_deserialization_accepts_alias_type_id():
     assert obj == span
 
 
-def test_wrapped_family_serializable_accepts_alias_type_id():
+def test_wrapped_family_serializable_accepts_alias_type_id() -> None:
     """Test `WrappedFamilySerializable` accepts a legacy alias via `__type__`."""
     legacy_id = "test.LegacyCustomNode"
     serialization.register_serializable(_CustomNode, type_id=legacy_id, alias=True)
 
     wrapped = {"__type__": legacy_id, "__data__": {"value": 7}}
 
-    node2 = _CustomNodeBase.deserialize(wrapped, serialization.SerializationFormat.DICT)
+    node2 = _CustomNodeBase.deserialize(wrapped, serialization.SerializationFormat.DICT)  # type: ignore[arg-type]  # test: loose dict type
     assert isinstance(node2, _CustomNode)
     assert node2.value == 7
 
 
-def test_dict_round_trip_via_classmethod():
+def test_dict_round_trip_via_classmethod() -> None:
     """Test that `serialize`/`deserialize` via dict format works."""
     span = _DummySpan(1, 9)
     dictionary = span.serialize(serialization.SerializationFormat.DICT)
@@ -204,7 +204,7 @@ def test_dict_round_trip_via_classmethod():
     assert span2 == span
 
 
-def test_json_round_trip_via_classmethod():
+def test_json_round_trip_via_classmethod() -> None:
     """Test that `serialize`/`deserialize` via JSON format works."""
     span = _DummySpan(2, 7)
     json_str = span.serialize(serialization.SerializationFormat.JSON)
@@ -219,7 +219,7 @@ def test_json_round_trip_via_classmethod():
     assert span3 == span
 
 
-def test_serialize_dispatch_and_invalid_format():
+def test_serialize_dispatch_and_invalid_format() -> None:
     """Test that `serialize` returns the correct format/rejects invalid formats."""
     span = _DummySpan(0, 1)
     assert span.serialize(serialization.SerializationFormat.DICT) == {"lo": 0, "hi": 1}
@@ -229,17 +229,17 @@ def test_serialize_dispatch_and_invalid_format():
     )
 
     with pytest.raises(serialization.SerializationError):
-        span.serialize("nope")
+        span.serialize("nope")  # type: ignore[arg-type]  # test: invalid format
 
 
-def test_deserialize_type_mismatch_raises():
+def test_deserialize_type_mismatch_raises() -> None:
     """Test that deserializing with a type that doesn't match raises an error."""
     blob = _DummySpan(1, 2).to_bytes()
     with pytest.raises(serialization.SerializationError):
         _CustomIdNode.deserialize(blob, serialization.SerializationFormat.BINARY)
 
 
-def test_wrapped_family_serializable_round_trip():
+def test_wrapped_family_serializable_round_trip() -> None:
     """Test that a `WrappedFamilySerializable` can round-trip."""
     node = _CustomNode(42)
 
@@ -281,7 +281,7 @@ def _parse_envelope(blob: bytes) -> tuple[bytes, int, int, str, bytes]:
     return magic, version, codec_u8, type_id, payload
 
 
-def test_binary_round_trip_auto_reconstructs_class_default_json_codec():
+def test_binary_round_trip_auto_reconstructs_class_default_json_codec() -> None:
     """Test that serializing to binary and deserializing reconstructs the object."""
     span = _DummySpan(10, 20)
     blob = span.to_bytes()
@@ -291,7 +291,7 @@ def test_binary_round_trip_auto_reconstructs_class_default_json_codec():
     assert obj == span
 
 
-def test_binary_round_trip_auto_reconstructs_class_custom_compact_codec():
+def test_binary_round_trip_auto_reconstructs_class_custom_compact_codec() -> None:
     """Test that custom compact binary payload round-trips and auto-reconstructs."""
     span = _CompactSpan(10, 20)
     blob = span.to_bytes()
@@ -301,7 +301,7 @@ def test_binary_round_trip_auto_reconstructs_class_custom_compact_codec():
     assert obj == span
 
 
-def test_binary_envelope_contains_expected_fields_json_codec():
+def test_binary_envelope_contains_expected_fields_json_codec() -> None:
     """Test that the envelope contains the expected fields for JSON codec payloads."""
     span = _DummySpan(5, 6)
     blob = span.to_bytes()
@@ -316,7 +316,7 @@ def test_binary_envelope_contains_expected_fields_json_codec():
     assert payload_obj == {"lo": 5, "hi": 6}
 
 
-def test_binary_envelope_contains_expected_fields_custom_codec():
+def test_binary_envelope_contains_expected_fields_custom_codec() -> None:
     """Test that the envelope contains the expected fields for CUSTOM codec payloads."""
     span = _CompactSpan(5, 6)
     blob = span.to_bytes()
@@ -331,7 +331,7 @@ def test_binary_envelope_contains_expected_fields_custom_codec():
     assert (lo, hi) == (5, 6)
 
 
-def test_binary_custom_type_id_is_used():
+def test_binary_custom_type_id_is_used() -> None:
     """Test that a custom type id is used in the binary envelope."""
     node = _CustomIdNode(123)
     blob = node.to_bytes()
@@ -346,7 +346,7 @@ def test_binary_custom_type_id_is_used():
     assert obj == node
 
 
-def test_binary_bad_magic_raises():
+def test_binary_bad_magic_raises() -> None:
     """Test that a blob with a bad magic value raises an error."""
     blob = _DummySpan(1, 2).to_bytes()
     corrupted = b"NOPE" + blob[4:]
@@ -354,7 +354,7 @@ def test_binary_bad_magic_raises():
         serialization.Serializable.from_bytes(corrupted)
 
 
-def test_binary_version_mismatch_raises():
+def test_binary_version_mismatch_raises() -> None:
     """Test that a blob with an unsupported version raises a `VersionMismatchError`."""
     blob = _DummySpan(1, 2).to_bytes()
 
@@ -364,7 +364,7 @@ def test_binary_version_mismatch_raises():
         serialization.Serializable.from_bytes(bytes(corrupted))
 
 
-def test_binary_unknown_codec_raises():
+def test_binary_unknown_codec_raises() -> None:
     """Test that a blob with an unknown codec code raises an `UnknownCodecError`."""
     blob = _DummySpan(1, 2).to_bytes()
     corrupted = bytearray(blob)
@@ -373,7 +373,7 @@ def test_binary_unknown_codec_raises():
         serialization.Serializable.from_bytes(bytes(corrupted))
 
 
-def test_binary_codec_mismatch_raises_on_custom_class_with_json_envelope():
+def test_binary_codec_mismatch_raises_on_custom_class_with_json_envelope() -> None:
     """Test that codec mismatch is rejected (CUSTOM class, JSON envelope)."""
     span = _CompactSpan(1, 2)
     blob = span.to_bytes()
@@ -383,21 +383,21 @@ def test_binary_codec_mismatch_raises_on_custom_class_with_json_envelope():
         serialization.Serializable.from_bytes(bytes(corrupted))
 
 
-def test_binary_truncated_header_raises():
+def test_binary_truncated_header_raises() -> None:
     """Test that a blob with a truncated header raises an error."""
     blob = _DummySpan(1, 2).to_bytes()
     with pytest.raises(serialization.SerializationError):
         serialization.Serializable.from_bytes(blob[:2])
 
 
-def test_binary_truncated_type_id_or_payload_raises():
+def test_binary_truncated_type_id_or_payload_raises() -> None:
     """Test that a blob with a truncated type id or payload raises an error."""
     blob = _DummySpan(1, 2).to_bytes()
     with pytest.raises(serialization.SerializationError):
         serialization.Serializable.from_bytes(blob[:-1])
 
 
-def test_binary_unknown_type_id_raises():
+def test_binary_unknown_type_id_raises() -> None:
     """Test that a blob with an unknown type id raises an `UnknownTypeIdError`."""
     blob = _DummySpan(1, 2).to_bytes()
     magic, version, codec_u8, _, payload = _parse_envelope(blob)
@@ -417,13 +417,13 @@ def test_binary_unknown_type_id_raises():
         serialization.Serializable.from_bytes(rebuilt)
 
 
-def test_registry_resolution_prefers_registered_class():
+def test_registry_resolution_prefers_registered_class() -> None:
     """Test that the registry resolution prefers registered classes over importlib."""
     cls = serialization._resolve_type_id(_DummySpan.get_serialization_class_type_id())
     assert cls is _DummySpan
 
 
-def test_fallback_import_resolution_via_mock(monkeypatch):
+def test_fallback_import_resolution_via_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that import fallback works when explicitly enabled and allowlisted."""
     mod = types.SimpleNamespace()
 
@@ -437,7 +437,7 @@ def test_fallback_import_resolution_via_mock(monkeypatch):
 
     setattr(mod, "_Outer", _Outer)
 
-    def fake_import(name: str):
+    def fake_import(name: str) -> types.SimpleNamespace:
         assert name == "fakepkg.fakemod"
         return mod
 
@@ -453,10 +453,12 @@ def test_fallback_import_resolution_via_mock(monkeypatch):
     assert resolved is _Outer
 
 
-def test_fallback_import_resolution_disabled_by_default(monkeypatch):
+def test_fallback_import_resolution_disabled_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Test that import fallback is disabled by default (registry-only)."""
 
-    def fail_import(name: str):
+    def fail_import(name: str) -> None:
         raise AssertionError("importlib.import_module should not be called by default")
 
     monkeypatch.setattr(importlib, "import_module", fail_import)
@@ -465,7 +467,9 @@ def test_fallback_import_resolution_disabled_by_default(monkeypatch):
         serialization._resolve_type_id("fakepkg.fakemod._Outer")
 
 
-def test_fallback_import_resolution_rejects_non_serializable(monkeypatch):
+def test_fallback_import_resolution_rejects_non_serializable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Test that the fallback resolution rejects types that are not serializable."""
     mod = types.SimpleNamespace()
 
@@ -474,7 +478,7 @@ def test_fallback_import_resolution_rejects_non_serializable(monkeypatch):
 
     setattr(mod, "_NotSerializable", _NotSerializable)
 
-    def fake_import(name: str):
+    def fake_import(name: str) -> types.SimpleNamespace:
         assert name == "fakepkg.fakemod"
         return mod
 
@@ -484,7 +488,9 @@ def test_fallback_import_resolution_rejects_non_serializable(monkeypatch):
         serialization._resolve_type_id("fakepkg.fakemod._NotSerializable")
 
 
-def test_binary_deserialization_does_not_import_by_default(monkeypatch):
+def test_binary_deserialization_does_not_import_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Test by default, deserialization does not import unknown types."""
     blob = _DummySpan(1, 2).to_bytes()
     magic, version, codec_u8, _, payload = _parse_envelope(blob)
@@ -500,7 +506,7 @@ def test_binary_deserialization_does_not_import_by_default(monkeypatch):
         + payload
     )
 
-    def fail_import(name: str):
+    def fail_import(name: str) -> None:
         raise AssertionError(
             "importlib.import_module was called but fallback should be disabled"
         )
@@ -511,7 +517,9 @@ def test_binary_deserialization_does_not_import_by_default(monkeypatch):
         serialization.Serializable.from_bytes(rebuilt)
 
 
-def test_binary_deserialization_import_fallback_opt_in(monkeypatch):
+def test_binary_deserialization_import_fallback_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Test deserialization can import/deserialize a type not in the registry."""
     blob = _DummySpan(1, 2).to_bytes()
     magic, version, codec_u8, _, payload = _parse_envelope(blob)
@@ -528,7 +536,7 @@ def test_binary_deserialization_import_fallback_opt_in(monkeypatch):
 
     setattr(mod, "_Outer", _Outer)
 
-    def fake_import(name: str):
+    def fake_import(name: str) -> types.SimpleNamespace:
         assert name == "fakepkg.fakemod"
         return mod
 
@@ -551,44 +559,44 @@ def test_binary_deserialization_import_fallback_opt_in(monkeypatch):
     assert isinstance(obj, _Outer)
 
 
-def test_from_json_non_object_raises():
+def test_from_json_non_object_raises() -> None:
     """Test that from_json raises if the JSON is not an object."""
     with pytest.raises(serialization.SerializationError):
         _DummySpan.from_json("[]")
 
 
-def test_deserialize_invalid_payload_type_raises():
+def test_deserialize_invalid_payload_type_raises() -> None:
     """Test that deserializing with an invalid payload type raises an error."""
     with pytest.raises(serialization.SerializationError):
-        _DummySpan.deserialize(123, serialization.SerializationFormat.DICT)
+        _DummySpan.deserialize(123, serialization.SerializationFormat.DICT)  # type: ignore[arg-type]  # test: invalid input
     with pytest.raises(serialization.SerializationError):
-        _DummySpan.deserialize(123, serialization.SerializationFormat.JSON)
+        _DummySpan.deserialize(123, serialization.SerializationFormat.JSON)  # type: ignore[arg-type]  # test: invalid input
     with pytest.raises(serialization.SerializationError):
         _DummySpan.deserialize("not-bytes", serialization.SerializationFormat.BINARY)
 
 
-def test_registry_wrapped_value_round_trip_for_int():
+def test_registry_wrapped_value_round_trip_for_int() -> None:
     """Test wrapped-value helpers round-trip integer values."""
     wrapped = serialization.serialize_registry_wrapped_value(7)
     restored = serialization.deserialize_registry_wrapped_value(wrapped)
     assert restored == 7
 
 
-def test_registry_wrapped_value_round_trip_for_bool():
+def test_registry_wrapped_value_round_trip_for_bool() -> None:
     """Test wrapped-value helpers round-trip boolean values."""
     wrapped = serialization.serialize_registry_wrapped_value(True)
     restored = serialization.deserialize_registry_wrapped_value(wrapped)
     assert restored is True
 
 
-def test_registry_wrapped_value_round_trip_for_string():
+def test_registry_wrapped_value_round_trip_for_string() -> None:
     """Test wrapped-value helpers round-trip string values."""
     wrapped = serialization.serialize_registry_wrapped_value("value")
     restored = serialization.deserialize_registry_wrapped_value(wrapped)
     assert restored == "value"
 
 
-def test_registry_wrapped_value_round_trip_for_serializable():
+def test_registry_wrapped_value_round_trip_for_serializable() -> None:
     """Test wrapped-value helpers round-trip serializable values."""
     value = _DummySpan(4, 9)
     wrapped = serialization.serialize_registry_wrapped_value(value)
@@ -597,21 +605,21 @@ def test_registry_wrapped_value_round_trip_for_serializable():
     assert restored == value
 
 
-def test_registry_wrapped_value_round_trip_for_tuple():
+def test_registry_wrapped_value_round_trip_for_tuple() -> None:
     """Test wrapped-value helpers round-trip tuple values."""
     wrapped = serialization.serialize_registry_wrapped_value((1, "a", True))
     restored = serialization.deserialize_registry_wrapped_value(wrapped)
     assert restored == (1, "a", True)
 
 
-def test_registry_wrapped_value_round_trip_for_frozenset():
+def test_registry_wrapped_value_round_trip_for_frozenset() -> None:
     """Test wrapped-value helpers round-trip frozenset values."""
     wrapped = serialization.serialize_registry_wrapped_value(frozenset({1, 2, 3}))
     restored = serialization.deserialize_registry_wrapped_value(wrapped)
     assert restored == frozenset({1, 2, 3})
 
 
-def test_registry_wrapped_value_round_trip_for_nested_collections():
+def test_registry_wrapped_value_round_trip_for_nested_collections() -> None:
     """Test wrapped-value helpers round-trip nested tuple/frozenset values."""
     value = (1, (2, 3), frozenset({4, 5}), _DummySpan(6, 7))
     wrapped = serialization.serialize_registry_wrapped_value(value)
@@ -619,7 +627,7 @@ def test_registry_wrapped_value_round_trip_for_nested_collections():
     assert restored == value
 
 
-def test_registry_wrapped_value_deserialization_rejects_bad_structure():
+def test_registry_wrapped_value_deserialization_rejects_bad_structure() -> None:
     """Test wrapped-value deserialization rejects invalid wrapped dicts."""
     with pytest.raises(serialization.DeserializationDictStructureError):
         serialization.deserialize_registry_wrapped_value({"bad": "data"})

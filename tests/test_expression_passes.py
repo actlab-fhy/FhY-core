@@ -1,8 +1,8 @@
 """Tests the expression tree analysis and transformation passes."""
 
 import pytest
-import sympy
-import z3
+import sympy  # type: ignore[import-untyped]
+import z3  # type: ignore[import-untyped]
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -45,14 +45,14 @@ from .conftest import mock_identifier
         (
             BinaryExpression(
                 BinaryOperation.MULTIPLY,
-                LiteralExpression(5 + 6j),
+                LiteralExpression(5 + 6j),  # type: ignore[arg-type]  # test: complex literal
                 LiteralExpression(10.5),
             ),
             "((5+6j) * 10.5)",
         ),
     ],
 )
-def test_pformat_expression(expression: Expression, expected_str: str):
+def test_pformat_expression(expression: Expression, expected_str: str) -> None:
     """Test that the expression is correctly pretty-formatted."""
     assert pformat_expression(expression) == expected_str
 
@@ -87,14 +87,16 @@ def test_pformat_expression(expression: Expression, expected_str: str):
         ),
     ],
 )
-def test_pformat_expressions_with_functional(expression: Expression, expected_str: str):
+def test_pformat_expressions_with_functional(
+    expression: Expression, expected_str: str
+) -> None:
     """Test that the expression is correctly pretty-formatted in a functional
     format.
     """
     assert pformat_expression(expression, functional=True) == expected_str
 
 
-def test_pformat_expressions_with_id():
+def test_pformat_expressions_with_id() -> None:
     """Test that the expression is correctly pretty-formatted with the
     identifier ID.
     """
@@ -105,7 +107,7 @@ def test_pformat_expressions_with_id():
     assert str(identifier.id) in result
 
 
-def test_collect_expression_identifiers():
+def test_collect_expression_identifiers() -> None:
     """Test that the identifiers are correctly collected from an expression."""
     x = Identifier("x")
     y = Identifier("y")
@@ -121,7 +123,7 @@ def test_collect_expression_identifiers():
     assert collect_identifiers(expr) == {x, y}
 
 
-def test_substitute_identifiers():
+def test_substitute_identifiers() -> None:
     """Test that the identifiers are correctly substituted in an expression."""
     x = Identifier("x")
     y = Identifier("y")
@@ -134,7 +136,10 @@ def test_substitute_identifiers():
             IdentifierExpression(y),
         ),
     )
-    substitutions = {x: LiteralExpression(10), y: LiteralExpression(5)}
+    substitutions: dict[Identifier, Expression] = {
+        x: LiteralExpression(10),
+        y: LiteralExpression(5),
+    }
     result = substitute_identifiers(expr, substitutions)
     assert result.is_structurally_equivalent(
         BinaryExpression(
@@ -149,7 +154,7 @@ def test_substitute_identifiers():
     )
 
 
-def test_replace_identifiers():
+def test_replace_identifiers() -> None:
     """Test that the identifiers are correctly replaced in an expression."""
     x = Identifier("x")
     y = Identifier("y")
@@ -332,18 +337,21 @@ def test_replace_identifiers():
 )
 def test_convert_expression_to_sympy_expression(
     expression: Expression, expected_sympy_expression: sympy.Expr
-):
+) -> None:
     """Test that the expression is correctly converted to a sympy expression."""
     result = convert_expression_to_sympy_expression(expression)
     assert result == expected_sympy_expression
 
 
-def test_substitute_sympy_expression_variables():
+def test_substitute_sympy_expression_variables() -> None:
     """Test that the sympy expression variables are correctly substituted."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
     sympy_expression = sympy.Symbol("x_0") + sympy.Symbol("y_1")
-    substitutions = {x: LiteralExpression(5), y: LiteralExpression(10)}
+    substitutions: dict[Identifier, Expression] = {
+        x: LiteralExpression(5),
+        y: LiteralExpression(10),
+    }
     result = substitute_sympy_expression_variables(sympy_expression, substitutions)
     assert result == 15
 
@@ -490,13 +498,13 @@ def test_substitute_sympy_expression_variables():
 )
 def test_convert_sympy_expression_to_expression(
     sympy_expression: sympy.Expr, expected_expression: Expression
-):
+) -> None:
     """Test that the sympy expression is correctly converted to an expression."""
     result = convert_sympy_expression_to_expression(sympy_expression)
     assert result.is_structurally_equivalent(expected_expression)
 
 
-def test_sympy_expression_conversion_fails_when_symbol_is_not_identifier():
+def test_sympy_expression_conversion_fails_when_symbol_is_not_identifier() -> None:
     """Test that the sympy expression conversion fails when the symbol is not an
     identifier.
     """
@@ -538,14 +546,14 @@ def test_sympy_expression_conversion_fails_when_symbol_is_not_identifier():
 )
 def test_simplify_constant_expression(
     expression: Expression, expected_value: LiteralType
-):
+) -> None:
     """Test that a constant expression is correctly simplified."""
     result = simplify_expression(expression)
     assert isinstance(result, LiteralExpression)
     assert result.value == expected_value
 
 
-def test_simplify_variable_expression():
+def test_simplify_variable_expression() -> None:
     """Test that variables are correctly substituted and simplified in an
     expression.
     """
@@ -768,7 +776,7 @@ def test_convert_expression_to_z3_expression(
     expression: Expression,
     symbol_types: dict[Identifier, SymbolType],
     expected_z3_expression: z3.ExprRef,
-):
+) -> None:
     """Test that the expression is correctly converted to a Z3 expression."""
     result, identifier_to_z3_symbol = convert_expression_to_z3_expression(
         expression, symbol_types
@@ -842,8 +850,8 @@ def test_find_satisfying_assignment(
     expression: Expression,
     considered_identifiers: set[Identifier],
     symbol_types: dict[Identifier, SymbolType],
-    expected_output: dict[Identifier, LiteralType] | None,
-):
+    expected_output: bool | None,
+) -> None:
     """Test that a satisfying assignment is correctly found for an expression."""
     result = is_satisfiable(considered_identifiers, expression, symbol_types)
     assert result == expected_output

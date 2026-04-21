@@ -17,6 +17,7 @@ class _TestClass1(StructuralEquivalenceMixin):
         self.num = num
 
     def is_structurally_equivalent(self, other: object) -> bool:
+        assert isinstance(other, _TestClass1)
         return self.num == other.num
 
 
@@ -27,6 +28,7 @@ class _TestClass2(StructuralEquivalenceMixin):
         self.test = test
 
     def is_structurally_equivalent(self, other: object) -> bool:
+        assert isinstance(other, _TestClass2)
         return self.test.is_structurally_equivalent(other.test)
 
 
@@ -34,7 +36,7 @@ _TestClass1Alias = _TestClass1
 
 
 @deterministic_identifiers_by_name_hint
-def test_deterministic_identifiers_by_name_hint():
+def test_deterministic_identifiers_by_name_hint() -> None:
     """Test deterministic identifiers support hashed containers in tests."""
     identifier_a = Identifier("a")
     identifier_a_2 = Identifier("a")
@@ -51,7 +53,7 @@ def test_deterministic_identifiers_by_name_hint():
     assert identifier_dict[identifier_a_2] == "left"
 
 
-def test_deterministic_identifiers_by_name_hint_with_block():
+def test_deterministic_identifiers_by_name_hint_with_block() -> None:
     """Test deterministic identifiers patch supports `with` usage."""
     with deterministic_identifiers_by_name_hint:
         identifier_a = Identifier("a")
@@ -61,7 +63,7 @@ def test_deterministic_identifiers_by_name_hint_with_block():
         assert hash(identifier_a) == hash(identifier_a_2)
 
 
-def test_fail_fast_structural_equivalence():
+def test_fail_fast_structural_equivalence() -> None:
     """Test the fail fast structural equivalence patch works."""
 
     test_class1_a = _TestClass1(1)

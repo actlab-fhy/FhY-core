@@ -98,7 +98,7 @@ def test_visitable_default_kind_is_snake_case_class_name() -> None:
 def test_visitable_accept_uses_visitor_dispatch() -> None:
     """Test that `accept` routes through the visitor dispatch API."""
     visitor = ToyNodeConsumer()
-    assert ToyNode().accept(visitor) == 7
+    assert ToyNode().accept(visitor) == 7  # type: ignore[arg-type]  # test: narrow visitor type
 
 
 def test_visitable_pass_execute_uses_run_pass_dispatch() -> None:

@@ -1,3 +1,4 @@
+# mypy: disable-error-code="misc"
 """Tests the basic compiler traits."""
 
 from dataclasses import FrozenInstanceError, dataclass
@@ -92,12 +93,12 @@ class _NoHashEqualValue(EqualMixin):  # noqa: PLW1641
 
 
 @dataclass(order=True)
-class _AutoPartialOrderableValue(PartialOrderableMixin):
+class _AutoPartialOrderableValue(PartialOrderableMixin):  # type: ignore[override]
     value: int
 
 
 @dataclass(order=True)
-class _AutoOrderableValue(OrderableMixin):
+class _AutoOrderableValue(OrderableMixin):  # type: ignore[override]
     value: int
 
 
@@ -190,13 +191,13 @@ class _DataclassInternedValue(InternedMixin[str]):
         return self.key
 
 
-def test_has_identifier_runtime_protocol():
+def test_has_identifier_runtime_protocol() -> None:
     """Test `HasIdentifier` runtime protocol."""
     carrier = _IdentifierCarrier(mock_identifier("x", 1))
     assert isinstance(carrier, HasIdentifier)
 
 
-def test_has_provenance_runtime_protocol():
+def test_has_provenance_runtime_protocol() -> None:
     """Test `HasProvenance` runtime protocol."""
     carrier = _ProvenanceCarrier(Provenance.unknown())
     assert isinstance(carrier, HasProvenance)
@@ -271,14 +272,14 @@ def test_orderable_mixin_defaults_to_total_order() -> None:
     assert value.supports_ordering is True
 
 
-def test_identifier_mixin_contract():
+def test_identifier_mixin_contract() -> None:
     """Test `HasIdentifierMixin` contract."""
     carrier = _IdentifierCarrier(mock_identifier("field", 2))
     assert carrier.get_identifier().name_hint == "field"
     assert carrier.get_identifier().id == 2
 
 
-def test_provenance_mixin_contract():
+def test_provenance_mixin_contract() -> None:
     """Test `HasProvenanceMixin` contract."""
     carrier = _ProvenanceCarrier(Provenance.unknown())
     assert carrier.get_provenance() == Provenance.unknown()
@@ -370,7 +371,7 @@ def test_native_frozen_dataclass_blocks_mutation() -> None:
     """Test native frozen dataclass blocks direct attribute mutation."""
     point = _AutoFrozenPoint(1, 2)
     with pytest.raises(FrozenInstanceError):
-        point.x = 4  # type: ignore[misc]
+        point.x = 4
 
 
 def test_native_frozen_dataclass_assert_frozen_detects_deep_mutability() -> None:
@@ -440,7 +441,7 @@ def test_interned_finalize_verifies_and_freezes_once() -> None:
 
     assert _VerifiedFrozenInternedValue.verify_calls == 1
     assert value.is_frozen is True
-    assert value.payload == (1, 2, 3)
+    assert value.payload == (1, 2, 3)  # type: ignore[comparison-overlap]
 
 
 def test_interned_finalize_propagates_verification_errors() -> None:

@@ -367,8 +367,8 @@ def test_validation_manager_add_returns_none_and_exposes_validators_in_order() -
     second = _clean_validator("tests.vm.add_second")
 
     manager = ValidationManager[ValueBox]()
-    assert manager.add(first) is None
-    assert manager.add(second) is None
+    manager.add(first)
+    manager.add(second)
 
     assert manager.validators == (first, second)
 

@@ -39,7 +39,7 @@ from .conftest import mock_identifier
         ),
     ],
 )
-def test_tokenize_expression(expression_str: str, expected_tokens: list[str]):
+def test_tokenize_expression(expression_str: str, expected_tokens: list[str]) -> None:
     """Test that the expression is correctly tokenized."""
     assert tokenize_expression(expression_str) == expected_tokens
 
@@ -148,7 +148,7 @@ def test_tokenize_expression(expression_str: str, expected_tokens: list[str]):
     ],
 )
 @patch("fhy_core.identifier.Identifier._next_id", 0)
-def test_parse_expression(expression_str: str, expected_tree: Expression):
+def test_parse_expression(expression_str: str, expected_tree: Expression) -> None:
     """Test that the expression is correctly parsed."""
     result = parse_expression(expression_str)
     assert result.is_structurally_equivalent(expected_tree)

@@ -16,6 +16,6 @@ from fhy_core.utils.array_utils import get_array_size_in_bits
 )
 def test_get_array_size_in_bits(
     shape: list[int], element_size_in_bits: int, expected: int
-):
+) -> None:
     """Test calculating the array size in bits is correct."""
     assert get_array_size_in_bits(shape, element_size_in_bits) == expected
