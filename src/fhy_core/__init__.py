@@ -1,9 +1,10 @@
 """FhY compiler core utilities."""
 
-__version__ = "0.0.8"
+__version__ = "0.1.0"
 
 __all__ = [
     "Constraint",
+    "ConstraintError",
     "EquationConstraint",
     "InSetConstraint",
     "NotInSetConstraint",
@@ -26,8 +27,12 @@ __all__ = [
     "PassManagerResult",
     "PassRunRecord",
     "FixpointPassGroup",
+    "TraversalOrder",
     "FixpointIterationRecord",
     "FixpointGroupRecord",
+    "ValidationFailedError",
+    "ValidationManager",
+    "ValidationReport",
     "VisitablePass",
     "register_pass",
     "BinaryExpression",
@@ -98,6 +103,7 @@ __all__ = [
     "OrdinalValue",
     "Param",
     "ParamAssignment",
+    "ParamError",
     "PermParam",
     "PermutationMemberValue",
     "RealParam",
@@ -163,6 +169,7 @@ __all__ = [
 
 from .constraint import (
     Constraint,
+    ConstraintError,
     EquationConstraint,
     InSetConstraint,
     NotInSetConstraint,
@@ -188,6 +195,7 @@ from .expression import (
     synthesize_expression_type,
 )
 from .identifier import Identifier
+from .lattice import Lattice
 from .logger import (
     add_file_handler,
     configure_logging,
@@ -205,6 +213,7 @@ from .param import (
     OrdinalValue,
     Param,
     ParamAssignment,
+    ParamError,
     PermParam,
     PermutationMemberValue,
     RealParam,
@@ -231,6 +240,10 @@ from .pass_infrastructure import (
     PassRunRecord,
     PassValidationError,
     PreservedAnalyses,
+    TraversalOrder,
+    ValidationFailedError,
+    ValidationManager,
+    ValidationReport,
     VisitablePass,
     register_pass,
 )
@@ -323,7 +336,6 @@ from .types import (
 )
 from .utils import (
     IntEnum,
-    Lattice,
     PartiallyOrderedSet,
     Stack,
     StrEnum,

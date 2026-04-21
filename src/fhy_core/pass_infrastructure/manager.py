@@ -307,20 +307,14 @@ class FixpointPassGroup(HasIdentifierMixin, Generic[_IRType]):
     def passes(self) -> tuple[CompilerPass[_IRType, _IRType], ...]:
         return tuple(self._passes)
 
-    def add_pass(
-        self, compiler_pass: CompilerPass[_IRType, _IRType]
-    ) -> "FixpointPassGroup[_IRType]":
+    def add_pass(self, compiler_pass: CompilerPass[_IRType, _IRType]) -> None:
         """Append a pass to the fixpoint group.
 
         Args:
             compiler_pass: The pass to add.
 
-        Returns:
-            This fixpoint group, for chaining.
-
         """
         self._passes.append(compiler_pass)
-        return self
 
 
 class PassManager(HasIdentifierMixin, Generic[_IRType]):
@@ -401,7 +395,7 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
                 records.append(record)
                 continue
 
-            result = item.execute(current)
+            result = self._execute_bound(item, current)
             run_record = self._make_pass_run_record(item, result)
             self.analysis_manager.transfer(
                 current, result.output, result.preserved_analyses
@@ -422,7 +416,7 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
             changed_any = False
             pass_runs: list[PassRunRecord] = []
             for compiler_pass in group.passes:
-                result = compiler_pass.execute(current)
+                result = self._execute_bound(compiler_pass, current)
                 pass_run = self._make_pass_run_record(compiler_pass, result)
                 self.analysis_manager.transfer(
                     current, result.output, result.preserved_analyses
@@ -454,6 +448,24 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
             converged,
             tuple(iteration_records),
         )
+
+    def _execute_bound(
+        self,
+        compiler_pass: CompilerPass[_IRType, _IRType],
+        ir: _IRType,
+    ) -> PassResult[_IRType]:
+        """Execute ``compiler_pass`` with ``self.analysis_manager`` bound.
+
+        The analysis manager is attached to the pass for the duration of the
+        execution so that ``CompilerPass.get_analysis`` sees a cache, and is
+        restored to its previous value afterward (usually ``None``).
+        """
+        previous = compiler_pass.get_analysis_manager()
+        compiler_pass.bind_analysis_manager(self._analysis_manager)
+        try:
+            return compiler_pass.execute(ir)
+        finally:
+            compiler_pass.bind_analysis_manager(previous)
 
     @staticmethod
     def _make_pass_run_record(

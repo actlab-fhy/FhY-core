@@ -20,7 +20,16 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Any, Callable, ClassVar, Generic, Mapping, TypeVar, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ClassVar,
+    Generic,
+    Mapping,
+    TypeVar,
+    cast,
+)
 
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
@@ -28,10 +37,15 @@ from fhy_core.provenance import Note
 from fhy_core.trait import FrozenMixin, PartialEqualMixin, Visitable
 from fhy_core.utils.enum import StrEnum
 
+if TYPE_CHECKING:
+    from .manager import Analysis, AnalysisManager
+
 _PassInputT = TypeVar("_PassInputT")
 _PassOutputT = TypeVar("_PassOutputT")
 _PassClassT = TypeVar("_PassClassT", bound=type["CompilerPass[Any, Any]"])
 _VisitableNodeT = TypeVar("_VisitableNodeT", bound=Visitable)
+_AnalysisIRT = TypeVar("_AnalysisIRT")
+_AnalysisResultT = TypeVar("_AnalysisResultT")
 
 
 class DiagnosticLevel(StrEnum):
@@ -143,9 +157,11 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
     _pass_name: ClassVar[str | None] = None
     _pass_description: ClassVar[str] = ""
     _diagnostics: list[PassDiagnostic]
+    _analysis_manager: "AnalysisManager[Any] | None"
 
     def __init__(self) -> None:
         self._diagnostics = []
+        self._analysis_manager = None
 
     @classmethod
     def get_pass_name(cls) -> str:
@@ -229,6 +245,49 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
             preserved_analyses=preserved,
         )
 
+    def get_analysis_manager(self) -> "AnalysisManager[Any] | None":
+        """Return the analysis manager currently bound to this pass, if any."""
+        return self._analysis_manager
+
+    def bind_analysis_manager(
+        self, analysis_manager: "AnalysisManager[Any] | None"
+    ) -> None:
+        """Attach (or detach, with ``None``) an analysis manager to this pass.
+
+        Typically called by :class:`PassManager` before and after executing
+        this pass, so that :meth:`get_analysis` resolves against the cache.
+        Passing ``None`` returns the pass to standalone mode, in which
+        :meth:`get_analysis` recomputes results every call.
+        """
+        self._analysis_manager = analysis_manager
+
+    def get_analysis(
+        self,
+        analysis_type: "type[Analysis[_AnalysisIRT, _AnalysisResultT]]",
+        ir: _AnalysisIRT,
+    ) -> _AnalysisResultT:
+        """Obtain an analysis result for ``ir``.
+
+        When this pass is executed under a :class:`PassManager`, results are
+        fetched from the manager's :class:`AnalysisManager`, which caches them
+        and preserves/invalidates across passes based on each pass's
+        ``get_preserved_analyses`` return value. When the pass is executed
+        standalone (no manager has been bound), the analysis is computed fresh
+        on every call.
+
+        Args:
+            analysis_type: The analysis class to obtain results for.
+            ir: The IR instance to analyze. Typically the same IR being passed
+                to the current pass, but sub-IR is also accepted.
+
+        Returns:
+            The analysis result, cached when possible.
+
+        """
+        if self._analysis_manager is None:
+            return analysis_type().run(ir)
+        return self._analysis_manager.get(analysis_type, ir)
+
     def report(
         self, level: DiagnosticLevel, message: str | Note, detail: str | None = None
     ) -> None:
@@ -299,7 +358,23 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
 
 
 class VisitablePass(CompilerPass[_VisitableNodeT, _PassOutputT], ABC):
-    """Compiler pass with convention-based visitor dispatch."""
+    """Compiler pass with convention-based visitor dispatch.
+
+    Visitor method naming convention:
+        Subclasses implement per-node-type visitor methods named
+        ``visit_<suffix>``, where ``<suffix>`` is produced by
+        ``Visitable.get_visit_method_suffix()``. By default, that suffix is the
+        node class name converted from ``CamelCase`` to ``snake_case``. For
+        example, a node class named ``BinaryExpression`` dispatches to
+        ``visit_binary_expression``, and a node named ``IntLiteral`` dispatches
+        to ``visit_int_literal``. A node type may override
+        ``get_visit_method_suffix()`` to customize this mapping.
+
+        When no matching ``visit_<suffix>`` method is defined on the pass,
+        dispatch falls back to ``visit_unknown``, which by default raises
+        ``NotImplementedError``. Subclasses may override ``visit_unknown`` to
+        provide a generic handler.
+    """
 
     _VISIT_METHOD_PREFIX: ClassVar[str] = "visit_"
 
@@ -334,7 +409,33 @@ class VisitablePass(CompilerPass[_VisitableNodeT, _PassOutputT], ABC):
 
 
 class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
-    """Analysis-only visitable pass with optional automatic traversal."""
+    """Analysis-only visitable pass with optional automatic traversal.
+
+    Per-node pre/post hook convention:
+        In addition to ``visit_<suffix>`` dispatch inherited from
+        ``VisitablePass``, this class dispatches per-node
+        ``before_visit_<suffix>`` and ``after_visit_<suffix>`` hooks around
+        the walk of every node (both the root and each descendant), using
+        the same ``<suffix>`` convention as ``visit_<suffix>``. The pre-hook
+        runs before the node's visit method and any child traversal; the
+        post-hook runs after both have completed, regardless of traversal
+        order. When a hook method is not defined for a given node type,
+        dispatch falls back to ``before_visit_unknown`` /
+        ``after_visit_unknown`` (both no-ops by default). This enables
+        subclasses to inject node-type-specific pre/post processing (e.g.,
+        pushing/popping a scope for a ``FunctionDefinition``) independent
+        of traversal order, without overriding the walk itself.
+
+    Unknown-node handling:
+        Unlike ``VisitablePass.visit_unknown`` (which raises
+        ``NotImplementedError``), ``AnalysisVisitablePass.visit_unknown`` is
+        a no-op by default. This lets analysis passes quietly skip node
+        types they do not care about during a full-tree walk. Override
+        ``visit_unknown`` if strict handling is required.
+    """
+
+    _BEFORE_VISIT_METHOD_PREFIX: ClassVar[str] = "before_visit_"
+    _AFTER_VISIT_METHOD_PREFIX: ClassVar[str] = "after_visit_"
 
     _traversal_order: TraversalOrder
 
@@ -360,16 +461,26 @@ class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
     def walk(self, node: _VisitableNodeT) -> None:
         """Visit a node and, when provided, recursively visit its children.
 
+        Each walked node is bracketed by dispatch-based ``before_visit_*`` and
+        ``after_visit_*`` hooks. The pre-hook runs before any visit or child
+        traversal for the node, and the post-hook runs after both the node's
+        visit method and its child traversal have completed, regardless of
+        traversal order. See the class docstring for dispatch details.
+
         Args:
             node: Node to visit.
 
         """
-        if self._traversal_order == TraversalOrder.PRE:
-            self.visit(node)
-            self.walk_children(node)
-        else:
-            self.walk_children(node)
-            self.visit(node)
+        self.before_visit(node)
+        try:
+            if self._traversal_order == TraversalOrder.PRE:
+                self.visit(node)
+                self.walk_children(node)
+            else:
+                self.walk_children(node)
+                self.visit(node)
+        finally:
+            self.after_visit(node)
 
     def walk_children(self, node: _VisitableNodeT) -> None:
         """Visit all children declared by the node.
@@ -380,6 +491,56 @@ class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
         """
         for child in self.get_visit_children(node):
             self.walk(child)
+
+    def before_visit(self, node: _VisitableNodeT) -> None:
+        """Dispatch the pre-visit hook for ``node``.
+
+        Resolves ``before_visit_<suffix>`` using the same naming convention as
+        ``visit``. Falls back to ``before_visit_unknown`` when no dedicated
+        method is defined.
+
+        Args:
+            node: Node about to be walked.
+
+        """
+        method_name = (
+            f"{self._BEFORE_VISIT_METHOD_PREFIX}{type(node).get_visit_method_suffix()}"
+        )
+        candidate = getattr(self, method_name, None)
+        if candidate is None or not callable(candidate):
+            self.before_visit_unknown(node)
+            return
+        method = cast(Callable[[_VisitableNodeT], None], candidate)
+        method(node)
+
+    def after_visit(self, node: _VisitableNodeT) -> None:
+        """Dispatch the post-visit hook for ``node``.
+
+        Resolves ``after_visit_<suffix>`` using the same naming convention as
+        ``visit``. Falls back to ``after_visit_unknown`` when no dedicated
+        method is defined.
+
+        Args:
+            node: Node that was just walked.
+
+        """
+        method_name = (
+            f"{self._AFTER_VISIT_METHOD_PREFIX}{type(node).get_visit_method_suffix()}"
+        )
+        candidate = getattr(self, method_name, None)
+        if candidate is None or not callable(candidate):
+            self.after_visit_unknown(node)
+            return
+        method = cast(Callable[[_VisitableNodeT], None], candidate)
+        method(node)
+
+    def before_visit_unknown(self, node: _VisitableNodeT) -> None:
+        """Default pre-visit handler for node types without a dedicated hook."""
+        _ = node
+
+    def after_visit_unknown(self, node: _VisitableNodeT) -> None:
+        """Default post-visit handler for node types without a dedicated hook."""
+        _ = node
 
     def get_visit_children(self, node: _VisitableNodeT) -> Sequence[_VisitableNodeT]:
         """Return children for automatic traversal.

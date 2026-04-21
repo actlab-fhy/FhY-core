@@ -85,18 +85,35 @@ class ExpressionParser:
     Args:
         tokens: List of tokens.
 
-    TODO: Document the BNF grammar for these expressions here.
+    Grammar (BNF, lowest-to-highest precedence)::
 
+        expression     ::= logical_or
+        logical_or     ::= logical_and ( "||" logical_and )*
+        logical_and    ::= equality ( "&&" equality )*
+        equality       ::= comparison ( ( "==" | "!=" ) comparison )*
+        comparison     ::= addition ( ( "<" | "<=" | ">" | ">=" ) addition )*
+        addition       ::= multiplication ( ( "+" | "-" ) multiplication )*
+        multiplication ::= unary ( ( "*" | "/" | "//" | "%" ) unary )*
+        unary          ::= ( "-" | "+" | "!" ) unary | exponentiation
+        exponentiation ::= primary ( "**" primary )*
+        primary        ::= number
+                         | "True" | "False"
+                         | identifier
+                         | "(" expression ")"
+
+    Binary operators are left-associative except ``**`` which is
+    right-associative in typical usage but parsed here left-to-right at the
+    exponentiation precedence level.
     """
 
     _tokens: list[str]
     _current: int
-    _idenfitiers: dict[str, Identifier]
+    _identifiers: dict[str, Identifier]
 
     def __init__(self, tokens: list[str]):
         self._tokens = tokens
         self._current = 0
-        self._idenfitiers = {}
+        self._identifiers = {}
 
     def parse(self) -> Expression:
         """Return the parsed expression as an expression tree."""
@@ -121,7 +138,7 @@ class ExpressionParser:
         return self._binary_operation(_LOGICAL_OR_SYMBOL_OPERATIONS, self._logical_and)
 
     def _logical_and(self) -> Expression:
-        return self._binary_operation(_LOGICAL_AND_SYMBOL_OPERATIONS, self._comparison)
+        return self._binary_operation(_LOGICAL_AND_SYMBOL_OPERATIONS, self._equality)
 
     def _equality(self) -> Expression:
         return self._binary_operation(_EQUALITY_SYMBOL_OPERATIONS, self._comparison)
@@ -171,9 +188,9 @@ class ExpressionParser:
         )
 
     def _get_identifier_from_symbol(self, symbol: str) -> Identifier:
-        if symbol not in self._idenfitiers:
-            self._idenfitiers[symbol] = Identifier(symbol)
-        return self._idenfitiers[symbol]
+        if symbol not in self._identifiers:
+            self._identifiers[symbol] = Identifier(symbol)
+        return self._identifiers[symbol]
 
     def _match(self, *types: str) -> bool:
         if self._peek_at_current_token() in types:

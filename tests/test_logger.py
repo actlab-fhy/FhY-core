@@ -1,9 +1,11 @@
 """Tests the logging utility."""
 
 import logging
+from collections.abc import Callable, Generator
 from pathlib import Path
 
 import pytest
+
 from fhy_core.logger import (
     add_file_handler,
     configure_logging,
@@ -14,14 +16,14 @@ from fhy_core.logger import (
 
 
 @pytest.fixture(autouse=True)
-def isolate_logging_state():
+def isolate_logging_state() -> Generator[Callable[[str], logging.Logger], None, None]:
     root_logger = logging.getLogger()
     root_logger_handlers = list(root_logger.handlers)
     root_logger_level = root_logger.level
 
-    touched_names = set()
+    touched_names: set[str] = set()
 
-    def touch(name: str):
+    def touch(name: str) -> logging.Logger:
         touched_names.add(name)
         return logging.getLogger(name)
 
@@ -39,7 +41,9 @@ def isolate_logging_state():
     reset()
 
 
-def _get_non_file_stream_handlers(logger: logging.Logger):
+def _get_non_file_stream_handlers(
+    logger: logging.Logger,
+) -> list[logging.StreamHandler]:  # type: ignore[type-arg]
     return [
         h
         for h in logger.handlers
@@ -48,11 +52,11 @@ def _get_non_file_stream_handlers(logger: logging.Logger):
     ]
 
 
-def _get_file_handlers(logger: logging.Logger):
+def _get_file_handlers(logger: logging.Logger) -> list[logging.FileHandler]:
     return [h for h in logger.handlers if isinstance(h, logging.FileHandler)]
 
 
-def test_get_logger_returns_named_logger():
+def test_get_logger_returns_named_logger() -> None:
     """Test `get_logger` returns a logger with the correct name."""
     name = "some.pkg.mod"
 
@@ -62,7 +66,7 @@ def test_get_logger_returns_named_logger():
     assert logger.name == name
 
 
-def test_get_logger_does_not_configure_handlers_or_level():
+def test_get_logger_does_not_configure_handlers_or_level() -> None:
     """Test `get_logger` does not modify root logger configuration."""
     root_logger = logging.getLogger()
     before_handlers = list(root_logger.handlers)
@@ -74,7 +78,9 @@ def test_get_logger_does_not_configure_handlers_or_level():
     assert root_logger.level == before_level
 
 
-def test_install_null_handler_adds_only_if_no_handlers(isolate_logging_state):
+def test_install_null_handler_adds_only_if_no_handlers(
+    isolate_logging_state: Callable[[str], logging.Logger],
+) -> None:
     """Test `install_null_handler` adds a NullHandler only if no handlers exist."""
     namespace = "my_namespace"
     logger = isolate_logging_state(namespace)
@@ -86,7 +92,9 @@ def test_install_null_handler_adds_only_if_no_handlers(isolate_logging_state):
     assert isinstance(logger.handlers[0], logging.NullHandler)
 
 
-def test_install_null_handler_does_not_add_if_handlers_exist(isolate_logging_state):
+def test_install_null_handler_does_not_add_if_handlers_exist(
+    isolate_logging_state: Callable[[str], logging.Logger],
+) -> None:
     """Test `install_null_handler` does not add a NullHandler if handlers exist."""
     namespace = "my_namespace"
     logger = isolate_logging_state(namespace)
@@ -99,7 +107,9 @@ def test_install_null_handler_does_not_add_if_handlers_exist(isolate_logging_sta
     assert logger.handlers == [sentinel]
 
 
-def test_install_null_handler_is_idempotent(isolate_logging_state):
+def test_install_null_handler_is_idempotent(
+    isolate_logging_state: Callable[[str], logging.Logger],
+) -> None:
     """Test `install_null_handler` is idempotent."""
     namespace = "my_namespace"
     logger = isolate_logging_state(namespace)
@@ -112,8 +122,8 @@ def test_install_null_handler_is_idempotent(isolate_logging_state):
 
 
 def test_configure_logging_adds_single_console_handler_and_sets_levels(
-    isolate_logging_state,
-):
+    isolate_logging_state: Callable[[str], logging.Logger],
+) -> None:
     """Test `configure_logging` adds a console handler with correct level."""
     namespace = "mycompiler"
     logger = isolate_logging_state(namespace)
@@ -127,7 +137,9 @@ def test_configure_logging_adds_single_console_handler_and_sets_levels(
     assert _get_file_handlers(logger) == []
 
 
-def test_configure_logging_is_idempotent_for_console_handler(isolate_logging_state):
+def test_configure_logging_is_idempotent_for_console_handler(
+    isolate_logging_state: Callable[[str], logging.Logger],
+) -> None:
     """Test `configure_logging` does not duplicate handlers on multiple calls."""
     namespace = "mycompiler"
     logger = isolate_logging_state(namespace)
@@ -141,8 +153,8 @@ def test_configure_logging_is_idempotent_for_console_handler(isolate_logging_sta
 
 
 def test_configure_logging_adds_file_handler_and_is_idempotent_by_resolved_path(
-    isolate_logging_state, tmp_path
-):
+    isolate_logging_state: Callable[[str], logging.Logger], tmp_path: Path
+) -> None:
     """Test `configure_logging` adds file handler and does not duplicate."""
     namespace = "mycompiler"
     logger = isolate_logging_state(namespace)
@@ -172,8 +184,8 @@ def test_configure_logging_adds_file_handler_and_is_idempotent_by_resolved_path(
 
 
 def test_configure_logging_does_not_duplicate_if_existing_streamhandler_present(
-    isolate_logging_state,
-):
+    isolate_logging_state: Callable[[str], logging.Logger],
+) -> None:
     """Test `configure_logging` updates existing StreamHandler."""
     namespace = "mycompiler"
     logger = isolate_logging_state(namespace)
@@ -190,7 +202,9 @@ def test_configure_logging_does_not_duplicate_if_existing_streamhandler_present(
     assert stream_handlers[0].level == logging.INFO
 
 
-def test_add_file_handler_adds_and_is_idempotent(isolate_logging_state, tmp_path):
+def test_add_file_handler_adds_and_is_idempotent(
+    isolate_logging_state: Callable[[str], logging.Logger], tmp_path: Path
+) -> None:
     """Test `add_file_handler` adds FileHandler and is idempotent by absolute path."""
     namespace = "mycompiler"
     logger = isolate_logging_state(namespace)
@@ -211,8 +225,8 @@ def test_add_file_handler_adds_and_is_idempotent(isolate_logging_state, tmp_path
 
 
 def test_add_file_handler_uses_explicit_formatter_when_provided(
-    isolate_logging_state, tmp_path
-):
+    isolate_logging_state: Callable[[str], logging.Logger], tmp_path: Path
+) -> None:
     """Test that `add_file_handler` uses the provided formatter."""
     logger = isolate_logging_state("mycompiler")
 
@@ -225,8 +239,8 @@ def test_add_file_handler_uses_explicit_formatter_when_provided(
 
 
 def test_add_file_handler_infers_formatter_from_existing_handler(
-    isolate_logging_state, tmp_path
-):
+    isolate_logging_state: Callable[[str], logging.Logger], tmp_path: Path
+) -> None:
     """Test `add_file_handler` uses existing handler's formatter if none provided."""
     logger = isolate_logging_state("mycompiler")
 
@@ -242,7 +256,9 @@ def test_add_file_handler_infers_formatter_from_existing_handler(
     assert file_handler.formatter is formatter
 
 
-def test_configure_logging_propagate_flag(isolate_logging_state):
+def test_configure_logging_propagate_flag(
+    isolate_logging_state: Callable[[str], logging.Logger],
+) -> None:
     """Test `configure_logging` sets the propagate flag correctly."""
     namespace = "mycompiler"
     logger = isolate_logging_state(namespace)
@@ -255,8 +271,8 @@ def test_configure_logging_propagate_flag(isolate_logging_state):
 
 
 def test_stream_handler_detection_does_not_count_filehandler_as_console(
-    isolate_logging_state, tmp_path
-):
+    isolate_logging_state: Callable[[str], logging.Logger], tmp_path: Path
+) -> None:
     """Test `configure_logging` detects existing handler when a handler exists."""
     namespace = "mycompiler"
     logger = isolate_logging_state(namespace)

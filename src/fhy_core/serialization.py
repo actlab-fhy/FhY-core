@@ -98,7 +98,7 @@ from typing import (
 from frozendict import frozendict
 
 from .error import register_error
-from .utils import StrEnum
+from .utils.enum import StrEnum
 
 SerializedValue: TypeAlias = Union[
     str, int, float, bool, None, Sequence["SerializedValue"], "SerializedDict"

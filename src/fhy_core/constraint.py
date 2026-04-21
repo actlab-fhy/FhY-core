@@ -2,6 +2,7 @@
 
 __all__ = [
     "Constraint",
+    "ConstraintError",
     "EquationConstraint",
     "InSetConstraint",
     "NotInSetConstraint",
@@ -20,6 +21,7 @@ from typing import (
     cast,
 )
 
+from fhy_core.error import register_error
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -46,6 +48,17 @@ from .expression import (
     simplify_expression,
 )
 from .identifier import Identifier
+
+
+@register_error
+class ConstraintError(ValueError):
+    """Domain error for constraint construction and validation.
+
+    Subclasses ``ValueError`` so call sites that previously caught
+    ``ValueError`` continue to work; new code should prefer
+    ``ConstraintError`` when distinguishing constraint-domain failures from
+    generic value errors.
+    """
 
 
 class Constraint(
@@ -117,19 +130,19 @@ def _is_serializable_hashable(value: Any) -> bool:
 
 def _validate_constraint_member(value: Any) -> None:
     if value is None:
-        raise ValueError("Constraint members cannot be `None`.")
+        raise ConstraintError("Constraint members cannot be `None`.")
     if isinstance(value, (tuple, frozenset)):
         for nested_value in value:
             _validate_constraint_member(nested_value)
         if not isinstance(value, Hashable):
-            raise ValueError(
+            raise ConstraintError(
                 "Constraint member containers must be hashable, but got "
                 f"value {value} of type {type(value)}.",
             )
         return
     if _is_valid_constraint_primitive(value) or _is_serializable_hashable(value):
         return
-    raise ValueError(
+    raise ConstraintError(
         "Constraint member must be either a primitive literal "
         "(`str`, `int`, `float`, `bool`), both `Serializable` and `Hashable`, "
         "or a tuple/frozenset containing valid constraint members, but got value "
@@ -149,7 +162,7 @@ def _normalize_constraint_member_collection(
     try:
         return frozenset(values)
     except TypeError as exc:
-        raise ValueError(
+        raise ConstraintError(
             "Constraint members must be hashable after validation."
         ) from exc
 
@@ -306,7 +319,7 @@ class InSetConstraint(Constraint, Generic[_ConstraintMemberT]):
 
     def _generate_single_value_constraint(self, value: Any) -> Expression:
         if not isinstance(value, LiteralType):
-            raise ValueError(
+            raise ConstraintError(
                 f"Conversion of type {type(value)} to an expression is not supported."
             )
         variable = IdentifierExpression(self.variable)
@@ -406,7 +419,7 @@ class NotInSetConstraint(Constraint, Generic[_ConstraintMemberT]):
 
     def _generate_single_value_constraint(self, value: Any) -> Expression:
         if not isinstance(value, LiteralType):
-            raise ValueError(
+            raise ConstraintError(
                 f"Conversion of type {type(value)} to an expression is not supported."
             )
         variable = IdentifierExpression(self.variable)

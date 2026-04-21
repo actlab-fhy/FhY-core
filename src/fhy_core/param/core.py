@@ -3,6 +3,7 @@
 __all__ = [
     "Param",
     "ParamAssignment",
+    "ParamError",
     "RealParam",
     "IntParam",
     "SerializableEqualValue",
@@ -38,6 +39,7 @@ from fhy_core.constraint import (
     InSetConstraint,
     NotInSetConstraint,
 )
+from fhy_core.error import register_error
 from fhy_core.expression import (
     Expression,
     IdentifierExpression,
@@ -61,6 +63,16 @@ from fhy_core.trait import Equal, FrozenMixin, Orderable, StructuralEquivalenceM
 from fhy_core.utils import Self, format_comma_separated_list
 
 _T = TypeVar("_T")
+
+
+@register_error
+class ParamError(ValueError):
+    """Domain error for parameter construction, validation, and assignment.
+
+    Subclasses ``ValueError`` so call sites that previously caught
+    ``ValueError`` continue to work; new code should prefer ``ParamError``
+    when distinguishing parameter-domain failures from generic value errors.
+    """
 
 
 def _constraint_structural_ordering_key(constraint: Constraint) -> str:
@@ -94,7 +106,7 @@ class ParamAssignment(Serializable, FrozenMixin, Generic[_T]):
     def __init__(self, param: "Param[_T]", value: _T) -> None:
         """Create an assignment after validating value against parameter constraints."""
         if not param.is_value_admissible(value):
-            raise ValueError(
+            raise ParamError(
                 f"Value {value!r} is not admissible for parameter {param!r}."
             )
 
@@ -102,7 +114,7 @@ class ParamAssignment(Serializable, FrozenMixin, Generic[_T]):
             param._is_constraints_satisfied_with_failing_constraint(value)
         )
         if not is_constraint_satisfied:
-            raise ValueError(
+            raise ParamError(
                 f"Value {value!r} violates constraint {failing_constraint!r} "
                 f"for parameter {param!r}."
             )
@@ -278,25 +290,6 @@ class Param(
         self_constraint_expression = convert_param_constraints(self)
         other_constraint_expression = convert_param_constraints(other)
 
-        # TODO: Match code not passing MyPy... using if-else chain instead
-        #       but fix this in the future when can get to pass
-        # match (self_constraint_expression, other_constraint_expression):
-        #     case (None, None):
-        #         return True
-        #     case (_, None):
-        #         return True
-        #     case (None, _):
-        #         return False
-        #     case (e1, e2):
-        #         all_constraints_expression = Expression.logical_and(
-        #             e1, Expression.logical_not(e2)
-        #         )
-        #         return not is_satisfiable(
-        #             {constrained_variable},
-        #             all_constraints_expression,
-        #             {constrained_variable: self.get_symbol_type()},
-        #         )
-
         if (
             self_constraint_expression is not None
             and other_constraint_expression is not None
@@ -380,7 +373,7 @@ class Param(
 
         """
         if constraint.variable != self.variable:
-            raise ValueError("Constraint variable must match parameter variable.")
+            raise ParamError("Constraint variable must match parameter variable.")
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -555,7 +548,7 @@ class RealParam(Param[str | float]):
             float(lower_bound) == float(upper_bound)
             and not (is_lower_inclusive and is_upper_inclusive)
         ):
-            raise ValueError("Lower bound must be less than or equal to upper bound.")
+            raise ParamError("Lower bound must be less than or equal to upper bound.")
         param = cls(name=name)
         param = param.add_lower_bound_constraint(
             lower_bound, is_inclusive=is_lower_inclusive
@@ -718,7 +711,7 @@ class IntParam(Param[int]):
             lower_bound == upper_bound
             and not (is_lower_inclusive and is_upper_inclusive)
         ):
-            raise ValueError("Lower bound must be less than or equal to upper bound.")
+            raise ParamError("Lower bound must be less than or equal to upper bound.")
         param = cls(name=name)
         param = param.add_lower_bound_constraint(
             lower_bound, is_inclusive=is_lower_inclusive
@@ -976,7 +969,7 @@ def _serialize_typed_wrapped_leaf_value(value: object) -> SerializedDict:
     the runtime shape here and then hand the value to the shared serializer.
     """
     if not isinstance(value, (bool, int, float, str, Serializable)):
-        raise ValueError(
+        raise ParamError(
             "Parameter values must be serializable leaf values "
             "(bool/int/float/str/Serializable)."
         )
@@ -1026,7 +1019,7 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
                 "Ordinal values must be mutually comparable for sorting."
             ) from exc
         if not _is_values_unique_in_sorted_sequence(all_values):
-            raise ValueError("Values must be unique.")
+            raise ParamError("Values must be unique.")
         object.__setattr__(self, "_all_values", all_values)
 
     @property
@@ -1047,7 +1040,7 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
     def validate_constraint(self, constraint: Constraint) -> None:
         super().validate_constraint(constraint)
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
-            raise ValueError(
+            raise ParamError(
                 "Only in-set and not-in-set constraints are allowed for "
                 "ordinal parameters."
             )
@@ -1127,7 +1120,7 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
                     "serializable, or be primitive bool/int/str values."
                 )
         if not _is_values_unique_in_sequence_with_set(category_values):
-            raise ValueError("Values must be unique.")
+            raise ParamError("Values must be unique.")
         object.__setattr__(self, "_categories", frozenset(category_values))
 
     @property
@@ -1152,7 +1145,7 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
     def validate_constraint(self, constraint: Constraint) -> None:
         super().validate_constraint(constraint)
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
-            raise ValueError(
+            raise ParamError(
                 "Only in-set and not-in-set constraints are allowed for "
                 "categorical parameters."
             )
@@ -1238,7 +1231,7 @@ class PermParam(
                     "serializable, or be primitive bool/int/float/str values."
                 )
         if not _is_values_unique_in_sequence_without_set(all_values):
-            raise ValueError("Values must be unique.")
+            raise ParamError("Values must be unique.")
         object.__setattr__(self, "_all_values", all_member_values)
 
     @property
@@ -1280,7 +1273,7 @@ class PermParam(
     def validate_constraint(self, constraint: Constraint) -> None:
         super().validate_constraint(constraint)
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
-            raise ValueError(
+            raise ParamError(
                 "Only in-set and not-in-set constraints are allowed for "
                 "permutation parameters."
             )

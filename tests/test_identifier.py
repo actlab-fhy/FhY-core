@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import pytest
+
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
     DeserializationDictStructureError,
@@ -12,7 +13,7 @@ from fhy_core.serialization import (
 from fhy_core.trait import Equal, PartialEqual
 
 
-def test_identifier_initialization():
+def test_identifier_initialization() -> None:
     """Test that the identifier is initialized correctly."""
     identifier = Identifier("test_name")
     assert identifier.name_hint == "test_name"
@@ -20,7 +21,7 @@ def test_identifier_initialization():
 
 
 @patch.object(Identifier, "_next_id", 0)
-def test_unique_id_generation():
+def test_unique_id_generation() -> None:
     """Test that the identifier generates a unique ID."""
     id1 = Identifier("")
     id2 = Identifier("")
@@ -31,7 +32,7 @@ def test_unique_id_generation():
     assert id3.id == 2
 
 
-def test_unique_id_generation_thread_safe():
+def test_unique_id_generation_thread_safe() -> None:
     """Test that IDs remain unique under concurrent creation."""
     num_identifiers = 2000
     with patch.object(Identifier, "_next_id", 0):
@@ -46,7 +47,7 @@ def test_unique_id_generation_thread_safe():
     assert max(ids) == num_identifiers - 1
 
 
-def test_equality():
+def test_equality() -> None:
     """Test that the identifier equality is based on the ID."""
     id1 = Identifier("name")
     id2 = Identifier("name")
@@ -66,20 +67,20 @@ def test_identifier_supports_equal_traits() -> None:
     assert identifier.supports_equality is True
 
 
-def test_string_representation():
+def test_string_representation() -> None:
     """Test that the identifier string representation is correct."""
     identifier = Identifier("test_repr")
     assert str(identifier) == "test_repr"
     assert repr(identifier) == f"test_repr::{identifier.id}"
 
 
-def test_hash():
+def test_hash() -> None:
     """Test that the identifier hash is based on the ID."""
     identifier = Identifier("hash_test")
     assert hash(identifier) == hash(identifier.id)
 
 
-def test_dict_serialization():
+def test_dict_serialization() -> None:
     """Test the identifier can be serialized/deserialized via a dictionary."""
     identifier = Identifier("serialization_test")
     serialized = identifier.serialize_to_dict()
