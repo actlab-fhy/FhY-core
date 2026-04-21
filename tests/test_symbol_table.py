@@ -29,13 +29,9 @@ def empty_symbol_table() -> SymbolTable:
     return SymbolTable()
 
 
-def _make_int32_numerical_type() -> NumericalType:
+@pytest.fixture
+def int32() -> NumericalType:
     return NumericalType(PrimitiveDataType(CoreDataType.INT32))
-
-
-# ---------------------------------------------------------------------------
-# Frame trait and serialization tests
-# ---------------------------------------------------------------------------
 
 
 def test_import_frame_is_frozen_runtime_protocol() -> None:
@@ -69,15 +65,15 @@ def test_import_frame_structural_equivalence_false_for_different_name() -> None:
     assert not left.is_structurally_equivalent(right)
 
 
-def test_import_frame_structural_equivalence_false_for_other_frame_type() -> None:
+def test_import_frame_structural_equivalence_false_for_other_frame_type(
+    int32: NumericalType,
+) -> None:
     """Test structural equivalence is false when compared to a different frame
     type.
     """
     name = mock_identifier("symbol", 0)
     import_frame = ImportSymbolTableFrame(name)
-    variable_frame = VariableSymbolTableFrame(
-        name, _make_int32_numerical_type(), TypeQualifier.STATE
-    )
+    variable_frame = VariableSymbolTableFrame(name, int32, TypeQualifier.STATE)
     assert not import_frame.is_structurally_equivalent(variable_frame)
 
 
@@ -91,58 +87,54 @@ def test_import_frame_dict_serialization_round_trip() -> None:
     assert frame.is_structurally_equivalent(restored)
 
 
-def test_variable_frame_is_frozen_runtime_protocol() -> None:
+def test_variable_frame_is_frozen_runtime_protocol(int32: NumericalType) -> None:
     """Test `VariableSymbolTableFrame` satisfies `Frozen` runtime protocol."""
     frame = VariableSymbolTableFrame(
-        mock_identifier("var", 0), _make_int32_numerical_type(), TypeQualifier.STATE
+        mock_identifier("var", 0), int32, TypeQualifier.STATE
     )
     assert isinstance(frame, Frozen)
 
 
-def test_variable_frame_is_structural_equivalence_runtime_protocol() -> None:
+def test_variable_frame_is_structural_equivalence_runtime_protocol(
+    int32: NumericalType,
+) -> None:
     """Test `VariableSymbolTableFrame` satisfies `StructuralEquivalence` runtime
     protocol.
     """
     frame = VariableSymbolTableFrame(
-        mock_identifier("var", 0), _make_int32_numerical_type(), TypeQualifier.STATE
+        mock_identifier("var", 0), int32, TypeQualifier.STATE
     )
     assert isinstance(frame, StructuralEquivalence)
 
 
-def test_variable_frame_structural_equivalence_true_for_same_content() -> None:
+def test_variable_frame_structural_equivalence_true_for_same_content(
+    int32: NumericalType,
+) -> None:
     """Test structural equivalence is true for variable frames with the same
     content.
     """
     name = mock_identifier("var", 0)
-    left = VariableSymbolTableFrame(
-        name, _make_int32_numerical_type(), TypeQualifier.STATE
-    )
-    right = VariableSymbolTableFrame(
-        name, _make_int32_numerical_type(), TypeQualifier.STATE
-    )
+    left = VariableSymbolTableFrame(name, int32, TypeQualifier.STATE)
+    right = VariableSymbolTableFrame(name, int32, TypeQualifier.STATE)
     assert left.is_structurally_equivalent(right)
 
 
-def test_variable_frame_structural_equivalence_false_for_different_type_qualifier() -> (
-    None
-):
+def test_variable_frame_structural_equivalence_false_for_different_type_qualifier(
+    int32: NumericalType,
+) -> None:
     """Test structural equivalence is false for variable frames with different
     type qualifiers.
     """
     name = mock_identifier("var", 0)
-    left = VariableSymbolTableFrame(
-        name, _make_int32_numerical_type(), TypeQualifier.STATE
-    )
-    right = VariableSymbolTableFrame(
-        name, _make_int32_numerical_type(), TypeQualifier.PARAM
-    )
+    left = VariableSymbolTableFrame(name, int32, TypeQualifier.STATE)
+    right = VariableSymbolTableFrame(name, int32, TypeQualifier.PARAM)
     assert not left.is_structurally_equivalent(right)
 
 
-def test_variable_frame_dict_serialization_round_trip() -> None:
+def test_variable_frame_dict_serialization_round_trip(int32: NumericalType) -> None:
     """Test `VariableSymbolTableFrame` round-trips through dict serialization."""
     frame = VariableSymbolTableFrame(
-        mock_identifier("var", 0), _make_int32_numerical_type(), TypeQualifier.STATE
+        mock_identifier("var", 0), int32, TypeQualifier.STATE
     )
 
     restored = SymbolTableFrame.deserialize_from_dict(frame.serialize_to_dict())
@@ -169,14 +161,16 @@ def test_function_frame_is_structural_equivalence_runtime_protocol() -> None:
     assert isinstance(frame, StructuralEquivalence)
 
 
-def test_function_frame_structural_equivalence_true_for_same_content() -> None:
+def test_function_frame_structural_equivalence_true_for_same_content(
+    int32: NumericalType,
+) -> None:
     """Test structural equivalence is true for function frames with the same
     content.
     """
     name = mock_identifier("fn", 0)
     signature = (
-        (TypeQualifier.INPUT, _make_int32_numerical_type()),
-        (TypeQualifier.OUTPUT, _make_int32_numerical_type()),
+        (TypeQualifier.INPUT, int32),
+        (TypeQualifier.OUTPUT, int32),
     )
     left = FunctionSymbolTableFrame(
         name, FunctionKeyword.PROCEDURE, signature=signature
@@ -197,9 +191,9 @@ def test_function_frame_structural_equivalence_false_for_different_keyword() -> 
     assert not left.is_structurally_equivalent(right)
 
 
-def test_function_frame_structural_equivalence_false_different_signature_length() -> (
-    None
-):
+def test_function_frame_structural_equivalence_false_different_signature_length(
+    int32: NumericalType,
+) -> None:
     """Test structural equivalence is false for function frames with different
     signature lengths.
     """
@@ -208,19 +202,19 @@ def test_function_frame_structural_equivalence_false_different_signature_length(
     right = FunctionSymbolTableFrame(
         name,
         FunctionKeyword.PROCEDURE,
-        signature=((TypeQualifier.INPUT, _make_int32_numerical_type()),),
+        signature=((TypeQualifier.INPUT, int32),),
     )
     assert not left.is_structurally_equivalent(right)
 
 
-def test_function_frame_dict_serialization_round_trip() -> None:
+def test_function_frame_dict_serialization_round_trip(int32: NumericalType) -> None:
     """Test `FunctionSymbolTableFrame` round-trips through dict serialization."""
     frame = FunctionSymbolTableFrame(
         mock_identifier("fn", 0),
         FunctionKeyword.PROCEDURE,
         signature=(
-            (TypeQualifier.INPUT, _make_int32_numerical_type()),
-            (TypeQualifier.OUTPUT, _make_int32_numerical_type()),
+            (TypeQualifier.INPUT, int32),
+            (TypeQualifier.OUTPUT, int32),
         ),
     )
 
@@ -230,12 +224,9 @@ def test_function_frame_dict_serialization_round_trip() -> None:
     assert frame.is_structurally_equivalent(restored)
 
 
-# ---------------------------------------------------------------------------
-# Symbol table structural equivalence tests
-# ---------------------------------------------------------------------------
-
-
-def test_symbol_table_structural_equivalence_true_for_same_content() -> None:
+def test_symbol_table_structural_equivalence_true_for_same_content(
+    int32: NumericalType,
+) -> None:
     """Test structural equivalence is true for symbol tables with same content."""
     namespace = mock_identifier("namespace", 0)
     symbol_name = mock_identifier("symbol", 1)
@@ -252,7 +243,9 @@ def test_symbol_table_structural_equivalence_true_for_same_content() -> None:
     assert left.is_structurally_equivalent(right)
 
 
-def test_symbol_table_structural_equivalence_with_equivalent_variable_frames() -> None:
+def test_symbol_table_structural_equivalence_with_equivalent_variable_frames(
+    int32: NumericalType,
+) -> None:
     """Test structural equivalence with equivalent variable frames."""
     namespace = mock_identifier("namespace", 0)
     symbol_name = mock_identifier("symbol", 1)
@@ -264,7 +257,7 @@ def test_symbol_table_structural_equivalence_with_equivalent_variable_frames() -
         symbol_name,
         VariableSymbolTableFrame(
             symbol_name,
-            _make_int32_numerical_type(),
+            int32,
             TypeQualifier.STATE,
         ),
     )
@@ -276,7 +269,7 @@ def test_symbol_table_structural_equivalence_with_equivalent_variable_frames() -
         symbol_name,
         VariableSymbolTableFrame(
             symbol_name,
-            _make_int32_numerical_type(),
+            int32,
             TypeQualifier.STATE,
         ),
     )
@@ -284,7 +277,9 @@ def test_symbol_table_structural_equivalence_with_equivalent_variable_frames() -
     assert left.is_structurally_equivalent(right)
 
 
-def test_symbol_table_structural_equivalence_with_equivalent_function_frames() -> None:
+def test_symbol_table_structural_equivalence_with_equivalent_function_frames(
+    int32: NumericalType,
+) -> None:
     """Test structural equivalence with equivalent function frames."""
     namespace = mock_identifier("namespace", 0)
     symbol_name = mock_identifier("symbol", 1)
@@ -298,8 +293,8 @@ def test_symbol_table_structural_equivalence_with_equivalent_function_frames() -
             symbol_name,
             FunctionKeyword.PROCEDURE,
             signature=(
-                (TypeQualifier.INPUT, _make_int32_numerical_type()),
-                (TypeQualifier.OUTPUT, _make_int32_numerical_type()),
+                (TypeQualifier.INPUT, int32),
+                (TypeQualifier.OUTPUT, int32),
             ),
         ),
     )
@@ -313,8 +308,8 @@ def test_symbol_table_structural_equivalence_with_equivalent_function_frames() -
             symbol_name,
             FunctionKeyword.PROCEDURE,
             signature=(
-                (TypeQualifier.INPUT, _make_int32_numerical_type()),
-                (TypeQualifier.OUTPUT, _make_int32_numerical_type()),
+                (TypeQualifier.INPUT, int32),
+                (TypeQualifier.OUTPUT, int32),
             ),
         ),
     )
@@ -348,11 +343,6 @@ def test_symbol_table_structural_equivalence_false_for_other_python_type() -> No
     assert not symbol_table.is_structurally_equivalent({})
 
 
-# ---------------------------------------------------------------------------
-# Symbol table serialization tests
-# ---------------------------------------------------------------------------
-
-
 def test_symbol_table_dict_serialization_with_import_frame() -> None:
     """Test `SymbolTable` can serialize/deserialize import frames."""
     symbol_table = SymbolTable()
@@ -368,14 +358,16 @@ def test_symbol_table_dict_serialization_with_import_frame() -> None:
     assert isinstance(restored_frame, ImportSymbolTableFrame)
 
 
-def test_symbol_table_dict_serialization_with_variable_frame() -> None:
+def test_symbol_table_dict_serialization_with_variable_frame(
+    int32: NumericalType,
+) -> None:
     """Test `SymbolTable` can serialize/deserialize variable frames."""
     symbol_table = SymbolTable()
     namespace = mock_identifier("namespace", 0)
     symbol_name = mock_identifier("var", 1)
     frame = VariableSymbolTableFrame(
         symbol_name,
-        _make_int32_numerical_type(),
+        int32,
         TypeQualifier.STATE,
     )
     symbol_table.add_namespace(namespace)
@@ -387,7 +379,9 @@ def test_symbol_table_dict_serialization_with_variable_frame() -> None:
     assert isinstance(restored_frame, VariableSymbolTableFrame)
 
 
-def test_symbol_table_dict_serialization_with_function_frame() -> None:
+def test_symbol_table_dict_serialization_with_function_frame(
+    int32: NumericalType,
+) -> None:
     """Test `SymbolTable` can serialize/deserialize function frames."""
     symbol_table = SymbolTable()
     namespace = mock_identifier("namespace", 0)
@@ -396,8 +390,8 @@ def test_symbol_table_dict_serialization_with_function_frame() -> None:
         symbol_name,
         FunctionKeyword.PROCEDURE,
         signature=(
-            (TypeQualifier.INPUT, _make_int32_numerical_type()),
-            (TypeQualifier.OUTPUT, _make_int32_numerical_type()),
+            (TypeQualifier.INPUT, int32),
+            (TypeQualifier.OUTPUT, int32),
         ),
     )
     symbol_table.add_namespace(namespace)
@@ -413,11 +407,6 @@ def test_symbol_table_deserialization_structure_rejected() -> None:
     """Test invalid `SymbolTable` serialization structures are rejected."""
     with pytest.raises(DeserializationDictStructureError):
         SymbolTable.deserialize_from_dict({"bad": "data"})
-
-
-# ---------------------------------------------------------------------------
-# Symbol table trait protocol and behavior tests
-# ---------------------------------------------------------------------------
 
 
 def test_symbol_table_is_canonicalizable_runtime_protocol() -> None:
@@ -505,11 +494,6 @@ def test_symbol_table_canonicalize_reports_no_change_when_already_sorted() -> No
     symbol_table.add_namespace(namespace_high)
 
     assert not symbol_table.canonicalize()
-
-
-# ---------------------------------------------------------------------------
-# Symbol table namespace and symbol operation tests
-# ---------------------------------------------------------------------------
 
 
 def test_add_and_check_namespace(empty_symbol_table: SymbolTable) -> None:

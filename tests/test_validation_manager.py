@@ -33,11 +33,6 @@ class ValueBox(FrozenMixin, Visitable):
         self.freeze()
 
 
-# ---------------------------------------------------------------------------
-# Helpers for building test validators.
-# ---------------------------------------------------------------------------
-
-
 def _single_error_validator(
     pass_name: str, message: str, *, detail: str | None = None
 ) -> CompilerPass[ValueBox, None]:
@@ -166,11 +161,6 @@ def test_raise_if_failed_raises_validation_failed_with_formatted_message() -> No
 
     assert excinfo.value.report is report
     assert "[ERROR] v.explode: boom" in str(excinfo.value)
-
-
-# ---------------------------------------------------------------------------
-# ValidationManager: orchestration semantics.
-# ---------------------------------------------------------------------------
 
 
 def test_validation_manager_runs_every_validator_even_after_errors() -> None:
