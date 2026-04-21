@@ -472,13 +472,15 @@ class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
 
         """
         self.before_visit(node)
-        if self._traversal_order == TraversalOrder.PRE:
-            self.visit(node)
-            self.walk_children(node)
-        else:
-            self.walk_children(node)
-            self.visit(node)
-        self.after_visit(node)
+        try:
+            if self._traversal_order == TraversalOrder.PRE:
+                self.visit(node)
+                self.walk_children(node)
+            else:
+                self.walk_children(node)
+                self.visit(node)
+        finally:
+            self.after_visit(node)
 
     def walk_children(self, node: _VisitableNodeT) -> None:
         """Visit all children declared by the node.

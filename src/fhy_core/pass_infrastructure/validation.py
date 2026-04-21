@@ -210,7 +210,7 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
         try:
             result = validator.execute(ir)
             return tuple(result.diagnostics)
-        except (PassValidationError, PassExecutionError):
+        except (PassValidationError, PassExecutionError) as exc:
             captured = tuple(validator.diagnostics)
             if any(d.level == DiagnosticLevel.ERROR for d in captured):
                 return captured
@@ -222,7 +222,8 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
                     level=DiagnosticLevel.ERROR,
                     message=Note(
                         f'Validator "{validator.get_pass_name()}" raised '
-                        "without reporting a diagnostic."
+                        f'"{type(exc).__name__} without reporting a diagnostic: '
+                        f"{exc}"
                     ),
                     pass_name=validator.get_pass_name(),
                 ),
