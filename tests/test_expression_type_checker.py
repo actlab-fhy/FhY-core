@@ -1,6 +1,7 @@
 """Tests for expression type checking and literal promotion."""
 
 import pytest
+
 from fhy_core.expression.core import (
     BinaryExpression,
     BinaryOperation,

@@ -1,7 +1,8 @@
 """Tests the general dictionary utilities."""
 
-from fhy_core.utils.dict_utils import invert_dict, invert_frozen_dict
 from frozendict import frozendict
+
+from fhy_core.utils.dict_utils import invert_dict, invert_frozen_dict
 
 
 def test_invert_dict() -> None:

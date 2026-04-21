@@ -4,6 +4,7 @@ import gc
 from dataclasses import dataclass
 
 import pytest
+
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     Analysis,

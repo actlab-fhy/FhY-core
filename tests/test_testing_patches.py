@@ -1,6 +1,7 @@
 """Tests the testing patches."""
 
 import pytest
+
 from fhy_core.expression.core import LiteralExpression
 from fhy_core.identifier import Identifier
 from fhy_core.testing_patches import (

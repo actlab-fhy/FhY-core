@@ -3,6 +3,7 @@
 import pytest
 import sympy  # type: ignore[import-untyped]
 import z3  # type: ignore[import-untyped]
+
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,

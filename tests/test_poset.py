@@ -1,6 +1,7 @@
 """Tests the partially ordered set utility."""
 
 import pytest
+
 from fhy_core.lattice import Lattice
 from fhy_core.utils.poset import PartiallyOrderedSet
 
@@ -187,5 +188,7 @@ def test_poset_invalid_order() -> None:
 def test_poset_iter(basic_poset: PartiallyOrderedSet[int]) -> None:
     """Test that the poset can be iterated over."""
     assert list(basic_poset) == [1, 2]
-    assert list(basic_poset) == [1, 2], "Expected the poset to be iterable \
+    assert list(basic_poset) == [1, 2], (
+        "Expected the poset to be iterable \
 multiple times."
+    )

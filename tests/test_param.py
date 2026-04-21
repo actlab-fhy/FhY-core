@@ -4,6 +4,7 @@ from functools import partial
 from typing import Any, TypeVar
 
 import pytest
+
 from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.expression import SymbolType
 from fhy_core.identifier import Identifier
@@ -79,16 +80,16 @@ class _SerializableEqualNoOrder(Serializable):
 
 def _assert_all_satisfied(param: Param[Any], values: list[Any]) -> None:
     for v in values:
-        assert param.is_constraints_satisfied(
-            v
-        ), f"Value {v} should satisfy constraints of parameter {param}"
+        assert param.is_constraints_satisfied(v), (
+            f"Value {v} should satisfy constraints of parameter {param}"
+        )
 
 
 def _assert_none_satisfied(param: Param[Any], values: list[Any]) -> None:
     for v in values:
-        assert not param.is_constraints_satisfied(
-            v
-        ), f"Value {v} should not satisfy constraints of parameter {param}"
+        assert not param.is_constraints_satisfied(v), (
+            f"Value {v} should not satisfy constraints of parameter {param}"
+        )
 
 
 @pytest.fixture

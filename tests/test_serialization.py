@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 import pytest
+
 from fhy_core import serialization
 
 

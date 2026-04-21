@@ -5,6 +5,7 @@ from collections.abc import Callable, Generator
 from pathlib import Path
 
 import pytest
+
 from fhy_core.logger import (
     add_file_handler,
     configure_logging,

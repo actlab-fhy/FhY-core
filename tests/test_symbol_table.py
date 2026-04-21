@@ -1,6 +1,7 @@
 """Tests the symbol table."""
 
 import pytest
+
 from fhy_core.serialization import DeserializationDictStructureError
 from fhy_core.symbol_table import (
     FunctionKeyword,

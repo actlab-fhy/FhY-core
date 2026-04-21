@@ -1,6 +1,7 @@
 """Tests for generic compiler pass infrastructure."""
 
 import pytest
+
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     CompilerPass,

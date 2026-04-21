@@ -4,6 +4,8 @@
 from dataclasses import FrozenInstanceError, dataclass
 
 import pytest
+from frozendict import frozendict
+
 from fhy_core.identifier import Identifier
 from fhy_core.provenance import Provenance
 from fhy_core.trait import (
@@ -28,7 +30,6 @@ from fhy_core.trait import (
     VerifiableMixin,
     VerificationError,
 )
-from frozendict import frozendict
 
 from .conftest import mock_identifier
 

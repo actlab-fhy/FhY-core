@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     AnalysisVisitablePass,
@@ -314,9 +315,9 @@ def test_validation_manager_synthesizes_error_when_pass_raises_without_reporting
 
     assert report.has_errors() is True
     errors = report.errors()
-    assert any(
-        "does not accept None" in d.message_text for d in errors
-    ), f"expected infra-emitted diagnostic, got {[d.message_text for d in errors]}"
+    assert any("does not accept None" in d.message_text for d in errors), (
+        f"expected infra-emitted diagnostic, got {[d.message_text for d in errors]}"
+    )
 
 
 def test_validation_manager_returns_report_that_satisfies_partial_equal() -> None:

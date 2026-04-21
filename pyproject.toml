@@ -150,6 +150,9 @@ ignore = [
 [tool.ruff.lint.pydocstyle]
 convention = "google"  # Accepts: "google" | "numpy" | "pep257"
 
+[tool.ruff.lint.isort]
+known-first-party = ["fhy_core"]
+
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = [
    "E402",  # Import Statement not at Top of File

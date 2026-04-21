@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+
 from fhy_core.utils.str_utils import format_comma_separated_list
 
 

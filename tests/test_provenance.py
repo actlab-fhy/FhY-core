@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+
 from fhy_core.provenance import Note, NoteKind, Position, Provenance, Span
 from fhy_core.serialization import (
     DeserializationDictStructureError,

@@ -3,6 +3,7 @@
 from typing import Any
 
 import pytest
+
 from fhy_core.lattice import Lattice
 from fhy_core.trait.verifiable import Verifiable, VerificationError
 

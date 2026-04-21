@@ -1,6 +1,7 @@
 """Tests the stack utility."""
 
 import pytest
+
 from fhy_core.utils.stack import Stack
 
 
@@ -48,8 +49,10 @@ def test_stack_peek(text_stack: Stack[str]) -> None:
     current: str = text_stack.peek()
     assert current == "test"
     current_length: int = len(text_stack)
-    assert current_length == 2, f"Expected the stack to be unchanged after peek, \
+    assert current_length == 2, (
+        f"Expected the stack to be unchanged after peek, \
 but the length changed to {current_length}."
+    )
 
 
 def test_stack_peek_error() -> None:
@@ -90,8 +93,10 @@ def test_stack_iter(text_stack: Stack[str]) -> None:
     for element, expected_element in zip(text_stack, ("fhy", "test")):
         assert element == expected_element
 
-    assert len(list(text_stack)) == 2, "Expected to be able to iterate over the \
+    assert len(list(text_stack)) == 2, (
+        "Expected to be able to iterate over the \
 stack again."
+    )
 
 
 def test_stack_next(text_stack: Stack[str]) -> None:

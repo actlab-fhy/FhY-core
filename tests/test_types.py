@@ -1,6 +1,7 @@
 """Tests the core type system."""
 
 import pytest
+
 from fhy_core.expression import (
     IdentifierExpression,
     LiteralExpression,

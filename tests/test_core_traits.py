@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 import pytest
+
 from fhy_core.trait import (
     HasType,
     HasTypeMixin,

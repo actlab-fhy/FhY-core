@@ -1,6 +1,7 @@
 """Tests the general array utilities."""
 
 import pytest
+
 from fhy_core.utils.array_utils import get_array_size_in_bits
 
 

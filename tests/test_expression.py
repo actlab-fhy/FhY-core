@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
