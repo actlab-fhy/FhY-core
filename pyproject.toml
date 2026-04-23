@@ -50,6 +50,7 @@ dev = ["fhy_core[test,lint,type,docs]", "tox"]
 test = ["pytest", "coverage", "pytest-xdist"]
 lint = ["ruff", "pylint"]
 type = ["fhy_core[test]", "mypy"]
+mutation = ["fhy_core[test]", "mutmut"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -74,6 +75,12 @@ exclude_also = [
    "def __repr__",
    'if __name__ == "__main__"'
 ]
+
+[tool.mutmut]
+paths_to_mutate = "src/fhy_core/"
+tests_dir = "tests/"
+runner = "pytest -x -q -p no:xdist -o addopts=''"
+type_check_command = ["mypy", "src/", "--output", "json", "--disable-error-code", "unused-ignore"]
 
 [tool.mypy]
 pretty = false
