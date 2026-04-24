@@ -11,6 +11,7 @@ from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
     SerializationFormat,
+    SerializedDict,
 )
 from fhy_core.trait import Equal, PartialEqual
 
@@ -51,14 +52,14 @@ def test_concurrent_construction_and_deserialization_yield_unique_ids() -> None:
     num_constructed = 1000
     num_deserialized = 1000
     base = Identifier("anchor").id
-    deserialize_payloads = [
+    deserialize_payloads: list[SerializedDict] = [
         {"id": base + 10_000 + i, "name_hint": f"d{i}"} for i in range(num_deserialized)
     ]
 
     def construct(_: int) -> Identifier:
         return Identifier("c")
 
-    def deserialize(payload: dict) -> Identifier:
+    def deserialize(payload: SerializedDict) -> Identifier:
         return Identifier.deserialize_from_dict(payload)
 
     with ThreadPoolExecutor(max_workers=32) as executor:
@@ -99,7 +100,7 @@ def test_inequality_with_non_identifier_types() -> None:
 
 def test_equality_uses_value_not_identity_for_large_ids() -> None:
     """Test equality holds for two distinct objects sharing a large `id`."""
-    payload = {"id": 1_000_000, "name_hint": "x"}
+    payload: SerializedDict = {"id": 1_000_000, "name_hint": "x"}
     a = Identifier.deserialize_from_dict(payload)
     b = Identifier.deserialize_from_dict(payload)
     assert a is not b
@@ -108,7 +109,7 @@ def test_equality_uses_value_not_identity_for_large_ids() -> None:
 
 def test_hash_consistent_with_equality() -> None:
     """Test two equal `Identifier`s also share the same `hash`."""
-    payload = {"id": 1_000_001, "name_hint": "x"}
+    payload: SerializedDict = {"id": 1_000_001, "name_hint": "x"}
     a = Identifier.deserialize_from_dict(payload)
     b = Identifier.deserialize_from_dict(payload)
     assert a == b
@@ -117,7 +118,7 @@ def test_hash_consistent_with_equality() -> None:
 
 def test_identifier_usable_as_dict_key() -> None:
     """Test an `Identifier` as a `dict` key is retrievable via an equal one."""
-    payload = {"id": 1_000_002, "name_hint": "x"}
+    payload: SerializedDict = {"id": 1_000_002, "name_hint": "x"}
     a = Identifier.deserialize_from_dict(payload)
     b = Identifier.deserialize_from_dict(payload)
     mapping = {a: "value"}
@@ -126,7 +127,7 @@ def test_identifier_usable_as_dict_key() -> None:
 
 def test_identifier_collapses_in_set() -> None:
     """Test two equal `Identifier`s collapse to a single `set` member."""
-    payload = {"id": 1_000_003, "name_hint": "x"}
+    payload: SerializedDict = {"id": 1_000_003, "name_hint": "x"}
     a = Identifier.deserialize_from_dict(payload)
     b = Identifier.deserialize_from_dict(payload)
     assert len({a, b}) == 1
