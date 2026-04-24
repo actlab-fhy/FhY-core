@@ -1,8 +1,21 @@
 """Testing utilitiy functions."""
 
+from importlib.util import find_spec
 from unittest.mock import Mock
 
+import pytest
+
 from fhy_core.identifier import Identifier
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    if find_spec("z3") is None:
+        skip_z3 = pytest.mark.skip(reason="z3-solver not installed")
+        for item in items:
+            if "z3" in item.keywords:
+                item.add_marker(skip_z3)
 
 
 def mock_identifier(name_hint: str, identifier_id: int) -> Identifier:
