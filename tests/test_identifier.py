@@ -100,9 +100,12 @@ def test_inequality_with_non_identifier_types() -> None:
 
 def test_equality_uses_value_not_identity_for_large_ids() -> None:
     """Test equality holds for two distinct objects sharing a large `id`."""
-    payload: SerializedDict = {"id": 1_000_000, "name_hint": "x"}
-    a = Identifier.deserialize_from_dict(payload)
-    b = Identifier.deserialize_from_dict(payload)
+    # Use JSON round-trip: each `from_json` call parses the payload fresh, so
+    # the two `_id` ints are distinct objects (above CPython's small-int cache
+    # of -5..256). A reused payload dict would share the same int reference
+    # and the `is`-vs-`==` distinction would not be exercised.
+    a = Identifier.from_json('{"id": 1000000, "name_hint": "x"}')
+    b = Identifier.from_json('{"id": 1000000, "name_hint": "x"}')
     assert a is not b
     assert a == b
 
