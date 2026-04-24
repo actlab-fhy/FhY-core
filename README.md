@@ -4,7 +4,6 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/fhy_core.svg)](https://pypi.org/project/fhy_core/)
 [![CI](https://github.com/actlab-fhy/FhY-core/actions/workflows/python-package.yml/badge.svg)](https://github.com/actlab-fhy/FhY-core/actions/workflows/python-package.yml)
 [![codecov](https://codecov.io/gh/actlab-fhy/FhY-core/branch/main/graph/badge.svg)](https://codecov.io/gh/actlab-fhy/FhY-core)
-[![License](https://img.shields.io/github/license/actlab-fhy/FhY-core.svg)](LICENSE)
 
 *FhY* Core is a collection of utilities for *FhY* and other parts of the compiler.
 
