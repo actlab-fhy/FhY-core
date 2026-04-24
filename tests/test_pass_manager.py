@@ -267,7 +267,7 @@ def test_get_analysis_runs_uncached_when_pass_is_standalone() -> None:
     pass_ = ReadAnalysisPass()
     pass_.execute(Box(5))
 
-    # Two calls → two runs (no cache available when standalone).
+    # Two calls -> two runs (no cache available when standalone).
     assert ReadAnalysisPass.observed == [10, 10]
     assert BoxDoubleAnalysis.runs == 2
 
@@ -311,7 +311,7 @@ def test_get_analysis_reuses_cache_across_preserving_passes() -> None:
 
         def run_pass(self, ir: Box) -> Box:
             self.get_analysis(BoxDoubleAnalysis, ir)
-            return ir  # identity — preserves all by default (no change)
+            return ir  # identity - preserves all by default (no change)
 
     @register_pass("tests.pm.read_analysis_again", "Reads the analysis a second time.")
     class ReadAgainPass(CompilerPass[Box, Box]):
@@ -379,8 +379,8 @@ def test_get_analysis_recomputes_after_non_preserving_pass() -> None:
     manager.add_pass(RereadPass())
     manager.run(Box(5))
 
-    # First run computed on Box(5) → 10. Mutation invalidated it.
-    # Second run computed on Box(6) → 12.
+    # First run computed on Box(5) -> 10. Mutation invalidated it.
+    # Second run computed on Box(6) -> 12.
     assert RereadPass.observed == [12]
     assert BoxDoubleAnalysis.runs == 2
 
@@ -443,9 +443,9 @@ def test_get_analysis_works_inside_fixpoint_group() -> None:
     manager.add_fixpoint_group(fixpoint_group)
     manager.run(Box(2))
 
-    # Iteration 1: Box(2) → observes 4 → returns Box(1)
-    # Iteration 2: Box(1) → observes 2 → returns Box(0)
-    # Iteration 3: Box(0) → observes 0 → returns Box(0); converged.
+    # Iteration 1: Box(2) -> observes 4 -> returns Box(1)
+    # Iteration 2: Box(1) -> observes 2 -> returns Box(0)
+    # Iteration 3: Box(0) -> observes 0 -> returns Box(0); converged.
     assert FixpointReaderPass.observed == [4, 2, 0]
 
 
@@ -475,7 +475,7 @@ def test_get_analysis_restores_pass_state_between_runs() -> None:
     # Using the pass standalone afterward must fall back to uncached execution.
     compiler_pass.execute(Box(7))
     compiler_pass.execute(Box(7))
-    # Standalone re-runs (no cache) → total runs == 1 (managed) + 2 (standalone) = 3.
+    # Standalone re-runs (no cache) -> total runs == 1 (managed) + 2 (standalone) = 3.
     assert BoxDoubleAnalysis.runs == 3
 
 

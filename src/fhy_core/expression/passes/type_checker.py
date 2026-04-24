@@ -1,4 +1,20 @@
-"""Bidirectional type checking and inference for expressions."""
+"""Bidirectional type checking and inference for expressions.
+
+Errors from this module are always :class:`FhYCoreTypeError` instances with
+messages of one of two shapes:
+
+- "Type error while inferring type of `<root>`: <reason>"
+- "Type error while inferring type of `<root>` at sub-expression `<sub>`:
+  <reason>"
+
+where ``<root>`` is the top-level expression passed to
+:meth:`ExpressionTypeChecker.synthesize` / :meth:`check`, ``<sub>`` is the
+sub-expression where the failure surfaced, and ``<reason>`` describes the
+specific rule that was violated along with the types and values involved.
+This is implemented via :class:`_TypeCheckContext`, which maintains a stack
+of enclosing expressions as the checker recurses so every
+:class:`FhYCoreTypeError` is enriched with that trace.
+"""
 
 __all__ = [
     "get_core_data_type_from_literal_type",
@@ -6,7 +22,8 @@ __all__ = [
     "check_expression_type",
 ]
 
-from typing import Callable, TypeAlias
+from contextlib import contextmanager
+from typing import Callable, Iterator, TypeAlias
 
 from fhy_core.expression.core import (
     BinaryExpression,
@@ -41,6 +58,7 @@ from fhy_core.types import (
     promote_type_qualifiers,
     resolve_literal_core_data_type,
 )
+from fhy_core.utils import Stack
 
 ExpressionValueType: TypeAlias = NumericalType | IndexType
 
@@ -132,37 +150,6 @@ def _format_expression(expression: Expression) -> str:
     return pformat_expression(expression, show_id=True)
 
 
-def _as_expression_value_type(
-    expression: Expression, type_: Type
-) -> ExpressionValueType:
-    if isinstance(type_, TupleType):
-        raise NotImplementedError(
-            f"Expression {_format_expression(expression)} resolves to tuple type "
-            f"{type_}, which is not valid here."
-        )
-    elif isinstance(type_, IndexType):
-        return type_
-    elif not isinstance(type_, NumericalType):
-        raise FhYCoreTypeError(
-            f"Expression {_format_expression(expression)} must resolve to a scalar "
-            f"numerical type or index type, not {type_}."
-        )
-
-    elif not isinstance(type_.data_type, PrimitiveDataType):
-        raise FhYCoreTypeError(
-            f"Expression {_format_expression(expression)} must resolve to a primitive "
-            f"numerical type, not {type_}."
-        )
-    elif not type_.is_scalar():
-        raise NotImplementedError(
-            f"Expression {_format_expression(expression)} resolves to tensor type "
-            f"{type_}, but only scalar numerical and index types are allowed in "
-            "expressions."
-        )
-    else:
-        return type_
-
-
 def _is_weak_numerical_type(numerical_type: NumericalType) -> bool:
     return is_weak_core_data_type(
         _get_primitive_data_type(numerical_type).core_data_type
@@ -172,14 +159,16 @@ def _is_weak_numerical_type(numerical_type: NumericalType) -> bool:
 def _get_primitive_data_type(numerical_type: NumericalType) -> PrimitiveDataType:
     data_type = numerical_type.data_type
     if not isinstance(data_type, PrimitiveDataType):
-        raise FhYCoreTypeError(f"Expected primitive data type, got {data_type}.")
+        raise FhYCoreTypeError(f"expected a primitive data type, got {data_type}")
     return data_type
 
 
 def _get_numeric_literal_value(literal_expression: LiteralExpression) -> int | float:
     literal_value = literal_expression.value
     if isinstance(literal_value, bool | str):
-        raise FhYCoreTypeError(f"Unsupported numeric literal value: {literal_value!r}.")
+        raise FhYCoreTypeError(
+            f"expected a numeric literal value, got {literal_value!r}"
+        )
     return literal_value
 
 
@@ -205,212 +194,55 @@ def _get_real_float_core_data_type_for_bit_width(bit_width: int | None) -> CoreD
             if core_data_type_bit_width >= bit_width:
                 return core_data_type
         raise FhYCoreTypeError(
-            f"No real float core data type found for bit width {bit_width}."
+            f"no real float core data type found for bit width {bit_width}"
         )
 
 
-def _get_division_primitive_data_type(
-    left_type: NumericalType, right_type: NumericalType
-) -> PrimitiveDataType:
-    left_core_data_type = _get_primitive_data_type(left_type).core_data_type
-    right_core_data_type = _get_primitive_data_type(right_type).core_data_type
+class _TypeCheckContext:
+    """Tracks the enclosing expression trace for context-rich error messages.
 
-    if (
-        left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
-        and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
-    ):
-        concrete_bit_widths = [
-            bit_width
-            for bit_width in (
-                get_core_data_type_bit_width(left_core_data_type),
-                get_core_data_type_bit_width(right_core_data_type),
-            )
-            if bit_width is not None
-        ]
-        return PrimitiveDataType(
-            _get_real_float_core_data_type_for_bit_width(
-                max(concrete_bit_widths) if concrete_bit_widths else None
-            )
-        )
+    The checker's public entry points (``synthesize``, ``check``) and each
+    recursive ``_infer*`` call enter a new scope via :meth:`entering`, which
+    pushes the expression being processed onto a stack. When an error is
+    raised via :meth:`type_error`, the message includes the root expression
+    (the first one pushed) and, when different, the current sub-expression
+    (the most recently pushed one still live).
 
-    if (
-        left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
-        and right_core_data_type in _FLOAT_LIKE_CORE_DATA_TYPES
-    ):
-        left_core_data_type = _get_real_float_core_data_type_for_bit_width(
-            get_core_data_type_bit_width(left_core_data_type)
-        )
-    elif (
-        left_core_data_type in _FLOAT_LIKE_CORE_DATA_TYPES
-        and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
-    ):
-        right_core_data_type = _get_real_float_core_data_type_for_bit_width(
-            get_core_data_type_bit_width(right_core_data_type)
-        )
-
-    return PrimitiveDataType(
-        promote_core_data_types(left_core_data_type, right_core_data_type)
-    )
-
-
-def _get_floor_division_primitive_data_type(
-    left_type: NumericalType, right_type: NumericalType
-) -> PrimitiveDataType:
-    left_core_data_type = _get_primitive_data_type(left_type).core_data_type
-    right_core_data_type = _get_primitive_data_type(right_type).core_data_type
-
-    if (
-        left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
-        and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
-    ):
-        return promote_primitive_data_types(
-            _get_primitive_data_type(left_type),
-            _get_primitive_data_type(right_type),
-        )
-
-    if (
-        left_core_data_type in _COMPLEX_CORE_DATA_TYPES
-        or right_core_data_type in _COMPLEX_CORE_DATA_TYPES
-    ):
-        raise FhYCoreTypeError(
-            "Floor division is not supported for complex numerical types."
-        )
-
-    if (
-        left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
-        and right_core_data_type in _REAL_FLOAT_CORE_DATA_TYPES
-    ):
-        left_core_data_type = _get_real_float_core_data_type_for_bit_width(
-            get_core_data_type_bit_width(left_core_data_type)
-        )
-    elif (
-        left_core_data_type in _REAL_FLOAT_CORE_DATA_TYPES
-        and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
-    ):
-        right_core_data_type = _get_real_float_core_data_type_for_bit_width(
-            get_core_data_type_bit_width(right_core_data_type)
-        )
-
-    return PrimitiveDataType(
-        promote_core_data_types(left_core_data_type, right_core_data_type)
-    )
-
-
-def _check_expected_type(
-    expression: Expression, actual_type: Type, expected_type: Type
-) -> None:
-    if isinstance(actual_type, IndexType) and isinstance(expected_type, IndexType):
-        if not actual_type.is_structurally_equivalent(expected_type):
-            raise FhYCoreTypeError(
-                f"Expression {_format_expression(expression)} has type {actual_type}, "
-                f"which is incompatible with expected type {expected_type}."
-            )
-        return
-
-    actual_value_type = _as_expression_value_type(expression, actual_type)
-    expected_value_type = _as_expression_value_type(expression, expected_type)
-    if isinstance(actual_value_type, IndexType) or isinstance(
-        expected_value_type, IndexType
-    ):
-        raise FhYCoreTypeError(
-            f"Expression {_format_expression(expression)} has type {actual_type}, "
-            f"which is incompatible with expected type {expected_type}."
-        )
-
-    promoted_type = promote_primitive_data_types(
-        _get_primitive_data_type(actual_value_type),
-        _get_primitive_data_type(expected_value_type),
-    )
-    if (
-        promoted_type.core_data_type
-        != _get_primitive_data_type(expected_value_type).core_data_type
-    ):
-        raise FhYCoreTypeError(
-            f"Expression {_format_expression(expression)} has type {actual_type}, "
-            f"which is incompatible with expected type {expected_type}."
-        )
-
-
-def _get_literal_stride_value(stride: Expression | None) -> int:
-    """Return the integer value of a stride, treating None as 1.
-
-    Raises:
-        FhYCoreTypeError: If the stride is not a literal integer expression,
-            since non-literal strides cannot be combined.
-
+    The reason string passed to :meth:`type_error` should describe *what*
+    went wrong without re-stating the expression itself — the context layer
+    is responsible for that framing.
     """
-    if stride is None:
-        return 1
-    elif not isinstance(stride, LiteralExpression):
-        raise FhYCoreTypeError(
-            "Index arithmetic on two index types requires literal integer strides, "
-            f"got non-literal stride {_format_expression(stride)}."
-        )
-    value = stride.value
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise FhYCoreTypeError(
-            f"Index stride literal must be an integer, got {value!r}."
-        )
-    return value
 
+    _stack: Stack[Expression]
 
-def _get_literal_stride_expression(value: int) -> Expression | None:
-    return None if value == 1 else LiteralExpression(value)
+    def __init__(self) -> None:
+        self._stack = Stack[Expression]()
 
+    @contextmanager
+    def entering(self, expression: Expression) -> Iterator[None]:
+        """Push ``expression`` onto the trace for the duration of the ``with`` block."""
+        self._stack.push(expression)
+        try:
+            yield
+        finally:
+            self._stack.pop()
 
-def _combine_index_strides_for_add(
-    left_stride: Expression | None, right_stride: Expression | None
-) -> Expression | None:
-    return _get_literal_stride_expression(
-        min(
-            _get_literal_stride_value(left_stride),
-            _get_literal_stride_value(right_stride),
-        )
-    )
-
-
-def _scale_index_type(index_type: IndexType, scalar: LiteralExpression) -> IndexType:
-    """Scale an index type by a positive integer literal scalar.
-
-    Raises:
-        FhYCoreTypeError: If the scalar is not a positive integer literal.
-
-    """
-    value = scalar.value
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise FhYCoreTypeError(
-            f"Index scaling requires an integer literal, got {value!r}."
-        )
-    if value <= 0:
-        raise FhYCoreTypeError(
-            f"Index scaling requires a positive integer literal, got {value}."
-        )
-    new_stride: Expression | None
-    if index_type.stride is None:
-        new_stride = None if value == 1 else LiteralExpression(value)
-    else:
-        new_stride = scalar * index_type.stride
-    return IndexType(
-        scalar * index_type.lower_bound,
-        scalar * index_type.upper_bound,
-        new_stride,
-    )
-
-
-def _shift_index_type(
-    index_type: IndexType, offset_expression: Expression, *, subtract: bool = False
-) -> IndexType:
-    if subtract:
-        return IndexType(
-            index_type.lower_bound - offset_expression,
-            index_type.upper_bound - offset_expression,
-            index_type.stride,
-        )
-    else:
-        return IndexType(
-            index_type.lower_bound + offset_expression,
-            index_type.upper_bound + offset_expression,
-            index_type.stride,
+    def type_error(self, reason: str) -> FhYCoreTypeError:
+        """Build a :class:`FhYCoreTypeError` framed by the current context trace."""
+        if not self._stack:
+            return FhYCoreTypeError(f"Type error: {reason}")
+        stack_elements = tuple(self._stack)
+        root = stack_elements[0]
+        current = stack_elements[-1]
+        root_text = _format_expression(root)
+        if current is root:
+            return FhYCoreTypeError(
+                f"Type error while inferring type of `{root_text}`: {reason}"
+            )
+        current_text = _format_expression(current)
+        return FhYCoreTypeError(
+            f"Type error while inferring type of `{root_text}` "
+            f"at sub-expression `{current_text}`: {reason}"
         )
 
 
@@ -422,12 +254,14 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
     """Bidirectional type checker for expressions."""
 
     _get_identifier_type: Callable[[Identifier], tuple[Type, TypeQualifier]]
+    _context: _TypeCheckContext
 
     def __init__(
         self, get_identifier_type: Callable[[Identifier], tuple[Type, TypeQualifier]]
     ) -> None:
         super().__init__()
         self._get_identifier_type = get_identifier_type
+        self._context = _TypeCheckContext()
 
     def synthesize(self, expression: Expression) -> tuple[Type, TypeQualifier]:
         """Synthesize a type for an expression."""
@@ -438,8 +272,11 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
     ) -> tuple[Type, TypeQualifier]:
         """Check an expression against an expected type."""
         actual_type, actual_qualifier = self._infer(expression, expected_type)
-        _check_expected_type(expression, actual_type, expected_type)
+        with self._context.entering(expression):
+            self._check_expected_type(expression, actual_type, expected_type)
         return actual_type, actual_qualifier
+
+    # --- Visitor dispatch ----------------------------------------------------
 
     def visit_unary_expression(
         self, unary_expression: UnaryExpression
@@ -454,19 +291,19 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
     def visit_identifier_expression(
         self, identifier_expression: IdentifierExpression
     ) -> tuple[Type, TypeQualifier]:
-        identifier_type, identifier_qualifier = self._get_identifier_type(
-            identifier_expression.identifier
-        )
-        if identifier_qualifier == TypeQualifier.OUTPUT:
-            raise FhYCoreTypeError(
-                f"Cannot read from variable "
-                f'"{_format_expression(identifier_expression)}" '
-                'with "output" type qualifier.'
+        with self._context.entering(identifier_expression):
+            identifier_type, identifier_qualifier = self._get_identifier_type(
+                identifier_expression.identifier
             )
-        return (
-            _as_expression_value_type(identifier_expression, identifier_type),
-            identifier_qualifier,
-        )
+            if identifier_qualifier == TypeQualifier.OUTPUT:
+                raise self._context.type_error(
+                    f"identifier `{_format_expression(identifier_expression)}` has "
+                    'type qualifier "output" and cannot be read from'
+                )
+            return (
+                self._as_expression_value_type(identifier_expression, identifier_type),
+                identifier_qualifier,
+            )
 
     def visit_literal_expression(
         self, literal_expression: LiteralExpression
@@ -484,6 +321,8 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         raise PassExecutionError(
             f'Pass "{self.get_pass_name()}" does not define noop output for {ir!r}.'
         )
+
+    # --- Core inference ------------------------------------------------------
 
     def _infer(
         self, expression: Expression, expected_type: Type | None = None
@@ -507,155 +346,169 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         literal_expression: LiteralExpression,
         expected_type: Type | None = None,
     ) -> tuple[Type, TypeQualifier]:
-        if expected_type is None:
-            return self.visit_literal_expression(literal_expression)
+        with self._context.entering(literal_expression):
+            if expected_type is None:
+                return self.visit_literal_expression(literal_expression)
 
-        expected_value_type = _as_expression_value_type(
-            literal_expression, expected_type
-        )
-        if isinstance(expected_value_type, IndexType):
-            raise FhYCoreTypeError(
-                f"Literal {_format_expression(literal_expression)} cannot be checked "
-                f"against index type {expected_type}."
+            expected_value_type = self._as_expression_value_type(
+                literal_expression, expected_type
             )
+            if isinstance(expected_value_type, IndexType):
+                raise self._context.type_error(
+                    f"a literal value cannot be checked against index type "
+                    f"{expected_type}"
+                )
 
-        resolved_core_data_type = resolve_literal_core_data_type(
-            _get_numeric_literal_value(literal_expression),
-            _get_primitive_data_type(expected_value_type).core_data_type,
-        )
-        return (
-            NumericalType(PrimitiveDataType(resolved_core_data_type)),
-            TypeQualifier.PARAM,
-        )
+            resolved_core_data_type = resolve_literal_core_data_type(
+                _get_numeric_literal_value(literal_expression),
+                _get_primitive_data_type(expected_value_type).core_data_type,
+            )
+            return (
+                NumericalType(PrimitiveDataType(resolved_core_data_type)),
+                TypeQualifier.PARAM,
+            )
 
     def _infer_unary_expression(
         self,
         unary_expression: UnaryExpression,
         expected_type: Type | None = None,
     ) -> tuple[Type, TypeQualifier]:
-        operand_type, operand_qualifier = self._infer(
-            unary_expression.operand, expected_type
-        )
-        if operand_qualifier == TypeQualifier.OUTPUT:
-            raise RuntimeError('"output" type qualifier should not be possible here.')
+        with self._context.entering(unary_expression):
+            operand_type, operand_qualifier = self._infer(
+                unary_expression.operand, expected_type
+            )
+            if operand_qualifier == TypeQualifier.OUTPUT:
+                raise RuntimeError(
+                    '"output" type qualifier should not be possible here.'
+                )
 
-        operand_value_type = _as_expression_value_type(unary_expression, operand_type)
+            operand_value_type = self._as_expression_value_type(
+                unary_expression, operand_type
+            )
 
-        match unary_expression.operation:
-            case UnaryOperation.POSITIVE:
-                return operand_value_type, operand_qualifier
-            case UnaryOperation.NEGATE:
-                if isinstance(operand_value_type, IndexType):
-                    raise FhYCoreTypeError(
-                        "Index negation is not supported because the resulting "
-                        "bounds and stride are not inferred safely."
-                    )
-                if isinstance(
-                    unary_expression.operand, LiteralExpression
-                ) and _is_weak_numerical_type(operand_value_type):
-                    return (
-                        NumericalType(
-                            PrimitiveDataType(
-                                get_core_data_type_from_literal_type(
-                                    -_get_numeric_literal_value(
-                                        unary_expression.operand
+            match unary_expression.operation:
+                case UnaryOperation.POSITIVE:
+                    return operand_value_type, operand_qualifier
+                case UnaryOperation.NEGATE:
+                    if isinstance(operand_value_type, IndexType):
+                        raise self._context.type_error(
+                            "unary negation is not defined for index types; the "
+                            "resulting bounds and stride cannot be inferred safely"
+                        )
+                    if isinstance(
+                        unary_expression.operand, LiteralExpression
+                    ) and _is_weak_numerical_type(operand_value_type):
+                        return (
+                            NumericalType(
+                                PrimitiveDataType(
+                                    get_core_data_type_from_literal_type(
+                                        -_get_numeric_literal_value(
+                                            unary_expression.operand
+                                        )
                                     )
                                 )
-                            )
-                        ),
-                        operand_qualifier,
+                            ),
+                            operand_qualifier,
+                        )
+                    return operand_value_type, operand_qualifier
+                case UnaryOperation.LOGICAL_NOT:
+                    raise NotImplementedError(
+                        "Boolean result types are not yet supported."
                     )
-                return operand_value_type, operand_qualifier
-            case UnaryOperation.LOGICAL_NOT:
-                raise NotImplementedError("Boolean result types are not yet supported.")
 
     def _infer_binary_expression(  # noqa: PLR0912, PLR0915
         self,
         binary_expression: BinaryExpression,
         expected_type: Type | None = None,
     ) -> tuple[Type, TypeQualifier]:
-        left_expected_type = None
-        right_expected_type = None
-        if (
-            binary_expression.operation in _ARITHMETIC_OPERATIONS
-            and isinstance(expected_type, NumericalType)
-            and expected_type.is_scalar()
-        ):
-            if isinstance(binary_expression.left, LiteralExpression):
-                left_expected_type = expected_type
-            if isinstance(binary_expression.right, LiteralExpression):
-                right_expected_type = expected_type
+        with self._context.entering(binary_expression):
+            left_expected_type = None
+            right_expected_type = None
+            if (
+                binary_expression.operation in _ARITHMETIC_OPERATIONS
+                and isinstance(expected_type, NumericalType)
+                and expected_type.is_scalar()
+            ):
+                if isinstance(binary_expression.left, LiteralExpression):
+                    left_expected_type = expected_type
+                if isinstance(binary_expression.right, LiteralExpression):
+                    right_expected_type = expected_type
 
-        left_type, left_qualifier = self._infer(
-            binary_expression.left, left_expected_type
-        )
-        right_type, right_qualifier = self._infer(
-            binary_expression.right, right_expected_type
-        )
-        if TypeQualifier.OUTPUT in {left_qualifier, right_qualifier}:
-            raise RuntimeError('"output" type qualifier should not be possible here.')
+            left_type, left_qualifier = self._infer(
+                binary_expression.left, left_expected_type
+            )
+            right_type, right_qualifier = self._infer(
+                binary_expression.right, right_expected_type
+            )
+            if TypeQualifier.OUTPUT in {left_qualifier, right_qualifier}:
+                raise RuntimeError(
+                    '"output" type qualifier should not be possible here.'
+                )
 
-        left_value_type = _as_expression_value_type(binary_expression.left, left_type)
-        right_value_type = _as_expression_value_type(
-            binary_expression.right, right_type
-        )
-
-        if (
-            binary_expression.operation in _ARITHMETIC_OPERATIONS
-            and isinstance(binary_expression.left, LiteralExpression)
-            and isinstance(left_value_type, NumericalType)
-            and _is_weak_numerical_type(left_value_type)
-            and isinstance(right_value_type, NumericalType)
-            and not _is_weak_numerical_type(right_value_type)
-        ):
-            checked_left_type, left_qualifier = self.check(
-                binary_expression.left, right_value_type
+            left_value_type = self._as_expression_value_type(
+                binary_expression.left, left_type
             )
-            left_value_type = _as_expression_value_type(
-                binary_expression.left, checked_left_type
-            )
-        if (
-            binary_expression.operation in _ARITHMETIC_OPERATIONS
-            and isinstance(binary_expression.right, LiteralExpression)
-            and isinstance(right_value_type, NumericalType)
-            and _is_weak_numerical_type(right_value_type)
-            and isinstance(left_value_type, NumericalType)
-            and not _is_weak_numerical_type(left_value_type)
-        ):
-            checked_right_type, right_qualifier = self.check(
-                binary_expression.right, left_value_type
-            )
-            right_value_type = _as_expression_value_type(
-                binary_expression.right, checked_right_type
+            right_value_type = self._as_expression_value_type(
+                binary_expression.right, right_type
             )
 
-        left_value_type = _as_expression_value_type(
-            binary_expression.left, left_value_type
-        )
-        right_value_type = _as_expression_value_type(
-            binary_expression.right, right_value_type
-        )
+            if (
+                binary_expression.operation in _ARITHMETIC_OPERATIONS
+                and isinstance(binary_expression.left, LiteralExpression)
+                and isinstance(left_value_type, NumericalType)
+                and _is_weak_numerical_type(left_value_type)
+                and isinstance(right_value_type, NumericalType)
+                and not _is_weak_numerical_type(right_value_type)
+            ):
+                checked_left_type, left_qualifier = self.check(
+                    binary_expression.left, right_value_type
+                )
+                left_value_type = self._as_expression_value_type(
+                    binary_expression.left, checked_left_type
+                )
+            if (
+                binary_expression.operation in _ARITHMETIC_OPERATIONS
+                and isinstance(binary_expression.right, LiteralExpression)
+                and isinstance(right_value_type, NumericalType)
+                and _is_weak_numerical_type(right_value_type)
+                and isinstance(left_value_type, NumericalType)
+                and not _is_weak_numerical_type(left_value_type)
+            ):
+                checked_right_type, right_qualifier = self.check(
+                    binary_expression.right, left_value_type
+                )
+                right_value_type = self._as_expression_value_type(
+                    binary_expression.right, checked_right_type
+                )
 
-        if binary_expression.operation in _ARITHMETIC_OPERATIONS:
+            left_value_type = self._as_expression_value_type(
+                binary_expression.left, left_value_type
+            )
+            right_value_type = self._as_expression_value_type(
+                binary_expression.right, right_value_type
+            )
+
+            operation = binary_expression.operation
+            if operation not in _ARITHMETIC_OPERATIONS:
+                raise NotImplementedError("Boolean result types are not yet supported.")
+
             if isinstance(left_value_type, NumericalType) and isinstance(
                 right_value_type, NumericalType
             ):
-                if binary_expression.operation == BinaryOperation.DIVIDE:
+                if operation == BinaryOperation.DIVIDE:
                     return (
                         NumericalType(
-                            _get_division_primitive_data_type(
-                                left_value_type,
-                                right_value_type,
+                            self._get_division_primitive_data_type(
+                                left_value_type, right_value_type
                             )
                         ),
                         promote_type_qualifiers(left_qualifier, right_qualifier),
                     )
-                if binary_expression.operation == BinaryOperation.FLOOR_DIVIDE:
+                if operation == BinaryOperation.FLOOR_DIVIDE:
                     return (
                         NumericalType(
-                            _get_floor_division_primitive_data_type(
-                                left_value_type,
-                                right_value_type,
+                            self._get_floor_division_primitive_data_type(
+                                left_value_type, right_value_type
                             )
                         ),
                         promote_type_qualifiers(left_qualifier, right_qualifier),
@@ -669,51 +522,56 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                     ),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
-            elif binary_expression.operation in {
+            elif operation in {
                 BinaryOperation.DIVIDE,
                 BinaryOperation.FLOOR_DIVIDE,
             } and (
                 isinstance(left_value_type, IndexType)
                 or isinstance(right_value_type, IndexType)
             ):
-                raise FhYCoreTypeError("Division is not supported for index types.")
+                raise self._context.type_error(
+                    "division is not defined for operands of index type"
+                )
             elif (
-                binary_expression.operation == BinaryOperation.ADD
+                operation == BinaryOperation.ADD
                 and isinstance(left_value_type, IndexType)
                 and isinstance(right_value_type, NumericalType)
             ):
                 if not _is_integral_numerical_type(right_value_type):
-                    raise FhYCoreTypeError(
-                        "Index arithmetic requires an integral scalar offset."
+                    raise self._context.type_error(
+                        f"index shift requires an integral scalar offset, but the "
+                        f"right operand has type {right_value_type}"
                     )
                 return (
-                    _shift_index_type(left_value_type, binary_expression.right),
+                    self._shift_index_type(left_value_type, binary_expression.right),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
             elif (
-                binary_expression.operation == BinaryOperation.ADD
+                operation == BinaryOperation.ADD
                 and isinstance(left_value_type, NumericalType)
                 and isinstance(right_value_type, IndexType)
             ):
                 if not _is_integral_numerical_type(left_value_type):
-                    raise FhYCoreTypeError(
-                        "Index arithmetic requires an integral scalar offset."
+                    raise self._context.type_error(
+                        f"index shift requires an integral scalar offset, but the "
+                        f"left operand has type {left_value_type}"
                     )
                 return (
-                    _shift_index_type(right_value_type, binary_expression.left),
+                    self._shift_index_type(right_value_type, binary_expression.left),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
             elif (
-                binary_expression.operation == BinaryOperation.SUBTRACT
+                operation == BinaryOperation.SUBTRACT
                 and isinstance(left_value_type, IndexType)
                 and isinstance(right_value_type, NumericalType)
             ):
                 if not _is_integral_numerical_type(right_value_type):
-                    raise FhYCoreTypeError(
-                        "Index arithmetic requires an integral scalar offset."
+                    raise self._context.type_error(
+                        f"index shift requires an integral scalar offset, but the "
+                        f"right operand has type {right_value_type}"
                     )
                 return (
-                    _shift_index_type(
+                    self._shift_index_type(
                         left_value_type,
                         binary_expression.right,
                         subtract=True,
@@ -721,70 +579,305 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
             elif (
-                binary_expression.operation == BinaryOperation.MULTIPLY
+                operation == BinaryOperation.MULTIPLY
                 and isinstance(left_value_type, IndexType)
                 and isinstance(right_value_type, NumericalType)
             ):
                 if not isinstance(binary_expression.right, LiteralExpression):
-                    raise FhYCoreTypeError(
-                        "Index scaling requires a positive integer literal scalar."
+                    raise self._context.type_error(
+                        "index scaling requires a positive integer literal scalar, "
+                        f"but the right operand "
+                        f"`{_format_expression(binary_expression.right)}` is not a "
+                        "literal expression"
                     )
                 if not _is_integral_numerical_type(right_value_type):
-                    raise FhYCoreTypeError(
-                        "Index scaling requires a positive integer literal scalar."
+                    raise self._context.type_error(
+                        "index scaling requires a positive integer literal scalar, "
+                        f"but the right operand has non-integral type "
+                        f"{right_value_type}"
                     )
                 return (
-                    _scale_index_type(left_value_type, binary_expression.right),
+                    self._scale_index_type(left_value_type, binary_expression.right),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
             elif (
-                binary_expression.operation == BinaryOperation.MULTIPLY
+                operation == BinaryOperation.MULTIPLY
                 and isinstance(left_value_type, NumericalType)
                 and isinstance(right_value_type, IndexType)
             ):
                 if not isinstance(binary_expression.left, LiteralExpression):
-                    raise FhYCoreTypeError(
-                        "Index scaling requires a positive integer literal scalar."
+                    raise self._context.type_error(
+                        "index scaling requires a positive integer literal scalar, "
+                        f"but the left operand "
+                        f"`{_format_expression(binary_expression.left)}` is not a "
+                        "literal expression"
                     )
                 if not _is_integral_numerical_type(left_value_type):
-                    raise FhYCoreTypeError(
-                        "Index scaling requires a positive integer literal scalar."
+                    raise self._context.type_error(
+                        "index scaling requires a positive integer literal scalar, "
+                        f"but the left operand has non-integral type "
+                        f"{left_value_type}"
                     )
                 return (
-                    _scale_index_type(right_value_type, binary_expression.left),
+                    self._scale_index_type(right_value_type, binary_expression.left),
                     promote_type_qualifiers(left_qualifier, right_qualifier),
                 )
             elif isinstance(left_value_type, IndexType) and isinstance(
                 right_value_type, IndexType
             ):
-                if binary_expression.operation == BinaryOperation.ADD:
+                if operation == BinaryOperation.ADD:
                     return (
                         IndexType(
                             left_value_type.lower_bound + right_value_type.lower_bound,
                             left_value_type.upper_bound + right_value_type.upper_bound,
-                            _combine_index_strides_for_add(
+                            self._combine_index_strides_for_add(
                                 left_value_type.stride, right_value_type.stride
                             ),
                         ),
                         promote_type_qualifiers(left_qualifier, right_qualifier),
                     )
-                elif binary_expression.operation == BinaryOperation.SUBTRACT:
-                    raise FhYCoreTypeError(
-                        "Subtraction of two index types is not supported: the "
-                        "resulting stride semantics have not been defined."
+                elif operation == BinaryOperation.SUBTRACT:
+                    raise self._context.type_error(
+                        "subtraction is not defined between two index types; the "
+                        "resulting stride semantics have not been defined"
                     )
                 else:
-                    raise FhYCoreTypeError(
-                        "Index arithmetic is not supported for "
-                        f"{binary_expression.operation} operation."
+                    raise self._context.type_error(
+                        f"the {operation.name.lower()} operation is not defined "
+                        "between two index types"
                     )
             else:
-                raise FhYCoreTypeError(
-                    "This operation is not supported for index types because the "
-                    "resulting index bounds/stride are not inferred safely."
+                raise self._context.type_error(
+                    f"the {operation.name.lower()} operation is not defined for "
+                    f"operands of types {left_value_type} and {right_value_type}; "
+                    "the resulting index bounds and stride cannot be inferred safely"
                 )
+
+    # --- Context-aware helpers ----------------------------------------------
+
+    def _as_expression_value_type(
+        self, expression: Expression, type_: Type
+    ) -> ExpressionValueType:
+        if isinstance(type_, TupleType):
+            raise NotImplementedError(
+                f"sub-expression `{_format_expression(expression)}` resolves to "
+                f"tuple type {type_}, which is not valid inside an expression"
+            )
+        elif isinstance(type_, IndexType):
+            return type_
+        elif not isinstance(type_, NumericalType):
+            raise self._context.type_error(
+                f"sub-expression `{_format_expression(expression)}` must resolve "
+                f"to a scalar numerical type or index type, but got {type_}"
+            )
+        elif not isinstance(type_.data_type, PrimitiveDataType):
+            raise self._context.type_error(
+                f"sub-expression `{_format_expression(expression)}` must resolve "
+                f"to a primitive numerical type, but got {type_}"
+            )
+        elif not type_.is_scalar():
+            raise NotImplementedError(
+                f"sub-expression `{_format_expression(expression)}` resolves to "
+                f"tensor type {type_}, but only scalar numerical and index types "
+                "are allowed in expressions"
+            )
         else:
-            raise NotImplementedError("Boolean result types are not yet supported.")
+            return type_
+
+    def _check_expected_type(
+        self, expression: Expression, actual_type: Type, expected_type: Type
+    ) -> None:
+        if isinstance(actual_type, IndexType) and isinstance(expected_type, IndexType):
+            if not actual_type.is_structurally_equivalent(expected_type):
+                raise self._context.type_error(
+                    f"synthesized index type {actual_type} is not structurally "
+                    f"equivalent to the expected index type {expected_type}"
+                )
+            return
+
+        actual_value_type = self._as_expression_value_type(expression, actual_type)
+        expected_value_type = self._as_expression_value_type(expression, expected_type)
+        if isinstance(actual_value_type, IndexType) or isinstance(
+            expected_value_type, IndexType
+        ):
+            raise self._context.type_error(
+                f"synthesized type {actual_type} is incompatible with the "
+                f"expected type {expected_type}: one is an index type and the "
+                "other is a numerical type"
+            )
+
+        promoted_type = promote_primitive_data_types(
+            _get_primitive_data_type(actual_value_type),
+            _get_primitive_data_type(expected_value_type),
+        )
+        if (
+            promoted_type.core_data_type
+            != _get_primitive_data_type(expected_value_type).core_data_type
+        ):
+            raise self._context.type_error(
+                f"synthesized type {actual_type} is wider than the expected type "
+                f"{expected_type}; promoting them yields {promoted_type}, which "
+                "does not match the expected type"
+            )
+
+    def _get_literal_stride_value(self, stride: Expression | None) -> int:
+        if stride is None:
+            return 1
+        if not isinstance(stride, LiteralExpression):
+            raise self._context.type_error(
+                "combining two index types requires both strides to be integer "
+                f"literals, but got non-literal stride `{_format_expression(stride)}`"
+            )
+        value = stride.value
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise self._context.type_error(
+                f"an index stride literal must be an integer, but got {value!r}"
+            )
+        return value
+
+    @staticmethod
+    def _get_literal_stride_expression(value: int) -> Expression | None:
+        return None if value == 1 else LiteralExpression(value)
+
+    def _combine_index_strides_for_add(
+        self, left_stride: Expression | None, right_stride: Expression | None
+    ) -> Expression | None:
+        return self._get_literal_stride_expression(
+            min(
+                self._get_literal_stride_value(left_stride),
+                self._get_literal_stride_value(right_stride),
+            )
+        )
+
+    def _scale_index_type(
+        self, index_type: IndexType, scalar: LiteralExpression
+    ) -> IndexType:
+        value = scalar.value
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise self._context.type_error(
+                f"index scaling requires an integer literal scalar, but got scalar "
+                f"value {value!r}"
+            )
+        if value <= 0:
+            raise self._context.type_error(
+                f"index scaling requires a positive integer literal scalar, but "
+                f"got scalar value {value}"
+            )
+        new_stride: Expression | None
+        if index_type.stride is None:
+            new_stride = None if value == 1 else LiteralExpression(value)
+        else:
+            new_stride = scalar * index_type.stride
+        return IndexType(
+            scalar * index_type.lower_bound,
+            scalar * index_type.upper_bound,
+            new_stride,
+        )
+
+    @staticmethod
+    def _shift_index_type(
+        index_type: IndexType,
+        offset_expression: Expression,
+        *,
+        subtract: bool = False,
+    ) -> IndexType:
+        if subtract:
+            return IndexType(
+                index_type.lower_bound - offset_expression,
+                index_type.upper_bound - offset_expression,
+                index_type.stride,
+            )
+        return IndexType(
+            index_type.lower_bound + offset_expression,
+            index_type.upper_bound + offset_expression,
+            index_type.stride,
+        )
+
+    def _get_division_primitive_data_type(
+        self, left_type: NumericalType, right_type: NumericalType
+    ) -> PrimitiveDataType:
+        left_core_data_type = _get_primitive_data_type(left_type).core_data_type
+        right_core_data_type = _get_primitive_data_type(right_type).core_data_type
+
+        if (
+            left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+            and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+        ):
+            concrete_bit_widths = [
+                bit_width
+                for bit_width in (
+                    get_core_data_type_bit_width(left_core_data_type),
+                    get_core_data_type_bit_width(right_core_data_type),
+                )
+                if bit_width is not None
+            ]
+            return PrimitiveDataType(
+                _get_real_float_core_data_type_for_bit_width(
+                    max(concrete_bit_widths) if concrete_bit_widths else None
+                )
+            )
+
+        if (
+            left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+            and right_core_data_type in _FLOAT_LIKE_CORE_DATA_TYPES
+        ):
+            left_core_data_type = _get_real_float_core_data_type_for_bit_width(
+                get_core_data_type_bit_width(left_core_data_type)
+            )
+        elif (
+            left_core_data_type in _FLOAT_LIKE_CORE_DATA_TYPES
+            and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+        ):
+            right_core_data_type = _get_real_float_core_data_type_for_bit_width(
+                get_core_data_type_bit_width(right_core_data_type)
+            )
+
+        return PrimitiveDataType(
+            promote_core_data_types(left_core_data_type, right_core_data_type)
+        )
+
+    def _get_floor_division_primitive_data_type(
+        self, left_type: NumericalType, right_type: NumericalType
+    ) -> PrimitiveDataType:
+        left_core_data_type = _get_primitive_data_type(left_type).core_data_type
+        right_core_data_type = _get_primitive_data_type(right_type).core_data_type
+
+        if (
+            left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+            and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+        ):
+            return promote_primitive_data_types(
+                _get_primitive_data_type(left_type),
+                _get_primitive_data_type(right_type),
+            )
+
+        if (
+            left_core_data_type in _COMPLEX_CORE_DATA_TYPES
+            or right_core_data_type in _COMPLEX_CORE_DATA_TYPES
+        ):
+            raise self._context.type_error(
+                f"floor division is not defined for complex numerical types "
+                f"(operand types were {left_type} and {right_type})"
+            )
+
+        if (
+            left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+            and right_core_data_type in _REAL_FLOAT_CORE_DATA_TYPES
+        ):
+            left_core_data_type = _get_real_float_core_data_type_for_bit_width(
+                get_core_data_type_bit_width(left_core_data_type)
+            )
+        elif (
+            left_core_data_type in _REAL_FLOAT_CORE_DATA_TYPES
+            and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+        ):
+            right_core_data_type = _get_real_float_core_data_type_for_bit_width(
+                get_core_data_type_bit_width(right_core_data_type)
+            )
+
+        return PrimitiveDataType(
+            promote_core_data_types(left_core_data_type, right_core_data_type)
+        )
 
 
 def synthesize_expression_type(

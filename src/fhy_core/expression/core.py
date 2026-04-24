@@ -234,7 +234,9 @@ class Expression(
         operation: "BinaryOperation", *expressions: "Expression"
     ) -> "BinaryExpression":
         if len(expressions) < 2:  # noqa: PLR2004
-            raise ValueError("At least two expressions are required.")
+            raise ValueError(
+                f"At least two expressions are required, but got {len(expressions)}."
+            )
         reversed_expressions = list(reversed(expressions))
         result = BinaryExpression(
             operation,
@@ -257,9 +259,10 @@ class Expression(
             return IdentifierExpression(other)
         elif isinstance(other, (int, float, bool, str)):
             return LiteralExpression(other)
-        raise ValueError(
-            f"Unsupported type for creating literal expression: {type(other)}."
-        )
+        else:
+            raise ValueError(
+                f"Unable to cast {other!r} with type {type(other)} to an expression."
+            )
 
 
 class UnaryOperation(Enum):
