@@ -21,6 +21,8 @@ Notes on known-equivalent mutants not targeted by this file:
 
 """
 
+from unittest.mock import Mock
+
 import pytest
 import sympy  # type: ignore[import-untyped]
 
@@ -38,7 +40,12 @@ from fhy_core.expression import (
     substitute_sympy_expression_variables,
 )
 from fhy_core.expression.core import LiteralType
+from fhy_core.expression.passes.sympy import (
+    ExpressionToSympyConverter,
+    SymPyToExpressionConverter,
+)
 from fhy_core.identifier import Identifier
+from fhy_core.pass_infrastructure import PassExecutionError
 
 from .conftest import mock_identifier
 
@@ -543,3 +550,170 @@ def test_simplify_variable_expression_with_environment_folds_to_scalar() -> None
 
     assert isinstance(result, LiteralExpression)
     assert result.value == 35
+
+
+# =============================================================================
+# Defensive dispatch branches and noop output
+# =============================================================================
+
+
+def test_sympy_converter_visit_literal_true_string_via_mock() -> None:
+    """Test the ``"True"`` string branch returns ``sympy.true``."""
+    converter = ExpressionToSympyConverter()
+    literal = Mock(spec=LiteralExpression)
+    literal.value = "True"
+    assert converter.visit_literal_expression(literal) is sympy.true
+
+
+def test_sympy_converter_visit_literal_false_string_via_mock() -> None:
+    """Test the ``"False"`` string branch emits `sympy.false`."""
+    converter = ExpressionToSympyConverter()
+    literal = Mock(spec=LiteralExpression)
+    literal.value = "False"
+    assert converter.visit_literal_expression(literal) is sympy.false
+
+
+def test_sympy_converter_visit_literal_unsupported_value_raises() -> None:
+    """Test `visit_literal_expression` raises on a wholly unsupported literal value."""
+    converter = ExpressionToSympyConverter()
+    literal = Mock(spec=LiteralExpression)
+    literal.value = object()  # not int/float/bool/str
+
+    with pytest.raises(TypeError, match=r"Unsupported literal type"):
+        converter.visit_literal_expression(literal)
+
+
+def test_sympy_converter_get_noop_output_raises() -> None:
+    """Test `ExpressionToSympyConverter.get_noop_output` raises `PassExecutionError`."""
+    with pytest.raises(PassExecutionError, match=r"does not define noop output"):
+        ExpressionToSympyConverter().get_noop_output(LiteralExpression(0))
+
+
+def test_sympy_to_expression_convert_rejects_unknown_node_type() -> None:
+    """Test `convert` raises `TypeError` for a node that is neither Expr nor Boolean."""
+    with pytest.raises(TypeError, match=r"Unsupported node type"):
+        SymPyToExpressionConverter().convert(42)
+
+
+def test_sympy_to_expression_convert_expr_rejects_unsupported_expr_subtype() -> None:
+    """Test `convert_expr` raises `TypeError` for an unsupported `sympy.Expr`."""
+    x = sympy.Symbol("x_0")
+    with pytest.raises(TypeError, match=r"Unsupported expression type"):
+        SymPyToExpressionConverter().convert_expr(sympy.exp(x))
+
+
+def test_sympy_to_expression_convert_bool_rejects_unsupported_boolean_subtype() -> None:
+    """Test `convert_bool` raises `TypeError` for an unrecognized boolean subtype."""
+    fake = Mock(spec=sympy.logic.boolalg.Boolean)
+    with pytest.raises(TypeError, match=r"Unsupported boolean expression type"):
+        SymPyToExpressionConverter().convert_bool(fake)
+
+
+def test_sympy_to_expression_convert_relational_rejects_unsupported_subtype() -> None:
+    """Test `convert_relational` raises `TypeError` for an unrecognized relational."""
+    fake = Mock(spec=sympy.core.relational.Relational)
+    with pytest.raises(TypeError, match=r"Unsupported relational type"):
+        SymPyToExpressionConverter().convert_relational(fake)
+
+
+def test_sympy_to_expression_convert_add_with_zero_args_returns_literal_zero() -> None:
+    """Test `convert_Add` returns `LiteralExpression(0)` when the node has no args."""
+    fake_add = Mock(spec=sympy.Add)
+    fake_add.args = ()
+    result = SymPyToExpressionConverter().convert_Add(fake_add)
+    assert result.is_structurally_equivalent(LiteralExpression(0))
+
+
+def test_sympy_to_expression_convert_add_with_one_arg_unwraps() -> None:
+    """Test `convert_Add` unwraps a single-arg node to the converted argument."""
+    fake_add = Mock(spec=sympy.Add)
+    fake_add.args = (sympy.Integer(7),)
+    result = SymPyToExpressionConverter().convert_Add(fake_add)
+    assert result.is_structurally_equivalent(LiteralExpression(7))
+
+
+def test_sympy_to_expression_convert_mul_with_zero_args_returns_literal_one() -> None:
+    """Test `convert_Mul` returns `LiteralExpression(1)` when the node has no args."""
+    fake_mul = Mock(spec=sympy.Mul)
+    fake_mul.args = ()
+    result = SymPyToExpressionConverter().convert_Mul(fake_mul)
+    assert result.is_structurally_equivalent(LiteralExpression(1))
+
+
+def test_sympy_to_expression_convert_mul_with_one_arg_unwraps() -> None:
+    """Test `convert_Mul` unwraps a single-arg node to the converted argument."""
+    fake_mul = Mock(spec=sympy.Mul)
+    fake_mul.args = (sympy.Integer(5),)
+    result = SymPyToExpressionConverter().convert_Mul(fake_mul)
+    assert result.is_structurally_equivalent(LiteralExpression(5))
+
+
+def test_sympy_to_expression_convert_nor_lowers_to_not_or() -> None:
+    """Test the ``Nor`` dispatch path lowers to ``NOT(OR(x, y))``.
+
+    SymPy normalizes ``sympy.Nor(x, y)`` (default ``evaluate=True``) to a
+    ``Not(Or(...))`` node, so the only way to reach ``convert_Nor`` is via a
+    node that declares itself as ``Nor``. We simulate that with a
+    ``Mock(spec=Nor)`` whose ``.func`` resolves to ``sympy.Or`` during the
+    internal recursive rebuild -- that keeps the converter's control flow
+    realistic while actually exercising ``convert_Nor``'s body.
+    """
+    fake_nor = Mock(spec=sympy.logic.boolalg.Nor)
+    fake_nor.args = (sympy.Symbol("x_0"), sympy.Symbol("y_1"))
+    fake_nor.func = sympy.Or
+
+    result = convert_sympy_expression_to_expression(fake_nor)
+
+    expected = UnaryExpression(
+        UnaryOperation.LOGICAL_NOT,
+        BinaryExpression(
+            BinaryOperation.LOGICAL_OR,
+            IdentifierExpression(mock_identifier("x", 0)),
+            IdentifierExpression(mock_identifier("y", 1)),
+        ),
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_sympy_to_expression_convert_nand_lowers_to_not_and() -> None:
+    """Test the ``Nand`` dispatch path lowers to ``NOT(AND(x, y))``.
+
+    As with ``Nor``, SymPy normalizes ``sympy.Nand`` to ``Not(And(...))`` by
+    default, so ``convert_Nand`` is only reachable via a mock declaring the
+    ``Nand`` spec. The ``.func`` override keeps the recursive rebuild intact
+    by routing it through ``sympy.And``.
+    """
+    fake_nand = Mock(spec=sympy.logic.boolalg.Nand)
+    fake_nand.args = (sympy.Symbol("x_0"), sympy.Symbol("y_1"))
+    fake_nand.func = sympy.And
+
+    result = convert_sympy_expression_to_expression(fake_nand)
+
+    expected = UnaryExpression(
+        UnaryOperation.LOGICAL_NOT,
+        BinaryExpression(
+            BinaryOperation.LOGICAL_AND,
+            IdentifierExpression(mock_identifier("x", 0)),
+            IdentifierExpression(mock_identifier("y", 1)),
+        ),
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_sympy_to_expression_convert_implies_raises_not_implemented() -> None:
+    """Test `convert_Implies` raises `NotImplementedError`."""
+    implies = sympy.Implies(sympy.Symbol("x_0"), sympy.Symbol("y_1"))
+
+    with pytest.raises(NotImplementedError, match=r"Implies is not supported"):
+        convert_sympy_expression_to_expression(implies)
+
+
+def test_sympy_two_argument_helper_rejects_wrong_arg_count() -> None:
+    """Test the two-argument binary helper rejects nodes with wrong arity."""
+    fake = Mock(spec=sympy.Pow)
+    fake.args = (sympy.Integer(1), sympy.Integer(2), sympy.Integer(3))
+
+    with pytest.raises(
+        ValueError, match=r"Expected a binary operation to have exactly two arguments"
+    ):
+        SymPyToExpressionConverter().convert_Pow(fake)

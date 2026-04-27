@@ -377,7 +377,11 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             operand_type, operand_qualifier = self._infer(
                 unary_expression.operand, expected_type
             )
-            if operand_qualifier == TypeQualifier.OUTPUT:
+            if operand_qualifier == TypeQualifier.OUTPUT:  # pragma: no cover
+                # Defensive guard: `visit_identifier_expression` already rejects
+                # OUTPUT identifiers, and no other expression form can produce an
+                # OUTPUT qualifier, so this branch is unreachable under normal
+                # operation.
                 raise RuntimeError(
                     '"output" type qualifier should not be possible here.'
                 )
@@ -411,7 +415,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                             operand_qualifier,
                         )
                     return operand_value_type, operand_qualifier
-                case UnaryOperation.LOGICAL_NOT:
+                case UnaryOperation.LOGICAL_NOT:  # pragma: no branch
                     raise NotImplementedError(
                         "Boolean result types are not yet supported."
                     )
@@ -440,7 +444,13 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             right_type, right_qualifier = self._infer(
                 binary_expression.right, right_expected_type
             )
-            if TypeQualifier.OUTPUT in {left_qualifier, right_qualifier}:
+            if TypeQualifier.OUTPUT in {  # pragma: no cover
+                left_qualifier,
+                right_qualifier,
+            }:
+                # Defensive guard: OUTPUT qualifiers are rejected at identifier
+                # resolution, so neither operand can carry OUTPUT by the time we
+                # reach this point.
                 raise RuntimeError(
                     '"output" type qualifier should not be possible here.'
                 )
@@ -720,9 +730,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 "does not match the expected type"
             )
 
-    def _get_literal_stride_value(self, stride: Expression | None) -> int:
-        if stride is None:
-            return 1
+    def _get_literal_stride_value(self, stride: Expression) -> int:
         if not isinstance(stride, LiteralExpression):
             raise self._context.type_error(
                 "combining two index types requires both strides to be integer "
@@ -735,14 +743,10 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             )
         return value
 
-    @staticmethod
-    def _get_literal_stride_expression(value: int) -> Expression | None:
-        return None if value == 1 else LiteralExpression(value)
-
     def _combine_index_strides_for_add(
-        self, left_stride: Expression | None, right_stride: Expression | None
-    ) -> Expression | None:
-        return self._get_literal_stride_expression(
+        self, left_stride: Expression, right_stride: Expression
+    ) -> Expression:
+        return LiteralExpression(
             min(
                 self._get_literal_stride_value(left_stride),
                 self._get_literal_stride_value(right_stride),
@@ -763,11 +767,15 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 f"index scaling requires a positive integer literal scalar, but "
                 f"got scalar value {value}"
             )
-        new_stride: Expression | None
-        if index_type.stride is None:
-            new_stride = None if value == 1 else LiteralExpression(value)
+        stride = index_type.stride
+        if (
+            isinstance(stride, LiteralExpression)
+            and isinstance(stride.value, int)
+            and not isinstance(stride.value, bool)
+        ):
+            new_stride: Expression = LiteralExpression(value * stride.value)
         else:
-            new_stride = scalar * index_type.stride
+            new_stride = scalar * stride
         return IndexType(
             scalar * index_type.lower_bound,
             scalar * index_type.upper_bound,

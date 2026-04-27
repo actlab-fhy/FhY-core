@@ -14,6 +14,7 @@ from fhy_core.expression import (
 )
 from fhy_core.expression.pprint import ExpressionPrettyFormatter
 from fhy_core.identifier import Identifier
+from fhy_core.pass_infrastructure import PassExecutionError
 
 # =============================================================================
 # Symbolic format (default)
@@ -116,3 +117,29 @@ def test_pretty_formatter_default_uses_symbolic_notation() -> None:
         BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
     )
     assert ExpressionPrettyFormatter()(expression) == "(1 + 2)"
+
+
+# =============================================================================
+# Defensive guards
+# =============================================================================
+
+
+def test_pretty_formatter_call_rejects_non_string_formatted_result() -> None:
+    """Test `__call__` raises `TypeError` when the visit result is not a `str`."""
+
+    class _NonStringFormatter(ExpressionPrettyFormatter):
+        def visit_literal_expression(
+            self, literal_expression: LiteralExpression
+        ) -> str:
+            return 42  # type: ignore[return-value]  # intentional contract violation
+
+    with pytest.raises(TypeError, match=r"Invalid formatted expression type"):
+        _NonStringFormatter()(LiteralExpression(5))
+
+
+def test_pretty_formatter_get_noop_output_raises() -> None:
+    """Test `ExpressionPrettyFormatter.get_noop_output` raises `PassExecutionError`."""
+    formatter = ExpressionPrettyFormatter()
+
+    with pytest.raises(PassExecutionError, match=r"does not define noop output"):
+        formatter.get_noop_output(LiteralExpression(0))

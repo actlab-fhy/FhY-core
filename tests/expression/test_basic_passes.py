@@ -8,6 +8,8 @@ from fhy_core.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    UnaryExpression,
+    UnaryOperation,
     collect_identifiers,
     replace_identifiers,
     substitute_identifiers,
@@ -93,6 +95,35 @@ def test_substitute_identifiers_leaves_unmapped_identifiers_untouched() -> None:
         BinaryOperation.ADD, LiteralExpression(1), IdentifierExpression(y)
     )
     assert result.is_structurally_equivalent(expected)
+
+
+def test_substitute_identifiers_recurses_into_unary_expression() -> None:
+    """Test `substitute_identifiers` traverses into a `UnaryExpression` operand."""
+    x = Identifier("x")
+    expression = UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(x))
+
+    result = substitute_identifiers(expression, {x: LiteralExpression(7)})
+
+    expected = UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(7))
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_substitute_identifiers_rebuilds_literal_subexpressions_fresh() -> None:
+    """Test `substitute_identifiers` rebuilds literal sub-expressions as new nodes."""
+    literal = LiteralExpression(3)
+
+    result = substitute_identifiers(literal, {})
+
+    assert result.is_structurally_equivalent(literal)
+    assert result is not literal
+
+
+def test_identifier_substituter_get_noop_output_returns_input() -> None:
+    """Test `IdentifierSubstituter.get_noop_output` returns its input unchanged."""
+    expression = LiteralExpression(0)
+    substituter = IdentifierSubstituter({})
+
+    assert substituter.get_noop_output(expression) is expression
 
 
 # =============================================================================

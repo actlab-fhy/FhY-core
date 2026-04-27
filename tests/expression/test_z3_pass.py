@@ -12,6 +12,8 @@ Notes on known-equivalent mutants not targeted by this file:
   distinguishable in CPython.
 """
 
+from unittest.mock import Mock
+
 import pytest
 import z3  # type: ignore[import-untyped]
 
@@ -27,7 +29,9 @@ from fhy_core.expression import (
     convert_expression_to_z3_expression,
     is_satisfiable,
 )
+from fhy_core.expression.passes.z3 import ExpressionToZ3Converter, _z3_floor_divide
 from fhy_core.identifier import Identifier
+from fhy_core.pass_infrastructure import PassExecutionError
 
 from .conftest import mock_identifier
 
@@ -383,3 +387,73 @@ def test_is_satisfiable_returns_true_when_solver_reports_unsat(
     monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unsat)
     considered, expression, symbol_types = _make_trivial_satisfiability_inputs()
     assert is_satisfiable(considered, expression, symbol_types) is True
+
+
+# =============================================================================
+# Defensive dispatch branches
+# =============================================================================
+
+
+def test_z3_floor_divide_rejects_non_int_non_real_expression() -> None:
+    """Test `_z3_floor_divide` raises `ValueError` on an expression that is neither."""
+    fake = Mock()
+    fake.is_real.return_value = False
+    fake.is_int.return_value = False
+    fake.__truediv__ = lambda self, other: fake
+
+    with pytest.raises(ValueError, match=r"Unsupported floor divide expression type"):
+        _z3_floor_divide(fake, fake)
+
+
+def test_z3_visit_identifier_rejects_invalid_symbol_type() -> None:
+    """Test `visit_identifier_expression` rejects an unknown symbol-type entry."""
+    identifier = mock_identifier("x", 0)
+    converter = ExpressionToZ3Converter({identifier: "not-a-symbol-type"})  # type: ignore[dict-item]
+
+    with pytest.raises(ValueError, match=r"Unsupported identifier type"):
+        converter.visit_identifier_expression(IdentifierExpression(identifier))
+
+
+def test_z3_visit_literal_true_string_via_mock_returns_bool_true() -> None:
+    """Test the ``"True"`` string branch returns ``z3.BoolVal(True)``."""
+    converter = ExpressionToZ3Converter({})
+    literal = Mock(spec=LiteralExpression)
+    literal.value = "True"
+    result = converter.visit_literal_expression(literal)
+    assert result.eq(z3.BoolVal(True))
+
+
+def test_z3_visit_literal_false_string_via_mock_returns_bool_false() -> None:
+    """Test the ``"False"`` string branch returns BoolVal(False)."""
+    converter = ExpressionToZ3Converter({})
+    literal = Mock(spec=LiteralExpression)
+    literal.value = "False"
+    result = converter.visit_literal_expression(literal)
+    assert result.eq(z3.BoolVal(False))
+
+
+def test_z3_visit_literal_unsupported_value_raises() -> None:
+    """Test `visit_literal_expression` raises on an unsupported literal value type."""
+    converter = ExpressionToZ3Converter({})
+    literal = Mock(spec=LiteralExpression)
+    literal.value = object()
+
+    with pytest.raises(TypeError, match=r"Unsupported literal type"):
+        converter.visit_literal_expression(literal)
+
+
+def test_z3_converter_get_noop_output_raises() -> None:
+    """Test `ExpressionToZ3Converter.get_noop_output` raises `PassExecutionError`."""
+    with pytest.raises(PassExecutionError, match=r"does not define noop output"):
+        ExpressionToZ3Converter({}).get_noop_output(LiteralExpression(0))
+
+
+def test_is_satisfiable_raises_on_unexpected_solver_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test `is_satisfiable` raises `RuntimeError` when the solver returns an oddity."""
+    monkeypatch.setattr(z3.Solver, "check", lambda self: object())
+    considered, expression, symbol_types = _make_trivial_satisfiability_inputs()
+
+    with pytest.raises(RuntimeError, match=r"Unexpected Z3 result"):
+        is_satisfiable(considered, expression, symbol_types)

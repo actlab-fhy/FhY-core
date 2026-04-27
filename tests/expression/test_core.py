@@ -15,6 +15,7 @@ from fhy_core.expression import (
     LiteralExpression,
     UnaryExpression,
     UnaryOperation,
+    collect_identifiers,
 )
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
@@ -433,12 +434,34 @@ def test_logical_and_accepts_a_two_argument_call() -> None:
     assert result.is_structurally_equivalent(expected)
 
 
+def test_logical_and_called_via_instance_does_not_capture_self() -> None:
+    """Test calling `logical_and` through an instance does not promote it to an arg."""
+    first = LiteralExpression(True)
+    second = LiteralExpression(False)
+
+    result = first.logical_and(first, second)
+
+    expected = BinaryExpression(BinaryOperation.LOGICAL_AND, first, second)
+    assert result.is_structurally_equivalent(expected)
+
+
 def test_logical_or_accepts_a_two_argument_call() -> None:
     """Test `Expression.logical_or` binds as a static method and accepts two args."""
     first = LiteralExpression(True)
     second = LiteralExpression(False)
 
     result = Expression.logical_or(first, second)
+
+    expected = BinaryExpression(BinaryOperation.LOGICAL_OR, first, second)
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_logical_or_called_via_instance_does_not_capture_self() -> None:
+    """Test calling `logical_or` through an instance does not promote it to an arg."""
+    first = LiteralExpression(True)
+    second = LiteralExpression(False)
+
+    result = first.logical_or(first, second)
 
     expected = BinaryExpression(BinaryOperation.LOGICAL_OR, first, second)
     assert result.is_structurally_equivalent(expected)
@@ -845,3 +868,59 @@ def test_deserialize_literal_rejects_invalid_data_shape(
     """Test literal deserialization raises on missing or unsupported-value fields."""
     with pytest.raises(DeserializationDictStructureError):
         Expression.deserialize_from_dict(data)
+
+
+# =============================================================================
+# Walker-driven traversal via `get_visit_children`
+# =============================================================================
+
+
+def test_collect_identifiers_walks_into_unary_expression_operand() -> None:
+    """Test the walker visits a `UnaryExpression` operand via `get_visit_children`."""
+    x = Identifier("x")
+    expression = UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(x))
+
+    assert collect_identifiers(expression) == {x}
+
+
+def test_collect_identifiers_walks_into_binary_expression_children() -> None:
+    """Test the walker visits both `BinaryExpression` children via child dispatch."""
+    left = Identifier("a")
+    right = Identifier("b")
+    expression = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(left), IdentifierExpression(right)
+    )
+
+    assert collect_identifiers(expression) == {left, right}
+
+
+# =============================================================================
+# Structural equivalence fallback for unregistered `Expression` subclasses
+# =============================================================================
+
+
+def test_structural_equivalence_returns_false_for_unregistered_subclass() -> None:
+    """Test the singledispatch default returns `False` for unregistered subclasses.
+
+    `Expression` is abstract, but a concrete subclass that does not register a
+    custom `is_structurally_equivalent` dispatcher falls back to the default,
+    which is expected to return `False` against any other expression.
+    """
+
+    @dataclasses.dataclass(frozen=True, eq=False)
+    class _UnregisteredExpression(Expression):  # test-local subclass
+        value: int
+
+        def serialize_data_to_dict(self) -> SerializedDict:  # pragma: no cover
+            return {"value": self.value}
+
+        @classmethod
+        def deserialize_data_from_dict(  # pragma: no cover
+            cls, data: SerializedDict
+        ) -> "_UnregisteredExpression":
+            return cls(value=int(data["value"]))  # type: ignore[arg-type]
+
+    instance = _UnregisteredExpression(value=1)
+
+    assert instance.is_structurally_equivalent(LiteralExpression(1)) is False
+    assert instance.is_structurally_equivalent(instance) is False

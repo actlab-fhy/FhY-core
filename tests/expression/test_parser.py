@@ -285,3 +285,12 @@ def test_parse_expression_handles_token_count_past_cpython_small_int_cache() -> 
     source = " + ".join(["1"] * num_terms)
     tree = parse_expression(source)
     assert _count_literal_leaves(tree, "1") == num_terms
+
+
+def test_parse_expression_reuses_identifier_for_repeated_symbol() -> None:
+    """Test repeated identifier symbols within one parse share the same `Identifier`."""
+    tree = parse_expression("x + x")
+    assert isinstance(tree, BinaryExpression)
+    assert isinstance(tree.left, IdentifierExpression)
+    assert isinstance(tree.right, IdentifierExpression)
+    assert tree.left.identifier is tree.right.identifier

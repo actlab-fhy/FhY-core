@@ -7,11 +7,14 @@ the full ``(data_type, shape)`` / ``(lower_bound, upper_bound, stride)``
 contract is compared on every case.
 """
 
+from unittest.mock import Mock
+
 import pytest
 
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
+    Expression,
     IdentifierExpression,
     LiteralExpression,
     UnaryExpression,
@@ -19,16 +22,25 @@ from fhy_core.expression import (
     pformat_expression,
 )
 from fhy_core.expression.passes.type_checker import (
+    _get_numeric_literal_value,
+    _get_primitive_data_type,
+    _get_real_float_core_data_type_for_bit_width,
+    _TypeCheckContext,
+    check_expression_type,
     get_core_data_type_from_literal_type,
+    synthesize_expression_type,
 )
 from fhy_core.identifier import Identifier
+from fhy_core.pass_infrastructure import PassExecutionError
 from fhy_core.types import (
     CoreDataType,
     FhYCoreTypeError,
     IndexType,
     NumericalType,
     PrimitiveDataType,
+    TemplateDataType,
     TupleType,
+    Type,
     TypeQualifier,
 )
 
@@ -306,12 +318,12 @@ def test_check_rejects_expression_wider_than_expected(
 def test_check_index_against_equivalent_index_succeeds() -> None:
     """Test `check` passes when actual and expected are equal index types."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(10), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
     result_type, _ = checker.check(
         IdentifierExpression(identifier),
-        IndexType(LiteralExpression(1), LiteralExpression(10), None),
+        IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1)),
     )
 
     assert result_type.is_structurally_equivalent(index)
@@ -320,7 +332,7 @@ def test_check_index_against_equivalent_index_succeeds() -> None:
 def test_check_index_against_nonequivalent_index_raises() -> None:
     """Test `check` raises when actual and expected are different index types."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(10), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
     with pytest.raises(
@@ -329,14 +341,16 @@ def test_check_index_against_nonequivalent_index_raises() -> None:
     ):
         checker.check(
             IdentifierExpression(identifier),
-            IndexType(LiteralExpression(2), LiteralExpression(10), None),
+            IndexType(
+                LiteralExpression(2), LiteralExpression(10), LiteralExpression(1)
+            ),
         )
 
 
 def test_check_index_against_numerical_raises() -> None:
     """Test `check` rejects an index-typed expression against a numerical type."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(10), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
     with pytest.raises(
@@ -358,7 +372,9 @@ def test_check_numerical_against_index_raises() -> None:
     ):
         checker.check(
             LiteralExpression(5),
-            IndexType(LiteralExpression(1), LiteralExpression(10), None),
+            IndexType(
+                LiteralExpression(1), LiteralExpression(10), LiteralExpression(1)
+            ),
         )
 
 
@@ -759,7 +775,7 @@ def test_index_plus_scalar_produces_shifted_index_type() -> None:
 def test_scalar_plus_index_produces_shifted_index_type() -> None:
     """Test adding a scalar on the left also shifts both bounds."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(10), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
     result_type, _ = checker.visit(
@@ -773,7 +789,7 @@ def test_scalar_plus_index_produces_shifted_index_type() -> None:
     expected = IndexType(
         LiteralExpression(1) + LiteralExpression(2),
         LiteralExpression(10) + LiteralExpression(2),
-        None,
+        LiteralExpression(1),
     )
     assert result_type.is_structurally_equivalent(expected)
 
@@ -807,7 +823,7 @@ def test_index_minus_scalar_produces_shifted_index_type() -> None:
 def test_index_plus_float_is_rejected() -> None:
     """Test adding a float scalar to an index is rejected."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
     with pytest.raises(
@@ -832,7 +848,7 @@ def test_index_plus_float_is_rejected() -> None:
 def test_unary_positive_index_preserves_index_type() -> None:
     """Test unary positive preserves the exact index type."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
     result_type, _ = checker.visit(
@@ -845,7 +861,7 @@ def test_unary_positive_index_preserves_index_type() -> None:
 def test_unary_negation_of_index_is_rejected() -> None:
     """Test unary negation of an index type is rejected."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
     with pytest.raises(
@@ -879,7 +895,7 @@ def test_index_times_positive_integer_literal_scales_bounds_and_stride() -> None
     expected = IndexType(
         LiteralExpression(3) * LiteralExpression(1),
         LiteralExpression(3) * LiteralExpression(8),
-        LiteralExpression(3) * LiteralExpression(2),
+        LiteralExpression(6),
     )
     assert result_type.is_structurally_equivalent(expected)
 
@@ -887,7 +903,7 @@ def test_index_times_positive_integer_literal_scales_bounds_and_stride() -> None
 def test_positive_integer_literal_times_index_scales_symmetrically() -> None:
     """Test scalar-times-index scales the same way as index-times-scalar."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
     result_type, _ = checker.visit(
@@ -907,9 +923,9 @@ def test_positive_integer_literal_times_index_scales_symmetrically() -> None:
 
 
 def test_index_scaling_by_one_preserves_unit_stride() -> None:
-    """Test scaling an index with stride ``None`` by ``1`` keeps stride ``None``."""
+    """Test scaling an index with unit stride by ``1`` yields a unit-stride index."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
     result_type, _ = checker.visit(
@@ -923,7 +939,34 @@ def test_index_scaling_by_one_preserves_unit_stride() -> None:
     expected = IndexType(
         LiteralExpression(1) * LiteralExpression(1),
         LiteralExpression(1) * LiteralExpression(8),
-        None,
+        LiteralExpression(1),
+    )
+    assert result_type.is_structurally_equivalent(expected)
+
+
+def test_index_scaling_with_non_literal_stride_emits_scalar_times_stride() -> None:
+    """Test scaling an index with a non-literal stride emits ``scalar * stride``."""
+    identifier = Identifier("idx")
+    stride_identifier = Identifier("s")
+    index = IndexType(
+        LiteralExpression(1),
+        LiteralExpression(8),
+        IdentifierExpression(stride_identifier),
+    )
+    checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.MULTIPLY,
+            IdentifierExpression(identifier),
+            LiteralExpression(3),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(3) * LiteralExpression(1),
+        LiteralExpression(3) * LiteralExpression(8),
+        LiteralExpression(3) * IdentifierExpression(stride_identifier),
     )
     assert result_type.is_structurally_equivalent(expected)
 
@@ -931,7 +974,7 @@ def test_index_scaling_by_one_preserves_unit_stride() -> None:
 def test_index_times_zero_literal_is_rejected() -> None:
     """Test scaling an index by `0` is rejected (positive-integer requirement)."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
     with pytest.raises(
@@ -951,7 +994,7 @@ def test_index_times_zero_literal_is_rejected() -> None:
 def test_index_times_negative_literal_is_rejected() -> None:
     """Test scaling an index by a negative integer literal is rejected."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
     with pytest.raises(
@@ -972,7 +1015,7 @@ def test_index_times_non_literal_scalar_is_rejected() -> None:
     """Test scaling an index by a non-literal integer identifier is rejected."""
     identifier = Identifier("idx")
     scalar = Identifier("k")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker(
         {
             identifier: (index, TypeQualifier.PARAM),
@@ -997,7 +1040,7 @@ def test_index_times_non_literal_scalar_is_rejected() -> None:
 def test_index_times_float_literal_is_rejected() -> None:
     """Test scaling an index by a float literal is rejected."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
     with pytest.raises(
@@ -1022,7 +1065,7 @@ def test_index_times_float_literal_is_rejected() -> None:
 def test_index_division_is_rejected_with_specific_message() -> None:
     """Test dividing an index by a scalar raises a division-specific message."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
     with pytest.raises(
@@ -1049,7 +1092,7 @@ def test_division_with_one_index_operand_uses_division_specific_message(
     """Test mixed index/numerical division raises a division-specific error message."""
     index_identifier = Identifier("idx")
     scalar_identifier = Identifier("k")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker(
         {
             index_identifier: (index, TypeQualifier.PARAM),
@@ -1075,12 +1118,16 @@ def test_division_with_one_index_operand_uses_division_specific_message(
 # =============================================================================
 
 
-def test_index_plus_index_combines_bounds_when_strides_are_none() -> None:
-    """Test index addition sums bounds and keeps stride `None` when both are `None`."""
+def test_index_plus_index_combines_bounds_when_strides_are_both_unit() -> None:
+    """Test index addition sums bounds and keeps unit stride when both are unit."""
     left = Identifier("i")
     right = Identifier("j")
-    left_index = IndexType(LiteralExpression(1), LiteralExpression(10), None)
-    right_index = IndexType(LiteralExpression(1), LiteralExpression(5), None)
+    left_index = IndexType(
+        LiteralExpression(1), LiteralExpression(10), LiteralExpression(1)
+    )
+    right_index = IndexType(
+        LiteralExpression(1), LiteralExpression(5), LiteralExpression(1)
+    )
     checker = make_identifier_checker(
         {
             left: (left_index, TypeQualifier.PARAM),
@@ -1099,7 +1146,7 @@ def test_index_plus_index_combines_bounds_when_strides_are_none() -> None:
     expected = IndexType(
         LiteralExpression(1) + LiteralExpression(1),
         LiteralExpression(10) + LiteralExpression(5),
-        None,
+        LiteralExpression(1),
     )
     assert result_type.is_structurally_equivalent(expected)
     assert result_qualifier is TypeQualifier.PARAM
@@ -1138,72 +1185,13 @@ def test_index_plus_index_preserves_matching_stride() -> None:
     assert result_type.is_structurally_equivalent(expected)
 
 
-def test_index_plus_index_treats_literal_one_stride_as_none() -> None:
-    """Test `LiteralExpression(1)` stride combined with `None` yields `None`."""
+def test_index_plus_index_unit_stride_dominates_non_unit_stride() -> None:
+    """Test combining unit stride with stride `2` yields unit stride via `min`."""
     left = Identifier("i")
     right = Identifier("j")
     left_index = IndexType(
         LiteralExpression(1), LiteralExpression(10), LiteralExpression(1)
     )
-    right_index = IndexType(LiteralExpression(1), LiteralExpression(6), None)
-    checker = make_identifier_checker(
-        {
-            left: (left_index, TypeQualifier.PARAM),
-            right: (right_index, TypeQualifier.PARAM),
-        }
-    )
-
-    result_type, _ = checker.visit(
-        BinaryExpression(
-            BinaryOperation.ADD,
-            IdentifierExpression(left),
-            IdentifierExpression(right),
-        )
-    )
-
-    expected = IndexType(
-        LiteralExpression(1) + LiteralExpression(1),
-        LiteralExpression(10) + LiteralExpression(6),
-        None,
-    )
-    assert result_type.is_structurally_equivalent(expected)
-
-
-def test_index_plus_index_canonicalizes_matching_unit_literal_stride() -> None:
-    """Test two `LiteralExpression(1)` strides canonicalize to `None`."""
-    left = Identifier("i")
-    right = Identifier("j")
-    unit = LiteralExpression(1)
-    left_index = IndexType(LiteralExpression(1), LiteralExpression(10), unit)
-    right_index = IndexType(LiteralExpression(1), LiteralExpression(6), unit)
-    checker = make_identifier_checker(
-        {
-            left: (left_index, TypeQualifier.PARAM),
-            right: (right_index, TypeQualifier.PARAM),
-        }
-    )
-
-    result_type, _ = checker.visit(
-        BinaryExpression(
-            BinaryOperation.ADD,
-            IdentifierExpression(left),
-            IdentifierExpression(right),
-        )
-    )
-
-    expected = IndexType(
-        LiteralExpression(1) + LiteralExpression(1),
-        LiteralExpression(10) + LiteralExpression(6),
-        None,
-    )
-    assert result_type.is_structurally_equivalent(expected)
-
-
-def test_index_plus_index_unit_stride_dominates_non_unit_stride() -> None:
-    """Test combining stride `None` with stride `2` yields stride `None`."""
-    left = Identifier("i")
-    right = Identifier("j")
-    left_index = IndexType(LiteralExpression(1), LiteralExpression(10), None)
     right_index = IndexType(
         LiteralExpression(1), LiteralExpression(6), LiteralExpression(2)
     )
@@ -1225,7 +1213,7 @@ def test_index_plus_index_unit_stride_dominates_non_unit_stride() -> None:
     expected = IndexType(
         LiteralExpression(1) + LiteralExpression(1),
         LiteralExpression(10) + LiteralExpression(6),
-        None,
+        LiteralExpression(1),
     )
     assert result_type.is_structurally_equivalent(expected)
 
@@ -1306,7 +1294,9 @@ def test_index_plus_index_rejects_non_literal_stride() -> None:
         LiteralExpression(10),
         IdentifierExpression(stride_identifier),
     )
-    right_index = IndexType(LiteralExpression(1), LiteralExpression(6), None)
+    right_index = IndexType(
+        LiteralExpression(1), LiteralExpression(6), LiteralExpression(1)
+    )
     checker = make_identifier_checker(
         {
             left: (left_index, TypeQualifier.PARAM),
@@ -1333,8 +1323,12 @@ def test_index_plus_index_with_symbolic_bounds() -> None:
     right = Identifier("j")
     upper_n = Identifier("N")
     upper_m = Identifier("M")
-    left_index = IndexType(LiteralExpression(1), IdentifierExpression(upper_n), None)
-    right_index = IndexType(LiteralExpression(1), IdentifierExpression(upper_m), None)
+    left_index = IndexType(
+        LiteralExpression(1), IdentifierExpression(upper_n), LiteralExpression(1)
+    )
+    right_index = IndexType(
+        LiteralExpression(1), IdentifierExpression(upper_m), LiteralExpression(1)
+    )
     checker = make_identifier_checker(
         {
             left: (left_index, TypeQualifier.PARAM),
@@ -1353,7 +1347,7 @@ def test_index_plus_index_with_symbolic_bounds() -> None:
     expected = IndexType(
         LiteralExpression(1) + LiteralExpression(1),
         IdentifierExpression(upper_n) + IdentifierExpression(upper_m),
-        None,
+        LiteralExpression(1),
     )
     assert result_type.is_structurally_equivalent(expected)
 
@@ -1434,7 +1428,7 @@ def test_scaled_shifted_index_plus_index_synthesizes_bottom_up() -> None:
     """Test ``2 * (i1 - 1) + i2`` synthesizes scale, shift, and combine in order."""
     i1 = Identifier("i1")
     i2 = Identifier("i2")
-    index = IndexType(LiteralExpression(1), LiteralExpression(10), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker(
         {
             i1: (index, TypeQualifier.PARAM),
@@ -1463,7 +1457,7 @@ def test_scaled_shifted_index_plus_index_synthesizes_bottom_up() -> None:
         + LiteralExpression(1),
         (LiteralExpression(2) * (LiteralExpression(10) - LiteralExpression(1)))
         + LiteralExpression(10),
-        None,
+        LiteralExpression(1),
     )
     assert result_type.is_structurally_equivalent(expected)
 
@@ -1510,7 +1504,7 @@ def test_index_minus_index_uses_stride_semantics_error_message() -> None:
     """Test subtracting two indices raises with the stride-semantics reason."""
     left = Identifier("i")
     right = Identifier("j")
-    index = IndexType(LiteralExpression(1), LiteralExpression(10), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker(
         {
             left: (index, TypeQualifier.PARAM),
@@ -1544,7 +1538,7 @@ def test_non_additive_index_index_operation_does_not_use_stride_semantics_messag
     """Test non-additive index-index operations use a generic (non-stride) message."""
     left = Identifier("i")
     right = Identifier("j")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker(
         {
             left: (index, TypeQualifier.PARAM),
@@ -1578,7 +1572,7 @@ def test_non_additive_index_index_operation_does_not_use_stride_semantics_messag
 def test_type_error_includes_root_expression_for_top_level_failure() -> None:
     """Test the error message frames the failure with the root expression."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
     expression = UnaryExpression(
         UnaryOperation.NEGATE, IdentifierExpression(identifier)
@@ -1597,7 +1591,7 @@ def test_type_error_includes_root_expression_for_top_level_failure() -> None:
 def test_type_error_includes_sub_expression_for_deeply_nested_failure() -> None:
     """Test the error message names the sub-expression where the failure surfaced."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
     inner = UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(identifier))
     root = UnaryExpression(UnaryOperation.POSITIVE, inner)
@@ -1615,10 +1609,12 @@ def test_type_error_includes_sub_expression_for_deeply_nested_failure() -> None:
 def test_type_error_from_check_includes_root_expression() -> None:
     """Test `check` failures are framed by the root expression, not just `_infer`."""
     identifier = Identifier("idx")
-    index = IndexType(LiteralExpression(1), LiteralExpression(10), None)
+    index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
     expression = IdentifierExpression(identifier)
-    expected = IndexType(LiteralExpression(2), LiteralExpression(10), None)
+    expected = IndexType(
+        LiteralExpression(2), LiteralExpression(10), LiteralExpression(1)
+    )
 
     with pytest.raises(FhYCoreTypeError) as exc_info:
         checker.check(expression, expected)
@@ -1626,3 +1622,503 @@ def test_type_error_from_check_includes_root_expression() -> None:
     message = str(exc_info.value)
     assert message.startswith("Type error while inferring type of `")
     assert pformat_expression(expression, show_id=True) in message
+
+
+# =============================================================================
+# Behavioural fine-tuning — pinning specific code paths
+# =============================================================================
+
+
+def test_check_negate_of_weak_literal_against_strong_type_returns_strong() -> None:
+    """Test ``check(NEGATE(Lit(5)), INT32)`` keeps the strong context type."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    actual_type, _ = checker.check(
+        UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(5)),
+        _make_scalar(CoreDataType.INT32),
+    )
+
+    assert actual_type.is_structurally_equivalent(_make_scalar(CoreDataType.INT32))
+
+
+def test_check_arithmetic_of_literals_against_index_uses_general_message() -> None:
+    """Test ``check(ADD(Lit, Lit), IndexType)`` reports the index/numerical mismatch."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"one is an index type and the other is a numerical type",
+    ):
+        checker.check(
+            BinaryExpression(
+                BinaryOperation.ADD,
+                LiteralExpression(1),
+                LiteralExpression(2),
+            ),
+            IndexType(
+                LiteralExpression(1), LiteralExpression(10), LiteralExpression(1)
+            ),
+        )
+
+
+def test_synthesize_multiply_of_two_indices_uses_between_indices_message() -> None:
+    """Test ``synthesize(MULTIPLY(idx, idx))`` reports the both-indices error."""
+    left = Identifier("i")
+    right = Identifier("j")
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
+    checker = make_identifier_checker(
+        {
+            left: (index, TypeQualifier.PARAM),
+            right: (index, TypeQualifier.PARAM),
+        }
+    )
+
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"the multiply operation is not defined between two index types",
+    ):
+        checker.visit(
+            BinaryExpression(
+                BinaryOperation.MULTIPLY,
+                IdentifierExpression(left),
+                IdentifierExpression(right),
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [BinaryOperation.MODULO, BinaryOperation.POWER],
+)
+def test_synthesize_non_additive_index_and_scalar_uses_operands_of_types_message(
+    operation: BinaryOperation,
+) -> None:
+    """Test ``MODULO``/``POWER`` of index and numerical reports an operand-types err."""
+    identifier = Identifier("idx")
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
+    checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
+
+    with pytest.raises(FhYCoreTypeError, match=r"is not defined for operands of types"):
+        checker.visit(
+            BinaryExpression(
+                operation,
+                IdentifierExpression(identifier),
+                LiteralExpression(5),
+            )
+        )
+
+
+def test_synthesize_index_plus_index_with_float_stride_uses_int_only_reason() -> None:
+    """Test combining indices with a float-literal stride hits the int-only check."""
+    left = Identifier("i")
+    right = Identifier("j")
+    float_stride_index = IndexType(
+        LiteralExpression(1), LiteralExpression(10), LiteralExpression(2.5)
+    )
+    int_stride_index = IndexType(
+        LiteralExpression(1), LiteralExpression(10), LiteralExpression(2)
+    )
+    checker = make_identifier_checker(
+        {
+            left: (float_stride_index, TypeQualifier.PARAM),
+            right: (int_stride_index, TypeQualifier.PARAM),
+        }
+    )
+
+    with pytest.raises(
+        FhYCoreTypeError, match=r"an index stride literal must be an integer"
+    ):
+        checker.visit(
+            BinaryExpression(
+                BinaryOperation.ADD,
+                IdentifierExpression(left),
+                IdentifierExpression(right),
+            )
+        )
+
+
+def test_division_complex_left_real_float_right_promotes_to_complex() -> None:
+    """Test ``DIVIDE(complex64, float64)`` promotes to ``complex128``."""
+    left = Identifier("c")
+    right = Identifier("f")
+    checker = make_identifier_checker(
+        {
+            left: (_make_scalar(CoreDataType.COMPLEX64), TypeQualifier.PARAM),
+            right: (_make_scalar(CoreDataType.FLOAT64), TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.DIVIDE,
+            IdentifierExpression(left),
+            IdentifierExpression(right),
+        )
+    )
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.COMPLEX128))
+
+
+def test_division_real_float_left_complex_right_promotes_to_complex() -> None:
+    """Test ``DIVIDE(float64, complex64)`` promotes to ``complex128``."""
+    left = Identifier("f")
+    right = Identifier("c")
+    checker = make_identifier_checker(
+        {
+            left: (_make_scalar(CoreDataType.FLOAT64), TypeQualifier.PARAM),
+            right: (_make_scalar(CoreDataType.COMPLEX64), TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.DIVIDE,
+            IdentifierExpression(left),
+            IdentifierExpression(right),
+        )
+    )
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.COMPLEX128))
+
+
+# =============================================================================
+# Top-level convenience functions
+# =============================================================================
+
+
+def test_synthesize_expression_type_top_level_function() -> None:
+    """Test `synthesize_expression_type` returns the synthesized type from the class."""
+    identifier = Identifier("x")
+    lookup_type = _make_scalar(CoreDataType.INT32)
+
+    result_type, result_qualifier = synthesize_expression_type(
+        IdentifierExpression(identifier),
+        lambda i: (lookup_type, TypeQualifier.PARAM),
+    )
+
+    assert result_type.is_structurally_equivalent(lookup_type)
+    assert result_qualifier is TypeQualifier.PARAM
+
+
+def test_check_expression_type_top_level_function() -> None:
+    """Test `check_expression_type` returns the checked type from the class."""
+    expected = _make_scalar(CoreDataType.UINT16)
+
+    result_type, result_qualifier = check_expression_type(
+        LiteralExpression(5),
+        expected,
+        lambda i: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM),
+    )
+
+    assert result_type.is_structurally_equivalent(expected)
+    assert result_qualifier is TypeQualifier.PARAM
+
+
+def test_checker_synthesize_method_routes_through_infer() -> None:
+    """Test `ExpressionTypeChecker.synthesize` yields the same result as `visit`."""
+    identifier = Identifier("x")
+    checker = make_identifier_checker(
+        {identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM)}
+    )
+
+    synthesized_type, _ = checker.synthesize(IdentifierExpression(identifier))
+
+    assert synthesized_type.is_structurally_equivalent(_make_scalar(CoreDataType.INT32))
+
+
+# =============================================================================
+# Bidirectional weak-literal hint on the LEFT operand
+# =============================================================================
+
+
+def test_weak_left_literal_upgrades_against_strong_right_identifier() -> None:
+    """Test a weak left-literal adopts the right identifier's strong type."""
+    right_identifier = Identifier("right")
+    checker = make_identifier_checker(
+        {right_identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM)}
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            LiteralExpression(5),
+            IdentifierExpression(right_identifier),
+        )
+    )
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.INT32))
+
+
+# =============================================================================
+# Index arithmetic - remaining non-integral / non-literal operand paths
+# =============================================================================
+
+
+def test_numerical_float_plus_index_is_rejected() -> None:
+    """Test ``ADD(Lit(1.5), idx)`` rejects because the left operand isn't integral."""
+    identifier = Identifier("idx")
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
+    checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
+
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"index shift requires an integral scalar offset, "
+        r"but the left operand has type",
+    ):
+        checker.visit(
+            BinaryExpression(
+                BinaryOperation.ADD,
+                LiteralExpression(1.5),
+                IdentifierExpression(identifier),
+            )
+        )
+
+
+def test_index_minus_float_literal_is_rejected() -> None:
+    """Test ``SUBTRACT(idx, Lit(1.5))`` rejects for a non-integral right operand."""
+    identifier = Identifier("idx")
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
+    checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
+
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"index shift requires an integral scalar offset, "
+        r"but the right operand has type",
+    ):
+        checker.visit(
+            BinaryExpression(
+                BinaryOperation.SUBTRACT,
+                IdentifierExpression(identifier),
+                LiteralExpression(1.5),
+            )
+        )
+
+
+def test_multiply_index_by_non_literal_identifier_on_right_is_rejected() -> None:
+    """Test ``MULTIPLY(idx, scalar_id)`` rejects because right is a non-literal."""
+    index_identifier = Identifier("idx")
+    scalar_identifier = Identifier("k")
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
+    checker = make_identifier_checker(
+        {
+            index_identifier: (index, TypeQualifier.PARAM),
+            scalar_identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM),
+        }
+    )
+
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"but the right operand .* is not a literal expression",
+    ):
+        checker.visit(
+            BinaryExpression(
+                BinaryOperation.MULTIPLY,
+                IdentifierExpression(index_identifier),
+                IdentifierExpression(scalar_identifier),
+            )
+        )
+
+
+def test_multiply_float_literal_times_index_rejected_on_left() -> None:
+    """Test ``MULTIPLY(Lit(2.0), idx)`` rejects because the left is non-integral."""
+    identifier = Identifier("idx")
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
+    checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
+
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"but the left operand has non-integral type",
+    ):
+        checker.visit(
+            BinaryExpression(
+                BinaryOperation.MULTIPLY,
+                LiteralExpression(2.0),
+                IdentifierExpression(identifier),
+            )
+        )
+
+
+# =============================================================================
+# Floor division on real-float operands skipping both int-side elif branches
+# =============================================================================
+
+
+def test_floor_division_of_two_real_floats_promotes_via_lattice() -> None:
+    """Test floor-div of two real-float identifiers skips both int-side branches."""
+    left = Identifier("left")
+    right = Identifier("right")
+    checker = make_identifier_checker(
+        {
+            left: (_make_scalar(CoreDataType.FLOAT32), TypeQualifier.PARAM),
+            right: (_make_scalar(CoreDataType.FLOAT64), TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.FLOOR_DIVIDE,
+            IdentifierExpression(left),
+            IdentifierExpression(right),
+        )
+    )
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.FLOAT64))
+
+
+# =============================================================================
+# Non-arithmetic binary operations and LOGICAL_NOT
+# =============================================================================
+
+
+def test_synthesize_logical_and_raises_not_implemented() -> None:
+    """Test `synthesize(LOGICAL_AND(...))` raises `NotImplementedError`."""
+    left = Identifier("a")
+    right = Identifier("b")
+    checker = make_identifier_checker(
+        {
+            left: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM),
+            right: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM),
+        }
+    )
+
+    with pytest.raises(NotImplementedError, match=r"Boolean result types"):
+        checker.visit(
+            BinaryExpression(
+                BinaryOperation.LOGICAL_AND,
+                IdentifierExpression(left),
+                IdentifierExpression(right),
+            )
+        )
+
+
+def test_synthesize_logical_not_unary_raises_not_implemented() -> None:
+    """Test `synthesize(LOGICAL_NOT(...))` raises `NotImplementedError`."""
+    identifier = Identifier("p")
+    checker = make_identifier_checker(
+        {identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM)}
+    )
+
+    with pytest.raises(NotImplementedError, match=r"Boolean result types"):
+        checker.visit(
+            UnaryExpression(
+                UnaryOperation.LOGICAL_NOT, IdentifierExpression(identifier)
+            )
+        )
+
+
+# =============================================================================
+# Value-type resolution and literal checking corner cases
+# =============================================================================
+
+
+def test_synthesize_rejects_identifier_with_template_numerical_data_type() -> None:
+    """Test an identifier bound to a template (non-primitive) data type is rejected."""
+    identifier = Identifier("t")
+    template_type = NumericalType(TemplateDataType(Identifier("T")))
+    checker = make_identifier_checker(
+        {identifier: (template_type, TypeQualifier.PARAM)}
+    )
+
+    with pytest.raises(
+        FhYCoreTypeError, match=r"must resolve to a primitive numerical type"
+    ):
+        checker.visit(IdentifierExpression(identifier))
+
+
+def test_check_bool_literal_against_numerical_type_rejects_via_resolver() -> None:
+    """Test ``check(Lit(True), NumericalType)`` rejects the bool literal."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    with pytest.raises(FhYCoreTypeError, match=r"expected a numeric literal value"):
+        checker.check(LiteralExpression(True), _make_scalar(CoreDataType.INT32))
+
+
+# =============================================================================
+# Direct private-helper exercises for defensive guards
+# =============================================================================
+
+
+def test_get_core_data_type_from_literal_type_rejects_unsupported_type() -> None:
+    """Test `get_core_data_type_from_literal_type` rejects container values."""
+    with pytest.raises(ValueError, match=r"Unsupported literal type"):
+        get_core_data_type_from_literal_type([1, 2, 3])  # type: ignore[arg-type]
+
+
+def test_get_primitive_data_type_rejects_non_primitive_data_type() -> None:
+    """Test `_get_primitive_data_type` rejects a numerical with a template data type."""
+    numerical = NumericalType(TemplateDataType(Identifier("T")))
+
+    with pytest.raises(FhYCoreTypeError, match=r"expected a primitive data type"):
+        _get_primitive_data_type(numerical)
+
+
+def test_get_numeric_literal_value_rejects_bool_literal() -> None:
+    """Test `_get_numeric_literal_value` rejects a boolean literal."""
+    with pytest.raises(FhYCoreTypeError, match=r"expected a numeric literal value"):
+        _get_numeric_literal_value(LiteralExpression(True))
+
+
+def test_get_numeric_literal_value_rejects_string_literal() -> None:
+    """Test `_get_numeric_literal_value` rejects a string literal (via mock)."""
+    literal = Mock(spec=LiteralExpression)
+    literal.value = "foo"
+
+    with pytest.raises(FhYCoreTypeError, match=r"expected a numeric literal value"):
+        _get_numeric_literal_value(literal)
+
+
+def test_get_real_float_for_bit_width_raises_when_no_match() -> None:
+    """Test `_get_real_float_core_data_type_for_bit_width` rejects oversized widths."""
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"no real float core data type found for bit width 256",
+    ):
+        _get_real_float_core_data_type_for_bit_width(256)
+
+
+def test_type_check_context_type_error_with_empty_stack() -> None:
+    """Test `_TypeCheckContext.type_error` builds a bare message when stack empty."""
+    context = _TypeCheckContext()
+
+    error = context.type_error("the reason")
+
+    assert isinstance(error, FhYCoreTypeError)
+    assert str(error) == "Type error: the reason"
+
+
+def test_checker_get_noop_output_raises() -> None:
+    """Test `ExpressionTypeChecker.get_noop_output` raises `PassExecutionError`."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    with pytest.raises(PassExecutionError, match=r"does not define noop output"):
+        checker.get_noop_output(LiteralExpression(0))
+
+
+def test_infer_rejects_unsupported_expression_subclass() -> None:
+    """Test `_infer` raises `NotImplementedError` on unknown Expression subclass."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+    unknown = Mock(spec=Expression)
+
+    with pytest.raises(NotImplementedError, match=r"Unsupported expression type"):
+        checker.synthesize(unknown)
+
+
+def test_as_expression_value_type_rejects_unknown_type_subclass() -> None:
+    """Test `_as_expression_value_type` rejects a `Type` not in the known kinds."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+    unknown_type = Mock(spec=Type)
+
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"must resolve to a scalar numerical type or index type",
+    ):
+        checker._as_expression_value_type(LiteralExpression(0), unknown_type)
+
+
+def test_scale_index_type_rejects_non_integer_literal_scalar() -> None:
+    """Test `_scale_index_type` rejects a non-integer literal at the bool/int gate."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+    index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
+
+    with pytest.raises(FhYCoreTypeError, match=r"requires an integer literal scalar"):
+        checker._scale_index_type(index, LiteralExpression(2.5))
