@@ -765,7 +765,7 @@ def _make_index_checker(
     return ExpressionTypeChecker(lookup)
 
 
-def test_index_plus_index_combines_bounds_when_strides_are_none() -> None:
+def test_index_plus_index_combines_bounds_when_strides_are_unit() -> None:
     """i ∈ [0, 10] + j ∈ [1, 5] ⟹ [0+1, 10+5] = [1, 15] with unit stride."""
     left = Identifier("i")
     right = Identifier("j")
@@ -828,7 +828,7 @@ def test_index_plus_index_preserves_matching_stride() -> None:
     _assert_index_type(result_type, expected)
 
 
-def test_index_plus_index_treats_literal_one_stride_as_none() -> None:
+def test_index_plus_index_treats_literal_one_stride_as_unit_stride() -> None:
     """An explicit stride of LiteralExpression(1) acts as the unit stride."""
     left = Identifier("i")
     right = Identifier("j")

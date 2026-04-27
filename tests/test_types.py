@@ -316,7 +316,7 @@ def test_index_type_dict_serialization() -> None:
         "__data__": {
             "lower_bound": lower_bound.serialize_to_dict(),
             "upper_bound": upper_bound.serialize_to_dict(),
-            "stride": index_type.stride.serialize_to_dict(),
+            "stride": LiteralExpression(1).serialize_to_dict(),
         },
     }
     dictionary = index_type.serialize_to_dict()
