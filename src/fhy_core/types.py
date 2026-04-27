@@ -34,7 +34,7 @@ from fhy_core.serialization import (
 from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
 
 from .error import register_error
-from .expression.core import Expression
+from .expression.core import Expression, LiteralExpression
 from .expression.pprint import pformat_expression
 from .identifier import Identifier
 from .lattice import Lattice
@@ -604,7 +604,7 @@ class NumericalType(Type):
 class _IndexTypeData(TypedDict):
     lower_bound: SerializedDict
     upper_bound: SerializedDict
-    stride: SerializedDict | None
+    stride: SerializedDict
 
 
 def _is_valid_index_type_data(data: SerializedDict) -> TypeGuard[_IndexTypeData]:
@@ -614,7 +614,7 @@ def _is_valid_index_type_data(data: SerializedDict) -> TypeGuard[_IndexTypeData]
         and "upper_bound" in data
         and is_serialized_dict(data["upper_bound"])
         and "stride" in data
-        and (is_serialized_dict(data["stride"]) or data["stride"] is None)
+        and is_serialized_dict(data["stride"])
     )
 
 
@@ -629,17 +629,17 @@ class IndexType(Type):
 
     _lower_bound: Expression
     _upper_bound: Expression
-    _stride: Expression | None
+    _stride: Expression
 
     def __init__(
         self,
         lower_bound: Expression,
         upper_bound: Expression,
-        stride: Expression | None,
+        stride: Expression | None = None,
     ) -> None:
         self._lower_bound = lower_bound
         self._upper_bound = upper_bound
-        self._stride = stride
+        self._stride = stride if stride is not None else LiteralExpression(1)
         self.freeze(deep=True)
 
     @property
@@ -651,14 +651,14 @@ class IndexType(Type):
         return self._upper_bound
 
     @property
-    def stride(self) -> Expression | None:
+    def stride(self) -> Expression:
         return self._stride
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "lower_bound": self._lower_bound.serialize_to_dict(),
             "upper_bound": self._upper_bound.serialize_to_dict(),
-            "stride": self._stride.serialize_to_dict() if self._stride else None,
+            "stride": self._stride.serialize_to_dict(),
         }
 
     @classmethod
@@ -667,20 +667,16 @@ class IndexType(Type):
             raise DeserializationDictStructureError(
                 cls, _IndexTypeData.__annotations__, data
             )
-        stride_dict = data["stride"]
-        stride = Expression.deserialize_from_dict(stride_dict) if stride_dict else None
         return cls(
             Expression.deserialize_from_dict(data["lower_bound"]),
             Expression.deserialize_from_dict(data["upper_bound"]),
-            stride,
+            Expression.deserialize_from_dict(data["stride"]),
         )
 
     def __str__(self) -> str:
         lower_bound_str = pformat_expression(self._lower_bound, show_id=True)
         upper_bound_str = pformat_expression(self._upper_bound, show_id=True)
-        stride_str = (
-            pformat_expression(self._stride, show_id=True) if self._stride else "1"
-        )
+        stride_str = pformat_expression(self._stride, show_id=True)
         return f"index({lower_bound_str}:{upper_bound_str}:{stride_str})"
 
     def __repr__(self) -> str:
@@ -809,10 +805,6 @@ def _(type_: IndexType, other: object) -> bool:
     elif not type_.lower_bound.is_structurally_equivalent(other.lower_bound):
         return False
     elif not type_.upper_bound.is_structurally_equivalent(other.upper_bound):
-        return False
-    elif type_.stride is None and other.stride is None:
-        return True
-    elif type_.stride is None or other.stride is None:
         return False
     else:
         return type_.stride.is_structurally_equivalent(other.stride)

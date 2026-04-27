@@ -44,7 +44,7 @@ def test_type_family_is_frozen_on_construction() -> None:
     data_type = PrimitiveDataType(CoreDataType.INT32)
     template_data_type = TemplateDataType(N, widths=[8, 16])
     numerical_type = NumericalType(data_type, shape)
-    index_type = IndexType(LiteralExpression(0), LiteralExpression(10), None)
+    index_type = IndexType(LiteralExpression(0), LiteralExpression(10))
     tuple_type = TupleType([numerical_type, index_type])
 
     for value in (
@@ -310,13 +310,13 @@ def test_index_type_dict_serialization() -> None:
     N = mock_identifier("N", 1)
     lower_bound = LiteralExpression(1)
     upper_bound = IdentifierExpression(N)
-    index_type = IndexType(lower_bound, upper_bound, None)
+    index_type = IndexType(lower_bound, upper_bound)
     expected_dict = {
         "__type__": "index_type",
         "__data__": {
             "lower_bound": lower_bound.serialize_to_dict(),
             "upper_bound": upper_bound.serialize_to_dict(),
-            "stride": None,
+            "stride": index_type.stride.serialize_to_dict(),
         },
     }
     dictionary = index_type.serialize_to_dict()
@@ -325,6 +325,9 @@ def test_index_type_dict_serialization() -> None:
     assert isinstance(index_type_deserialized, IndexType)
     assert index_type_deserialized.lower_bound.is_structurally_equivalent(lower_bound)
     assert index_type_deserialized.upper_bound.is_structurally_equivalent(upper_bound)
+    assert index_type_deserialized.stride.is_structurally_equivalent(
+        LiteralExpression(1)
+    )
 
 
 def test_index_type_with_stride_serialization() -> None:
@@ -348,7 +351,6 @@ def test_index_type_with_stride_serialization() -> None:
     assert isinstance(index_type_deserialized, IndexType)
     assert index_type_deserialized.lower_bound.is_structurally_equivalent(lower_bound)
     assert index_type_deserialized.upper_bound.is_structurally_equivalent(upper_bound)
-    assert index_type_deserialized.stride is not None
     assert index_type_deserialized.stride.is_structurally_equivalent(stride)
 
 

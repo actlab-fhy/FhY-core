@@ -331,17 +331,15 @@ def _check_expected_type(
         )
 
 
-def _get_literal_stride_value(stride: Expression | None) -> int:
-    """Return the integer value of a stride, treating None as 1.
+def _get_literal_stride_value(stride: Expression) -> int:
+    """Return the integer value of a literal stride.
 
     Raises:
         FhYCoreTypeError: If the stride is not a literal integer expression,
             since non-literal strides cannot be combined.
 
     """
-    if stride is None:
-        return 1
-    elif not isinstance(stride, LiteralExpression):
+    if not isinstance(stride, LiteralExpression):
         raise FhYCoreTypeError(
             "Index arithmetic on two index types requires literal integer strides, "
             f"got non-literal stride {_format_expression(stride)}."
@@ -354,14 +352,10 @@ def _get_literal_stride_value(stride: Expression | None) -> int:
     return value
 
 
-def _get_literal_stride_expression(value: int) -> Expression | None:
-    return None if value == 1 else LiteralExpression(value)
-
-
 def _combine_index_strides_for_add(
-    left_stride: Expression | None, right_stride: Expression | None
-) -> Expression | None:
-    return _get_literal_stride_expression(
+    left_stride: Expression, right_stride: Expression
+) -> Expression:
+    return LiteralExpression(
         min(
             _get_literal_stride_value(left_stride),
             _get_literal_stride_value(right_stride),
@@ -385,11 +379,17 @@ def _scale_index_type(index_type: IndexType, scalar: LiteralExpression) -> Index
         raise FhYCoreTypeError(
             f"Index scaling requires a positive integer literal, got {value}."
         )
-    new_stride: Expression | None
-    if index_type.stride is None:
-        new_stride = None if value == 1 else LiteralExpression(value)
+    new_stride: Expression
+    stride = index_type.stride
+    if (
+        isinstance(stride, LiteralExpression)
+        and not isinstance(stride.value, bool)
+        and isinstance(stride.value, int)
+        and stride.value == 1
+    ):
+        new_stride = scalar
     else:
-        new_stride = scalar * index_type.stride
+        new_stride = scalar * stride
     return IndexType(
         scalar * index_type.lower_bound,
         scalar * index_type.upper_bound,
