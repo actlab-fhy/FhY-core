@@ -443,7 +443,7 @@ def test_scalar_plus_index_produces_shifted_index_type() -> None:
     index_type = IndexType(
         LiteralExpression(1),
         LiteralExpression(10),
-        None,
+        LiteralExpression(1),
     )
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
@@ -464,7 +464,7 @@ def test_scalar_plus_index_produces_shifted_index_type() -> None:
     expected_type = IndexType(
         LiteralExpression(1) + LiteralExpression(2),
         LiteralExpression(10) + LiteralExpression(2),
-        None,
+        LiteralExpression(1),
     )
     _assert_index_type(result_type, expected_type)
 
@@ -507,7 +507,7 @@ def test_unary_positive_index_preserves_index_type() -> None:
     index_type = IndexType(
         LiteralExpression(1),
         LiteralExpression(8),
-        None,
+        LiteralExpression(1),
     )
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
@@ -530,7 +530,7 @@ def test_unary_negation_of_index_is_rejected() -> None:
     index_type = IndexType(
         LiteralExpression(1),
         LiteralExpression(8),
-        None,
+        LiteralExpression(1),
     )
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
@@ -579,7 +579,7 @@ def test_index_times_positive_integer_literal_scales_bounds_and_stride() -> None
 def test_positive_integer_literal_times_index_scales_symmetrically() -> None:
     """k * idx produces the same shifted type as idx * k."""
     identifier = Identifier("idx")
-    index_type = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index_type = IndexType(LiteralExpression(1), LiteralExpression(8))
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
             (index_type, TypeQualifier.PARAM)
@@ -605,9 +605,9 @@ def test_positive_integer_literal_times_index_scales_symmetrically() -> None:
 
 
 def test_index_scaling_by_one_preserves_unit_stride() -> None:
-    """k=1 keeps stride=None (unit) since there is no real scaling."""
+    """k=1 keeps unit stride (LE(1)) since scaling a unit stride folds to the scalar."""
     identifier = Identifier("idx")
-    index_type = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index_type = IndexType(LiteralExpression(1), LiteralExpression(8))
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
             (index_type, TypeQualifier.PARAM)
@@ -627,7 +627,7 @@ def test_index_scaling_by_one_preserves_unit_stride() -> None:
     expected = IndexType(
         LiteralExpression(1) * LiteralExpression(1),
         LiteralExpression(1) * LiteralExpression(8),
-        None,
+        LiteralExpression(1),
     )
     _assert_index_type(result_type, expected)
 
@@ -635,7 +635,7 @@ def test_index_scaling_by_one_preserves_unit_stride() -> None:
 def test_index_times_non_positive_integer_literal_is_rejected() -> None:
     """Index scaling requires a positive integer literal (zero rejected)."""
     identifier = Identifier("idx")
-    index_type = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index_type = IndexType(LiteralExpression(1), LiteralExpression(8))
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
             (index_type, TypeQualifier.PARAM)
@@ -658,7 +658,7 @@ def test_index_times_non_literal_scalar_is_rejected() -> None:
     """Index scaling fails if the scalar is not a literal integer."""
     identifier = Identifier("idx")
     scalar = Identifier("k")
-    index_type = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index_type = IndexType(LiteralExpression(1), LiteralExpression(8))
     scalar_type = NumericalType(PrimitiveDataType(CoreDataType.INT32))
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
@@ -683,7 +683,7 @@ def test_index_times_non_literal_scalar_is_rejected() -> None:
 def test_index_times_float_literal_is_rejected() -> None:
     """Index scaling requires an integer literal, not a float."""
     identifier = Identifier("idx")
-    index_type = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index_type = IndexType(LiteralExpression(1), LiteralExpression(8))
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
             (index_type, TypeQualifier.PARAM)
@@ -708,7 +708,7 @@ def test_index_division_is_rejected() -> None:
     index_type = IndexType(
         LiteralExpression(1),
         LiteralExpression(8),
-        None,
+        LiteralExpression(1),
     )
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
@@ -734,7 +734,7 @@ def test_index_plus_float_is_rejected() -> None:
     index_type = IndexType(
         LiteralExpression(1),
         LiteralExpression(8),
-        None,
+        LiteralExpression(1),
     )
     checker = ExpressionTypeChecker(
         lambda seen_identifier: (
@@ -765,12 +765,12 @@ def _make_index_checker(
     return ExpressionTypeChecker(lookup)
 
 
-def test_index_plus_index_combines_bounds_when_strides_are_none() -> None:
+def test_index_plus_index_combines_bounds_when_strides_are_unit() -> None:
     """i ∈ [0, 10] + j ∈ [1, 5] ⟹ [0+1, 10+5] = [1, 15] with unit stride."""
     left = Identifier("i")
     right = Identifier("j")
-    left_index = IndexType(LiteralExpression(1), LiteralExpression(10), None)
-    right_index = IndexType(LiteralExpression(1), LiteralExpression(5), None)
+    left_index = IndexType(LiteralExpression(1), LiteralExpression(10))
+    right_index = IndexType(LiteralExpression(1), LiteralExpression(5))
     checker = _make_index_checker(
         {
             left: (left_index, TypeQualifier.PARAM),
@@ -789,7 +789,7 @@ def test_index_plus_index_combines_bounds_when_strides_are_none() -> None:
     expected = IndexType(
         LiteralExpression(1) + LiteralExpression(1),
         LiteralExpression(10) + LiteralExpression(5),
-        None,
+        LiteralExpression(1),
     )
     _assert_index_type(result_type, expected)
     assert result_qualifier == TypeQualifier.PARAM
@@ -828,14 +828,14 @@ def test_index_plus_index_preserves_matching_stride() -> None:
     _assert_index_type(result_type, expected)
 
 
-def test_index_plus_index_treats_literal_one_stride_as_none() -> None:
-    """An explicit stride of LiteralExpression(1) is equivalent to None (unit)."""
+def test_index_plus_index_treats_literal_one_stride_as_unit_stride() -> None:
+    """An explicit stride of LiteralExpression(1) acts as the unit stride."""
     left = Identifier("i")
     right = Identifier("j")
     left_index = IndexType(
         LiteralExpression(1), LiteralExpression(10), LiteralExpression(1)
     )
-    right_index = IndexType(LiteralExpression(1), LiteralExpression(6), None)
+    right_index = IndexType(LiteralExpression(1), LiteralExpression(6))
     checker = _make_index_checker(
         {
             left: (left_index, TypeQualifier.PARAM),
@@ -854,13 +854,13 @@ def test_index_plus_index_treats_literal_one_stride_as_none() -> None:
     expected = IndexType(
         LiteralExpression(1) + LiteralExpression(1),
         LiteralExpression(10) + LiteralExpression(6),
-        None,
+        LiteralExpression(1),
     )
     _assert_index_type(result_type, expected)
 
 
 def test_index_plus_index_canonicalizes_matching_unit_literal_stride() -> None:
-    """Two LiteralExpression(1) strides canonicalize to None in the result."""
+    """Two LiteralExpression(1) strides combine to LiteralExpression(1)."""
     left = Identifier("i")
     right = Identifier("j")
     unit = LiteralExpression(1)
@@ -884,7 +884,7 @@ def test_index_plus_index_canonicalizes_matching_unit_literal_stride() -> None:
     expected = IndexType(
         LiteralExpression(1) + LiteralExpression(1),
         LiteralExpression(10) + LiteralExpression(6),
-        None,
+        LiteralExpression(1),
     )
     _assert_index_type(result_type, expected)
 
@@ -893,7 +893,7 @@ def test_index_plus_index_unit_stride_dominates_non_unit_stride() -> None:
     """gcd(1, s) = 1 — combining unit stride with stride 2 yields unit stride."""
     left = Identifier("i")
     right = Identifier("j")
-    left_index = IndexType(LiteralExpression(1), LiteralExpression(10), None)
+    left_index = IndexType(LiteralExpression(1), LiteralExpression(10))
     right_index = IndexType(
         LiteralExpression(1), LiteralExpression(6), LiteralExpression(2)
     )
@@ -915,7 +915,7 @@ def test_index_plus_index_unit_stride_dominates_non_unit_stride() -> None:
     expected = IndexType(
         LiteralExpression(1) + LiteralExpression(1),
         LiteralExpression(10) + LiteralExpression(6),
-        None,
+        LiteralExpression(1),
     )
     _assert_index_type(result_type, expected)
 
@@ -963,7 +963,7 @@ def test_index_plus_index_rejects_non_literal_stride() -> None:
         LiteralExpression(10),
         IdentifierExpression(stride_identifier),
     )
-    right_index = IndexType(LiteralExpression(1), LiteralExpression(6), None)
+    right_index = IndexType(LiteralExpression(1), LiteralExpression(6))
     checker = _make_index_checker(
         {
             left: (left_index, TypeQualifier.PARAM),
@@ -985,7 +985,7 @@ def test_index_minus_index_is_rejected() -> None:
     """Subtraction of two index types is not yet supported (stride semantics TBD)."""
     left = Identifier("i")
     right = Identifier("j")
-    index_type = IndexType(LiteralExpression(1), LiteralExpression(10), None)
+    index_type = IndexType(LiteralExpression(1), LiteralExpression(10))
     checker = _make_index_checker(
         {
             left: (index_type, TypeQualifier.PARAM),
@@ -1009,8 +1009,8 @@ def test_index_plus_index_with_symbolic_bounds() -> None:
     right = Identifier("j")
     upper_n = Identifier("N")
     upper_m = Identifier("M")
-    left_index = IndexType(LiteralExpression(1), IdentifierExpression(upper_n), None)
-    right_index = IndexType(LiteralExpression(1), IdentifierExpression(upper_m), None)
+    left_index = IndexType(LiteralExpression(1), IdentifierExpression(upper_n))
+    right_index = IndexType(LiteralExpression(1), IdentifierExpression(upper_m))
     checker = _make_index_checker(
         {
             left: (left_index, TypeQualifier.PARAM),
@@ -1029,7 +1029,7 @@ def test_index_plus_index_with_symbolic_bounds() -> None:
     expected = IndexType(
         LiteralExpression(1) + LiteralExpression(1),
         IdentifierExpression(upper_n) + IdentifierExpression(upper_m),
-        None,
+        LiteralExpression(1),
     )
     _assert_index_type(result_type, expected)
 
@@ -1114,13 +1114,13 @@ def test_scaled_shifted_index_plus_index_synthesizes_bottom_up() -> None:
     """2 * (i1 - 1) + i2: scale of a shifted index, added to another index.
 
     Synthesis chain:
-      (i1 - 1) → IndexType(0-1, 10-1, None) (stride 1)
-      2 * (i1 - 1) → IndexType(2*(0-1), 2*(10-1), LiteralExpression(2))
-      ... + i2 → IndexType(..., min(2, 1) = 1 = None)
+      (i1 - 1) → IndexType(0-1, 10-1, LiteralExpression(1)) (stride 1)
+      2 * (i1 - 1) → IndexType(2*(0-1), 2*(10-1), LiteralExpression(2)) (unit folds)
+      ... + i2 → IndexType(..., min(2, 1) = LiteralExpression(1))
     """
     i1 = Identifier("i1")
     i2 = Identifier("i2")
-    index_type = IndexType(LiteralExpression(1), LiteralExpression(10), None)
+    index_type = IndexType(LiteralExpression(1), LiteralExpression(10))
     checker = _make_index_checker(
         {
             i1: (index_type, TypeQualifier.PARAM),
@@ -1149,7 +1149,7 @@ def test_scaled_shifted_index_plus_index_synthesizes_bottom_up() -> None:
         + LiteralExpression(1),
         (LiteralExpression(2) * (LiteralExpression(10) - LiteralExpression(1)))
         + LiteralExpression(10),
-        None,
+        LiteralExpression(1),
     )
     _assert_index_type(result_type, expected)
 
@@ -1204,7 +1204,7 @@ def test_non_additive_index_index_operations_are_rejected(
     """Only ADD and SUBTRACT are supported between two index operands."""
     left = Identifier("i")
     right = Identifier("j")
-    index_type = IndexType(LiteralExpression(1), LiteralExpression(8), None)
+    index_type = IndexType(LiteralExpression(1), LiteralExpression(8))
     checker = _make_index_checker(
         {
             left: (index_type, TypeQualifier.PARAM),
