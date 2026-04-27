@@ -207,6 +207,47 @@ def test_parse_expression_respects_full_precedence_ladder() -> None:
 
 
 # =============================================================================
+# Parser - boolean literals in compound expressions
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "expression_str, expected_tree",
+    [
+        (
+            "True && False",
+            BinaryExpression(
+                BinaryOperation.LOGICAL_AND,
+                LiteralExpression(True),
+                LiteralExpression(False),
+            ),
+        ),
+        (
+            "(True)",
+            LiteralExpression(True),
+        ),
+        (
+            "(False)",
+            LiteralExpression(False),
+        ),
+    ],
+)
+def test_parse_expression_recognizes_boolean_keywords_in_context(
+    expression_str: str, expected_tree: Expression
+) -> None:
+    """Test ``True``/``False`` are recognized as booleans even when surrounded by
+    other tokens.
+
+    This guards against regressions where a substring identity comparison
+    (``token is "True"``) replaces value equality: under those conditions the
+    runtime tokens produced by the tokenizer are not interned alongside the
+    Python string literal, so the identity check would fail and the booleans
+    would fall through to the identifier branch.
+    """
+    assert parse_expression(expression_str).is_structurally_equivalent(expected_tree)
+
+
+# =============================================================================
 # Parser - keyword vs identifier boundary
 # =============================================================================
 
