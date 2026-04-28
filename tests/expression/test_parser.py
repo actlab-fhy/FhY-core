@@ -425,28 +425,19 @@ def test_capitalized_identifier_remains_identifier_in_compound_expression() -> N
 # =============================================================================
 
 
-def test_parse_expression_raises_on_unclosed_paren() -> None:
-    """Test a missing closing paren raises `RuntimeError`."""
+@pytest.mark.parametrize(
+    "malformed_expression",
+    [
+        pytest.param("(1 + 2", id="unclosed_paren"),
+        pytest.param("((1 + 2) (", id="mismatched_open_paren"),
+        pytest.param("1 +", id="trailing_operator"),
+        pytest.param("", id="empty_input"),
+    ],
+)
+def test_parse_expression_raises_on_malformed_input(malformed_expression: str) -> None:
+    """Test malformed inputs raise `RuntimeError` from the parser."""
     with pytest.raises(RuntimeError):
-        parse_expression("(1 + 2")
-
-
-def test_parse_expression_raises_on_mismatched_open_paren() -> None:
-    """Test a stray opening paren where `)` is expected raises `RuntimeError`."""
-    with pytest.raises(RuntimeError):
-        parse_expression("((1 + 2) (")
-
-
-def test_parse_expression_raises_on_trailing_operator() -> None:
-    """Test an expression ending with an operator raises `RuntimeError`."""
-    with pytest.raises(RuntimeError):
-        parse_expression("1 +")
-
-
-def test_parse_expression_raises_on_empty_input() -> None:
-    """Test an empty expression string raises `RuntimeError`."""
-    with pytest.raises(RuntimeError):
-        parse_expression("")
+        parse_expression(malformed_expression)
 
 
 def test_parse_expression_error_message_reports_offending_token_position() -> None:

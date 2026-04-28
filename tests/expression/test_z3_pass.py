@@ -362,31 +362,24 @@ def _make_trivial_satisfiability_inputs() -> tuple[
     return {identifier}, expression, {identifier: SymbolType.INT}
 
 
-def test_is_satisfiable_returns_none_when_solver_reports_unknown(
+@pytest.mark.parametrize(
+    "solver_result, expected_satisfiability",
+    [
+        pytest.param(z3.unknown, None, id="unknown_to_none"),
+        pytest.param(z3.sat, False, id="sat_to_false"),
+        pytest.param(z3.unsat, True, id="unsat_to_true"),
+    ],
+)
+def test_is_satisfiable_maps_solver_result_to_satisfiability(
     monkeypatch: pytest.MonkeyPatch,
+    solver_result: z3.CheckSatResult,
+    expected_satisfiability: bool | None,
 ) -> None:
-    """Test `is_satisfiable` returns `None` when the solver reports `z3.unknown`."""
-    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+    """Test `is_satisfiable` maps each `z3` solver outcome to its documented return."""
+    monkeypatch.setattr(z3.Solver, "check", lambda self: solver_result)
     considered, expression, symbol_types = _make_trivial_satisfiability_inputs()
-    assert is_satisfiable(considered, expression, symbol_types) is None
-
-
-def test_is_satisfiable_returns_false_when_solver_reports_sat(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test `is_satisfiable` returns `False` when the solver reports `z3.sat`."""
-    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.sat)
-    considered, expression, symbol_types = _make_trivial_satisfiability_inputs()
-    assert is_satisfiable(considered, expression, symbol_types) is False
-
-
-def test_is_satisfiable_returns_true_when_solver_reports_unsat(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test `is_satisfiable` returns `True` when the solver reports `z3.unsat`."""
-    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unsat)
-    considered, expression, symbol_types = _make_trivial_satisfiability_inputs()
-    assert is_satisfiable(considered, expression, symbol_types) is True
+    result = is_satisfiable(considered, expression, symbol_types)
+    assert result is expected_satisfiability
 
 
 # =============================================================================
@@ -414,22 +407,20 @@ def test_z3_visit_identifier_rejects_invalid_symbol_type() -> None:
         converter.visit_identifier_expression(IdentifierExpression(identifier))
 
 
-def test_z3_visit_literal_true_string_via_mock_returns_bool_true() -> None:
-    """Test the ``"True"`` string branch returns ``z3.BoolVal(True)``."""
+@pytest.mark.parametrize(
+    "value, expected_bool",
+    [
+        pytest.param("True", True, id="true_string"),
+        pytest.param("False", False, id="false_string"),
+    ],
+)
+def test_z3_visit_literal_bool_string_via_mock(value: str, expected_bool: bool) -> None:
+    """Test the boolean-string branches map to `z3.BoolVal(True)` / `BoolVal(False)`."""
     converter = ExpressionToZ3Converter({})
     literal = Mock(spec=LiteralExpression)
-    literal.value = "True"
+    literal.value = value
     result = converter.visit_literal_expression(literal)
-    assert result.eq(z3.BoolVal(True))
-
-
-def test_z3_visit_literal_false_string_via_mock_returns_bool_false() -> None:
-    """Test the ``"False"`` string branch returns BoolVal(False)."""
-    converter = ExpressionToZ3Converter({})
-    literal = Mock(spec=LiteralExpression)
-    literal.value = "False"
-    result = converter.visit_literal_expression(literal)
-    assert result.eq(z3.BoolVal(False))
+    assert result.eq(z3.BoolVal(expected_bool))
 
 
 def test_z3_visit_literal_unsupported_value_raises() -> None:

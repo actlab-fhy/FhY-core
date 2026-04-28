@@ -459,82 +459,68 @@ def test_binary_dunder_rejects_unsupported_type_on_left() -> None:
 # =============================================================================
 
 
-def test_logical_and_builds_right_associative_tree() -> None:
-    """Test `Expression.logical_and` folds three arguments right-associatively."""
+_LOGICAL_BUILDERS = (
+    pytest.param(Expression.logical_and, BinaryOperation.LOGICAL_AND, id="and"),
+    pytest.param(Expression.logical_or, BinaryOperation.LOGICAL_OR, id="or"),
+)
+
+
+@pytest.mark.parametrize("builder, expected_operation", _LOGICAL_BUILDERS)
+def test_logical_builder_folds_three_args_right_associatively(
+    builder: Callable[..., BinaryExpression],
+    expected_operation: BinaryOperation,
+) -> None:
+    """Test `logical_and`/`logical_or` fold three args right-associatively."""
     first = LiteralExpression(True)
     second = LiteralExpression(False)
     third = True  # coerced to LiteralExpression
 
-    result = Expression.logical_and(first, second, third)  # type: ignore[arg-type]
+    result = builder(first, second, third)
 
     expected = BinaryExpression(
-        BinaryOperation.LOGICAL_AND,
+        expected_operation,
         first,
-        BinaryExpression(BinaryOperation.LOGICAL_AND, second, LiteralExpression(third)),
+        BinaryExpression(expected_operation, second, LiteralExpression(third)),
     )
     assert result.is_structurally_equivalent(expected)
 
 
-def test_logical_or_builds_right_associative_tree() -> None:
-    """Test `Expression.logical_or` folds three arguments right-associatively."""
-    first = LiteralExpression(True)
-    second = False  # coerced to LiteralExpression
-    third = LiteralExpression(True)
-
-    result = Expression.logical_or(first, second, third)  # type: ignore[arg-type]
-
-    expected = BinaryExpression(
-        BinaryOperation.LOGICAL_OR,
-        first,
-        BinaryExpression(BinaryOperation.LOGICAL_OR, LiteralExpression(second), third),
-    )
-    assert result.is_structurally_equivalent(expected)
-
-
-def test_logical_and_accepts_a_two_argument_call() -> None:
-    """Test `Expression.logical_and` binds as a static method and accepts two args."""
+@pytest.mark.parametrize("builder, expected_operation", _LOGICAL_BUILDERS)
+def test_logical_builder_accepts_a_two_argument_call(
+    builder: Callable[..., BinaryExpression],
+    expected_operation: BinaryOperation,
+) -> None:
+    """Test `logical_and`/`logical_or` bind as static methods and accept two args."""
     first = LiteralExpression(True)
     second = LiteralExpression(False)
 
-    result = Expression.logical_and(first, second)
+    result = builder(first, second)
 
-    expected = BinaryExpression(BinaryOperation.LOGICAL_AND, first, second)
+    expected = BinaryExpression(expected_operation, first, second)
     assert result.is_structurally_equivalent(expected)
 
 
-def test_logical_and_called_via_instance_does_not_capture_self() -> None:
-    """Test calling `logical_and` through an instance does not promote it to an arg."""
+@pytest.mark.parametrize(
+    "method_name, expected_operation",
+    [
+        pytest.param("logical_and", BinaryOperation.LOGICAL_AND, id="and"),
+        pytest.param("logical_or", BinaryOperation.LOGICAL_OR, id="or"),
+    ],
+)
+def test_logical_builder_called_via_instance_does_not_capture_self(
+    method_name: str, expected_operation: BinaryOperation
+) -> None:
+    """Test calling `logical_*` via an instance does not promote `self` to an arg."""
     first = LiteralExpression(True)
     second = LiteralExpression(False)
 
-    result = first.logical_and(first, second)
+    result = getattr(first, method_name)(first, second)
 
-    expected = BinaryExpression(BinaryOperation.LOGICAL_AND, first, second)
+    expected = BinaryExpression(expected_operation, first, second)
     assert result.is_structurally_equivalent(expected)
 
 
-def test_logical_or_accepts_a_two_argument_call() -> None:
-    """Test `Expression.logical_or` binds as a static method and accepts two args."""
-    first = LiteralExpression(True)
-    second = LiteralExpression(False)
-
-    result = Expression.logical_or(first, second)
-
-    expected = BinaryExpression(BinaryOperation.LOGICAL_OR, first, second)
-    assert result.is_structurally_equivalent(expected)
-
-
-def test_logical_or_called_via_instance_does_not_capture_self() -> None:
-    """Test calling `logical_or` through an instance does not promote it to an arg."""
-    first = LiteralExpression(True)
-    second = LiteralExpression(False)
-
-    result = first.logical_or(first, second)
-
-    expected = BinaryExpression(BinaryOperation.LOGICAL_OR, first, second)
-    assert result.is_structurally_equivalent(expected)
-
-
+@pytest.mark.parametrize("builder, _expected_operation", _LOGICAL_BUILDERS)
 @pytest.mark.parametrize(
     "args",
     [
@@ -542,31 +528,16 @@ def test_logical_or_called_via_instance_does_not_capture_self() -> None:
         pytest.param((LiteralExpression(True),), id="one_arg"),
     ],
 )
-def test_logical_and_requires_at_least_two_expressions(
+def test_logical_builder_requires_at_least_two_expressions(
+    builder: Callable[..., BinaryExpression],
+    _expected_operation: BinaryOperation,
     args: tuple[Expression, ...],
 ) -> None:
-    """Test `Expression.logical_and` raises `ValueError` on fewer than two args."""
+    """Test `logical_and`/`logical_or` raise `ValueError` on fewer than two args."""
     with pytest.raises(
         ValueError, match=f"At least two expressions are required, but got {len(args)}."
     ):
-        Expression.logical_and(*args)
-
-
-@pytest.mark.parametrize(
-    "args",
-    [
-        pytest.param((), id="zero_args"),
-        pytest.param((LiteralExpression(True),), id="one_arg"),
-    ],
-)
-def test_logical_or_requires_at_least_two_expressions(
-    args: tuple[Expression, ...],
-) -> None:
-    """Test `Expression.logical_or` raises `ValueError` on fewer than two args."""
-    with pytest.raises(
-        ValueError, match=f"At least two expressions are required, but got {len(args)}."
-    ):
-        Expression.logical_or(*args)
+        builder(*args)
 
 
 # =============================================================================

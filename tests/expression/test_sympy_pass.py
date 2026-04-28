@@ -583,20 +583,21 @@ def test_simplify_variable_expression_with_environment_folds_to_scalar() -> None
 # =============================================================================
 
 
-def test_sympy_converter_visit_literal_true_string_via_mock() -> None:
-    """Test the ``"True"`` string branch returns ``sympy.true``."""
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        pytest.param("True", sympy.true, id="true_string"),
+        pytest.param("False", sympy.false, id="false_string"),
+    ],
+)
+def test_sympy_converter_visit_literal_bool_string_via_mock(
+    value: str, expected: sympy.logic.boolalg.BooleanAtom
+) -> None:
+    """Test the boolean-string branches map to `sympy.true` / `sympy.false`."""
     converter = ExpressionToSympyConverter()
     literal = Mock(spec=LiteralExpression)
-    literal.value = "True"
-    assert converter.visit_literal_expression(literal) is sympy.true
-
-
-def test_sympy_converter_visit_literal_false_string_via_mock() -> None:
-    """Test the ``"False"`` string branch emits `sympy.false`."""
-    converter = ExpressionToSympyConverter()
-    literal = Mock(spec=LiteralExpression)
-    literal.value = "False"
-    assert converter.visit_literal_expression(literal) is sympy.false
+    literal.value = value
+    assert converter.visit_literal_expression(literal) is expected
 
 
 def test_sympy_converter_visit_literal_unsupported_value_raises() -> None:
@@ -642,36 +643,41 @@ def test_sympy_to_expression_convert_relational_rejects_unsupported_subtype() ->
         SymPyToExpressionConverter().convert_relational(fake)
 
 
-def test_sympy_to_expression_convert_add_with_zero_args_returns_literal_zero() -> None:
-    """Test `convert_Add` returns `LiteralExpression(0)` when the node has no args."""
-    fake_add = Mock(spec=sympy.Add)
-    fake_add.args = ()
-    result = SymPyToExpressionConverter().convert_Add(fake_add)
-    assert result.is_structurally_equivalent(LiteralExpression(0))
+@pytest.mark.parametrize(
+    "method_name, sympy_class, identity_value, sample_arg",
+    [
+        pytest.param("convert_Add", sympy.Add, 0, 7, id="add"),
+        pytest.param("convert_Mul", sympy.Mul, 1, 5, id="mul"),
+    ],
+)
+def test_sympy_to_expression_convert_commutative_op_zero_arg_returns_identity(
+    method_name: str,
+    sympy_class: type,
+    identity_value: int,
+    sample_arg: int,  # noqa: ARG001
+) -> None:
+    """Test `convert_Add`/`convert_Mul` return the identity literal on zero args."""
+    fake = Mock(spec=sympy_class)
+    fake.args = ()
+    result = getattr(SymPyToExpressionConverter(), method_name)(fake)
+    assert result.is_structurally_equivalent(LiteralExpression(identity_value))
 
 
-def test_sympy_to_expression_convert_add_with_one_arg_unwraps() -> None:
-    """Test `convert_Add` unwraps a single-arg node to the converted argument."""
-    fake_add = Mock(spec=sympy.Add)
-    fake_add.args = (sympy.Integer(7),)
-    result = SymPyToExpressionConverter().convert_Add(fake_add)
-    assert result.is_structurally_equivalent(LiteralExpression(7))
-
-
-def test_sympy_to_expression_convert_mul_with_zero_args_returns_literal_one() -> None:
-    """Test `convert_Mul` returns `LiteralExpression(1)` when the node has no args."""
-    fake_mul = Mock(spec=sympy.Mul)
-    fake_mul.args = ()
-    result = SymPyToExpressionConverter().convert_Mul(fake_mul)
-    assert result.is_structurally_equivalent(LiteralExpression(1))
-
-
-def test_sympy_to_expression_convert_mul_with_one_arg_unwraps() -> None:
-    """Test `convert_Mul` unwraps a single-arg node to the converted argument."""
-    fake_mul = Mock(spec=sympy.Mul)
-    fake_mul.args = (sympy.Integer(5),)
-    result = SymPyToExpressionConverter().convert_Mul(fake_mul)
-    assert result.is_structurally_equivalent(LiteralExpression(5))
+@pytest.mark.parametrize(
+    "method_name, sympy_class, sample_arg",
+    [
+        pytest.param("convert_Add", sympy.Add, 7, id="add"),
+        pytest.param("convert_Mul", sympy.Mul, 5, id="mul"),
+    ],
+)
+def test_sympy_to_expression_convert_commutative_op_one_arg_unwraps(
+    method_name: str, sympy_class: type, sample_arg: int
+) -> None:
+    """Test `convert_Add`/`convert_Mul` unwrap a single-arg node to its argument."""
+    fake = Mock(spec=sympy_class)
+    fake.args = (sympy.Integer(sample_arg),)
+    result = getattr(SymPyToExpressionConverter(), method_name)(fake)
+    assert result.is_structurally_equivalent(LiteralExpression(sample_arg))
 
 
 def test_sympy_to_expression_convert_nor_lowers_to_not_or() -> None:
