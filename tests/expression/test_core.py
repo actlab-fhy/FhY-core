@@ -121,6 +121,28 @@ def test_expression_satisfies_structural_equivalence_protocol() -> None:
 # =============================================================================
 
 
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(LiteralExpression(7), id="literal"),
+        pytest.param(IdentifierExpression(mock_identifier("x", 0)), id="identifier"),
+        pytest.param(
+            UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1)),
+            id="unary",
+        ),
+        pytest.param(
+            BinaryExpression(
+                BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
+            ),
+            id="binary",
+        ),
+    ],
+)
+def test_structural_equivalence_is_reflexive(expression: Expression) -> None:
+    """Test every expression is structurally equivalent to itself."""
+    assert expression.is_structurally_equivalent(expression)
+
+
 def test_structurally_equivalent_trees_compare_equivalent() -> None:
     """Test two independently-built identical trees are structurally equivalent."""
     left = BinaryExpression(
@@ -205,6 +227,37 @@ def test_identifier_equivalence_requires_matching_identifier() -> None:
     left = IdentifierExpression(Identifier("x"))
     right = IdentifierExpression(Identifier("x"))
     assert not left.is_structurally_equivalent(right)
+
+
+def test_binary_equivalence_is_not_commutative() -> None:
+    """Test ``a + b`` and ``b + a`` are not structurally equivalent.
+
+    Structural equivalence is positional, not algebraic; commuting operands
+    must produce a non-equivalent tree so future "smart" equivalence changes
+    are caught.
+    """
+    a = LiteralExpression(1)
+    b = LiteralExpression(2)
+    assert not BinaryExpression(BinaryOperation.ADD, a, b).is_structurally_equivalent(
+        BinaryExpression(BinaryOperation.ADD, b, a)
+    )
+
+
+@pytest.mark.parametrize(
+    "left_value, right_value",
+    [
+        pytest.param(1, "1", id="int_vs_numeric_string"),
+        pytest.param(1.0, "1.0", id="float_vs_numeric_string"),
+        pytest.param(1.5, "1.5", id="non_integer_float_vs_numeric_string"),
+    ],
+)
+def test_literal_equivalence_is_false_when_python_equality_is_false(
+    left_value: int | float, right_value: str
+) -> None:
+    """Test literal equivalence honors ``==``: numbers do not equal strings."""
+    assert not LiteralExpression(left_value).is_structurally_equivalent(
+        LiteralExpression(right_value)
+    )
 
 
 def _make_pair_by_subclass(
@@ -366,6 +419,21 @@ def test_binary_dunder_promotes_left_python_operand_to_expression(
         right,
     )
     assert binary_operator(left, right).is_structurally_equivalent(expected)
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_binary_dunder_preserves_bool_type_when_wrapping(value: bool) -> None:
+    """Test wrapping a Python ``bool`` keeps it as a ``bool``, not coerced to ``int``.
+
+    ``bool`` is a subtype of ``int`` and ``LiteralType`` admits both, so a naive
+    isinstance check could misclassify. This test pins down that the wrapped
+    value is the ``bool`` singleton.
+    """
+    expression = LiteralExpression(0) + value
+    assert isinstance(expression, BinaryExpression)
+    assert isinstance(expression.right, LiteralExpression)
+    assert type(expression.right.value) is bool
+    assert expression.right.value is value
 
 
 def test_binary_dunder_rejects_unsupported_type_on_right() -> None:
@@ -662,6 +730,38 @@ def test_expression_round_trips_through_serialize_to_dict(
     """Test `serialize_to_dict` yields the expected payload and round-trips."""
     assert expression.serialize_to_dict() == expected_dict
     restored = Expression.deserialize_from_dict(expected_dict)
+    assert restored.is_structurally_equivalent(expression)
+
+
+@pytest.mark.parametrize("operation", list(UnaryOperation))
+def test_unary_expression_round_trips_for_every_operation(
+    operation: UnaryOperation,
+) -> None:
+    """Test serialize/deserialize round-trips every `UnaryOperation` enum value."""
+    expression = UnaryExpression(operation, LiteralExpression(1))
+    restored = Expression.deserialize_from_dict(expression.serialize_to_dict())
+    assert restored.is_structurally_equivalent(expression)
+
+
+@pytest.mark.parametrize("operation", list(BinaryOperation))
+def test_binary_expression_round_trips_for_every_operation(
+    operation: BinaryOperation,
+) -> None:
+    """Test serialize/deserialize round-trips every `BinaryOperation` enum value."""
+    expression = BinaryExpression(operation, LiteralExpression(1), LiteralExpression(2))
+    restored = Expression.deserialize_from_dict(expression.serialize_to_dict())
+    assert restored.is_structurally_equivalent(expression)
+
+
+def test_expression_round_trips_through_a_deeply_nested_tree() -> None:
+    """Test serialize/deserialize round-trips a 50-level left-leaning binary chain."""
+    depth = 50
+    expression: Expression = LiteralExpression(0)
+    for term in range(1, depth + 1):
+        expression = BinaryExpression(
+            BinaryOperation.ADD, expression, LiteralExpression(term)
+        )
+    restored = Expression.deserialize_from_dict(expression.serialize_to_dict())
     assert restored.is_structurally_equivalent(expression)
 
 

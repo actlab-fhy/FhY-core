@@ -429,6 +429,32 @@ def test_convert_symbol_recovers_name_hint_and_suffix_as_id(
     assert result.identifier.id == expected_id
 
 
+@pytest.mark.parametrize(
+    "name_hint, identifier_id",
+    [
+        pytest.param("a_b_c", 5, id="underscores_in_name_hint"),
+        pytest.param("nested_name", 0, id="single_underscore_in_name_hint"),
+        pytest.param("x1", 0, id="digits_in_name_hint"),
+        pytest.param("x_1", 0, id="digit_after_underscore_in_name_hint"),
+    ],
+)
+def test_identifier_round_trips_through_sympy_for_tricky_name_hints(
+    name_hint: str, identifier_id: int
+) -> None:
+    """Test name hints with underscores/digits round-trip through SymPy unchanged.
+
+    The encoding glues ``name_hint + "_" + id`` and the decoder splits at the
+    *last* underscore, so name hints that themselves contain underscores or
+    end in digits are the interesting boundary cases.
+    """
+    original = IdentifierExpression(mock_identifier(name_hint, identifier_id))
+    sympy_expression = convert_expression_to_sympy_expression(original)
+    restored = convert_sympy_expression_to_expression(sympy_expression)
+    assert isinstance(restored, IdentifierExpression)
+    assert restored.identifier.name_hint == name_hint
+    assert restored.identifier.id == identifier_id
+
+
 def test_convert_add_of_literals_and_symbol_preserves_unevaluated_tail() -> None:
     """Test `convert_Add` preserves the multi-arg shape without folding the tail."""
     source = sympy.Add(

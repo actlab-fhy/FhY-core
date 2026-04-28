@@ -1,5 +1,7 @@
 """Tests for `fhy_core.expression.pprint`."""
 
+from unittest.mock import patch
+
 import pytest
 
 from fhy_core.expression import (
@@ -10,11 +12,14 @@ from fhy_core.expression import (
     LiteralExpression,
     UnaryExpression,
     UnaryOperation,
+    parse_expression,
     pformat_expression,
 )
 from fhy_core.expression.pprint import ExpressionPrettyFormatter
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
+
+from .conftest import mock_identifier
 
 # =============================================================================
 # Symbolic format (default)
@@ -117,6 +122,79 @@ def test_pretty_formatter_default_uses_symbolic_notation() -> None:
         BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
     )
     assert ExpressionPrettyFormatter()(expression) == "(1 + 2)"
+
+
+# =============================================================================
+# Symbolic-format round-trip with the parser
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(LiteralExpression("5"), id="integer_literal"),
+        pytest.param(LiteralExpression("3.5"), id="float_literal"),
+        pytest.param(IdentifierExpression(mock_identifier("x", 0)), id="identifier"),
+        pytest.param(
+            UnaryExpression(
+                UnaryOperation.NEGATE,
+                IdentifierExpression(mock_identifier("x", 0)),
+            ),
+            id="unary_negate",
+        ),
+        pytest.param(
+            UnaryExpression(
+                UnaryOperation.LOGICAL_NOT,
+                IdentifierExpression(mock_identifier("flag", 0)),
+            ),
+            id="unary_logical_not",
+        ),
+        pytest.param(
+            BinaryExpression(
+                BinaryOperation.ADD,
+                LiteralExpression("1"),
+                BinaryExpression(
+                    BinaryOperation.MULTIPLY,
+                    LiteralExpression("2"),
+                    LiteralExpression("3"),
+                ),
+            ),
+            id="add_times_precedence",
+        ),
+        pytest.param(
+            BinaryExpression(
+                BinaryOperation.LOGICAL_AND,
+                IdentifierExpression(mock_identifier("a", 0)),
+                BinaryExpression(
+                    BinaryOperation.LOGICAL_OR,
+                    IdentifierExpression(mock_identifier("b", 1)),
+                    IdentifierExpression(mock_identifier("c", 2)),
+                ),
+            ),
+            id="and_or",
+        ),
+        pytest.param(
+            BinaryExpression(
+                BinaryOperation.POWER,
+                IdentifierExpression(mock_identifier("x", 0)),
+                LiteralExpression("2"),
+            ),
+            id="power",
+        ),
+    ],
+)
+@patch("fhy_core.identifier.Identifier._next_id", 0)
+def test_pformat_expression_round_trips_through_parse_expression(
+    expression: Expression,
+) -> None:
+    """Test ``parse_expression(pformat_expression(e))`` round-trips back to ``e``.
+
+    Catches drift between the pretty-printer's parenthesization and the
+    parser's precedence rules.
+    """
+    formatted = pformat_expression(expression)
+    reparsed = parse_expression(formatted)
+    assert reparsed.is_structurally_equivalent(expression)
 
 
 # =============================================================================

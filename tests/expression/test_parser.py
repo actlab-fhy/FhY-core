@@ -248,6 +248,144 @@ def test_parse_expression_recognizes_boolean_keywords_in_context(
 
 
 # =============================================================================
+# Parser - precedence and associativity edge cases
+# =============================================================================
+
+
+@patch("fhy_core.identifier.Identifier._next_id", 0)
+def test_chained_exponent_is_left_associative_per_grammar() -> None:
+    """Test ``a ** b ** c`` parses left-to-right at the exponentiation level.
+
+    The grammar docstring on `ExpressionParser` notes that ``**`` is parsed
+    left-to-right despite being right-associative in typical usage; this test
+    locks that documented behavior in.
+    """
+    a = IdentifierExpression(mock_identifier("a", 0))
+    b = IdentifierExpression(mock_identifier("b", 1))
+    c = IdentifierExpression(mock_identifier("c", 2))
+    expected = BinaryExpression(
+        BinaryOperation.POWER,
+        BinaryExpression(BinaryOperation.POWER, a, b),
+        c,
+    )
+    assert parse_expression("a ** b ** c").is_structurally_equivalent(expected)
+
+
+@patch("fhy_core.identifier.Identifier._next_id", 0)
+def test_exponent_binds_tighter_than_unary_minus() -> None:
+    """Test ``-a ** b`` parses as ``-(a ** b)``."""
+    a = IdentifierExpression(mock_identifier("a", 0))
+    b = IdentifierExpression(mock_identifier("b", 1))
+    expected = UnaryExpression(
+        UnaryOperation.NEGATE, BinaryExpression(BinaryOperation.POWER, a, b)
+    )
+    assert parse_expression("-a ** b").is_structurally_equivalent(expected)
+
+
+@pytest.mark.parametrize(
+    "expression_str, expected_tree",
+    [
+        (
+            "--x",
+            UnaryExpression(
+                UnaryOperation.NEGATE,
+                UnaryExpression(
+                    UnaryOperation.NEGATE,
+                    IdentifierExpression(mock_identifier("x", 0)),
+                ),
+            ),
+        ),
+        (
+            "!!x",
+            UnaryExpression(
+                UnaryOperation.LOGICAL_NOT,
+                UnaryExpression(
+                    UnaryOperation.LOGICAL_NOT,
+                    IdentifierExpression(mock_identifier("x", 0)),
+                ),
+            ),
+        ),
+        (
+            "-+-x",
+            UnaryExpression(
+                UnaryOperation.NEGATE,
+                UnaryExpression(
+                    UnaryOperation.POSITIVE,
+                    UnaryExpression(
+                        UnaryOperation.NEGATE,
+                        IdentifierExpression(mock_identifier("x", 0)),
+                    ),
+                ),
+            ),
+        ),
+    ],
+)
+@patch("fhy_core.identifier.Identifier._next_id", 0)
+def test_stacked_unary_operators_nest_in_token_order(
+    expression_str: str, expected_tree: Expression
+) -> None:
+    """Test stacked unary operators produce nested ``UnaryExpression`` nodes."""
+    assert parse_expression(expression_str).is_structurally_equivalent(expected_tree)
+
+
+@pytest.mark.parametrize(
+    "expression_str, expected_tree",
+    [
+        (
+            "1+2*3",
+            BinaryExpression(
+                BinaryOperation.ADD,
+                LiteralExpression("1"),
+                BinaryExpression(
+                    BinaryOperation.MULTIPLY,
+                    LiteralExpression("2"),
+                    LiteralExpression("3"),
+                ),
+            ),
+        ),
+        (
+            "a&&b||c",
+            BinaryExpression(
+                BinaryOperation.LOGICAL_OR,
+                BinaryExpression(
+                    BinaryOperation.LOGICAL_AND,
+                    IdentifierExpression(mock_identifier("a", 0)),
+                    IdentifierExpression(mock_identifier("b", 1)),
+                ),
+                IdentifierExpression(mock_identifier("c", 2)),
+            ),
+        ),
+    ],
+)
+@patch("fhy_core.identifier.Identifier._next_id", 0)
+def test_parse_expression_handles_operators_without_surrounding_whitespace(
+    expression_str: str, expected_tree: Expression
+) -> None:
+    """Test the tokenizer separates adjacent operators without requiring spaces."""
+    assert parse_expression(expression_str).is_structurally_equivalent(expected_tree)
+
+
+# =============================================================================
+# Tokenizer - numeric oddities
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "expression_str, expected_tokens",
+    [
+        ("1.", ["1"]),
+        (".1", ["1"]),
+        ("00", ["00"]),
+    ],
+)
+def test_tokenize_expression_handles_malformed_numeric_fragments(
+    expression_str: str, expected_tokens: list[str]
+) -> None:
+    """Test the tokenizer drops stray ``.`` and preserves leading-zero integer runs."""
+    assert tokenize_expression(expression_str) == expected_tokens
+
+
+# =============================================================================
 # Parser - keyword vs identifier boundary
 # =============================================================================
 
@@ -256,6 +394,15 @@ def test_parse_expression_recognizes_boolean_keywords_in_context(
 @patch("fhy_core.identifier.Identifier._next_id", 0)
 def test_capitalized_identifiers_before_keywords_stay_identifiers(name: str) -> None:
     """Test names sorting before ``True``/``False`` lex-wise stay identifiers."""
+    result = parse_expression(name)
+    expected = IdentifierExpression(mock_identifier(name, 0))
+    assert result.is_structurally_equivalent(expected)
+
+
+@pytest.mark.parametrize("name", ["Truex", "TRUE", "_True", "True_"])
+@patch("fhy_core.identifier.Identifier._next_id", 0)
+def test_boolean_keyword_lookalikes_stay_identifiers(name: str) -> None:
+    """Test names sharing a prefix or differing in case from bools stay identifiers."""
     result = parse_expression(name)
     expected = IdentifierExpression(mock_identifier(name, 0))
     assert result.is_structurally_equivalent(expected)
@@ -300,6 +447,12 @@ def test_parse_expression_raises_on_empty_input() -> None:
     """Test an empty expression string raises `RuntimeError`."""
     with pytest.raises(RuntimeError):
         parse_expression("")
+
+
+def test_parse_expression_error_message_reports_offending_token_position() -> None:
+    """Test the error message includes the token index of the unexpected token."""
+    with pytest.raises(RuntimeError, match=r'Unexpected token "\)" at position 0'):
+        parse_expression(") + 1")
 
 
 # =============================================================================
