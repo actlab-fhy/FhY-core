@@ -160,6 +160,21 @@ def test_positive_integer_literal_upgrades_to_signed_context() -> None:
     assert result_qualifier is TypeQualifier.PARAM
 
 
+def test_synthesize_large_positive_integer_literal_stays_weak_unsigned() -> None:
+    """Test a positive integer above 32-bit range still synthesizes as weak ``UINT``.
+
+    Without a surrounding context, no automatic bit-width selection happens;
+    the literal stays as the weak ``UINT`` core type and only narrows when
+    placed in a ``check`` flow with a concrete expected type.
+    """
+    result_type, _ = synthesize_expression_type(
+        LiteralExpression(2**40),
+        lambda _: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM),
+    )
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.UINT))
+
+
 def test_integer_literals_remain_weak_without_context() -> None:
     """Test two integer literals without context stay weakly typed."""
     checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
@@ -216,6 +231,48 @@ def test_check_integer_literal_against_float_context_uses_context_type() -> None
     )
 
     assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.FLOAT32))
+
+
+def test_check_propagates_expected_type_to_two_weak_literal_operands() -> None:
+    """Test `check` propagates the expected type into both literal operands.
+
+    With both sides starting as weak literals, the late-stage recheck logic
+    inside ``_infer_binary_expression`` cannot rescue them - one side has to
+    already be non-weak for the rescue to fire. This exercises the early
+    propagation that hands the expected type to each literal up front.
+    """
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    result_type, _ = checker.check(
+        BinaryExpression(
+            BinaryOperation.ADD, LiteralExpression(5), LiteralExpression(3)
+        ),
+        _make_scalar(CoreDataType.INT8),
+    )
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.INT8))
+
+
+def test_check_positive_literal_overflowing_narrow_unsigned_expected_raises() -> None:
+    """Test `check` rejects a positive literal that exceeds the expected width."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"is wider than the expected type uint8",
+    ):
+        checker.check(LiteralExpression(256), _make_scalar(CoreDataType.UINT8))
+
+
+def test_check_negative_literal_against_unsigned_expected_raises() -> None:
+    """Test `check` rejects a negative literal against an unsigned expected type."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"Literal -1 is incompatible with uint16",
+    ):
+        checker.check(LiteralExpression(-1), _make_scalar(CoreDataType.UINT16))
 
 
 def test_check_binary_expression_uses_expected_type_bidirectionally() -> None:
@@ -376,6 +433,55 @@ def test_check_numerical_against_index_raises() -> None:
                 LiteralExpression(1), LiteralExpression(10), LiteralExpression(1)
             ),
         )
+
+
+# =============================================================================
+# Numerical addition promotion - bit-width and sign edges
+# =============================================================================
+
+
+def test_addition_of_mixed_bit_width_signed_integers_promotes_to_wider_width() -> None:
+    """Test ``INT8 + INT64`` synthesizes as ``INT64``."""
+    left = Identifier("left")
+    right = Identifier("right")
+    checker = make_identifier_checker(
+        {
+            left: (_make_scalar(CoreDataType.INT8), TypeQualifier.PARAM),
+            right: (_make_scalar(CoreDataType.INT64), TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            IdentifierExpression(left),
+            IdentifierExpression(right),
+        )
+    )
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.INT64))
+
+
+def test_addition_of_unsigned_and_signed_same_width_promotes_to_wider_signed() -> None:
+    """Test ``UINT32 + INT32`` widens to ``INT64`` to fit both operand ranges."""
+    left = Identifier("left")
+    right = Identifier("right")
+    checker = make_identifier_checker(
+        {
+            left: (_make_scalar(CoreDataType.UINT32), TypeQualifier.PARAM),
+            right: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            IdentifierExpression(left),
+            IdentifierExpression(right),
+        )
+    )
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.INT64))
 
 
 # =============================================================================
@@ -603,6 +709,28 @@ def test_floor_division_mixed_int_and_float_promotes_to_float(
     assert result_type.is_structurally_equivalent(_make_scalar(expected_core_data_type))
 
 
+def test_floor_division_int64_by_float16_widens_to_max_bit_width_float() -> None:
+    """Test ``INT64 // FLOAT16`` promotes to ``FLOAT64`` to honor the wider operand."""
+    left = Identifier("left")
+    right = Identifier("right")
+    checker = make_identifier_checker(
+        {
+            left: (_make_scalar(CoreDataType.INT64), TypeQualifier.PARAM),
+            right: (_make_scalar(CoreDataType.FLOAT16), TypeQualifier.PARAM),
+        }
+    )
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.FLOOR_DIVIDE,
+            IdentifierExpression(left),
+            IdentifierExpression(right),
+        )
+    )
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.FLOAT64))
+
+
 @pytest.mark.parametrize(
     "left_core_data_type, right_core_data_type",
     [
@@ -722,6 +850,30 @@ def test_non_output_qualifier_identifier_is_accepted_on_read(
     assert result_qualifier is qualifier
 
 
+def test_aliased_input_identifier_promotes_qualifier_through_addition() -> None:
+    """Test ``x + x`` for a single ``INPUT`` identifier yields the promoted qualifier.
+
+    Reusing the same identifier on both sides of a binary expression must not
+    confuse the context tracker; the synthesized qualifier should follow the
+    documented promotion rule for ``INPUT + INPUT``.
+    """
+    x = Identifier("x")
+    checker = make_identifier_checker(
+        {x: (_make_scalar(CoreDataType.INT32), TypeQualifier.INPUT)}
+    )
+
+    result_type, result_qualifier = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            IdentifierExpression(x),
+            IdentifierExpression(x),
+        )
+    )
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.INT32))
+    assert result_qualifier is TypeQualifier.TEMP
+
+
 @pytest.mark.parametrize("qualifier", _NON_OUTPUT_TYPE_QUALIFIERS)
 def test_non_output_qualifier_operand_is_accepted_in_unary_expression(
     qualifier: TypeQualifier,
@@ -816,6 +968,54 @@ def test_index_minus_scalar_produces_shifted_index_type() -> None:
         LiteralExpression(2) - LiteralExpression(1),
         LiteralExpression(12) - LiteralExpression(1),
         LiteralExpression(3),
+    )
+    assert result_type.is_structurally_equivalent(expected)
+
+
+def test_index_with_negative_stride_shifts_bounds_and_preserves_stride() -> None:
+    """Test shifting a negative-stride index leaves the stride untouched."""
+    identifier = Identifier("idx")
+    index = IndexType(
+        LiteralExpression(10), LiteralExpression(0), LiteralExpression(-1)
+    )
+    checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.ADD,
+            IdentifierExpression(identifier),
+            LiteralExpression(3),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(10) + LiteralExpression(3),
+        LiteralExpression(0) + LiteralExpression(3),
+        LiteralExpression(-1),
+    )
+    assert result_type.is_structurally_equivalent(expected)
+
+
+def test_index_with_negative_stride_scales_bounds_and_stride() -> None:
+    """Test scaling a negative-stride index multiplies bounds and stride together."""
+    identifier = Identifier("idx")
+    index = IndexType(
+        LiteralExpression(10), LiteralExpression(0), LiteralExpression(-1)
+    )
+    checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.MULTIPLY,
+            IdentifierExpression(identifier),
+            LiteralExpression(2),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(2) * LiteralExpression(10),
+        LiteralExpression(2) * LiteralExpression(0),
+        LiteralExpression(-2),
     )
     assert result_type.is_structurally_equivalent(expected)
 

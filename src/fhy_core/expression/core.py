@@ -559,7 +559,7 @@ def _is_expression_structurally_equivalent(
 def _(expression: UnaryExpression, other: object) -> bool:
     return (
         isinstance(other, UnaryExpression)
-        and expression.operation == other.operation  # pragma: no mutate
+        and expression.operation == other.operation
         and expression.operand.is_structurally_equivalent(other.operand)
     )
 
@@ -568,7 +568,7 @@ def _(expression: UnaryExpression, other: object) -> bool:
 def _(expression: BinaryExpression, other: object) -> bool:
     return (
         isinstance(other, BinaryExpression)
-        and expression.operation == other.operation  # pragma: no mutate
+        and expression.operation == other.operation
         and expression.left.is_structurally_equivalent(other.left)
         and expression.right.is_structurally_equivalent(other.right)
     )
