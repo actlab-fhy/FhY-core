@@ -33,7 +33,7 @@ def test_categorical_param_accepts_serializable_with_equality_and_hash() -> None
     """
     a = SerializableEqualHashable(1)
     b = SerializableEqualHashable(2)
-    param: CategoricalParam[SerializableEqualHashable] = CategoricalParam([a, b])
+    param: CategoricalParam[SerializableEqualHashable] = CategoricalParam([a, b])  # type: ignore[type-var]  # test: bespoke `Serializable` value
     assert param.is_value_admissible(a)
     assert param.is_value_admissible(b)
 
@@ -47,7 +47,7 @@ def test_categorical_param_admissibility_does_not_raise_on_serializable_value() 
     pins the current admissibility path as exception-free.
     """
     value = SerializableEqualHashable(1)
-    param: CategoricalParam[SerializableEqualHashable] = CategoricalParam([value])
+    param: CategoricalParam[SerializableEqualHashable] = CategoricalParam([value])  # type: ignore[type-var]  # test: bespoke `Serializable` value
     assert param.is_value_admissible(value)
 
 
@@ -65,7 +65,7 @@ def test_ordinal_param_accepts_serializable_with_lt_inherited_from_parent() -> N
     """
     a = SerializableOrderableInherited(1)
     b = SerializableOrderableInherited(2)
-    param: OrdinalParam[SerializableOrderableInherited] = OrdinalParam([a, b])
+    param: OrdinalParam[SerializableOrderableInherited] = OrdinalParam([a, b])  # type: ignore[type-var]  # test: bespoke `Serializable` value
     assert param.is_value_admissible(a)
     assert param.is_value_admissible(b)
 
@@ -79,7 +79,7 @@ def test_ordinal_param_accepts_serializable_with_lt_on_self_class() -> None:
     """
     a = SerializableOrderableSelf(1)
     b = SerializableOrderableSelf(2)
-    param: OrdinalParam[SerializableOrderableSelf] = OrdinalParam([a, b])
+    param: OrdinalParam[SerializableOrderableSelf] = OrdinalParam([a, b])  # type: ignore[type-var]  # test: bespoke `Serializable` value
     assert param.is_value_admissible(a)
     assert param.is_value_admissible(b)
 

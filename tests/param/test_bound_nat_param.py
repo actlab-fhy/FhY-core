@@ -1,5 +1,7 @@
 """Tests for `BoundNatParam`."""
 
+from typing import cast
+
 import pytest
 
 from fhy_core.identifier import Identifier
@@ -47,8 +49,8 @@ def test_bound_nat_param_init_defaults_to_prefer_inclusive_true() -> None:
     which masks the `__init__` default. Verifies via the constraint form
     produced by an arithmetic operation.
     """
-    p = BoundNatParam().add_lower_bound_constraint(3) + 1
-    assert ">=" in str(p)
+    bounded = cast(BoundNatParam, BoundNatParam().add_lower_bound_constraint(3))
+    assert ">=" in str(bounded + 1)
 
 
 # =============================================================================

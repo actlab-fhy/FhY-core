@@ -516,7 +516,7 @@ def test_bound_int_param_classmethod_rejects_name_passed_positionally(
 ) -> None:
     """Test each `BoundIntParam` classmethod rejects ``name`` passed positionally."""
     with pytest.raises(TypeError):
-        callable_(*positional_args, Identifier("x"))  # type: ignore[operator,misc]  # test: keyword-only
+        callable_(*positional_args, Identifier("x"))  # type: ignore[operator]  # test: keyword-only
 
 
 # =============================================================================

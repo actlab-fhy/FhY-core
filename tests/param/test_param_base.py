@@ -1,5 +1,6 @@
 """Tests for the `Param` ABC and shared base behavior."""
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -133,23 +134,17 @@ def test_structural_equivalence_is_false_when_constraint_counts_differ(
     """Test params with different constraint counts are not structurally equivalent."""
     shared_name = Identifier("x")
     shared_name_copy = Identifier.deserialize_from_dict(shared_name.serialize_to_dict())
-    bounds = [
-        lambda var, ve: EquationConstraint(var, ve >= 0),
-        lambda var, ve: EquationConstraint(var, ve <= 10),
+    bound_builders: list[Callable[[IntParam], EquationConstraint]] = [
+        lambda p: EquationConstraint(p.variable, p.variable_expression >= 0),
+        lambda p: EquationConstraint(p.variable, p.variable_expression <= 10),
     ]
     left_base = IntParam(name=shared_name)
     right_base = IntParam(name=shared_name_copy)
     left = left_base.add_constraints(
-        [
-            b(left_base.variable, left_base.variable_expression)
-            for b in bounds[:self_count]
-        ]
+        [b(left_base) for b in bound_builders[:self_count]]
     )
     right = right_base.add_constraints(
-        [
-            b(right_base.variable, right_base.variable_expression)
-            for b in bounds[:other_count]
-        ]
+        [b(right_base) for b in bound_builders[:other_count]]
     )
     assert not left.is_structurally_equivalent(right)
 

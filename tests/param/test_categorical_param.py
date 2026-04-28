@@ -142,7 +142,7 @@ def test_categorical_param_admissibility_uses_equality_not_identity() -> None:
     candidate = SerializableEqualHashable(42)
     assert category is not candidate
     assert category == candidate
-    param: CategoricalParam[SerializableEqualHashable] = CategoricalParam([category])
+    param: CategoricalParam[SerializableEqualHashable] = CategoricalParam([category])  # type: ignore[type-var]  # test: bespoke `Serializable` value
     assert param.is_value_admissible(candidate)
 
 

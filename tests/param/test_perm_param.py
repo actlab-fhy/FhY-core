@@ -52,7 +52,7 @@ def test_perm_param_init_uses_equality_not_identity_to_detect_duplicates() -> No
     assert first is not second
     assert first == second
     with pytest.raises(ValueError):
-        PermParam([first, second])
+        PermParam([first, second])  # type: ignore[type-var]  # test: bespoke `Serializable` value
 
 
 def test_perm_param_init_rejects_non_primitive_non_serializable_members() -> None:
