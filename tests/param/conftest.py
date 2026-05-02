@@ -15,6 +15,8 @@ from fhy_core.param import (
 from fhy_core.serialization import Serializable, register_serializable
 from fhy_core.trait import OrderableMixin
 
+from ..conftest import SerializableEqualHashable  # noqa: F401  # re-exported below
+
 __all__ = [
     "SerializableHashOnly",
     "SerializableEqualNoOrder",
@@ -75,37 +77,6 @@ class SerializableEqualNoOrder(Serializable):
 
     @classmethod
     def deserialize_from_dict(cls, data: dict[str, Any]) -> "SerializableEqualNoOrder":
-        return cls(value=int(data["value"]))
-
-
-@register_serializable(type_id="tests.param.serializable_equal_hashable")
-class SerializableEqualHashable(Serializable):
-    """Serializable value with overridden ``__eq__`` and a real ``__hash__``.
-
-    Used to exercise the wrapped-leaf equal-semantics path in
-    `_supports_equal_value_semantics`, which checks both an overridden
-    ``__eq__`` and a non-``None`` ``__hash__``.
-
-    """
-
-    _value: int
-
-    def __init__(self, value: int) -> None:
-        self._value = value
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, SerializableEqualHashable) and (
-            self._value == other._value
-        )
-
-    def __hash__(self) -> int:
-        return hash(self._value)
-
-    def serialize_to_dict(self) -> dict[str, Any]:
-        return {"value": self._value}
-
-    @classmethod
-    def deserialize_from_dict(cls, data: dict[str, Any]) -> "SerializableEqualHashable":
         return cls(value=int(data["value"]))
 
 
