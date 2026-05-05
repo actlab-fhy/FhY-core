@@ -36,6 +36,7 @@ from fhy_core.serialization import (
     SerializationPayloadTypeError,
     SerializationTypeError,
     SerializationValueError,
+    SerializedDict,
     UnknownCodecError,
     UnknownTypeIdError,
     VersionMismatchError,
@@ -214,7 +215,8 @@ def _replace_byte(data: bytes, index: int, value: int) -> bytes:
 def _decode_envelope_payload(payload: bytes, obj: Serializable) -> dict[str, int]:
     """Decode an envelope payload using the codec advertised by ``obj``."""
     if type(obj).get_binary_codec() is BinaryPayloadCodec.JSON:
-        return json.loads(payload.decode("utf-8"))
+        decoded: dict[str, int] = json.loads(payload.decode("utf-8"))
+        return decoded
     lo, hi = struct.unpack("!ii", payload)
     return {"lo": lo, "hi": hi}
 
@@ -571,7 +573,7 @@ def test_deserialize_registry_wrapped_value_rejects_unhashable_frozenset_item() 
         def __eq__(self, other: object) -> bool:
             return isinstance(other, _UnhashableLeaf)
 
-    payload = {
+    payload: SerializedDict = {
         "__type__": "builtins.frozenset",
         "__data__": [
             {
