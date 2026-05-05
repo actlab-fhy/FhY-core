@@ -54,6 +54,28 @@ class SymbolType(Enum):
     BOOL = auto()
 
 
+def _generate_commutative_associative_operation_tree(
+    operation: "BinaryOperation", *expressions: "Expression"
+) -> "BinaryExpression":
+    if len(expressions) < 2:  # noqa: PLR2004
+        raise ValueError(
+            f"At least two expressions are required, but got {len(expressions)}."
+        )
+    reversed_expressions = list(reversed(expressions))
+    result = BinaryExpression(
+        operation,
+        Expression._get_expression_from_other(reversed_expressions[1]),
+        Expression._get_expression_from_other(reversed_expressions[0]),
+    )
+    for next_expression in reversed_expressions[2:]:
+        result = BinaryExpression(
+            operation,
+            Expression._get_expression_from_other(next_expression),
+            result,
+        )
+    return result
+
+
 class Expression(
     WrappedFamilySerializable,
     FrozenMixin,
@@ -210,7 +232,7 @@ class Expression(
             Logical AND expression.
 
         """
-        return Expression._generate_commutative_associative_operation_tree(
+        return _generate_commutative_associative_operation_tree(
             BinaryOperation.LOGICAL_AND, *expressions
         )
 
@@ -225,29 +247,9 @@ class Expression(
             Logical OR expression.
 
         """
-        return Expression._generate_commutative_associative_operation_tree(
+        return _generate_commutative_associative_operation_tree(
             BinaryOperation.LOGICAL_OR, *expressions
         )
-
-    @staticmethod
-    def _generate_commutative_associative_operation_tree(
-        operation: "BinaryOperation", *expressions: "Expression"
-    ) -> "BinaryExpression":
-        if len(expressions) < 2:  # noqa: PLR2004
-            raise ValueError("At least two expressions are required.")
-        reversed_expressions = list(reversed(expressions))
-        result = BinaryExpression(
-            operation,
-            Expression._get_expression_from_other(reversed_expressions[1]),
-            Expression._get_expression_from_other(reversed_expressions[0]),
-        )
-        for next_expression in reversed_expressions[2:]:
-            result = BinaryExpression(
-                operation,
-                Expression._get_expression_from_other(next_expression),
-                result,
-            )
-        return result
 
     @staticmethod
     def _get_expression_from_other(other: Any) -> "Expression":
@@ -257,9 +259,10 @@ class Expression(
             return IdentifierExpression(other)
         elif isinstance(other, (int, float, bool, str)):
             return LiteralExpression(other)
-        raise ValueError(
-            f"Unsupported type for creating literal expression: {type(other)}."
-        )
+        else:
+            raise ValueError(
+                f"Unable to cast {other!r} with type {type(other)} to an expression."
+            )
 
 
 class UnaryOperation(Enum):

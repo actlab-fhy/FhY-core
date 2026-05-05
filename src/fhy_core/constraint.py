@@ -75,8 +75,8 @@ class Constraint(
     def variable(self) -> Identifier:
         return self._variable
 
-    def __call__(self, values: dict[Identifier, Any]) -> bool:
-        return self.is_satisfied(values)
+    def __call__(self, value: Any) -> bool:
+        return self.is_satisfied(value)
 
     @abstractmethod
     def is_satisfied(self, variable_value: Any) -> bool:
@@ -180,7 +180,7 @@ def _serialize_constraint_member(value: ConstraintMember) -> SerializedValue:
 def _deserialize_constraint_member(
     owner_class: type[Any], field_name: str, value: SerializedValue
 ) -> ConstraintMember:
-    if not is_serialized_dict(value):
+    if not is_serialized_dict(value):  # pragma: no cover
         raise DeserializationValueError(
             owner_class,
             field_name,

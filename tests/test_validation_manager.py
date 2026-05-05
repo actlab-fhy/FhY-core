@@ -408,7 +408,7 @@ def test_validation_manager_does_not_suppress_pass_validation_error_diagnostics(
     report = manager.validate(ValueBox(0))
 
     messages = [d.message_text for d in report.errors()]
-    # Only the real, explicitly-reported ERROR should be present —
+    # Only the real, explicitly-reported ERROR should be present -
     # no synthetic "raised without reporting" fallback.
     assert "real-error" in messages
     assert not any("raised without reporting" in m for m in messages)
