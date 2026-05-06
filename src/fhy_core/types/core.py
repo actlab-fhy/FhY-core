@@ -46,11 +46,12 @@ class Type(WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, A
 
     def is_structurally_equivalent(self, other: object) -> bool:
         # Deferred import: ``dispatch`` registers handlers against
-        # ``structural_eq`` for the concrete ``Type`` subclasses defined in
-        # this module, so importing it at the module top would create a cycle.
-        from .dispatch import structural_eq  # noqa: PLC0415
+        # ``is_structurally_equivalent`` for the concrete ``Type`` subclasses
+        # defined in this module, so importing it at the module top would
+        # create a cycle.
+        from .dispatch import is_structurally_equivalent  # noqa: PLC0415
 
-        return structural_eq(self, other)
+        return is_structurally_equivalent(self, other)
 
 
 @register_error
@@ -62,10 +63,11 @@ class DataType(WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixi
     """Abstract data type."""
 
     def is_structurally_equivalent(self, other: object) -> bool:
-        # Deferred import for the same reason as ``Type.is_structurally_equivalent``.
-        from .dispatch import structural_eq  # noqa: PLC0415
+        # Deferred import for the same reason as
+        # ``Type.is_structurally_equivalent``.
+        from .dispatch import is_structurally_equivalent  # noqa: PLC0415
 
-        return structural_eq(self, other)
+        return is_structurally_equivalent(self, other)
 
 
 class CoreDataType(StrEnum):
@@ -551,6 +553,13 @@ def _is_valid_numerical_type_data(
     )
 
 
+def _format_numerical_shape_dimension(dimension: Expression | EllipsisType) -> str:
+    if dimension is Ellipsis:
+        return "..."
+    else:
+        return pformat_expression(dimension, show_id=True)
+
+
 @register_serializable(type_id="numerical_type")
 class NumericalType(Type):
     """Numerical multi-dimensional array type; empty shapes indicate scalars.
@@ -624,12 +633,6 @@ class NumericalType(Type):
         return (
             f"{self.__class__.__name__}({repr(self._data_type)}, {repr(self._shape)})"
         )
-
-
-def _format_numerical_shape_dimension(dimension: Expression | EllipsisType) -> str:
-    if dimension is Ellipsis:
-        return "..."
-    return pformat_expression(dimension, show_id=True)
 
 
 class _IndexTypeData(TypedDict):

@@ -33,17 +33,41 @@ from fhy_core.types import (
     bind_data_template,
     bind_template,
     get_core_data_type_bit_width,
+    is_structurally_equivalent,
     is_weak_core_data_type,
     promote_core_data_types,
     promote_type_qualifiers,
     resolve_literal_core_data_type,
-    structural_eq,
     substitute_data_template,
     substitute_template,
     unify,
 )
 
 from .conftest import mock_identifier
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def int32_data_type() -> PrimitiveDataType:
+    return PrimitiveDataType(CoreDataType.INT32)
+
+
+@pytest.fixture
+def float32_data_type() -> PrimitiveDataType:
+    return PrimitiveDataType(CoreDataType.FLOAT32)
+
+
+@pytest.fixture
+def empty_environment() -> TypeUnificationEnvironment:
+    return TypeUnificationEnvironment.empty()
+
+
+# =============================================================================
+# `Type` and `DataType` runtime protocols
+# =============================================================================
 
 
 def test_type_structural_equivalence_runtime_protocol() -> None:
@@ -416,42 +440,40 @@ def test_tuple_type_dict_serialization() -> None:
 # TODO: Check serialization structure errors and value errors for all types.
 
 
-# ---------------------------------------------------------------------------
-# Type-system dispatchers: TypeUnificationEnvironment, bind/substitute/
-# unify/eq.
-# ---------------------------------------------------------------------------
+# =============================================================================
+# `TypeUnificationEnvironment` construction and helpers
+# =============================================================================
 
 
-def _float32() -> PrimitiveDataType:
-    return PrimitiveDataType(CoreDataType.FLOAT32)
+def test_empty_environment_has_no_bindings(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test ``empty()`` returns an environment whose binding tables are empty."""
+    assert empty_environment.get_data_type_binding("T") is None
+    assert empty_environment.get_type_binding("T") is None
+    assert empty_environment.get_expression_binding(Identifier("N")) is None
 
 
-def _int32() -> PrimitiveDataType:
-    return PrimitiveDataType(CoreDataType.INT32)
-
-
-def test_type_unification_environment_empty_has_no_bindings() -> None:
-    environment = TypeUnificationEnvironment.empty()
-    assert environment.get_data_type_binding("T") is None
-    assert environment.get_type_binding("T") is None
-    assert environment.get_expression_binding(Identifier("N")) is None
-
-
-def test_type_unification_environment_with_helpers_return_new_environment() -> None:
-    original = TypeUnificationEnvironment.empty()
+def test_with_helpers_return_new_environments_without_mutating_original(
+    empty_environment: TypeUnificationEnvironment,
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test ``with_*`` helpers return new environments and leave the original alone."""
     n_identifier = Identifier("N")
 
-    environment_with_data_type_binding = original.with_data_type_binding("T", _int32())
-    environment_with_type_binding = original.with_type_binding(
-        "U", NumericalType(_int32())
+    environment_with_data_type_binding = empty_environment.with_data_type_binding(
+        "T", int32_data_type
     )
-    environment_with_expression_binding = original.with_expression_binding(
+    environment_with_type_binding = empty_environment.with_type_binding(
+        "U", NumericalType(int32_data_type)
+    )
+    environment_with_expression_binding = empty_environment.with_expression_binding(
         n_identifier, LiteralExpression(4)
     )
 
-    assert original.get_data_type_binding("T") is None
-    assert original.get_type_binding("U") is None
-    assert original.get_expression_binding(n_identifier) is None
+    assert empty_environment.get_data_type_binding("T") is None
+    assert empty_environment.get_type_binding("U") is None
+    assert empty_environment.get_expression_binding(n_identifier) is None
 
     assert isinstance(
         environment_with_data_type_binding.get_data_type_binding("T"),
@@ -465,29 +487,41 @@ def test_type_unification_environment_with_helpers_return_new_environment() -> N
         is not None
     )
 
-    assert not original.is_structurally_equivalent(environment_with_data_type_binding)
-    assert not original.is_structurally_equivalent(environment_with_type_binding)
-    assert not original.is_structurally_equivalent(environment_with_expression_binding)
+    assert not empty_environment.is_structurally_equivalent(
+        environment_with_data_type_binding
+    )
+    assert not empty_environment.is_structurally_equivalent(
+        environment_with_type_binding
+    )
+    assert not empty_environment.is_structurally_equivalent(
+        environment_with_expression_binding
+    )
 
 
-def test_type_unification_environment_is_frozen_dataclass() -> None:
-    environment = TypeUnificationEnvironment.empty()
-    assert isinstance(environment, Frozen)
-    assert environment.is_frozen
+def test_environment_is_a_frozen_dataclass(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test the environment is frozen and rejects attribute assignment."""
+    assert isinstance(empty_environment, Frozen)
+    assert empty_environment.is_frozen
     with pytest.raises((FrozenInstanceError, FrozenMutationError)):
-        environment.data_type_bindings = frozendict()  # type: ignore[misc]
+        empty_environment.data_type_bindings = frozendict()  # type: ignore[misc]
 
 
-def test_type_unification_environment_structural_equivalence_value_based() -> None:
+def test_environment_structural_equivalence_compares_bindings_by_value(
+    int32_data_type: PrimitiveDataType,
+    float32_data_type: PrimitiveDataType,
+) -> None:
+    """Test environment structural equivalence compares bindings by structural value."""
     n_identifier = Identifier("N")
     environment_with_int = TypeUnificationEnvironment.empty().with_data_type_binding(
-        "T", _int32()
+        "T", int32_data_type
     )
     environment_with_int_duplicate = (
-        TypeUnificationEnvironment.empty().with_data_type_binding("T", _int32())
+        TypeUnificationEnvironment.empty().with_data_type_binding("T", int32_data_type)
     )
     environment_with_float = TypeUnificationEnvironment.empty().with_data_type_binding(
-        "T", _float32()
+        "T", float32_data_type
     )
     environment_with_expression = (
         TypeUnificationEnvironment.empty().with_expression_binding(
@@ -505,35 +539,83 @@ def test_type_unification_environment_structural_equivalence_value_based() -> No
     assert not environment_with_int.is_structurally_equivalent("not an environment")
 
 
-def test_structural_eq_matches_legacy_for_numerical_type() -> None:
-    left = NumericalType(_int32(), [LiteralExpression(4), LiteralExpression(8)])
-    right = NumericalType(_int32(), [LiteralExpression(4), LiteralExpression(8)])
-    different = NumericalType(_int32(), [LiteralExpression(4), LiteralExpression(9)])
+def test_chained_with_helpers_produce_pairwise_distinct_environments(
+    int32_data_type: PrimitiveDataType,
+    float32_data_type: PrimitiveDataType,
+) -> None:
+    """Test successive ``with_*`` calls yield pairwise structurally distinct envs."""
+    n_identifier = Identifier("N")
+    environment_0 = TypeUnificationEnvironment.empty()
+    environment_1 = environment_0.with_data_type_binding("T", int32_data_type)
+    environment_2 = environment_1.with_expression_binding(
+        n_identifier, LiteralExpression(7)
+    )
+    environment_3 = environment_2.with_type_binding(
+        "U", NumericalType(float32_data_type)
+    )
 
-    assert structural_eq(left, right)
+    environments = [environment_0, environment_1, environment_2, environment_3]
+    for left_index, left_environment in enumerate(environments):
+        for right_environment in environments[left_index + 1 :]:
+            assert not left_environment.is_structurally_equivalent(right_environment)
+    assert environment_0.get_data_type_binding("T") is None
+    assert environment_0.get_expression_binding(n_identifier) is None
+    assert environment_0.get_type_binding("U") is None
+
+
+# =============================================================================
+# `is_structurally_equivalent` dispatcher
+# =============================================================================
+
+
+def test_is_structurally_equivalent_dispatches_for_numerical_type(
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test dispatcher and `NumericalType.is_structurally_equivalent` agree."""
+    left = NumericalType(int32_data_type, [LiteralExpression(4), LiteralExpression(8)])
+    right = NumericalType(int32_data_type, [LiteralExpression(4), LiteralExpression(8)])
+    different = NumericalType(
+        int32_data_type, [LiteralExpression(4), LiteralExpression(9)]
+    )
+
+    assert is_structurally_equivalent(left, right)
     assert left.is_structurally_equivalent(right)
-    assert not structural_eq(left, different)
+    assert not is_structurally_equivalent(left, different)
     assert not left.is_structurally_equivalent(different)
 
 
-def test_structural_eq_matches_legacy_for_data_type() -> None:
-    left = _int32()
-    right = _int32()
-    different = _float32()
+def test_is_structurally_equivalent_dispatches_for_data_type(
+    int32_data_type: PrimitiveDataType,
+    float32_data_type: PrimitiveDataType,
+) -> None:
+    """Test dispatcher and `DataType.is_structurally_equivalent` agree on primitives."""
+    int32_duplicate = PrimitiveDataType(CoreDataType.INT32)
 
-    assert structural_eq(left, right)
-    assert left.is_structurally_equivalent(right)
-    assert not structural_eq(left, different)
-    assert not left.is_structurally_equivalent(different)
+    assert is_structurally_equivalent(int32_data_type, int32_duplicate)
+    assert int32_data_type.is_structurally_equivalent(int32_duplicate)
+    assert not is_structurally_equivalent(int32_data_type, float32_data_type)
+    assert not int32_data_type.is_structurally_equivalent(float32_data_type)
 
 
-def test_structural_eq_returns_false_for_unrelated_classes() -> None:
-    numerical_type = NumericalType(_int32())
+def test_is_structurally_equivalent_returns_false_for_unrelated_concrete_classes(
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test the dispatcher returns ``False`` for unrelated concrete classes."""
+    numerical_type = NumericalType(int32_data_type)
     tuple_type = TupleType([numerical_type])
-    assert not structural_eq(numerical_type, tuple_type)
+    assert not is_structurally_equivalent(numerical_type, tuple_type)
 
 
-def test_bind_template_then_substitute_round_trip_numerical() -> None:
+# =============================================================================
+# Template binding
+# =============================================================================
+
+
+def test_bind_template_then_substitute_round_trips_for_numerical_type(
+    empty_environment: TypeUnificationEnvironment,
+    float32_data_type: PrimitiveDataType,
+) -> None:
+    """Test a `NumericalType` bind/substitute cycle reproduces the actual type."""
     template_data_type = TemplateDataType(Identifier("T"))
     n_identifier = Identifier("N")
     m_identifier = Identifier("M")
@@ -544,10 +626,14 @@ def test_bind_template_then_substitute_round_trip_numerical() -> None:
             IdentifierExpression(m_identifier),
         ],
     )
-    actual = NumericalType(_float32(), [LiteralExpression(10), LiteralExpression(20)])
+    actual = NumericalType(
+        float32_data_type, [LiteralExpression(10), LiteralExpression(20)]
+    )
 
-    environment = bind_template(pattern, actual, TypeUnificationEnvironment.empty())
-    assert structural_eq(environment.get_data_type_binding("T"), _float32())
+    environment = bind_template(pattern, actual, empty_environment)
+    assert is_structurally_equivalent(
+        environment.get_data_type_binding("T"), float32_data_type
+    )
     n_binding = environment.get_expression_binding(n_identifier)
     m_binding = environment.get_expression_binding(m_identifier)
     assert n_binding is not None and n_binding.is_structurally_equivalent(
@@ -558,10 +644,14 @@ def test_bind_template_then_substitute_round_trip_numerical() -> None:
     )
 
     substituted = substitute_template(pattern, environment)
-    assert structural_eq(substituted, actual)
+    assert is_structurally_equivalent(substituted, actual)
 
 
-def test_bind_template_then_substitute_round_trip_tuple() -> None:
+def test_bind_template_then_substitute_round_trips_for_tuple_type(
+    empty_environment: TypeUnificationEnvironment,
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test a `TupleType` bind/substitute cycle reproduces the actual type."""
     template_data_type = TemplateDataType(Identifier("T"))
     n_identifier = Identifier("N")
     pattern_first = NumericalType(
@@ -572,16 +662,19 @@ def test_bind_template_then_substitute_round_trip_tuple() -> None:
     )
     pattern = TupleType([pattern_first, pattern_second])
 
-    actual_first = NumericalType(_int32(), [LiteralExpression(7)])
-    actual_second = NumericalType(_int32(), [LiteralExpression(7)])
+    actual_first = NumericalType(int32_data_type, [LiteralExpression(7)])
+    actual_second = NumericalType(int32_data_type, [LiteralExpression(7)])
     actual = TupleType([actual_first, actual_second])
 
-    environment = bind_template(pattern, actual, TypeUnificationEnvironment.empty())
+    environment = bind_template(pattern, actual, empty_environment)
     substituted = substitute_template(pattern, environment)
-    assert structural_eq(substituted, actual)
+    assert is_structurally_equivalent(substituted, actual)
 
 
-def test_bind_template_then_substitute_round_trip_index_type() -> None:
+def test_bind_template_then_substitute_round_trips_for_index_type(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test an `IndexType` bind/substitute cycle reproduces the actual type."""
     n_identifier = Identifier("N")
     pattern = IndexType(
         LiteralExpression(0),
@@ -592,67 +685,102 @@ def test_bind_template_then_substitute_round_trip_index_type() -> None:
         LiteralExpression(0), LiteralExpression(64), LiteralExpression(1)
     )
 
-    environment = bind_template(pattern, actual, TypeUnificationEnvironment.empty())
+    environment = bind_template(pattern, actual, empty_environment)
     binding = environment.get_expression_binding(n_identifier)
     assert binding is not None and binding.is_structurally_equivalent(
         LiteralExpression(64)
     )
 
     substituted = substitute_template(pattern, environment)
-    assert structural_eq(substituted, actual)
+    assert is_structurally_equivalent(substituted, actual)
 
 
-def test_bind_template_full_type_binding_records_entire_actual() -> None:
+def test_bind_template_full_type_wildcard_records_entire_actual(
+    empty_environment: TypeUnificationEnvironment,
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test `[T, ...]` against a concrete type binds the entire actual to ``T``."""
     template_data_type = TemplateDataType(Identifier("T"))
     pattern = NumericalType(template_data_type, [...])
     actual = NumericalType(
-        _int32(),
+        int32_data_type,
         [LiteralExpression(4), LiteralExpression(5), LiteralExpression(6)],
     )
 
-    environment = bind_template(pattern, actual, TypeUnificationEnvironment.empty())
+    environment = bind_template(pattern, actual, empty_environment)
     bound_full_type = environment.get_type_binding("T")
-    assert bound_full_type is not None and structural_eq(bound_full_type, actual)
-    assert structural_eq(environment.get_data_type_binding("T"), _int32())
+    assert bound_full_type is not None and is_structurally_equivalent(
+        bound_full_type, actual
+    )
+    assert is_structurally_equivalent(
+        environment.get_data_type_binding("T"), int32_data_type
+    )
 
     substituted = substitute_template(pattern, environment)
-    assert structural_eq(substituted, actual)
+    assert is_structurally_equivalent(substituted, actual)
 
 
-def test_bind_template_wildcard_with_concrete_data_type_accepts_any_shape() -> None:
-    pattern = NumericalType(_float32(), [...])
-    actual = NumericalType(_float32(), [LiteralExpression(1), LiteralExpression(2)])
+def test_bind_template_wildcard_with_concrete_data_type_accepts_any_shape(
+    empty_environment: TypeUnificationEnvironment,
+    float32_data_type: PrimitiveDataType,
+) -> None:
+    """Test `[concrete, ...]` accepts any actual shape without recording bindings."""
+    pattern = NumericalType(float32_data_type, [...])
+    actual = NumericalType(
+        float32_data_type, [LiteralExpression(1), LiteralExpression(2)]
+    )
 
-    environment = bind_template(pattern, actual, TypeUnificationEnvironment.empty())
+    environment = bind_template(pattern, actual, empty_environment)
     assert environment.get_data_type_binding("anything") is None
     assert environment.get_type_binding("anything") is None
 
 
-def test_bind_template_rank_mismatch_raises() -> None:
-    pattern = NumericalType(_float32(), [LiteralExpression(4)])
-    actual = NumericalType(_float32(), [LiteralExpression(4), LiteralExpression(5)])
+def test_bind_template_raises_on_shape_rank_mismatch(
+    empty_environment: TypeUnificationEnvironment,
+    float32_data_type: PrimitiveDataType,
+) -> None:
+    """Test bind raises `VerificationError` when the pattern and actual ranks differ."""
+    pattern = NumericalType(float32_data_type, [LiteralExpression(4)])
+    actual = NumericalType(
+        float32_data_type, [LiteralExpression(4), LiteralExpression(5)]
+    )
     with pytest.raises(VerificationError):
-        bind_template(pattern, actual, TypeUnificationEnvironment.empty())
+        bind_template(pattern, actual, empty_environment)
 
 
-def test_bind_template_class_mismatch_raises() -> None:
-    pattern = NumericalType(_float32())
-    actual = TupleType([NumericalType(_float32())])
+def test_bind_template_raises_on_concrete_class_mismatch(
+    empty_environment: TypeUnificationEnvironment,
+    float32_data_type: PrimitiveDataType,
+) -> None:
+    """Test bind raises `VerificationError` when pattern and actual classes differ."""
+    pattern = NumericalType(float32_data_type)
+    actual = TupleType([NumericalType(float32_data_type)])
     with pytest.raises(VerificationError):
-        bind_template(pattern, actual, TypeUnificationEnvironment.empty())
+        bind_template(pattern, actual, empty_environment)
 
 
-def test_bind_template_conflicting_data_type_binding_raises() -> None:
+def test_bind_template_raises_on_conflicting_data_type_binding(
+    empty_environment: TypeUnificationEnvironment,
+    int32_data_type: PrimitiveDataType,
+    float32_data_type: PrimitiveDataType,
+) -> None:
+    """Test bind raises when one template name binds to two different data types."""
     template_data_type = TemplateDataType(Identifier("T"))
     pattern = TupleType(
         [NumericalType(template_data_type), NumericalType(template_data_type)]
     )
-    actual = TupleType([NumericalType(_float32()), NumericalType(_int32())])
+    actual = TupleType(
+        [NumericalType(float32_data_type), NumericalType(int32_data_type)]
+    )
     with pytest.raises(VerificationError):
-        bind_template(pattern, actual, TypeUnificationEnvironment.empty())
+        bind_template(pattern, actual, empty_environment)
 
 
-def test_bind_template_conflicting_shape_binding_raises() -> None:
+def test_bind_template_raises_on_conflicting_shape_binding(
+    empty_environment: TypeUnificationEnvironment,
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test bind raises when one shape variable binds to two different dimensions."""
     template_data_type = TemplateDataType(Identifier("T"))
     n_identifier = Identifier("N")
     pattern = NumericalType(
@@ -662,23 +790,80 @@ def test_bind_template_conflicting_shape_binding_raises() -> None:
             IdentifierExpression(n_identifier),
         ],
     )
-    actual = NumericalType(_int32(), [LiteralExpression(4), LiteralExpression(5)])
+    actual = NumericalType(
+        int32_data_type, [LiteralExpression(4), LiteralExpression(5)]
+    )
     with pytest.raises(VerificationError):
-        bind_template(pattern, actual, TypeUnificationEnvironment.empty())
+        bind_template(pattern, actual, empty_environment)
 
 
-def test_substitute_template_leaves_unbound_placeholders_alone() -> None:
+def test_bind_template_raises_on_full_type_binding_conflict(
+    empty_environment: TypeUnificationEnvironment,
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test bind raises when a `[T, ...]` placeholder binds to two different actuals."""
+    template_data_type = TemplateDataType(Identifier("T"))
+    pattern = NumericalType(template_data_type, [...])
+    first_actual = NumericalType(int32_data_type, [LiteralExpression(2)])
+    second_actual = NumericalType(int32_data_type, [LiteralExpression(3)])
+    pair_pattern = TupleType([pattern, pattern])
+    pair_actual = TupleType([first_actual, second_actual])
+    with pytest.raises(VerificationError):
+        bind_template(pair_pattern, pair_actual, empty_environment)
+
+
+def test_bind_data_template_raises_on_conflicting_binding(
+    empty_environment: TypeUnificationEnvironment,
+    int32_data_type: PrimitiveDataType,
+    float32_data_type: PrimitiveDataType,
+) -> None:
+    """Test `bind_data_template` raises on a conflicting second binding."""
+    template_data_type = TemplateDataType(Identifier("T"))
+    environment = bind_data_template(
+        template_data_type, int32_data_type, empty_environment
+    )
+    with pytest.raises(VerificationError):
+        bind_data_template(template_data_type, float32_data_type, environment)
+
+
+def test_bind_data_template_repeated_consistent_binding_is_idempotent(
+    empty_environment: TypeUnificationEnvironment,
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test rebinding a template name to the same value leaves the env unchanged."""
+    template_data_type = TemplateDataType(Identifier("T"))
+    environment = bind_data_template(
+        template_data_type, int32_data_type, empty_environment
+    )
+    same_environment = bind_data_template(
+        template_data_type, int32_data_type, environment
+    )
+    assert environment.is_structurally_equivalent(same_environment)
+
+
+# =============================================================================
+# Template substitution
+# =============================================================================
+
+
+def test_substitute_template_leaves_unbound_placeholders_alone(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test substitution leaves unbound placeholders in the input unchanged."""
     template_data_type = TemplateDataType(Identifier("T"))
     n_identifier = Identifier("N")
     pattern = NumericalType(template_data_type, [IdentifierExpression(n_identifier)])
-    substituted = substitute_template(pattern, TypeUnificationEnvironment.empty())
-    assert structural_eq(substituted, pattern)
+    substituted = substitute_template(pattern, empty_environment)
+    assert is_structurally_equivalent(substituted, pattern)
 
 
-def test_substitute_template_handles_compound_shape_expressions() -> None:
+def test_substitute_template_walks_compound_shape_expressions(
+    float32_data_type: PrimitiveDataType,
+) -> None:
+    """Test substitution recurses into binary shape expressions for placeholders."""
     n_identifier = Identifier("N")
     pattern = NumericalType(
-        _float32(),
+        float32_data_type,
         [
             BinaryExpression(
                 BinaryOperation.ADD,
@@ -700,47 +885,60 @@ def test_substitute_template_handles_compound_shape_expressions() -> None:
     assert dimension.is_structurally_equivalent(expected_dimension)
 
 
-def test_substitute_data_template_resolves_bound_template() -> None:
+def test_substitute_data_template_resolves_a_bound_template(
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test data-type substitution returns the bound concrete type for a placeholder."""
     template_data_type = TemplateDataType(Identifier("T"))
     environment = TypeUnificationEnvironment.empty().with_data_type_binding(
-        "T", _int32()
+        "T", int32_data_type
     )
     substituted = substitute_data_template(template_data_type, environment)
-    assert structural_eq(substituted, _int32())
+    assert is_structurally_equivalent(substituted, int32_data_type)
 
 
-def test_substitute_data_template_leaves_unbound_template_alone() -> None:
+def test_substitute_data_template_leaves_an_unbound_template_alone(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test data-type substitution returns the placeholder unchanged when unbound."""
     template_data_type = TemplateDataType(Identifier("T"))
-    substituted = substitute_data_template(
-        template_data_type, TypeUnificationEnvironment.empty()
-    )
+    substituted = substitute_data_template(template_data_type, empty_environment)
     assert isinstance(substituted, TemplateDataType)
     assert substituted.data_type.name_hint == "T"
 
 
-def test_unify_binds_placeholder_on_either_side() -> None:
+# =============================================================================
+# Unification
+# =============================================================================
+
+
+def test_unify_binds_a_placeholder_when_appearing_on_either_side(
+    empty_environment: TypeUnificationEnvironment,
+    float32_data_type: PrimitiveDataType,
+) -> None:
+    """Test unification binds placeholders regardless of which side carries them."""
     n_identifier = Identifier("N")
     m_identifier = Identifier("M")
     expected = NumericalType(
-        _float32(),
+        float32_data_type,
         [
             IdentifierExpression(n_identifier),
             IdentifierExpression(m_identifier),
         ],
     )
     actual = NumericalType(
-        _float32(),
+        float32_data_type,
         [LiteralExpression(10), IdentifierExpression(m_identifier)],
     )
 
-    unified, environment = unify(expected, actual, TypeUnificationEnvironment.empty())
+    unified, environment = unify(expected, actual, empty_environment)
 
     assert isinstance(unified, NumericalType)
     expected_unified = NumericalType(
-        _float32(),
+        float32_data_type,
         [LiteralExpression(10), IdentifierExpression(m_identifier)],
     )
-    assert structural_eq(unified, expected_unified)
+    assert is_structurally_equivalent(unified, expected_unified)
 
     n_binding = environment.get_expression_binding(n_identifier)
     assert n_binding is not None and n_binding.is_structurally_equivalent(
@@ -749,11 +947,15 @@ def test_unify_binds_placeholder_on_either_side() -> None:
     assert environment.get_expression_binding(m_identifier) is None
 
 
-def test_unify_occurs_check_failure_raises() -> None:
+def test_unify_raises_when_occurs_check_fails(
+    empty_environment: TypeUnificationEnvironment,
+    float32_data_type: PrimitiveDataType,
+) -> None:
+    """Test unification raises when binding a placeholder would create a cycle."""
     n_identifier = Identifier("N")
-    expected = NumericalType(_float32(), [IdentifierExpression(n_identifier)])
+    expected = NumericalType(float32_data_type, [IdentifierExpression(n_identifier)])
     actual = NumericalType(
-        _float32(),
+        float32_data_type,
         [
             BinaryExpression(
                 BinaryOperation.ADD,
@@ -763,88 +965,56 @@ def test_unify_occurs_check_failure_raises() -> None:
         ],
     )
     with pytest.raises(VerificationError):
-        unify(expected, actual, TypeUnificationEnvironment.empty())
+        unify(expected, actual, empty_environment)
 
 
-def test_unify_structurally_equal_index_types_returns_unchanged() -> None:
+def test_unify_returns_index_types_unchanged_when_already_structurally_equal(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test unifying two structurally equal `IndexType`s returns them unchanged."""
     expected = IndexType(
         LiteralExpression(0), LiteralExpression(10), LiteralExpression(1)
     )
     actual = IndexType(
         LiteralExpression(0), LiteralExpression(10), LiteralExpression(1)
     )
-    unified, environment = unify(expected, actual, TypeUnificationEnvironment.empty())
-    assert structural_eq(unified, expected)
-    assert environment.is_structurally_equivalent(TypeUnificationEnvironment.empty())
+    unified, environment = unify(expected, actual, empty_environment)
+    assert is_structurally_equivalent(unified, expected)
+    assert environment.is_structurally_equivalent(empty_environment)
 
 
-def test_unify_mismatched_concrete_types_raises() -> None:
-    expected = NumericalType(_float32())
-    actual = TupleType([NumericalType(_float32())])
+def test_unify_raises_on_mismatched_concrete_types(
+    empty_environment: TypeUnificationEnvironment,
+    float32_data_type: PrimitiveDataType,
+) -> None:
+    """Test unification raises when the two concrete type classes are incompatible."""
+    expected = NumericalType(float32_data_type)
+    actual = TupleType([NumericalType(float32_data_type)])
     with pytest.raises(VerificationError):
-        unify(expected, actual, TypeUnificationEnvironment.empty())
+        unify(expected, actual, empty_environment)
 
 
-def test_unify_data_type_template_on_either_side_binds() -> None:
+def test_unify_binds_data_type_template_appearing_on_either_side(
+    empty_environment: TypeUnificationEnvironment,
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test unification binds a `TemplateDataType` when it appears on either side."""
     template_data_type = TemplateDataType(Identifier("T"))
     expected = NumericalType(template_data_type, [LiteralExpression(4)])
-    actual = NumericalType(_int32(), [LiteralExpression(4)])
-    unified, environment = unify(expected, actual, TypeUnificationEnvironment.empty())
-    assert structural_eq(unified, actual)
-    assert structural_eq(environment.get_data_type_binding("T"), _int32())
-
-
-def test_bind_data_template_conflict_raises() -> None:
-    template_data_type = TemplateDataType(Identifier("T"))
-    environment = TypeUnificationEnvironment.empty()
-    environment = bind_data_template(template_data_type, _int32(), environment)
-    with pytest.raises(VerificationError):
-        bind_data_template(template_data_type, _float32(), environment)
-
-
-def test_bind_data_template_repeated_consistent_binding_is_idempotent() -> None:
-    template_data_type = TemplateDataType(Identifier("T"))
-    environment = TypeUnificationEnvironment.empty()
-    environment = bind_data_template(template_data_type, _int32(), environment)
-    same_environment = bind_data_template(template_data_type, _int32(), environment)
-    assert environment.is_structurally_equivalent(same_environment)
-
-
-def test_bind_template_full_type_conflict_raises() -> None:
-    template_data_type = TemplateDataType(Identifier("T"))
-    pattern = NumericalType(template_data_type, [...])
-    first_actual = NumericalType(_int32(), [LiteralExpression(2)])
-    second_actual = NumericalType(_int32(), [LiteralExpression(3)])
-    pair_pattern = TupleType([pattern, pattern])
-    pair_actual = TupleType([first_actual, second_actual])
-    with pytest.raises(VerificationError):
-        bind_template(pair_pattern, pair_actual, TypeUnificationEnvironment.empty())
-
-
-def test_frozen_environment_chain_produces_distinct_environments_each_step() -> None:
-    n_identifier = Identifier("N")
-    environment_0 = TypeUnificationEnvironment.empty()
-    environment_1 = environment_0.with_data_type_binding("T", _int32())
-    environment_2 = environment_1.with_expression_binding(
-        n_identifier, LiteralExpression(7)
+    actual = NumericalType(int32_data_type, [LiteralExpression(4)])
+    unified, environment = unify(expected, actual, empty_environment)
+    assert is_structurally_equivalent(unified, actual)
+    assert is_structurally_equivalent(
+        environment.get_data_type_binding("T"), int32_data_type
     )
-    environment_3 = environment_2.with_type_binding("U", NumericalType(_float32()))
-
-    environments = [environment_0, environment_1, environment_2, environment_3]
-    for left_index, left_environment in enumerate(environments):
-        for right_environment in environments[left_index + 1 :]:
-            assert not left_environment.is_structurally_equivalent(right_environment)
-    assert environment_0.get_data_type_binding("T") is None
-    assert environment_0.get_expression_binding(n_identifier) is None
-    assert environment_0.get_type_binding("U") is None
 
 
-# ---------------------------------------------------------------------------
-# Out-of-tree extension test.
+# =============================================================================
+# Out-of-tree extension
 #
-# Demonstrates that a downstream package can register a brand-new ``Type``
+# Demonstrates that a downstream package can register a brand-new `Type`
 # subclass against the dispatchers without modifying ``fhy_core``.
-# ---------------------------------------------------------------------------
+# =============================================================================
 
 
 class SyntheticTaggedType(Type):
@@ -877,12 +1047,12 @@ class SyntheticTaggedType(Type):
         raise NotImplementedError
 
 
-@structural_eq.register
+@is_structurally_equivalent.register
 def _(left: SyntheticTaggedType, right: object) -> bool:
     return (
         isinstance(right, SyntheticTaggedType)
         and left.tag == right.tag
-        and structural_eq(left.inner, right.inner)
+        and is_structurally_equivalent(left.inner, right.inner)
     )
 
 
@@ -896,9 +1066,10 @@ def _(
         raise VerificationError(
             f"Cannot bind SyntheticTaggedType against {type(actual).__name__}."
         )
-    if pattern.tag != actual.tag:
+    elif pattern.tag != actual.tag:
         raise VerificationError(f"Tag mismatch: {pattern.tag!r} vs {actual.tag!r}.")
-    return bind_template(pattern.inner, actual.inner, environment)
+    else:
+        return bind_template(pattern.inner, actual.inner, environment)
 
 
 @substitute_template.register
@@ -916,34 +1087,44 @@ def _(
         raise VerificationError(
             f"Cannot unify SyntheticTaggedType with {type(actual).__name__}."
         )
-    if expected.tag != actual.tag:
+    elif expected.tag != actual.tag:
         raise VerificationError(f"Tag mismatch: {expected.tag!r} vs {actual.tag!r}.")
-    unified_inner, next_environment = unify(expected.inner, actual.inner, environment)
-    return (
-        SyntheticTaggedType(expected.tag, unified_inner),
-        next_environment,
-    )
+    else:
+        unified_inner, next_environment = unify(
+            expected.inner, actual.inner, environment
+        )
+        return (
+            SyntheticTaggedType(expected.tag, unified_inner),
+            next_environment,
+        )
 
 
-def test_out_of_tree_structural_eq() -> None:
-    inner_first = NumericalType(_int32(), [LiteralExpression(2)])
-    inner_first_duplicate = NumericalType(_int32(), [LiteralExpression(2)])
-    inner_second = NumericalType(_int32(), [LiteralExpression(3)])
+def test_out_of_tree_class_supports_structural_equivalence_dispatch(
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test the registered out-of-tree class participates in structural equivalence."""
+    inner_first = NumericalType(int32_data_type, [LiteralExpression(2)])
+    inner_first_duplicate = NumericalType(int32_data_type, [LiteralExpression(2)])
+    inner_second = NumericalType(int32_data_type, [LiteralExpression(3)])
 
     dense_first = SyntheticTaggedType("dense", inner_first)
     dense_first_duplicate = SyntheticTaggedType("dense", inner_first_duplicate)
     sparse_first = SyntheticTaggedType("sparse", inner_first)
     dense_second = SyntheticTaggedType("dense", inner_second)
-    plain_numerical_type = NumericalType(_int32(), [LiteralExpression(2)])
+    plain_numerical_type = NumericalType(int32_data_type, [LiteralExpression(2)])
 
-    assert structural_eq(dense_first, dense_first_duplicate)
+    assert is_structurally_equivalent(dense_first, dense_first_duplicate)
     assert dense_first.is_structurally_equivalent(dense_first_duplicate)
-    assert not structural_eq(dense_first, sparse_first)
-    assert not structural_eq(dense_first, dense_second)
-    assert not structural_eq(dense_first, plain_numerical_type)
+    assert not is_structurally_equivalent(dense_first, sparse_first)
+    assert not is_structurally_equivalent(dense_first, dense_second)
+    assert not is_structurally_equivalent(dense_first, plain_numerical_type)
 
 
-def test_out_of_tree_bind_and_substitute() -> None:
+def test_out_of_tree_class_supports_bind_then_substitute_round_trip(
+    empty_environment: TypeUnificationEnvironment,
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test the registered out-of-tree class participates in bind and substitute."""
     template_data_type = TemplateDataType(Identifier("T"))
     n_identifier = Identifier("N")
     pattern = SyntheticTaggedType(
@@ -951,16 +1132,20 @@ def test_out_of_tree_bind_and_substitute() -> None:
         NumericalType(template_data_type, [IdentifierExpression(n_identifier)]),
     )
     actual = SyntheticTaggedType(
-        "dense", NumericalType(_int32(), [LiteralExpression(8)])
+        "dense", NumericalType(int32_data_type, [LiteralExpression(8)])
     )
 
-    environment = bind_template(pattern, actual, TypeUnificationEnvironment.empty())
+    environment = bind_template(pattern, actual, empty_environment)
     substituted = substitute_template(pattern, environment)
     assert isinstance(substituted, SyntheticTaggedType)
-    assert structural_eq(substituted, actual)
+    assert is_structurally_equivalent(substituted, actual)
 
 
-def test_out_of_tree_unify_propagates_inner_bindings() -> None:
+def test_out_of_tree_class_propagates_inner_bindings_during_unification(
+    empty_environment: TypeUnificationEnvironment,
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test unification through an out-of-tree wrapper records bindings on its inner."""
     template_data_type = TemplateDataType(Identifier("T"))
     n_identifier = Identifier("N")
     expected = SyntheticTaggedType(
@@ -968,23 +1153,29 @@ def test_out_of_tree_unify_propagates_inner_bindings() -> None:
         NumericalType(template_data_type, [IdentifierExpression(n_identifier)]),
     )
     actual = SyntheticTaggedType(
-        "dense", NumericalType(_int32(), [LiteralExpression(8)])
+        "dense", NumericalType(int32_data_type, [LiteralExpression(8)])
     )
-    unified, environment = unify(expected, actual, TypeUnificationEnvironment.empty())
+    unified, environment = unify(expected, actual, empty_environment)
     assert isinstance(unified, SyntheticTaggedType)
-    assert structural_eq(unified, actual)
-    assert structural_eq(environment.get_data_type_binding("T"), _int32())
+    assert is_structurally_equivalent(unified, actual)
+    assert is_structurally_equivalent(
+        environment.get_data_type_binding("T"), int32_data_type
+    )
     n_binding = environment.get_expression_binding(n_identifier)
     assert n_binding is not None and n_binding.is_structurally_equivalent(
         LiteralExpression(8)
     )
 
 
-def test_out_of_tree_tag_mismatch_raises() -> None:
-    inner = NumericalType(_int32())
+def test_out_of_tree_class_raises_on_tag_mismatch(
+    empty_environment: TypeUnificationEnvironment,
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test bind and unify both raise when out-of-tree wrapper tags differ."""
+    inner = NumericalType(int32_data_type)
     expected = SyntheticTaggedType("dense", inner)
     actual = SyntheticTaggedType("sparse", inner)
     with pytest.raises(VerificationError):
-        bind_template(expected, actual, TypeUnificationEnvironment.empty())
+        bind_template(expected, actual, empty_environment)
     with pytest.raises(VerificationError):
-        unify(expected, actual, TypeUnificationEnvironment.empty())
+        unify(expected, actual, empty_environment)
