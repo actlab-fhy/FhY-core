@@ -131,6 +131,13 @@ __all__ = [
     "promote_primitive_data_types",
     "promote_type_qualifiers",
     "resolve_literal_core_data_type",
+    "TypeUnificationEnv",
+    "bind_data_template",
+    "bind_template",
+    "structural_eq",
+    "substitute_data_template",
+    "substitute_template",
+    "unify",
     "IntEnum",
     "Lattice",
     "PartiallyOrderedSet",
@@ -315,6 +322,15 @@ from .trait import (
     VerificationError,
     Visitable,
     VisitableMixin,
+)
+from .type_dispatch import (
+    TypeUnificationEnv,
+    bind_data_template,
+    bind_template,
+    structural_eq,
+    substitute_data_template,
+    substitute_template,
+    unify,
 )
 from .types import (
     CoreDataType,

@@ -20,7 +20,7 @@ __all__ = [
 
 from abc import ABC
 from collections.abc import Sequence
-from functools import partial, singledispatch
+from types import EllipsisType
 from typing import TypedDict, TypeGuard
 
 from fhy_core.serialization import (
@@ -45,7 +45,12 @@ class Type(WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, A
     """Abstract compiler type."""
 
     def is_structurally_equivalent(self, other: object) -> bool:
-        return _is_type_structurally_equivalent(self, other)
+        # Deferred import: ``type_dispatch`` registers handlers against
+        # ``structural_eq`` for the concrete ``Type`` subclasses defined in
+        # this module, so importing it at the module top would create a cycle.
+        from .type_dispatch import structural_eq  # noqa: PLC0415
+
+        return structural_eq(self, other)
 
 
 @register_error
@@ -57,9 +62,10 @@ class DataType(WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixi
     """Abstract data type."""
 
     def is_structurally_equivalent(self, other: object) -> bool:
-        if not isinstance(other, DataType):
-            return False
-        return _is_data_type_structurally_equivalent(self, other)
+        # Deferred import for the same reason as ``Type.is_structurally_equivalent``.
+        from .type_dispatch import structural_eq  # noqa: PLC0415
+
+        return structural_eq(self, other)
 
 
 class CoreDataType(StrEnum):
@@ -547,13 +553,21 @@ def _is_valid_numerical_type_data(
 
 @register_serializable(type_id="numerical_type")
 class NumericalType(Type):
-    """Numerical multi-dimensional array type; empty shapes indicate scalars."""
+    """Numerical multi-dimensional array type; empty shapes indicate scalars.
+
+    Shape elements are normally ``Expression`` values. The literal ``...``
+    (``Ellipsis``) is also accepted as a shape element to represent a
+    wildcard dimension during template binding and substitution. Wildcard
+    shapes cannot be serialized.
+    """
 
     _data_type: DataType
-    _shape: tuple[Expression, ...]
+    _shape: tuple[Expression | EllipsisType, ...]
 
     def __init__(
-        self, data_type: DataType, shape: Sequence[Expression] | None = None
+        self,
+        data_type: DataType,
+        shape: Sequence[Expression | EllipsisType] | None = None,
     ) -> None:
         super().__init__()
         self._data_type = data_type
@@ -565,7 +579,7 @@ class NumericalType(Type):
         return self._data_type
 
     @property
-    def shape(self) -> list[Expression]:
+    def shape(self) -> list[Expression | EllipsisType]:
         return list(self._shape)
 
     def is_scalar(self) -> bool:
@@ -573,9 +587,17 @@ class NumericalType(Type):
         return not self._shape
 
     def serialize_data_to_dict(self) -> SerializedDict:
+        serialized_shape: list[SerializedDict] = []
+        for dim in self._shape:
+            if dim is Ellipsis:
+                raise TypeError(
+                    "Cannot serialize a NumericalType whose shape contains "
+                    "the wildcard `...`."
+                )
+            serialized_shape.append(dim.serialize_to_dict())
         return {
             "data_type": self._data_type.serialize_to_dict(),
-            "shape": [dim.serialize_to_dict() for dim in self._shape],
+            "shape": serialized_shape,
         }
 
     @classmethod
@@ -591,7 +613,7 @@ class NumericalType(Type):
 
     def __str__(self) -> str:
         shape_str = format_comma_separated_list(
-            self._shape, str_func=partial(pformat_expression, show_id=True)
+            self._shape, str_func=_format_numerical_shape_dim
         )
         return f"{self._data_type}[{shape_str}]"
 
@@ -599,6 +621,12 @@ class NumericalType(Type):
         return (
             f"{self.__class__.__name__}({repr(self._data_type)}, {repr(self._shape)})"
         )
+
+
+def _format_numerical_shape_dim(dim: Expression | EllipsisType) -> str:
+    if dim is Ellipsis:
+        return "..."
+    return pformat_expression(dim, show_id=True)
 
 
 class _IndexTypeData(TypedDict):
@@ -758,66 +786,3 @@ def promote_type_qualifiers(
         return TypeQualifier.PARAM
     else:
         return TypeQualifier.TEMP
-
-
-def _is_data_type_structurally_equivalent(
-    data_type_1: DataType, data_type_2: DataType
-) -> bool:
-    if isinstance(data_type_1, PrimitiveDataType) and isinstance(
-        data_type_2, PrimitiveDataType
-    ):
-        return data_type_1.core_data_type == data_type_2.core_data_type
-    elif isinstance(data_type_1, TemplateDataType) and isinstance(
-        data_type_2, TemplateDataType
-    ):
-        return (
-            data_type_1.data_type == data_type_2.data_type
-            and data_type_1.widths == data_type_2.widths
-        )
-    else:
-        return False
-
-
-@singledispatch
-def _is_type_structurally_equivalent(type_: Type, other: object) -> bool:
-    return False
-
-
-@_is_type_structurally_equivalent.register
-def _(type_: NumericalType, other: object) -> bool:
-    if not isinstance(other, NumericalType):
-        return False
-    elif not _is_data_type_structurally_equivalent(type_.data_type, other.data_type):
-        return False
-    elif len(type_.shape) != len(other.shape):
-        return False
-    else:
-        return all(
-            dim_1.is_structurally_equivalent(dim_2)
-            for dim_1, dim_2 in zip(type_.shape, other.shape, strict=True)
-        )
-
-
-@_is_type_structurally_equivalent.register
-def _(type_: IndexType, other: object) -> bool:
-    if not isinstance(other, IndexType):
-        return False
-    elif not type_.lower_bound.is_structurally_equivalent(other.lower_bound):
-        return False
-    elif not type_.upper_bound.is_structurally_equivalent(other.upper_bound):
-        return False
-    else:
-        return type_.stride.is_structurally_equivalent(other.stride)
-
-
-@_is_type_structurally_equivalent.register
-def _(type_: TupleType, other: object) -> bool:
-    if not isinstance(other, TupleType):
-        return False
-    elif len(type_.types) != len(other.types):
-        return False
-    else:
-        return all(
-            ty_1.is_structurally_equivalent(ty_2)
-            for ty_1, ty_2 in zip(type_.types, other.types, strict=True)
-        )
