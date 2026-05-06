@@ -33,22 +33,22 @@ from fhy_core.serialization import (
 )
 from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
 
-from .error import register_error
-from .expression.core import Expression, LiteralExpression
-from .expression.pprint import pformat_expression
-from .identifier import Identifier
-from .lattice import Lattice
-from .utils import StrEnum, format_comma_separated_list
+from ..error import register_error
+from ..expression.core import Expression, LiteralExpression
+from ..expression.pprint import pformat_expression
+from ..identifier import Identifier
+from ..lattice import Lattice
+from ..utils import StrEnum, format_comma_separated_list
 
 
 class Type(WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC):
     """Abstract compiler type."""
 
     def is_structurally_equivalent(self, other: object) -> bool:
-        # Deferred import: ``type_dispatch`` registers handlers against
+        # Deferred import: ``dispatch`` registers handlers against
         # ``structural_eq`` for the concrete ``Type`` subclasses defined in
         # this module, so importing it at the module top would create a cycle.
-        from .type_dispatch import structural_eq  # noqa: PLC0415
+        from .dispatch import structural_eq  # noqa: PLC0415
 
         return structural_eq(self, other)
 
@@ -63,7 +63,7 @@ class DataType(WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixi
 
     def is_structurally_equivalent(self, other: object) -> bool:
         # Deferred import for the same reason as ``Type.is_structurally_equivalent``.
-        from .type_dispatch import structural_eq  # noqa: PLC0415
+        from .dispatch import structural_eq  # noqa: PLC0415
 
         return structural_eq(self, other)
 
@@ -547,7 +547,7 @@ def _is_valid_numerical_type_data(
         and is_serialized_dict(data["data_type"])
         and "shape" in data
         and isinstance(data["shape"], list)
-        and all(is_serialized_dict(dim_dict) for dim_dict in data["shape"])
+        and all(is_serialized_dict(dimension_dict) for dimension_dict in data["shape"])
     )
 
 
@@ -588,13 +588,13 @@ class NumericalType(Type):
 
     def serialize_data_to_dict(self) -> SerializedDict:
         serialized_shape: list[SerializedDict] = []
-        for dim in self._shape:
-            if dim is Ellipsis:
+        for dimension in self._shape:
+            if dimension is Ellipsis:
                 raise TypeError(
                     "Cannot serialize a NumericalType whose shape contains "
                     "the wildcard `...`."
                 )
-            serialized_shape.append(dim.serialize_to_dict())
+            serialized_shape.append(dimension.serialize_to_dict())
         return {
             "data_type": self._data_type.serialize_to_dict(),
             "shape": serialized_shape,
@@ -608,14 +608,17 @@ class NumericalType(Type):
             )
         return cls(
             DataType.deserialize_from_dict(data["data_type"]),
-            [Expression.deserialize_from_dict(dim_dict) for dim_dict in data["shape"]],
+            [
+                Expression.deserialize_from_dict(dimension_dict)
+                for dimension_dict in data["shape"]
+            ],
         )
 
     def __str__(self) -> str:
-        shape_str = format_comma_separated_list(
-            self._shape, str_func=_format_numerical_shape_dim
+        shape_string = format_comma_separated_list(
+            self._shape, str_func=_format_numerical_shape_dimension
         )
-        return f"{self._data_type}[{shape_str}]"
+        return f"{self._data_type}[{shape_string}]"
 
     def __repr__(self) -> str:
         return (
@@ -623,10 +626,10 @@ class NumericalType(Type):
         )
 
 
-def _format_numerical_shape_dim(dim: Expression | EllipsisType) -> str:
-    if dim is Ellipsis:
+def _format_numerical_shape_dimension(dimension: Expression | EllipsisType) -> str:
+    if dimension is Ellipsis:
         return "..."
-    return pformat_expression(dim, show_id=True)
+    return pformat_expression(dimension, show_id=True)
 
 
 class _IndexTypeData(TypedDict):
@@ -722,7 +725,7 @@ def _is_valid_tuple_type_data(data: SerializedDict) -> TypeGuard[_TupleTypeData]
     return (
         "types" in data
         and isinstance(data["types"], list)
-        and all(is_serialized_dict(ty_dict) for ty_dict in data["types"])
+        and all(is_serialized_dict(element_dict) for element_dict in data["types"])
     )
 
 
@@ -742,7 +745,7 @@ class TupleType(Type):
         return list(self._types)
 
     def serialize_data_to_dict(self) -> SerializedDict:
-        return {"types": [ty.serialize_to_dict() for ty in self._types]}
+        return {"types": [element.serialize_to_dict() for element in self._types]}
 
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "TupleType":
@@ -750,7 +753,9 @@ class TupleType(Type):
             raise DeserializationDictStructureError(
                 cls, _TupleTypeData.__annotations__, data
             )
-        return cls([Type.deserialize_from_dict(ty_dict) for ty_dict in data["types"]])
+        return cls(
+            [Type.deserialize_from_dict(element_dict) for element_dict in data["types"]]
+        )
 
     def __str__(self) -> str:
         return f"({format_comma_separated_list(self._types)})"

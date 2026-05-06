@@ -131,7 +131,7 @@ __all__ = [
     "promote_primitive_data_types",
     "promote_type_qualifiers",
     "resolve_literal_core_data_type",
-    "TypeUnificationEnv",
+    "TypeUnificationEnvironment",
     "bind_data_template",
     "bind_template",
     "structural_eq",
@@ -323,15 +323,6 @@ from .trait import (
     Visitable,
     VisitableMixin,
 )
-from .type_dispatch import (
-    TypeUnificationEnv,
-    bind_data_template,
-    bind_template,
-    structural_eq,
-    substitute_data_template,
-    substitute_template,
-    unify,
-)
 from .types import (
     CoreDataType,
     DataType,
@@ -343,12 +334,19 @@ from .types import (
     TupleType,
     Type,
     TypeQualifier,
+    TypeUnificationEnvironment,
+    bind_data_template,
+    bind_template,
     get_core_data_type_bit_width,
     is_weak_core_data_type,
     promote_core_data_types,
     promote_primitive_data_types,
     promote_type_qualifiers,
     resolve_literal_core_data_type,
+    structural_eq,
+    substitute_data_template,
+    substitute_template,
+    unify,
 )
 from .utils import (
     IntEnum,
