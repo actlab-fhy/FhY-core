@@ -559,6 +559,22 @@ def _format_numerical_shape_dimension(dimension: Expression | EllipsisType) -> s
         return pformat_expression(dimension, show_id=True)
 
 
+# Sentinel dictionary used in place of an ``Expression``-serialized dict to
+# encode a single ``Ellipsis`` shape element. The ``__type__`` tag is
+# distinct from any ``Expression`` ``type_id`` so deserialization can detect
+# the sentinel without consulting the serialization registry; the empty
+# ``__data__`` payload mirrors the family-serialization convention.
+_ELLIPSIS_SHAPE_DIMENSION_TYPE_ID = "numerical_type_shape_ellipsis"
+
+
+def _make_ellipsis_shape_dimension_dict() -> SerializedDict:
+    return {"__type__": _ELLIPSIS_SHAPE_DIMENSION_TYPE_ID, "__data__": {}}
+
+
+def _is_ellipsis_shape_dimension_dict(data: SerializedDict) -> bool:
+    return data.get("__type__") == _ELLIPSIS_SHAPE_DIMENSION_TYPE_ID
+
+
 @register_serializable(type_id="numerical_type")
 class NumericalType(Type):
     """Numerical multi-dimensional array type; empty shapes indicate scalars.
@@ -576,7 +592,10 @@ class NumericalType(Type):
       ``Expression`` on the actual without binding, while neighbouring
       dimensions are matched normally and the rank still has to agree.
 
-    Numerical types whose shape contains ``Ellipsis`` cannot be serialized.
+    Numerical types whose shape contains ``Ellipsis`` round-trip through
+    serialization. Each ``Ellipsis`` is encoded as a sentinel dictionary in
+    place of an ``Expression``-serialized dict and is restored to
+    ``Ellipsis`` on deserialization.
     """
 
     _data_type: DataType
@@ -608,11 +627,9 @@ class NumericalType(Type):
         serialized_shape: list[SerializedDict] = []
         for dimension in self._shape:
             if dimension is Ellipsis:
-                raise TypeError(
-                    "Cannot serialize a NumericalType whose shape contains "
-                    "the wildcard `...`."
-                )
-            serialized_shape.append(dimension.serialize_to_dict())
+                serialized_shape.append(_make_ellipsis_shape_dimension_dict())
+            else:
+                serialized_shape.append(dimension.serialize_to_dict())
         return {
             "data_type": self._data_type.serialize_to_dict(),
             "shape": serialized_shape,
@@ -624,12 +641,17 @@ class NumericalType(Type):
             raise DeserializationDictStructureError(
                 cls, _NumericalTypeData.__annotations__, data
             )
+        deserialized_shape: list[Expression | EllipsisType] = []
+        for dimension_dict in data["shape"]:
+            if _is_ellipsis_shape_dimension_dict(dimension_dict):
+                deserialized_shape.append(Ellipsis)
+            else:
+                deserialized_shape.append(
+                    Expression.deserialize_from_dict(dimension_dict)
+                )
         return cls(
             DataType.deserialize_from_dict(data["data_type"]),
-            [
-                Expression.deserialize_from_dict(dimension_dict)
-                for dimension_dict in data["shape"]
-            ],
+            deserialized_shape,
         )
 
     def __str__(self) -> str:

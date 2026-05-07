@@ -1,6 +1,7 @@
 """Tests the core type system."""
 
 from dataclasses import FrozenInstanceError
+from types import EllipsisType
 
 import pytest
 from frozendict import frozendict
@@ -388,6 +389,64 @@ def test_index_type_with_stride_serialization() -> None:
     assert index_type_deserialized.lower_bound.is_structurally_equivalent(lower_bound)
     assert index_type_deserialized.upper_bound.is_structurally_equivalent(upper_bound)
     assert index_type_deserialized.stride.is_structurally_equivalent(stride)
+
+
+def test_numerical_type_full_shape_wildcard_round_trips_through_serialization() -> None:
+    """Test a numerical type with shape ``[...]`` round-trips structurally."""
+    numerical_type = NumericalType(PrimitiveDataType(CoreDataType.INT32), [...])
+    expected_dict = {
+        "__type__": "numerical_type",
+        "__data__": {
+            "data_type": {
+                "__type__": "primitive_data_type",
+                "__data__": {"core_data_type": CoreDataType.INT32.value},
+            },
+            "shape": [
+                {"__type__": "numerical_type_shape_ellipsis", "__data__": {}},
+            ],
+        },
+    }
+    dictionary = numerical_type.serialize_to_dict()
+    assert dictionary == expected_dict
+
+    deserialized = NumericalType.deserialize_from_dict(dictionary)
+    assert isinstance(deserialized, NumericalType)
+    assert len(deserialized.shape) == 1
+    assert deserialized.shape[0] is Ellipsis
+    assert deserialized.is_structurally_equivalent(numerical_type)
+
+
+def test_numerical_type_per_dimension_wildcard_round_trips_through_serialization() -> (
+    None
+):
+    """Test a numerical type with a mid-shape ``Ellipsis`` round-trips structurally."""
+    N = mock_identifier("N", 1)
+    shape: list[Expression | EllipsisType] = [
+        IdentifierExpression(N),
+        ...,
+        LiteralExpression(4),
+    ]
+    numerical_type = NumericalType(PrimitiveDataType(CoreDataType.FLOAT32), shape)
+
+    dictionary = numerical_type.serialize_to_dict()
+    assert isinstance(dictionary["__data__"], dict)
+    serialized_shape = dictionary["__data__"]["shape"]
+    assert isinstance(serialized_shape, list)
+    assert serialized_shape[1] == {
+        "__type__": "numerical_type_shape_ellipsis",
+        "__data__": {},
+    }
+
+    deserialized = NumericalType.deserialize_from_dict(dictionary)
+    assert isinstance(deserialized, NumericalType)
+    deserialized_shape = deserialized.shape
+    assert len(deserialized_shape) == 3
+    assert isinstance(deserialized_shape[0], Expression)
+    assert deserialized_shape[0].is_structurally_equivalent(IdentifierExpression(N))
+    assert deserialized_shape[1] is Ellipsis
+    assert isinstance(deserialized_shape[2], Expression)
+    assert deserialized_shape[2].is_structurally_equivalent(LiteralExpression(4))
+    assert deserialized.is_structurally_equivalent(numerical_type)
 
 
 # TODO: Check serialization structure errors and value errors for all types.
