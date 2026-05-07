@@ -1,7 +1,11 @@
 """Extensible dispatchers for the core type system.
 
-This module provides the four extension points (six dispatchers) that the
-core type system exposes for downstream packages:
+This module exposes four conceptual extension points — *binding*,
+*substitution*, *unification*, and *structural equivalence* — across two
+tiers (the ``Type`` tier and the ``DataType`` tier), giving six
+:func:`functools.singledispatch` functions in total. Equivalence and
+unification have only a single dispatcher because the same function handles
+both ``Type`` and ``DataType`` arguments via its registered overloads.
 
 - ``bind_template(pattern, actual, environment)``: one-directional binding
   for template patterns against concrete types.
@@ -15,11 +19,10 @@ core type system exposes for downstream packages:
 - ``substitute_data_template(data_type, environment)``: data-type-tier
   substitution.
 
-All dispatchers are :func:`functools.singledispatch` functions keyed by the
-concrete class of their first argument. Downstream packages defining new
-``Type`` or ``DataType`` subclasses register handlers against these
-dispatchers from wherever the class is defined; no modification to
-``fhy_core`` is required.
+Each dispatcher is keyed by the concrete class of its first argument.
+Downstream packages defining new ``Type`` or ``DataType`` subclasses
+register handlers against these dispatchers from wherever the class is
+defined; no modification to ``fhy_core`` is required.
 """
 
 from __future__ import annotations
@@ -262,6 +265,16 @@ def _unify_data_types(
     if isinstance(left_data_type, TemplateDataType) and isinstance(
         right_data_type, TemplateDataType
     ):
+        # Two unbound template placeholders. Standard unification would link
+        # them via a fresh chain binding, but ``substitute_data_template`` does
+        # not follow chains. Until that machinery exists, require the two
+        # templates to be the same placeholder; otherwise surface the gap
+        # rather than silently dropping ``right_data_type``.
+        if not is_structurally_equivalent(left_data_type, right_data_type):
+            raise VerificationError(
+                f"Cannot unify distinct template data types: "
+                f"{left_data_type!r} vs {right_data_type!r}."
+            )
         return left_data_type, environment
     elif isinstance(left_data_type, TemplateDataType):
         next_environment = bind_data_template(
@@ -344,8 +357,9 @@ class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalenceMixin):
             A new environment that extends ``self`` with the new binding;
             ``self`` is left unchanged.
         """
-        new_bindings = frozendict({**self.data_type_bindings, name: value})
-        return replace(self, data_type_bindings=new_bindings)
+        return replace(
+            self, data_type_bindings=self.data_type_bindings.set(name, value)
+        )
 
     def with_type_binding(self, name: str, value: Type) -> TypeUnificationEnvironment:
         """Return a new environment with an additional full-type binding.
@@ -358,8 +372,7 @@ class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalenceMixin):
             A new environment that extends ``self`` with the new binding;
             ``self`` is left unchanged.
         """
-        new_bindings = frozendict({**self.type_bindings, name: value})
-        return replace(self, type_bindings=new_bindings)
+        return replace(self, type_bindings=self.type_bindings.set(name, value))
 
     def with_expression_binding(
         self, name: Identifier, value: Expression
@@ -374,8 +387,9 @@ class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalenceMixin):
             A new environment that extends ``self`` with the new binding;
             ``self`` is left unchanged.
         """
-        new_bindings = frozendict({**self.expression_bindings, name: value})
-        return replace(self, expression_bindings=new_bindings)
+        return replace(
+            self, expression_bindings=self.expression_bindings.set(name, value)
+        )
 
     def get_data_type_binding(self, name: str) -> DataType | None:
         """Return the bound data type for a placeholder name.

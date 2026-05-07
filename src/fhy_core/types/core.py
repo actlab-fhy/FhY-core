@@ -564,9 +564,19 @@ class NumericalType(Type):
     """Numerical multi-dimensional array type; empty shapes indicate scalars.
 
     Shape elements are normally ``Expression`` values. The literal ``...``
-    (``Ellipsis``) is also accepted as a shape element to represent a
-    wildcard dimension during template binding and substitution. Wildcard
-    shapes cannot be serialized.
+    (``Ellipsis``) is also accepted in shapes used for template binding and
+    substitution, with two distinct semantics:
+
+    - A shape of *exactly* ``[...]`` (a single ``Ellipsis``) is a full-shape
+      wildcard. When paired with a ``TemplateDataType`` it triggers the
+      whole-type binding path in ``bind_template``; otherwise it accepts any
+      shape on the actual without recording per-dimension bindings.
+    - An ``Ellipsis`` at a specific position within an otherwise-concrete
+      shape is a per-dimension wildcard: that single dimension matches any
+      ``Expression`` on the actual without binding, while neighbouring
+      dimensions are matched normally and the rank still has to agree.
+
+    Numerical types whose shape contains ``Ellipsis`` cannot be serialized.
     """
 
     _data_type: DataType

@@ -906,6 +906,33 @@ def test_unify_binds_data_type_template_appearing_on_either_side(
     )
 
 
+def test_unify_raises_on_distinct_template_data_types(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test unifying two distinct `TemplateDataType` placeholders raises."""
+    left_template = TemplateDataType(Identifier("T"))
+    right_template = TemplateDataType(Identifier("U"))
+    expected = NumericalType(left_template, [LiteralExpression(4)])
+    actual = NumericalType(right_template, [LiteralExpression(4)])
+    with pytest.raises(VerificationError):
+        unify(expected, actual, empty_environment)
+
+
+def test_unify_accepts_two_identical_template_data_types(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test unifying a template with an equally-named template is a no-op."""
+    template = TemplateDataType(Identifier("T"))
+    duplicate = TemplateDataType(
+        Identifier.deserialize_from_dict(template.data_type.serialize_to_dict())
+    )
+    expected = NumericalType(template, [LiteralExpression(4)])
+    actual = NumericalType(duplicate, [LiteralExpression(4)])
+    unified, environment = unify(expected, actual, empty_environment)
+    assert is_structurally_equivalent(unified, expected)
+    assert environment.is_structurally_equivalent(empty_environment)
+
+
 # =============================================================================
 # Out-of-tree extension
 #
