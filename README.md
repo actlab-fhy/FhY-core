@@ -14,7 +14,7 @@
 | Expression                               | General expression represented as an AST with a parser and printer.    |
 | Constraint                               | General logical constraint.                                            |
 | Parameter                                | Real, integer, ordinal, categorical, and permutation parameters.       |
-| Types                                    | Core type system for the compiler w/ type checking for expressions.    |
+| Types                                    | Extensible type system with open dispatchers for binding, substitution, unification, and structural equivalence; type checking for expressions. |
 | Symbol Table                             | Nested symbol table.                                                   |
 | Pass Infrastructure                      | `CompilerPass`, `VisitablePass`, and `register_pass` for building IR passes with diagnostics (`PassDiagnostic`, `DiagnosticLevel`) and preserved-analysis tracking. |
 | Pass Manager                             | `PassManager` sequences transformations and returns `PassManagerResult`/`PassRunRecord`; `FixpointPassGroup` drives until-fixpoint iteration. |
