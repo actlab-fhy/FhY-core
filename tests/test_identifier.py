@@ -36,8 +36,8 @@ def test_consecutive_identifiers_have_consecutive_ids() -> None:
     assert next_b == base + 2
 
 
-def test_concurrent_construction_yields_unique_ids() -> None:
-    """Test constructing `Identifier`s across many threads yields unique `id`s."""
+def test_concurrent_construction_yields_unique_and_contiguous_ids() -> None:
+    """Test concurrent constructions yield ids that form a contiguous range."""
     num_identifiers = 2000
     with ThreadPoolExecutor(max_workers=32) as executor:
         identifiers = list(
@@ -45,29 +45,72 @@ def test_concurrent_construction_yields_unique_ids() -> None:
         )
     ids = [identifier.id for identifier in identifiers]
     assert len(set(ids)) == num_identifiers
+    assert set(ids) == set(range(min(ids), min(ids) + num_identifiers))
 
 
-def test_concurrent_construction_and_deserialization_yield_unique_ids() -> None:
-    """Test concurrent construction and deserialization yield unique `id`s."""
-    num_constructed = 1000
-    num_deserialized = 1000
+def test_interleaved_construction_and_deserialization_yield_unique_ids() -> None:
+    """Test interleaved construct + high-id deserialize yield unique ids and an
+    advanced generator under contention."""
+    num_each = 500
     base = Identifier("anchor").id
-    deserialize_payloads: list[SerializedDict] = [
-        {"id": base + 10_000 + i, "name_hint": f"d{i}"} for i in range(num_deserialized)
-    ]
+    # Deserialize ids sit well above the construction range AND are spaced
+    # apart by more than `num_each` so constructions cannot fill into a
+    # later deserialize id under any interleaving. Each successful
+    # deserialize must bump `_next_id` under lock; without the lock, a
+    # deserialize bump overwritten by a concurrent construction's smaller
+    # increment leaves `_next_id` stale and lets later constructions reach
+    # an already-issued deserialized id.
+    spacing = num_each + 1
+    deserialize_ids = [base + 10_000 + i * spacing for i in range(num_each)]
 
-    def construct(_: int) -> Identifier:
-        return Identifier("c")
+    def run_op(spec: tuple[str, int]) -> int:
+        kind, value = spec
+        if kind == "c":
+            return Identifier("c").id
+        return Identifier.deserialize_from_dict({"id": value, "name_hint": "d"}).id
 
-    def deserialize(payload: SerializedDict) -> Identifier:
-        return Identifier.deserialize_from_dict(payload)
+    operations: list[tuple[str, int]] = []
+    for i in range(num_each):
+        operations.append(("c", i))
+        operations.append(("d", deserialize_ids[i]))
 
     with ThreadPoolExecutor(max_workers=32) as executor:
-        constructed = list(executor.map(construct, range(num_constructed)))
-        deserialized = list(executor.map(deserialize, deserialize_payloads))
+        ids = list(executor.map(run_op, operations))
 
-    all_ids = [i.id for i in constructed] + [i.id for i in deserialized]
-    assert len(set(all_ids)) == len(all_ids)
+    assert len(set(ids)) == len(ids)
+    # Generator-state post-condition: the next constructed id must strictly
+    # exceed every id observed during the race.
+    assert Identifier("post").id > max(ids)
+
+
+def test_interleaved_construct_id_strictly_exceeds_running_max() -> None:
+    """Test each constructed id strictly exceeds the running max across mixed
+    construct and above-and-below deserialize operations."""
+    base = Identifier("anchor").id
+    running_max = base
+    operations: list[tuple[str, int | None]] = [
+        ("c", None),
+        ("d", base + 50),
+        ("c", None),
+        ("d", base + 1),
+        ("c", None),
+        ("d", base + 200),
+        ("c", None),
+        ("d", base + 100),
+        ("c", None),
+        ("d", base + 5),
+        ("c", None),
+    ]
+
+    for kind, value in operations:
+        if kind == "c":
+            new_id = Identifier("c").id
+            assert new_id > running_max
+            running_max = new_id
+        else:
+            assert value is not None
+            d_id = Identifier.deserialize_from_dict({"id": value, "name_hint": "d"}).id
+            running_max = max(running_max, d_id)
 
 
 # =============================================================================
@@ -143,6 +186,20 @@ def test_identifier_supports_equal_traits() -> None:
     assert isinstance(identifier, Equal)
     assert identifier.supports_partial_equality is True
     assert identifier.supports_equality is True
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="`typing.final` only sets `__final__` on Python 3.11+",
+)
+def test_identifier_class_is_final() -> None:
+    """Test `Identifier` is decorated with `typing.final`.
+
+    `Identifier` is process-globally unique by design and shares its id
+    generator across the class. Subclassing creates a forked id space that
+    silently breaks uniqueness; the `@final` decorator pins this policy.
+    """
+    assert getattr(Identifier, "__final__", False) is True
 
 
 # =============================================================================
@@ -262,6 +319,32 @@ def test_deserialize_zero_id_is_valid() -> None:
     """Test deserializing the boundary `id` `0` succeeds."""
     deserialized = Identifier.deserialize_from_dict({"id": 0, "name_hint": "x"})
     assert deserialized.id == 0
+
+
+@pytest.mark.parametrize("id_value", [True, False], ids=["true", "false"])
+def test_deserialize_bool_id_raises(id_value: bool) -> None:
+    """Test deserializing a `bool` `id` raises a structure error.
+
+    `bool` is a subclass of `int` in Python, so a naive `isinstance(_, int)`
+    check would silently accept `True`/`False`. The deserializer must reject
+    them so the id space stays integer-only.
+    """
+    with pytest.raises(DeserializationDictStructureError):
+        Identifier.deserialize_from_dict({"id": id_value, "name_hint": "x"})
+
+
+def test_deserialize_extra_key_raises() -> None:
+    """Test an extra key in the payload raises a structure error."""
+    with pytest.raises(DeserializationDictStructureError):
+        Identifier.deserialize_from_dict({"id": 0, "name_hint": "x", "extra": 1})
+
+
+def test_deserialize_typo_key_raises() -> None:
+    """Test a typo'd key (e.g. `name_hit`) raises rather than silently dropping data."""
+    with pytest.raises(DeserializationDictStructureError):
+        Identifier.deserialize_from_dict(
+            {"id": 0, "name_hint": "x", "name_hit": "typo"}
+        )
 
 
 # =============================================================================
