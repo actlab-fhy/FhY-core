@@ -40,17 +40,25 @@ from ..lattice import Lattice
 from ..utils import StrEnum, format_comma_separated_list
 
 
-class Type(WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC):
-    """Abstract compiler type."""
+class _DispatchedStructuralEquivalence(
+    WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC
+):
+    """Shared base for ``Type`` and ``DataType``.
+
+    Forwards ``is_structurally_equivalent`` to the dispatcher in the
+    sibling ``dispatch`` module via a deferred import (``dispatch``
+    registers handlers against this method, so a top-level import would
+    cycle).
+    """
 
     def is_structurally_equivalent(self, other: object) -> bool:
-        # Deferred import: ``dispatch`` registers handlers against
-        # ``is_structurally_equivalent`` for the concrete ``Type`` subclasses
-        # defined in this module, so importing it at the module top would
-        # create a cycle.
         from .dispatch import is_structurally_equivalent  # noqa: PLC0415
 
         return is_structurally_equivalent(self, other)
+
+
+class Type(_DispatchedStructuralEquivalence, ABC):
+    """Abstract compiler type."""
 
 
 @register_error
@@ -58,15 +66,8 @@ class FhYCoreTypeError(TypeError):
     """Core type error."""
 
 
-class DataType(WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC):
+class DataType(_DispatchedStructuralEquivalence, ABC):
     """Abstract data type."""
-
-    def is_structurally_equivalent(self, other: object) -> bool:
-        # Deferred import for the same reason as
-        # ``Type.is_structurally_equivalent``.
-        from .dispatch import is_structurally_equivalent  # noqa: PLC0415
-
-        return is_structurally_equivalent(self, other)
 
 
 class CoreDataType(StrEnum):
@@ -201,6 +202,37 @@ _INTEGER_DATA_TYPE_LATTICE = _define_integer_data_type_lattice()
 _FLOAT_COMPLEX_DATA_TYPE_LATTICE = _define_float_complex_data_type_lattice()
 
 
+_UINT_DATA_TYPES: frozenset[CoreDataType] = frozenset(
+    {
+        CoreDataType.UINT,
+        CoreDataType.UINT8,
+        CoreDataType.UINT16,
+        CoreDataType.UINT32,
+    }
+)
+_SIGNED_INT_DATA_TYPES: frozenset[CoreDataType] = frozenset(
+    {
+        CoreDataType.INT,
+        CoreDataType.INT8,
+        CoreDataType.INT16,
+        CoreDataType.INT32,
+        CoreDataType.INT64,
+    }
+)
+_INTEGER_DATA_TYPES: frozenset[CoreDataType] = _UINT_DATA_TYPES | _SIGNED_INT_DATA_TYPES
+_FLOAT_COMPLEX_DATA_TYPES: frozenset[CoreDataType] = frozenset(
+    {
+        CoreDataType.FLOAT,
+        CoreDataType.FLOAT16,
+        CoreDataType.FLOAT32,
+        CoreDataType.FLOAT64,
+        CoreDataType.COMPLEX32,
+        CoreDataType.COMPLEX64,
+        CoreDataType.COMPLEX128,
+    }
+)
+
+
 def promote_core_data_types(
     core_data_type1: CoreDataType, core_data_type2: CoreDataType
 ) -> CoreDataType:
@@ -214,30 +246,9 @@ def promote_core_data_types(
         Common type to which both core data types can be promoted.
 
     Raises:
-        FhYTypeError: If the promotion is not supported.
+        FhYCoreTypeError: If the promotion is not supported.
 
     """
-    _INTEGER_DATA_TYPES = {
-        CoreDataType.UINT,
-        CoreDataType.UINT8,
-        CoreDataType.UINT16,
-        CoreDataType.UINT32,
-        CoreDataType.INT,
-        CoreDataType.INT8,
-        CoreDataType.INT16,
-        CoreDataType.INT32,
-        CoreDataType.INT64,
-    }
-    _FLOAT_COMPLEX_DATA_TYPES = {
-        CoreDataType.FLOAT,
-        CoreDataType.FLOAT16,
-        CoreDataType.FLOAT32,
-        CoreDataType.FLOAT64,
-        CoreDataType.COMPLEX32,
-        CoreDataType.COMPLEX64,
-        CoreDataType.COMPLEX128,
-    }
-
     if (
         core_data_type1 in _INTEGER_DATA_TYPES
         and core_data_type2 in _INTEGER_DATA_TYPES
@@ -282,6 +293,10 @@ def _get_smallest_int_core_data_type(literal: int) -> CoreDataType:
     raise FhYCoreTypeError(f"Literal {literal} does not fit in a supported int type.")
 
 
+def _resolve_to_concrete_float_complex(target: CoreDataType) -> CoreDataType:
+    return CoreDataType.FLOAT16 if target == CoreDataType.FLOAT else target
+
+
 def resolve_literal_core_data_type(
     literal: int | float, core_data_type: CoreDataType
 ) -> CoreDataType:
@@ -296,102 +311,40 @@ def resolve_literal_core_data_type(
         the requested context.
 
     Raises:
+        NotImplementedError: If `literal` is a `bool`. Boolean literals are
+            reserved for a future `BOOL` core data type and are surfaced as
+            a deliberate "not yet supported" marker, distinct from the
+            type-incompatibility path.
         FhYCoreTypeError: If the literal cannot be represented in the requested
             type family.
 
     """
     if isinstance(literal, bool):
         raise NotImplementedError("Boolean literals are not yet supported.")
-    elif isinstance(literal, float):
-        if core_data_type in {
-            CoreDataType.FLOAT,
-            CoreDataType.FLOAT16,
-            CoreDataType.FLOAT32,
-            CoreDataType.FLOAT64,
-            CoreDataType.COMPLEX32,
-            CoreDataType.COMPLEX64,
-            CoreDataType.COMPLEX128,
-        }:
-            return (
-                CoreDataType.FLOAT16
-                if core_data_type == CoreDataType.FLOAT
-                else core_data_type
-            )
-        else:
-            raise FhYCoreTypeError(
-                f"Float literal {literal} is incompatible with {core_data_type}."
-            )
-    elif literal >= 0:
+
+    if isinstance(literal, float):
+        if core_data_type in _FLOAT_COMPLEX_DATA_TYPES:
+            return _resolve_to_concrete_float_complex(core_data_type)
+        raise FhYCoreTypeError(
+            f"Float literal {literal} is incompatible with {core_data_type}."
+        )
+
+    if literal >= 0 and core_data_type in _UINT_DATA_TYPES:
         minimal_uint = _get_smallest_uint_core_data_type(literal)
-        if core_data_type in {
-            CoreDataType.UINT,
-            CoreDataType.UINT8,
-            CoreDataType.UINT16,
-            CoreDataType.UINT32,
-        }:
-            return promote_core_data_types(
-                minimal_uint,
-                CoreDataType.UINT8
-                if core_data_type == CoreDataType.UINT
-                else core_data_type,
-            )
-        elif core_data_type in {
-            CoreDataType.INT,
-            CoreDataType.INT8,
-            CoreDataType.INT16,
-            CoreDataType.INT32,
-            CoreDataType.INT64,
-        }:
-            minimal_int = _get_smallest_int_core_data_type(literal)
-            return promote_core_data_types(
-                minimal_int,
-                CoreDataType.INT8
-                if core_data_type == CoreDataType.INT
-                else core_data_type,
-            )
-        elif core_data_type in {
-            CoreDataType.FLOAT,
-            CoreDataType.FLOAT16,
-            CoreDataType.FLOAT32,
-            CoreDataType.FLOAT64,
-            CoreDataType.COMPLEX32,
-            CoreDataType.COMPLEX64,
-            CoreDataType.COMPLEX128,
-        }:
-            return (
-                CoreDataType.FLOAT16
-                if core_data_type == CoreDataType.FLOAT
-                else core_data_type
-            )
-    else:
+        return promote_core_data_types(
+            minimal_uint,
+            CoreDataType.UINT8
+            if core_data_type == CoreDataType.UINT
+            else core_data_type,
+        )
+    if core_data_type in _SIGNED_INT_DATA_TYPES:
         minimal_int = _get_smallest_int_core_data_type(literal)
-        if core_data_type in {
-            CoreDataType.INT,
-            CoreDataType.INT8,
-            CoreDataType.INT16,
-            CoreDataType.INT32,
-            CoreDataType.INT64,
-        }:
-            return promote_core_data_types(
-                minimal_int,
-                CoreDataType.INT8
-                if core_data_type == CoreDataType.INT
-                else core_data_type,
-            )
-        elif core_data_type in {
-            CoreDataType.FLOAT,
-            CoreDataType.FLOAT16,
-            CoreDataType.FLOAT32,
-            CoreDataType.FLOAT64,
-            CoreDataType.COMPLEX32,
-            CoreDataType.COMPLEX64,
-            CoreDataType.COMPLEX128,
-        }:
-            return (
-                CoreDataType.FLOAT16
-                if core_data_type == CoreDataType.FLOAT
-                else core_data_type
-            )
+        return promote_core_data_types(
+            minimal_int,
+            CoreDataType.INT8 if core_data_type == CoreDataType.INT else core_data_type,
+        )
+    if core_data_type in _FLOAT_COMPLEX_DATA_TYPES:
+        return _resolve_to_concrete_float_complex(core_data_type)
 
     raise FhYCoreTypeError(f"Literal {literal} is incompatible with {core_data_type}.")
 
@@ -413,6 +366,7 @@ class PrimitiveDataType(DataType):
     _core_data_type: CoreDataType
 
     def __init__(self, core_data_type: CoreDataType) -> None:
+        super().__init__()
         self._core_data_type = core_data_type
         self.freeze(deep=True)
 
@@ -472,6 +426,7 @@ class TemplateDataType(DataType):
     def __init__(
         self, data_type: Identifier, widths: Sequence[int] | None = None
     ) -> None:
+        super().__init__()
         self._data_type = data_type
         self._widths = tuple(widths) if widths is not None else None
         self.freeze(deep=True)
@@ -525,7 +480,7 @@ def promote_primitive_data_types(
         DataType: Common type to which both primitive data types can be promoted.
 
     Raises:
-        FhYTypeError: If the promotion is not supported.
+        FhYCoreTypeError: If the promotion is not supported.
 
     """
     return PrimitiveDataType(
@@ -564,7 +519,7 @@ def _format_numerical_shape_dimension(dimension: Expression | EllipsisType) -> s
 # distinct from any ``Expression`` ``type_id`` so deserialization can detect
 # the sentinel without consulting the serialization registry; the empty
 # ``__data__`` payload mirrors the family-serialization convention.
-_ELLIPSIS_SHAPE_DIMENSION_TYPE_ID = "numerical_type_shape_ellipsis"
+_ELLIPSIS_SHAPE_DIMENSION_TYPE_ID = "__numerical_type_shape_ellipsis__"
 
 
 def _make_ellipsis_shape_dimension_dict() -> SerializedDict:
@@ -702,6 +657,7 @@ class IndexType(Type):
         upper_bound: Expression,
         stride: Expression | None = None,
     ) -> None:
+        super().__init__()
         self._lower_bound = lower_bound
         self._upper_bound = upper_bound
         self._stride = stride if stride is not None else LiteralExpression(1)

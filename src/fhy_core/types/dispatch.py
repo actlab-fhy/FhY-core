@@ -67,40 +67,13 @@ from .core import (
     PrimitiveDataType,
     TemplateDataType,
     Type,
+    get_core_data_type_bit_width,
 )
 
 
-def _is_data_type_bindings_equivalent(
-    left_bindings: frozendict[Identifier, DataType],
-    right_bindings: frozendict[Identifier, DataType],
-) -> bool:
-    if set(left_bindings.keys()) != set(right_bindings.keys()):
-        return False
-    for binding_identifier, left_value in left_bindings.items():
-        if not left_value.is_structurally_equivalent(
-            right_bindings[binding_identifier]
-        ):
-            return False
-    return True
-
-
-def _is_type_bindings_equivalent(
-    left_bindings: frozendict[Identifier, Type],
-    right_bindings: frozendict[Identifier, Type],
-) -> bool:
-    if set(left_bindings.keys()) != set(right_bindings.keys()):
-        return False
-    for binding_identifier, left_value in left_bindings.items():
-        if not left_value.is_structurally_equivalent(
-            right_bindings[binding_identifier]
-        ):
-            return False
-    return True
-
-
-def _is_expression_bindings_equivalent(
-    left_bindings: frozendict[Identifier, Expression],
-    right_bindings: frozendict[Identifier, Expression],
+def _is_bindings_equivalent(
+    left_bindings: frozendict[Identifier, Any],
+    right_bindings: frozendict[Identifier, Any],
 ) -> bool:
     if set(left_bindings.keys()) != set(right_bindings.keys()):
         return False
@@ -276,11 +249,7 @@ def _unify_data_types(
     if isinstance(left_data_type, TemplateDataType) and isinstance(
         right_data_type, TemplateDataType
     ):
-        # Two unbound template placeholders. Standard unification would link
-        # them via a fresh chain binding, but ``substitute_data_template`` does
-        # not follow chains. Until that machinery exists, require the two
-        # templates to be the same placeholder; otherwise surface the gap
-        # rather than silently dropping ``right_data_type``.
+        # TODO: chain-binding for two-template unify
         if not is_structurally_equivalent(left_data_type, right_data_type):
             raise VerificationError(
                 f"Cannot unify distinct template data types: "
@@ -443,16 +412,13 @@ class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalenceMixin):
     def is_structurally_equivalent(self, other: object) -> bool:
         if not isinstance(other, TypeUnificationEnvironment):
             return False
-        elif not _is_data_type_bindings_equivalent(
-            self.data_type_bindings, other.data_type_bindings
-        ):
-            return False
-        elif not _is_type_bindings_equivalent(self.type_bindings, other.type_bindings):
-            return False
-        else:
-            return _is_expression_bindings_equivalent(
+        return (
+            _is_bindings_equivalent(self.data_type_bindings, other.data_type_bindings)
+            and _is_bindings_equivalent(self.type_bindings, other.type_bindings)
+            and _is_bindings_equivalent(
                 self.expression_bindings, other.expression_bindings
             )
+        )
 
 
 @singledispatch
@@ -522,11 +488,13 @@ def substitute_template(type_: Any, environment: TypeUnificationEnvironment) -> 
         are left as-is (partial substitution is allowed).
 
     Raises:
-        VerificationError: If ``type_`` is not a ``Type`` and no handler
-            is registered for its concrete class.
+        TypeError: If ``type_`` is not a ``Type`` and no handler is
+            registered for its concrete class. (Reaching this default with
+            a non-``Type`` is a programmer/registration bug, not a
+            verification failure.)
     """
     if not isinstance(type_, Type):
-        raise VerificationError(
+        raise TypeError(
             f"substitute_template received {type(type_).__name__}, which is not a Type."
         )
     return type_
@@ -614,11 +582,13 @@ def substitute_data_template(
         placeholders are left as-is.
 
     Raises:
-        VerificationError: If ``data_type`` is not a ``DataType`` and no
-            handler is registered for its concrete class.
+        TypeError: If ``data_type`` is not a ``DataType`` and no handler
+            is registered for its concrete class. (Reaching this default
+            with a non-``DataType`` is a programmer/registration bug, not
+            a verification failure.)
     """
     if not isinstance(data_type, DataType):
-        raise VerificationError(
+        raise TypeError(
             f"substitute_data_template received {type(data_type).__name__}, "
             f"which is not a DataType."
         )
@@ -748,12 +718,39 @@ def _(
     return next_environment
 
 
+def _check_template_width_constraint(
+    pattern: TemplateDataType, actual: DataType
+) -> None:
+    """Raise ``VerificationError`` when ``actual`` violates ``pattern.widths``.
+
+    A ``TemplateDataType`` whose ``widths`` is non-``None`` matches only
+    actuals whose bit width appears in the list. Weak-literal types (bit
+    width ``None``) never satisfy a non-``None`` constraint, even when the
+    constraint is empty. ``widths=None`` is unconstrained.
+    """
+    pattern_widths = pattern.widths
+    if pattern_widths is None:
+        return
+    if not isinstance(actual, PrimitiveDataType):
+        raise VerificationError(
+            f"Cannot satisfy width constraint {pattern_widths!r} on "
+            f"{pattern!r} with non-primitive actual {actual!r}."
+        )
+    actual_width = get_core_data_type_bit_width(actual.core_data_type)
+    if actual_width is None or actual_width not in pattern_widths:
+        raise VerificationError(
+            f"Width mismatch for template {pattern!r}: actual {actual!r} "
+            f"has width {actual_width!r}, not in {pattern_widths!r}."
+        )
+
+
 @bind_data_template.register
 def _(
     pattern: TemplateDataType,
     actual: DataType,
     environment: TypeUnificationEnvironment,
 ) -> TypeUnificationEnvironment:
+    _check_template_width_constraint(pattern, actual)
     template_identifier = pattern.data_type
     existing_binding = environment.get_data_type_binding(template_identifier)
     if existing_binding is None:
