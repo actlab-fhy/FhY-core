@@ -1,11 +1,12 @@
 """Extensible dispatchers for the core type system.
 
-This module exposes four conceptual extension points — *binding*,
-*substitution*, *unification*, and *structural equivalence* — across two
-tiers (the ``Type`` tier and the ``DataType`` tier), giving six
-:func:`functools.singledispatch` functions in total. Equivalence and
-unification have only a single dispatcher because the same function handles
-both ``Type`` and ``DataType`` arguments via its registered overloads.
+This module exposes four conceptual extension points --- *binding*,
+*substitution*, *unification*, and *structural equivalence* --- as six
+:func:`functools.singledispatch` functions. Binding and substitution are
+split across a ``Type`` tier and a parallel ``DataType`` tier;
+``is_structurally_equivalent`` is registered against both tiers and accepts
+either argument type; ``unify`` operates on ``Type`` arguments only and
+handles data-type unification internally.
 
 - ``bind_template(pattern, actual, environment)``: one-directional binding
   for template patterns against concrete types.
@@ -23,6 +24,12 @@ Each dispatcher is keyed by the concrete class of its first argument.
 Downstream packages defining new ``Type`` or ``DataType`` subclasses
 register handlers against these dispatchers from wherever the class is
 defined; no modification to ``fhy_core`` is required.
+
+Template placeholders are scoped by their underlying ``Identifier`` --- the
+same id-based equality used everywhere else in ``fhy_core``. Two
+``TemplateDataType`` values backed by ``Identifier`` instances that share a
+``name_hint`` but differ in id are *distinct* placeholders, and unification
+between them raises rather than silently merging them.
 """
 
 from __future__ import annotations
@@ -64,25 +71,29 @@ from .core import (
 
 
 def _is_data_type_bindings_equivalent(
-    left_bindings: frozendict[str, DataType],
-    right_bindings: frozendict[str, DataType],
+    left_bindings: frozendict[Identifier, DataType],
+    right_bindings: frozendict[Identifier, DataType],
 ) -> bool:
     if set(left_bindings.keys()) != set(right_bindings.keys()):
         return False
-    for binding_name, left_value in left_bindings.items():
-        if not left_value.is_structurally_equivalent(right_bindings[binding_name]):
+    for binding_identifier, left_value in left_bindings.items():
+        if not left_value.is_structurally_equivalent(
+            right_bindings[binding_identifier]
+        ):
             return False
     return True
 
 
 def _is_type_bindings_equivalent(
-    left_bindings: frozendict[str, Type],
-    right_bindings: frozendict[str, Type],
+    left_bindings: frozendict[Identifier, Type],
+    right_bindings: frozendict[Identifier, Type],
 ) -> bool:
     if set(left_bindings.keys()) != set(right_bindings.keys()):
         return False
-    for binding_name, left_value in left_bindings.items():
-        if not left_value.is_structurally_equivalent(right_bindings[binding_name]):
+    for binding_identifier, left_value in left_bindings.items():
+        if not left_value.is_structurally_equivalent(
+            right_bindings[binding_identifier]
+        ):
             return False
     return True
 
@@ -300,21 +311,22 @@ class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalenceMixin):
     """Carrier for binding state used during type-system operations.
 
     Three independent binding tables hold placeholder resolutions accumulated
-    while binding, substituting, or unifying types:
+    while binding, substituting, or unifying types. All three are keyed by
+    ``Identifier`` so that placeholder identity follows the codebase-wide
+    id-based equality on ``Identifier`` rather than any name string:
 
-    - ``data_type_bindings`` maps a ``TemplateDataType`` placeholder name (the
-      placeholder's ``Identifier.name_hint``) to a concrete ``DataType``.
-      Populated when a ``TemplateDataType`` in a pattern is matched against a
-      concrete data type in an actual.
-    - ``type_bindings`` maps a full-type-template placeholder name to a
+    - ``data_type_bindings`` maps a ``TemplateDataType``'s ``Identifier`` to
+      a concrete ``DataType``. Populated when a ``TemplateDataType`` in a
+      pattern is matched against a concrete data type in an actual.
+    - ``type_bindings`` maps a full-type-template ``Identifier`` to a
       concrete ``Type``. Populated when a ``NumericalType`` whose data type
       is a ``TemplateDataType`` and whose shape is a wildcard (``[...]``) is
-      matched against a concrete type — the entire actual type is captured,
+      matched against a concrete type --- the entire actual type is captured,
       not just its data-type part.
-    - ``expression_bindings`` maps an ``Identifier`` (a shape-variable
-      placeholder used as the head of an ``IdentifierExpression``) to a
-      concrete ``Expression``. Populated when shape elements are unified
-      pairwise and one side is a placeholder.
+    - ``expression_bindings`` maps a shape-variable placeholder ``Identifier``
+      (the head of an ``IdentifierExpression``) to a concrete ``Expression``.
+      Populated when shape elements are unified pairwise and one side is a
+      placeholder.
 
     The environment is frozen. Updates produce new environments via the
     ``with_*`` helpers; the dispatchers thread the environment through
@@ -329,8 +341,10 @@ class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalenceMixin):
         expression_bindings: Bindings for shape-variable placeholders.
     """
 
-    data_type_bindings: frozendict[str, DataType] = field(default_factory=frozendict)
-    type_bindings: frozendict[str, Type] = field(default_factory=frozendict)
+    data_type_bindings: frozendict[Identifier, DataType] = field(
+        default_factory=frozendict
+    )
+    type_bindings: frozendict[Identifier, Type] = field(default_factory=frozendict)
     expression_bindings: frozendict[Identifier, Expression] = field(
         default_factory=frozendict
     )
@@ -345,12 +359,12 @@ class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalenceMixin):
         return cls()
 
     def with_data_type_binding(
-        self, name: str, value: DataType
+        self, name: Identifier, value: DataType
     ) -> TypeUnificationEnvironment:
         """Return a new environment with an additional data-type binding.
 
         Args:
-            name: Placeholder name to bind.
+            name: Placeholder identifier to bind.
             value: Concrete data type to bind ``name`` to.
 
         Returns:
@@ -361,11 +375,13 @@ class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalenceMixin):
             self, data_type_bindings=self.data_type_bindings.set(name, value)
         )
 
-    def with_type_binding(self, name: str, value: Type) -> TypeUnificationEnvironment:
+    def with_type_binding(
+        self, name: Identifier, value: Type
+    ) -> TypeUnificationEnvironment:
         """Return a new environment with an additional full-type binding.
 
         Args:
-            name: Placeholder name to bind.
+            name: Placeholder identifier to bind.
             value: Concrete type to bind ``name`` to.
 
         Returns:
@@ -391,22 +407,22 @@ class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalenceMixin):
             self, expression_bindings=self.expression_bindings.set(name, value)
         )
 
-    def get_data_type_binding(self, name: str) -> DataType | None:
-        """Return the bound data type for a placeholder name.
+    def get_data_type_binding(self, name: Identifier) -> DataType | None:
+        """Return the bound data type for a placeholder identifier.
 
         Args:
-            name: Placeholder name to look up.
+            name: Placeholder identifier to look up.
 
         Returns:
             The bound data type, or ``None`` if ``name`` is unbound.
         """
         return self.data_type_bindings.get(name)
 
-    def get_type_binding(self, name: str) -> Type | None:
-        """Return the bound full type for a placeholder name.
+    def get_type_binding(self, name: Identifier) -> Type | None:
+        """Return the bound full type for a placeholder identifier.
 
         Args:
-            name: Placeholder name to look up.
+            name: Placeholder identifier to look up.
 
         Returns:
             The bound type, or ``None`` if ``name`` is unbound.
@@ -443,7 +459,7 @@ class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalenceMixin):
 def is_structurally_equivalent(left: Any, right: Any) -> bool:
     """Compare two ``Type`` or ``DataType`` values for structural equivalence.
 
-    The default returns ``False`` — register a handler for any concrete
+    The default returns ``False`` --- register a handler for any concrete
     subclass that should support structural comparison.
 
     Args:
@@ -677,16 +693,16 @@ def _(
     if isinstance(pattern.data_type, TemplateDataType) and _is_wildcard_shape(
         pattern.shape
     ):
-        template_name = pattern.data_type.data_type.name_hint
-        existing_full_type = next_environment.get_type_binding(template_name)
+        template_identifier = pattern.data_type.data_type
+        existing_full_type = next_environment.get_type_binding(template_identifier)
         if existing_full_type is not None and not is_structurally_equivalent(
             existing_full_type, actual
         ):
             raise VerificationError(
-                f"Conflicting full-type binding for {template_name!r}: "
+                f"Conflicting full-type binding for {template_identifier!r}: "
                 f"{existing_full_type!r} vs {actual!r}."
             )
-        return next_environment.with_type_binding(template_name, actual)
+        return next_environment.with_type_binding(template_identifier, actual)
     elif _is_wildcard_shape(pattern.shape):
         return next_environment
     elif len(pattern.shape) != len(actual.shape):
@@ -738,13 +754,13 @@ def _(
     actual: DataType,
     environment: TypeUnificationEnvironment,
 ) -> TypeUnificationEnvironment:
-    template_name = pattern.data_type.name_hint
-    existing_binding = environment.get_data_type_binding(template_name)
+    template_identifier = pattern.data_type
+    existing_binding = environment.get_data_type_binding(template_identifier)
     if existing_binding is None:
-        return environment.with_data_type_binding(template_name, actual)
+        return environment.with_data_type_binding(template_identifier, actual)
     elif not is_structurally_equivalent(existing_binding, actual):
         raise VerificationError(
-            f"Conflicting data-type binding for {template_name!r}: "
+            f"Conflicting data-type binding for {template_identifier!r}: "
             f"{existing_binding!r} vs {actual!r}."
         )
     else:
@@ -775,9 +791,7 @@ def _(type_: NumericalType, environment: TypeUnificationEnvironment) -> Type:
     if isinstance(type_.data_type, TemplateDataType) and _is_wildcard_shape(
         type_.shape
     ):
-        bound_full_type = environment.get_type_binding(
-            type_.data_type.data_type.name_hint
-        )
+        bound_full_type = environment.get_type_binding(type_.data_type.data_type)
         if bound_full_type is not None:
             return bound_full_type
 
@@ -802,7 +816,7 @@ def _(type_: IndexType, environment: TypeUnificationEnvironment) -> Type:
 
 @substitute_data_template.register
 def _(data_type: TemplateDataType, environment: TypeUnificationEnvironment) -> DataType:
-    bound_data_type = environment.get_data_type_binding(data_type.data_type.name_hint)
+    bound_data_type = environment.get_data_type_binding(data_type.data_type)
     if bound_data_type is None:
         return data_type
     else:

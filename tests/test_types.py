@@ -461,8 +461,8 @@ def test_empty_environment_has_no_bindings(
     empty_environment: TypeUnificationEnvironment,
 ) -> None:
     """Test ``empty()`` returns an environment whose binding tables are empty."""
-    assert empty_environment.get_data_type_binding("T") is None
-    assert empty_environment.get_type_binding("T") is None
+    assert empty_environment.get_data_type_binding(Identifier("T")) is None
+    assert empty_environment.get_type_binding(Identifier("T")) is None
     assert empty_environment.get_expression_binding(Identifier("N")) is None
 
 
@@ -471,28 +471,30 @@ def test_with_helpers_return_new_environments_without_mutating_original(
     int32_data_type: PrimitiveDataType,
 ) -> None:
     """Test ``with_*`` helpers return new environments and leave the original alone."""
+    t_identifier = Identifier("T")
+    u_identifier = Identifier("U")
     n_identifier = Identifier("N")
 
     environment_with_data_type_binding = empty_environment.with_data_type_binding(
-        "T", int32_data_type
+        t_identifier, int32_data_type
     )
     environment_with_type_binding = empty_environment.with_type_binding(
-        "U", NumericalType(int32_data_type)
+        u_identifier, NumericalType(int32_data_type)
     )
     environment_with_expression_binding = empty_environment.with_expression_binding(
         n_identifier, LiteralExpression(4)
     )
 
-    assert empty_environment.get_data_type_binding("T") is None
-    assert empty_environment.get_type_binding("U") is None
+    assert empty_environment.get_data_type_binding(t_identifier) is None
+    assert empty_environment.get_type_binding(u_identifier) is None
     assert empty_environment.get_expression_binding(n_identifier) is None
 
     assert isinstance(
-        environment_with_data_type_binding.get_data_type_binding("T"),
+        environment_with_data_type_binding.get_data_type_binding(t_identifier),
         PrimitiveDataType,
     )
     assert isinstance(
-        environment_with_type_binding.get_type_binding("U"), NumericalType
+        environment_with_type_binding.get_type_binding(u_identifier), NumericalType
     )
     assert (
         environment_with_expression_binding.get_expression_binding(n_identifier)
@@ -525,15 +527,18 @@ def test_environment_structural_equivalence_compares_bindings_by_value(
     float32_data_type: PrimitiveDataType,
 ) -> None:
     """Test environment structural equivalence compares bindings by structural value."""
+    t_identifier = Identifier("T")
     n_identifier = Identifier("N")
     environment_with_int = TypeUnificationEnvironment.empty().with_data_type_binding(
-        "T", int32_data_type
+        t_identifier, int32_data_type
     )
     environment_with_int_duplicate = (
-        TypeUnificationEnvironment.empty().with_data_type_binding("T", int32_data_type)
+        TypeUnificationEnvironment.empty().with_data_type_binding(
+            t_identifier, int32_data_type
+        )
     )
     environment_with_float = TypeUnificationEnvironment.empty().with_data_type_binding(
-        "T", float32_data_type
+        t_identifier, float32_data_type
     )
     environment_with_expression = (
         TypeUnificationEnvironment.empty().with_expression_binding(
@@ -556,23 +561,25 @@ def test_chained_with_helpers_produce_pairwise_distinct_environments(
     float32_data_type: PrimitiveDataType,
 ) -> None:
     """Test successive ``with_*`` calls yield pairwise structurally distinct envs."""
+    t_identifier = Identifier("T")
+    u_identifier = Identifier("U")
     n_identifier = Identifier("N")
     environment_0 = TypeUnificationEnvironment.empty()
-    environment_1 = environment_0.with_data_type_binding("T", int32_data_type)
+    environment_1 = environment_0.with_data_type_binding(t_identifier, int32_data_type)
     environment_2 = environment_1.with_expression_binding(
         n_identifier, LiteralExpression(7)
     )
     environment_3 = environment_2.with_type_binding(
-        "U", NumericalType(float32_data_type)
+        u_identifier, NumericalType(float32_data_type)
     )
 
     environments = [environment_0, environment_1, environment_2, environment_3]
     for left_index, left_environment in enumerate(environments):
         for right_environment in environments[left_index + 1 :]:
             assert not left_environment.is_structurally_equivalent(right_environment)
-    assert environment_0.get_data_type_binding("T") is None
+    assert environment_0.get_data_type_binding(t_identifier) is None
     assert environment_0.get_expression_binding(n_identifier) is None
-    assert environment_0.get_type_binding("U") is None
+    assert environment_0.get_type_binding(u_identifier) is None
 
 
 # =============================================================================
@@ -628,7 +635,8 @@ def test_bind_template_then_substitute_round_trips_for_numerical_type(
     float32_data_type: PrimitiveDataType,
 ) -> None:
     """Test a `NumericalType` bind/substitute cycle reproduces the actual type."""
-    template_data_type = TemplateDataType(Identifier("T"))
+    t_identifier = Identifier("T")
+    template_data_type = TemplateDataType(t_identifier)
     n_identifier = Identifier("N")
     m_identifier = Identifier("M")
     pattern = NumericalType(
@@ -644,7 +652,7 @@ def test_bind_template_then_substitute_round_trips_for_numerical_type(
 
     environment = bind_template(pattern, actual, empty_environment)
     assert is_structurally_equivalent(
-        environment.get_data_type_binding("T"), float32_data_type
+        environment.get_data_type_binding(t_identifier), float32_data_type
     )
     n_binding = environment.get_expression_binding(n_identifier)
     m_binding = environment.get_expression_binding(m_identifier)
@@ -688,7 +696,8 @@ def test_bind_template_full_type_wildcard_records_entire_actual(
     int32_data_type: PrimitiveDataType,
 ) -> None:
     """Test `[T, ...]` against a concrete type binds the entire actual to ``T``."""
-    template_data_type = TemplateDataType(Identifier("T"))
+    t_identifier = Identifier("T")
+    template_data_type = TemplateDataType(t_identifier)
     pattern = NumericalType(template_data_type, [...])
     actual = NumericalType(
         int32_data_type,
@@ -696,12 +705,12 @@ def test_bind_template_full_type_wildcard_records_entire_actual(
     )
 
     environment = bind_template(pattern, actual, empty_environment)
-    bound_full_type = environment.get_type_binding("T")
+    bound_full_type = environment.get_type_binding(t_identifier)
     assert bound_full_type is not None and is_structurally_equivalent(
         bound_full_type, actual
     )
     assert is_structurally_equivalent(
-        environment.get_data_type_binding("T"), int32_data_type
+        environment.get_data_type_binding(t_identifier), int32_data_type
     )
 
     substituted = substitute_template(pattern, environment)
@@ -719,8 +728,8 @@ def test_bind_template_wildcard_with_concrete_data_type_accepts_any_shape(
     )
 
     environment = bind_template(pattern, actual, empty_environment)
-    assert environment.get_data_type_binding("anything") is None
-    assert environment.get_type_binding("anything") is None
+    assert environment.get_data_type_binding(Identifier("anything")) is None
+    assert environment.get_type_binding(Identifier("anything")) is None
 
 
 def test_bind_template_raises_on_shape_rank_mismatch(
@@ -845,9 +854,10 @@ def test_substitute_data_template_resolves_a_bound_template(
     int32_data_type: PrimitiveDataType,
 ) -> None:
     """Test data-type substitution returns the bound concrete type for a placeholder."""
-    template_data_type = TemplateDataType(Identifier("T"))
+    t_identifier = Identifier("T")
+    template_data_type = TemplateDataType(t_identifier)
     environment = TypeUnificationEnvironment.empty().with_data_type_binding(
-        "T", int32_data_type
+        t_identifier, int32_data_type
     )
     substituted = substitute_data_template(template_data_type, environment)
     assert is_structurally_equivalent(substituted, int32_data_type)
@@ -955,13 +965,14 @@ def test_unify_binds_data_type_template_appearing_on_either_side(
     int32_data_type: PrimitiveDataType,
 ) -> None:
     """Test unification binds a `TemplateDataType` when it appears on either side."""
-    template_data_type = TemplateDataType(Identifier("T"))
+    t_identifier = Identifier("T")
+    template_data_type = TemplateDataType(t_identifier)
     expected = NumericalType(template_data_type, [LiteralExpression(4)])
     actual = NumericalType(int32_data_type, [LiteralExpression(4)])
     unified, environment = unify(expected, actual, empty_environment)
     assert is_structurally_equivalent(unified, actual)
     assert is_structurally_equivalent(
-        environment.get_data_type_binding("T"), int32_data_type
+        environment.get_data_type_binding(t_identifier), int32_data_type
     )
 
 
@@ -977,19 +988,54 @@ def test_unify_raises_on_distinct_template_data_types(
         unify(expected, actual, empty_environment)
 
 
-def test_unify_accepts_two_identical_template_data_types(
+def test_unify_treats_same_name_distinct_identifiers_as_distinct_templates(
     empty_environment: TypeUnificationEnvironment,
 ) -> None:
-    """Test unifying a template with an equally-named template is a no-op."""
-    template = TemplateDataType(Identifier("T"))
-    duplicate = TemplateDataType(
-        Identifier.deserialize_from_dict(template.data_type.serialize_to_dict())
-    )
-    expected = NumericalType(template, [LiteralExpression(4)])
-    actual = NumericalType(duplicate, [LiteralExpression(4)])
+    """Test two ``TemplateDataType`` values backed by distinct ``Identifier``s raise.
+
+    Both templates share the ``name_hint`` ``"T"`` but wrap distinct
+    ``Identifier`` instances with different unique ids. The id-based
+    placeholder scoping treats them as different templates and refuses to
+    unify them silently.
+    """
+    expected = NumericalType(TemplateDataType(Identifier("T")), [LiteralExpression(4)])
+    actual = NumericalType(TemplateDataType(Identifier("T")), [LiteralExpression(4)])
+    with pytest.raises(VerificationError):
+        unify(expected, actual, empty_environment)
+
+
+def test_unify_accepts_a_template_with_itself(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test unifying two `TemplateDataType`s sharing one identifier is a no-op."""
+    t_identifier = Identifier("T")
+    expected = NumericalType(TemplateDataType(t_identifier), [LiteralExpression(4)])
+    actual = NumericalType(TemplateDataType(t_identifier), [LiteralExpression(4)])
     unified, environment = unify(expected, actual, empty_environment)
     assert is_structurally_equivalent(unified, expected)
     assert environment.is_structurally_equivalent(empty_environment)
+
+
+def test_template_data_type_equivalence_is_identifier_based() -> None:
+    """Test ``is_structurally_equivalent`` compares ``TemplateDataType`` by id."""
+    t_identifier = Identifier("T")
+    left = TemplateDataType(t_identifier)
+    same_identifier = TemplateDataType(t_identifier)
+    same_name_distinct_identifier = TemplateDataType(Identifier("T"))
+    different_name = TemplateDataType(Identifier("U"))
+
+    assert is_structurally_equivalent(left, same_identifier)
+    assert left.is_structurally_equivalent(same_identifier)
+    assert not is_structurally_equivalent(left, same_name_distinct_identifier)
+    assert not is_structurally_equivalent(left, different_name)
+
+
+def test_template_data_type_equivalence_respects_widths() -> None:
+    """Test same-identifier templates with differing widths are not equivalent."""
+    t_identifier = Identifier("T")
+    eight_bit = TemplateDataType(t_identifier, widths=[8])
+    sixteen_bit = TemplateDataType(t_identifier, widths=[16])
+    assert not is_structurally_equivalent(eight_bit, sixteen_bit)
 
 
 # =============================================================================
@@ -1129,7 +1175,8 @@ def test_out_of_tree_class_propagates_inner_bindings_during_unification(
     int32_data_type: PrimitiveDataType,
 ) -> None:
     """Test unification through an out-of-tree wrapper records bindings on its inner."""
-    template_data_type = TemplateDataType(Identifier("T"))
+    t_identifier = Identifier("T")
+    template_data_type = TemplateDataType(t_identifier)
     n_identifier = Identifier("N")
     expected = SyntheticTaggedType(
         "dense",
@@ -1142,7 +1189,7 @@ def test_out_of_tree_class_propagates_inner_bindings_during_unification(
     assert isinstance(unified, SyntheticTaggedType)
     assert is_structurally_equivalent(unified, actual)
     assert is_structurally_equivalent(
-        environment.get_data_type_binding("T"), int32_data_type
+        environment.get_data_type_binding(t_identifier), int32_data_type
     )
     n_binding = environment.get_expression_binding(n_identifier)
     assert n_binding is not None and n_binding.is_structurally_equivalent(
