@@ -13,7 +13,6 @@ __all__ = [
     "promote_type_qualifiers",
     "resolve_literal_core_data_type",
     "TemplateDataType",
-    "TupleType",
     "Type",
     "TypeQualifier",
 ]
@@ -718,53 +717,6 @@ class IndexType(Type):
             f"{self.__class__.__name__}({repr(self._lower_bound)}, "
             f"{repr(self._upper_bound)}, {repr(self._stride)})"
         )
-
-
-class _TupleTypeData(TypedDict):
-    types: list[SerializedDict]
-
-
-def _is_valid_tuple_type_data(data: SerializedDict) -> TypeGuard[_TupleTypeData]:
-    return (
-        "types" in data
-        and isinstance(data["types"], list)
-        and all(is_serialized_dict(element_dict) for element_dict in data["types"])
-    )
-
-
-@register_serializable(type_id="tuple_type")
-class TupleType(Type):
-    """Tuple type."""
-
-    _types: tuple[Type, ...]
-
-    def __init__(self, types: Sequence[Type]) -> None:
-        super().__init__()
-        self._types = tuple(types)
-        self.freeze(deep=True)
-
-    @property
-    def types(self) -> list[Type]:
-        return list(self._types)
-
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {"types": [element.serialize_to_dict() for element in self._types]}
-
-    @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> "TupleType":
-        if not _is_valid_tuple_type_data(data):
-            raise DeserializationDictStructureError(
-                cls, _TupleTypeData.__annotations__, data
-            )
-        return cls(
-            [Type.deserialize_from_dict(element_dict) for element_dict in data["types"]]
-        )
-
-    def __str__(self) -> str:
-        return f"({format_comma_separated_list(self._types)})"
-
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({repr(self._types)})"
 
 
 class TypeQualifier(StrEnum):

@@ -56,7 +56,6 @@ from .core import (
     NumericalType,
     PrimitiveDataType,
     TemplateDataType,
-    TupleType,
     Type,
 )
 
@@ -630,19 +629,6 @@ def _(left: IndexType, right: object) -> bool:
 
 
 @is_structurally_equivalent.register
-def _(left: TupleType, right: object) -> bool:
-    if not isinstance(right, TupleType):
-        return False
-    elif len(left.types) != len(right.types):
-        return False
-    else:
-        return all(
-            is_structurally_equivalent(left_element, right_element)
-            for left_element, right_element in zip(left.types, right.types, strict=True)
-        )
-
-
-@is_structurally_equivalent.register
 def _(left: PrimitiveDataType, right: object) -> bool:
     return (
         isinstance(right, PrimitiveDataType)
@@ -706,32 +692,6 @@ def _(
                 )
             next_environment = _bind_shape_dimension(
                 pattern_dimension, actual_dimension, next_environment
-            )
-        return next_environment
-
-
-@bind_template.register
-def _(
-    pattern: TupleType,
-    actual: Type,
-    environment: TypeUnificationEnvironment,
-) -> TypeUnificationEnvironment:
-    if not isinstance(actual, TupleType):
-        raise VerificationError(
-            f"Cannot bind TupleType pattern against {type(actual).__name__}."
-        )
-    elif len(pattern.types) != len(actual.types):
-        raise VerificationError(
-            f"Tuple arity mismatch: pattern has {len(pattern.types)}, "
-            f"actual has {len(actual.types)}."
-        )
-    else:
-        next_environment = environment
-        for pattern_element, actual_element in zip(
-            pattern.types, actual.types, strict=True
-        ):
-            next_environment = bind_template(
-                pattern_element, actual_element, next_environment
             )
         return next_environment
 
@@ -818,13 +778,6 @@ def _(type_: NumericalType, environment: TypeUnificationEnvironment) -> Type:
 
 
 @substitute_template.register
-def _(type_: TupleType, environment: TypeUnificationEnvironment) -> Type:
-    return TupleType(
-        [substitute_template(element, environment) for element in type_.types]
-    )
-
-
-@substitute_template.register
 def _(type_: IndexType, environment: TypeUnificationEnvironment) -> Type:
     return IndexType(
         _substitute_expression(type_.lower_bound, environment),
@@ -881,32 +834,6 @@ def _(
             )
             unified_shape.append(unified_dimension)
         return NumericalType(unified_data_type, unified_shape), next_environment
-
-
-@unify.register
-def _(
-    expected: TupleType,
-    actual: Type,
-    environment: TypeUnificationEnvironment,
-) -> tuple[Type, TypeUnificationEnvironment]:
-    if not isinstance(actual, TupleType):
-        raise VerificationError(f"Cannot unify TupleType with {type(actual).__name__}.")
-    elif len(expected.types) != len(actual.types):
-        raise VerificationError(
-            f"Tuple arity mismatch during unification: "
-            f"{len(expected.types)} vs {len(actual.types)}."
-        )
-    else:
-        next_environment = environment
-        unified_types: list[Type] = []
-        for expected_element, actual_element in zip(
-            expected.types, actual.types, strict=True
-        ):
-            unified_element, next_environment = unify(
-                expected_element, actual_element, next_environment
-            )
-            unified_types.append(unified_element)
-        return TupleType(unified_types), next_environment
 
 
 @unify.register

@@ -26,7 +26,6 @@ from fhy_core.types import (
     NumericalType,
     PrimitiveDataType,
     TemplateDataType,
-    TupleType,
     Type,
     TypeQualifier,
     TypeUnificationEnvironment,
@@ -90,14 +89,12 @@ def test_type_family_is_frozen_on_construction() -> None:
     template_data_type = TemplateDataType(N, widths=[8, 16])
     numerical_type = NumericalType(data_type, shape)
     index_type = IndexType(LiteralExpression(0), LiteralExpression(10))
-    tuple_type = TupleType([numerical_type, index_type])
 
     for value in (
         data_type,
         template_data_type,
         numerical_type,
         index_type,
-        tuple_type,
     ):
         assert isinstance(value, Frozen)
         assert value.is_frozen
@@ -128,15 +125,6 @@ def test_index_type_structural_equivalence_false_for_stride() -> None:
     upper_bound = LiteralExpression(10)
     left = IndexType(lower_bound, upper_bound, LiteralExpression(1))
     right = IndexType(lower_bound, upper_bound, LiteralExpression(2))
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_tuple_type_structural_equivalence_false_for_element_order() -> None:
-    """Test structural equivalence is false for differing tuple type order."""
-    int_type = NumericalType(PrimitiveDataType(CoreDataType.INT32))
-    float_type = NumericalType(PrimitiveDataType(CoreDataType.FLOAT32))
-    left = TupleType([int_type, float_type])
-    right = TupleType([float_type, int_type])
     assert not left.is_structurally_equivalent(right)
 
 
@@ -402,41 +390,6 @@ def test_index_type_with_stride_serialization() -> None:
     assert index_type_deserialized.stride.is_structurally_equivalent(stride)
 
 
-def test_tuple_type_dict_serialization() -> None:
-    """Test tuple types can be serialized/deserialized via a dictionary."""
-    N = mock_identifier("N", 1)
-    shape = [
-        IdentifierExpression(N),
-        LiteralExpression(28),
-    ]
-    numerical_type = NumericalType(PrimitiveDataType(CoreDataType.INT32), shape)
-    tuple_type = TupleType([numerical_type, numerical_type])
-    expected_dict = {
-        "__type__": "tuple_type",
-        "__data__": {
-            "types": [
-                numerical_type.serialize_to_dict(),
-                numerical_type.serialize_to_dict(),
-            ],
-        },
-    }
-    dictionary = tuple_type.serialize_to_dict()
-    assert dictionary == expected_dict
-    tuple_type_deserialized = TupleType.deserialize_from_dict(dictionary)
-    assert isinstance(tuple_type_deserialized, TupleType)
-    assert len(tuple_type_deserialized.types) == 2
-    for ty in tuple_type_deserialized.types:
-        assert isinstance(ty, NumericalType)
-        assert isinstance(ty.data_type, PrimitiveDataType)
-        assert ty.data_type.core_data_type == CoreDataType.INT32
-        assert len(ty.shape) == 2
-        ty_shape = ty.shape
-        assert isinstance(ty_shape[0], Expression)
-        assert isinstance(ty_shape[1], Expression)
-        assert ty_shape[0].is_structurally_equivalent(shape[0])
-        assert ty_shape[1].is_structurally_equivalent(shape[1])
-
-
 # TODO: Check serialization structure errors and value errors for all types.
 
 
@@ -602,8 +555,8 @@ def test_is_structurally_equivalent_returns_false_for_unrelated_concrete_classes
 ) -> None:
     """Test the dispatcher returns ``False`` for unrelated concrete classes."""
     numerical_type = NumericalType(int32_data_type)
-    tuple_type = TupleType([numerical_type])
-    assert not is_structurally_equivalent(numerical_type, tuple_type)
+    index_type = IndexType(LiteralExpression(0), LiteralExpression(10))
+    assert not is_structurally_equivalent(numerical_type, index_type)
 
 
 # =============================================================================
@@ -643,30 +596,6 @@ def test_bind_template_then_substitute_round_trips_for_numerical_type(
         LiteralExpression(20)
     )
 
-    substituted = substitute_template(pattern, environment)
-    assert is_structurally_equivalent(substituted, actual)
-
-
-def test_bind_template_then_substitute_round_trips_for_tuple_type(
-    empty_environment: TypeUnificationEnvironment,
-    int32_data_type: PrimitiveDataType,
-) -> None:
-    """Test a `TupleType` bind/substitute cycle reproduces the actual type."""
-    template_data_type = TemplateDataType(Identifier("T"))
-    n_identifier = Identifier("N")
-    pattern_first = NumericalType(
-        template_data_type, [IdentifierExpression(n_identifier)]
-    )
-    pattern_second = NumericalType(
-        template_data_type, [IdentifierExpression(n_identifier)]
-    )
-    pattern = TupleType([pattern_first, pattern_second])
-
-    actual_first = NumericalType(int32_data_type, [LiteralExpression(7)])
-    actual_second = NumericalType(int32_data_type, [LiteralExpression(7)])
-    actual = TupleType([actual_first, actual_second])
-
-    environment = bind_template(pattern, actual, empty_environment)
     substituted = substitute_template(pattern, environment)
     assert is_structurally_equivalent(substituted, actual)
 
@@ -754,24 +683,7 @@ def test_bind_template_raises_on_concrete_class_mismatch(
 ) -> None:
     """Test bind raises `VerificationError` when pattern and actual classes differ."""
     pattern = NumericalType(float32_data_type)
-    actual = TupleType([NumericalType(float32_data_type)])
-    with pytest.raises(VerificationError):
-        bind_template(pattern, actual, empty_environment)
-
-
-def test_bind_template_raises_on_conflicting_data_type_binding(
-    empty_environment: TypeUnificationEnvironment,
-    int32_data_type: PrimitiveDataType,
-    float32_data_type: PrimitiveDataType,
-) -> None:
-    """Test bind raises when one template name binds to two different data types."""
-    template_data_type = TemplateDataType(Identifier("T"))
-    pattern = TupleType(
-        [NumericalType(template_data_type), NumericalType(template_data_type)]
-    )
-    actual = TupleType(
-        [NumericalType(float32_data_type), NumericalType(int32_data_type)]
-    )
+    actual = IndexType(LiteralExpression(0), LiteralExpression(10))
     with pytest.raises(VerificationError):
         bind_template(pattern, actual, empty_environment)
 
@@ -795,21 +707,6 @@ def test_bind_template_raises_on_conflicting_shape_binding(
     )
     with pytest.raises(VerificationError):
         bind_template(pattern, actual, empty_environment)
-
-
-def test_bind_template_raises_on_full_type_binding_conflict(
-    empty_environment: TypeUnificationEnvironment,
-    int32_data_type: PrimitiveDataType,
-) -> None:
-    """Test bind raises when a `[T, ...]` placeholder binds to two different actuals."""
-    template_data_type = TemplateDataType(Identifier("T"))
-    pattern = NumericalType(template_data_type, [...])
-    first_actual = NumericalType(int32_data_type, [LiteralExpression(2)])
-    second_actual = NumericalType(int32_data_type, [LiteralExpression(3)])
-    pair_pattern = TupleType([pattern, pattern])
-    pair_actual = TupleType([first_actual, second_actual])
-    with pytest.raises(VerificationError):
-        bind_template(pair_pattern, pair_actual, empty_environment)
 
 
 def test_bind_data_template_raises_on_conflicting_binding(
@@ -989,7 +886,7 @@ def test_unify_raises_on_mismatched_concrete_types(
 ) -> None:
     """Test unification raises when the two concrete type classes are incompatible."""
     expected = NumericalType(float32_data_type)
-    actual = TupleType([NumericalType(float32_data_type)])
+    actual = IndexType(LiteralExpression(0), LiteralExpression(10))
     with pytest.raises(VerificationError):
         unify(expected, actual, empty_environment)
 
