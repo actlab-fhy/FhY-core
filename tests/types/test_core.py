@@ -389,7 +389,7 @@ def test_resolve_literal_core_data_type_rejects_positive_overflow_in_int() -> No
 
 
 @pytest.mark.parametrize(
-    ("type_qualifer1", "type_qualifer2", "expected_type_qualifer"),
+    ("type_qualifier1", "type_qualifier2", "expected_type_qualifier"),
     [
         (TypeQualifier.INPUT, TypeQualifier.INPUT, TypeQualifier.TEMP),
         (TypeQualifier.STATE, TypeQualifier.PARAM, TypeQualifier.TEMP),
@@ -400,12 +400,12 @@ def test_resolve_literal_core_data_type_rejects_positive_overflow_in_int() -> No
     ],
 )
 def test_promote_type_qualifiers(
-    type_qualifer1: TypeQualifier,
-    type_qualifer2: TypeQualifier,
-    expected_type_qualifer: TypeQualifier,
+    type_qualifier1: TypeQualifier,
+    type_qualifier2: TypeQualifier,
+    expected_type_qualifier: TypeQualifier,
 ) -> None:
     """Test type qualifiers promote to PARAM only when both inputs are PARAM."""
     assert (
-        promote_type_qualifiers(type_qualifer1, type_qualifer2)
-        == expected_type_qualifer
+        promote_type_qualifiers(type_qualifier1, type_qualifier2)
+        == expected_type_qualifier
     )

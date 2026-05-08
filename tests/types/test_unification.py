@@ -474,6 +474,27 @@ def test_bind_data_template_unconstrained_template_accepts_any_width(
     assert environment.get_data_type_binding(template.data_type) is not None
 
 
+def test_bind_data_template_raises_on_distinct_template_actual(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test `bind_data_template` rejects a distinct `TemplateDataType` actual."""
+    pattern = TemplateDataType(Identifier("T"))
+    actual = TemplateDataType(Identifier("U"))
+    with pytest.raises(VerificationError, match="template"):
+        bind_data_template(pattern, actual, empty_environment)
+
+
+def test_bind_data_template_accepts_same_template_actual_as_no_op(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test `bind_data_template` no-ops when pattern and actual share an identifier."""
+    t_identifier = Identifier("T")
+    pattern = TemplateDataType(t_identifier)
+    actual = TemplateDataType(t_identifier)
+    environment = bind_data_template(pattern, actual, empty_environment)
+    assert environment.is_structurally_equivalent(empty_environment)
+
+
 def test_bind_data_template_widths_are_set_membership_not_order_sensitive(
     empty_environment: TypeUnificationEnvironment,
 ) -> None:

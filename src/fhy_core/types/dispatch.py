@@ -750,6 +750,14 @@ def _(
     actual: DataType,
     environment: TypeUnificationEnvironment,
 ) -> TypeUnificationEnvironment:
+    if isinstance(actual, TemplateDataType):
+        # Mirrors ``_unify_data_types``: distinct template placeholders cannot
+        # be silently aliased; the same placeholder is a no-op.
+        if not is_structurally_equivalent(pattern, actual):
+            raise VerificationError(
+                f"Cannot bind distinct template data types: {pattern!r} vs {actual!r}."
+            )
+        return environment
     _check_template_width_constraint(pattern, actual)
     template_identifier = pattern.data_type
     existing_binding = environment.get_data_type_binding(template_identifier)
