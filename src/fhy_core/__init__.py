@@ -1,6 +1,6 @@
 """FhY compiler core utilities."""
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = [
     "Constraint",
@@ -56,6 +56,11 @@ __all__ = [
     "NoteKind",
     "Note",
     "Provenance",
+    "UnknownProvenance",
+    "FileProvenance",
+    "NamedProvenance",
+    "CallSiteProvenance",
+    "FusedProvenance",
     "HasIdentifier",
     "HasIdentifierMixin",
     "Interned",
@@ -146,6 +151,7 @@ __all__ = [
     "get_array_size_in_bits",
     "invert_dict",
     "invert_frozen_dict",
+    "is_strict_int",
     "register_serializable",
     "Serializable",
     "WrappedFamilySerializable",
@@ -180,6 +186,7 @@ from .constraint import (
     InSetConstraint,
     NotInSetConstraint,
 )
+from .diagnostic import Note, NoteKind
 from .error import register_error
 from .expression import (
     BinaryExpression,
@@ -253,7 +260,16 @@ from .pass_infrastructure import (
     VisitablePass,
     register_pass,
 )
-from .provenance import Note, NoteKind, Position, Provenance, Span
+from .provenance import (
+    CallSiteProvenance,
+    FileProvenance,
+    FusedProvenance,
+    NamedProvenance,
+    Position,
+    Provenance,
+    Span,
+    UnknownProvenance,
+)
 from .serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -355,4 +371,5 @@ from .utils import (
     get_array_size_in_bits,
     invert_dict,
     invert_frozen_dict,
+    is_strict_int,
 )

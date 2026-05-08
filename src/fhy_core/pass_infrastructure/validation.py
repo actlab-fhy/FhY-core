@@ -24,9 +24,9 @@ __all__ = [
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
+from fhy_core.diagnostic import Note
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
-from fhy_core.provenance import Note
 from fhy_core.trait import FrozenMixin, HasIdentifierMixin, PartialEqualMixin
 
 from .core import (

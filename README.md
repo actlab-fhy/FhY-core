@@ -40,6 +40,7 @@
 | _General Utility_ - Stack                | General stack utility that wraps `deque`.                              |
 | _General Utility_ - POSET                | General partially ordered set utility represented as a directed graph. |
 | _General Utility_ - Dictionary Utilities | Additional dictionary helper functions.                                |
+| _General Utility_ - Numeric Predicates   | `is_strict_int` rejects `bool` so contexts requiring a strict integer do not silently accept `True`/`False`. |
 
 
 ## Table of Contents
