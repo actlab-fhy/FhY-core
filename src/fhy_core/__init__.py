@@ -151,6 +151,7 @@ __all__ = [
     "get_array_size_in_bits",
     "invert_dict",
     "invert_frozen_dict",
+    "is_strict_int",
     "register_serializable",
     "Serializable",
     "WrappedFamilySerializable",
@@ -370,4 +371,5 @@ from .utils import (
     get_array_size_in_bits,
     invert_dict,
     invert_frozen_dict,
+    is_strict_int,
 )

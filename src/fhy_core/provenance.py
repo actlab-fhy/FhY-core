@@ -47,6 +47,7 @@ from fhy_core.serialization import (
 )
 from fhy_core.trait.equality import EqualMixin
 from fhy_core.trait.frozen import FrozenMixin
+from fhy_core.utils.numeric_utils import is_strict_int
 
 
 class _PositionData(TypedDict):
@@ -57,9 +58,9 @@ class _PositionData(TypedDict):
 def _is_valid_position_data(data: SerializedDict) -> TypeGuard[_PositionData]:
     return (
         "line" in data
-        and isinstance(data["line"], int)
+        and is_strict_int(data["line"])
         and "column" in data
-        and isinstance(data["column"], int)
+        and is_strict_int(data["column"])
     )
 
 
@@ -80,6 +81,14 @@ class Position(Serializable, FrozenMixin, EqualMixin):
         return True
 
     def __post_init__(self) -> None:
+        if not is_strict_int(self.line):
+            raise TypeError(
+                f'"line" must be a strict int, got {type(self.line).__name__}'
+            )
+        if not is_strict_int(self.column):
+            raise TypeError(
+                f'"column" must be a strict int, got {type(self.column).__name__}'
+            )
         if self.line < 1:
             raise ValueError(f'"line" must be >= 1, got {self.line}')
         if self.column < 1:
@@ -111,7 +120,7 @@ class _SpanData(TypedDict):
 
 
 def _is_valid_optional_int(value: object) -> bool:
-    return value is None or isinstance(value, int)
+    return value is None or is_strict_int(value)
 
 
 def _is_valid_optional_position_data(
@@ -150,6 +159,15 @@ class Span(Serializable, FrozenMixin, EqualMixin):
     end_position: Position | None = None
 
     def __post_init__(self) -> None:
+        for offset_name, offset_value in (
+            ("start_offset", self.start_offset),
+            ("end_offset", self.end_offset),
+        ):
+            if offset_value is not None and not is_strict_int(offset_value):
+                raise TypeError(
+                    f'"{offset_name}" must be a strict int or None, got '
+                    f"{type(offset_value).__name__}"
+                )
         if self.start_offset is not None and self.start_offset < 0:
             raise ValueError(f'"start_offset" must be >= 0, got {self.start_offset}')
         if self.end_offset is not None and self.end_offset < 0:
@@ -224,11 +242,15 @@ class Span(Serializable, FrozenMixin, EqualMixin):
             raise DeserializationValueError(f"Invalid span values: {exc}") from exc
 
     def __str__(self) -> str:
-        if self.start_position is not None and self.end_position is not None:
-            return f"{self.start_position}-{self.end_position}"
-        if self.start_offset is not None and self.end_offset is not None:
-            return f"@{self.start_offset}-{self.end_offset}"
-        return "<unknown>"
+        if self.is_unknown():
+            return "<unknown>"
+        if self.start_position is not None or self.end_position is not None:
+            start = str(self.start_position) if self.start_position is not None else "?"
+            end = str(self.end_position) if self.end_position is not None else "?"
+            return f"{start}-{end}"
+        start_offset = str(self.start_offset) if self.start_offset is not None else "?"
+        end_offset = str(self.end_offset) if self.end_offset is not None else "?"
+        return f"@{start_offset}-{end_offset}"
 
 
 class Provenance(WrappedFamilySerializable, FrozenMixin, EqualMixin, ABC):
@@ -266,6 +288,8 @@ class UnknownProvenance(Provenance):
 
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "UnknownProvenance":
+        if data:
+            raise DeserializationDictStructureError(cls, {}, data)
         return cls()
 
 

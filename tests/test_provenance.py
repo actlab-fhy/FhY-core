@@ -104,6 +104,23 @@ def test_position_string_representation() -> None:
     assert str(Position(2, 8)) == "2:8"
 
 
+@pytest.mark.parametrize(
+    "line,column",
+    [(True, 1), (1, True), (False, 1), (1, False)],
+    ids=["bool-line-true", "bool-column-true", "bool-line-false", "bool-column-false"],
+)
+def test_position_rejects_bool_values(line: object, column: object) -> None:
+    """Test `Position` rejects `bool` values for line and column."""
+    with pytest.raises(TypeError):
+        Position(line, column)  # type: ignore[arg-type]
+
+
+def test_position_dict_deserialization_rejects_bool_values() -> None:
+    """Test `Position.deserialize_from_dict` rejects `bool` values."""
+    with pytest.raises(DeserializationDictStructureError):
+        Position.deserialize_from_dict({"line": True, "column": 1})
+
+
 # ============================================================================
 # Span
 # ============================================================================
@@ -192,6 +209,59 @@ def test_span_dict_deserialization_structure_rejected() -> None:
         Span.deserialize_from_dict({"start_offset": 0})
 
 
+@pytest.mark.parametrize(
+    "start_offset,end_offset",
+    [(True, None), (None, False), (True, True)],
+    ids=["bool-start", "bool-end", "both-bool"],
+)
+def test_span_rejects_bool_offsets(start_offset: object, end_offset: object) -> None:
+    """Test `Span` rejects `bool` values for offsets."""
+    with pytest.raises(TypeError):
+        Span(start_offset=start_offset, end_offset=end_offset)  # type: ignore[arg-type]
+
+
+def test_span_dict_deserialization_rejects_bool_offsets() -> None:
+    """Test `Span.deserialize_from_dict` rejects `bool` offset values."""
+    with pytest.raises(DeserializationDictStructureError):
+        Span.deserialize_from_dict(
+            {
+                "start_offset": True,
+                "end_offset": None,
+                "start_position": None,
+                "end_position": None,
+            }
+        )
+
+
+def test_span_string_representation_for_unknown() -> None:
+    """Test `Span.__str__` returns ``<unknown>`` for an unknown span."""
+    assert str(Span()) == "<unknown>"
+
+
+def test_span_string_representation_with_both_positions() -> None:
+    """Test `Span.__str__` renders ``start-end`` when both positions are set."""
+    span = Span(start_position=Position(1, 1), end_position=Position(1, 4))
+
+    assert str(span) == "1:1-1:4"
+
+
+def test_span_string_representation_with_both_offsets() -> None:
+    """Test `Span.__str__` renders ``@start-end`` when only offsets are set."""
+    assert str(Span(start_offset=0, end_offset=3)) == "@0-3"
+
+
+def test_span_string_representation_partial_offsets_uses_placeholder() -> None:
+    """Test `Span.__str__` renders a partial offset span using a placeholder."""
+    assert str(Span(start_offset=5)) == "@5-?"
+
+
+def test_span_string_representation_partial_positions_uses_placeholder() -> None:
+    """Test `Span.__str__` renders a partial position span using a placeholder."""
+    span = Span(start_position=Position(1, 1))
+
+    assert str(span) == "1:1-?"
+
+
 def test_span_satisfies_equal_traits() -> None:
     """Test `Span` implements equality trait protocols."""
     span = Span(0, 3)
@@ -216,6 +286,12 @@ def test_provenance_unknown_instances_compare_equal() -> None:
     """Test all `UnknownProvenance` instances compare equal."""
     assert Provenance.unknown() == Provenance.unknown()
     assert UnknownProvenance() == UnknownProvenance()
+
+
+def test_unknown_provenance_deserialization_rejects_non_empty_data() -> None:
+    """Test `UnknownProvenance` rejects payloads with unexpected keys."""
+    with pytest.raises(DeserializationDictStructureError):
+        UnknownProvenance.deserialize_data_from_dict({"unexpected": 1})
 
 
 # ============================================================================
