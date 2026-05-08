@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from fhy_core.diagnostic import Note
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     AnalysisVisitablePass,
@@ -19,7 +20,6 @@ from fhy_core.pass_infrastructure import (
     ValidationReport,
     register_pass,
 )
-from fhy_core.provenance import Note
 from fhy_core.trait import FrozenMixin, PartialEqual, Visitable
 
 

@@ -1,13 +1,37 @@
-"""Provenance tracking utilities for compiler objects."""
+"""Provenance tracking for compiler objects.
+
+This module exposes a ``Provenance`` abstract base class and the five
+canonical variants used by MLIR's ``Location`` attribute family. Each
+variant captures one well-defined concept; richer concepts (builtins,
+library symbols, lowered objects) are expressed by composition rather than
+by adding new variants.
+
+Variants:
+
+- ``UnknownProvenance``: no source information is available.
+- ``FileProvenance``: a region within a source code file.
+- ``NamedProvenance``: wraps a child provenance with a human-readable name.
+- ``CallSiteProvenance``: a value created at a call site (inlining,
+    macro expansion).
+- ``FusedProvenance``: N provenances combined by a transformation.
+
+Combining provenances during transformations is done through
+``Provenance.fuse``, which applies a small set of reduction rules to keep
+fusion trees compact.
+"""
 
 __all__ = [
-    "Note",
-    "NoteKind",
+    "CallSiteProvenance",
+    "FileProvenance",
+    "FusedProvenance",
+    "NamedProvenance",
     "Position",
     "Provenance",
     "Span",
+    "UnknownProvenance",
 ]
 
+from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict, TypeGuard
@@ -17,12 +41,12 @@ from fhy_core.serialization import (
     DeserializationValueError,
     Serializable,
     SerializedDict,
+    WrappedFamilySerializable,
     is_serialized_dict,
     register_serializable,
 )
 from fhy_core.trait.equality import EqualMixin
 from fhy_core.trait.frozen import FrozenMixin
-from fhy_core.utils import StrEnum
 
 
 class _PositionData(TypedDict):
@@ -42,7 +66,7 @@ def _is_valid_position_data(data: SerializedDict) -> TypeGuard[_PositionData]:
 @register_serializable(type_id="position")
 @dataclass(frozen=True, slots=True, order=True)
 class Position(Serializable, FrozenMixin, EqualMixin):
-    """Line/column position."""
+    """A 1-indexed line/column position in a source text."""
 
     line: int
     column: int
@@ -62,10 +86,7 @@ class Position(Serializable, FrozenMixin, EqualMixin):
             raise ValueError(f'"column" must be >= 1, got {self.column}')
 
     def serialize_to_dict(self) -> SerializedDict:
-        return {
-            "line": self.line,
-            "column": self.column,
-        }
+        return {"line": self.line, "column": self.column}
 
     @classmethod
     def deserialize_from_dict(cls, data: SerializedDict) -> "Position":
@@ -83,53 +104,46 @@ class Position(Serializable, FrozenMixin, EqualMixin):
 
 
 class _SpanData(TypedDict):
-    file_path: str
     start_offset: int | None
     end_offset: int | None
     start_position: _PositionData | None
     end_position: _PositionData | None
 
 
+def _is_valid_optional_int(value: object) -> bool:
+    return value is None or isinstance(value, int)
+
+
+def _is_valid_optional_position_data(
+    value: object,
+) -> TypeGuard[_PositionData | None]:
+    if value is None:
+        return True
+    return is_serialized_dict(value) and _is_valid_position_data(value)
+
+
 def _is_valid_span_data(data: SerializedDict) -> TypeGuard[_SpanData]:
     if not is_serialized_dict(data):
         return False
-    if "file_path" not in data or not isinstance(data["file_path"], str):
-        return False
-    if "start_offset" not in data or not (
-        isinstance(data["start_offset"], int) or data["start_offset"] is None
-    ):
-        return False
-    if "end_offset" not in data or not (
-        isinstance(data["end_offset"], int) or data["end_offset"] is None
-    ):
-        return False
-    start_position_data = data["start_position"] if "start_position" in data else None
-    if "start_position" not in data or not (
-        (
-            is_serialized_dict(start_position_data)
-            and _is_valid_position_data(start_position_data)
-        )
-        or start_position_data is None
-    ):
-        return False
-    end_position_data = data["end_position"] if "end_position" in data else None
-    if "end_position" not in data or not (
-        (
-            is_serialized_dict(end_position_data)
-            and _is_valid_position_data(end_position_data)
-        )
-        or end_position_data is None
-    ):
-        return False
+    for offset_key in ("start_offset", "end_offset"):
+        if offset_key not in data or not _is_valid_optional_int(data[offset_key]):
+            return False
+    for position_key in ("start_position", "end_position"):
+        if position_key not in data or not _is_valid_optional_position_data(
+            data[position_key]
+        ):
+            return False
     return True
 
 
 @register_serializable(type_id="span")
 @dataclass(frozen=True, slots=True)
 class Span(Serializable, FrozenMixin, EqualMixin):
-    """A region in a source file."""
+    """A file-agnostic byte/position range.
 
-    file_path: Path
+    Owned by ``FileProvenance``; does not carry a file path itself.
+    """
+
     start_offset: int | None = None
     end_offset: int | None = None
     start_position: Position | None = None
@@ -169,15 +183,18 @@ class Span(Serializable, FrozenMixin, EqualMixin):
 
     def serialize_to_dict(self) -> SerializedDict:
         return {
-            "file_path": str(self.file_path),
             "start_offset": self.start_offset,
             "end_offset": self.end_offset,
-            "start_position": self.start_position.serialize_to_dict()
-            if self.start_position
-            else None,
-            "end_position": self.end_position.serialize_to_dict()
-            if self.end_position
-            else None,
+            "start_position": (
+                self.start_position.serialize_to_dict()
+                if self.start_position is not None
+                else None
+            ),
+            "end_position": (
+                self.end_position.serialize_to_dict()
+                if self.end_position is not None
+                else None
+            ),
         }
 
     @classmethod
@@ -186,13 +203,10 @@ class Span(Serializable, FrozenMixin, EqualMixin):
             raise DeserializationDictStructureError(
                 cls, _SpanData.__annotations__, data
             )
-
         start_position_data = data["start_position"]
         end_position_data = data["end_position"]
-
         try:
             return cls(
-                Path(data["file_path"]),
                 start_offset=data["start_offset"],
                 end_offset=data["end_offset"],
                 start_position=(
@@ -210,189 +224,199 @@ class Span(Serializable, FrozenMixin, EqualMixin):
             raise DeserializationValueError(f"Invalid span values: {exc}") from exc
 
     def __str__(self) -> str:
-        file_path = str(self.file_path)
-        if self.start_position and self.end_position:
-            return f"{file_path}:{self.start_position}-{self.end_position}"
+        if self.start_position is not None and self.end_position is not None:
+            return f"{self.start_position}-{self.end_position}"
         if self.start_offset is not None and self.end_offset is not None:
-            return f"{file_path}@{self.start_offset}-{self.end_offset}"
-        return file_path
+            return f"@{self.start_offset}-{self.end_offset}"
+        return "<unknown>"
 
 
-class NoteKind(StrEnum):
-    """Structured note kinds so tooling can filter/group notes."""
-
-    OTHER = "other"
-
-
-class _NoteData(TypedDict):
-    message: str
-    kind: str
-
-
-def _is_valid_note_data(data: SerializedDict) -> TypeGuard[_NoteData]:
-    return (
-        "message" in data
-        and isinstance(data["message"], str)
-        and "kind" in data
-        and isinstance(data["kind"], str)
-    )
-
-
-@register_serializable(type_id="provenance_note")
-@dataclass(frozen=True, slots=True)
-class Note(Serializable, FrozenMixin, EqualMixin):
-    """A provenance breadcrumb."""
-
-    message: str
-    kind: NoteKind = NoteKind.OTHER
-
-    def serialize_to_dict(self) -> SerializedDict:
-        return {"message": self.message, "kind": self.kind.value}
-
-    @classmethod
-    def deserialize_from_dict(cls, data: SerializedDict) -> "Note":
-        if not _is_valid_note_data(data):
-            raise DeserializationDictStructureError(
-                cls, _NoteData.__annotations__, data
-            )
-        try:
-            return cls(data["message"], kind=NoteKind(data["kind"]))
-        except ValueError as exc:
-            raise DeserializationValueError(f"Invalid note values: {exc}") from exc
-
-    def __str__(self) -> str:
-        return f"{self.kind}: {self.message}"
-
-
-class _ProvenanceData(TypedDict):
-    span: _SpanData | None
-    origins: list[SerializedDict]
-    notes: list[SerializedDict]
-    source_ids: list[str]
-
-
-def _is_valid_provenance_data(data: SerializedDict) -> TypeGuard[_ProvenanceData]:
-    if not is_serialized_dict(data):
-        return False
-    if "span" not in data or not (
-        is_serialized_dict(data["span"])
-        and _is_valid_span_data(data["span"])
-        or data["span"] is None
-    ):
-        return False
-    if "origins" not in data or not isinstance(data["origins"], list):
-        return False
-    for origin in data["origins"]:
-        if not is_serialized_dict(origin) or not _is_valid_span_data(origin):
-            return False
-    if "notes" not in data or not isinstance(data["notes"], list):
-        return False
-    for note in data["notes"]:
-        if not is_serialized_dict(note) or not _is_valid_note_data(note):
-            return False
-    if "source_ids" not in data or not isinstance(data["source_ids"], list):
-        return False
-    for source_id in data["source_ids"]:
-        if not isinstance(source_id, str):
-            return False
-    return True
-
-
-@register_serializable(type_id="provenance")
-@dataclass(frozen=True, slots=True)
-class Provenance(Serializable, FrozenMixin, EqualMixin):
-    """Immutable provenance for compiler objects."""
-
-    span: Span | None = None
-    origins: tuple[Span, ...] = ()
-    notes: tuple[Note, ...] = ()
-    source_ids: tuple[str, ...] = ()
+class Provenance(WrappedFamilySerializable, FrozenMixin, EqualMixin, ABC):
+    """Origin information for a compiler object. Abstract base."""
 
     @staticmethod
     def unknown() -> "Provenance":
-        """Return a provenance with no information."""
-        return Provenance()
+        return UnknownProvenance()
 
-    def with_span(self, span: Span) -> "Provenance":
-        """Return a new provenance with the span, preserving other metadata."""
-        return Provenance(
-            span=span,
-            origins=self.origins,
-            notes=self.notes,
-            source_ids=self.source_ids,
-        )
+    @staticmethod
+    def fuse(*provenances: "Provenance", metadata: str | None = None) -> "Provenance":
+        flat: list[Provenance] = []
+        for provenance in provenances:
+            if isinstance(provenance, UnknownProvenance):
+                continue
+            if isinstance(provenance, FusedProvenance) and provenance.metadata is None:
+                flat.extend(provenance.sources)
+            else:
+                flat.append(provenance)
 
-    def add_origin(self, origin: Span) -> "Provenance":
-        """Return a new provenance with the origin, preserving other metadata."""
-        return Provenance(
-            span=self.span,
-            origins=self.origins + (origin,),
-            notes=self.notes,
-            source_ids=self.source_ids,
-        )
+        if not flat:
+            return UnknownProvenance()
+        if len(flat) == 1 and metadata is None:
+            return flat[0]
+        return FusedProvenance(sources=tuple(flat), metadata=metadata)
 
-    def add_note(self, note: Note) -> "Provenance":
-        """Return a new provenance with the note, preserving other metadata."""
-        return Provenance(
-            span=self.span,
-            origins=self.origins,
-            notes=self.notes + (note,),
-            source_ids=self.source_ids,
-        )
 
-    def add_source_id(self, source_id: str) -> "Provenance":
-        """Return a new provenance with the source ID, preserving other metadata."""
-        return Provenance(
-            span=self.span,
-            origins=self.origins,
-            notes=self.notes,
-            source_ids=self.source_ids + (source_id,),
-        )
+@register_serializable(type_id="provenance.unknown")
+@dataclass(frozen=True, slots=True)
+class UnknownProvenance(Provenance):
+    """Provenance with no source information."""
 
-    def merge(self, *others: "Provenance") -> "Provenance":
-        """Merge multiple provenances while preserving insertion order."""
-        span = self.span
-        origins = list(self.origins)
-        notes = list(self.notes)
-        source_ids = list(self.source_ids)
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {}
 
-        for other in others:
-            if span is None and other.span is not None:
-                span = other.span
-            origins.extend(other.origins)
-            notes.extend(other.notes)
-            source_ids.extend(other.source_ids)
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "UnknownProvenance":
+        return cls()
 
-        return Provenance(
-            span=span,
-            origins=tuple(origins),
-            notes=tuple(notes),
-            source_ids=tuple(source_ids),
-        )
 
-    def serialize_to_dict(self) -> SerializedDict:
+class _FileProvenanceData(TypedDict):
+    file_path: str
+    span: SerializedDict | None
+
+
+@register_serializable(type_id="provenance.file")
+@dataclass(frozen=True, slots=True)
+class FileProvenance(Provenance):
+    """Provenance pointing to a region within a source code file."""
+
+    file_path: Path
+    span: Span | None = None
+
+    def serialize_data_to_dict(self) -> SerializedDict:
         return {
-            "span": self.span.serialize_to_dict() if self.span else None,
-            "origins": [origin.serialize_to_dict() for origin in self.origins],
-            "notes": [note.serialize_to_dict() for note in self.notes],
-            "source_ids": list(self.source_ids),
+            "file_path": str(self.file_path),
+            "span": self.span.serialize_to_dict() if self.span is not None else None,
         }
 
     @classmethod
-    def deserialize_from_dict(cls, data: SerializedDict) -> "Provenance":
-        if not _is_valid_provenance_data(data):
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "FileProvenance":
+        file_path_value = data.get("file_path")
+        span_value = data.get("span")
+        if not isinstance(file_path_value, str) or not (
+            span_value is None or is_serialized_dict(span_value)
+        ):
             raise DeserializationDictStructureError(
-                cls, _ProvenanceData.__annotations__, data
+                cls, _FileProvenanceData.__annotations__, data
             )
+        try:
+            return cls(
+                Path(file_path_value),
+                Span.deserialize_from_dict(span_value)
+                if is_serialized_dict(span_value)
+                else None,
+            )
+        except ValueError as exc:
+            raise DeserializationValueError(
+                f"Invalid file provenance values: {exc}"
+            ) from exc
 
-        span_data = data["span"]
+
+class _NamedProvenanceData(TypedDict):
+    name: str
+    child: SerializedDict
+
+
+@register_serializable(type_id="provenance.named")
+@dataclass(frozen=True, slots=True)
+class NamedProvenance(Provenance):
+    """Wraps a child provenance with a human-readable label."""
+
+    name: str
+    child: Provenance
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError('"name" must be non-empty')
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {"name": self.name, "child": self.child.serialize_to_dict()}
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "NamedProvenance":
+        name_value = data.get("name")
+        child_value = data.get("child")
+        if not isinstance(name_value, str) or not is_serialized_dict(child_value):
+            raise DeserializationDictStructureError(
+                cls, _NamedProvenanceData.__annotations__, data
+            )
+        try:
+            return cls(name_value, Provenance.deserialize_from_dict(child_value))
+        except ValueError as exc:
+            raise DeserializationValueError(
+                f"Invalid named provenance values: {exc}"
+            ) from exc
+
+
+class _CallSiteProvenanceData(TypedDict):
+    callee: SerializedDict
+    caller: SerializedDict
+
+
+@register_serializable(type_id="provenance.call_site")
+@dataclass(frozen=True, slots=True)
+class CallSiteProvenance(Provenance):
+    """Provenance for a value created at a call site."""
+
+    callee: Provenance
+    caller: Provenance
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {
+            "callee": self.callee.serialize_to_dict(),
+            "caller": self.caller.serialize_to_dict(),
+        }
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "CallSiteProvenance":
+        callee_value = data.get("callee")
+        caller_value = data.get("caller")
+        if not is_serialized_dict(callee_value) or not is_serialized_dict(caller_value):
+            raise DeserializationDictStructureError(
+                cls, _CallSiteProvenanceData.__annotations__, data
+            )
         return cls(
-            span=Span.deserialize_from_dict(span_data)
-            if is_serialized_dict(span_data)
-            else None,
-            origins=tuple(
-                Span.deserialize_from_dict(origin) for origin in data["origins"]
+            callee=Provenance.deserialize_from_dict(callee_value),
+            caller=Provenance.deserialize_from_dict(caller_value),
+        )
+
+
+class _FusedProvenanceData(TypedDict):
+    sources: list[SerializedDict]
+    metadata: str | None
+
+
+@register_serializable(type_id="provenance.fused")
+@dataclass(frozen=True, slots=True)
+class FusedProvenance(Provenance):
+    """N provenances combined by a transformation."""
+
+    sources: tuple[Provenance, ...]
+    metadata: str | None = None
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {
+            "sources": [source.serialize_to_dict() for source in self.sources],
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "FusedProvenance":
+        sources_value = data.get("sources")
+        metadata_value = data.get("metadata")
+        if not isinstance(sources_value, list) or not (
+            metadata_value is None or isinstance(metadata_value, str)
+        ):
+            raise DeserializationDictStructureError(
+                cls, _FusedProvenanceData.__annotations__, data
+            )
+        for source in sources_value:
+            if not is_serialized_dict(source):
+                raise DeserializationDictStructureError(
+                    cls, _FusedProvenanceData.__annotations__, data
+                )
+        return cls(
+            sources=tuple(
+                Provenance.deserialize_from_dict(source) for source in sources_value
             ),
-            notes=tuple(Note.deserialize_from_dict(note) for note in data["notes"]),
-            source_ids=tuple(data["source_ids"]),
+            metadata=metadata_value,
         )
