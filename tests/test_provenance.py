@@ -468,6 +468,42 @@ def test_fuse_attaches_metadata_to_result() -> None:
     assert fused == FusedProvenance(sources=(a, b), metadata="loop-fusion")
 
 
+def test_fuse_drops_unknown_inside_directly_constructed_nested_fused() -> None:
+    """Test `Provenance.fuse` strips `UnknownProvenance` after splicing."""
+    a = FileProvenance(Path("a.fhy"))
+    b = FileProvenance(Path("b.fhy"))
+    non_canonical_inner = FusedProvenance(sources=(UnknownProvenance(), a))
+
+    fused = Provenance.fuse(non_canonical_inner, b)
+
+    assert fused == FusedProvenance(sources=(a, b))
+
+
+def test_fuse_flattens_nested_metadata_less_fused_transitively() -> None:
+    """Test `Provenance.fuse` flattens metadata-less fused at any depth."""
+    a = FileProvenance(Path("a.fhy"))
+    b = FileProvenance(Path("b.fhy"))
+    c = FileProvenance(Path("c.fhy"))
+    deeply_nested = FusedProvenance(sources=(a, FusedProvenance(sources=(b, c))))
+
+    fused = Provenance.fuse(deeply_nested)
+
+    assert fused == FusedProvenance(sources=(a, b, c))
+
+
+def test_fuse_does_not_flatten_through_metadata_bearing_fused() -> None:
+    """Test `Provenance.fuse` keeps labeled fused opaque even when nested."""
+    a = FileProvenance(Path("a.fhy"))
+    b = FileProvenance(Path("b.fhy"))
+    c = FileProvenance(Path("c.fhy"))
+    labeled_inner = FusedProvenance(sources=(b, c), metadata="cse")
+    outer_metadata_less = FusedProvenance(sources=(a, labeled_inner))
+
+    fused = Provenance.fuse(outer_metadata_less)
+
+    assert fused == FusedProvenance(sources=(a, labeled_inner))
+
+
 def test_fuse_combines_all_reduction_rules() -> None:
     """Test `Provenance.fuse` composes drop-unknown, flatten, and order rules."""
     a = FileProvenance(Path("a.fhy"))

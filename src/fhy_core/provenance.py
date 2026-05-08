@@ -263,13 +263,15 @@ class Provenance(WrappedFamilySerializable, FrozenMixin, EqualMixin, ABC):
     @staticmethod
     def fuse(*provenances: "Provenance", metadata: str | None = None) -> "Provenance":
         flat: list[Provenance] = []
-        for provenance in provenances:
+        pending: list[Provenance] = list(reversed(provenances))
+        while pending:
+            provenance = pending.pop()
             if isinstance(provenance, UnknownProvenance):
                 continue
             if isinstance(provenance, FusedProvenance) and provenance.metadata is None:
-                flat.extend(provenance.sources)
-            else:
-                flat.append(provenance)
+                pending.extend(reversed(provenance.sources))
+                continue
+            flat.append(provenance)
 
         if not flat:
             return UnknownProvenance()
