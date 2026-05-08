@@ -55,9 +55,9 @@ class Identifier(Serializable, EqualMixin):
     ``name_hint`` properties (or ``serialize_to_dict``) when a parseable
     representation is needed.
 
-    The class is ``@final`` and is not intended to be subclassed; the
-    shared id counter would silently fork across subclasses and break
-    process-global uniqueness.
+    The class is ``@final`` and is not intended to be subclassed; callers
+    should treat it as a closed implementation that provides a single
+    process-global id space.
     """
 
     _next_id: ClassVar[int] = 0

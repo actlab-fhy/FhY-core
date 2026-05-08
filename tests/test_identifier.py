@@ -195,9 +195,9 @@ def test_identifier_supports_equal_traits() -> None:
 def test_identifier_class_is_final() -> None:
     """Test `Identifier` is decorated with `typing.final`.
 
-    `Identifier` is process-globally unique by design and shares its id
-    generator across the class. Subclassing creates a forked id space that
-    silently breaks uniqueness; the `@final` decorator pins this policy.
+    `Identifier` is documented as a closed implementation providing a single
+    process-global id space; the `@final` decorator pins that policy so
+    subclasses are flagged by static checkers.
     """
     assert getattr(Identifier, "__final__", False) is True
 
