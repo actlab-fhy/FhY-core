@@ -39,7 +39,6 @@ from fhy_core.types import (
     NumericalType,
     PrimitiveDataType,
     TemplateDataType,
-    TupleType,
     Type,
     TypeQualifier,
 )
@@ -797,21 +796,6 @@ def test_tensor_identifier_is_rejected_immediately() -> None:
     )
 
     with pytest.raises(NotImplementedError, match=r"resolves to tensor type"):
-        checker.visit(IdentifierExpression(identifier))
-
-
-def test_tuple_identifier_is_rejected_immediately() -> None:
-    """Test a tuple-typed identifier is rejected in expressions."""
-    identifier = Identifier("pair")
-    tuple_type = TupleType(
-        [
-            _make_scalar(CoreDataType.INT32),
-            _make_scalar(CoreDataType.INT32),
-        ]
-    )
-    checker = make_identifier_checker({identifier: (tuple_type, TypeQualifier.PARAM)})
-
-    with pytest.raises(NotImplementedError, match=r"resolves to tuple type"):
         checker.visit(IdentifierExpression(identifier))
 
 

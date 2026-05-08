@@ -48,7 +48,6 @@ from fhy_core.types import (
     IndexType,
     NumericalType,
     PrimitiveDataType,
-    TupleType,
     Type,
     TypeQualifier,
     get_core_data_type_bit_width,
@@ -668,12 +667,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
     def _as_expression_value_type(
         self, expression: Expression, type_: Type
     ) -> ExpressionValueType:
-        if isinstance(type_, TupleType):
-            raise NotImplementedError(
-                f"sub-expression `{_format_expression(expression)}` resolves to "
-                f"tuple type {type_}, which is not valid inside an expression"
-            )
-        elif isinstance(type_, IndexType):
+        if isinstance(type_, IndexType):
             return type_
         elif not isinstance(type_, NumericalType):
             raise self._context.type_error(
