@@ -3,7 +3,7 @@
 __all__ = ["Identifier"]
 
 from threading import Lock
-from typing import Any, ClassVar, TypedDict, TypeGuard
+from typing import Any, ClassVar, TypedDict, TypeGuard, final
 
 from .serialization import (
     DeserializationDictStructureError,
@@ -20,18 +20,45 @@ class _IdentifierData(TypedDict):
     name_hint: str
 
 
+_IDENTIFIER_DATA_KEYS: frozenset[str] = frozenset({"id", "name_hint"})
+
+
 def _is_valid_identifier_data(data: SerializedDict) -> TypeGuard[_IdentifierData]:
-    return (
-        "id" in data
-        and isinstance(data["id"], int)
-        and "name_hint" in data
-        and isinstance(data["name_hint"], str)
-    )
+    if data.keys() != _IDENTIFIER_DATA_KEYS:
+        return False
+    id_value = data["id"]
+    # `bool` is a subclass of `int` in Python; reject it explicitly so the
+    # id space stays integer-only.
+    if not isinstance(id_value, int) or isinstance(id_value, bool):
+        return False
+    return isinstance(data["name_hint"], str)
 
 
+@final
 @register_serializable(type_id="id")
 class Identifier(Serializable, EqualMixin):
-    """Unique name."""
+    """Process-globally unique, named compiler symbol.
+
+    Two ``Identifier`` instances are equal iff they share the same ``id``;
+    ``name_hint`` is a debugging aid and is not consulted by ``__eq__`` or
+    ``__hash__``. Ids are drawn from a single process-global,
+    monotonically-increasing counter and are never reused.
+
+    Construction and deserialization are thread-safe and share the same
+    counter: a deserialized id cannot collide with a subsequently
+    constructed id, regardless of interleaving. Deserializing an id
+    greater than the next-to-be-issued value advances the counter past it.
+
+    ``repr`` of an ``Identifier`` returns ``"<name_hint>::<id>"``. The form
+    is for debugging only --- it is not a serialization protocol and is not
+    round-trippable through the constructor. Use the structured ``id`` and
+    ``name_hint`` properties (or ``serialize_to_dict``) when a parseable
+    representation is needed.
+
+    The class is ``@final`` and is not intended to be subclassed; callers
+    should treat it as a closed implementation that provides a single
+    process-global id space.
+    """
 
     _next_id: ClassVar[int] = 0
     _id_lock: ClassVar[Lock] = Lock()
@@ -68,9 +95,9 @@ class Identifier(Serializable, EqualMixin):
         identifier = cls.__new__(cls)
         identifier._id = data["id"]
         identifier._name_hint = data["name_hint"]
-        with cls._id_lock:
-            if identifier._id >= cls._next_id:
-                cls._next_id = identifier._id + 1
+        with Identifier._id_lock:
+            if identifier._id >= Identifier._next_id:
+                Identifier._next_id = identifier._id + 1
         return identifier
 
     def __eq__(self, other: Any) -> bool:
