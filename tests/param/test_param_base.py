@@ -7,7 +7,6 @@ import pytest
 
 from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.error import _COMPILER_ERRORS
-from fhy_core.expression import SymbolType
 from fhy_core.identifier import Identifier
 from fhy_core.param import (
     CategoricalParam,
@@ -19,6 +18,7 @@ from fhy_core.param import (
     RealParam,
 )
 from fhy_core.serialization import SerializedDict
+from fhy_core.symbol_type import SymbolType
 from fhy_core.trait import StructuralEquivalence
 
 from .conftest import assert_all_satisfied, assert_none_satisfied

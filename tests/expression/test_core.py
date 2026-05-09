@@ -16,6 +16,8 @@ from fhy_core.expression import (
     UnaryExpression,
     UnaryOperation,
     collect_identifiers,
+    logical_and,
+    logical_or,
 )
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
@@ -57,24 +59,115 @@ def test_identifier_expression_stores_identifier() -> None:
     assert expression.identifier is identifier
 
 
-@pytest.mark.parametrize("value", [5, 3.14, True, "3.14"])
-def test_literal_expression_accepts_int_float_bool_and_numeric_string(
-    value: int | float | bool | str,
+@pytest.mark.parametrize("value", [0, 5, -3, 1_000_000])
+def test_literal_expression_stores_native_int_as_int(value: int) -> None:
+    """Test a native ``int`` is stored unchanged with type ``int``."""
+    literal = LiteralExpression(value)
+
+    assert literal.value == value
+    assert type(literal.value) is int
+
+
+@pytest.mark.parametrize("value", [0.0, 3.14, -2.5, 1e-10])
+def test_literal_expression_stores_native_float_as_float(value: float) -> None:
+    """Test a native ``float`` is stored unchanged with type ``float``."""
+    literal = LiteralExpression(value)
+
+    assert literal.value == value
+    assert type(literal.value) is float
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_literal_expression_stores_native_bool_as_bool(value: bool) -> None:
+    """Test a native ``bool`` is stored unchanged with type ``bool`` (not ``int``)."""
+    literal = LiteralExpression(value)
+
+    assert literal.value is value
+    assert type(literal.value) is bool
+
+
+@pytest.mark.parametrize(
+    "string_value, expected_int",
+    [("0", 0), ("5", 5), ("42", 42), ("00", 0), ("01", 1)],
+)
+def test_literal_expression_canonicalizes_integer_shaped_string_to_int(
+    string_value: str, expected_int: int
 ) -> None:
-    """Test `LiteralExpression` accepts ints, floats, bools, and numeric strings."""
-    assert LiteralExpression(value).value == value
+    """Test an integer-shaped ``str`` value is canonicalized to ``int``.
+
+    The constructor accepts ``"5"`` and the resulting expression is
+    indistinguishable from ``LiteralExpression(5)``.
+    """
+    literal = LiteralExpression(string_value)
+
+    assert literal.value == expected_int
+    assert type(literal.value) is int
 
 
-def test_literal_expression_rejects_non_numeric_string() -> None:
-    """Test `LiteralExpression` rejects a non-numeric string with `ValueError`."""
-    with pytest.raises(
-        ValueError,
-        match=(
-            r"Invalid literal expression value: not_a_number with type "
-            r'"<class \'str\'>"\.'
-        ),
-    ):
-        LiteralExpression("not_a_number")
+@pytest.mark.parametrize("string_value", ["3.14", "0.0", "1.", ".5", "0.1", "100.001"])
+def test_literal_expression_keeps_float_shaped_string_as_str(string_value: str) -> None:
+    """Test a float-shaped ``str`` value is kept as ``str`` to preserve exact decimal.
+
+    Native ``float`` would be lossy; the design preserves the textual form so
+    e.g. ``LiteralExpression("0.1")`` does not become the IEEE-754 approximation.
+    """
+    literal = LiteralExpression(string_value)
+
+    assert literal.value == string_value
+    assert type(literal.value) is str
+
+
+@pytest.mark.parametrize(
+    "string_value",
+    [
+        "not_a_number",
+        "inf",
+        "-inf",
+        "Infinity",
+        "NaN",
+        "1e10",
+        "0x1f",
+        "-5",
+        "+5",
+        "5.5e2",
+        "",
+        "  ",
+        "5 ",
+    ],
+)
+def test_literal_expression_rejects_string_outside_parser_grammar(
+    string_value: str,
+) -> None:
+    """Test ``str`` values not matching the parser's int or float grammar raise.
+
+    The validator pins to the parser's numeric grammar so any string that the
+    parser couldn't have produced is rejected at construction time.
+    """
+    with pytest.raises(ValueError, match="(?i)literal"):
+        LiteralExpression(string_value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(5 + 6j, id="complex"),
+        pytest.param(b"bytes", id="bytes"),
+        pytest.param(None, id="none"),
+        pytest.param([1, 2, 3], id="list"),
+        pytest.param((1, 2), id="tuple"),
+        pytest.param({"k": 1}, id="dict"),
+        pytest.param(object(), id="arbitrary_object"),
+    ],
+)
+def test_literal_expression_rejects_unsupported_python_types(value: object) -> None:
+    """Test values whose type is not in ``LiteralType`` raise ``TypeError``.
+
+    The runtime contract matches ``LiteralType``; values outside that union
+    are rejected at construction time rather than slipping through to a
+    downstream pass.
+    """
+    with pytest.raises(TypeError, match="(?i)literal"):
+        LiteralExpression(value)  # type: ignore[arg-type]
 
 
 # =============================================================================
@@ -246,18 +339,41 @@ def test_binary_equivalence_is_not_commutative() -> None:
 @pytest.mark.parametrize(
     "left_value, right_value",
     [
-        pytest.param(1, "1", id="int_vs_numeric_string"),
-        pytest.param(1.0, "1.0", id="float_vs_numeric_string"),
-        pytest.param(1.5, "1.5", id="non_integer_float_vs_numeric_string"),
+        pytest.param(1.0, "1.0", id="float_vs_str_form_float"),
+        pytest.param(1.5, "1.5", id="non_integer_float_vs_str_form_float"),
+        pytest.param(0.5, "0.5", id="half_native_vs_str"),
     ],
 )
-def test_literal_equivalence_is_false_when_python_equality_is_false(
-    left_value: int | float, right_value: str
+def test_literal_equivalence_is_false_for_native_float_vs_str_form_float(
+    left_value: float, right_value: str
 ) -> None:
-    """Test literal equivalence honors ``==``: numbers do not equal strings."""
+    """Test native ``float`` literal and equivalent str-form-float are not equivalent.
+
+    The design treats native ``float`` as a (possibly imprecise) IEEE-754 value
+    and str-form floats as exact decimals; they are intentionally distinct.
+    """
     assert not LiteralExpression(left_value).is_structurally_equivalent(
         LiteralExpression(right_value)
     )
+
+
+@pytest.mark.parametrize(
+    "int_value, equivalent_string",
+    [(0, "0"), (1, "1"), (42, "42"), (0, "00")],
+)
+def test_int_literal_and_integer_shaped_string_compare_structurally_equivalent(
+    int_value: int, equivalent_string: str
+) -> None:
+    """Test int and integer-shaped-string literals compare structurally equivalent.
+
+    Integer-shaped strings canonicalize to ``int`` at construction time, so
+    the two forms produce structurally-equivalent trees.
+    """
+    left = LiteralExpression(int_value)
+    right = LiteralExpression(equivalent_string)
+
+    assert left.is_structurally_equivalent(right)
+    assert right.is_structurally_equivalent(left)
 
 
 def _make_pair_by_subclass(
@@ -459,18 +575,18 @@ def test_binary_dunder_rejects_unsupported_type_on_left() -> None:
 # =============================================================================
 
 
-_LOGICAL_BUILDERS = (
-    pytest.param(Expression.logical_and, BinaryOperation.LOGICAL_AND, id="and"),
-    pytest.param(Expression.logical_or, BinaryOperation.LOGICAL_OR, id="or"),
+_MODULE_LOGICAL_BUILDERS = (
+    pytest.param(logical_and, BinaryOperation.LOGICAL_AND, id="and"),
+    pytest.param(logical_or, BinaryOperation.LOGICAL_OR, id="or"),
 )
 
 
-@pytest.mark.parametrize("builder, expected_operation", _LOGICAL_BUILDERS)
-def test_logical_builder_folds_three_args_right_associatively(
+@pytest.mark.parametrize("builder, expected_operation", _MODULE_LOGICAL_BUILDERS)
+def test_module_level_logical_builder_folds_three_args_right_associatively(
     builder: Callable[..., BinaryExpression],
     expected_operation: BinaryOperation,
 ) -> None:
-    """Test `logical_and`/`logical_or` fold three args right-associatively."""
+    """Test module-level `logical_and`/`logical_or` fold three args right-assoc."""
     first = LiteralExpression(True)
     second = LiteralExpression(False)
     third = True  # coerced to LiteralExpression
@@ -485,12 +601,12 @@ def test_logical_builder_folds_three_args_right_associatively(
     assert result.is_structurally_equivalent(expected)
 
 
-@pytest.mark.parametrize("builder, expected_operation", _LOGICAL_BUILDERS)
-def test_logical_builder_accepts_a_two_argument_call(
+@pytest.mark.parametrize("builder, expected_operation", _MODULE_LOGICAL_BUILDERS)
+def test_module_level_logical_builder_accepts_a_two_argument_call(
     builder: Callable[..., BinaryExpression],
     expected_operation: BinaryOperation,
 ) -> None:
-    """Test `logical_and`/`logical_or` bind as static methods and accept two args."""
+    """Test module-level `logical_and`/`logical_or` accept exactly two args."""
     first = LiteralExpression(True)
     second = LiteralExpression(False)
 
@@ -500,27 +616,7 @@ def test_logical_builder_accepts_a_two_argument_call(
     assert result.is_structurally_equivalent(expected)
 
 
-@pytest.mark.parametrize(
-    "method_name, expected_operation",
-    [
-        pytest.param("logical_and", BinaryOperation.LOGICAL_AND, id="and"),
-        pytest.param("logical_or", BinaryOperation.LOGICAL_OR, id="or"),
-    ],
-)
-def test_logical_builder_called_via_instance_does_not_capture_self(
-    method_name: str, expected_operation: BinaryOperation
-) -> None:
-    """Test calling `logical_*` via an instance does not promote `self` to an arg."""
-    first = LiteralExpression(True)
-    second = LiteralExpression(False)
-
-    result = getattr(first, method_name)(first, second)
-
-    expected = BinaryExpression(expected_operation, first, second)
-    assert result.is_structurally_equivalent(expected)
-
-
-@pytest.mark.parametrize("builder, _expected_operation", _LOGICAL_BUILDERS)
+@pytest.mark.parametrize("builder, _expected_operation", _MODULE_LOGICAL_BUILDERS)
 @pytest.mark.parametrize(
     "args",
     [
@@ -528,16 +624,69 @@ def test_logical_builder_called_via_instance_does_not_capture_self(
         pytest.param((LiteralExpression(True),), id="one_arg"),
     ],
 )
-def test_logical_builder_requires_at_least_two_expressions(
+def test_module_level_logical_builder_requires_at_least_two_expressions(
     builder: Callable[..., BinaryExpression],
     _expected_operation: BinaryOperation,
     args: tuple[Expression, ...],
 ) -> None:
-    """Test `logical_and`/`logical_or` raise `ValueError` on fewer than two args."""
-    with pytest.raises(
-        ValueError, match=f"At least two expressions are required, but got {len(args)}."
-    ):
+    """Test module-level `logical_and`/`logical_or` raise on fewer than two args."""
+    with pytest.raises(ValueError, match="(?i)at least two"):
         builder(*args)
+
+
+_INSTANCE_LOGICAL_METHODS = (
+    pytest.param("logical_and", BinaryOperation.LOGICAL_AND, id="and"),
+    pytest.param("logical_or", BinaryOperation.LOGICAL_OR, id="or"),
+)
+
+
+@pytest.mark.parametrize("method_name, expected_operation", _INSTANCE_LOGICAL_METHODS)
+def test_instance_logical_builder_includes_self_with_one_other(
+    method_name: str, expected_operation: BinaryOperation
+) -> None:
+    """Test `expr.logical_*(other)` builds ``expr OP other`` (self is included)."""
+    first = LiteralExpression(True)
+    second = LiteralExpression(False)
+
+    result = getattr(first, method_name)(second)
+
+    expected = BinaryExpression(expected_operation, first, second)
+    assert result.is_structurally_equivalent(expected)
+
+
+@pytest.mark.parametrize("method_name, expected_operation", _INSTANCE_LOGICAL_METHODS)
+def test_instance_logical_builder_includes_self_with_two_others(
+    method_name: str, expected_operation: BinaryOperation
+) -> None:
+    """Test `expr.logical_*(a, b)` folds ``(self, a, b)`` right-associatively."""
+    first = LiteralExpression(True)
+    second = LiteralExpression(False)
+    third = LiteralExpression(True)
+
+    result = getattr(first, method_name)(second, third)
+
+    expected = BinaryExpression(
+        expected_operation,
+        first,
+        BinaryExpression(expected_operation, second, third),
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
+@pytest.mark.parametrize("method_name, _expected_operation", _INSTANCE_LOGICAL_METHODS)
+def test_instance_logical_builder_requires_at_least_one_other(
+    method_name: str, _expected_operation: BinaryOperation
+) -> None:
+    """Test `expr.logical_*()` with no others raises ``ValueError``.
+
+    The instance method counts ``self`` toward the minimum-two contract, so a
+    no-other call still fails the ≥-2 check on the underlying module-level
+    function.
+    """
+    expression = LiteralExpression(True)
+
+    with pytest.raises(ValueError, match="(?i)at least two"):
+        getattr(expression, method_name)()
 
 
 # =============================================================================
@@ -610,12 +759,19 @@ def test_distinct_expression_instances_are_unequal_under_eq(
     "subclass",
     [LiteralExpression, IdentifierExpression, UnaryExpression, BinaryExpression],
 )
-def test_hash_is_identity_based_for_expression_subclasses(
+def test_distinct_expression_instances_have_distinct_object_ids(
     subclass: type[Expression],
 ) -> None:
-    """Test two field-equal but distinct `Expression` instances have distinct hashes."""
+    """Test two field-equal but distinct `Expression` instances have distinct ids.
+
+    The ``set``-based test below (which depends on ``hash`` behavior) covers
+    the user-visible consequence; this test pins that the two instances are
+    genuinely distinct objects in memory, not interned by the dataclass
+    machinery. ``id`` is the right comparison because it is the underlying
+    invariant, not ``hash`` (which could in principle collide).
+    """
     first, second = _build_instance_pair(subclass)
-    assert hash(first) != hash(second)
+    assert id(first) != id(second)
 
 
 @pytest.mark.parametrize(
@@ -970,12 +1126,14 @@ def test_collect_identifiers_walks_into_binary_expression_children() -> None:
 # =============================================================================
 
 
-def test_structural_equivalence_returns_false_for_unregistered_subclass() -> None:
-    """Test the singledispatch default returns `False` for unregistered subclasses.
+def test_unregistered_expression_subclass_raises_not_implemented_on_equivalence() -> (
+    None
+):
+    """Test the singledispatch default raises ``NotImplementedError``.
 
-    `Expression` is abstract, but a concrete subclass that does not register a
-    custom `is_structurally_equivalent` dispatcher falls back to the default,
-    which is expected to return `False` against any other expression.
+    A concrete subclass that does not register a custom dispatcher must
+    surface as a clear error rather than silently returning ``False``,
+    so adding a new node type without wiring up equivalence fails loudly.
     """
 
     @dataclasses.dataclass(frozen=True, eq=False)
@@ -993,5 +1151,5 @@ def test_structural_equivalence_returns_false_for_unregistered_subclass() -> Non
 
     instance = _UnregisteredExpression(value=1)
 
-    assert instance.is_structurally_equivalent(LiteralExpression(1)) is False
-    assert instance.is_structurally_equivalent(instance) is False
+    with pytest.raises(NotImplementedError, match="_UnregisteredExpression"):
+        instance.is_structurally_equivalent(LiteralExpression(1))

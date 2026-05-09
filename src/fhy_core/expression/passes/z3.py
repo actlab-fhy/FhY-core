@@ -12,7 +12,6 @@ from fhy_core.expression.core import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    SymbolType,
     UnaryExpression,
     UnaryOperation,
 )
@@ -22,6 +21,7 @@ from fhy_core.pass_infrastructure import (
     VisitablePass,
     register_pass,
 )
+from fhy_core.symbol_type import SymbolType
 
 
 def _z3_floor_divide(left: z3.ExprRef, right: z3.ExprRef) -> z3.ExprRef:

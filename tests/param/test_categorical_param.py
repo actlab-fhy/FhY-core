@@ -3,7 +3,6 @@
 import pytest
 
 from fhy_core.constraint import EquationConstraint, InSetConstraint
-from fhy_core.expression import SymbolType
 from fhy_core.identifier import Identifier
 from fhy_core.param import (
     CategoricalParam,
@@ -13,6 +12,7 @@ from fhy_core.serialization import (
     DeserializationValueError,
     serialize_registry_wrapped_value,
 )
+from fhy_core.symbol_type import SymbolType
 
 from .conftest import (
     SerializableEqualHashable,

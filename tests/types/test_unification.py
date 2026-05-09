@@ -413,7 +413,7 @@ def test_bind_data_template_repeated_consistent_binding_is_idempotent(
 
 
 # =============================================================================
-# F-001: width enforcement at bind / unify
+# Width enforcement at bind / unify
 # =============================================================================
 
 
@@ -749,7 +749,7 @@ def test_unify_raises_on_index_type_with_mismatched_literal_bound(
 
 
 # =============================================================================
-# F-004: dispatcher defaults
+# Dispatcher defaults
 # =============================================================================
 
 

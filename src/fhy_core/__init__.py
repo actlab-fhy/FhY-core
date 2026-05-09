@@ -194,7 +194,6 @@ from .expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    SymbolType,
     UnaryExpression,
     UnaryOperation,
     check_expression_type,
@@ -301,6 +300,7 @@ from .symbol_table import (
     SymbolTableFrame,
     VariableSymbolTableFrame,
 )
+from .symbol_type import SymbolType  # noqa: F401  # re-exported in __all__
 from .trait import (
     Canonicalizable,
     CanonicalizableMixin,

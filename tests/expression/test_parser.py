@@ -15,6 +15,7 @@ from fhy_core.expression import (
     parse_expression,
     tokenize_expression,
 )
+from fhy_core.expression.parser import ExpressionParser
 
 from .conftest import mock_identifier
 
@@ -64,16 +65,16 @@ def test_tokenize_expression_covers_operator_set(
 @pytest.mark.parametrize(
     "expression_str, expected_tree",
     [
-        ("5", LiteralExpression("5")),
+        ("5", LiteralExpression(5)),
         ("3.2", LiteralExpression("3.2")),
         ("True", LiteralExpression(True)),
         ("False", LiteralExpression(False)),
-        ("-5", UnaryExpression(UnaryOperation.NEGATE, LiteralExpression("5"))),
+        ("-5", UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(5))),
         (
             "34 / 5.7",
             BinaryExpression(
                 BinaryOperation.DIVIDE,
-                LiteralExpression("34"),
+                LiteralExpression(34),
                 LiteralExpression("5.7"),
             ),
         ),
@@ -81,11 +82,11 @@ def test_tokenize_expression_covers_operator_set(
             "10 + -2 * 5",
             BinaryExpression(
                 BinaryOperation.ADD,
-                LiteralExpression("10"),
+                LiteralExpression(10),
                 BinaryExpression(
                     BinaryOperation.MULTIPLY,
-                    UnaryExpression(UnaryOperation.NEGATE, LiteralExpression("2")),
-                    LiteralExpression("5"),
+                    UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(2)),
+                    LiteralExpression(5),
                 ),
             ),
         ),
@@ -95,14 +96,14 @@ def test_tokenize_expression_covers_operator_set(
                 BinaryOperation.MULTIPLY,
                 BinaryExpression(
                     BinaryOperation.ADD,
-                    LiteralExpression("2"),
+                    LiteralExpression(2),
                     BinaryExpression(
                         BinaryOperation.ADD,
-                        LiteralExpression("5"),
-                        LiteralExpression("6"),
+                        LiteralExpression(5),
+                        LiteralExpression(6),
                     ),
                 ),
-                UnaryExpression(UnaryOperation.NEGATE, LiteralExpression("0")),
+                UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(0)),
             ),
         ),
         (
@@ -118,7 +119,7 @@ def test_tokenize_expression_covers_operator_set(
             BinaryExpression(
                 BinaryOperation.GREATER_EQUAL,
                 IdentifierExpression(mock_identifier("i", 0)),
-                LiteralExpression("1"),
+                LiteralExpression(1),
             ),
         ),
         (
@@ -335,11 +336,11 @@ def test_stacked_unary_operators_nest_in_token_order(
             "1+2*3",
             BinaryExpression(
                 BinaryOperation.ADD,
-                LiteralExpression("1"),
+                LiteralExpression(1),
                 BinaryExpression(
                     BinaryOperation.MULTIPLY,
-                    LiteralExpression("2"),
-                    LiteralExpression("3"),
+                    LiteralExpression(2),
+                    LiteralExpression(3),
                 ),
             ),
         ),
@@ -373,15 +374,15 @@ def test_parse_expression_handles_operators_without_surrounding_whitespace(
 @pytest.mark.parametrize(
     "expression_str, expected_tokens",
     [
-        ("1.", ["1"]),
-        (".1", ["1"]),
-        ("00", ["00"]),
+        pytest.param("1.", ["1."], id="dot_terminated_float"),
+        pytest.param(".1", [".1"], id="dot_leading_float"),
+        pytest.param("00", ["00"], id="leading_zero_integer"),
     ],
 )
-def test_tokenize_expression_handles_malformed_numeric_fragments(
+def test_tokenize_expression_handles_python_float_grammar_and_leading_zeroes(
     expression_str: str, expected_tokens: list[str]
 ) -> None:
-    """Test the tokenizer drops stray ``.`` and preserves leading-zero integer runs."""
+    """Test the tokenizer recognizes Python-style ``1.`` / ``.5`` floats and ``00``."""
     assert tokenize_expression(expression_str) == expected_tokens
 
 
@@ -415,7 +416,7 @@ def test_capitalized_identifier_remains_identifier_in_compound_expression() -> N
     expected = BinaryExpression(
         BinaryOperation.ADD,
         IdentifierExpression(mock_identifier("Baseline", 0)),
-        LiteralExpression("1"),
+        LiteralExpression(1),
     )
     assert result.is_structurally_equivalent(expected)
 
@@ -432,10 +433,11 @@ def test_capitalized_identifier_remains_identifier_in_compound_expression() -> N
         pytest.param("((1 + 2) (", id="mismatched_open_paren"),
         pytest.param("1 +", id="trailing_operator"),
         pytest.param("", id="empty_input"),
+        pytest.param("   ", id="whitespace_only"),
     ],
 )
 def test_parse_expression_raises_on_malformed_input(malformed_expression: str) -> None:
-    """Test malformed inputs raise `RuntimeError` from the parser."""
+    """Test malformed inputs raise ``RuntimeError`` from the parser."""
     with pytest.raises(RuntimeError):
         parse_expression(malformed_expression)
 
@@ -446,12 +448,129 @@ def test_parse_expression_error_message_reports_offending_token_position() -> No
         parse_expression(") + 1")
 
 
+@pytest.mark.parametrize(
+    "expression_str",
+    [
+        pytest.param("1 2", id="two_int_literals"),
+        pytest.param("a b", id="two_identifiers"),
+        pytest.param("x + y z", id="trailing_after_valid_expression"),
+        pytest.param("a + b )", id="trailing_close_paren"),
+        pytest.param("(1) (2)", id="two_parenthesized_expressions"),
+    ],
+)
+def test_parse_expression_rejects_trailing_tokens_after_complete_parse(
+    expression_str: str,
+) -> None:
+    """Test the parser rejects any token left over after a successful parse."""
+    with pytest.raises(RuntimeError, match="(?i)trailing|unexpected"):
+        parse_expression(expression_str)
+
+
+@pytest.mark.parametrize(
+    "expression_str",
+    [
+        pytest.param("@x", id="prefix_at"),
+        pytest.param("a $ b", id="dollar_between_identifiers"),
+        pytest.param("~q", id="tilde_prefix"),
+        pytest.param("a + @ + b", id="at_inside_otherwise_valid"),
+    ],
+)
+def test_tokenize_expression_rejects_unknown_ascii_characters(
+    expression_str: str,
+) -> None:
+    """Test the tokenizer rejects characters not part of any valid token."""
+    with pytest.raises(RuntimeError, match="(?i)unrecognized|unknown|invalid"):
+        tokenize_expression(expression_str)
+
+
+@pytest.mark.parametrize(
+    "expression_str",
+    [
+        pytest.param("café", id="latin_e_acute"),
+        pytest.param("αβ", id="greek_letters"),
+        pytest.param("a € b", id="euro_sign_between_identifiers"),
+    ],
+)
+def test_tokenize_expression_rejects_non_ascii_characters(
+    expression_str: str,
+) -> None:
+    """Test non-ASCII characters are rejected; ASCII identifier policy is preserved."""
+    with pytest.raises(RuntimeError, match="(?i)unrecognized|unknown|invalid"):
+        tokenize_expression(expression_str)
+
+
+@pytest.mark.parametrize(
+    "expression_str, expected_message_substring",
+    [
+        pytest.param("", "end of input", id="empty_input"),
+        pytest.param("   ", "end of input", id="whitespace_only"),
+        pytest.param("1 +", "end of input", id="trailing_operator"),
+        pytest.param("(1 + 2", "end of input", id="unclosed_paren"),
+    ],
+)
+def test_parse_expression_uses_distinct_end_of_input_message(
+    expression_str: str, expected_message_substring: str
+) -> None:
+    """Test end-of-input errors say so explicitly instead of mentioning ``None``."""
+    with pytest.raises(RuntimeError) as exc_info:
+        parse_expression(expression_str)
+
+    assert expected_message_substring in str(exc_info.value)
+    assert "None" not in str(exc_info.value)
+
+
+def test_expression_parser_rejects_a_second_parse_call() -> None:
+    """Test calling ``ExpressionParser.parse()`` twice raises a clear error."""
+    parser = ExpressionParser(tokenize_expression("1 + 2"))
+    parser.parse()
+
+    with pytest.raises(RuntimeError, match="(?i)already consumed|single-use"):
+        parser.parse()
+
+
+def test_parse_expression_returns_a_fresh_parser_each_call() -> None:
+    """Test calling ``parse_expression`` repeatedly works (each call -> new parser)."""
+    first = parse_expression("1 + 2")
+    second = parse_expression("3 * 4")
+
+    assert first.is_structurally_equivalent(
+        BinaryExpression(
+            BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
+        )
+    )
+    assert second.is_structurally_equivalent(
+        BinaryExpression(
+            BinaryOperation.MULTIPLY, LiteralExpression(3), LiteralExpression(4)
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "expression_str, expected_value",
+    [
+        pytest.param("1.", "1.", id="dot_terminated"),
+        pytest.param(".5", ".5", id="dot_leading"),
+        pytest.param("3.14", "3.14", id="standard_float"),
+        pytest.param("0.0", "0.0", id="zero_dot_zero"),
+    ],
+)
+def test_parse_expression_produces_str_form_literal_for_float_token(
+    expression_str: str, expected_value: str
+) -> None:
+    """Test the parser stores float-shaped tokens as ``str`` (exact decimal)."""
+    result = parse_expression(expression_str)
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == expected_value
+    assert type(result.value) is str
+
+
 # =============================================================================
 # Parser - large-input boundary
 # =============================================================================
 
 
-def _count_literal_leaves(expression: Expression, target_value: str) -> int:
+def _count_literal_leaves(expression: Expression, target_value: object) -> int:
     if isinstance(expression, LiteralExpression):
         return 1 if expression.value == target_value else 0
     elif isinstance(expression, BinaryExpression):
@@ -465,11 +584,11 @@ def _count_literal_leaves(expression: Expression, target_value: str) -> int:
 
 
 def test_parse_expression_handles_token_count_past_cpython_small_int_cache() -> None:
-    """Test parsing a 300-term sum yields a tree with 300 literal leaves of value 1."""
+    """Test parsing a 300-term sum yields a tree with 300 integer leaves of value 1."""
     num_terms = 300
     source = " + ".join(["1"] * num_terms)
     tree = parse_expression(source)
-    assert _count_literal_leaves(tree, "1") == num_terms
+    assert _count_literal_leaves(tree, 1) == num_terms
 
 
 def test_parse_expression_reuses_identifier_for_repeated_symbol() -> None:

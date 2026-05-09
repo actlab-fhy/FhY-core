@@ -48,7 +48,7 @@ def mock_identifier(name_hint: str, identifier_id: int) -> Identifier:
         "name_hint": identifier.name_hint,
     }
     identifier.deserialize_from_dict = lambda data: mock_identifier(
-        data["id"], data["name_hint"]
+        data["name_hint"], data["id"]
     )
     return identifier
 
