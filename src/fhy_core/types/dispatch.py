@@ -42,6 +42,7 @@ __all__ = [
     "substitute_data_template",
     "substitute_template",
     "unify",
+    "unify_expression",
 ]
 
 from collections.abc import Sequence
@@ -529,6 +530,37 @@ def unify(
             f"Cannot unify {expected!r} with {actual!r}: structural mismatch."
         )
     return expected, environment
+
+
+def unify_expression(
+    left_expression: Expression,
+    right_expression: Expression,
+    environment: TypeUnificationEnvironment,
+) -> tuple[Expression, TypeUnificationEnvironment]:
+    """Bidirectionally unify two expressions, allowing placeholders on either side.
+
+    Resolves any chained ``IdentifierExpression`` placeholders against the
+    current ``expression_bindings``, then unifies the resolved forms: a
+    placeholder on either side is bound to the other expression (subject to
+    the occurs check), and two concrete expressions must be structurally
+    equivalent.
+
+    Args:
+        left_expression: First expression, possibly containing placeholders.
+        right_expression: Second expression, possibly containing placeholders.
+        environment: Current binding environment.
+
+    Returns:
+        A tuple ``(unified_expression, new_environment)`` where
+        ``unified_expression`` is the more-specific reconciliation of the two
+        inputs and ``new_environment`` carries every binding learned during
+        unification.
+
+    Raises:
+        VerificationError: If the two expressions are incompatible or an
+            occurs check fails.
+    """
+    return _unify_expressions(left_expression, right_expression, environment)
 
 
 @singledispatch

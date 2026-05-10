@@ -142,6 +142,7 @@ __all__ = [
     "substitute_data_template",
     "substitute_template",
     "unify",
+    "unify_expression",
     "IntEnum",
     "Lattice",
     "PartiallyOrderedSet",
@@ -361,6 +362,7 @@ from .types import (
     substitute_data_template,
     substitute_template,
     unify,
+    unify_expression,
 )
 from .utils import (
     IntEnum,
