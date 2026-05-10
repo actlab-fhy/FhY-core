@@ -5,6 +5,8 @@ __all__ = ["Identifier"]
 from threading import Lock
 from typing import Any, ClassVar, TypedDict, TypeGuard, final
 
+from fhy_core.utils import is_strict_int
+
 from .serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -27,9 +29,7 @@ def _is_valid_identifier_data(data: SerializedDict) -> TypeGuard[_IdentifierData
     if data.keys() != _IDENTIFIER_DATA_KEYS:
         return False
     id_value = data["id"]
-    # `bool` is a subclass of `int` in Python; reject it explicitly so the
-    # id space stays integer-only.
-    if not isinstance(id_value, int) or isinstance(id_value, bool):
+    if not is_strict_int(id_value):
         return False
     return isinstance(data["name_hint"], str)
 

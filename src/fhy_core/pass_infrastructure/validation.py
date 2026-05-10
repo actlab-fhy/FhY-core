@@ -142,20 +142,18 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
     """
 
     _validators: list[CompilerPass[_IRType, Any]]
-    _identifier: Identifier
+    _name: Identifier
 
     def __init__(self, name: Identifier | None = None) -> None:
-        self._identifier = (
-            name if name is not None else Identifier("validation-pipeline")
-        )
+        self._name = name if name is not None else Identifier("validation-pipeline")
         self._validators = []
 
     def get_identifier(self) -> Identifier:
-        return self._identifier
+        return self._name
 
     @property
     def name(self) -> Identifier:
-        return self._identifier
+        return self._name
 
     @property
     def validators(self) -> tuple[CompilerPass[_IRType, Any], ...]:
