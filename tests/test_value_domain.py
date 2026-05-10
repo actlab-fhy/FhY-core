@@ -195,25 +195,34 @@ def test_value_domain_structural_equivalence_recurses_into_parent() -> None:
 # =============================================================================
 
 
-def test_value_domain_equality_ignores_description_and_parent() -> None:
-    """Test `__eq__` compares on `name` only and ignores `description`/`parent`."""
+def test_value_domain_equality_ignores_description() -> None:
+    """Test `__eq__` ignores `description` (metadata)."""
     name = Identifier("x")
     left = ValueDomain(name, "first")
-    right = ValueDomain(name, "second", parent=DATA_DOMAIN)
+    right = ValueDomain(name, "second")
     assert left == right
 
 
-def test_value_domain_hash_ignores_description_and_parent() -> None:
-    """Test `__hash__` is keyed on `name` and ignores `description`/`parent`."""
+def test_value_domain_hash_ignores_description() -> None:
+    """Test `__hash__` ignores `description` (metadata)."""
     name = Identifier("x")
     left = ValueDomain(name, "first")
-    right = ValueDomain(name, "second", parent=DATA_DOMAIN)
+    right = ValueDomain(name, "second")
     assert hash(left) == hash(right)
 
 
 def test_value_domain_unequal_when_names_differ() -> None:
     """Test instances with different `name`s compare unequal."""
     assert ValueDomain(Identifier("a"), "desc") != ValueDomain(Identifier("b"), "desc")
+
+
+def test_value_domain_unequal_when_parents_differ() -> None:
+    """Test `__eq__` distinguishes domains with the same `name` but different
+    `parent`s, keeping equality aligned with structural equivalence."""
+    name = Identifier("child")
+    parented = ValueDomain(name, "desc", parent=DATA_DOMAIN)
+    orphan = ValueDomain(name, "desc")
+    assert parented != orphan
 
 
 # =============================================================================

@@ -89,7 +89,7 @@ class ValueDomain(
 
     name: Identifier
     description: str = field(compare=False)
-    parent: "ValueDomain | None" = field(default=None, compare=False)
+    parent: "ValueDomain | None" = None
 
     def __post_init__(self) -> None:
         self.register_interned_instance()
