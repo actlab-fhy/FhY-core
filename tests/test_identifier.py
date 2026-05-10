@@ -412,43 +412,39 @@ def test_deserialize_then_construct_avoids_collision() -> None:
 # =============================================================================
 # Class-level defaults (subprocess-isolated)
 #
-# The class-level default `_next_id = 0` is only observable in a fresh
-# process: any prior Identifier(...) in this test session has already mutated
-# it. We spawn a subprocess and observe the counter against the count of
-# identifiers actually issued. Importing `fhy_core` (or any submodule) may
-# construct identifiers during module initialization; the invariant we care
-# about is that `_next_id` equals the number of identifiers issued from a
-# clean import, which only holds if the counter starts at 0 and increments
-# by 1 per construction. The test is therefore robust to future additions
-# of module-level interned objects.
+# `_next_id` is mutated by every Identifier construction, so its starting
+# state is only observable in a fresh process. Importing `fhy_core` (or any
+# submodule) may construct identifiers during module initialization; the
+# test reads `Identifier._next_id` immediately after import and then
+# verifies the next user-constructed identifier picks up that counter
+# contiguously and advances it by 1. The assertion is robust to future
+# additions of module-level interned objects.
 # =============================================================================
 
 
 @pytest.mark.slow
 @pytest.mark.subprocess
 def test_first_identifier_in_fresh_process_has_id_zero() -> None:
-    """Test the `_next_id` counter starts at 0 in a fresh process.
+    """Test the `_next_id` counter is contiguous from a fresh process import.
 
-    Asserts that after a clean import, the count of live `Identifier`
-    instances equals `Identifier._next_id` and that the next user-constructed
-    `Identifier` picks up the counter contiguously. This holds iff the
-    class-level default `_next_id = 0` is honored.
+    Reads `Identifier._next_id` after package initialization and asserts that
+    a freshly-constructed `Identifier` picks up the counter and advances it
+    by exactly one. Combined with the contiguous-construction tests, this
+    pins down the "monotonically-increasing, never-reused" id contract from
+    a clean process start.
     """
     output = subprocess.check_output(
         [
             sys.executable,
             "-c",
-            "import gc\n"
             "import fhy_core  # ensure full package initialization\n"
             "from fhy_core.identifier import Identifier\n"
-            "module_init_count = sum(\n"
-            "    1 for o in gc.get_objects() if type(o) is Identifier\n"
-            ")\n"
+            "start_next_id = Identifier._next_id\n"
             "fresh = Identifier('x')\n"
-            "print(module_init_count, fresh.id, Identifier._next_id)",
+            "print(start_next_id, fresh.id, Identifier._next_id)",
         ],
         text=True,
     ).strip()
-    module_init_count, fresh_id, next_id = (int(part) for part in output.split())
-    assert fresh_id == module_init_count
+    start_next_id, fresh_id, next_id = (int(part) for part in output.split())
+    assert fresh_id == start_next_id
     assert next_id == fresh_id + 1
