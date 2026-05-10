@@ -840,6 +840,65 @@ def test_unify_expression_raises_when_occurs_check_fails(
         unify_expression(left, right, empty_environment)
 
 
+def test_unify_expression_raises_when_occurs_check_fails_indirectly_via_binding(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test the occurs check follows existing bindings when detecting cycles."""
+    m_identifier = Identifier("M")
+    n_identifier = Identifier("N")
+    pre_bound_environment = empty_environment.with_expression_binding(
+        m_identifier, IdentifierExpression(n_identifier)
+    )
+    left = IdentifierExpression(n_identifier)
+    right = BinaryExpression(
+        BinaryOperation.ADD,
+        IdentifierExpression(m_identifier),
+        LiteralExpression(1),
+    )
+    with pytest.raises(VerificationError):
+        unify_expression(left, right, pre_bound_environment)
+
+
+def test_unify_expression_raises_when_occurs_check_fails_indirectly_on_right(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test the indirect occurs check fires for right-side placeholders too."""
+    m_identifier = Identifier("M")
+    n_identifier = Identifier("N")
+    pre_bound_environment = empty_environment.with_expression_binding(
+        m_identifier, IdentifierExpression(n_identifier)
+    )
+    left = BinaryExpression(
+        BinaryOperation.ADD,
+        IdentifierExpression(m_identifier),
+        LiteralExpression(1),
+    )
+    right = IdentifierExpression(n_identifier)
+    with pytest.raises(VerificationError):
+        unify_expression(left, right, pre_bound_environment)
+
+
+def test_unify_expression_does_not_treat_concrete_binding_as_indirect_cycle(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test the indirect occurs check does not false-positive on concrete bindings."""
+    m_identifier = Identifier("M")
+    n_identifier = Identifier("N")
+    pre_bound_environment = empty_environment.with_expression_binding(
+        m_identifier, LiteralExpression(5)
+    )
+    left = IdentifierExpression(n_identifier)
+    right = BinaryExpression(
+        BinaryOperation.ADD,
+        IdentifierExpression(m_identifier),
+        LiteralExpression(1),
+    )
+    unified, environment = unify_expression(left, right, pre_bound_environment)
+    assert unified.is_structurally_equivalent(right)
+    n_binding = environment.get_expression_binding(n_identifier)
+    assert n_binding is not None and n_binding.is_structurally_equivalent(right)
+
+
 def test_unify_expression_chains_through_existing_placeholder_binding(
     empty_environment: TypeUnificationEnvironment,
 ) -> None:

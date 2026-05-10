@@ -217,7 +217,8 @@ def _unify_expressions(
     ):
         return resolved_left, environment
     elif isinstance(resolved_left, IdentifierExpression):
-        if _is_identifier_in_expression(resolved_left.identifier, resolved_right):
+        substituted_right = _substitute_expression(resolved_right, environment)
+        if _is_identifier_in_expression(resolved_left.identifier, substituted_right):
             raise VerificationError(
                 f"Occurs check failed: identifier "
                 f"{resolved_left.identifier!r} appears in {resolved_right!r}."
@@ -226,7 +227,8 @@ def _unify_expressions(
             resolved_left.identifier, resolved_right
         )
     elif isinstance(resolved_right, IdentifierExpression):
-        if _is_identifier_in_expression(resolved_right.identifier, resolved_left):
+        substituted_left = _substitute_expression(resolved_left, environment)
+        if _is_identifier_in_expression(resolved_right.identifier, substituted_left):
             raise VerificationError(
                 f"Occurs check failed: identifier "
                 f"{resolved_right.identifier!r} appears in {resolved_left!r}."
