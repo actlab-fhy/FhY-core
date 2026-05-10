@@ -145,7 +145,7 @@ def test_compiler_pass_skip_path_uses_noop_output() -> None:
     assert result.diagnostics[0].level == DiagnosticLevel.INFO
     assert result.diagnostics[0].message_text == "skip requested"
 
-    # F-004: skipped runs do not count as executions.
+    # Skipped runs do not count as executions.
     assert SkippedPass.get_run_count() == per_before
     assert CompilerPass.get_total_run_count() == total_before
 
@@ -190,7 +190,7 @@ def test_pass_core_records_support_partial_equal_traits() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F-002: lifecycle exceptions are wrapped to PassValidationError /
+# Lifecycle exceptions are wrapped to PassValidationError /
 # PassExecutionError. The validate_* methods wrap to PassValidationError;
 # the others wrap to PassExecutionError. PassValidationError /
 # PassExecutionError raised by user code pass through unchanged.
@@ -383,7 +383,7 @@ def test_explicit_pass_execution_error_passes_through_unchanged() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F-004: run counters track real executions, not invocations.
+# Run counters track real executions, not invocations.
 # ---------------------------------------------------------------------------
 
 
@@ -421,7 +421,7 @@ def test_run_counter_counts_only_real_executions() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F-012: register_pass input validation.
+# register_pass input validation.
 # ---------------------------------------------------------------------------
 
 
@@ -482,7 +482,7 @@ def test_register_pass_is_idempotent_for_same_class() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F-012: PreservedAnalyses contracts.
+# PreservedAnalyses contracts.
 # ---------------------------------------------------------------------------
 
 
@@ -512,7 +512,7 @@ def test_preserve_when_already_preserved_returns_self() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F-023: report() emits to a per-pass-class FhY-core logger.
+# report() emits to a per-pass-class FhY-core logger.
 # ---------------------------------------------------------------------------
 
 

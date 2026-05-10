@@ -512,7 +512,7 @@ def test_pass_manager_records_support_partial_equal_traits() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F-003: add_* methods return None (no fluent chaining anywhere).
+# add_* methods return None (no fluent chaining anywhere).
 # ---------------------------------------------------------------------------
 
 
@@ -558,7 +558,7 @@ def test_fixpoint_pass_group_add_pass_returns_none() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F-005: Analysis subclass __init__ signature is validated at class creation.
+# Analysis subclass __init__ signature is validated at class creation.
 # ---------------------------------------------------------------------------
 
 
@@ -614,7 +614,7 @@ def test_analysis_subclass_with_optional_only_args_is_accepted() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F-006: PassRunRecord stores PreservedAnalyses directly.
+# PassRunRecord stores PreservedAnalyses directly.
 # ---------------------------------------------------------------------------
 
 
@@ -674,7 +674,7 @@ def test_pass_run_record_carries_specific_preservation_set() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F-007: FixpointGroupRecord.iterations is a property derived from
+# FixpointGroupRecord.iterations is a property derived from
 # iteration_records.
 # ---------------------------------------------------------------------------
 
@@ -708,7 +708,7 @@ def test_fixpoint_group_record_iterations_cannot_be_set() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F-009: AnalysisManager falls back to uncached execution when the underlying
+# AnalysisManager falls back to uncached execution when the underlying
 # `weakref.finalize` call raises (no probe ref needed).
 # ---------------------------------------------------------------------------
 
@@ -742,7 +742,7 @@ def test_analysis_manager_falls_back_when_weakref_finalize_raises(
 
 
 # ---------------------------------------------------------------------------
-# F-012: AnalysisManager public surface (clear / invalidate / transfer).
+# AnalysisManager public surface (clear / invalidate / transfer).
 # ---------------------------------------------------------------------------
 
 
@@ -851,7 +851,7 @@ def test_analysis_manager_transfer_drops_when_not_preserved() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F-013: bind / unbind split. The `None` overload is gone.
+# bind / unbind split. The `None` overload is gone.
 # ---------------------------------------------------------------------------
 
 

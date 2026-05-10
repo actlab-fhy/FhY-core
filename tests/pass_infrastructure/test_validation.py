@@ -451,8 +451,7 @@ def test_validation_manager_attributes_each_diagnostic_to_emitting_validator() -
 
 def test_validation_manager_synthesizes_balanced_quotes_around_exception_type() -> None:
     """Test that the synthesised "raised X without reporting a diagnostic"
-    message has balanced quotes around the exception type (regression for
-    F-016)."""
+    message has balanced quotes around the exception type."""
 
     @register_pass(
         "tests.vm.silent_validation_error",

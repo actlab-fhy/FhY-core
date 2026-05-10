@@ -155,8 +155,8 @@ def test_analysis_visitable_pass_requires_node_child_enumeration() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F-018: AnalysisVisitablePass dispatches per-node before_visit_<suffix> /
-# after_visit_<suffix> hooks. F-019: visit_unknown defaults.
+# AnalysisVisitablePass dispatches per-node before_visit_<suffix> /
+# after_visit_<suffix> hooks; visit_unknown defaults.
 # ---------------------------------------------------------------------------
 
 
@@ -271,7 +271,7 @@ def test_analysis_visitable_pass_falls_back_to_unknown_pre_post_hooks() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F-019: visit_unknown defaults differ between VisitablePass (raise) and
+# visit_unknown defaults differ between VisitablePass (raise) and
 # AnalysisVisitablePass (no-op).
 # ---------------------------------------------------------------------------
 
@@ -294,8 +294,8 @@ class HandlesNothingAnalysisPass(AnalysisVisitablePass[UnhandledNode]):
 def test_visitable_pass_unknown_node_raises_not_implemented_error() -> None:
     """Test that VisitablePass.visit_unknown raises NotImplementedError by default.
 
-    Per F-002, the unwrapped exception inside `run_pass`/`visit` is wrapped
-    to PassExecutionError by `execute`. The original `NotImplementedError`
+    The unwrapped exception inside `run_pass`/`visit` is wrapped to
+    `PassExecutionError` by `execute`. The original `NotImplementedError`
     is the cause and the message identifies the pass and node type.
     """
     visitor = HandlesNothingVisitablePass()
@@ -314,7 +314,7 @@ def test_analysis_visitable_pass_unknown_node_is_noop() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F-020: walk's try/finally guarantees after_visit runs even when visit raises.
+# walk's try/finally guarantees after_visit runs even when visit raises.
 # ---------------------------------------------------------------------------
 
 
@@ -342,7 +342,7 @@ class RaisingVisitPass(AnalysisVisitablePass[ToyTreeNode]):
 def test_walk_runs_after_visit_when_visit_raises() -> None:
     """Test that `after_visit_<X>` fires even when `visit_<X>` raises.
 
-    Per F-002, the underlying exception is wrapped to `PassExecutionError`.
+    The underlying exception is wrapped to `PassExecutionError`.
     """
     tree = ToyTreeNode("root", (ToyTreeNode("boom"),))
     visitor = RaisingVisitPass()
