@@ -1,7 +1,5 @@
 """Pass manager and analysis manager infrastructure."""
 
-from __future__ import annotations
-
 __all__ = [
     "Analysis",
     "AnalysisManager",
