@@ -49,7 +49,8 @@ from fhy_core.utils import invert_frozen_dict
 
 
 def _build_right_folded_binary_tree(
-    operation: "BinaryOperation", *expressions: "Expression"
+    operation: "BinaryOperation",
+    *expressions: "Expression | Identifier | LiteralType",
 ) -> "BinaryExpression":
     if len(expressions) < 2:  # noqa: PLR2004
         operation_name = BINARY_OPERATION_FUNCTION_NAMES[operation]
@@ -72,33 +73,49 @@ def _build_right_folded_binary_tree(
     return result
 
 
-def logical_and(*expressions: "Expression") -> "BinaryExpression":
-    """Build a right-folded ``LOGICAL_AND`` tree from two or more expressions.
+def logical_and(
+    *expressions: "Expression | Identifier | LiteralType",
+) -> "BinaryExpression":
+    """Build a right-folded ``LOGICAL_AND`` tree from two or more operands.
+
+    Each operand may be an ``Expression`` (used as-is), an ``Identifier``
+    (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
+    (wrapped in ``LiteralExpression``); the same coercion rules as the
+    operator dunders apply.
 
     Args:
-        expressions: Expressions to AND together. Must be at least two.
+        expressions: Operands to AND together. Must be at least two.
 
     Returns:
         Right-folded binary AND expression.
 
     Raises:
-        ValueError: If fewer than two expressions are supplied.
+        ValueError: If fewer than two operands are supplied, or if an
+            operand has an unsupported type.
 
     """
     return _build_right_folded_binary_tree(BinaryOperation.LOGICAL_AND, *expressions)
 
 
-def logical_or(*expressions: "Expression") -> "BinaryExpression":
-    """Build a right-folded ``LOGICAL_OR`` tree from two or more expressions.
+def logical_or(
+    *expressions: "Expression | Identifier | LiteralType",
+) -> "BinaryExpression":
+    """Build a right-folded ``LOGICAL_OR`` tree from two or more operands.
+
+    Each operand may be an ``Expression`` (used as-is), an ``Identifier``
+    (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
+    (wrapped in ``LiteralExpression``); the same coercion rules as the
+    operator dunders apply.
 
     Args:
-        expressions: Expressions to OR together. Must be at least two.
+        expressions: Operands to OR together. Must be at least two.
 
     Returns:
         Right-folded binary OR expression.
 
     Raises:
-        ValueError: If fewer than two expressions are supplied.
+        ValueError: If fewer than two operands are supplied, or if an
+            operand has an unsupported type.
 
     """
     return _build_right_folded_binary_tree(BinaryOperation.LOGICAL_OR, *expressions)
@@ -249,34 +266,48 @@ class Expression(
             BinaryOperation.GREATER_EQUAL, self, self._get_expression_from_other(other)
         )
 
-    def logical_and(self, *others: "Expression") -> "BinaryExpression":
+    def logical_and(
+        self, *others: "Expression | Identifier | LiteralType"
+    ) -> "BinaryExpression":
         """Create a logical AND expression over ``self`` and ``others``.
 
+        Each item in ``others`` may be an ``Expression``, an ``Identifier``,
+        or a value of ``LiteralType``; the same coercion rules as the
+        operator dunders apply.
+
         Args:
-            others: Additional expressions to AND with ``self``. At least one
+            others: Additional operands to AND with ``self``. At least one
                 is required (``self`` is always included).
 
         Returns:
             Right-folded logical AND expression.
 
         Raises:
-            ValueError: If no additional expressions are supplied.
+            ValueError: If no additional operands are supplied, or if an
+                operand has an unsupported type.
 
         """
         return logical_and(self, *others)
 
-    def logical_or(self, *others: "Expression") -> "BinaryExpression":
+    def logical_or(
+        self, *others: "Expression | Identifier | LiteralType"
+    ) -> "BinaryExpression":
         """Create a logical OR expression over ``self`` and ``others``.
 
+        Each item in ``others`` may be an ``Expression``, an ``Identifier``,
+        or a value of ``LiteralType``; the same coercion rules as the
+        operator dunders apply.
+
         Args:
-            others: Additional expressions to OR with ``self``. At least one
+            others: Additional operands to OR with ``self``. At least one
                 is required (``self`` is always included).
 
         Returns:
             Right-folded logical OR expression.
 
         Raises:
-            ValueError: If no additional expressions are supplied.
+            ValueError: If no additional operands are supplied, or if an
+                operand has an unsupported type.
 
         """
         return logical_or(self, *others)
