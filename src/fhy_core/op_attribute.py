@@ -24,7 +24,7 @@ __all__ = [
     "OpAttribute",
 ]
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TypedDict, TypeGuard
 
 from .identifier import Identifier
@@ -85,7 +85,7 @@ class OpAttribute(
     """
 
     name: Identifier
-    description: str
+    description: str = field(compare=False)
 
     def __post_init__(self) -> None:
         self.register_interned_instance()

@@ -16,7 +16,7 @@ fresh ``ValueDomain`` instances with the same ``name_hint``, because
 
 __all__ = ["ADDRESS_DOMAIN", "DATA_DOMAIN", "ValueDomain"]
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TypedDict, TypeGuard
 
 from .identifier import Identifier
@@ -88,8 +88,8 @@ class ValueDomain(
     """
 
     name: Identifier
-    description: str
-    parent: "ValueDomain | None" = None
+    description: str = field(compare=False)
+    parent: "ValueDomain | None" = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         self.register_interned_instance()

@@ -192,6 +192,27 @@ def test_op_attribute_is_hashable() -> None:
     assert hash(attribute) == hash(attribute)
 
 
+def test_op_attribute_equality_ignores_description() -> None:
+    """Test `__eq__` compares on `name` only and ignores `description`."""
+    name = Identifier("x")
+    left = OpAttribute(name, "first description")
+    right = OpAttribute(name, "second description")
+    assert left == right
+
+
+def test_op_attribute_hash_ignores_description() -> None:
+    """Test `__hash__` is keyed on `name` and ignores `description`."""
+    name = Identifier("x")
+    left = OpAttribute(name, "first description")
+    right = OpAttribute(name, "second description")
+    assert hash(left) == hash(right)
+
+
+def test_op_attribute_unequal_when_names_differ() -> None:
+    """Test instances with different `name`s compare unequal."""
+    assert OpAttribute(Identifier("a"), "desc") != OpAttribute(Identifier("b"), "desc")
+
+
 def test_op_attribute_works_in_frozenset() -> None:
     """Test canonical attributes can be assembled into a frozenset."""
     tags = frozenset({COMMUTATIVE, PURE})

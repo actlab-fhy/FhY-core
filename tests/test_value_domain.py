@@ -191,6 +191,32 @@ def test_value_domain_structural_equivalence_recurses_into_parent() -> None:
 
 
 # =============================================================================
+# Equality & hash
+# =============================================================================
+
+
+def test_value_domain_equality_ignores_description_and_parent() -> None:
+    """Test `__eq__` compares on `name` only and ignores `description`/`parent`."""
+    name = Identifier("x")
+    left = ValueDomain(name, "first")
+    right = ValueDomain(name, "second", parent=DATA_DOMAIN)
+    assert left == right
+
+
+def test_value_domain_hash_ignores_description_and_parent() -> None:
+    """Test `__hash__` is keyed on `name` and ignores `description`/`parent`."""
+    name = Identifier("x")
+    left = ValueDomain(name, "first")
+    right = ValueDomain(name, "second", parent=DATA_DOMAIN)
+    assert hash(left) == hash(right)
+
+
+def test_value_domain_unequal_when_names_differ() -> None:
+    """Test instances with different `name`s compare unequal."""
+    assert ValueDomain(Identifier("a"), "desc") != ValueDomain(Identifier("b"), "desc")
+
+
+# =============================================================================
 # Parent chain & is_subdomain_of
 # =============================================================================
 
