@@ -302,7 +302,7 @@ class FixpointPassGroup(HasIdentifierMixin, Generic[_IRType]):
     """A repeatedly executed pass sequence until fixpoint or iteration budget."""
 
     _passes: list[CompilerPass[_IRType, _IRType]]
-    _identifier: Identifier
+    _name: Identifier
     _max_iterations: int
     _fail_on_non_convergence: bool
 
@@ -315,17 +315,17 @@ class FixpointPassGroup(HasIdentifierMixin, Generic[_IRType]):
     ) -> None:
         if max_iterations < 1:
             raise ValueError('"max_iterations" must be >= 1.')
-        self._identifier = name
+        self._name = name
         self._max_iterations = max_iterations
         self._fail_on_non_convergence = fail_on_non_convergence
         self._passes = []
 
     def get_identifier(self) -> Identifier:
-        return self._identifier
+        return self._name
 
     @property
     def name(self) -> Identifier:
-        return self._identifier
+        return self._name
 
     @property
     def max_iterations(self) -> int:
