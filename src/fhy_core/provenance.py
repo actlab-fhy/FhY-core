@@ -31,7 +31,7 @@ __all__ = [
     "UnknownProvenance",
 ]
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict, TypeGuard
@@ -256,6 +256,9 @@ class Span(Serializable, FrozenMixin, EqualMixin):
 class Provenance(WrappedFamilySerializable, FrozenMixin, EqualMixin, ABC):
     """Origin information for a compiler object. Abstract base."""
 
+    @abstractmethod
+    def __str__(self) -> str: ...
+
     @staticmethod
     def unknown() -> "Provenance":
         return UnknownProvenance()
@@ -293,6 +296,9 @@ class UnknownProvenance(Provenance):
         if data:
             raise DeserializationDictStructureError(cls, {}, data)
         return cls()
+
+    def __str__(self) -> str:
+        return "<unknown>"
 
 
 class _FileProvenanceData(TypedDict):
@@ -336,6 +342,12 @@ class FileProvenance(Provenance):
                 f"Invalid file provenance values: {exc}"
             ) from exc
 
+    def __str__(self) -> str:
+        if self.span is None or self.span.is_unknown():
+            return str(self.file_path)
+        else:
+            return f"{self.file_path}:{self.span}"
+
 
 class _NamedProvenanceData(TypedDict):
     name: str
@@ -372,6 +384,12 @@ class NamedProvenance(Provenance):
                 f"Invalid named provenance values: {exc}"
             ) from exc
 
+    def __str__(self) -> str:
+        if isinstance(self.child, UnknownProvenance):
+            return self.name
+        else:
+            return f"{self.name} ({self.child})"
+
 
 class _CallSiteProvenanceData(TypedDict):
     callee: SerializedDict
@@ -404,6 +422,9 @@ class CallSiteProvenance(Provenance):
             callee=Provenance.deserialize_from_dict(callee_value),
             caller=Provenance.deserialize_from_dict(caller_value),
         )
+
+    def __str__(self) -> str:
+        return f"{self.callee} at {self.caller}"
 
 
 class _FusedProvenanceData(TypedDict):
@@ -446,3 +467,8 @@ class FusedProvenance(Provenance):
             ),
             metadata=metadata_value,
         )
+
+    def __str__(self) -> str:
+        label = self.metadata if self.metadata is not None else "fused"
+        rendered_sources = ", ".join(str(source) for source in self.sources)
+        return f"{label}[{rendered_sources}]"
