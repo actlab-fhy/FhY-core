@@ -221,7 +221,9 @@ def _unify_expressions(
         if _is_identifier_in_expression(resolved_left.identifier, substituted_right):
             raise VerificationError(
                 f"Occurs check failed: identifier "
-                f"{resolved_left.identifier!r} appears in {resolved_right!r}."
+                f"{resolved_left.identifier!r} appears in {resolved_right!r} "
+                f"after substitution through existing bindings "
+                f"({substituted_right!r})."
             )
         return resolved_right, environment.with_expression_binding(
             resolved_left.identifier, resolved_right
@@ -231,7 +233,9 @@ def _unify_expressions(
         if _is_identifier_in_expression(resolved_right.identifier, substituted_left):
             raise VerificationError(
                 f"Occurs check failed: identifier "
-                f"{resolved_right.identifier!r} appears in {resolved_left!r}."
+                f"{resolved_right.identifier!r} appears in {resolved_left!r} "
+                f"after substitution through existing bindings "
+                f"({substituted_left!r})."
             )
         return resolved_left, environment.with_expression_binding(
             resolved_right.identifier, resolved_left
