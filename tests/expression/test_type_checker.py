@@ -111,10 +111,10 @@ def test_synthesize_bool_literal_expression_is_rejected() -> None:
 
 
 def test_synthesize_string_literal_expression_is_rejected() -> None:
-    """Test a numeric-string `LiteralExpression` is rejected during type synthesis."""
+    """Test a string-form `LiteralExpression` is rejected during type synthesis."""
     checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
     with pytest.raises(NotImplementedError):
-        checker.visit(LiteralExpression("1"))
+        checker.visit(LiteralExpression("1.0"))
 
 
 def test_unary_negation_of_positive_integer_literal_becomes_weak_signed_int() -> None:

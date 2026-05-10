@@ -30,6 +30,7 @@ from .conftest import mock_identifier
     "expression, expected_str",
     [
         (LiteralExpression(4.5), "4.5"),
+        (LiteralExpression("0.1"), "0.1"),
         (IdentifierExpression(Identifier("baz")), "baz"),
         (
             UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(True)),
@@ -38,10 +39,10 @@ from .conftest import mock_identifier
         (
             BinaryExpression(
                 BinaryOperation.MULTIPLY,
-                LiteralExpression(5 + 6j),  # type: ignore[arg-type]  # test: complex literal
+                LiteralExpression("3.14"),
                 LiteralExpression(10.5),
             ),
-            "((5+6j) * 10.5)",
+            "(3.14 * 10.5)",
         ),
     ],
 )
@@ -132,8 +133,9 @@ def test_pretty_formatter_default_uses_symbolic_notation() -> None:
 @pytest.mark.parametrize(
     "expression",
     [
-        pytest.param(LiteralExpression("5"), id="integer_literal"),
-        pytest.param(LiteralExpression("3.5"), id="float_literal"),
+        pytest.param(LiteralExpression(5), id="native_int_literal"),
+        pytest.param(LiteralExpression("3.5"), id="str_form_float_literal"),
+        pytest.param(LiteralExpression(True), id="bool_literal"),
         pytest.param(IdentifierExpression(mock_identifier("x", 0)), id="identifier"),
         pytest.param(
             UnaryExpression(
@@ -152,11 +154,11 @@ def test_pretty_formatter_default_uses_symbolic_notation() -> None:
         pytest.param(
             BinaryExpression(
                 BinaryOperation.ADD,
-                LiteralExpression("1"),
+                LiteralExpression(1),
                 BinaryExpression(
                     BinaryOperation.MULTIPLY,
-                    LiteralExpression("2"),
-                    LiteralExpression("3"),
+                    LiteralExpression(2),
+                    LiteralExpression(3),
                 ),
             ),
             id="add_times_precedence",
@@ -177,7 +179,7 @@ def test_pretty_formatter_default_uses_symbolic_notation() -> None:
             BinaryExpression(
                 BinaryOperation.POWER,
                 IdentifierExpression(mock_identifier("x", 0)),
-                LiteralExpression("2"),
+                LiteralExpression(2),
             ),
             id="power",
         ),
@@ -189,12 +191,49 @@ def test_pformat_expression_round_trips_through_parse_expression(
 ) -> None:
     """Test ``parse_expression(pformat_expression(e))`` round-trips back to ``e``.
 
-    Catches drift between the pretty-printer's parenthesization and the
-    parser's precedence rules.
+    Round-trip is guaranteed for ``int`` / ``bool`` / str-form-float literals
+    and for tree shapes the pretty-printer emits in the parser-recognized
+    form. Native ``float`` literals are explicitly lossy and are exercised
+    separately below.
     """
     formatted = pformat_expression(expression)
     reparsed = parse_expression(formatted)
     assert reparsed.is_structurally_equivalent(expression)
+
+
+def test_pformat_native_float_literal_does_not_round_trip_through_parser() -> None:
+    """Test ``parse(pformat(LiteralExpression(<float>)))`` is structurally non-equiv.
+
+    The design treats native ``float`` as IEEE-754-imprecise and str-form
+    floats as exact decimals. The pretty-printer emits the float's textual
+    form; the parser stores that as a str literal, structurally unequal to
+    the original native-float literal. This is the documented lossy case
+    in the round-trip contract — locked in here so the asymmetry can't
+    quietly disappear.
+    """
+    original = LiteralExpression(0.5)
+
+    reparsed = parse_expression(pformat_expression(original))
+
+    assert isinstance(reparsed, LiteralExpression)
+    assert type(reparsed.value) is str
+    assert reparsed.value == "0.5"
+    assert not original.is_structurally_equivalent(reparsed)
+
+
+def test_pformat_int_literal_round_trips_through_parser() -> None:
+    """Test ``parse(pformat(LiteralExpression(<int>)))`` is structurally equivalent.
+
+    Positive control for the native-float lossy case above.
+    """
+    original = LiteralExpression(42)
+
+    reparsed = parse_expression(pformat_expression(original))
+
+    assert original.is_structurally_equivalent(reparsed)
+    assert isinstance(reparsed, LiteralExpression)
+    assert type(reparsed.value) is int
+    assert reparsed.value == 42
 
 
 # =============================================================================

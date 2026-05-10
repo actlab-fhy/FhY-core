@@ -3,9 +3,9 @@
 import pytest
 
 from fhy_core.constraint import EquationConstraint, InSetConstraint
-from fhy_core.expression import SymbolType
 from fhy_core.identifier import Identifier
 from fhy_core.param import PermParam
+from fhy_core.symbol_type import SymbolType
 
 from .conftest import (
     SerializableEqualHashable,

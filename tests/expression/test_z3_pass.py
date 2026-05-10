@@ -23,7 +23,6 @@ from fhy_core.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    SymbolType,
     UnaryExpression,
     UnaryOperation,
     convert_expression_to_z3_expression,
@@ -32,6 +31,7 @@ from fhy_core.expression import (
 from fhy_core.expression.passes.z3 import ExpressionToZ3Converter, _z3_floor_divide
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
+from fhy_core.symbol_type import SymbolType
 
 from .conftest import mock_identifier
 
