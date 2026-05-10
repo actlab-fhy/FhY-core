@@ -229,15 +229,24 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
     def execute(self, ir: _PassInputT) -> PassResult[_PassOutputT]:
         """Execute the pass with validation and standardized error handling.
 
-        Every user-overridable lifecycle method (``validate_input``,
-        ``should_run``, ``run_pass``, ``get_noop_output``,
-        ``validate_output``, ``did_change``, ``get_preserved_analyses``) is
-        executed inside a guard that converts unexpected exceptions into
-        ``PassValidationError`` (for the ``validate_*`` methods) or
-        ``PassExecutionError`` (for the others), with an ERROR diagnostic
-        emitted before re-raising. ``PassValidationError`` and
-        ``PassExecutionError`` raised directly by user code pass through
-        unchanged.
+        Every user-overridable lifecycle method is executed inside a guard
+        with a method-specific error contract:
+
+        - ``validate_input`` / ``validate_output``: any unexpected exception
+          is converted to ``PassValidationError`` after emitting an ERROR
+          diagnostic. ``PassValidationError`` raised directly by user code
+          passes through unchanged.
+        - ``should_run`` / ``get_noop_output`` / ``run_pass`` /
+          ``did_change`` / ``get_preserved_analyses``: any unexpected
+          exception is converted to ``PassExecutionError`` after emitting
+          an ERROR diagnostic. ``PassExecutionError`` raised directly by
+          user code passes through unchanged.
+
+        The asymmetry is deliberate: each lifecycle method has a natural
+        error category, and raising the "wrong" typed error from the wrong
+        slot signals that the check should have lived in a different slot
+        — the wrap turns that mismatch into the correct typed error for
+        the slot that actually ran.
 
         Run counters (``get_run_count`` / ``get_total_run_count``) increment
         only for runs that actually executed (``should_run`` returned True).
