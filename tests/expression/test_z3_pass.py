@@ -350,6 +350,44 @@ def test_is_satisfiable_on_example_expressions(
     )
 
 
+def test_is_satisfiable_with_empty_considered_set_treats_expression_as_tautology() -> (
+    None
+):
+    """Test the empty-considered branch skips the ForAll wrapper.
+
+    With no considered identifiers, the implementation degenerates to
+    "is the expression a tautology over its free identifiers" -- here
+    ``5 == 5`` is, so the result is True.
+    """
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, LiteralExpression(5), LiteralExpression(5)
+    )
+    assert is_satisfiable(set(), expression, {}) is True
+
+
+def test_is_satisfiable_ignores_considered_identifiers_absent_from_expression() -> None:
+    """Test extra `considered_identifiers` not in the expression are skipped.
+
+    A quantifier over an identifier that does not appear in the body is
+    semantically vacuous, so the entry point silently filters such
+    identifiers rather than raising a `KeyError` from the converter's
+    identifier-to-Z3 mapping.
+    """
+    x = mock_identifier("x", 0)
+    unused = mock_identifier("u", 1)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(5)
+    )
+
+    result = is_satisfiable(
+        {x, unused},
+        expression,
+        {x: SymbolType.INT, unused: SymbolType.INT},
+    )
+
+    assert result is True
+
+
 def _make_trivial_satisfiability_inputs() -> tuple[
     set[Identifier], Expression, dict[Identifier, SymbolType]
 ]:

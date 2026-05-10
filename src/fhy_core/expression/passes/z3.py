@@ -221,17 +221,13 @@ def is_satisfiable(
         expression, symbol_types
     )
     z3_expression = z3.Not(z3_expression)
-    z3_expression = (
-        z3.ForAll(
-            [
-                identifier_to_z3_expression[identifier]
-                for identifier in considered_identifiers
-            ],
-            z3_expression,
-        )
-        if considered_identifiers
-        else z3_expression
-    )
+    quantified_variables = [
+        identifier_to_z3_expression[identifier]
+        for identifier in considered_identifiers
+        if identifier in identifier_to_z3_expression
+    ]
+    if quantified_variables:
+        z3_expression = z3.ForAll(quantified_variables, z3_expression)
 
     solver = z3.Solver()
     solver.add(z3_expression)
