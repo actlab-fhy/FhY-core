@@ -6,20 +6,30 @@ into the expression so weak literals can adopt the surrounding context,
 then verifies the synthesized result is assignment-compatible with the
 expected type. Both entry points return ``(Type, TypeQualifier)``.
 
-Errors from this module are always :class:`FhYCoreTypeError` instances with
-messages of one of two shapes:
+This module raises :class:`FhYCoreTypeError` for type-rule violations and
+:class:`NotImplementedError` for expression shapes / operations that are
+not yet supported (boolean / string literals, boolean-result operations,
+tensor operands, unknown ``UnaryOperation`` / ``Expression`` subclasses).
+
+:class:`FhYCoreTypeError` instances raised through
+:meth:`_TypeCheckContext.type_error` carry a context-framed message of one
+of two shapes:
 
 - "Type error while inferring type of `<root>`: <reason>"
 - "Type error while inferring type of `<root>` at sub-expression `<sub>`:
   <reason>"
 
-where ``<root>`` is the top-level expression passed to
-:meth:`ExpressionTypeChecker.synthesize` / :meth:`check`, ``<sub>`` is the
-sub-expression where the failure surfaced, and ``<reason>`` describes the
-specific rule that was violated along with the types and values involved.
-This is implemented via :class:`_TypeCheckContext`, which maintains a stack
-of enclosing expressions as the checker recurses so every
-:class:`FhYCoreTypeError` is enriched with that trace.
+where ``<root>`` is the outermost expression on the context stack,
+``<sub>`` is the sub-expression where the failure surfaced, and
+``<reason>`` describes the specific rule that was violated along with the
+types and values involved. The framing is provided by
+:class:`_TypeCheckContext`, which the checker pushes / pops as it recurses.
+
+A small number of module-level helpers (``_get_primitive_data_type``,
+``_get_numeric_literal_value``, ``_get_real_float_core_data_type_for_bit_width``)
+raise bare :class:`FhYCoreTypeError` instances without that framing - they
+have no access to a context, and the checker does not catch and reframe
+them, so callers can see either form on a failed type check.
 """
 
 __all__ = [
@@ -314,9 +324,10 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
     ) -> tuple[Type, TypeQualifier]:
         """Check an expression against an expected type."""
         actual_type, actual_qualifier = self._infer(expression, expected_type)
-        # `_infer` fully unwinds its `entering` scope before returning, so the
-        # context stack is empty here and re-entering `expression` produces the
-        # correct framing for any error raised by `_check_expected_type`.
+        # `_infer` unwinds any `entering` scopes it opens before returning.
+        # Re-enter `expression` here so `_check_expected_type` is framed
+        # correctly whether `check` is called at top level or from within an
+        # existing outer context (e.g. the late weak-literal rescue).
         with self._context.entering(expression):
             self._check_expected_type(expression, actual_type, expected_type)
         return actual_type, actual_qualifier
