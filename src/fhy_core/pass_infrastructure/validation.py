@@ -235,7 +235,7 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
                     pass_name=validator.get_pass_name(),
                 ),
             )
-        except Exception as exc:  # noqa: BLE001 — defense-in-depth
+        except Exception as exc:  # noqa: BLE001 - defense-in-depth
             captured = tuple(validator.diagnostics)
             synthesized = PassDiagnostic(
                 level=DiagnosticLevel.ERROR,
