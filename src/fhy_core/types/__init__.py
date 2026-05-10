@@ -23,6 +23,7 @@ __all__ = [
     "substitute_data_template",
     "substitute_template",
     "unify",
+    "unify_expression",
 ]
 
 from .core import (
@@ -50,4 +51,5 @@ from .dispatch import (
     substitute_data_template,
     substitute_template,
     unify,
+    unify_expression,
 )

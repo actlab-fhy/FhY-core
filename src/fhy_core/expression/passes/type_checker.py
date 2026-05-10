@@ -208,7 +208,7 @@ class _TypeCheckContext:
     (the most recently pushed one still live).
 
     The reason string passed to :meth:`type_error` should describe *what*
-    went wrong without re-stating the expression itself — the context layer
+    went wrong without re-stating the expression itself; the context layer
     is responsible for that framing.
     """
 

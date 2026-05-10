@@ -242,12 +242,6 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
           an ERROR diagnostic. ``PassExecutionError`` raised directly by
           user code passes through unchanged.
 
-        The asymmetry is deliberate: each lifecycle method has a natural
-        error category, and raising the "wrong" typed error from the wrong
-        slot signals that the check should have lived in a different slot
-        — the wrap turns that mismatch into the correct typed error for
-        the slot that actually ran.
-
         Run counters (``get_run_count`` / ``get_total_run_count``) increment
         only for runs that actually executed (``should_run`` returned True).
         """

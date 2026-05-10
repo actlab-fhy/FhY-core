@@ -473,15 +473,14 @@ def promote_primitive_data_types(
     """Promote two primitive data types to a common type.
 
     Args:
-        primitive_data_type1 (DataType): First primitive data type.
-        primitive_data_type2 (DataType): Second primitive data type.
+        primitive_data_type1: First primitive data type.
+        primitive_data_type2: Second primitive data type.
 
     Returns:
-        DataType: Common type to which both primitive data types can be promoted.
+        Common type to which both primitive data types can be promoted.
 
     Raises:
         FhYCoreTypeError: If the promotion is not supported.
-
     """
     return PrimitiveDataType(
         promote_core_data_types(

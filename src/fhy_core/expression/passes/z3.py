@@ -192,7 +192,7 @@ def is_satisfiable(
     """Check whether the expression is satisfiable in the considered space.
 
     The check has the form
-    ``∀ <free identifiers>. ∃ <considered_identifiers>. expression``:
+    ``forall <free identifiers>. exists <considered_identifiers>. expression``:
     the expression must hold for some assignment to
     ``considered_identifiers`` *for every* assignment to the remaining
     free identifiers. When ``considered_identifiers`` is empty, the check
