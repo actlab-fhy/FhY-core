@@ -22,6 +22,7 @@ from fhy_core.expression import (
     pformat_expression,
 )
 from fhy_core.expression.passes.type_checker import (
+    ExpressionTypeChecker,
     _get_numeric_literal_value,
     _get_primitive_data_type,
     _get_real_float_core_data_type_for_bit_width,
@@ -39,7 +40,6 @@ from fhy_core.types import (
     NumericalType,
     PrimitiveDataType,
     TemplateDataType,
-    Type,
     TypeQualifier,
 )
 
@@ -1435,39 +1435,6 @@ def test_index_plus_index_uses_min_of_literal_strides() -> None:
     assert result_type.is_structurally_equivalent(expected)
 
 
-def test_index_plus_index_preserves_zero_stride_via_min() -> None:
-    """Test combining a `0` stride with a `5` stride yields a `0` stride via `min`."""
-    left = Identifier("i")
-    right = Identifier("j")
-    left_index = IndexType(
-        LiteralExpression(1), LiteralExpression(10), LiteralExpression(0)
-    )
-    right_index = IndexType(
-        LiteralExpression(1), LiteralExpression(9), LiteralExpression(5)
-    )
-    checker = make_identifier_checker(
-        {
-            left: (left_index, TypeQualifier.PARAM),
-            right: (right_index, TypeQualifier.PARAM),
-        }
-    )
-
-    result_type, _ = checker.visit(
-        BinaryExpression(
-            BinaryOperation.ADD,
-            IdentifierExpression(left),
-            IdentifierExpression(right),
-        )
-    )
-
-    expected = IndexType(
-        LiteralExpression(1) + LiteralExpression(1),
-        LiteralExpression(10) + LiteralExpression(9),
-        LiteralExpression(0),
-    )
-    assert result_type.is_structurally_equivalent(expected)
-
-
 def test_index_plus_index_rejects_non_literal_stride() -> None:
     """Test combining indices where at least one stride is non-literal is rejected."""
     left = Identifier("i")
@@ -2217,6 +2184,14 @@ def test_check_bool_literal_against_numerical_type_rejects_via_resolver() -> Non
         checker.check(LiteralExpression(True), _make_scalar(CoreDataType.INT32))
 
 
+def test_check_string_literal_against_numerical_type_rejects_via_resolver() -> None:
+    """Test ``check(Lit("1.0"), NumericalType)`` rejects the string-form literal."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    with pytest.raises(FhYCoreTypeError, match=r"expected a numeric literal value"):
+        checker.check(LiteralExpression("1.0"), _make_scalar(CoreDataType.INT32))
+
+
 # =============================================================================
 # Direct private-helper exercises for defensive guards
 # =============================================================================
@@ -2240,15 +2215,6 @@ def test_get_numeric_literal_value_rejects_bool_literal() -> None:
     """Test `_get_numeric_literal_value` rejects a boolean literal."""
     with pytest.raises(FhYCoreTypeError, match=r"expected a numeric literal value"):
         _get_numeric_literal_value(LiteralExpression(True))
-
-
-def test_get_numeric_literal_value_rejects_string_literal() -> None:
-    """Test `_get_numeric_literal_value` rejects a string literal (via mock)."""
-    literal = Mock(spec=LiteralExpression)
-    literal.value = "foo"
-
-    with pytest.raises(FhYCoreTypeError, match=r"expected a numeric literal value"):
-        _get_numeric_literal_value(literal)
 
 
 def test_get_real_float_for_bit_width_raises_when_no_match() -> None:
@@ -2287,22 +2253,110 @@ def test_infer_rejects_unsupported_expression_subclass() -> None:
         checker.synthesize(unknown)
 
 
-def test_as_expression_value_type_rejects_unknown_type_subclass() -> None:
-    """Test `_as_expression_value_type` rejects a `Type` not in the known kinds."""
-    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
-    unknown_type = Mock(spec=Type)
+# =============================================================================
+# Index types with literal-zero stride are rejected at first contact
+# =============================================================================
+
+
+def test_synthesize_rejects_index_with_literal_zero_stride() -> None:
+    """Test an identifier whose `IndexType` has stride literal `0` is rejected."""
+    identifier = Identifier("idx")
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(0))
+    checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
     with pytest.raises(
         FhYCoreTypeError,
-        match=r"must resolve to a scalar numerical type or index type",
+        match=r"index type with stride `0` is not allowed",
     ):
-        checker._as_expression_value_type(LiteralExpression(0), unknown_type)
+        checker.visit(IdentifierExpression(identifier))
 
 
-def test_scale_index_type_rejects_non_integer_literal_scalar() -> None:
-    """Test `_scale_index_type` rejects a non-integer literal at the bool/int gate."""
-    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
-    index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
+def test_check_rejects_index_with_literal_zero_stride() -> None:
+    """Test `check` also rejects an `IndexType` with stride literal `0`."""
+    identifier = Identifier("idx")
+    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(0))
+    checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
+    expected = IndexType(
+        LiteralExpression(1), LiteralExpression(8), LiteralExpression(1)
+    )
 
-    with pytest.raises(FhYCoreTypeError, match=r"requires an integer literal scalar"):
-        checker._scale_index_type(index, LiteralExpression(2.5))
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"index type with stride `0` is not allowed",
+    ):
+        checker.check(IdentifierExpression(identifier), expected)
+
+
+def test_index_arithmetic_with_zero_stride_operand_is_rejected() -> None:
+    """Test arithmetic involving a stride-`0` index is rejected at the operand."""
+    left = Identifier("i")
+    right = Identifier("j")
+    zero_stride = IndexType(
+        LiteralExpression(1), LiteralExpression(10), LiteralExpression(0)
+    )
+    nonzero_stride = IndexType(
+        LiteralExpression(1), LiteralExpression(9), LiteralExpression(5)
+    )
+    checker = make_identifier_checker(
+        {
+            left: (zero_stride, TypeQualifier.PARAM),
+            right: (nonzero_stride, TypeQualifier.PARAM),
+        }
+    )
+
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"index type with stride `0` is not allowed",
+    ):
+        checker.visit(
+            BinaryExpression(
+                BinaryOperation.ADD,
+                IdentifierExpression(left),
+                IdentifierExpression(right),
+            )
+        )
+
+
+def test_unary_positive_on_zero_stride_index_is_rejected() -> None:
+    """Test unary `+` of a stride-`0` index also surfaces the rejection."""
+    identifier = Identifier("idx")
+    zero_stride = IndexType(
+        LiteralExpression(1), LiteralExpression(10), LiteralExpression(0)
+    )
+    checker = make_identifier_checker({identifier: (zero_stride, TypeQualifier.PARAM)})
+
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"index type with stride `0` is not allowed",
+    ):
+        checker.visit(
+            UnaryExpression(UnaryOperation.POSITIVE, IdentifierExpression(identifier))
+        )
+
+
+# =============================================================================
+# Unknown UnaryOperation falls through to NotImplementedError
+# =============================================================================
+
+
+def test_unary_expression_with_unknown_operation_raises_not_implemented() -> None:
+    """Test an `UnaryExpression` carrying an unknown operation is rejected."""
+    identifier = Identifier("x")
+    checker = make_identifier_checker(
+        {identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM)}
+    )
+    unary = UnaryExpression(UnaryOperation.POSITIVE, IdentifierExpression(identifier))
+    object.__setattr__(unary, "operation", Mock(spec=UnaryOperation))
+
+    with pytest.raises(NotImplementedError, match=r"unary operation"):
+        checker.synthesize(unary)
+
+
+# =============================================================================
+# Pass registration name
+# =============================================================================
+
+
+def test_pass_registered_under_renamed_name() -> None:
+    """Test the pass is registered under the `type_checker` name (was `type_check`)."""
+    assert ExpressionTypeChecker.get_pass_name() == "fhy_core.expression.type_checker"

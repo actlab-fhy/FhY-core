@@ -1,5 +1,11 @@
 """Bidirectional type checking and inference for expressions.
 
+:func:`synthesize_expression_type` infers a type purely from the leaves of
+an expression; :func:`check_expression_type` propagates an expected type
+into the expression so weak literals can adopt the surrounding context,
+then verifies the synthesized result is assignment-compatible with the
+expected type. Both entry points return ``(Type, TypeQualifier)``.
+
 Errors from this module are always :class:`FhYCoreTypeError` instances with
 messages of one of two shapes:
 
@@ -57,7 +63,7 @@ from fhy_core.types import (
     promote_type_qualifiers,
     resolve_literal_core_data_type,
 )
-from fhy_core.utils import Stack
+from fhy_core.utils import Stack, is_strict_int
 
 ExpressionValueType: TypeAlias = NumericalType | IndexType
 
@@ -114,6 +120,22 @@ _COMPLEX_CORE_DATA_TYPES = frozenset(
 _FLOAT_LIKE_CORE_DATA_TYPES = _REAL_FLOAT_CORE_DATA_TYPES | _COMPLEX_CORE_DATA_TYPES
 
 
+def _build_real_float_core_data_types_by_bit_width() -> tuple[
+    tuple[int, CoreDataType], ...
+]:
+    entries: list[tuple[int, CoreDataType]] = []
+    for core_data_type in _REAL_FLOAT_CORE_DATA_TYPES:
+        bit_width = get_core_data_type_bit_width(core_data_type)
+        if bit_width is not None:
+            entries.append((bit_width, core_data_type))
+    return tuple(sorted(entries))
+
+
+_REAL_FLOAT_CORE_DATA_TYPES_BY_BIT_WIDTH = (
+    _build_real_float_core_data_types_by_bit_width()
+)
+
+
 def get_core_data_type_from_literal_type(literal: LiteralType) -> CoreDataType:
     """Return the weak core data type assigned to a literal.
 
@@ -146,6 +168,7 @@ def get_core_data_type_from_literal_type(literal: LiteralType) -> CoreDataType:
 
 
 def _format_expression(expression: Expression) -> str:
+    """Format an expression for inclusion in error messages."""
     return pformat_expression(expression, show_id=True)
 
 
@@ -179,22 +202,42 @@ def _is_integral_numerical_type(numerical_type: NumericalType) -> bool:
 
 
 def _get_real_float_core_data_type_for_bit_width(bit_width: int | None) -> CoreDataType:
-    core_data_type_bit_widths: list[tuple[int, CoreDataType]] = []
-    for core_data_type in _REAL_FLOAT_CORE_DATA_TYPES:
-        core_data_type_bit_width = get_core_data_type_bit_width(core_data_type)
-        if core_data_type_bit_width is not None:
-            core_data_type_bit_widths.append((core_data_type_bit_width, core_data_type))
-    core_data_type_bit_widths = sorted(core_data_type_bit_widths)
-
     if bit_width is None:
         return CoreDataType.FLOAT
-    else:
-        for core_data_type_bit_width, core_data_type in core_data_type_bit_widths:
-            if core_data_type_bit_width >= bit_width:
-                return core_data_type
-        raise FhYCoreTypeError(
-            f"no real float core data type found for bit width {bit_width}"
+    for candidate_bit_width, candidate in _REAL_FLOAT_CORE_DATA_TYPES_BY_BIT_WIDTH:
+        if candidate_bit_width >= bit_width:
+            return candidate
+    raise FhYCoreTypeError(
+        f"no real float core data type found for bit width {bit_width}"
+    )
+
+
+def _lift_integral_against_float_like(
+    left_core_data_type: CoreDataType, right_core_data_type: CoreDataType
+) -> tuple[CoreDataType, CoreDataType]:
+    """Promote whichever side is integral to a real-float of matching bit width.
+
+    Used by both true and floor division to align an integer operand with a
+    float-like operand before falling through to ``promote_core_data_types``.
+    Floor division rejects complex operands upstream, so the float-like check
+    reduces to a real-float check there; true division relies on the lift to
+    bridge the integer / complex lattice gap.
+    """
+    if (
+        left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+        and right_core_data_type in _FLOAT_LIKE_CORE_DATA_TYPES
+    ):
+        left_core_data_type = _get_real_float_core_data_type_for_bit_width(
+            get_core_data_type_bit_width(left_core_data_type)
         )
+    elif (
+        left_core_data_type in _FLOAT_LIKE_CORE_DATA_TYPES
+        and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
+    ):
+        right_core_data_type = _get_real_float_core_data_type_for_bit_width(
+            get_core_data_type_bit_width(right_core_data_type)
+        )
+    return left_core_data_type, right_core_data_type
 
 
 class _TypeCheckContext:
@@ -246,7 +289,7 @@ class _TypeCheckContext:
 
 
 @register_pass(
-    "fhy_core.expression.type_check",
+    "fhy_core.expression.type_checker",
     "Bidirectionally synthesize and check expression types.",
 )
 class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]]):
@@ -271,6 +314,9 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
     ) -> tuple[Type, TypeQualifier]:
         """Check an expression against an expected type."""
         actual_type, actual_qualifier = self._infer(expression, expected_type)
+        # `_infer` fully unwinds its `entering` scope before returning, so the
+        # context stack is empty here and re-entering `expression` produces the
+        # correct framing for any error raised by `_check_expected_type`.
         with self._context.entering(expression):
             self._check_expected_type(expression, actual_type, expected_type)
         return actual_type, actual_qualifier
@@ -376,14 +422,6 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             operand_type, operand_qualifier = self._infer(
                 unary_expression.operand, expected_type
             )
-            if operand_qualifier == TypeQualifier.OUTPUT:  # pragma: no cover
-                # Defensive guard: `visit_identifier_expression` already rejects
-                # OUTPUT identifiers, and no other expression form can produce an
-                # OUTPUT qualifier, so this branch is unreachable under normal
-                # operation.
-                raise RuntimeError(
-                    '"output" type qualifier should not be possible here.'
-                )
 
             operand_value_type = self._as_expression_value_type(
                 unary_expression, operand_type
@@ -414,45 +452,34 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                             operand_qualifier,
                         )
                     return operand_value_type, operand_qualifier
-                case UnaryOperation.LOGICAL_NOT:  # pragma: no branch
+                case UnaryOperation.LOGICAL_NOT:
                     raise NotImplementedError(
                         "Boolean result types are not yet supported."
                     )
+                case _:
+                    raise NotImplementedError(
+                        f"unary operation {unary_expression.operation} is not supported"
+                    )
 
-    def _infer_binary_expression(  # noqa: PLR0912, PLR0915
+    def _infer_binary_expression(
         self,
         binary_expression: BinaryExpression,
         expected_type: Type | None = None,
     ) -> tuple[Type, TypeQualifier]:
         with self._context.entering(binary_expression):
-            left_expected_type = None
-            right_expected_type = None
-            if (
-                binary_expression.operation in _ARITHMETIC_OPERATIONS
-                and isinstance(expected_type, NumericalType)
-                and expected_type.is_scalar()
-            ):
-                if isinstance(binary_expression.left, LiteralExpression):
-                    left_expected_type = expected_type
-                if isinstance(binary_expression.right, LiteralExpression):
-                    right_expected_type = expected_type
+            operation = binary_expression.operation
+            left_expected, right_expected = (
+                self._propagate_expected_type_to_literal_operands(
+                    binary_expression, expected_type
+                )
+            )
 
             left_type, left_qualifier = self._infer(
-                binary_expression.left, left_expected_type
+                binary_expression.left, left_expected
             )
             right_type, right_qualifier = self._infer(
-                binary_expression.right, right_expected_type
+                binary_expression.right, right_expected
             )
-            if TypeQualifier.OUTPUT in {  # pragma: no cover
-                left_qualifier,
-                right_qualifier,
-            }:
-                # Defensive guard: OUTPUT qualifiers are rejected at identifier
-                # resolution, so neither operand can carry OUTPUT by the time we
-                # reach this point.
-                raise RuntimeError(
-                    '"output" type qualifier should not be possible here.'
-                )
 
             left_value_type = self._as_expression_value_type(
                 binary_expression.left, left_type
@@ -461,206 +488,295 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 binary_expression.right, right_type
             )
 
-            if (
-                binary_expression.operation in _ARITHMETIC_OPERATIONS
-                and isinstance(binary_expression.left, LiteralExpression)
-                and isinstance(left_value_type, NumericalType)
-                and _is_weak_numerical_type(left_value_type)
-                and isinstance(right_value_type, NumericalType)
-                and not _is_weak_numerical_type(right_value_type)
-            ):
-                checked_left_type, left_qualifier = self.check(
-                    binary_expression.left, right_value_type
-                )
-                left_value_type = self._as_expression_value_type(
-                    binary_expression.left, checked_left_type
-                )
-            if (
-                binary_expression.operation in _ARITHMETIC_OPERATIONS
-                and isinstance(binary_expression.right, LiteralExpression)
-                and isinstance(right_value_type, NumericalType)
-                and _is_weak_numerical_type(right_value_type)
-                and isinstance(left_value_type, NumericalType)
-                and not _is_weak_numerical_type(left_value_type)
-            ):
-                checked_right_type, right_qualifier = self.check(
-                    binary_expression.right, left_value_type
-                )
-                right_value_type = self._as_expression_value_type(
-                    binary_expression.right, checked_right_type
-                )
-
-            left_value_type = self._as_expression_value_type(
-                binary_expression.left, left_value_type
+            left_value_type, left_qualifier = self._apply_late_weak_literal_rescue(
+                binary_expression.left,
+                left_value_type,
+                left_qualifier,
+                right_value_type,
+                operation,
             )
-            right_value_type = self._as_expression_value_type(
-                binary_expression.right, right_value_type
+            right_value_type, right_qualifier = self._apply_late_weak_literal_rescue(
+                binary_expression.right,
+                right_value_type,
+                right_qualifier,
+                left_value_type,
+                operation,
             )
 
-            operation = binary_expression.operation
             if operation not in _ARITHMETIC_OPERATIONS:
                 raise NotImplementedError("Boolean result types are not yet supported.")
 
-            if isinstance(left_value_type, NumericalType) and isinstance(
-                right_value_type, NumericalType
-            ):
-                if operation == BinaryOperation.DIVIDE:
-                    return (
-                        NumericalType(
-                            self._get_division_primitive_data_type(
-                                left_value_type, right_value_type
-                            )
-                        ),
-                        promote_type_qualifiers(left_qualifier, right_qualifier),
-                    )
-                if operation == BinaryOperation.FLOOR_DIVIDE:
-                    return (
-                        NumericalType(
-                            self._get_floor_division_primitive_data_type(
-                                left_value_type, right_value_type
-                            )
-                        ),
-                        promote_type_qualifiers(left_qualifier, right_qualifier),
-                    )
-                return (
-                    NumericalType(
-                        promote_primitive_data_types(
-                            _get_primitive_data_type(left_value_type),
-                            _get_primitive_data_type(right_value_type),
-                        )
-                    ),
-                    promote_type_qualifiers(left_qualifier, right_qualifier),
+            return self._dispatch_arithmetic_binary(
+                binary_expression,
+                operation,
+                left_value_type,
+                right_value_type,
+                left_qualifier,
+                right_qualifier,
+            )
+
+    @staticmethod
+    def _propagate_expected_type_to_literal_operands(
+        binary_expression: BinaryExpression, expected_type: Type | None
+    ) -> tuple[Type | None, Type | None]:
+        if not (
+            binary_expression.operation in _ARITHMETIC_OPERATIONS
+            and isinstance(expected_type, NumericalType)
+            and expected_type.is_scalar()
+        ):
+            return None, None
+        left_expected = (
+            expected_type
+            if isinstance(binary_expression.left, LiteralExpression)
+            else None
+        )
+        right_expected = (
+            expected_type
+            if isinstance(binary_expression.right, LiteralExpression)
+            else None
+        )
+        return left_expected, right_expected
+
+    def _apply_late_weak_literal_rescue(
+        self,
+        operand_expression: Expression,
+        operand_value_type: ExpressionValueType,
+        operand_qualifier: TypeQualifier,
+        other_value_type: ExpressionValueType,
+        operation: BinaryOperation,
+    ) -> tuple[ExpressionValueType, TypeQualifier]:
+        if not (
+            operation in _ARITHMETIC_OPERATIONS
+            and isinstance(operand_expression, LiteralExpression)
+            and isinstance(operand_value_type, NumericalType)
+            and _is_weak_numerical_type(operand_value_type)
+            and isinstance(other_value_type, NumericalType)
+            and not _is_weak_numerical_type(other_value_type)
+        ):
+            return operand_value_type, operand_qualifier
+        checked_type, operand_qualifier = self.check(
+            operand_expression, other_value_type
+        )
+        operand_value_type = self._as_expression_value_type(
+            operand_expression, checked_type
+        )
+        return operand_value_type, operand_qualifier
+
+    def _dispatch_arithmetic_binary(
+        self,
+        binary_expression: BinaryExpression,
+        operation: BinaryOperation,
+        left_value_type: ExpressionValueType,
+        right_value_type: ExpressionValueType,
+        left_qualifier: TypeQualifier,
+        right_qualifier: TypeQualifier,
+    ) -> tuple[Type, TypeQualifier]:
+        result_qualifier = promote_type_qualifiers(left_qualifier, right_qualifier)
+
+        if isinstance(left_value_type, NumericalType) and isinstance(
+            right_value_type, NumericalType
+        ):
+            return (
+                self._infer_arithmetic_numerical_pair(
+                    operation, left_value_type, right_value_type
+                ),
+                result_qualifier,
+            )
+
+        elif operation in {
+            BinaryOperation.DIVIDE,
+            BinaryOperation.FLOOR_DIVIDE,
+        }:
+            raise self._context.type_error(
+                "division is not defined for operands of index type"
+            )
+
+        elif isinstance(left_value_type, IndexType) and isinstance(
+            right_value_type, IndexType
+        ):
+            return (
+                self._infer_index_combine(operation, left_value_type, right_value_type),
+                result_qualifier,
+            )
+
+        elif operation == BinaryOperation.ADD:
+            return (
+                self._infer_index_shift_add(
+                    binary_expression, left_value_type, right_value_type
+                ),
+                result_qualifier,
+            )
+        elif (
+            operation == BinaryOperation.SUBTRACT
+            and isinstance(left_value_type, IndexType)
+            and isinstance(right_value_type, NumericalType)
+        ):
+            return (
+                self._infer_index_shift_subtract(
+                    binary_expression, left_value_type, right_value_type
+                ),
+                result_qualifier,
+            )
+        elif operation == BinaryOperation.MULTIPLY:
+            return (
+                self._infer_index_scale(
+                    binary_expression, left_value_type, right_value_type
+                ),
+                result_qualifier,
+            )
+        else:
+            raise self._context.type_error(
+                f"the {operation.name.lower()} operation is not defined for "
+                f"operands of types {left_value_type} and {right_value_type}; "
+                "the resulting index bounds and stride cannot be inferred safely"
+            )
+
+    def _infer_arithmetic_numerical_pair(
+        self,
+        operation: BinaryOperation,
+        left_value_type: NumericalType,
+        right_value_type: NumericalType,
+    ) -> NumericalType:
+        if operation == BinaryOperation.DIVIDE:
+            return NumericalType(
+                self._get_division_primitive_data_type(
+                    left_value_type, right_value_type
                 )
-            elif operation in {
-                BinaryOperation.DIVIDE,
-                BinaryOperation.FLOOR_DIVIDE,
-            } and (
-                isinstance(left_value_type, IndexType)
-                or isinstance(right_value_type, IndexType)
-            ):
+            )
+        if operation == BinaryOperation.FLOOR_DIVIDE:
+            return NumericalType(
+                self._get_floor_division_primitive_data_type(
+                    left_value_type, right_value_type
+                )
+            )
+        return NumericalType(
+            promote_primitive_data_types(
+                _get_primitive_data_type(left_value_type),
+                _get_primitive_data_type(right_value_type),
+            )
+        )
+
+    def _infer_index_shift_add(
+        self,
+        binary_expression: BinaryExpression,
+        left_value_type: ExpressionValueType,
+        right_value_type: ExpressionValueType,
+    ) -> IndexType:
+        if isinstance(left_value_type, IndexType) and isinstance(
+            right_value_type, NumericalType
+        ):
+            if not _is_integral_numerical_type(right_value_type):
                 raise self._context.type_error(
-                    "division is not defined for operands of index type"
+                    f"index shift requires an integral scalar offset, but the "
+                    f"right operand has type {right_value_type}"
                 )
-            elif (
-                operation == BinaryOperation.ADD
-                and isinstance(left_value_type, IndexType)
-                and isinstance(right_value_type, NumericalType)
-            ):
-                if not _is_integral_numerical_type(right_value_type):
-                    raise self._context.type_error(
-                        f"index shift requires an integral scalar offset, but the "
-                        f"right operand has type {right_value_type}"
-                    )
-                return (
-                    self._shift_index_type(left_value_type, binary_expression.right),
-                    promote_type_qualifiers(left_qualifier, right_qualifier),
-                )
-            elif (
-                operation == BinaryOperation.ADD
-                and isinstance(left_value_type, NumericalType)
-                and isinstance(right_value_type, IndexType)
-            ):
-                if not _is_integral_numerical_type(left_value_type):
-                    raise self._context.type_error(
-                        f"index shift requires an integral scalar offset, but the "
-                        f"left operand has type {left_value_type}"
-                    )
-                return (
-                    self._shift_index_type(right_value_type, binary_expression.left),
-                    promote_type_qualifiers(left_qualifier, right_qualifier),
-                )
-            elif (
-                operation == BinaryOperation.SUBTRACT
-                and isinstance(left_value_type, IndexType)
-                and isinstance(right_value_type, NumericalType)
-            ):
-                if not _is_integral_numerical_type(right_value_type):
-                    raise self._context.type_error(
-                        f"index shift requires an integral scalar offset, but the "
-                        f"right operand has type {right_value_type}"
-                    )
-                return (
-                    self._shift_index_type(
-                        left_value_type,
-                        binary_expression.right,
-                        subtract=True,
-                    ),
-                    promote_type_qualifiers(left_qualifier, right_qualifier),
-                )
-            elif (
-                operation == BinaryOperation.MULTIPLY
-                and isinstance(left_value_type, IndexType)
-                and isinstance(right_value_type, NumericalType)
-            ):
-                if not isinstance(binary_expression.right, LiteralExpression):
-                    raise self._context.type_error(
-                        "index scaling requires a positive integer literal scalar, "
-                        f"but the right operand "
-                        f"`{_format_expression(binary_expression.right)}` is not a "
-                        "literal expression"
-                    )
-                if not _is_integral_numerical_type(right_value_type):
-                    raise self._context.type_error(
-                        "index scaling requires a positive integer literal scalar, "
-                        f"but the right operand has non-integral type "
-                        f"{right_value_type}"
-                    )
-                return (
-                    self._scale_index_type(left_value_type, binary_expression.right),
-                    promote_type_qualifiers(left_qualifier, right_qualifier),
-                )
-            elif (
-                operation == BinaryOperation.MULTIPLY
-                and isinstance(left_value_type, NumericalType)
-                and isinstance(right_value_type, IndexType)
-            ):
-                if not isinstance(binary_expression.left, LiteralExpression):
-                    raise self._context.type_error(
-                        "index scaling requires a positive integer literal scalar, "
-                        f"but the left operand "
-                        f"`{_format_expression(binary_expression.left)}` is not a "
-                        "literal expression"
-                    )
-                if not _is_integral_numerical_type(left_value_type):
-                    raise self._context.type_error(
-                        "index scaling requires a positive integer literal scalar, "
-                        f"but the left operand has non-integral type "
-                        f"{left_value_type}"
-                    )
-                return (
-                    self._scale_index_type(right_value_type, binary_expression.left),
-                    promote_type_qualifiers(left_qualifier, right_qualifier),
-                )
-            elif isinstance(left_value_type, IndexType) and isinstance(
-                right_value_type, IndexType
-            ):
-                if operation == BinaryOperation.ADD:
-                    return (
-                        IndexType(
-                            left_value_type.lower_bound + right_value_type.lower_bound,
-                            left_value_type.upper_bound + right_value_type.upper_bound,
-                            self._combine_index_strides_for_add(
-                                left_value_type.stride, right_value_type.stride
-                            ),
-                        ),
-                        promote_type_qualifiers(left_qualifier, right_qualifier),
-                    )
-                elif operation == BinaryOperation.SUBTRACT:
-                    raise self._context.type_error(
-                        "subtraction is not defined between two index types; the "
-                        "resulting stride semantics have not been defined"
-                    )
-                else:
-                    raise self._context.type_error(
-                        f"the {operation.name.lower()} operation is not defined "
-                        "between two index types"
-                    )
-            else:
+            return self._shift_index_type(left_value_type, binary_expression.right)
+        if isinstance(left_value_type, NumericalType) and isinstance(
+            right_value_type, IndexType
+        ):
+            if not _is_integral_numerical_type(left_value_type):
                 raise self._context.type_error(
-                    f"the {operation.name.lower()} operation is not defined for "
-                    f"operands of types {left_value_type} and {right_value_type}; "
-                    "the resulting index bounds and stride cannot be inferred safely"
+                    f"index shift requires an integral scalar offset, but the "
+                    f"left operand has type {left_value_type}"
                 )
+            return self._shift_index_type(right_value_type, binary_expression.left)
+        # Unreachable: the dispatcher routes both-numerical and both-index cases
+        # away before this helper, so mixed shapes are the only remaining ones.
+        raise self._context.type_error(  # pragma: no cover
+            f"the add operation is not defined for operands of types "
+            f"{left_value_type} and {right_value_type}; the resulting "
+            "index bounds and stride cannot be inferred safely"
+        )
+
+    def _infer_index_shift_subtract(
+        self,
+        binary_expression: BinaryExpression,
+        left_value_type: IndexType,
+        right_value_type: NumericalType,
+    ) -> IndexType:
+        if not _is_integral_numerical_type(right_value_type):
+            raise self._context.type_error(
+                f"index shift requires an integral scalar offset, but the "
+                f"right operand has type {right_value_type}"
+            )
+        return self._shift_index_type(
+            left_value_type, binary_expression.right, subtract=True
+        )
+
+    def _infer_index_scale(
+        self,
+        binary_expression: BinaryExpression,
+        left_value_type: ExpressionValueType,
+        right_value_type: ExpressionValueType,
+    ) -> IndexType:
+        if isinstance(left_value_type, IndexType) and isinstance(
+            right_value_type, NumericalType
+        ):
+            scalar_literal = self._validate_index_scale_scalar(
+                binary_expression.right, right_value_type, side="right"
+            )
+            return self._scale_index_type(left_value_type, scalar_literal)
+        if isinstance(left_value_type, NumericalType) and isinstance(
+            right_value_type, IndexType
+        ):
+            scalar_literal = self._validate_index_scale_scalar(
+                binary_expression.left, left_value_type, side="left"
+            )
+            return self._scale_index_type(right_value_type, scalar_literal)
+        # Unreachable: the dispatcher routes both-numerical and both-index cases
+        # away before this helper, so mixed shapes are the only remaining ones.
+        raise self._context.type_error(  # pragma: no cover
+            f"the multiply operation is not defined for operands of types "
+            f"{left_value_type} and {right_value_type}; the resulting "
+            "index bounds and stride cannot be inferred safely"
+        )
+
+    def _validate_index_scale_scalar(
+        self,
+        scalar_expression: Expression,
+        scalar_value_type: NumericalType,
+        *,
+        side: str,
+    ) -> LiteralExpression:
+        if not isinstance(scalar_expression, LiteralExpression):
+            raise self._context.type_error(
+                "index scaling requires a positive integer literal scalar, "
+                f"but the {side} operand "
+                f"`{_format_expression(scalar_expression)}` is not a "
+                "literal expression"
+            )
+        if not _is_integral_numerical_type(scalar_value_type):
+            raise self._context.type_error(
+                "index scaling requires a positive integer literal scalar, "
+                f"but the {side} operand has non-integral type "
+                f"{scalar_value_type}"
+            )
+        return scalar_expression
+
+    def _infer_index_combine(
+        self,
+        operation: BinaryOperation,
+        left_value_type: IndexType,
+        right_value_type: IndexType,
+    ) -> IndexType:
+        if operation == BinaryOperation.ADD:
+            return IndexType(
+                left_value_type.lower_bound + right_value_type.lower_bound,
+                left_value_type.upper_bound + right_value_type.upper_bound,
+                self._combine_index_strides_for_add(
+                    left_value_type.stride, right_value_type.stride
+                ),
+            )
+        elif operation == BinaryOperation.SUBTRACT:
+            raise self._context.type_error(
+                "subtraction is not defined between two index types; the "
+                "resulting stride semantics have not been defined"
+            )
+        else:
+            raise self._context.type_error(
+                f"the {operation.name.lower()} operation is not defined "
+                "between two index types"
+            )
 
     # --- Context-aware helpers ----------------------------------------------
 
@@ -668,8 +784,21 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         self, expression: Expression, type_: Type
     ) -> ExpressionValueType:
         if isinstance(type_, IndexType):
+            stride = type_.stride
+            if (
+                isinstance(stride, LiteralExpression)
+                and is_strict_int(stride.value)
+                and stride.value == 0
+            ):
+                raise self._context.type_error(
+                    "index type with stride `0` is not allowed; stride must be "
+                    "a non-zero integer or a non-literal expression"
+                )
             return type_
-        elif not isinstance(type_, NumericalType):
+        elif not isinstance(type_, NumericalType):  # pragma: no cover
+            # Defensive: callers always supply IndexType, NumericalType, or a
+            # type that becomes one through Type.bind_template; a future Type
+            # subclass that bypasses both paths should fail loud.
             raise self._context.type_error(
                 f"sub-expression `{_format_expression(expression)}` must resolve "
                 f"to a scalar numerical type or index type, but got {type_}"
@@ -731,7 +860,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 f"literals, but got non-literal stride `{_format_expression(stride)}`"
             )
         value = stride.value
-        if isinstance(value, bool) or not isinstance(value, int):
+        if not is_strict_int(value):
             raise self._context.type_error(
                 f"an index stride literal must be an integer, but got {value!r}"
             )
@@ -751,7 +880,9 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         self, index_type: IndexType, scalar: LiteralExpression
     ) -> IndexType:
         value = scalar.value
-        if isinstance(value, bool) or not isinstance(value, int):
+        if not is_strict_int(value):  # pragma: no cover
+            # Defensive: `_validate_index_scale_scalar` rejects non-integer
+            # scalars before this method is reached from the dispatcher.
             raise self._context.type_error(
                 f"index scaling requires an integer literal scalar, but got scalar "
                 f"value {value!r}"
@@ -762,11 +893,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 f"got scalar value {value}"
             )
         stride = index_type.stride
-        if (
-            isinstance(stride, LiteralExpression)
-            and isinstance(stride.value, int)
-            and not isinstance(stride.value, bool)
-        ):
+        if isinstance(stride, LiteralExpression) and is_strict_int(stride.value):
             new_stride: Expression = LiteralExpression(value * stride.value)
         else:
             new_stride = scalar * stride
@@ -819,21 +946,9 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 )
             )
 
-        if (
-            left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
-            and right_core_data_type in _FLOAT_LIKE_CORE_DATA_TYPES
-        ):
-            left_core_data_type = _get_real_float_core_data_type_for_bit_width(
-                get_core_data_type_bit_width(left_core_data_type)
-            )
-        elif (
-            left_core_data_type in _FLOAT_LIKE_CORE_DATA_TYPES
-            and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
-        ):
-            right_core_data_type = _get_real_float_core_data_type_for_bit_width(
-                get_core_data_type_bit_width(right_core_data_type)
-            )
-
+        left_core_data_type, right_core_data_type = _lift_integral_against_float_like(
+            left_core_data_type, right_core_data_type
+        )
         return PrimitiveDataType(
             promote_core_data_types(left_core_data_type, right_core_data_type)
         )
@@ -862,21 +977,9 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 f"(operand types were {left_type} and {right_type})"
             )
 
-        if (
-            left_core_data_type in _INTEGRAL_CORE_DATA_TYPES
-            and right_core_data_type in _REAL_FLOAT_CORE_DATA_TYPES
-        ):
-            left_core_data_type = _get_real_float_core_data_type_for_bit_width(
-                get_core_data_type_bit_width(left_core_data_type)
-            )
-        elif (
-            left_core_data_type in _REAL_FLOAT_CORE_DATA_TYPES
-            and right_core_data_type in _INTEGRAL_CORE_DATA_TYPES
-        ):
-            right_core_data_type = _get_real_float_core_data_type_for_bit_width(
-                get_core_data_type_bit_width(right_core_data_type)
-            )
-
+        left_core_data_type, right_core_data_type = _lift_integral_against_float_like(
+            left_core_data_type, right_core_data_type
+        )
         return PrimitiveDataType(
             promote_core_data_types(left_core_data_type, right_core_data_type)
         )
