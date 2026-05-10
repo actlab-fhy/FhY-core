@@ -1,18 +1,23 @@
 """Tests the pass manager infrastructure."""
 
 import gc
+import weakref
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     Analysis,
+    AnalysisManager,
     CompilerPass,
     FixpointGroupRecord,
+    FixpointIterationRecord,
     FixpointPassGroup,
     PassExecutionError,
     PassManager,
+    PassRunRecord,
     PreservedAnalyses,
     register_pass,
 )
@@ -86,7 +91,8 @@ def test_pass_manager_runs_passes_in_order() -> None:
             return Box(ir.value * 2)
 
     manager = PassManager[Box]()
-    manager.add_pass(AddOnePass()).add_pass(DoublePass())
+    manager.add_pass(AddOnePass())
+    manager.add_pass(DoublePass())
 
     result = manager.run(Box(3))
 
@@ -146,22 +152,26 @@ def test_analysis_manager_does_not_cache_non_frozen_ir() -> None:
     assert MutableBoxDoubleAnalysis.runs == 2
 
 
-def test_analysis_manager_evicts_cache_after_ir_collection() -> None:
-    """Test that cached analysis entries are evicted after IR collection."""
+def test_analysis_manager_does_not_block_ir_from_garbage_collection() -> None:
+    """Test that caching an analysis result does not pin the IR in memory.
+
+    Public observation of the eviction-via-weakref contract: if the
+    cache held a strong reference to the IR, the weakref below would
+    still resolve after `gc.collect()`. The fact that it returns None
+    confirms the cache is not pinning the IR.
+    """
     BoxDoubleAnalysis.runs = 0
     manager = PassManager[Box]()
     ir = Box(3)
+    weak_ir = weakref.ref(ir)
 
-    assert manager.analysis_manager.get(BoxDoubleAnalysis, ir) == 6
-    assert BoxDoubleAnalysis.runs == 1
+    manager.analysis_manager.get(BoxDoubleAnalysis, ir)
+    assert weak_ir() is not None  # ir still alive while caller holds it
 
-    ir_id = id(ir)
-    assert ir_id in manager.analysis_manager._cache
     del ir
     gc.collect()
 
-    assert ir_id not in manager.analysis_manager._cache
-    assert ir_id not in manager.analysis_manager._finalizers
+    assert weak_ir() is None
 
 
 def test_analysis_identifier_is_unique() -> None:
@@ -386,7 +396,7 @@ def test_get_analysis_recomputes_after_non_preserving_pass() -> None:
 
 
 def test_bind_and_get_analysis_manager_are_public_accessors() -> None:
-    """Test that bind_analysis_manager / get_analysis_manager expose the binding."""
+    """Test that bind / unbind / get_analysis_manager expose the binding."""
     BoxDoubleAnalysis.runs = 0
 
     @register_pass(
@@ -413,7 +423,7 @@ def test_bind_and_get_analysis_manager_are_public_accessors() -> None:
     compiler_pass.get_analysis(BoxDoubleAnalysis, ir)
     assert BoxDoubleAnalysis.runs == 1
 
-    compiler_pass.bind_analysis_manager(None)
+    compiler_pass.unbind_analysis_manager()
     assert compiler_pass.get_analysis_manager() is None
 
 
@@ -499,3 +509,402 @@ def test_pass_manager_records_support_partial_equal_traits() -> None:
     assert result.supports_partial_equality is True
     assert isinstance(run_record, PartialEqual)
     assert run_record.supports_partial_equality is True
+
+
+# ---------------------------------------------------------------------------
+# F-003: add_* methods return None (no fluent chaining anywhere).
+# ---------------------------------------------------------------------------
+
+
+def test_pass_manager_add_pass_returns_none() -> None:
+    """Test that PassManager.add_pass returns None (no chaining)."""
+
+    @register_pass("tests.pm.no_chain_a", "Identity pass for chaining test A.")
+    class _NoChainA(CompilerPass[int, int]):
+        def get_noop_output(self, ir: int) -> int:
+            return ir
+
+        def run_pass(self, ir: int) -> int:
+            return ir
+
+    manager = PassManager[int]()
+    # The assertion pins the runtime contract that mypy already enforces
+    # statically; the `type: ignore` is intentional.
+    assert manager.add_pass(_NoChainA()) is None  # type: ignore[func-returns-value]
+
+
+def test_pass_manager_add_fixpoint_group_returns_none() -> None:
+    """Test that PassManager.add_fixpoint_group returns None (no chaining)."""
+    manager = PassManager[int]()
+    group = FixpointPassGroup[int](name=Identifier("no-chain-group"), max_iterations=1)
+
+    assert manager.add_fixpoint_group(group) is None  # type: ignore[func-returns-value]
+
+
+def test_fixpoint_pass_group_add_pass_returns_none() -> None:
+    """Test that FixpointPassGroup.add_pass returns None (no chaining)."""
+
+    @register_pass("tests.pm.no_chain_group_pass", "Identity pass for group chaining.")
+    class _NoChainGroupPass(CompilerPass[int, int]):
+        def get_noop_output(self, ir: int) -> int:
+            return ir
+
+        def run_pass(self, ir: int) -> int:
+            return ir
+
+    group = FixpointPassGroup[int](name=Identifier("no-chain-group"), max_iterations=1)
+
+    assert group.add_pass(_NoChainGroupPass()) is None  # type: ignore[func-returns-value]
+
+
+# ---------------------------------------------------------------------------
+# F-005: Analysis subclass __init__ signature is validated at class creation.
+# ---------------------------------------------------------------------------
+
+
+def test_analysis_subclass_with_no_arg_init_is_accepted() -> None:
+    """Test that an Analysis subclass with `__init__(self)` is accepted."""
+
+    class _NoArgAnalysis(Analysis[int, int]):
+        def __init__(self) -> None:
+            super().__init__()
+
+        def run(self, ir: int) -> int:
+            return ir
+
+    assert _NoArgAnalysis().run(5) == 5
+
+
+def test_analysis_subclass_with_default_init_is_accepted() -> None:
+    """Test that an Analysis subclass with no explicit `__init__` is accepted."""
+
+    class _DefaultInitAnalysis(Analysis[int, int]):
+        def run(self, ir: int) -> int:
+            return ir
+
+    assert _DefaultInitAnalysis().run(5) == 5
+
+
+def test_analysis_subclass_with_required_positional_arg_is_rejected() -> None:
+    """Test that an Analysis subclass requiring positional args is rejected at
+    class creation time."""
+    with pytest.raises(TypeError, match="no-arg"):
+
+        class _BadAnalysis(Analysis[int, int]):
+            def __init__(self, scale: int) -> None:
+                super().__init__()
+                self.scale = scale
+
+            def run(self, ir: int) -> int:
+                return ir * self.scale
+
+
+def test_analysis_subclass_with_optional_only_args_is_accepted() -> None:
+    """Test that an Analysis subclass with only optional/keyword args is accepted."""
+
+    class _OptionalOnlyAnalysis(Analysis[int, int]):
+        def __init__(self, *, scale: int = 2) -> None:
+            super().__init__()
+            self.scale = scale
+
+        def run(self, ir: int) -> int:
+            return ir * self.scale
+
+    assert _OptionalOnlyAnalysis().run(3) == 6
+
+
+# ---------------------------------------------------------------------------
+# F-006: PassRunRecord stores PreservedAnalyses directly.
+# ---------------------------------------------------------------------------
+
+
+def test_pass_run_record_stores_preserved_analyses_directly() -> None:
+    """Test that `PassRunRecord.preserved_analyses` is a `PreservedAnalyses`."""
+
+    @register_pass(
+        "tests.pm.record_schema_preserve_all",
+        "Identity pass; preserves all analyses by default for unchanged IR.",
+    )
+    class IdentityPreserveAllPass(CompilerPass[int, int]):
+        def get_noop_output(self, ir: int) -> int:
+            return ir
+
+        def run_pass(self, ir: int) -> int:
+            return ir
+
+    manager = PassManager[int]()
+    manager.add_pass(IdentityPreserveAllPass())
+    result = manager.run(1)
+    record = result.records[0]
+    assert isinstance(record, PassRunRecord)
+
+    assert isinstance(record.preserved_analyses, PreservedAnalyses)
+    assert record.preserved_analyses.preserve_all is True
+
+
+def test_pass_run_record_carries_specific_preservation_set() -> None:
+    """Test that a pass preserving one analysis surfaces that name in the record."""
+    name_to_preserve = BoxDoubleAnalysis.get_analysis_name()
+
+    @register_pass(
+        "tests.pm.record_schema_preserve_specific",
+        "Changes IR while preserving only the double analysis.",
+    )
+    class PreserveSpecificPass(CompilerPass[Box, Box]):
+        def get_noop_output(self, ir: Box) -> Box:
+            return ir
+
+        def run_pass(self, ir: Box) -> Box:
+            return Box(ir.value + 1)
+
+        def get_preserved_analyses(
+            self, input_ir: Box, output: Box, *, changed: bool
+        ) -> PreservedAnalyses:
+            return PreservedAnalyses.none().preserve(name_to_preserve)
+
+    manager = PassManager[Box]()
+    manager.add_pass(PreserveSpecificPass())
+    result = manager.run(Box(0))
+    record = result.records[0]
+    assert isinstance(record, PassRunRecord)
+
+    assert isinstance(record.preserved_analyses, PreservedAnalyses)
+    assert record.preserved_analyses.preserve_all is False
+    assert record.preserved_analyses.is_preserved(name_to_preserve) is True
+
+
+# ---------------------------------------------------------------------------
+# F-007: FixpointGroupRecord.iterations is a property derived from
+# iteration_records.
+# ---------------------------------------------------------------------------
+
+
+def test_fixpoint_group_record_iterations_matches_records_length() -> None:
+    """Test that `record.iterations == len(record.iteration_records)`."""
+    record = FixpointGroupRecord(
+        group_name=Identifier("group"),
+        iteration_records=(
+            FixpointIterationRecord(1, True, ()),
+            FixpointIterationRecord(2, True, ()),
+            FixpointIterationRecord(3, False, ()),
+        ),
+        converged=True,
+    )
+
+    assert record.iterations == len(record.iteration_records)
+    assert record.iterations == 3
+
+
+def test_fixpoint_group_record_iterations_cannot_be_set() -> None:
+    """Test that `iterations` is read-only after construction."""
+    record = FixpointGroupRecord(
+        group_name=Identifier("group"),
+        iteration_records=(),
+        converged=False,
+    )
+
+    with pytest.raises(AttributeError):
+        record.iterations = 42  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# F-009: AnalysisManager falls back to uncached execution when the underlying
+# `weakref.finalize` call raises (no probe ref needed).
+# ---------------------------------------------------------------------------
+
+
+def test_analysis_manager_falls_back_when_weakref_finalize_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that the manager runs uncached when finalizer registration fails.
+
+    Simulates a non-weakreffable IR by patching the manager-module `weakref`
+    so that `weakref.finalize` raises `TypeError`. The contract: rather than
+    propagating the error, `AnalysisManager.get` falls back to uncached
+    execution.
+    """
+    BoxDoubleAnalysis.runs = 0
+
+    def _raise_type_error(*_: Any, **__: Any) -> None:
+        raise TypeError("simulated non-weakreffable IR")
+
+    monkeypatch.setattr(
+        "fhy_core.pass_infrastructure.manager.weakref.finalize", _raise_type_error
+    )
+
+    manager = AnalysisManager[Box]()
+    ir = Box(4)
+
+    assert manager.get(BoxDoubleAnalysis, ir) == 8
+    assert manager.get(BoxDoubleAnalysis, ir) == 8
+    # Two calls -> two runs because the IR could not be cached.
+    assert BoxDoubleAnalysis.runs == 2
+
+
+# ---------------------------------------------------------------------------
+# F-012: AnalysisManager public surface (clear / invalidate / transfer).
+# ---------------------------------------------------------------------------
+
+
+def test_analysis_manager_clear_drops_cached_entries() -> None:
+    """Test that `clear(ir)` removes cached entries for that IR."""
+    BoxDoubleAnalysis.runs = 0
+    manager = AnalysisManager[Box]()
+    ir = Box(3)
+
+    assert manager.get(BoxDoubleAnalysis, ir) == 6
+    assert BoxDoubleAnalysis.runs == 1
+
+    manager.clear(ir)
+
+    assert manager.get(BoxDoubleAnalysis, ir) == 6
+    assert BoxDoubleAnalysis.runs == 2
+
+
+def test_analysis_manager_invalidate_with_none_drops_everything() -> None:
+    """Test that `invalidate(ir, PreservedAnalyses.none())` drops every entry."""
+    BoxDoubleAnalysis.runs = 0
+    BoxParityAnalysis.runs = 0
+    manager = AnalysisManager[Box]()
+    ir = Box(3)
+
+    manager.get(BoxDoubleAnalysis, ir)
+    manager.get(BoxParityAnalysis, ir)
+    assert BoxDoubleAnalysis.runs == 1
+    assert BoxParityAnalysis.runs == 1
+
+    manager.invalidate(ir, PreservedAnalyses.none())
+
+    manager.get(BoxDoubleAnalysis, ir)
+    manager.get(BoxParityAnalysis, ir)
+    assert BoxDoubleAnalysis.runs == 2
+    assert BoxParityAnalysis.runs == 2
+
+
+def test_analysis_manager_invalidate_with_preserve_all_keeps_everything() -> None:
+    """Test that `invalidate(ir, PreservedAnalyses.all())` is a no-op."""
+    BoxDoubleAnalysis.runs = 0
+    manager = AnalysisManager[Box]()
+    ir = Box(3)
+
+    manager.get(BoxDoubleAnalysis, ir)
+    assert BoxDoubleAnalysis.runs == 1
+
+    manager.invalidate(ir, PreservedAnalyses.all())
+
+    manager.get(BoxDoubleAnalysis, ir)
+    assert BoxDoubleAnalysis.runs == 1
+
+
+def test_analysis_manager_invalidate_keeps_only_preserved_entries() -> None:
+    """Test that `invalidate` retains preserved entries and drops the rest."""
+    BoxDoubleAnalysis.runs = 0
+    BoxParityAnalysis.runs = 0
+    manager = AnalysisManager[Box]()
+    ir = Box(3)
+
+    manager.get(BoxDoubleAnalysis, ir)
+    manager.get(BoxParityAnalysis, ir)
+
+    preserved = PreservedAnalyses.none().preserve(BoxDoubleAnalysis.get_analysis_name())
+    manager.invalidate(ir, preserved)
+
+    manager.get(BoxDoubleAnalysis, ir)
+    manager.get(BoxParityAnalysis, ir)
+    # Double was preserved -> still 1 run total.
+    # Parity was dropped -> recomputed on the second `get`.
+    assert BoxDoubleAnalysis.runs == 1
+    assert BoxParityAnalysis.runs == 2
+
+
+def test_analysis_manager_transfer_moves_preserved_entries() -> None:
+    """Test that `transfer` moves preserved entries from one IR to another."""
+    BoxDoubleAnalysis.runs = 0
+    manager = AnalysisManager[Box]()
+    from_ir = Box(3)
+    to_ir = Box(4)
+
+    manager.get(BoxDoubleAnalysis, from_ir)
+    assert BoxDoubleAnalysis.runs == 1
+
+    manager.transfer(from_ir, to_ir, PreservedAnalyses.all())
+
+    manager.get(BoxDoubleAnalysis, to_ir)
+    # The cached entry transferred; no recomputation despite the different IR.
+    assert BoxDoubleAnalysis.runs == 1
+
+
+def test_analysis_manager_transfer_drops_when_not_preserved() -> None:
+    """Test that `transfer` with `PreservedAnalyses.none()` drops the entry."""
+    BoxDoubleAnalysis.runs = 0
+    manager = AnalysisManager[Box]()
+    from_ir = Box(3)
+    to_ir = Box(4)
+
+    manager.get(BoxDoubleAnalysis, from_ir)
+    assert BoxDoubleAnalysis.runs == 1
+
+    manager.transfer(from_ir, to_ir, PreservedAnalyses.none())
+
+    manager.get(BoxDoubleAnalysis, to_ir)
+    assert BoxDoubleAnalysis.runs == 2
+
+
+# ---------------------------------------------------------------------------
+# F-013: bind / unbind split. The `None` overload is gone.
+# ---------------------------------------------------------------------------
+
+
+def test_bind_analysis_manager_rejects_none() -> None:
+    """Test that `bind_analysis_manager(None)` is no longer accepted."""
+
+    @register_pass("tests.pm.bind_rejects_none", "Identity pass for bind/unbind tests.")
+    class _BindRejectsNonePass(CompilerPass[Box, Box]):
+        def get_noop_output(self, ir: Box) -> Box:
+            return ir
+
+        def run_pass(self, ir: Box) -> Box:
+            return ir
+
+    compiler_pass = _BindRejectsNonePass()
+
+    with pytest.raises(TypeError):
+        compiler_pass.bind_analysis_manager(None)  # type: ignore[arg-type]
+
+
+def test_unbind_analysis_manager_clears_binding() -> None:
+    """Test that `unbind_analysis_manager()` returns the pass to standalone mode."""
+
+    @register_pass("tests.pm.unbind", "Identity pass for unbind testing.")
+    class _UnbindPass(CompilerPass[Box, Box]):
+        def get_noop_output(self, ir: Box) -> Box:
+            return ir
+
+        def run_pass(self, ir: Box) -> Box:
+            return ir
+
+    compiler_pass = _UnbindPass()
+    manager = PassManager[Box]()
+    compiler_pass.bind_analysis_manager(manager.analysis_manager)
+    assert compiler_pass.get_analysis_manager() is manager.analysis_manager
+
+    compiler_pass.unbind_analysis_manager()
+
+    assert compiler_pass.get_analysis_manager() is None
+
+
+def test_unbind_analysis_manager_is_idempotent() -> None:
+    """Test that calling `unbind_analysis_manager()` when unbound is a no-op."""
+
+    @register_pass("tests.pm.unbind_idempotent", "Identity pass for idempotent unbind.")
+    class _UnbindIdemPass(CompilerPass[Box, Box]):
+        def get_noop_output(self, ir: Box) -> Box:
+            return ir
+
+        def run_pass(self, ir: Box) -> Box:
+            return ir
+
+    compiler_pass = _UnbindIdemPass()
+    compiler_pass.unbind_analysis_manager()  # already unbound; must not raise
+
+    assert compiler_pass.get_analysis_manager() is None

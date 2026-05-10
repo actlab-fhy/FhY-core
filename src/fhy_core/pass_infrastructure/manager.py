@@ -13,6 +13,7 @@ __all__ = [
     "PassRunRecord",
 ]
 
+import inspect
 import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -22,17 +23,51 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 from fhy_core.identifier import Identifier
 from fhy_core.trait import Frozen, FrozenMixin, HasIdentifierMixin, PartialEqualMixin
 
-from .core import CompilerPass, PassExecutionError, PassResult, PreservedAnalyses
+from .core import (
+    CompilerPass,
+    PassDiagnostic,
+    PassExecutionError,
+    PassResult,
+    PreservedAnalyses,
+)
 
 _IRType = TypeVar("_IRType")
 _AnalysisResultT = TypeVar("_AnalysisResultT")
 
 
 class Analysis(ABC, Generic[_IRType, _AnalysisResultT]):
-    """Base class for reusable analyses cached by the pass manager."""
+    """Base class for reusable analyses cached by the pass manager.
+
+    Subclasses must support no-argument construction: the analysis manager
+    instantiates analyses internally via ``analysis_type()``. Optional
+    keyword arguments with defaults are fine; required positional arguments
+    are rejected at class-creation time with ``TypeError``.
+    """
 
     _analysis_name: ClassVar[Identifier | None] = None
     _analysis_name_lock: ClassVar[Lock] = Lock()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        signature = inspect.signature(cls.__init__)
+        for parameter in signature.parameters.values():
+            if parameter.name == "self":
+                continue
+            if parameter.kind in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            ):
+                continue
+            if parameter.default is inspect.Parameter.empty and parameter.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            ):
+                raise TypeError(
+                    f'Analysis subclass "{cls.__qualname__}" requires a no-arg '
+                    f'constructor; parameter "{parameter.name}" has no default. '
+                    f"AnalysisManager instantiates analyses with no arguments."
+                )
 
     @classmethod
     def get_analysis_name(cls) -> Identifier:
@@ -43,11 +78,8 @@ class Analysis(ABC, Generic[_IRType, _AnalysisResultT]):
         with Analysis._analysis_name_lock:
             if "_analysis_name" not in cls.__dict__ or cls._analysis_name is None:
                 cls._analysis_name = Identifier(f"{cls.__module__}.{cls.__qualname__}")
-            analysis_name = cls._analysis_name
-
-        if analysis_name is None:
-            raise RuntimeError("Failed to initialize analysis name.")
-        return analysis_name
+            assert cls._analysis_name is not None
+            return cls._analysis_name
 
     @abstractmethod
     def run(self, ir: _IRType) -> _AnalysisResultT:
@@ -210,12 +242,11 @@ class AnalysisManager(Generic[_IRType]):
         if ir_id in self._finalizers:
             return True
         try:
-            weakref.ref(ir)
+            self._finalizers[ir_id] = weakref.finalize(
+                ir, AnalysisManager._evict_cached_ir, weakref.ref(self), ir_id
+            )
         except TypeError:
             return False
-        self._finalizers[ir_id] = weakref.finalize(
-            ir, AnalysisManager._evict_cached_ir, weakref.ref(self), ir_id
-        )
         return True
 
     def _drop_finalizer(self, ir_id: int) -> None:
@@ -234,9 +265,8 @@ class PassRunRecord(FrozenMixin, PartialEqualMixin):
 
     pass_name: str
     changed: bool
-    diagnostics: tuple[Any, ...]
-    preserved_analyses: tuple[Identifier, ...]
-    preserves_all_analyses: bool
+    diagnostics: tuple[PassDiagnostic, ...]
+    preserved_analyses: PreservedAnalyses
 
 
 @dataclass(frozen=True)
@@ -253,9 +283,13 @@ class FixpointGroupRecord(FrozenMixin, PartialEqualMixin):
     """Execution record for a fixpoint group."""
 
     group_name: Identifier
-    iterations: int
-    converged: bool
     iteration_records: tuple[FixpointIterationRecord, ...]
+    converged: bool
+
+    @property
+    def iterations(self) -> int:
+        """Return the number of iterations executed."""
+        return len(self.iteration_records)
 
 
 @dataclass(frozen=True)
@@ -340,36 +374,23 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
     def analysis_manager(self) -> AnalysisManager[_IRType]:
         return self._analysis_manager
 
-    def add_pass(
-        self, compiler_pass: CompilerPass[_IRType, _IRType]
-    ) -> "PassManager[_IRType]":
+    def add_pass(self, compiler_pass: CompilerPass[_IRType, _IRType]) -> None:
         """Append one pass to the pipeline.
 
         Args:
             compiler_pass: The pass to add.
 
-        Returns:
-            This pass manager, for chaining.
-
         """
         self._items.append(compiler_pass)
-        return self
 
-    def add_fixpoint_group(
-        self,
-        group: FixpointPassGroup[_IRType],
-    ) -> "PassManager[_IRType]":
+    def add_fixpoint_group(self, group: FixpointPassGroup[_IRType]) -> None:
         """Append one fixpoint group to the pipeline.
 
         Args:
             group: The fixpoint group to add.
 
-        Returns:
-            This pass manager, for chaining.
-
         """
         self._items.append(group)
-        return self
 
     def run(self, ir: _IRType) -> PassManagerResult[_IRType]:
         """Run the pass pipeline over the IR.
@@ -443,10 +464,9 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
             )
 
         return current, FixpointGroupRecord(
-            group.name,
-            len(iteration_records),
-            converged,
-            tuple(iteration_records),
+            group_name=group.name,
+            iteration_records=tuple(iteration_records),
+            converged=converged,
         )
 
     def _execute_bound(
@@ -458,26 +478,25 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
 
         The analysis manager is attached to the pass for the duration of the
         execution so that ``CompilerPass.get_analysis`` sees a cache, and is
-        restored to its previous value afterward (usually ``None``).
+        restored to its previous binding afterward (usually unbound).
         """
         previous = compiler_pass.get_analysis_manager()
         compiler_pass.bind_analysis_manager(self._analysis_manager)
         try:
             return compiler_pass.execute(ir)
         finally:
-            compiler_pass.bind_analysis_manager(previous)
+            if previous is None:
+                compiler_pass.unbind_analysis_manager()
+            else:
+                compiler_pass.bind_analysis_manager(previous)
 
     @staticmethod
     def _make_pass_run_record(
         compiler_pass: CompilerPass[_IRType, _IRType], result: PassResult[_IRType]
     ) -> PassRunRecord:
-        preserved = result.preserved_analyses
         return PassRunRecord(
-            compiler_pass.get_pass_name(),
-            result.changed,
-            result.diagnostics,
-            tuple(
-                sorted(preserved.analysis_names, key=lambda identifier: identifier.id)
-            ),
-            preserved.preserve_all,
+            pass_name=compiler_pass.get_pass_name(),
+            changed=result.changed,
+            diagnostics=result.diagnostics,
+            preserved_analyses=result.preserved_analyses,
         )

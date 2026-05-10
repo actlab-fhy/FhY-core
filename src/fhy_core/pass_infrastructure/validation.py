@@ -35,6 +35,7 @@ from .core import (
     PassDiagnostic,
     PassExecutionError,
     PassValidationError,
+    PreservedAnalyses,
 )
 from .manager import PassRunRecord
 
@@ -131,6 +132,13 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
     validator) is itself turned into an ERROR diagnostic attributed to that
     validator, and the pipeline proceeds.
 
+    Unlike :class:`PassManager`, ``ValidationManager`` does **not** provide
+    an :class:`AnalysisManager` to its validators. Each validator runs
+    standalone; ``self.get_analysis(...)`` inside a validator recomputes
+    its result on every call. Validators that need to share an expensive
+    analysis must either compute it themselves once and pass it through
+    state, or be sequenced inside a :class:`PassManager` instead.
+
     """
 
     _validators: list[CompilerPass[_IRType, Any]]
@@ -188,8 +196,7 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
                     pass_name=validator.get_pass_name(),
                     changed=False,
                     diagnostics=tuple(diagnostics),
-                    preserved_analyses=(),
-                    preserves_all_analyses=True,
+                    preserved_analyses=PreservedAnalyses.all(),
                 )
             )
 
@@ -222,7 +229,7 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
                     level=DiagnosticLevel.ERROR,
                     message=Note(
                         f'Validator "{validator.get_pass_name()}" raised '
-                        f'"{type(exc).__name__} without reporting a diagnostic: '
+                        f'"{type(exc).__name__}" without reporting a diagnostic: '
                         f"{exc}"
                     ),
                     pass_name=validator.get_pass_name(),
