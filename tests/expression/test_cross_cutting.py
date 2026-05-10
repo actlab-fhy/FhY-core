@@ -31,7 +31,7 @@ from .conftest import mock_identifier
 _EXPECTED_REGISTRATIONS: list[tuple[str, type]] = [
     ("fhy_core.expression.collect_identifiers", IdentifierCollector),
     ("fhy_core.expression.substitute_identifiers", IdentifierSubstituter),
-    ("fhy_core.expression.type_check", ExpressionTypeChecker),
+    ("fhy_core.expression.type_checker", ExpressionTypeChecker),
     ("fhy_core.expression.from_sympy", SymPyToExpressionConverter),
     ("fhy_core.expression.to_sympy", ExpressionToSympyConverter),
     ("fhy_core.expression.to_z3", ExpressionToZ3Converter),
