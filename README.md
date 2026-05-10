@@ -1,5 +1,10 @@
 # *FhY* Core
 
+[![PyPI version](https://img.shields.io/pypi/v/fhy_core.svg)](https://pypi.org/project/fhy_core/)
+[![Python versions](https://img.shields.io/pypi/pyversions/fhy_core.svg)](https://pypi.org/project/fhy_core/)
+[![CI](https://github.com/actlab-fhy/FhY-core/actions/workflows/python-package.yml/badge.svg)](https://github.com/actlab-fhy/FhY-core/actions/workflows/python-package.yml)
+[![codecov](https://codecov.io/gh/actlab-fhy/FhY-core/branch/main/graph/badge.svg)](https://codecov.io/gh/actlab-fhy/FhY-core)
+
 *FhY* Core is a collection of utilities for *FhY* and other parts of the compiler.
 
 | Utility                                  | Description                                                            |
@@ -9,7 +14,7 @@
 | Expression                               | General expression represented as an AST with a parser and printer.    |
 | Constraint                               | General logical constraint.                                            |
 | Parameter                                | Real, integer, ordinal, categorical, and permutation parameters.       |
-| Types                                    | Core type system for the compiler w/ type checking for expressions.    |
+| Types                                    | Extensible type system with open dispatchers for binding, substitution, unification, and structural equivalence; type checking for expressions. |
 | Symbol Table                             | Nested symbol table.                                                   |
 | Pass Infrastructure                      | `CompilerPass`, `VisitablePass`, and `register_pass` for building IR passes with diagnostics (`PassDiagnostic`, `DiagnosticLevel`) and preserved-analysis tracking. |
 | Pass Manager                             | `PassManager` sequences transformations and returns `PassManagerResult`/`PassRunRecord`; `FixpointPassGroup` drives until-fixpoint iteration. |
@@ -35,6 +40,7 @@
 | _General Utility_ - Stack                | General stack utility that wraps `deque`.                              |
 | _General Utility_ - POSET                | General partially ordered set utility represented as a directed graph. |
 | _General Utility_ - Dictionary Utilities | Additional dictionary helper functions.                                |
+| _General Utility_ - Numeric Predicates   | `is_strict_int` rejects `bool` so contexts requiring a strict integer do not silently accept `True`/`False`. |
 
 
 ## Table of Contents

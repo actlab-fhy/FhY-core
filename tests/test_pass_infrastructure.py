@@ -2,6 +2,7 @@
 
 import pytest
 
+from fhy_core.diagnostic import Note
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     CompilerPass,
@@ -14,7 +15,6 @@ from fhy_core.pass_infrastructure import (
     PreservedAnalyses,
     register_pass,
 )
-from fhy_core.provenance import Note
 from fhy_core.trait import PartialEqual
 
 

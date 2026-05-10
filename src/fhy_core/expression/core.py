@@ -2,7 +2,6 @@
 
 __all__ = [
     "Expression",
-    "SymbolType",
     "LiteralType",
     "UnaryOperation",
     "UNARY_OPERATION_FUNCTION_NAMES",
@@ -18,8 +17,11 @@ __all__ = [
     "BinaryExpression",
     "IdentifierExpression",
     "LiteralExpression",
+    "logical_and",
+    "logical_or",
 ]
 
+import re
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -46,12 +48,77 @@ from fhy_core.trait import (
 from fhy_core.utils import invert_frozen_dict
 
 
-class SymbolType(Enum):
-    """Symbol type."""
+def _build_right_folded_binary_tree(
+    operation: "BinaryOperation",
+    *expressions: "Expression | Identifier | LiteralType",
+) -> "BinaryExpression":
+    if len(expressions) < 2:  # noqa: PLR2004
+        operation_name = BINARY_OPERATION_FUNCTION_NAMES[operation]
+        raise ValueError(
+            f"{operation_name} requires at least two expressions, but got "
+            f"{len(expressions)}."
+        )
+    reversed_expressions = list(reversed(expressions))
+    result = BinaryExpression(
+        operation,
+        Expression._get_expression_from_other(reversed_expressions[1]),
+        Expression._get_expression_from_other(reversed_expressions[0]),
+    )
+    for next_expression in reversed_expressions[2:]:
+        result = BinaryExpression(
+            operation,
+            Expression._get_expression_from_other(next_expression),
+            result,
+        )
+    return result
 
-    REAL = auto()
-    INT = auto()
-    BOOL = auto()
+
+def logical_and(
+    *expressions: "Expression | Identifier | LiteralType",
+) -> "BinaryExpression":
+    """Build a right-folded ``LOGICAL_AND`` tree from two or more operands.
+
+    Each operand may be an ``Expression`` (used as-is), an ``Identifier``
+    (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
+    (wrapped in ``LiteralExpression``); the same coercion rules as the
+    operator dunders apply.
+
+    Args:
+        expressions: Operands to AND together. Must be at least two.
+
+    Returns:
+        Right-folded binary AND expression.
+
+    Raises:
+        ValueError: If fewer than two operands are supplied, or if an
+            operand has an unsupported type.
+
+    """
+    return _build_right_folded_binary_tree(BinaryOperation.LOGICAL_AND, *expressions)
+
+
+def logical_or(
+    *expressions: "Expression | Identifier | LiteralType",
+) -> "BinaryExpression":
+    """Build a right-folded ``LOGICAL_OR`` tree from two or more operands.
+
+    Each operand may be an ``Expression`` (used as-is), an ``Identifier``
+    (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
+    (wrapped in ``LiteralExpression``); the same coercion rules as the
+    operator dunders apply.
+
+    Args:
+        expressions: Operands to OR together. Must be at least two.
+
+    Returns:
+        Right-folded binary OR expression.
+
+    Raises:
+        ValueError: If fewer than two operands are supplied, or if an
+            operand has an unsupported type.
+
+    """
+    return _build_right_folded_binary_tree(BinaryOperation.LOGICAL_OR, *expressions)
 
 
 class Expression(
@@ -199,55 +266,51 @@ class Expression(
             BinaryOperation.GREATER_EQUAL, self, self._get_expression_from_other(other)
         )
 
-    @staticmethod
-    def logical_and(*expressions: "Expression") -> "BinaryExpression":
-        """Create a logical AND expression.
-
-        Args:
-            expressions: Expressions to AND together.
-
-        Returns:
-            Logical AND expression.
-
-        """
-        return Expression._generate_commutative_associative_operation_tree(
-            BinaryOperation.LOGICAL_AND, *expressions
-        )
-
-    @staticmethod
-    def logical_or(*expressions: "Expression") -> "BinaryExpression":
-        """Create a logical OR expression.
-
-        Args:
-            expressions: Expressions to OR together.
-
-        Returns:
-            Logical OR expression.
-
-        """
-        return Expression._generate_commutative_associative_operation_tree(
-            BinaryOperation.LOGICAL_OR, *expressions
-        )
-
-    @staticmethod
-    def _generate_commutative_associative_operation_tree(
-        operation: "BinaryOperation", *expressions: "Expression"
+    def logical_and(
+        self, *others: "Expression | Identifier | LiteralType"
     ) -> "BinaryExpression":
-        if len(expressions) < 2:  # noqa: PLR2004
-            raise ValueError("At least two expressions are required.")
-        reversed_expressions = list(reversed(expressions))
-        result = BinaryExpression(
-            operation,
-            Expression._get_expression_from_other(reversed_expressions[1]),
-            Expression._get_expression_from_other(reversed_expressions[0]),
-        )
-        for next_expression in reversed_expressions[2:]:
-            result = BinaryExpression(
-                operation,
-                Expression._get_expression_from_other(next_expression),
-                result,
-            )
-        return result
+        """Create a logical AND expression over ``self`` and ``others``.
+
+        Each item in ``others`` may be an ``Expression``, an ``Identifier``,
+        or a value of ``LiteralType``; the same coercion rules as the
+        operator dunders apply.
+
+        Args:
+            others: Additional operands to AND with ``self``. At least one
+                is required (``self`` is always included).
+
+        Returns:
+            Right-folded logical AND expression.
+
+        Raises:
+            ValueError: If no additional operands are supplied, or if an
+                operand has an unsupported type.
+
+        """
+        return logical_and(self, *others)
+
+    def logical_or(
+        self, *others: "Expression | Identifier | LiteralType"
+    ) -> "BinaryExpression":
+        """Create a logical OR expression over ``self`` and ``others``.
+
+        Each item in ``others`` may be an ``Expression``, an ``Identifier``,
+        or a value of ``LiteralType``; the same coercion rules as the
+        operator dunders apply.
+
+        Args:
+            others: Additional operands to OR with ``self``. At least one
+                is required (``self`` is always included).
+
+        Returns:
+            Right-folded logical OR expression.
+
+        Raises:
+            ValueError: If no additional operands are supplied, or if an
+                operand has an unsupported type.
+
+        """
+        return logical_or(self, *others)
 
     @staticmethod
     def _get_expression_from_other(other: Any) -> "Expression":
@@ -255,11 +318,12 @@ class Expression(
             return other
         elif isinstance(other, Identifier):
             return IdentifierExpression(other)
-        elif isinstance(other, (int, float, bool, str)):
+        elif type(other) is bool or type(other) in (int, float, str):
             return LiteralExpression(other)
-        raise ValueError(
-            f"Unsupported type for creating literal expression: {type(other)}."
-        )
+        else:
+            raise ValueError(
+                f"Unable to cast {other!r} with type {type(other)} to an expression."
+            )
 
 
 class UnaryOperation(Enum):
@@ -504,6 +568,9 @@ class IdentifierExpression(Expression):
 
 LiteralType = str | float | int | bool
 
+_INTEGER_LITERAL_PATTERN = re.compile(r"\d+")
+_FLOAT_LITERAL_PATTERN = re.compile(r"\d+\.\d*|\.\d+")
+
 
 class _LiteralExpressionData(TypedDict):
     value: LiteralType
@@ -518,20 +585,46 @@ def _is_valid_literal_expression_data(
 @register_serializable(type_id="literal_expression")
 @dataclass(frozen=True, eq=False)
 class LiteralExpression(Expression):
-    """Literal expression."""
+    r"""Literal expression.
+
+    Stored value follows these canonicalization rules:
+
+    - ``bool`` / ``int`` / ``float`` values are stored unchanged. ``bool`` is
+      checked before ``int`` to keep the two distinct.
+    - ``str`` values matching the integer grammar (``\d+``) are canonicalized
+      to ``int`` via ``int(value)`` so ``LiteralExpression("5")`` and
+      ``LiteralExpression(5)`` are indistinguishable.
+    - ``str`` values matching the float grammar (``\d+\.\d*`` or
+      ``\.\d+``) are kept as ``str`` to preserve exact decimal text. Native
+      ``float`` would impose IEEE-754 rounding, which the design avoids.
+    - Any other ``str`` raises ``ValueError``; any other Python type raises
+      ``TypeError``.
+    """
 
     value: LiteralType
 
     def __post_init__(self) -> None:
-        if not isinstance(self.value, str):
+        value = self.value
+        if type(value) is bool:
             return
-        try:
-            float(self.value)
-        except ValueError as exc:
-            raise ValueError(
-                f"Invalid literal expression value: "
-                f'{self.value} with type "{type(self.value)}".'
-            ) from exc
+        if type(value) is int:
+            return
+        if type(value) is float:
+            return
+        if not isinstance(value, str):
+            raise TypeError(
+                f"Unsupported type for literal expression value: "
+                f"{type(value).__name__}; expected str, float, int, or bool."
+            )
+        if _INTEGER_LITERAL_PATTERN.fullmatch(value):
+            object.__setattr__(self, "value", int(value))
+            return
+        if _FLOAT_LITERAL_PATTERN.fullmatch(value):
+            return
+        raise ValueError(
+            f"Invalid string-form literal expression value: {value!r} "
+            f"does not match the integer or float grammar."
+        )
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {"value": self.value}
@@ -549,7 +642,9 @@ class LiteralExpression(Expression):
 def _is_expression_structurally_equivalent(
     expression: Expression, other: object
 ) -> bool:
-    return False
+    raise NotImplementedError(
+        f"is_structurally_equivalent is not registered for {type(expression).__name__}."
+    )
 
 
 @_is_expression_structurally_equivalent.register

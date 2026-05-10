@@ -31,9 +31,9 @@ from typing import (
     cast,
 )
 
+from fhy_core.diagnostic import Note
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
-from fhy_core.provenance import Note
 from fhy_core.trait import FrozenMixin, PartialEqualMixin, Visitable
 from fhy_core.utils.enum import StrEnum
 

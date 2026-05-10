@@ -62,7 +62,7 @@ def _is_valid_bound_expression(expression: Expression) -> bool:
         literal_expression = expression.left
     elif isinstance(expression.right, LiteralExpression):
         literal_expression = expression.right
-    else:
+    else:  # pragma: no cover
         raise RuntimeError(
             "Somehow failed to find LiteralExpression in bound expression."
         )
@@ -169,25 +169,29 @@ class BoundIntParam(IntParam):
                 nonlocal identifier_expression
                 if identifier_expression is None:
                     identifier_expression = e
-                elif identifier_expression != e:
+                elif identifier_expression != e:  # pragma: no cover
                     raise RuntimeError(
                         "BoundIntParam somehow has bound constraints on "
                         "different variables."
                     )
 
-            if not isinstance(expression, BinaryExpression):
+            if not isinstance(expression, BinaryExpression):  # pragma: no cover
                 raise RuntimeError(
                     "Somehow bound constraint expression is not a BinaryExpression."
                 )
             if isinstance(expression.left, IdentifierExpression):
-                if not isinstance(expression.right, LiteralExpression):
+                if not isinstance(
+                    expression.right, LiteralExpression
+                ):  # pragma: no cover
                     raise RuntimeError(
                         "Somehow bound expression is not in the expected form."
                     )
                 set_or_check_identifier_expr(expression.left)
                 yield _get_bound_from_expression(expression.right, expression.operation)
             elif isinstance(expression.right, IdentifierExpression):
-                if not isinstance(expression.left, LiteralExpression):
+                if not isinstance(
+                    expression.left, LiteralExpression
+                ):  # pragma: no cover
                     raise RuntimeError(
                         "Somehow bound expression is not in the expected form."
                     )
@@ -196,7 +200,7 @@ class BoundIntParam(IntParam):
                     expression.left,
                     _invert_binary_comparison_operation(expression.operation),
                 )
-            else:
+            else:  # pragma: no cover
                 raise RuntimeError(
                     "Somehow bound expression is not in the expected form."
                 )

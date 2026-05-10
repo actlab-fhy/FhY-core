@@ -1,6 +1,6 @@
 """FhY compiler core utilities."""
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = [
     "Constraint",
@@ -56,6 +56,11 @@ __all__ = [
     "NoteKind",
     "Note",
     "Provenance",
+    "UnknownProvenance",
+    "FileProvenance",
+    "NamedProvenance",
+    "CallSiteProvenance",
+    "FusedProvenance",
     "HasIdentifier",
     "HasIdentifierMixin",
     "Interned",
@@ -123,7 +128,6 @@ __all__ = [
     "NumericalType",
     "PrimitiveDataType",
     "TemplateDataType",
-    "TupleType",
     "Type",
     "TypeQualifier",
     "get_core_data_type_bit_width",
@@ -131,6 +135,13 @@ __all__ = [
     "promote_primitive_data_types",
     "promote_type_qualifiers",
     "resolve_literal_core_data_type",
+    "TypeUnificationEnvironment",
+    "bind_data_template",
+    "bind_template",
+    "is_structurally_equivalent",
+    "substitute_data_template",
+    "substitute_template",
+    "unify",
     "IntEnum",
     "Lattice",
     "PartiallyOrderedSet",
@@ -140,6 +151,7 @@ __all__ = [
     "get_array_size_in_bits",
     "invert_dict",
     "invert_frozen_dict",
+    "is_strict_int",
     "register_serializable",
     "Serializable",
     "WrappedFamilySerializable",
@@ -174,6 +186,7 @@ from .constraint import (
     InSetConstraint,
     NotInSetConstraint,
 )
+from .diagnostic import Note, NoteKind
 from .error import register_error
 from .expression import (
     BinaryExpression,
@@ -181,7 +194,6 @@ from .expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    SymbolType,
     UnaryExpression,
     UnaryOperation,
     check_expression_type,
@@ -247,7 +259,16 @@ from .pass_infrastructure import (
     VisitablePass,
     register_pass,
 )
-from .provenance import Note, NoteKind, Position, Provenance, Span
+from .provenance import (
+    CallSiteProvenance,
+    FileProvenance,
+    FusedProvenance,
+    NamedProvenance,
+    Position,
+    Provenance,
+    Span,
+    UnknownProvenance,
+)
 from .serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -279,6 +300,7 @@ from .symbol_table import (
     SymbolTableFrame,
     VariableSymbolTableFrame,
 )
+from .symbol_type import SymbolType  # noqa: F401  # re-exported in __all__
 from .trait import (
     Canonicalizable,
     CanonicalizableMixin,
@@ -324,15 +346,21 @@ from .types import (
     NumericalType,
     PrimitiveDataType,
     TemplateDataType,
-    TupleType,
     Type,
     TypeQualifier,
+    TypeUnificationEnvironment,
+    bind_data_template,
+    bind_template,
     get_core_data_type_bit_width,
+    is_structurally_equivalent,
     is_weak_core_data_type,
     promote_core_data_types,
     promote_primitive_data_types,
     promote_type_qualifiers,
     resolve_literal_core_data_type,
+    substitute_data_template,
+    substitute_template,
+    unify,
 )
 from .utils import (
     IntEnum,
@@ -343,4 +371,5 @@ from .utils import (
     get_array_size_in_bits,
     invert_dict,
     invert_frozen_dict,
+    is_strict_int,
 )

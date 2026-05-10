@@ -43,7 +43,6 @@ from fhy_core.error import register_error
 from fhy_core.expression import (
     Expression,
     IdentifierExpression,
-    SymbolType,
     is_satisfiable,
     replace_identifiers,
 )
@@ -59,8 +58,9 @@ from fhy_core.serialization import (
     register_serializable,
     serialize_registry_wrapped_value,
 )
+from fhy_core.symbol_type import SymbolType
 from fhy_core.trait import Equal, FrozenMixin, Orderable, StructuralEquivalenceMixin
-from fhy_core.utils import Self, format_comma_separated_list
+from fhy_core.utils import Self, format_comma_separated_list, is_strict_int
 
 _T = TypeVar("_T")
 
@@ -672,7 +672,7 @@ class IntParam(Param[int]):
         return SymbolType.INT
 
     def is_value_admissible(self, value: Any) -> bool:
-        return isinstance(value, int) and not isinstance(value, bool)
+        return is_strict_int(value)
 
     def is_constraints_satisfied(self, value: int) -> bool:
         return super().is_constraints_satisfied(value)

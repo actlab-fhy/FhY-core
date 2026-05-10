@@ -580,7 +580,7 @@ def _dump_to_binary(obj: "Serializable") -> bytes:
 
     if len(type_id) > 65535:  # noqa: PLR2004
         raise SerializationError("type_id too long (>65535 bytes).")
-    if len(payload_bytes) > 0xFFFFFFFF:  # noqa: PLR2004
+    if len(payload_bytes) > 0xFFFFFFFF:  # noqa: PLR2004  # pragma: no cover
         raise SerializationError("payload too large (>4GB).")
 
     header = _HEADER_STRUCT.pack(_MAGIC, _VERSION, codec_u8, len(type_id))
