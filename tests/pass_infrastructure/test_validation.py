@@ -1,5 +1,6 @@
 """Tests the validation pipeline infrastructure."""
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +16,7 @@ from fhy_core.pass_infrastructure import (
     PassExecutionError,
     PassRunRecord,
     PassValidationError,
+    PreservedAnalyses,
     ValidationFailedError,
     ValidationManager,
     ValidationReport,
@@ -384,8 +386,8 @@ def test_validation_manager_record_reports_no_changes_and_preserves_all() -> Non
     record = report.records[0]
     assert isinstance(record, PassRunRecord)
     assert record.changed is False
-    assert record.preserves_all_analyses is True
-    assert record.preserved_analyses == ()
+    assert isinstance(record.preserved_analyses, PreservedAnalyses)
+    assert record.preserved_analyses == PreservedAnalyses.all()
 
 
 def test_validation_manager_does_not_suppress_pass_validation_error_diagnostics() -> (
@@ -445,6 +447,33 @@ def test_validation_manager_attributes_each_diagnostic_to_emitting_validator() -
         ("tests.vm.attr.first", "first-msg"),
         ("tests.vm.attr.second", "second-msg"),
     ]
+
+
+def test_validation_manager_synthesizes_balanced_quotes_around_exception_type() -> None:
+    """Test that the synthesised "raised X without reporting a diagnostic"
+    message has balanced quotes around the exception type."""
+
+    @register_pass(
+        "tests.vm.silent_validation_error",
+        "Raises PassValidationError without reporting any diagnostic.",
+    )
+    class _SilentValidationError(AnalysisVisitablePass[ValueBox]):
+        def visit_value_box(self, node: ValueBox) -> None:
+            _ = node
+            raise PassValidationError("silent-msg")
+
+    manager = ValidationManager[ValueBox]()
+    manager.add(_SilentValidationError())
+    report = manager.validate(ValueBox(0))
+
+    expected_pattern = re.compile(
+        r'^Validator "tests\.vm\.silent_validation_error" raised '
+        r'"PassValidationError" without reporting a diagnostic: silent-msg$'
+    )
+    assert any(expected_pattern.match(d.message_text) for d in report.errors()), (
+        f"expected balanced-quote synthesised message, got "
+        f"{[d.message_text for d in report.errors()]}"
+    )
 
 
 def test_validation_manager_preserves_multiple_diagnostics_from_single_validator() -> (
