@@ -1,25 +1,4 @@
-"""Tests for `fhy_core.expression.passes.sympy`.
-
-Notes on known-equivalent mutants not targeted by this file:
-
-- The ``evaluate=False`` at :mod:`fhy_core.expression.passes.sympy` lines 388
-  (``convert_Xor``) and line 535 for ``And``/``Or`` flavours is observably
-  indistinguishable from ``evaluate=True`` when the recursive tail contains
-  only symbolic arguments - SymPy yields identical node structure in both
-  cases. Only the ``Add``/``Mul`` flavours at line 535 are killable here
-  (arithmetic folding at the tail changes the tree shape).
-- The empty-args / single-arg guards in ``convert_Add`` and ``convert_Mul``
-  are unreachable through any public SymPy constructor and are therefore not
-  targeted.
-- ``Not.args[0]`` vs ``args[-1]`` is equivalent because SymPy's ``Not`` is
-  always unary.
-- The ``value == "True"`` / ``value == "False"`` string branches in
-  ``visit_literal_expression`` are unreachable: ``LiteralExpression``'s
-  ``__post_init__`` rejects any non-numeric string at construction. All
-  comparison-operator mutants on those branches are therefore unkillable
-  from the public surface.
-
-"""
+"""Tests for `fhy_core.expression.passes.sympy`."""
 
 from unittest.mock import Mock
 
