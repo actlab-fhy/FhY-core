@@ -1,5 +1,10 @@
 """Expression passes that interface with Z3."""
 
+__all__ = [
+    "convert_expression_to_z3_expression",
+    "is_satisfiable",
+]
+
 import operator
 from typing import Any, Callable
 
@@ -15,6 +20,7 @@ from fhy_core.expression.core import (
     UnaryExpression,
     UnaryOperation,
 )
+from fhy_core.expression.passes.basic import collect_identifiers
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     PassExecutionError,
@@ -81,21 +87,25 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
         self._identifier_to_z3_expression = {}
 
     @property
-    def identifier_to_z3_expression(self) -> dict[Identifier, z3.ExprRef]:
-        return self._identifier_to_z3_expression
+    def identifier_to_z3_expression(self) -> frozendict[Identifier, z3.ExprRef]:
+        return frozendict(self._identifier_to_z3_expression)
 
     def visit_binary_expression(
         self, binary_expression: BinaryExpression
     ) -> z3.ExprRef:
         left = self.visit(binary_expression.left)
         right = self.visit(binary_expression.right)
-        operator = self._BINARY_OPERATION_Z3_OPERATORS[binary_expression.operation]
-        return operator(left, right)
+        operation_function = self._BINARY_OPERATION_Z3_OPERATORS[
+            binary_expression.operation
+        ]
+        return operation_function(left, right)
 
     def visit_unary_expression(self, unary_expression: UnaryExpression) -> z3.ExprRef:
         operand = self.visit(unary_expression.operand)
-        operator = self._UNARY_OPERATION_Z3_OPERATORS[unary_expression.operation]
-        return operator(operand)
+        operation_function = self._UNARY_OPERATION_Z3_OPERATORS[
+            unary_expression.operation
+        ]
+        return operation_function(operand)
 
     def visit_identifier_expression(
         self, identifier_expression: IdentifierExpression
@@ -146,7 +156,7 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
 
 def convert_expression_to_z3_expression(
     expression: Expression, symbol_types: dict[Identifier, SymbolType] | None = None
-) -> tuple[z3.ExprRef, dict[Identifier, z3.ExprRef]]:
+) -> tuple[z3.ExprRef, frozendict[Identifier, z3.ExprRef]]:
     """Convert an expression to a Z3 expression.
 
     Args:
@@ -156,8 +166,20 @@ def convert_expression_to_z3_expression(
     Returns:
         Z3 expression and mapping of identifiers to Z3 expressions.
 
+    Raises:
+        KeyError: If ``symbol_types`` is missing an entry for any
+            identifier referenced by ``expression``.
+
     """
-    converter = ExpressionToZ3Converter(symbol_types or {})
+    resolved_symbol_types = symbol_types or {}
+    referenced_identifiers = collect_identifiers(expression)
+    missing_identifiers = referenced_identifiers - resolved_symbol_types.keys()
+    if missing_identifiers:
+        sorted_missing = sorted(missing_identifiers, key=lambda i: i.id)
+        raise KeyError(
+            f"symbol_types is missing entries for identifiers: {sorted_missing}"
+        )
+    converter = ExpressionToZ3Converter(resolved_symbol_types)
     z3_expression = converter(expression)
     return z3_expression, converter.identifier_to_z3_expression
 
@@ -167,33 +189,45 @@ def is_satisfiable(
     expression: Expression,
     symbol_types: dict[Identifier, SymbolType],
 ) -> bool | None:
-    """Check if the expression is satisfiable.
+    """Check whether the expression is satisfiable in the considered space.
+
+    The check has the form
+    ``∀ <free identifiers>. ∃ <considered_identifiers>. expression``:
+    the expression must hold for some assignment to
+    ``considered_identifiers`` *for every* assignment to the remaining
+    free identifiers. When ``considered_identifiers`` is empty, the check
+    degenerates to "the expression holds for every assignment to its free
+    identifiers" -- i.e., the expression is a tautology.
 
     Args:
-        considered_identifiers: Considered identifiers.
+        considered_identifiers: Identifiers existentially quantified by
+            the check. Identifiers in the expression but not in this set
+            are treated as free (universally quantified).
         expression: Expression to check.
-        symbol_types: Symbol types.
+        symbol_types: Z3 sort to use for each identifier appearing in
+            the expression. Every free or considered identifier
+            referenced by the expression must have an entry.
 
     Returns:
-        True if the expression is satisfiable; False if the expression is unsatisfiable;
-        None if the satisfiability is unknown.
+        True if the expression is satisfiable in the sense above; False
+        if it is unsatisfiable; None if Z3 returns ``unknown``.
+
+    Raises:
+        RuntimeError: If the underlying solver returns an unrecognized
+            result.
 
     """
     z3_expression, identifier_to_z3_expression = convert_expression_to_z3_expression(
         expression, symbol_types
     )
     z3_expression = z3.Not(z3_expression)
-    z3_expression = (
-        z3.ForAll(
-            [
-                identifier_to_z3_expression[identifier]
-                for identifier in considered_identifiers
-            ],
-            z3_expression,
-        )
-        if considered_identifiers
-        else z3_expression
-    )
+    quantified_variables = [
+        identifier_to_z3_expression[identifier]
+        for identifier in considered_identifiers
+        if identifier in identifier_to_z3_expression
+    ]
+    if quantified_variables:
+        z3_expression = z3.ForAll(quantified_variables, z3_expression)
 
     solver = z3.Solver()
     solver.add(z3_expression)
