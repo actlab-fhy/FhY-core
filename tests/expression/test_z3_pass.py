@@ -398,6 +398,30 @@ def test_z3_floor_divide_rejects_non_int_non_real_expression() -> None:
         _z3_floor_divide(fake, fake)
 
 
+def test_convert_expression_to_z3_returned_mapping_is_immutable() -> None:
+    """Test the returned identifier-to-Z3 mapping rejects mutation."""
+    x = mock_identifier("x", 0)
+    converter = ExpressionToZ3Converter({x: SymbolType.INT})
+    converter(IdentifierExpression(x))
+
+    snapshot = converter.identifier_to_z3_expression
+
+    with pytest.raises(TypeError):
+        snapshot[x] = z3.Int("other")  # type: ignore[index]
+
+
+def test_convert_expression_to_z3_raises_clear_error_on_missing_symbol_type() -> None:
+    """Test the entry point reports identifiers absent from `symbol_types`."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(x), IdentifierExpression(y)
+    )
+
+    with pytest.raises(KeyError, match=r"symbol_types is missing entries"):
+        convert_expression_to_z3_expression(expression, {x: SymbolType.INT})
+
+
 def test_z3_visit_identifier_rejects_invalid_symbol_type() -> None:
     """Test `visit_identifier_expression` rejects an unknown symbol-type entry."""
     identifier = mock_identifier("x", 0)
