@@ -177,6 +177,9 @@ __all__ = [
     "configure_logging",
     "get_logger",
     "install_null_handler",
+    "ADDRESS_DOMAIN",
+    "DATA_DOMAIN",
+    "ValueDomain",
 ]
 
 
@@ -375,3 +378,4 @@ from .utils import (
     invert_frozen_dict,
     is_strict_int,
 )
+from .value_domain import ADDRESS_DOMAIN, DATA_DOMAIN, ValueDomain
