@@ -180,6 +180,11 @@ __all__ = [
     "ADDRESS_DOMAIN",
     "DATA_DOMAIN",
     "ValueDomain",
+    "ASSOCIATIVE",
+    "COMMUTATIVE",
+    "ELEMENTWISE",
+    "PURE",
+    "OpAttribute",
 ]
 
 
@@ -217,6 +222,13 @@ from .logger import (
     configure_logging,
     get_logger,
     install_null_handler,
+)
+from .op_attribute import (
+    ASSOCIATIVE,
+    COMMUTATIVE,
+    ELEMENTWISE,
+    PURE,
+    OpAttribute,
 )
 from .param import (
     BoundIntParam,
