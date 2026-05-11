@@ -357,3 +357,85 @@ def test_value_domain_json_round_trip_via_deserialize() -> None:
     payload = original.serialize(SerializationFormat.JSON)
     restored = ValueDomain.deserialize(payload, SerializationFormat.JSON)
     assert restored.is_structurally_equivalent(original)
+
+
+# =============================================================================
+# Description-mismatch deserialization warning
+# =============================================================================
+
+
+def test_value_domain_deserialize_warns_on_description_mismatch(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test deserializing a canonical name with a different description warns."""
+    canonical = ValueDomain(
+        Identifier("mismatch-warning-domain"), "original description"
+    )
+    payload: SerializedDict = {
+        "name": canonical.name.serialize_to_dict(),
+        "description": "divergent description",
+        "parent": None,
+    }
+    with caplog.at_level("WARNING", logger="fhy_core.value_domain"):
+        restored = ValueDomain.deserialize_from_dict(payload)
+
+    assert restored is canonical
+    assert restored.description == "original description"
+    assert any(
+        "already canonical" in record.getMessage()
+        and "divergent description" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_value_domain_deserialize_does_not_warn_when_descriptions_match(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test deserializing a canonical name with matching description does not warn."""
+    canonical = ValueDomain(
+        Identifier("matching-description-domain"), "matching description"
+    )
+    payload = canonical.serialize_to_dict()
+    with caplog.at_level("WARNING", logger="fhy_core.value_domain"):
+        restored = ValueDomain.deserialize_from_dict(payload)
+
+    assert restored is canonical
+    assert not any(
+        "already canonical" in record.getMessage() for record in caplog.records
+    )
+
+
+# =============================================================================
+# register_default_instances restores module-level canonicals
+# =============================================================================
+
+
+def test_clearing_registry_desyncs_module_level_constants_without_default_restore() -> (
+    None
+):
+    """Test clearing the registry desyncs the module-level constants."""
+    try:
+        ValueDomain.clear_interned_registry()
+        payload = DATA_DOMAIN.serialize_to_dict()
+        restored = ValueDomain.deserialize_from_dict(payload)
+        assert restored is not DATA_DOMAIN
+    finally:
+        ValueDomain.register_default_instances()
+
+
+def test_register_default_instances_restores_module_level_canonicals() -> None:
+    """Test ``register_default_instances`` re-canonicalizes shipped defaults."""
+    try:
+        ValueDomain.clear_interned_registry()
+        ValueDomain.register_default_instances()
+
+        restored_data = ValueDomain.deserialize_from_dict(
+            DATA_DOMAIN.serialize_to_dict()
+        )
+        restored_address = ValueDomain.deserialize_from_dict(
+            ADDRESS_DOMAIN.serialize_to_dict()
+        )
+        assert restored_data is DATA_DOMAIN
+        assert restored_address is ADDRESS_DOMAIN
+    finally:
+        ValueDomain.register_default_instances()

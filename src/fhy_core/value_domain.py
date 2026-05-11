@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import TypedDict, TypeGuard
 
 from .identifier import Identifier
+from .logger import get_logger
 from .serialization import (
     DeserializationDictStructureError,
     Serializable,
@@ -33,6 +34,8 @@ from .trait import (
     InternedMixin,
     StructuralEquivalenceMixin,
 )
+
+_LOGGER = get_logger(__name__)
 
 
 class _ValueDomainData(TypedDict):
@@ -78,6 +81,14 @@ class ValueDomain(
     ``is_subdomain_of`` helper walks that chain so callers can ask whether
     one domain is a descendant of another without baking the relationships
     into core.
+
+    ``description`` is human-readable metadata only -- it does not
+    participate in equality, structural equivalence, hashing, or
+    interning. The first instance registered for a given ``Identifier``
+    becomes canonical; subsequent constructions and deserializations
+    with a different description are not rejected but do not update the
+    canonical description. ``deserialize_from_dict`` emits a warning
+    when the payload description differs from the canonical's.
 
     Attributes:
         name: Stable, process-global identifier for this domain.
@@ -146,8 +157,17 @@ class ValueDomain(
                 cls, _ValueDomainData.__annotations__, data
             )
         name = Identifier.deserialize_from_dict(data["name"])
+        payload_description = data["description"]
         canonical = cls.get_interned(name)
         if canonical is not None:
+            if canonical.description != payload_description:
+                _LOGGER.warning(
+                    "ValueDomain %r already canonical with description %r; "
+                    "ignoring payload description %r.",
+                    name,
+                    canonical.description,
+                    payload_description,
+                )
             return canonical
         parent_payload = data["parent"]
         parent = (
@@ -155,7 +175,19 @@ class ValueDomain(
             if parent_payload is not None
             else None
         )
-        return cls(name=name, description=data["description"], parent=parent)
+        return cls(name=name, description=payload_description, parent=parent)
+
+    @classmethod
+    def register_default_instances(cls) -> None:
+        """Re-register the canonical default ``ValueDomain``s shipped here.
+
+        After :meth:`clear_interned_registry` wipes the registry, call this
+        method to restore ``DATA_DOMAIN`` and ``ADDRESS_DOMAIN`` so the
+        module-level constants remain canonical. Useful for test isolation
+        that otherwise desyncs the constants from the registry.
+        """
+        for instance in _DEFAULT_INSTANCES:
+            instance.register_interned_instance()
 
 
 DATA_DOMAIN: ValueDomain = ValueDomain(
@@ -166,3 +198,5 @@ ADDRESS_DOMAIN: ValueDomain = ValueDomain(
     Identifier("address"),
     "Index, offset, or address values used to access data.",
 )
+
+_DEFAULT_INSTANCES: tuple[ValueDomain, ...] = (DATA_DOMAIN, ADDRESS_DOMAIN)

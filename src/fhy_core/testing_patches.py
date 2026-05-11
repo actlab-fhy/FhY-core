@@ -7,7 +7,6 @@ __all__ = [
 
 import contextlib
 import functools
-import inspect
 import sys
 from contextlib import ContextDecorator
 from typing import Any, Generator
@@ -45,7 +44,17 @@ def fail_fast_structural_equivalence() -> Generator[None, None, None]:
         if not module or not hasattr(module, "__name__"):
             continue
 
-        for _, obj in inspect.getmembers(module, inspect.isclass):
+        # Iterate __dict__ directly rather than via inspect.getmembers so
+        # we never trigger ``__getattr__``-only lazy attributes (notably
+        # ``typing.io`` / ``typing.re``, which emit DeprecationWarnings on
+        # access and are slated for removal in Python 3.13). Class
+        # definitions live in __dict__; lazy aliases do not.
+        module_dict = getattr(module, "__dict__", None)
+        if module_dict is None:
+            continue
+        for obj in module_dict.values():
+            if not isinstance(obj, type):
+                continue
             if obj in seen_classes or obj.__module__ != module.__name__:
                 continue
             try:
@@ -129,6 +138,7 @@ class _DeterministicIdentifiersByNameHint(ContextDecorator):
                     Identifier._next_id += 1
             identifier._id = identifier_id
             identifier._name_hint = name_hint
+            identifier.freeze()
 
         return patched_init
 

@@ -243,7 +243,12 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
           user code passes through unchanged.
 
         Run counters (``get_run_count`` / ``get_total_run_count``) increment
-        only for runs that actually executed (``should_run`` returned True).
+        once per ``execute(ir)`` invocation where ``should_run(ir)`` returned
+        True. The counter increments before ``run_pass`` is invoked, so a
+        pass that raises during ``run_pass``, ``validate_output``,
+        ``did_change``, or ``get_preserved_analyses`` still counts toward
+        its run total. Skipped runs (``should_run`` returned False) do not
+        count.
         """
         self._diagnostics = []
         self._guarded_validate_input(ir)
@@ -732,11 +737,21 @@ def register_pass(name: str, description: str) -> Callable[[_PassClassT], _PassC
             )
         with CompilerPass._registry_lock:
             existing = CompilerPass._registry.get(name)
-            if existing is not None and existing.pass_type is not pass_cls:
-                raise PassRegistrationError(
-                    f'Pass name "{name}" is already registered by '
-                    f"{existing.pass_type.__qualname__}."
-                )
+            if existing is not None:
+                if existing.pass_type is not pass_cls:
+                    raise PassRegistrationError(
+                        f'Pass name "{name}" is already registered by '
+                        f"{existing.pass_type.__qualname__} "
+                        f"with description {existing.description!r}."
+                    )
+                if existing.description != description:
+                    raise PassRegistrationError(
+                        f'Pass name "{name}" is already registered by '
+                        f"{pass_cls.__qualname__} with description "
+                        f"{existing.description!r}; refusing to overwrite "
+                        f"with new description {description!r}."
+                    )
+                return pass_cls
 
             pass_cls._pass_name = name
             pass_cls._pass_description = description

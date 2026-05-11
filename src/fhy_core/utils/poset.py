@@ -2,7 +2,7 @@
 
 __all__ = ["PartiallyOrderedSet"]
 
-from typing import Generic, Iterator, TypeVar
+from typing import Any, Callable, Generic, Iterator, TypeVar
 
 import networkx as nx  # type: ignore
 
@@ -24,7 +24,31 @@ class PartiallyOrderedSet(Generic[T]):
         return is_contain
 
     def __iter__(self) -> Iterator[T]:
+        """Iterate elements in some valid topological order.
+
+        The specific permutation among valid topological orders is
+        determined by networkx's internal algorithm and is not stable
+        across networkx versions or across graph mutations. Callers
+        that need a deterministic order should use :meth:`iter_stable`
+        instead.
+        """
         return iter(nx.topological_sort(self._graph))
+
+    def iter_stable(self, key: Callable[[T], Any] = repr) -> Iterator[T]:
+        """Iterate in a deterministic topological order using ``key`` to break ties.
+
+        Walks the same DAG as :meth:`__iter__` but uses networkx's
+        lexicographical topological sort, breaking ties between nodes at
+        the same topological level by the value of ``key(node)``. The
+        default key (``repr``) yields a stable order for any element
+        whose ``repr`` is itself stable; pass a custom key when the
+        elements have a more natural ordering.
+
+        Args:
+            key: A function from element to a sort key used to break
+                ties between nodes at the same topological level.
+        """
+        return iter(nx.lexicographical_topological_sort(self._graph, key=key))
 
     def __len__(self) -> int:
         return len(self._graph.nodes)

@@ -11,6 +11,7 @@ from fhy_core.pass_infrastructure import (
     VisitablePass,
 )
 from fhy_core.trait import VisitableMixin
+from fhy_core.trait.visitable import _camel_to_snake
 
 
 class ToyNode(VisitableMixin):
@@ -96,6 +97,33 @@ class ToyOpaqueConsumer(AnalysisVisitablePass[ToyOpaqueNode]):
 def test_visitable_default_kind_is_snake_case_class_name() -> None:
     """Test that the default visitor kind is snake case class name."""
     assert ToyNode.get_visit_method_suffix() == "toy_node"
+
+
+@pytest.mark.parametrize(
+    "class_name, expected_suffix",
+    [
+        pytest.param("BinaryExpression", "binary_expression", id="simple_camel"),
+        pytest.param("UnaryExpression", "unary_expression", id="unary_expression"),
+        pytest.param("IOError", "io_error", id="acronym_at_start"),
+        pytest.param("XMLParser", "xml_parser", id="three_letter_acronym"),
+        pytest.param(
+            "ABCExpression", "abc_expression", id="three_letter_acronym_with_word"
+        ),
+        pytest.param(
+            "SimpleHTTPSServer",
+            "simple_https_server",
+            id="acronym_in_middle",
+        ),
+        pytest.param("A", "a", id="single_char"),
+        pytest.param("a", "a", id="single_lowercase"),
+        pytest.param("already_snake", "already_snake", id="already_snake"),
+    ],
+)
+def test_camel_to_snake_handles_acronyms_and_simple_camel(
+    class_name: str, expected_suffix: str
+) -> None:
+    """Test ``_camel_to_snake`` produces canonical snake_case across patterns."""
+    assert _camel_to_snake(class_name) == expected_suffix
 
 
 def test_visitable_accept_uses_visitor_dispatch() -> None:

@@ -10,6 +10,7 @@ __all__ = [
     "NotInSetConstraint",
     "FhYCoreTypeError",
     "SymbolTableError",
+    "get_registered_errors",
     "register_error",
     "CompilerPass",
     "DiagnosticLevel",
@@ -44,7 +45,8 @@ __all__ = [
     "UnaryExpression",
     "UnaryOperation",
     "collect_identifiers",
-    "is_satisfiable",
+    "does_expression_imply",
+    "holds_for_all_free_assignments",
     "parse_expression",
     "pformat_expression",
     "replace_identifiers",
@@ -104,6 +106,7 @@ __all__ = [
     "BoundIntParam",
     "NatParam",
     "BoundNatParam",
+    "NumericParam",
     "OrdinalParam",
     "OrdinalValue",
     "Param",
@@ -196,7 +199,7 @@ from .constraint import (
     NotInSetConstraint,
 )
 from .diagnostic import Note, NoteKind
-from .error import register_error
+from .error import get_registered_errors, register_error
 from .expression import (
     BinaryExpression,
     BinaryOperation,
@@ -207,7 +210,8 @@ from .expression import (
     UnaryOperation,
     check_expression_type,
     collect_identifiers,
-    is_satisfiable,
+    does_expression_imply,
+    holds_for_all_free_assignments,
     parse_expression,
     pformat_expression,
     replace_identifiers,
@@ -237,6 +241,7 @@ from .param import (
     CategoricalValue,
     IntParam,
     NatParam,
+    NumericParam,
     OrdinalParam,
     OrdinalValue,
     Param,

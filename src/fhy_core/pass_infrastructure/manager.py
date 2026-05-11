@@ -12,6 +12,7 @@ __all__ = [
 ]
 
 import inspect
+import threading
 import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -93,14 +94,28 @@ class Analysis(ABC, Generic[_IRType, _AnalysisResultT]):
 
 
 class AnalysisManager(Generic[_IRType]):
-    """Caches analysis results and applies preservation/invalidation rules."""
+    """Caches analysis results and applies preservation/invalidation rules.
+
+    Thread-safe: all public methods may be called concurrently from multiple
+    threads, and the finalizer-driven cache eviction triggered by garbage
+    collection of cached IRs is also lock-guarded. Internal helper methods
+    are intended to be called only while the lock is already held; they do
+    not re-acquire it.
+
+    Cache identity uses ``id(ir)``. Cyclic-GC delays can cause spurious
+    cache misses if a Python id is reused before the original IR's finalizer
+    fires, but they cannot produce corrupted results: the second IR simply
+    fails to register a finalizer and runs uncached.
+    """
 
     _cache: dict[int, dict[Identifier, Any]]
     _finalizers: dict[int, Any]
+    _lock: threading.RLock
 
     def __init__(self) -> None:
         self._cache = {}
         self._finalizers = {}
+        self._lock = threading.RLock()
 
     def get(
         self, analysis_type: type[Analysis[_IRType, _AnalysisResultT]], ir: _IRType
@@ -115,23 +130,24 @@ class AnalysisManager(Generic[_IRType]):
             The analysis result for IR.
 
         """
-        if not self._is_cacheable_ir(ir):
-            self._drop_cached_ir(id(ir))
-            return analysis_type().run(ir)
-
-        ir_id = id(ir)
-        analysis_name = analysis_type.get_analysis_name()
-        bucket = self._cache.get(ir_id)
-        if bucket is None:
-            if not self._register_finalizer(ir, ir_id):
+        with self._lock:
+            if not self._is_cacheable_ir(ir):
+                self._drop_cached_ir(id(ir))
                 return analysis_type().run(ir)
-            bucket = {}
-            self._cache[ir_id] = bucket
-        if analysis_name in bucket:
-            return cast(_AnalysisResultT, bucket[analysis_name])
-        result = analysis_type().run(ir)
-        bucket[analysis_name] = result
-        return result
+
+            ir_id = id(ir)
+            analysis_name = analysis_type.get_analysis_name()
+            bucket = self._cache.get(ir_id)
+            if bucket is None:
+                if not self._register_finalizer(ir, ir_id):
+                    return analysis_type().run(ir)
+                bucket = {}
+                self._cache[ir_id] = bucket
+            if analysis_name in bucket:
+                return cast(_AnalysisResultT, bucket[analysis_name])
+            result = analysis_type().run(ir)
+            bucket[analysis_name] = result
+            return result
 
     def clear(self, ir: _IRType) -> None:
         """Clear all cached analyses for IR.
@@ -140,7 +156,8 @@ class AnalysisManager(Generic[_IRType]):
             ir: The IR to clear analyses for.
 
         """
-        self._drop_cached_ir(id(ir))
+        with self._lock:
+            self._drop_cached_ir(id(ir))
 
     def invalidate(self, ir: _IRType, preserved: PreservedAnalyses) -> None:
         """Invalidate non-preserved analyses for IR.
@@ -150,25 +167,26 @@ class AnalysisManager(Generic[_IRType]):
             preserved: The analyses to preserve.
 
         """
-        if not self._is_cacheable_ir(ir):
-            self._drop_cached_ir(id(ir))
-            return
+        with self._lock:
+            if not self._is_cacheable_ir(ir):
+                self._drop_cached_ir(id(ir))
+                return
 
-        ir_id = id(ir)
-        bucket = self._cache.get(ir_id)
-        if bucket is None:
-            return
-        if preserved.preserve_all:
-            return
-        analyses_to_drop = [
-            analysis_name
-            for analysis_name in bucket
-            if not preserved.is_preserved(analysis_name)
-        ]
-        for analysis_name in analyses_to_drop:
-            del bucket[analysis_name]
-        if not bucket:
-            self._drop_cached_ir(ir_id)
+            ir_id = id(ir)
+            bucket = self._cache.get(ir_id)
+            if bucket is None:
+                return
+            if preserved.preserve_all:
+                return
+            analyses_to_drop = [
+                analysis_name
+                for analysis_name in bucket
+                if not preserved.is_preserved(analysis_name)
+            ]
+            for analysis_name in analyses_to_drop:
+                del bucket[analysis_name]
+            if not bucket:
+                self._drop_cached_ir(ir_id)
 
     def transfer(
         self,
@@ -184,43 +202,44 @@ class AnalysisManager(Generic[_IRType]):
             preserved: The analyses to preserve across the replacement.
 
         """
-        from_cacheable = self._is_cacheable_ir(from_ir)
-        to_cacheable = self._is_cacheable_ir(to_ir)
-        if not from_cacheable and not to_cacheable:
-            return
-        if not from_cacheable:
-            self._drop_cached_ir(id(to_ir))
-            return
-
-        from_id = id(from_ir)
-        to_id = id(to_ir)
-        if from_id == to_id:
-            self.invalidate(from_ir, preserved)
-            return
-
-        from_bucket = self._cache.pop(from_id, {})
-        self._drop_finalizer(from_id)
-        self._drop_cached_ir(to_id)
-        if not from_bucket:
-            return
-        if not to_cacheable:
-            return
-
-        if preserved.preserve_all:
-            if not self._register_finalizer(to_ir, to_id):
+        with self._lock:
+            from_cacheable = self._is_cacheable_ir(from_ir)
+            to_cacheable = self._is_cacheable_ir(to_ir)
+            if not from_cacheable and not to_cacheable:
                 return
-            self._cache[to_id] = dict(from_bucket)
-            return
-
-        kept = {
-            analysis_name: result
-            for analysis_name, result in from_bucket.items()
-            if preserved.is_preserved(analysis_name)
-        }
-        if kept:
-            if not self._register_finalizer(to_ir, to_id):
+            if not from_cacheable:
+                self._drop_cached_ir(id(to_ir))
                 return
-            self._cache[to_id] = kept
+
+            from_id = id(from_ir)
+            to_id = id(to_ir)
+            if from_id == to_id:
+                self.invalidate(from_ir, preserved)
+                return
+
+            from_bucket = self._cache.pop(from_id, {})
+            self._drop_finalizer(from_id)
+            self._drop_cached_ir(to_id)
+            if not from_bucket:
+                return
+            if not to_cacheable:
+                return
+
+            if preserved.preserve_all:
+                if not self._register_finalizer(to_ir, to_id):
+                    return
+                self._cache[to_id] = dict(from_bucket)
+                return
+
+            kept = {
+                analysis_name: result
+                for analysis_name, result in from_bucket.items()
+                if preserved.is_preserved(analysis_name)
+            }
+            if kept:
+                if not self._register_finalizer(to_ir, to_id):
+                    return
+                self._cache[to_id] = kept
 
     @staticmethod
     def _is_cacheable_ir(ir: object) -> bool:
@@ -233,8 +252,9 @@ class AnalysisManager(Generic[_IRType]):
         manager = manager_ref()
         if manager is None:
             return
-        manager._cache.pop(ir_id, None)
-        manager._finalizers.pop(ir_id, None)
+        with manager._lock:
+            manager._cache.pop(ir_id, None)
+            manager._finalizers.pop(ir_id, None)
 
     def _register_finalizer(self, ir: object, ir_id: int) -> bool:
         if ir_id in self._finalizers:

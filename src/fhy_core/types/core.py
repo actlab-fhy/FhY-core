@@ -22,6 +22,11 @@ from collections.abc import Sequence
 from types import EllipsisType
 from typing import TypedDict, TypeGuard
 
+try:
+    from typing import assert_never
+except ImportError:  # pragma: no cover - Python 3.10 fallback
+    from typing_extensions import assert_never
+
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -120,6 +125,8 @@ def get_core_data_type_bit_width(core_data_type: CoreDataType) -> int | None:
             return 64
         case CoreDataType.COMPLEX128:
             return 128
+        case _:
+            assert_never(core_data_type)
 
 
 def is_weak_core_data_type(core_data_type: CoreDataType) -> bool:
@@ -294,13 +301,19 @@ def _get_smallest_int_core_data_type(literal: int) -> CoreDataType:
 
 
 def _resolve_to_concrete_float_complex(target: CoreDataType) -> CoreDataType:
-    return CoreDataType.FLOAT16 if target == CoreDataType.FLOAT else target
+    return CoreDataType.FLOAT64 if target == CoreDataType.FLOAT else target
 
 
 def resolve_literal_core_data_type(
     literal: int | float, core_data_type: CoreDataType
 ) -> CoreDataType:
-    """Resolve a weak literal type to the narrowest compatible concrete type.
+    """Resolve a weak literal type to a concrete type compatible with the context.
+
+    Integer literals resolve to the narrowest concrete integer type that
+    represents the value (consistent with the integer lattice). Floating-
+    point literals paired with the weak ``FLOAT`` context resolve to
+    ``FLOAT64`` (matching Python's native ``float`` precision); narrower
+    concrete float types must be requested explicitly via the context.
 
     Args:
         literal: Literal value whose concrete type should be resolved.

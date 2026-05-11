@@ -1,8 +1,8 @@
 """Tests for the `NatParam` constraint-detection helper predicates.
 
-The three helpers — ``is_the_basic_nat_param_constraint``,
+The three helpers - ``is_the_basic_nat_param_constraint``,
 ``is_zero_included_constraint_exists``, and ``is_zero_not_included_constraint_exists``
-— each match a constraint expression of a fixed shape: ``variable >= 0`` or
+- each match a constraint expression of a fixed shape: ``variable >= 0`` or
 ``variable > 0``. The tests in this file build constraints whose expression
 breaks exactly one conjunct of the predicate at a time, so each ``and→or``
 weakening, each ``==``-vs-``is``/``is not`` swap, and each ``right.value``

@@ -1298,361 +1298,34 @@ def test_division_with_one_index_operand_uses_division_specific_message(
 
 
 # =============================================================================
-# Index + index
+# Index op index (rejected)
 # =============================================================================
+#
+# The type checker rejects every binary operation between two index types:
+# the sum or difference of two strided ranges is not in general a strided
+# range, so the result cannot be safely inferred as another ``IndexType``.
+# Shift (``index +/- int``) and scale (``index * int literal``) remain
+# supported and are exercised in adjacent sections of this file.
 
 
-def test_index_plus_index_combines_bounds_when_strides_are_both_unit() -> None:
-    """Test index addition sums bounds and keeps unit stride when both are unit."""
-    left = Identifier("i")
-    right = Identifier("j")
-    left_index = IndexType(
-        LiteralExpression(1), LiteralExpression(10), LiteralExpression(1)
-    )
-    right_index = IndexType(
-        LiteralExpression(1), LiteralExpression(5), LiteralExpression(1)
-    )
-    checker = make_identifier_checker(
-        {
-            left: (left_index, TypeQualifier.PARAM),
-            right: (right_index, TypeQualifier.PARAM),
-        }
-    )
+@pytest.mark.parametrize(
+    "operation",
+    [
+        BinaryOperation.ADD,
+        BinaryOperation.SUBTRACT,
+        BinaryOperation.MULTIPLY,
+        BinaryOperation.MODULO,
+        BinaryOperation.POWER,
+    ],
+)
+def test_index_index_binary_operation_is_rejected(
+    operation: BinaryOperation,
+) -> None:
+    """Test every binary operation between two ``IndexType`` operands is rejected.
 
-    result_type, result_qualifier = checker.visit(
-        BinaryExpression(
-            BinaryOperation.ADD,
-            IdentifierExpression(left),
-            IdentifierExpression(right),
-        )
-    )
-
-    expected = IndexType(
-        LiteralExpression(1) + LiteralExpression(1),
-        LiteralExpression(10) + LiteralExpression(5),
-        LiteralExpression(1),
-    )
-    assert result_type.is_structurally_equivalent(expected)
-    assert result_qualifier is TypeQualifier.PARAM
-
-
-def test_index_plus_index_preserves_matching_stride() -> None:
-    """Test index addition with matching integer strides keeps that stride."""
-    left = Identifier("i")
-    right = Identifier("j")
-    left_index = IndexType(
-        LiteralExpression(1), LiteralExpression(10), LiteralExpression(2)
-    )
-    right_index = IndexType(
-        LiteralExpression(1), LiteralExpression(6), LiteralExpression(2)
-    )
-    checker = make_identifier_checker(
-        {
-            left: (left_index, TypeQualifier.PARAM),
-            right: (right_index, TypeQualifier.PARAM),
-        }
-    )
-
-    result_type, _ = checker.visit(
-        BinaryExpression(
-            BinaryOperation.ADD,
-            IdentifierExpression(left),
-            IdentifierExpression(right),
-        )
-    )
-
-    expected = IndexType(
-        LiteralExpression(1) + LiteralExpression(1),
-        LiteralExpression(10) + LiteralExpression(6),
-        LiteralExpression(2),
-    )
-    assert result_type.is_structurally_equivalent(expected)
-
-
-def test_index_plus_index_unit_stride_dominates_non_unit_stride() -> None:
-    """Test combining unit stride with stride `2` yields unit stride via `min`."""
-    left = Identifier("i")
-    right = Identifier("j")
-    left_index = IndexType(
-        LiteralExpression(1), LiteralExpression(10), LiteralExpression(1)
-    )
-    right_index = IndexType(
-        LiteralExpression(1), LiteralExpression(6), LiteralExpression(2)
-    )
-    checker = make_identifier_checker(
-        {
-            left: (left_index, TypeQualifier.PARAM),
-            right: (right_index, TypeQualifier.PARAM),
-        }
-    )
-
-    result_type, _ = checker.visit(
-        BinaryExpression(
-            BinaryOperation.ADD,
-            IdentifierExpression(left),
-            IdentifierExpression(right),
-        )
-    )
-
-    expected = IndexType(
-        LiteralExpression(1) + LiteralExpression(1),
-        LiteralExpression(10) + LiteralExpression(6),
-        LiteralExpression(1),
-    )
-    assert result_type.is_structurally_equivalent(expected)
-
-
-def test_index_plus_index_uses_min_of_literal_strides() -> None:
-    """Test mismatched literal strides combine via `min`: `min(2, 3) == 2`."""
-    left = Identifier("i")
-    right = Identifier("j")
-    left_index = IndexType(
-        LiteralExpression(1), LiteralExpression(10), LiteralExpression(2)
-    )
-    right_index = IndexType(
-        LiteralExpression(1), LiteralExpression(9), LiteralExpression(3)
-    )
-    checker = make_identifier_checker(
-        {
-            left: (left_index, TypeQualifier.PARAM),
-            right: (right_index, TypeQualifier.PARAM),
-        }
-    )
-
-    result_type, _ = checker.visit(
-        BinaryExpression(
-            BinaryOperation.ADD,
-            IdentifierExpression(left),
-            IdentifierExpression(right),
-        )
-    )
-
-    expected = IndexType(
-        LiteralExpression(1) + LiteralExpression(1),
-        LiteralExpression(10) + LiteralExpression(9),
-        LiteralExpression(2),
-    )
-    assert result_type.is_structurally_equivalent(expected)
-
-
-def test_index_plus_index_rejects_non_literal_stride() -> None:
-    """Test combining indices where at least one stride is non-literal is rejected."""
-    left = Identifier("i")
-    right = Identifier("j")
-    stride_identifier = Identifier("s")
-    left_index = IndexType(
-        LiteralExpression(1),
-        LiteralExpression(10),
-        IdentifierExpression(stride_identifier),
-    )
-    right_index = IndexType(
-        LiteralExpression(1), LiteralExpression(6), LiteralExpression(1)
-    )
-    checker = make_identifier_checker(
-        {
-            left: (left_index, TypeQualifier.PARAM),
-            right: (right_index, TypeQualifier.PARAM),
-        }
-    )
-
-    with pytest.raises(
-        FhYCoreTypeError,
-        match=r"combining two index types requires both strides to be integer literals",
-    ):
-        checker.visit(
-            BinaryExpression(
-                BinaryOperation.ADD,
-                IdentifierExpression(left),
-                IdentifierExpression(right),
-            )
-        )
-
-
-def test_index_plus_index_with_symbolic_bounds() -> None:
-    """Test two indices with symbolic upper bounds combine via bound addition."""
-    left = Identifier("i")
-    right = Identifier("j")
-    upper_n = Identifier("N")
-    upper_m = Identifier("M")
-    left_index = IndexType(
-        LiteralExpression(1), IdentifierExpression(upper_n), LiteralExpression(1)
-    )
-    right_index = IndexType(
-        LiteralExpression(1), IdentifierExpression(upper_m), LiteralExpression(1)
-    )
-    checker = make_identifier_checker(
-        {
-            left: (left_index, TypeQualifier.PARAM),
-            right: (right_index, TypeQualifier.PARAM),
-        }
-    )
-
-    result_type, _ = checker.visit(
-        BinaryExpression(
-            BinaryOperation.ADD,
-            IdentifierExpression(left),
-            IdentifierExpression(right),
-        )
-    )
-
-    expected = IndexType(
-        LiteralExpression(1) + LiteralExpression(1),
-        IdentifierExpression(upper_n) + IdentifierExpression(upper_m),
-        LiteralExpression(1),
-    )
-    assert result_type.is_structurally_equivalent(expected)
-
-
-def test_nested_index_plus_index_synthesizes_bottom_up_on_left() -> None:
-    """Test `(a + b) + c` synthesizes the left subtree first, chaining strides."""
-    a = Identifier("a")
-    b = Identifier("b")
-    c = Identifier("c")
-    idx_a = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(2))
-    idx_b = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(3))
-    idx_c = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(6))
-    checker = make_identifier_checker(
-        {
-            a: (idx_a, TypeQualifier.PARAM),
-            b: (idx_b, TypeQualifier.PARAM),
-            c: (idx_c, TypeQualifier.PARAM),
-        }
-    )
-
-    result_type, _ = checker.visit(
-        BinaryExpression(
-            BinaryOperation.ADD,
-            BinaryExpression(
-                BinaryOperation.ADD,
-                IdentifierExpression(a),
-                IdentifierExpression(b),
-            ),
-            IdentifierExpression(c),
-        )
-    )
-
-    expected = IndexType(
-        (LiteralExpression(1) + LiteralExpression(1)) + LiteralExpression(1),
-        (LiteralExpression(10) + LiteralExpression(10)) + LiteralExpression(10),
-        LiteralExpression(2),
-    )
-    assert result_type.is_structurally_equivalent(expected)
-
-
-def test_nested_index_plus_index_synthesizes_bottom_up_on_right() -> None:
-    """Test `a + (b + c)` synthesizes the right subtree first, chaining strides."""
-    a = Identifier("a")
-    b = Identifier("b")
-    c = Identifier("c")
-    idx_a = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(6))
-    idx_b = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(2))
-    idx_c = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(3))
-    checker = make_identifier_checker(
-        {
-            a: (idx_a, TypeQualifier.PARAM),
-            b: (idx_b, TypeQualifier.PARAM),
-            c: (idx_c, TypeQualifier.PARAM),
-        }
-    )
-
-    result_type, _ = checker.visit(
-        BinaryExpression(
-            BinaryOperation.ADD,
-            IdentifierExpression(a),
-            BinaryExpression(
-                BinaryOperation.ADD,
-                IdentifierExpression(b),
-                IdentifierExpression(c),
-            ),
-        )
-    )
-
-    expected = IndexType(
-        LiteralExpression(1) + (LiteralExpression(1) + LiteralExpression(1)),
-        LiteralExpression(10) + (LiteralExpression(10) + LiteralExpression(10)),
-        LiteralExpression(2),
-    )
-    assert result_type.is_structurally_equivalent(expected)
-
-
-def test_scaled_shifted_index_plus_index_synthesizes_bottom_up() -> None:
-    """Test ``2 * (i1 - 1) + i2`` synthesizes scale, shift, and combine in order."""
-    i1 = Identifier("i1")
-    i2 = Identifier("i2")
-    index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
-    checker = make_identifier_checker(
-        {
-            i1: (index, TypeQualifier.PARAM),
-            i2: (index, TypeQualifier.PARAM),
-        }
-    )
-
-    result_type, _ = checker.visit(
-        BinaryExpression(
-            BinaryOperation.ADD,
-            BinaryExpression(
-                BinaryOperation.MULTIPLY,
-                LiteralExpression(2),
-                BinaryExpression(
-                    BinaryOperation.SUBTRACT,
-                    IdentifierExpression(i1),
-                    LiteralExpression(1),
-                ),
-            ),
-            IdentifierExpression(i2),
-        )
-    )
-
-    expected = IndexType(
-        (LiteralExpression(2) * (LiteralExpression(1) - LiteralExpression(1)))
-        + LiteralExpression(1),
-        (LiteralExpression(2) * (LiteralExpression(10) - LiteralExpression(1)))
-        + LiteralExpression(10),
-        LiteralExpression(1),
-    )
-    assert result_type.is_structurally_equivalent(expected)
-
-
-def test_shifted_index_plus_index_propagates_stride_bottom_up() -> None:
-    """Test ``(a + 1) + b`` keeps ``a``'s stride through the scalar shift."""
-    a = Identifier("a")
-    b = Identifier("b")
-    idx_a = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(2))
-    idx_b = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(3))
-    checker = make_identifier_checker(
-        {
-            a: (idx_a, TypeQualifier.PARAM),
-            b: (idx_b, TypeQualifier.PARAM),
-        }
-    )
-
-    result_type, _ = checker.visit(
-        BinaryExpression(
-            BinaryOperation.ADD,
-            BinaryExpression(
-                BinaryOperation.ADD,
-                IdentifierExpression(a),
-                LiteralExpression(1),
-            ),
-            IdentifierExpression(b),
-        )
-    )
-
-    expected = IndexType(
-        (LiteralExpression(1) + LiteralExpression(1)) + LiteralExpression(1),
-        (LiteralExpression(10) + LiteralExpression(1)) + LiteralExpression(10),
-        LiteralExpression(2),
-    )
-    assert result_type.is_structurally_equivalent(expected)
-
-
-# =============================================================================
-# Index - index and other non-additive index arithmetic
-# =============================================================================
-
-
-def test_index_minus_index_uses_stride_semantics_error_message() -> None:
-    """Test subtracting two indices raises with the stride-semantics reason."""
+    ``DIVIDE`` and ``FLOOR_DIVIDE`` hit an earlier, more specific
+    division-not-defined branch and are tested separately.
+    """
     left = Identifier("i")
     right = Identifier("j")
     index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
@@ -1663,10 +1336,10 @@ def test_index_minus_index_uses_stride_semantics_error_message() -> None:
         }
     )
 
-    with pytest.raises(FhYCoreTypeError, match="stride semantics"):
+    with pytest.raises(FhYCoreTypeError, match="between two index types"):
         checker.visit(
             BinaryExpression(
-                BinaryOperation.SUBTRACT,
+                operation,
                 IdentifierExpression(left),
                 IdentifierExpression(right),
             )
@@ -1675,21 +1348,15 @@ def test_index_minus_index_uses_stride_semantics_error_message() -> None:
 
 @pytest.mark.parametrize(
     "operation",
-    [
-        BinaryOperation.MULTIPLY,
-        BinaryOperation.DIVIDE,
-        BinaryOperation.FLOOR_DIVIDE,
-        BinaryOperation.MODULO,
-        BinaryOperation.POWER,
-    ],
+    [BinaryOperation.DIVIDE, BinaryOperation.FLOOR_DIVIDE],
 )
-def test_non_additive_index_index_operation_does_not_use_stride_semantics_message(
+def test_index_index_division_uses_specific_division_message(
     operation: BinaryOperation,
 ) -> None:
-    """Test non-additive index-index operations use a generic (non-stride) message."""
+    """Test ``DIVIDE``/``FLOOR_DIVIDE`` between indices use the division-error path."""
     left = Identifier("i")
     right = Identifier("j")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
+    index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker(
         {
             left: (index, TypeQualifier.PARAM),
@@ -1697,7 +1364,9 @@ def test_non_additive_index_index_operation_does_not_use_stride_semantics_messag
         }
     )
 
-    with pytest.raises(FhYCoreTypeError) as exc_info:
+    with pytest.raises(
+        FhYCoreTypeError, match="division is not defined for operands of index type"
+    ):
         checker.visit(
             BinaryExpression(
                 operation,
@@ -1705,7 +1374,6 @@ def test_non_additive_index_index_operation_does_not_use_stride_semantics_messag
                 IdentifierExpression(right),
             )
         )
-    assert "stride semantics" not in str(exc_info.value)
 
 
 # =============================================================================
@@ -1776,7 +1444,7 @@ def test_type_error_from_check_includes_root_expression() -> None:
 
 
 # =============================================================================
-# Behavioural fine-tuning — pinning specific code paths
+# Behavioural fine-tuning - pinning specific code paths
 # =============================================================================
 
 
@@ -1812,31 +1480,6 @@ def test_check_arithmetic_of_literals_against_index_uses_general_message() -> No
         )
 
 
-def test_synthesize_multiply_of_two_indices_uses_between_indices_message() -> None:
-    """Test ``synthesize(MULTIPLY(idx, idx))`` reports the both-indices error."""
-    left = Identifier("i")
-    right = Identifier("j")
-    index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
-    checker = make_identifier_checker(
-        {
-            left: (index, TypeQualifier.PARAM),
-            right: (index, TypeQualifier.PARAM),
-        }
-    )
-
-    with pytest.raises(
-        FhYCoreTypeError,
-        match=r"the multiply operation is not defined between two index types",
-    ):
-        checker.visit(
-            BinaryExpression(
-                BinaryOperation.MULTIPLY,
-                IdentifierExpression(left),
-                IdentifierExpression(right),
-            )
-        )
-
-
 @pytest.mark.parametrize(
     "operation",
     [BinaryOperation.MODULO, BinaryOperation.POWER],
@@ -1855,35 +1498,6 @@ def test_synthesize_non_additive_index_and_scalar_uses_operands_of_types_message
                 operation,
                 IdentifierExpression(identifier),
                 LiteralExpression(5),
-            )
-        )
-
-
-def test_synthesize_index_plus_index_with_float_stride_uses_int_only_reason() -> None:
-    """Test combining indices with a float-literal stride hits the int-only check."""
-    left = Identifier("i")
-    right = Identifier("j")
-    float_stride_index = IndexType(
-        LiteralExpression(1), LiteralExpression(10), LiteralExpression(2.5)
-    )
-    int_stride_index = IndexType(
-        LiteralExpression(1), LiteralExpression(10), LiteralExpression(2)
-    )
-    checker = make_identifier_checker(
-        {
-            left: (float_stride_index, TypeQualifier.PARAM),
-            right: (int_stride_index, TypeQualifier.PARAM),
-        }
-    )
-
-    with pytest.raises(
-        FhYCoreTypeError, match=r"an index stride literal must be an integer"
-    ):
-        checker.visit(
-            BinaryExpression(
-                BinaryOperation.ADD,
-                IdentifierExpression(left),
-                IdentifierExpression(right),
             )
         )
 

@@ -2,18 +2,25 @@
 
 __all__ = ["Visitable", "VisitableMixin"]
 
+import re
 from abc import ABC
 from collections.abc import Sequence
 from typing import Any, Protocol
 
+_CAMEL_SPLIT_BEFORE_UPPER_LOWER = re.compile(r"(.)([A-Z][a-z]+)")
+_CAMEL_SPLIT_AT_LOWER_THEN_UPPER = re.compile(r"([a-z0-9])([A-Z])")
+
 
 def _camel_to_snake(text: str) -> str:
-    chars: list[str] = []
-    for index, char in enumerate(text):
-        if index > 0 and char.isupper():
-            chars.append("_")
-        chars.append(char.lower())
-    return "".join(chars)
+    """Convert a ``CamelCase`` or ``camelCase`` identifier to ``snake_case``.
+
+    Acronyms collapse to a single segment: ``IOError`` becomes ``io_error``,
+    ``XMLParser`` becomes ``xml_parser``, ``ABCExpression`` becomes
+    ``abc_expression``.
+    """
+    text = _CAMEL_SPLIT_BEFORE_UPPER_LOWER.sub(r"\1_\2", text)
+    text = _CAMEL_SPLIT_AT_LOWER_THEN_UPPER.sub(r"\1_\2", text)
+    return text.lower()
 
 
 class _SupportsVisit(Protocol):

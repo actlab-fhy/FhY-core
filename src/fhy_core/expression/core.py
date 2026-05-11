@@ -676,4 +676,8 @@ def _(expression: IdentifierExpression, other: object) -> bool:
 
 @_is_expression_structurally_equivalent.register
 def _(expression: LiteralExpression, other: object) -> bool:
-    return isinstance(other, LiteralExpression) and expression.value == other.value
+    return (
+        isinstance(other, LiteralExpression)
+        and type(expression.value) is type(other.value)
+        and expression.value == other.value
+    )

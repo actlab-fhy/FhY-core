@@ -745,7 +745,7 @@ def test_register_serializable_rejects_canonical_id_conflict() -> None:
     """Test re-registering a class with a different canonical id raises.
 
     Existing id is built from string fragments so it isn't the same string
-    object as the comparison target — value-equality must drive the check.
+    object as the comparison target - value-equality must drive the check.
     """
     existing_id = "tests." + "ConstructedId" + "!"
 
@@ -1313,3 +1313,73 @@ def test_wrapped_family_rejects_invalid_envelope(
     """Test the base class rejects payloads that aren't a valid family envelope."""
     with pytest.raises(SerializationError, match=match):
         _CustomNodeBase.deserialize_from_dict(payload)
+
+
+# =============================================================================
+# Float precision + NaN/Infinity rejection
+# =============================================================================
+
+
+@register_serializable
+@dataclass(frozen=True)
+class _FloatBox(Serializable):
+    """Serializable holding a single float field for round-trip tests."""
+
+    value: float
+
+    def serialize_to_dict(self) -> dict[str, Any]:
+        return {"value": self.value}
+
+    @classmethod
+    def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_FloatBox":
+        return cls(value=float(data["value"]))
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        0.0,
+        1.0,
+        -1.0,
+        3.141592653589793,
+        2.718281828459045,
+        1e-300,
+        1e300,
+        1.7976931348623157e308,
+        5e-324,
+    ],
+)
+def test_float_round_trips_exactly_through_json_binary_codec(value: float) -> None:
+    """Test finite float values round-trip exactly through the JSON binary codec."""
+    blob = _FloatBox(value).to_bytes()
+    restored = Serializable.from_bytes(blob)
+    assert isinstance(restored, _FloatBox)
+    assert restored.value == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+    ],
+)
+def test_to_bytes_rejects_nan_and_infinity(value: float) -> None:
+    """Test ``to_bytes`` raises ``SerializationValueError`` for NaN/Infinity."""
+    with pytest.raises(SerializationValueError, match="JSON-finite"):
+        _FloatBox(value).to_bytes()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+    ],
+)
+def test_to_json_rejects_nan_and_infinity(value: float) -> None:
+    """Test ``to_json`` rejects NaN/Infinity with a ``SerializationValueError``."""
+    with pytest.raises(SerializationValueError, match="JSON-finite"):
+        _FloatBox(value).to_json()

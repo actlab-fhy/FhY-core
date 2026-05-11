@@ -153,7 +153,7 @@ def test_in_set_constraint_collapses_bool_and_int_per_python_set_semantics() -> 
     """Test ``InSetConstraint(x, {1})`` treats ``True`` and ``1.0`` as members.
 
     Python sets collapse equal-and-equal-hash values; ``1 == True`` and
-    ``hash(1) == hash(True)``. The constraint inherits — not overrides —
+    ``hash(1) == hash(True)``. The constraint inherits - not overrides -
     that behavior.
     """
     constraint: InSetConstraint[Any] = InSetConstraint(mock_identifier("x", 0), {1})

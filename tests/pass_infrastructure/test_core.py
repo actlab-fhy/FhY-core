@@ -420,6 +420,38 @@ def test_run_counter_counts_only_real_executions() -> None:
     assert CompilerPass.get_total_run_count() == total_before + 2
 
 
+def test_run_counter_counts_attempts_even_when_run_pass_raises() -> None:
+    """Test run counters increment for a pass that crashes inside ``run_pass``."""
+
+    @register_pass(
+        "tests.counter.crashes_in_run_pass",
+        "Pass that always raises inside run_pass.",
+    )
+    class CrashingRunPass(CompilerPass[int, int]):
+        def get_noop_output(self, ir: int) -> int:
+            return ir
+
+        def run_pass(self, ir: int) -> int:
+            raise RuntimeError("intentional crash in run_pass")
+
+    per_before = CrashingRunPass.get_run_count()
+    total_before = CompilerPass.get_total_run_count()
+    compiler_pass = CrashingRunPass()
+
+    with pytest.raises(PassExecutionError):
+        compiler_pass.execute(1)
+
+    assert CrashingRunPass.get_run_count() == per_before + 1
+    assert CompilerPass.get_total_run_count() == total_before + 1
+
+    # A second crashed attempt still counts.
+    with pytest.raises(PassExecutionError):
+        compiler_pass.execute(2)
+
+    assert CrashingRunPass.get_run_count() == per_before + 2
+    assert CompilerPass.get_total_run_count() == total_before + 2
+
+
 # ---------------------------------------------------------------------------
 # register_pass input validation.
 # ---------------------------------------------------------------------------
@@ -458,6 +490,27 @@ def test_register_pass_rejects_non_compiler_pass_class() -> None:
         @register_pass("tests.register.bad_class", "Not a CompilerPass.")
         class _NotAPass:  # type: ignore[type-var]  # test: deliberately invalid input
             pass
+
+
+def test_register_pass_rejects_same_class_with_different_description() -> None:
+    """Test re-registering the same class with a different description raises."""
+
+    @register_pass("tests.register.mismatch", "Original description.")
+    class MismatchPass(CompilerPass[int, int]):
+        def get_noop_output(self, ir: int) -> int:
+            return ir
+
+        def run_pass(self, ir: int) -> int:
+            return ir
+
+    with pytest.raises(PassRegistrationError, match="refusing to overwrite"):
+        register_pass("tests.register.mismatch", "A different description.")(
+            MismatchPass
+        )
+
+    # The original description must remain intact.
+    registered = CompilerPass.get_registered_passes()["tests.register.mismatch"]
+    assert registered.description == "Original description."
 
 
 def test_register_pass_is_idempotent_for_same_class() -> None:

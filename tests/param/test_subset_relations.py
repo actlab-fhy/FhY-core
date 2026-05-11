@@ -10,7 +10,7 @@ from fhy_core.param import (
 )
 
 # =============================================================================
-# Same-class subset relations — RealParam / IntParam
+# Same-class subset relations - RealParam / IntParam
 # =============================================================================
 
 
@@ -77,7 +77,7 @@ def test_ordinal_param_is_subset_returns_false_against_categorical_param() -> No
 
 
 # =============================================================================
-# is_value_set_subset — RealParam / IntParam
+# is_value_set_subset - RealParam / IntParam
 # =============================================================================
 
 
@@ -384,3 +384,89 @@ def test_perm_param_is_value_set_subset_returns_false_against_non_perm() -> None
     perm: PermParam[int] = PermParam([1, 2, 3])
     not_perm: OrdinalParam[int] = OrdinalParam([1, 2, 3])
     assert not perm.is_value_set_subset(not_perm)  # type: ignore[arg-type]  # test: cross class
+
+
+# =============================================================================
+# Discrete-set subset semantics (no Z3 path)
+# =============================================================================
+
+
+def test_categorical_param_subset_with_string_values_does_not_raise() -> None:
+    """Test `CategoricalParam.is_subset` works for non-numeric string categories."""
+    smaller: CategoricalParam[str] = CategoricalParam(["red", "blue"])
+    larger: CategoricalParam[str] = CategoricalParam(["red", "blue", "green"])
+
+    assert smaller.is_subset(larger)
+    assert not larger.is_subset(smaller)
+
+
+def test_categorical_param_subset_with_int_values() -> None:
+    """Test ``CategoricalParam.is_subset`` over int categories using set semantics."""
+    smaller: CategoricalParam[int] = CategoricalParam([1, 2])
+    larger: CategoricalParam[int] = CategoricalParam([1, 2, 3])
+
+    assert smaller.is_subset(larger)
+    assert not larger.is_subset(smaller)
+
+
+def test_categorical_param_subset_respects_in_set_constraint() -> None:
+    """Test ``CategoricalParam.is_subset`` honors an ``InSetConstraint`` narrowing."""
+    universe: CategoricalParam[int] = CategoricalParam([1, 2, 3])
+    restricted = universe.add_constraint(InSetConstraint(universe.variable, {1, 2}))
+
+    assert restricted.is_subset(universe)
+    assert not universe.is_subset(restricted)
+
+
+def test_ordinal_param_subset_with_int_values() -> None:
+    """Test ``OrdinalParam.is_subset`` over integer values using set semantics."""
+    smaller: OrdinalParam[int] = OrdinalParam([1, 2])
+    larger: OrdinalParam[int] = OrdinalParam([1, 2, 3])
+
+    assert smaller.is_subset(larger)
+    assert not larger.is_subset(smaller)
+
+
+def test_ordinal_param_subset_respects_in_set_constraint() -> None:
+    """Test ``OrdinalParam.is_subset`` honors an ``InSetConstraint`` narrowing."""
+    universe: OrdinalParam[int] = OrdinalParam([1, 2, 3])
+    restricted = universe.add_constraint(InSetConstraint(universe.variable, {1, 2}))
+
+    assert restricted.is_subset(universe)
+    assert not universe.is_subset(restricted)
+
+
+def test_perm_param_subset_distinguishes_different_member_sets() -> None:
+    """Test ``PermParam.is_subset`` returns False when member sets differ.
+
+    Different universes produce disjoint permutation sets, so neither
+    direction holds.
+    """
+    smaller: PermParam[int] = PermParam([1, 2])
+    larger: PermParam[int] = PermParam([1, 2, 3])
+
+    assert not smaller.is_subset(larger)
+    assert not larger.is_subset(smaller)
+
+
+def test_perm_param_subset_respects_in_set_constraint() -> None:
+    """Test ``PermParam.is_subset`` honors an ``InSetConstraint`` narrowing."""
+    universe: PermParam[int] = PermParam([1, 2])
+    restricted = universe.add_constraint(InSetConstraint(universe.variable, {(1, 2)}))
+
+    assert restricted.is_subset(universe)
+    assert not universe.is_subset(restricted)
+
+
+def test_discrete_params_reject_cross_class_subset_check() -> None:
+    """Test ``is_subset`` returns False across distinct discrete-param classes."""
+    cat: CategoricalParam[int] = CategoricalParam([1])
+    ordinal: OrdinalParam[int] = OrdinalParam([1])
+    perm: PermParam[int] = PermParam([1])
+
+    assert not cat.is_subset(ordinal)  # type: ignore[arg-type]  # test: cross class
+    assert not cat.is_subset(perm)  # type: ignore[arg-type]  # test: cross class
+    assert not ordinal.is_subset(cat)  # type: ignore[arg-type]  # test: cross class
+    assert not ordinal.is_subset(perm)  # type: ignore[arg-type]  # test: cross class
+    assert not perm.is_subset(cat)  # type: ignore[arg-type]  # test: cross class
+    assert not perm.is_subset(ordinal)  # type: ignore[arg-type]  # test: cross class

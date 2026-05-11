@@ -1,5 +1,7 @@
 """Tests the testing patches."""
 
+import warnings
+
 import pytest
 
 from fhy_core.expression.core import LiteralExpression
@@ -158,3 +160,18 @@ def test_deterministic_identifiers_by_name_hint_supports_nested_usage() -> None:
         assert outer_a == outer_b
 
     assert Identifier.__init__ is original_init
+
+
+# =============================================================================
+# fail_fast_structural_equivalence does not trigger deprecation warnings
+# =============================================================================
+
+
+def test_fail_fast_structural_equivalence_does_not_trigger_deprecation_warnings() -> (
+    None
+):
+    """Test entering the context does not raise ``DeprecationWarning``."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        with fail_fast_structural_equivalence():
+            pass

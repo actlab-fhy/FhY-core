@@ -5,7 +5,7 @@ from typing import cast
 import pytest
 
 from fhy_core.identifier import Identifier
-from fhy_core.param import BoundNatParam
+from fhy_core.param import BoundIntParam, BoundNatParam
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -43,7 +43,7 @@ def test_bound_nat_param_init_defaults_to_prefer_inclusive_true() -> None:
     """Test `BoundNatParam()` defaults to ``prefer_inclusive=True``.
 
     Constructs the param via the bare ``BoundNatParam()`` constructor (no
-    classmethod) so the `__init__` default is the *only* default in play —
+    classmethod) so the `__init__` default is the *only* default in play -
     inherited classmethods like `with_lower_bound` carry their own
     ``prefer_inclusive`` default and pass it explicitly to ``cls(...)``,
     which masks the `__init__` default. Verifies via the constraint form
@@ -79,7 +79,7 @@ def test_bound_nat_param_deserialize_round_trip_preserves_zero_excluded_flag() -
     leaves admissibility unchanged on every integer (the basic ``var > 0``
     constraint from the payload survives the filter alongside the
     constructor's added ``var >= 0``), so ``is_value_valid`` cannot
-    discriminate the two. Asserts structural equivalence instead — the
+    discriminate the two. Asserts structural equivalence instead - the
     mutant produces a param with two constraints and ``_is_zero_included =
     True``, which is not structurally equivalent to the original.
     """
@@ -110,3 +110,58 @@ def test_bound_nat_param_deserialize_rejects_payload_without_basic_constraint() 
     payload["__data__"]["constraints"] = []  # type: ignore[index]  # test: modify serialized
     with pytest.raises(DeserializationValueError):
         BoundNatParam.deserialize_from_dict(payload)
+
+
+# =============================================================================
+# Arithmetic type preservation vs. widening
+# =============================================================================
+
+
+def test_bound_nat_param_plus_bound_nat_param_preserves_class() -> None:
+    """Test ``BoundNatParam + BoundNatParam`` returns a ``BoundNatParam``."""
+    left = BoundNatParam.between(0, 5)
+    right = BoundNatParam.between(0, 3)
+    result = left + right
+    assert isinstance(result, BoundNatParam)
+
+
+def test_bound_nat_param_plus_int_literal_widens_to_bound_int_param() -> None:
+    """Test ``BoundNatParam + int`` widens to ``BoundIntParam`` via coercion."""
+    left = BoundNatParam.between(1, 5)
+    result = left + 2
+    assert isinstance(result, BoundIntParam)
+    assert not isinstance(result, BoundNatParam)
+
+
+def test_bound_nat_param_minus_bound_nat_param_widens_to_bound_int_param() -> None:
+    """Test ``BoundNatParam - BoundNatParam`` widens to ``BoundIntParam``."""
+    left = BoundNatParam.between(0, 3)
+    right = BoundNatParam.between(0, 5)
+    result = left - right
+    assert isinstance(result, BoundIntParam)
+    assert not isinstance(result, BoundNatParam)
+
+
+def test_negation_of_bound_nat_param_widens_to_bound_int_param() -> None:
+    """Test ``-BoundNatParam`` widens to ``BoundIntParam``."""
+    base = BoundNatParam.between(0, 5)
+    result = -base
+    assert isinstance(result, BoundIntParam)
+    assert not isinstance(result, BoundNatParam)
+
+
+def test_bound_int_param_plus_bound_int_param_returns_bound_int_param() -> None:
+    """Test ``BoundIntParam + BoundIntParam`` returns ``BoundIntParam``."""
+    left = BoundIntParam.between(-3, 3)
+    right = BoundIntParam.between(-1, 1)
+    result = left + right
+    assert isinstance(result, BoundIntParam)
+    assert not isinstance(result, BoundNatParam)
+
+
+def test_bound_nat_param_addition_preserves_zero_excluded_flag() -> None:
+    """Test ``BoundNatParam + BoundNatParam`` preserves ``is_zero_included``."""
+    zero_excluded_left = BoundNatParam.between(1, 5, prefer_inclusive=True)
+    zero_excluded_right = BoundNatParam.between(1, 3, prefer_inclusive=True)
+    result = zero_excluded_left + zero_excluded_right
+    assert isinstance(result, BoundNatParam)

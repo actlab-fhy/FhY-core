@@ -4,6 +4,7 @@ __all__ = [
     "Param",
     "ParamAssignment",
     "ParamError",
+    "NumericParam",
     "RealParam",
     "IntParam",
     "SerializableEqualValue",
@@ -21,6 +22,7 @@ __all__ = [
 ]
 
 import copy
+import itertools
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Hashable, Sequence
@@ -45,7 +47,7 @@ from fhy_core.error import register_error
 from fhy_core.expression import (
     Expression,
     IdentifierExpression,
-    is_satisfiable,
+    does_expression_imply,
     replace_identifiers,
 )
 from fhy_core.identifier import Identifier
@@ -194,10 +196,6 @@ class Param(
     def variable_expression(self) -> IdentifierExpression:
         return IdentifierExpression(self._variable)
 
-    @abstractmethod
-    def get_symbol_type(self) -> SymbolType:
-        """Return the symbol type of the parameter."""
-
     @classmethod
     def with_value(
         cls: type[Self], value: _T, *, name: Identifier | None = None
@@ -274,72 +272,16 @@ class Param(
         the enumerated possible values for ``OrdinalParam``).
         """
 
+    @abstractmethod
     def is_subset(self, other: "Param[_T]") -> bool:
         """Return whether this parameter's feasibility set is a subset of `other`'s.
 
-        The check has two parts:
-
-        1. ``self.is_value_set_subset(other)`` -- the underlying value domain
-           of this parameter must be a subset of ``other``'s.
-        2. Constraint satisfiability -- every value admitted by ``self``'s
-           constraints must also satisfy ``other``'s constraints.
-
-        Returns ``False`` immediately if ``other`` is not an instance of
-        ``self.__class__``.
+        Concrete subclasses define the semantics: :class:`NumericParam`
+        reasons about continuous and integer domains via Z3 implication,
+        while the discrete-set subclasses (:class:`OrdinalParam`,
+        :class:`CategoricalParam`, :class:`PermParam`) iterate over their
+        explicit feasibility sets and test membership directly.
         """
-        if not isinstance(other, self.__class__):
-            return False
-        if not self.is_value_set_subset(other):
-            return False
-
-        constrained_variable = Identifier("var")
-
-        def convert_param_constraints(
-            param_: Param[_T],
-        ) -> Expression | None:
-            constraint_expressions_: list[Expression] = []
-            for constraint_ in param_._constraints:
-                constraint_expression_ = constraint_.convert_to_expression()
-                constraint_expression_ = replace_identifiers(
-                    constraint_expression_, {constraint_.variable: constrained_variable}
-                )
-                constraint_expressions_.append(constraint_expression_)
-            if len(constraint_expressions_) == 0:
-                return None
-            elif len(constraint_expressions_) == 1:
-                return constraint_expressions_[0]
-            else:
-                return Expression.logical_and(*constraint_expressions_)
-
-        self_constraint_expression = convert_param_constraints(self)
-        other_constraint_expression = convert_param_constraints(other)
-
-        if (
-            self_constraint_expression is not None
-            and other_constraint_expression is not None
-        ):
-            e1 = self_constraint_expression
-            e2 = other_constraint_expression
-            all_constraints_expression = Expression.logical_and(
-                e1, Expression.logical_not(e2)
-            )
-            return not is_satisfiable(
-                {constrained_variable},
-                all_constraints_expression,
-                {constrained_variable: self.get_symbol_type()},
-            )
-        elif (
-            self_constraint_expression is not None
-            and other_constraint_expression is None
-        ):
-            return True
-        elif (
-            self_constraint_expression is None
-            and other_constraint_expression is not None
-        ):
-            return False
-        else:
-            return True
 
     def assign(self, value: _T) -> ParamAssignment[_T]:
         """Assign a value to the parameter, returning a parameter assignment.
@@ -359,28 +301,39 @@ class Param(
     def add_constraint(self, constraint: Constraint) -> Self:
         """Return a new parameter with an additional constraint.
 
+        Constraints are deduplicated by structural equivalence: if an
+        equivalent constraint is already present, ``self`` is returned
+        unchanged.
+
         Args:
             constraint: Constraint to add.
 
         Returns:
-            A new parameter instance with the added constraint.
+            A new parameter instance with the added constraint, or ``self``
+            when an equivalent constraint is already present.
 
         """
         self.validate_constraint(constraint)
+        if any(
+            existing.is_structurally_equivalent(constraint)
+            for existing in self._constraints
+        ):
+            return self
         new_param = self._clone()
         object.__setattr__(new_param, "_constraints", self._constraints + (constraint,))
         return new_param
 
     def add_constraints(self, constraints: Collection[Constraint]) -> Self:
-        """Return a new parameter with multiple additional constraints."""
-        constraints_tuple = tuple(constraints)
-        for constraint in constraints_tuple:
-            self.validate_constraint(constraint)
-        new_param = self._clone()
-        object.__setattr__(
-            new_param, "_constraints", self._constraints + constraints_tuple
-        )
-        return new_param
+        """Return a new parameter with multiple additional constraints.
+
+        Each constraint is added through :meth:`add_constraint`, so
+        structural duplicates (whether against the existing set or among
+        the incoming constraints) are skipped.
+        """
+        result = self
+        for constraint in constraints:
+            result = result.add_constraint(constraint)
+        return result
 
     def validate_constraint(self, constraint: Constraint) -> None:
         """Validate whether a constraint can be added to this parameter.
@@ -534,8 +487,97 @@ def finalize_param_construction_from_data(
     return param.add_constraints(constraints_to_add)
 
 
+class NumericParam(Param[_T], ABC, Generic[_T]):
+    """Abstract intermediate base for parameters whose domain is numeric.
+
+    A :class:`NumericParam` reasons about its feasibility set via Z3
+    implication: every value admitted by ``self``'s constraints must also
+    satisfy ``other``'s constraints. The Z3 sort used for that reasoning
+    is determined by :meth:`get_symbol_type`.
+
+    Subclasses (currently :class:`RealParam` and :class:`IntParam`, with
+    transitive descendants :class:`NatParam`, :class:`BoundIntParam`,
+    :class:`BoundNatParam`) commit to a continuous or integer domain that
+    Z3 can model. Discrete-set parameter classes that do not have a
+    natural Z3 sort (e.g. :class:`CategoricalParam` over arbitrary
+    serializable values) inherit from :class:`Param` directly and define
+    their own set-semantics :meth:`is_subset`.
+    """
+
+    @abstractmethod
+    def get_symbol_type(self) -> SymbolType:
+        """Return the Z3 sort used to reason about this parameter's domain."""
+
+    def is_subset(self, other: "Param[_T]") -> bool:
+        """Return whether this parameter's feasibility set is a subset of `other`'s.
+
+        The check has two parts:
+
+        1. ``self.is_value_set_subset(other)`` -- the underlying value domain
+           of this parameter must be a subset of ``other``'s.
+        2. Constraint satisfiability -- every value admitted by ``self``'s
+           constraints must also satisfy ``other``'s constraints, checked
+           by Z3 over the sort returned by :meth:`get_symbol_type`.
+
+        Returns ``False`` immediately if ``other`` is not an instance of
+        ``self.__class__``.
+        """
+        if not isinstance(other, self.__class__):
+            return False
+        if not self.is_value_set_subset(other):
+            return False
+
+        constrained_variable = Identifier("var")
+
+        def convert_param_constraints(
+            param_: Param[_T],
+        ) -> Expression | None:
+            constraint_expressions_: list[Expression] = []
+            for constraint_ in param_._constraints:
+                constraint_expression_ = constraint_.convert_to_expression()
+                constraint_expression_ = replace_identifiers(
+                    constraint_expression_, {constraint_.variable: constrained_variable}
+                )
+                constraint_expressions_.append(constraint_expression_)
+            if len(constraint_expressions_) == 0:
+                return None
+            elif len(constraint_expressions_) == 1:
+                return constraint_expressions_[0]
+            else:
+                return Expression.logical_and(*constraint_expressions_)
+
+        self_constraint_expression = convert_param_constraints(self)
+        other_constraint_expression = convert_param_constraints(other)
+
+        if (
+            self_constraint_expression is not None
+            and other_constraint_expression is not None
+        ):
+            implies = does_expression_imply(
+                self_constraint_expression,
+                other_constraint_expression,
+                {constrained_variable: self.get_symbol_type()},
+            )
+            # Z3 `unknown` is treated as "not a counterexample": when the
+            # solver cannot decide implication, the subset relation is
+            # reported as True rather than as a proof of failure.
+            return implies is None or implies
+        elif (
+            self_constraint_expression is not None
+            and other_constraint_expression is None
+        ):
+            return True
+        elif (
+            self_constraint_expression is None
+            and other_constraint_expression is not None
+        ):
+            return False
+        else:
+            return True
+
+
 @register_serializable(type_id="real_param")
-class RealParam(Param[str | float]):
+class RealParam(NumericParam[str | float]):
     """Real-valued parameter."""
 
     def get_symbol_type(self) -> SymbolType:
@@ -711,7 +753,7 @@ class RealParam(Param[str | float]):
 
 
 @register_serializable(type_id="int_param")
-class IntParam(Param[int]):
+class IntParam(NumericParam[int]):
     """Integer-valued parameter."""
 
     def get_symbol_type(self) -> SymbolType:
@@ -1084,9 +1126,6 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
             self._sorted_values, value
         )
 
-    def get_symbol_type(self) -> SymbolType:
-        return SymbolType.REAL
-
     def assign(self, value: _OrdinalValueT) -> ParamAssignment[_OrdinalValueT]:
         return super().assign(value)
 
@@ -1112,6 +1151,22 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
             _contains_param_value(other._sorted_values, value)
             for value in self._sorted_values
         )
+
+    def is_subset(self, other: "Param[_OrdinalValueT]") -> bool:
+        """Return whether this parameter's feasibility set is a subset of `other`'s.
+
+        Uses set semantics: every value in ``self._sorted_values`` that
+        satisfies ``self``'s constraints must also be admissible by
+        ``other`` and satisfy ``other``'s constraints.
+        """
+        if not isinstance(other, OrdinalParam):
+            return False
+        for value in self._sorted_values:
+            if not self.is_value_valid(value):
+                continue
+            if not other.is_value_valid(value):
+                return False
+        return True
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
@@ -1185,9 +1240,6 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
     def categories(self) -> frozenset[_CategoricalValueT]:
         return self._categories
 
-    def get_symbol_type(self) -> SymbolType:
-        return SymbolType.REAL
-
     def is_value_admissible(self, value: Any) -> bool:
         return _is_categorical_value(value) and _contains_param_value(
             self._categories, value
@@ -1218,6 +1270,22 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
             _contains_param_value(other._categories, category)
             for category in self._categories
         )
+
+    def is_subset(self, other: "Param[_CategoricalValueT]") -> bool:
+        """Return whether this parameter's feasibility set is a subset of `other`'s.
+
+        Uses set semantics: every category in ``self._categories`` that
+        satisfies ``self``'s constraints must also be admissible by
+        ``other`` and satisfy ``other``'s constraints.
+        """
+        if not isinstance(other, CategoricalParam):
+            return False
+        for value in self._categories:
+            if not self.is_value_valid(value):
+                continue
+            if not other.is_value_valid(value):
+                return False
+        return True
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
@@ -1297,9 +1365,6 @@ class PermParam(
     def members(self) -> tuple[_PermutationMemberValueT, ...]:
         return self._ordered_members
 
-    def get_symbol_type(self) -> SymbolType:
-        return SymbolType.REAL
-
     def is_value_admissible(self, value: Any) -> bool:
         return (
             isinstance(value, Sequence)
@@ -1355,6 +1420,28 @@ class PermParam(
             _contains_param_value(other._ordered_members, member)
             for member in self._ordered_members
         )
+
+    def is_subset(self, other: "Param[tuple[_PermutationMemberValueT, ...]]") -> bool:
+        """Return whether this parameter's feasibility set is a subset of `other`'s.
+
+        Uses set semantics: every permutation of ``self._ordered_members``
+        that satisfies ``self``'s constraints must also be admissible by
+        ``other`` and satisfy ``other``'s constraints.
+
+        Note:
+            The cost is ``O(n!)`` in the number of members; restrict the
+            universe with ``InSetConstraint`` for large permutation sets.
+        """
+        if not isinstance(other, PermParam):
+            return False
+        if len(self._ordered_members) != len(other._ordered_members):
+            return False
+        for permutation in itertools.permutations(self._ordered_members):
+            if not self.is_value_valid(permutation):
+                continue
+            if not other.is_value_valid(permutation):
+                return False
+        return True
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()

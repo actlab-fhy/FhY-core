@@ -235,18 +235,56 @@ class BoundIntParam(IntParam):
         return min_int, max_int
 
     @staticmethod
-    def _create_param_from_min_max(
-        param: "BoundIntParam",
+    def _create_widened_bound_int_param_from_min_max(
+        template: "BoundIntParam",
         min_int: Optional[int],
         max_int: Optional[int],
     ) -> "BoundIntParam":
-        """Create a new BoundIntParam from min/max integers.
+        """Create a new BoundIntParam from min/max (widens past any subclass).
 
-        Emits either inclusive or exclusive style depending on param.prefer_inclusive.
+        Always returns a ``BoundIntParam`` regardless of the runtime class of
+        ``template``. Used by operators that may produce values outside any
+        subclass's representable range -- subtraction can go negative,
+        negation reverses sign -- so the result must be the more permissive
+        ``BoundIntParam`` rather than e.g. ``BoundNatParam``.
         """
         out = BoundIntParam(
-            name=param.variable, prefer_inclusive=param._prefer_inclusive
+            name=template.variable, prefer_inclusive=template._prefer_inclusive
         )
+        return BoundIntParam._apply_min_max_to_param(out, min_int, max_int)
+
+    @staticmethod
+    def _create_class_preserved_param_from_min_max(
+        template: "BoundIntParam",
+        other: "BoundIntParam",
+        min_int: Optional[int],
+        max_int: Optional[int],
+    ) -> "BoundIntParam":
+        """Create a new param preserving the runtime class when operands match.
+
+        Used by addition (where the result range never escapes either
+        operand's class) when ``template`` and ``other`` are the same
+        runtime class. Falls back to ``_create_widened_bound_int_param_from_min_max``
+        when the classes differ -- the more permissive class wins.
+        """
+        if type(template) is type(other) and isinstance(template, BoundNatParam):
+            out: BoundIntParam = BoundNatParam(
+                name=template.variable,
+                is_zero_included=template._is_zero_included,
+                prefer_inclusive=template._prefer_inclusive,
+            )
+            return BoundIntParam._apply_min_max_to_param(out, min_int, max_int)
+        return BoundIntParam._create_widened_bound_int_param_from_min_max(
+            template, min_int, max_int
+        )
+
+    @staticmethod
+    def _apply_min_max_to_param(
+        out: "BoundIntParam",
+        min_int: Optional[int],
+        max_int: Optional[int],
+    ) -> "BoundIntParam":
+        """Apply min/max bound constraints honoring ``out``'s prefer_inclusive."""
         if min_int is not None:
             if out._prefer_inclusive:
                 out = out.add_lower_bound_constraint(min_int, is_inclusive=True)
@@ -321,17 +359,6 @@ class BoundIntParam(IntParam):
         super_dict["prefer_inclusive"] = self._prefer_inclusive
         return super_dict
 
-    def _clone(self) -> Self:
-        init_kwargs: dict[str, Any] = {
-            "name": self._variable,
-            "prefer_inclusive": self._prefer_inclusive,
-        }
-        if hasattr(self, "_is_zero_included"):
-            init_kwargs["is_zero_included"] = getattr(self, "_is_zero_included")
-        new_param = self.__class__(**init_kwargs)
-        object.__setattr__(new_param, "_constraints", self._constraints)
-        return new_param
-
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, BoundIntParam)
@@ -386,7 +413,9 @@ class BoundIntParam(IntParam):
         new_max = (
             None if (self_max is None or other_max is None) else self_max + other_max
         )
-        return self._create_param_from_min_max(self, new_min, new_max)
+        return self._create_class_preserved_param_from_min_max(
+            self, coerced_other, new_min, new_max
+        )
 
     def __radd__(self, other: Any) -> "BoundIntParam":
         return self.__add__(other)
@@ -402,7 +431,7 @@ class BoundIntParam(IntParam):
         new_max = (
             None if (self_max is None or other_min is None) else self_max - other_min
         )
-        return self._create_param_from_min_max(self, new_min, new_max)
+        return self._create_widened_bound_int_param_from_min_max(self, new_min, new_max)
 
     def __rsub__(self, other: Any) -> "BoundIntParam":
         return self._coerce_other(other).__sub__(self)
@@ -411,7 +440,7 @@ class BoundIntParam(IntParam):
         self_min, self_max = self._get_effective_min_max()
         new_min = None if self_max is None else -self_max
         new_max = None if self_min is None else -self_min
-        return self._create_param_from_min_max(self, new_min, new_max)
+        return self._create_widened_bound_int_param_from_min_max(self, new_min, new_max)
 
 
 @register_serializable(type_id="bound_nat_param")

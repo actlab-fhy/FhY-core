@@ -313,3 +313,64 @@ def test_op_attribute_canonical_binary_round_trip_returns_canonical() -> None:
     blob = COMMUTATIVE.to_bytes()
     restored = Serializable.from_bytes(blob)
     assert restored is COMMUTATIVE
+
+
+# =============================================================================
+# Description-mismatch deserialization warning
+# =============================================================================
+
+
+def test_op_attribute_deserialize_warns_on_description_mismatch(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test deserializing a canonical name with a different description warns."""
+    canonical = OpAttribute(Identifier("mismatch-warning-attr"), "original description")
+    payload: SerializedDict = {
+        "name": canonical.name.serialize_to_dict(),
+        "description": "divergent description",
+    }
+    with caplog.at_level("WARNING", logger="fhy_core.op_attribute"):
+        restored = OpAttribute.deserialize_from_dict(payload)
+
+    assert restored is canonical
+    assert restored.description == "original description"
+    assert any(
+        "already canonical" in record.getMessage()
+        and "divergent description" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_op_attribute_deserialize_does_not_warn_when_descriptions_match(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test deserializing a canonical name with matching description does not warn."""
+    canonical = OpAttribute(
+        Identifier("matching-description-attr"), "matching description"
+    )
+    payload = canonical.serialize_to_dict()
+    with caplog.at_level("WARNING", logger="fhy_core.op_attribute"):
+        restored = OpAttribute.deserialize_from_dict(payload)
+
+    assert restored is canonical
+    assert not any(
+        "already canonical" in record.getMessage() for record in caplog.records
+    )
+
+
+# =============================================================================
+# register_default_instances restores module-level canonicals
+# =============================================================================
+
+
+def test_register_default_instances_restores_module_level_op_attributes() -> None:
+    """Test ``register_default_instances`` re-canonicalizes shipped defaults."""
+    try:
+        OpAttribute.clear_interned_registry()
+        OpAttribute.register_default_instances()
+
+        for canonical in (COMMUTATIVE, ASSOCIATIVE, PURE, ELEMENTWISE):
+            restored = OpAttribute.deserialize_from_dict(canonical.serialize_to_dict())
+            assert restored is canonical
+    finally:
+        OpAttribute.register_default_instances()

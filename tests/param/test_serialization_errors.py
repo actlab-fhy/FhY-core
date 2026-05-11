@@ -39,7 +39,7 @@ def valid_variable_data() -> dict[str, Any]:
 
 
 # =============================================================================
-# Param data — `is_valid_param_data` rejection paths
+# Param data - `is_valid_param_data` rejection paths
 # =============================================================================
 
 
@@ -110,7 +110,7 @@ class TestParamDeserializeRejectsMalformedParamData:
 
 
 # =============================================================================
-# Wrapped-leaf params — `_is_valid_ordinal_categorical_perm_param_data` rejection
+# Wrapped-leaf params - `_is_valid_ordinal_categorical_perm_param_data` rejection
 # =============================================================================
 
 

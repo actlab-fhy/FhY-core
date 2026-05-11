@@ -254,20 +254,15 @@ def test_parse_expression_recognizes_boolean_keywords_in_context(
 
 
 @patch("fhy_core.identifier.Identifier._next_id", 0)
-def test_chained_exponent_is_left_associative_per_grammar() -> None:
-    """Test ``a ** b ** c`` parses left-to-right at the exponentiation level.
-
-    The grammar docstring on `ExpressionParser` notes that ``**`` is parsed
-    left-to-right despite being right-associative in typical usage; this test
-    locks that documented behavior in.
-    """
+def test_chained_exponent_is_right_associative() -> None:
+    """Test ``a ** b ** c`` parses as ``a ** (b ** c)``."""
     a = IdentifierExpression(mock_identifier("a", 0))
     b = IdentifierExpression(mock_identifier("b", 1))
     c = IdentifierExpression(mock_identifier("c", 2))
     expected = BinaryExpression(
         BinaryOperation.POWER,
-        BinaryExpression(BinaryOperation.POWER, a, b),
-        c,
+        a,
+        BinaryExpression(BinaryOperation.POWER, b, c),
     )
     assert parse_expression("a ** b ** c").is_structurally_equivalent(expected)
 

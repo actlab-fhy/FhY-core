@@ -358,6 +358,36 @@ def test_literal_equivalence_is_false_for_native_float_vs_str_form_float(
 
 
 @pytest.mark.parametrize(
+    "left_value, right_value",
+    [
+        pytest.param(0, False, id="int_zero_vs_bool_false"),
+        pytest.param(1, True, id="int_one_vs_bool_true"),
+        pytest.param(0, 0.0, id="int_zero_vs_float_zero"),
+        pytest.param(1, 1.0, id="int_one_vs_float_one"),
+        pytest.param(False, 0.0, id="bool_false_vs_float_zero"),
+        pytest.param(True, 1.0, id="bool_true_vs_float_one"),
+    ],
+)
+def test_literal_equivalence_is_false_when_value_types_differ(
+    left_value: bool | int | float, right_value: bool | int | float
+) -> None:
+    """Test `LiteralExpression` equivalence is false across distinct numeric types.
+
+    Python evaluates ``0 == False``, ``1 == True`` and ``0 == 0.0`` as
+    ``True``, but the codebase distinguishes ``bool``, ``int`` and ``float``
+    everywhere else (``is_strict_int``, ``_has_bool_numeric_mismatch``,
+    the ``type(value) is bool`` ordering in ``__post_init__``, the
+    ``bool``/``int``/``float`` discrimination in
+    ``get_core_data_type_from_literal_type``). Structural equivalence
+    must agree.
+    """
+    left = LiteralExpression(left_value)
+    right = LiteralExpression(right_value)
+    assert not left.is_structurally_equivalent(right)
+    assert not right.is_structurally_equivalent(left)
+
+
+@pytest.mark.parametrize(
     "int_value, equivalent_string",
     [(0, "0"), (1, "1"), (42, "42"), (0, "00")],
 )

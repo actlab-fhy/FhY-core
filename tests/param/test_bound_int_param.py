@@ -198,7 +198,7 @@ def test_bound_int_param_assign_rejects_value_outside_constraints() -> None:
 
 
 # =============================================================================
-# Arithmetic — addition
+# Arithmetic - addition
 # =============================================================================
 
 
@@ -298,7 +298,7 @@ def test_bound_int_param_prefer_inclusive_changes_str_not_membership_addition() 
 
 
 # =============================================================================
-# Arithmetic — subtraction
+# Arithmetic - subtraction
 # =============================================================================
 
 
@@ -361,7 +361,7 @@ def test_bound_int_param_rsub_accepts_int_param_on_left() -> None:
 
 
 # =============================================================================
-# Arithmetic — negation
+# Arithmetic - negation
 # =============================================================================
 
 
@@ -682,7 +682,7 @@ def test_bound_int_param_addition_emits_form_per_prefer_inclusive(
 
 
 # =============================================================================
-# Structural equivalence — `_prefer_inclusive` flag
+# Structural equivalence - `_prefer_inclusive` flag
 # =============================================================================
 
 
@@ -838,7 +838,7 @@ def test_bound_int_param_add_constraint_rejects_each_invalid_bound_expression(
 
 
 # =============================================================================
-# Deserialization — structural rejection
+# Deserialization - structural rejection
 # =============================================================================
 
 

@@ -223,7 +223,7 @@ def test_equation_constraint_ignores_value_when_variable_absent_from_expression(
     """Test `is_satisfied` ignores the value when the variable is absent.
 
     If the variable doesn't appear in the expression, the substitution
-    is a no-op — only the standalone expression's truth value matters.
+    is a no-op - only the standalone expression's truth value matters.
     """
     x = mock_identifier("x", 0)
     constraint = EquationConstraint(x, LiteralExpression(True))
