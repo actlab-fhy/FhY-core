@@ -7,6 +7,7 @@ import pytest
 from fhy_core.param import (
     IntParam,
     ParamAssignment,
+    ParamError,
     PermParam,
     RealParam,
 )
@@ -61,8 +62,8 @@ def test_real_param_with_value_creates_initialized_assignment() -> None:
 
 
 def test_real_param_with_value_rejects_invalid_value() -> None:
-    """Test `RealParam.with_value` raises for an invalid value."""
-    with pytest.raises(ValueError):
+    """Test `RealParam.with_value` raises `ParamError` for an invalid value."""
+    with pytest.raises(ParamError):
         RealParam.with_value("invalid")
 
 
@@ -74,8 +75,8 @@ def test_int_param_with_value_creates_initialized_assignment() -> None:
 
 
 def test_int_param_with_value_rejects_invalid_value() -> None:
-    """Test `IntParam.with_value` raises for an invalid value."""
-    with pytest.raises(ValueError):
+    """Test `IntParam.with_value` raises `ParamError` for an invalid value."""
+    with pytest.raises(ParamError):
         IntParam.with_value(1.2)  # type: ignore[arg-type]  # test: invalid input
 
 
@@ -86,13 +87,6 @@ def test_param_assign_creates_immutable_assignment() -> None:
     assert isinstance(assignment, ParamAssignment)
     assert assignment.value == 3
     assert assignment.param is param
-
-
-def test_assignment_materialize_returns_underlying_param() -> None:
-    """Test `ParamAssignment.materialize` returns the underlying parameter."""
-    assignment = RealParam.with_upper_bound(2.0).assign(1.5)
-    bound_param = assignment.materialize()
-    assert bound_param is assignment.param
 
 
 def test_repeated_assigns_share_param_definition_and_record_value(

@@ -210,10 +210,31 @@ def test_add_constraints_applies_multiple_constraints_in_one_call() -> None:
     assert_none_satisfied(param, [0.5, 3.5])
 
 
+@pytest.mark.parametrize(
+    "empty",
+    [
+        pytest.param([], id="empty-list"),
+        pytest.param((), id="empty-tuple"),
+        pytest.param(set(), id="empty-set"),
+    ],
+)
+def test_add_constraints_returns_a_clone_for_empty_collection(empty: object) -> None:
+    """Test `add_constraints` returns a clone when the collection is empty.
+
+    The "every constructive op returns a new instance" invariant holds
+    uniformly; identity-based equality must distinguish the result from the
+    original.
+    """
+    original = IntParam.with_lower_bound(0)
+    result = original.add_constraints(empty)  # type: ignore[arg-type]  # test: empty variants
+    assert result is not original
+    assert result.is_structurally_equivalent(original)
+
+
 def test_add_constraints_validates_each_subclass_constraint_rule() -> None:
     """Test `add_constraints` enforces subclass-specific constraint validation."""
     param = OrdinalParam([1, 2, 3])
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         param.add_constraints(
             [
                 InSetConstraint(param.variable, {1, 2}),
@@ -246,6 +267,9 @@ def test_param_default_is_structurally_equivalent_returns_false_for_non_param() 
 
         def is_value_admissible(self, value: Any) -> bool:
             return isinstance(value, int) and not isinstance(value, bool)
+
+        def is_value_set_subset(self, other: Param[int]) -> bool:
+            return True
 
         def _get_param_set_str(self) -> str:
             return "Z"
@@ -292,6 +316,9 @@ def test_param_subclass_must_implement_get_symbol_type() -> None:
         def is_value_admissible(self, value: Any) -> bool:
             return isinstance(value, int)
 
+        def is_value_set_subset(self, other: Param[int]) -> bool:
+            return True
+
         def _get_param_set_str(self) -> str:
             return "Z"
 
@@ -315,6 +342,9 @@ def test_param_subclass_must_implement_is_value_admissible() -> None:
     class _MissingIsValueAdmissible(Param[int]):
         def get_symbol_type(self) -> SymbolType:
             return SymbolType.INT
+
+        def is_value_set_subset(self, other: Param[int]) -> bool:
+            return True
 
         def _get_param_set_str(self) -> str:
             return "Z"
@@ -343,6 +373,9 @@ def test_param_subclass_must_implement_get_param_set_str() -> None:
         def is_value_admissible(self, value: Any) -> bool:
             return isinstance(value, int)
 
+        def is_value_set_subset(self, other: Param[int]) -> bool:
+            return True
+
         @classmethod
         def deserialize_data_from_dict(
             cls, data: SerializedDict
@@ -351,6 +384,33 @@ def test_param_subclass_must_implement_get_param_set_str() -> None:
 
     with pytest.raises(TypeError):
         _MissingGetParamSetStr()  # type: ignore[abstract]  # test: ABC instantiation
+
+
+def test_param_subclass_must_implement_is_value_set_subset() -> None:
+    """Test a `Param` subclass without `is_value_set_subset` cannot be instantiated.
+
+    The subclass implements every other abstract method on `Param` so that
+    ``is_value_set_subset`` is the *only* unimplemented abstract slot.
+    """
+
+    class _MissingIsValueSetSubset(Param[int]):
+        def get_symbol_type(self) -> SymbolType:
+            return SymbolType.INT
+
+        def is_value_admissible(self, value: Any) -> bool:
+            return isinstance(value, int)
+
+        def _get_param_set_str(self) -> str:
+            return "Z"
+
+        @classmethod
+        def deserialize_data_from_dict(
+            cls, data: SerializedDict
+        ) -> "_MissingIsValueSetSubset":
+            return cls()
+
+    with pytest.raises(TypeError):
+        _MissingIsValueSetSubset()  # type: ignore[abstract]  # test: ABC instantiation
 
 
 # =============================================================================

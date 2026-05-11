@@ -4,7 +4,7 @@ import pytest
 
 from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.identifier import Identifier
-from fhy_core.param import PermParam
+from fhy_core.param import ParamError, PermParam
 from fhy_core.symbol_type import SymbolType
 
 from .conftest import (
@@ -26,8 +26,14 @@ def test_perm_param_initializes_from_sequence_of_members() -> None:
 
 def test_perm_param_init_rejects_duplicate_members() -> None:
     """Test `PermParam` rejects duplicate members with `ParamError`."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         PermParam(["n", "c", "h", "n"])
+
+
+def test_perm_param_init_rejects_empty_members() -> None:
+    """Test `PermParam` rejects an empty member sequence with `ParamError`."""
+    with pytest.raises(ParamError, match="non-empty"):
+        PermParam([])
 
 
 def test_perm_param_init_detects_adjacent_duplicate_members() -> None:
@@ -37,7 +43,7 @@ def test_perm_param_init_detects_adjacent_duplicate_members() -> None:
     duplicate at indices ``0`` and ``1`` must be detected even though only
     a single later index needs to be inspected.
     """
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         PermParam([1, 1, 2])
 
 
@@ -51,7 +57,7 @@ def test_perm_param_init_uses_equality_not_identity_to_detect_duplicates() -> No
     second = SerializableEqualHashable(1)
     assert first is not second
     assert first == second
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         PermParam([first, second])  # type: ignore[type-var]  # test: bespoke `Serializable` value
 
 
@@ -93,8 +99,8 @@ def test_perm_param_assigns_a_permutation_of_its_members(
 def test_perm_param_assign_rejects_non_permutation_value(
     perm_param_nchw: PermParam[str],
 ) -> None:
-    """Test `PermParam.assign` rejects a value that is not a permutation."""
-    with pytest.raises(ValueError):
+    """Test `PermParam.assign` raises `ParamError` for a non-permutation value."""
+    with pytest.raises(ParamError):
         perm_param_nchw.assign(["n", "c", "h", "n"])
 
 
@@ -149,8 +155,8 @@ def test_perm_param_add_constraint_combines_with_existing_membership(
 def test_perm_param_rejects_non_set_constraint(
     perm_param_nchw: PermParam[str],
 ) -> None:
-    """Test `PermParam.add_constraint` rejects equation constraints."""
-    with pytest.raises(ValueError):
+    """Test `PermParam.add_constraint` raises `ParamError` for equation constraints."""
+    with pytest.raises(ParamError):
         perm_param_nchw.add_constraint(
             EquationConstraint(
                 perm_param_nchw.variable, perm_param_nchw.variable_expression > 1

@@ -20,6 +20,8 @@ __all__ = [
     "create_single_valid_value_param",
 ]
 
+import copy
+import json
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Hashable, Sequence
 from typing import (
@@ -76,8 +78,12 @@ class ParamError(ValueError):
 
 
 def _constraint_structural_ordering_key(constraint: Constraint) -> str:
-    """Return a deterministic key for canonical constraint ordering."""
-    return repr(constraint.serialize_to_dict())
+    """Return a deterministic key for canonical constraint ordering.
+
+    Uses ``json.dumps`` with ``sort_keys=True`` so the key does not depend on
+    the insertion order of keys produced by ``Constraint.serialize_to_dict``.
+    """
+    return json.dumps(constraint.serialize_to_dict(), sort_keys=True, default=str)
 
 
 class _ParamAssignmentData(TypedDict):
@@ -130,10 +136,6 @@ class ParamAssignment(Serializable, FrozenMixin, Generic[_T]):
     @property
     def value(self) -> _T:
         return self._value
-
-    def materialize(self) -> "Param[_T]":
-        """Return the parameter definition associated with this assignment."""
-        return self._param
 
     def is_value_set(self) -> bool:
         """Return whether this assignment has a value."""
@@ -263,9 +265,31 @@ class Param(
                 return False, constraint
         return True, None
 
+    @abstractmethod
+    def is_value_set_subset(self, other: "Param[_T]") -> bool:
+        """Return whether this parameter's value set is a subset of `other`'s.
+
+        The "value set" is the underlying domain the parameter is defined
+        over before constraints narrow it (e.g., the reals for ``RealParam``;
+        the enumerated possible values for ``OrdinalParam``).
+        """
+
     def is_subset(self, other: "Param[_T]") -> bool:
-        """Return if the current parameter is a subset of another parameter."""
+        """Return whether this parameter's feasibility set is a subset of `other`'s.
+
+        The check has two parts:
+
+        1. ``self.is_value_set_subset(other)`` -- the underlying value domain
+           of this parameter must be a subset of ``other``'s.
+        2. Constraint satisfiability -- every value admitted by ``self``'s
+           constraints must also satisfy ``other``'s constraints.
+
+        Returns ``False`` immediately if ``other`` is not an instance of
+        ``self.__class__``.
+        """
         if not isinstance(other, self.__class__):
+            return False
+        if not self.is_value_set_subset(other):
             return False
 
         constrained_variable = Identifier("var")
@@ -350,8 +374,6 @@ class Param(
     def add_constraints(self, constraints: Collection[Constraint]) -> Self:
         """Return a new parameter with multiple additional constraints."""
         constraints_tuple = tuple(constraints)
-        if not constraints_tuple:
-            return self
         for constraint in constraints_tuple:
             self.validate_constraint(constraint)
         new_param = self._clone()
@@ -385,8 +407,12 @@ class Param(
 
     def _clone(self) -> Self:
         """Create a new parameter with identical definition state."""
-        new_param = self.__class__(name=self._variable)
-        object.__setattr__(new_param, "_constraints", self._constraints)
+        return copy.copy(self)
+
+    def __copy__(self) -> Self:
+        new_param = self.__class__.__new__(self.__class__)
+        for attribute_name, attribute_value in self.__dict__.items():
+            object.__setattr__(new_param, attribute_name, attribute_value)
         return new_param
 
     def __repr__(self) -> str:
@@ -421,17 +447,37 @@ class Param(
         """Return a string representation of the parameter set."""
 
 
+def _create_bound_constraint(
+    param_variable: Identifier,
+    bound: int | float | str,
+    *,
+    is_lower: bool,
+    is_inclusive: bool,
+) -> EquationConstraint:
+    param_variable_expression = IdentifierExpression(param_variable)
+    if is_lower:
+        constraint_equation = (
+            param_variable_expression >= bound
+            if is_inclusive
+            else param_variable_expression > bound
+        )
+    else:
+        constraint_equation = (
+            param_variable_expression <= bound
+            if is_inclusive
+            else param_variable_expression < bound
+        )
+    return EquationConstraint(param_variable, constraint_equation)
+
+
 def _create_lower_bound_constraint(
     param_variable: Identifier,
     lower_bound: int | float | str,
     is_inclusive: bool = True,
 ) -> EquationConstraint:
-    param_variable_expression = IdentifierExpression(param_variable)
-    if is_inclusive:
-        constraint_equation = param_variable_expression >= lower_bound
-    else:
-        constraint_equation = param_variable_expression > lower_bound
-    return EquationConstraint(param_variable, constraint_equation)
+    return _create_bound_constraint(
+        param_variable, lower_bound, is_lower=True, is_inclusive=is_inclusive
+    )
 
 
 def _create_upper_bound_constraint(
@@ -439,12 +485,9 @@ def _create_upper_bound_constraint(
     upper_bound: int | float | str,
     is_inclusive: bool = True,
 ) -> EquationConstraint:
-    param_variable_expression = IdentifierExpression(param_variable)
-    if is_inclusive:
-        constraint_equation = param_variable_expression <= upper_bound
-    else:
-        constraint_equation = param_variable_expression < upper_bound
-    return EquationConstraint(param_variable, constraint_equation)
+    return _create_bound_constraint(
+        param_variable, upper_bound, is_lower=False, is_inclusive=is_inclusive
+    )
 
 
 class ParamData(TypedDict):
@@ -647,6 +690,9 @@ class RealParam(Param[str | float]):
             other
         )
 
+    def is_value_set_subset(self, other: "Param[str | float]") -> bool:
+        return isinstance(other, RealParam)
+
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "RealParam":
         if not is_valid_param_data(data):
@@ -808,6 +854,9 @@ class IntParam(Param[int]):
     def is_structurally_equivalent(self, other: object) -> bool:
         return isinstance(other, IntParam) and super().is_structurally_equivalent(other)
 
+    def is_value_set_subset(self, other: "Param[int]") -> bool:
+        return isinstance(other, IntParam)
+
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "IntParam":
         if not is_valid_param_data(data):
@@ -842,6 +891,8 @@ class SerializableOrderableValue(Orderable, _SerializableValueLike, Protocol):
     """Value with ordering semantics and serializable instance behavior."""
 
 
+# CategoricalValue omits `float`: floating-point equality is unreliable for
+# category membership.
 CategoricalValue: TypeAlias = bool | int | str | SerializableEqualValue
 OrdinalValue: TypeAlias = bool | int | float | str | SerializableOrderableValue
 PermutationMemberValue: TypeAlias = bool | int | float | str | SerializableEqualValue
@@ -999,13 +1050,15 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
 
     """
 
-    _all_values: tuple[_OrdinalValueT, ...]
+    _sorted_values: tuple[_OrdinalValueT, ...]
 
     def __init__(
         self, values: Sequence[_OrdinalValueT], *, name: Identifier | None = None
     ) -> None:
         super().__init__(name=name)
         all_values = tuple(values)
+        if not all_values:
+            raise ParamError("Values must be non-empty.")
         for value in all_values:
             if not _is_ordinal_value(value):
                 raise TypeError(
@@ -1013,22 +1066,22 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
                     "serializable, or be primitive bool/int/float/str values."
                 )
         try:
-            all_values = tuple(sorted(all_values))
+            sorted_values = tuple(sorted(all_values))
         except TypeError as exc:
             raise TypeError(
                 "Ordinal values must be mutually comparable for sorting."
             ) from exc
-        if not _is_values_unique_in_sorted_sequence(all_values):
+        if not _is_values_unique_in_sorted_sequence(sorted_values):
             raise ParamError("Values must be unique.")
-        object.__setattr__(self, "_all_values", all_values)
+        object.__setattr__(self, "_sorted_values", sorted_values)
 
     @property
     def possible_values(self) -> tuple[_OrdinalValueT, ...]:
-        return self._all_values
+        return self._sorted_values
 
     def is_value_admissible(self, value: Any) -> bool:
         return _is_ordinal_value(value) and _contains_param_value(
-            self._all_values, value
+            self._sorted_values, value
         )
 
     def get_symbol_type(self) -> SymbolType:
@@ -1049,13 +1102,21 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
         return (
             isinstance(other, OrdinalParam)
             and super().is_structurally_equivalent(other)
-            and self._all_values == other._all_values
+            and self._sorted_values == other._sorted_values
+        )
+
+    def is_value_set_subset(self, other: "Param[_OrdinalValueT]") -> bool:
+        if not isinstance(other, OrdinalParam):
+            return False
+        return all(
+            _contains_param_value(other._sorted_values, value)
+            for value in self._sorted_values
         )
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
         super_dict["possible_values"] = [
-            _serialize_typed_wrapped_leaf_value(value) for value in self._all_values
+            _serialize_typed_wrapped_leaf_value(value) for value in self._sorted_values
         ]
         return super_dict
 
@@ -1081,16 +1142,11 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
         final_param = cast(Self, finalize_param_construction_from_data(param, data))
         return final_param
 
-    def _clone(self) -> "OrdinalParam[_OrdinalValueT]":
-        new_param = OrdinalParam(self._all_values, name=self._variable)
-        object.__setattr__(new_param, "_constraints", self._constraints)
-        return new_param
-
     def _get_param_set_repr(self) -> str:
-        return f"{{{format_comma_separated_list(self._all_values)}}}"
+        return f"{{{format_comma_separated_list(self._sorted_values)}}}"
 
     def _get_param_set_str(self) -> str:
-        return f"{{{format_comma_separated_list(self._all_values, str_func=str)}}}"
+        return f"{{{format_comma_separated_list(self._sorted_values, str_func=str)}}}"
 
 
 @register_serializable(type_id="categorical_param")
@@ -1113,6 +1169,8 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
     ) -> None:
         super().__init__(name=name)
         category_values = tuple(categories)
+        if not category_values:
+            raise ParamError("Categories must be non-empty.")
         for category in category_values:
             if not _is_categorical_value(category):
                 raise TypeError(
@@ -1138,10 +1196,6 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
     def assign(self, value: _CategoricalValueT) -> ParamAssignment[_CategoricalValueT]:
         return super().assign(value)
 
-    def get_possible_values(self) -> set[_CategoricalValueT]:
-        """Return the set of possible values for the parameter."""
-        return set(self._categories)
-
     def validate_constraint(self, constraint: Constraint) -> None:
         super().validate_constraint(constraint)
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
@@ -1155,6 +1209,14 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
             isinstance(other, CategoricalParam)
             and super().is_structurally_equivalent(other)
             and self._categories == other._categories
+        )
+
+    def is_value_set_subset(self, other: "Param[_CategoricalValueT]") -> bool:
+        if not isinstance(other, CategoricalParam):
+            return False
+        return all(
+            _contains_param_value(other._categories, category)
+            for category in self._categories
         )
 
     def serialize_data_to_dict(self) -> SerializedDict:
@@ -1184,11 +1246,6 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
         final_param = cast(Self, finalize_param_construction_from_data(param, data))
         return final_param
 
-    def _clone(self) -> "CategoricalParam[_CategoricalValueT]":
-        new_param = CategoricalParam(self._categories, name=self._variable)
-        object.__setattr__(new_param, "_constraints", self._constraints)
-        return new_param
-
     def _get_param_set_repr(self) -> str:
         return f"{{{format_comma_separated_list(self._categories)}}}"
 
@@ -1214,7 +1271,7 @@ class PermParam(
 
     """
 
-    _all_values: tuple[_PermutationMemberValueT, ...]
+    _ordered_members: tuple[_PermutationMemberValueT, ...]
 
     def __init__(
         self,
@@ -1224,6 +1281,8 @@ class PermParam(
     ) -> None:
         super().__init__(name=name)
         all_member_values = tuple(all_values)
+        if not all_member_values:
+            raise ParamError("Members must be non-empty.")
         for value in all_member_values:
             if not _is_permutation_member_value(value):
                 raise TypeError(
@@ -1232,11 +1291,11 @@ class PermParam(
                 )
         if not _is_values_unique_in_sequence_without_set(all_values):
             raise ParamError("Values must be unique.")
-        object.__setattr__(self, "_all_values", all_member_values)
+        object.__setattr__(self, "_ordered_members", all_member_values)
 
     @property
     def members(self) -> tuple[_PermutationMemberValueT, ...]:
-        return self._all_values
+        return self._ordered_members
 
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.REAL
@@ -1252,10 +1311,10 @@ class PermParam(
         return (
             all(
                 _is_permutation_member_value(value_element)
-                and _contains_param_value(self._all_values, value_element)
+                and _contains_param_value(self._ordered_members, value_element)
                 for value_element in value
             )
-            and len(value) == len(self._all_values)
+            and len(value) == len(self._ordered_members)
             and _is_values_unique_in_sequence_without_set(value)
         )
 
@@ -1282,13 +1341,26 @@ class PermParam(
         return (
             isinstance(other, PermParam)
             and super().is_structurally_equivalent(other)
-            and self._all_values == other._all_values
+            and self._ordered_members == other._ordered_members
+        )
+
+    def is_value_set_subset(
+        self, other: "Param[tuple[_PermutationMemberValueT, ...]]"
+    ) -> bool:
+        if not isinstance(other, PermParam):
+            return False
+        if len(self._ordered_members) != len(other._ordered_members):
+            return False
+        return all(
+            _contains_param_value(other._ordered_members, member)
+            for member in self._ordered_members
         )
 
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
         super_dict["possible_values"] = [
-            _serialize_typed_wrapped_leaf_value(value) for value in self._all_values
+            _serialize_typed_wrapped_leaf_value(value)
+            for value in self._ordered_members
         ]
         return super_dict
 
@@ -1314,13 +1386,8 @@ class PermParam(
         final_param = cast(Self, finalize_param_construction_from_data(param, data))
         return final_param
 
-    def _clone(self) -> "PermParam[_PermutationMemberValueT]":
-        new_param = PermParam(self._all_values, name=self._variable)
-        object.__setattr__(new_param, "_constraints", self._constraints)
-        return new_param
-
     def _get_param_set_repr(self) -> str:
-        return f"{{{format_comma_separated_list(self._all_values)}}}"
+        return f"{{{format_comma_separated_list(self._ordered_members)}}}"
 
     def _get_param_set_str(self) -> str:
-        return f"{{{format_comma_separated_list(self._all_values, str_func=str)}}}"
+        return f"{{{format_comma_separated_list(self._ordered_members, str_func=str)}}}"
