@@ -43,10 +43,12 @@ def mock_identifier(name_hint: str, identifier_id: int) -> Identifier:
     identifier.id = identifier_id
     # Configure dunder methods via MagicMock's side_effect rather than direct
     # function assignment so mock-library internals own the dunder wiring.
-    identifier.__eq__ = MagicMock(
+    identifier.__eq__ = MagicMock(  # type: ignore[method-assign]
         side_effect=lambda other: identifier.id == getattr(other, "id", object())
     )
-    identifier.__hash__ = MagicMock(side_effect=lambda: hash(identifier.id))
+    identifier.__hash__ = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda: hash(identifier.id)
+    )
     identifier.serialize_to_dict = lambda: {
         "id": identifier.id,
         "name_hint": identifier.name_hint,

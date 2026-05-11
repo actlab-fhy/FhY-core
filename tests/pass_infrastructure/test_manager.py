@@ -940,6 +940,7 @@ def test_analysis_manager_get_is_safe_under_concurrent_callers() -> None:
     assert errors == []
 
 
+@pytest.mark.slow
 def test_analysis_manager_survives_concurrent_get_and_gc_eviction() -> None:
     """Test concurrent ``get`` and finalizer-driven eviction do not corrupt state."""
     manager: AnalysisManager[Box] = AnalysisManager()

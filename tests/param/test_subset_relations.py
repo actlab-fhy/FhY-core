@@ -464,9 +464,9 @@ def test_discrete_params_reject_cross_class_subset_check() -> None:
     ordinal: OrdinalParam[int] = OrdinalParam([1])
     perm: PermParam[int] = PermParam([1])
 
-    assert not cat.is_subset(ordinal)  # type: ignore[arg-type]  # test: cross class
+    assert not cat.is_subset(ordinal)
     assert not cat.is_subset(perm)  # type: ignore[arg-type]  # test: cross class
-    assert not ordinal.is_subset(cat)  # type: ignore[arg-type]  # test: cross class
+    assert not ordinal.is_subset(cat)
     assert not ordinal.is_subset(perm)  # type: ignore[arg-type]  # test: cross class
     assert not perm.is_subset(cat)  # type: ignore[arg-type]  # test: cross class
     assert not perm.is_subset(ordinal)  # type: ignore[arg-type]  # test: cross class
