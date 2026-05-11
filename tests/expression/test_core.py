@@ -25,7 +25,7 @@ from fhy_core.serialization import (
     DeserializationValueError,
     SerializedDict,
 )
-from fhy_core.trait import HasOperands, StructuralEquivalence
+from fhy_core.trait import FrozenMutationError, HasOperands, StructuralEquivalence
 
 from .conftest import mock_identifier
 
@@ -767,7 +767,7 @@ def test_expression_instances_are_frozen(
 ) -> None:
     """Test assigning to any field of an `Expression` instance is rejected."""
     instance, _ = _build_instance_pair(subclass)
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    with pytest.raises(FrozenMutationError):
         setattr(instance, field, None)
 
 

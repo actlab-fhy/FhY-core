@@ -1,11 +1,12 @@
 # mypy: disable-error-code="misc"
 """Tests the basic compiler traits."""
 
-from dataclasses import FrozenInstanceError, dataclass
+from dataclasses import dataclass
 
 import pytest
 from frozendict import frozendict
 
+from fhy_core import DATA_DOMAIN
 from fhy_core.identifier import Identifier
 from fhy_core.provenance import Provenance
 from fhy_core.trait import (
@@ -371,7 +372,7 @@ def test_native_frozen_dataclass_runtime_protocol() -> None:
 def test_native_frozen_dataclass_blocks_mutation() -> None:
     """Test native frozen dataclass blocks direct attribute mutation."""
     point = _AutoFrozenPoint(1, 2)
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(FrozenMutationError):
         point.x = 4
 
 
@@ -395,8 +396,26 @@ def test_native_frozen_dataclass_with_frozen_mixin() -> None:
     assert isinstance(point, Frozen)
     assert point.is_frozen is True
     point.assert_frozen()
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(FrozenMutationError):
         setattr(point, "x", 4)
+
+
+def test_frozen_dataclass_mixin_delete_raises_frozen_mutation_error() -> None:
+    """Test `@dataclass(frozen=True) + FrozenMixin` raises on deletion."""
+
+    @dataclass(frozen=True)
+    class _NativeFrozenDeletable(FrozenMixin):
+        value: int
+
+    instance = _NativeFrozenDeletable(1)
+    with pytest.raises(FrozenMutationError):
+        delattr(instance, "value")
+
+
+def test_frozen_dataclass_mixin_raises_consistent_error_for_existing_classes() -> None:
+    """Test fhy_core's own frozen-dataclass classes raise `FrozenMutationError`."""
+    with pytest.raises(FrozenMutationError):
+        DATA_DOMAIN.description = "rewritten"
 
 
 def test_interned_runtime_protocol() -> None:
