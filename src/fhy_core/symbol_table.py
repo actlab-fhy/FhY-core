@@ -621,11 +621,18 @@ class SymbolTable(
     def update_namespaces(self, other_symbol_table: "SymbolTable") -> None:
         """Update the symbol table with new namespaces from another symbol table.
 
+        Inner per-namespace symbol dicts are shallow-copied so the two
+        tables do not alias state after the merge: subsequent additions
+        or removals on either side stay local to that side. The contained
+        ``SymbolTableFrame`` instances are frozen dataclasses, so sharing
+        them across tables is safe and intentional.
+
         Args:
             other_symbol_table: Symbol table to update with.
 
         """
-        self._table.update(other_symbol_table._table)
+        for namespace_name, namespace_table in other_symbol_table._table.items():
+            self._table[namespace_name] = dict(namespace_table)
         self._parent_namespace.update(other_symbol_table._parent_namespace)
 
     def add_symbol(
@@ -795,7 +802,7 @@ class SymbolTable(
         seen_namespace_names = set()
         while current_namespace_name is not None:
             if current_namespace_name in seen_namespace_names:
-                raise RuntimeError(f"Namespace {current_namespace_name} is cyclic.")
+                raise SymbolTableError(f"Namespace {current_namespace_name} is cyclic.")
             seen_namespace_names.add(current_namespace_name)
 
             result = action(current_namespace_name)

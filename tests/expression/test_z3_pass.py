@@ -26,7 +26,8 @@ from fhy_core.expression import (
     UnaryExpression,
     UnaryOperation,
     convert_expression_to_z3_expression,
-    is_satisfiable,
+    does_expression_imply,
+    holds_for_all_free_assignments,
 )
 from fhy_core.expression.passes.z3 import ExpressionToZ3Converter, _z3_floor_divide
 from fhy_core.identifier import Identifier
@@ -272,7 +273,7 @@ def test_symbol_type_maps_to_correct_z3_sort(
 
 
 # =============================================================================
-# is_satisfiable
+# holds_for_all_free_assignments
 # =============================================================================
 
 
@@ -337,17 +338,55 @@ def test_symbol_type_maps_to_correct_z3_sort(
         ),
     ],
 )
-def test_is_satisfiable_on_example_expressions(
+def test_holds_for_all_free_assignments_on_example_expressions(
     expression: Expression,
     considered_identifiers: set[Identifier],
     symbol_types: dict[Identifier, SymbolType],
     expected_output: bool | None,
 ) -> None:
-    """Test `is_satisfiable` returns the expected tri-valued result on examples."""
+    """Test the tri-valued result of ``holds_for_all_free_assignments`` on examples."""
     assert (
-        is_satisfiable(considered_identifiers, expression, symbol_types)
+        holds_for_all_free_assignments(considered_identifiers, expression, symbol_types)
         == expected_output
     )
+
+
+def test_holds_for_all_free_with_empty_considered_set_is_validity_check() -> None:
+    """Test the empty-considered branch skips the ForAll wrapper.
+
+    With no considered identifiers, the implementation degenerates to
+    "is the expression universally valid over its free identifiers"
+    -- here ``5 == 5`` is, so the result is True.
+    """
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, LiteralExpression(5), LiteralExpression(5)
+    )
+    assert holds_for_all_free_assignments(set(), expression, {}) is True
+
+
+def test_holds_for_all_free_ignores_considered_identifiers_absent_from_expression() -> (
+    None
+):
+    """Test extra `considered_identifiers` not in the expression are skipped.
+
+    A quantifier over an identifier that does not appear in the body is
+    semantically vacuous, so the entry point silently filters such
+    identifiers rather than raising a `KeyError` from the converter's
+    identifier-to-Z3 mapping.
+    """
+    x = mock_identifier("x", 0)
+    unused = mock_identifier("u", 1)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(5)
+    )
+
+    result = holds_for_all_free_assignments(
+        {x, unused},
+        expression,
+        {x: SymbolType.INT, unused: SymbolType.INT},
+    )
+
+    assert result is True
 
 
 def _make_trivial_satisfiability_inputs() -> tuple[
@@ -370,15 +409,15 @@ def _make_trivial_satisfiability_inputs() -> tuple[
         pytest.param(z3.unsat, True, id="unsat_to_true"),
     ],
 )
-def test_is_satisfiable_maps_solver_result_to_satisfiability(
+def test_holds_for_all_free_assignments_maps_solver_result_to_satisfiability(
     monkeypatch: pytest.MonkeyPatch,
     solver_result: z3.CheckSatResult,
     expected_satisfiability: bool | None,
 ) -> None:
-    """Test `is_satisfiable` maps each `z3` solver outcome to its documented return."""
+    """Test ``holds_for_all_free_assignments`` maps each z3 solver outcome correctly."""
     monkeypatch.setattr(z3.Solver, "check", lambda self: solver_result)
     considered, expression, symbol_types = _make_trivial_satisfiability_inputs()
-    result = is_satisfiable(considered, expression, symbol_types)
+    result = holds_for_all_free_assignments(considered, expression, symbol_types)
     assert result is expected_satisfiability
 
 
@@ -396,6 +435,30 @@ def test_z3_floor_divide_rejects_non_int_non_real_expression() -> None:
 
     with pytest.raises(ValueError, match=r"Unsupported floor divide expression type"):
         _z3_floor_divide(fake, fake)
+
+
+def test_convert_expression_to_z3_returned_mapping_is_immutable() -> None:
+    """Test the returned identifier-to-Z3 mapping rejects mutation."""
+    x = mock_identifier("x", 0)
+    converter = ExpressionToZ3Converter({x: SymbolType.INT})
+    converter(IdentifierExpression(x))
+
+    snapshot = converter.identifier_to_z3_expression
+
+    with pytest.raises(TypeError):
+        snapshot[x] = z3.Int("other")  # type: ignore[index]
+
+
+def test_convert_expression_to_z3_raises_clear_error_on_missing_symbol_type() -> None:
+    """Test the entry point reports identifiers absent from `symbol_types`."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(x), IdentifierExpression(y)
+    )
+
+    with pytest.raises(KeyError, match=r"symbol_types is missing entries"):
+        convert_expression_to_z3_expression(expression, {x: SymbolType.INT})
 
 
 def test_z3_visit_identifier_rejects_invalid_symbol_type() -> None:
@@ -439,12 +502,145 @@ def test_z3_converter_get_noop_output_raises() -> None:
         ExpressionToZ3Converter({}).get_noop_output(LiteralExpression(0))
 
 
-def test_is_satisfiable_raises_on_unexpected_solver_result(
+def test_holds_for_all_free_assignments_raises_on_unexpected_solver_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test `is_satisfiable` raises `RuntimeError` when the solver returns an oddity."""
+    """Test ``holds_for_all_free_assignments`` raises on an unexpected solver return."""
     monkeypatch.setattr(z3.Solver, "check", lambda self: object())
     considered, expression, symbol_types = _make_trivial_satisfiability_inputs()
 
     with pytest.raises(RuntimeError, match=r"Unexpected Z3 result"):
-        is_satisfiable(considered, expression, symbol_types)
+        holds_for_all_free_assignments(considered, expression, symbol_types)
+
+
+# =============================================================================
+# does_expression_imply
+# =============================================================================
+
+
+def test_does_expression_imply_returns_true_when_antecedent_implies_consequent() -> (
+    None
+):
+    """Test `does_expression_imply` reports True for `x >= 5 -> x > 3` over int x."""
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL,
+        IdentifierExpression(x),
+        LiteralExpression(5),
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(3)
+    )
+    assert does_expression_imply(antecedent, consequent, {x: SymbolType.INT}) is True
+
+
+def test_does_expression_imply_returns_false_when_a_counterexample_exists() -> None:
+    """Test `does_expression_imply` reports False for `x >= 5 -> x > 10` (x=6 fails)."""
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL,
+        IdentifierExpression(x),
+        LiteralExpression(5),
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(10)
+    )
+    assert does_expression_imply(antecedent, consequent, {x: SymbolType.INT}) is False
+
+
+def test_does_expression_imply_holds_when_antecedent_is_false_everywhere() -> None:
+    """Test ``False -> anything`` is True (vacuous truth from a false antecedent)."""
+    x = mock_identifier("x", 0)
+    contradictory_antecedent = BinaryExpression(
+        BinaryOperation.LOGICAL_AND,
+        BinaryExpression(
+            BinaryOperation.GREATER,
+            IdentifierExpression(x),
+            LiteralExpression(10),
+        ),
+        BinaryExpression(
+            BinaryOperation.LESS,
+            IdentifierExpression(x),
+            LiteralExpression(5),
+        ),
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(0)
+    )
+    assert (
+        does_expression_imply(contradictory_antecedent, consequent, {x: SymbolType.INT})
+        is True
+    )
+
+
+def test_does_expression_imply_returns_true_when_consequent_is_tautological() -> None:
+    """Test ``anything -> True`` is True (tautological consequent)."""
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+    )
+    tautological_consequent = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), IdentifierExpression(x)
+    )
+    assert (
+        does_expression_imply(antecedent, tautological_consequent, {x: SymbolType.INT})
+        is True
+    )
+
+
+def test_does_expression_imply_returns_none_when_z3_returns_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test `does_expression_imply` propagates Z3 ``unknown`` as ``None``."""
+    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL,
+        IdentifierExpression(x),
+        LiteralExpression(0),
+    )
+    assert does_expression_imply(antecedent, consequent, {x: SymbolType.INT}) is None
+
+
+def test_does_expression_imply_handles_two_variable_implication() -> None:
+    """Test `does_expression_imply` over two variables: ``x == y && x > 0 -> y > 0``."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    antecedent = BinaryExpression(
+        BinaryOperation.LOGICAL_AND,
+        BinaryExpression(
+            BinaryOperation.EQUAL,
+            IdentifierExpression(x),
+            IdentifierExpression(y),
+        ),
+        BinaryExpression(
+            BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+        ),
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(y), LiteralExpression(0)
+    )
+    assert (
+        does_expression_imply(
+            antecedent, consequent, {x: SymbolType.INT, y: SymbolType.INT}
+        )
+        is True
+    )
+
+
+def test_does_expression_imply_raises_on_missing_symbol_type() -> None:
+    """Test `does_expression_imply` raises `KeyError` when an identifier is unmapped."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    antecedent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(y), LiteralExpression(0)
+    )
+
+    with pytest.raises(KeyError, match=r"symbol_types is missing entries"):
+        does_expression_imply(antecedent, consequent, {x: SymbolType.INT})

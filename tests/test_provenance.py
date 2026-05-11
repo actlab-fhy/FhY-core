@@ -691,6 +691,92 @@ def test_user_story_loop_fusion_pass_combines_two_provenances() -> None:
     assert fused.metadata == "loop-fusion"
 
 
+# ============================================================================
+# Provenance.__str__ (human-readable rendering)
+# ============================================================================
+
+
+def test_provenance_str_is_abstract_on_base_class() -> None:
+    """Test `Provenance.__str__` is declared abstract on the base class."""
+    assert "__str__" in Provenance.__abstractmethods__
+
+
+def test_unknown_provenance_string_representation() -> None:
+    """Test `UnknownProvenance.__str__` renders as ``<unknown>``."""
+    assert str(UnknownProvenance()) == "<unknown>"
+
+
+def test_file_provenance_string_representation_without_span() -> None:
+    """Test `FileProvenance.__str__` renders just the file path when no span."""
+    assert str(FileProvenance(Path("a.fhy"))) == "a.fhy"
+
+
+def test_file_provenance_string_representation_with_unknown_span() -> None:
+    """Test `FileProvenance.__str__` omits an unknown span."""
+    assert str(FileProvenance(Path("a.fhy"), Span())) == "a.fhy"
+
+
+def test_file_provenance_string_representation_with_offset_span() -> None:
+    """Test `FileProvenance.__str__` appends an offset-only span."""
+    assert str(FileProvenance(Path("a.fhy"), Span(0, 3))) == "a.fhy:@0-3"
+
+
+def test_file_provenance_string_representation_with_position_span() -> None:
+    """Test `FileProvenance.__str__` appends a position-bearing span."""
+    span = Span(start_position=Position(1, 1), end_position=Position(1, 4))
+
+    assert str(FileProvenance(Path("a.fhy"), span)) == "a.fhy:1:1-1:4"
+
+
+def test_named_provenance_string_representation_with_unknown_child() -> None:
+    """Test `NamedProvenance.__str__` shows just the name for unknown child."""
+    assert str(NamedProvenance("fhy.add", UnknownProvenance())) == "fhy.add"
+
+
+def test_named_provenance_string_representation_with_known_child() -> None:
+    """Test `NamedProvenance.__str__` shows the child in parentheses."""
+    prov = NamedProvenance("mylib::matmul", FileProvenance(Path("mylib.fhyobj")))
+
+    assert str(prov) == "mylib::matmul (mylib.fhyobj)"
+
+
+def test_call_site_provenance_string_representation() -> None:
+    """Test `CallSiteProvenance.__str__` renders ``callee at caller``."""
+    prov = CallSiteProvenance(
+        callee=FileProvenance(Path("callee.fhy")),
+        caller=FileProvenance(Path("caller.fhy")),
+    )
+
+    assert str(prov) == "callee.fhy at caller.fhy"
+
+
+def test_fused_provenance_string_representation_without_metadata() -> None:
+    """Test `FusedProvenance.__str__` uses ``fused`` label when unlabeled."""
+    a = FileProvenance(Path("a.fhy"))
+    b = FileProvenance(Path("b.fhy"))
+
+    assert str(FusedProvenance(sources=(a, b))) == "fused[a.fhy, b.fhy]"
+
+
+def test_fused_provenance_string_representation_with_metadata() -> None:
+    """Test `FusedProvenance.__str__` uses metadata as the label."""
+    a = FileProvenance(Path("a.fhy"))
+
+    prov = FusedProvenance(sources=(a,), metadata="loop-fusion")
+
+    assert str(prov) == "loop-fusion[a.fhy]"
+
+
+def test_fused_provenance_string_representation_recurses_into_sources() -> None:
+    """Test `FusedProvenance.__str__` renders nested provenances recursively."""
+    a = FileProvenance(Path("a.fhy"))
+    b = FileProvenance(Path("b.fhy"))
+    inner = FusedProvenance(sources=(a, b), metadata="cse")
+    outer = FusedProvenance(sources=(inner, FileProvenance(Path("c.fhy"))))
+
+    assert str(outer) == "fused[cse[a.fhy, b.fhy], c.fhy]"
+
+
 def test_user_story_inliner_call_site_chain_is_walkable() -> None:
     """Test a chained `CallSiteProvenance` exposes both arms recursively."""
     inner = FileProvenance(Path("inner.fhy"))

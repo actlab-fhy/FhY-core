@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from fhy_core.constraint import EquationConstraint
-from fhy_core.param import IntParam
+from fhy_core.param import IntParam, ParamError
 
 from .conftest import assert_all_satisfied, assert_none_satisfied
 
@@ -16,8 +16,8 @@ from .conftest import assert_all_satisfied, assert_none_satisfied
 
 
 def test_int_param_assign_rejects_float_value(default_int_param: IntParam) -> None:
-    """Test `IntParam.assign` rejects a `float` value."""
-    with pytest.raises(ValueError):
+    """Test `IntParam.assign` raises `ParamError` for a `float` value."""
+    with pytest.raises(ParamError):
         default_int_param.assign(1.0)  # type: ignore[arg-type]  # test: invalid input
 
 
@@ -59,7 +59,7 @@ def test_int_param_add_constraint_combines_with_existing_constraints(
         EquationConstraint(param.variable, param.variable_expression > 10)
     )
     assert param.is_constraints_satisfied(15)
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         param.assign(12)
 
 
@@ -190,8 +190,8 @@ def test_int_param_bounded_construction_admits_expected_values(
 
 
 def test_int_param_between_with_reversed_bounds_raises() -> None:
-    """Test `IntParam.between` raises when ``lower > upper``."""
-    with pytest.raises(ValueError):
+    """Test `IntParam.between` raises `ParamError` when ``lower > upper``."""
+    with pytest.raises(ParamError):
         IntParam.between(2, 1)
 
 
@@ -250,14 +250,14 @@ def test_int_param_between_equal_bounds_with_both_inclusive_is_singleton() -> No
 def test_int_param_between_equal_bounds_with_any_exclusive_raises(
     is_lower_inclusive: bool, is_upper_inclusive: bool
 ) -> None:
-    """Test `IntParam.between(x, x)` raises when either bound is exclusive.
+    """Test `IntParam.between(x, x)` raises `ParamError` when either bound is exclusive.
 
     Uses an integer above CPython's small-int cache (``257``) and constructs
     the upper bound via ``int("257")`` so the two bounds are equal but not
     identity-equal; pins down value-equality (``==``) rather than identity
     (``is``) on the bounds-equal check.
     """
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         IntParam.between(
             257,
             int("257"),

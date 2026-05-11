@@ -21,6 +21,8 @@
 | Analysis Manager                         | `Analysis`/`AnalysisVisitablePass` with `AnalysisManager` for caching and invalidating analysis results across pass runs. |
 | Validation Manager                       | `ValidationManager` runs every validator against the IR (collect-all, never fail-fast) and returns a `ValidationReport`; `ValidationFailedError` surfaces ERROR diagnostics. |
 | Serializable Trait                       | `Serializable`/`WrappedFamilySerializable` with dict, JSON, and binary formats plus registered type IDs. |
+| Value Domain                             | `ValueDomain` open registry classifying the kind of value an IR operation handles (e.g., `DATA_DOMAIN`, `ADDRESS_DOMAIN`), with optional parent hierarchies. |
+| Op Attribute                             | `OpAttribute` open registry of semantic tags attachable to compiler operations (`COMMUTATIVE`, `ASSOCIATIVE`, `PURE`, `ELEMENTWISE`). |
 | Compiler Traits - Identity               | `HasIdentifier` for stable object identity.                            |
 | Compiler Traits - Provenance             | `HasProvenance` for source/origin tracking.                            |
 | Compiler Traits - Type Carrier           | `HasType` for objects carrying an explicit type.                       |

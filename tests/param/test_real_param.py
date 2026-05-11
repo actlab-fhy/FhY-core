@@ -7,7 +7,7 @@ import pytest
 
 from fhy_core.constraint import EquationConstraint
 from fhy_core.identifier import Identifier
-from fhy_core.param import IntParam, RealParam
+from fhy_core.param import IntParam, ParamError, RealParam
 
 from .conftest import assert_all_satisfied, assert_none_satisfied
 
@@ -19,8 +19,8 @@ from .conftest import assert_all_satisfied, assert_none_satisfied
 def test_real_param_assign_rejects_non_numeric_value(
     default_real_param: RealParam,
 ) -> None:
-    """Test `RealParam.assign` rejects a non-numeric value."""
-    with pytest.raises(ValueError):
+    """Test `RealParam.assign` raises `ParamError` for a non-numeric value."""
+    with pytest.raises(ParamError):
         default_real_param.assign([])  # type: ignore[arg-type]  # test: invalid input
 
 
@@ -221,23 +221,30 @@ def test_real_param_bounded_construction_admits_expected_values(
             [],
             id="lower-constructor-invalid",
         ),
-        pytest.param(
-            partial(RealParam.between, 2.0, 1.0),
-            [],
-            id="between-constructor-reversed",
-        ),
     ],
 )
-def test_real_param_bounded_construction_with_invalid_inputs_raises(
+def test_real_param_bounded_construction_with_invalid_string_bounds_raises(
     factory: Any,
     ops: list[tuple[str, tuple[Any, ...]]],
 ) -> None:
-    """Test bounded `RealParam` constructions reject invalid bounds via `ValueError`."""
+    """Test bounded `RealParam` constructions reject unparseable string bounds.
+
+    The string ``"invalid"`` reaches the expression layer's
+    ``LiteralExpression`` validator and raises a plain ``ValueError`` rather
+    than ``ParamError`` -- the failure is in expression construction, not in
+    param-domain validation.
+    """
     with pytest.raises(ValueError):
         param = factory()
         for op in ops:
             name, args = op
             param = getattr(param, name)(*args)
+
+
+def test_real_param_between_with_reversed_bounds_raises() -> None:
+    """Test `RealParam.between` raises `ParamError` when ``lower > upper``."""
+    with pytest.raises(ParamError):
+        RealParam.between(2.0, 1.0)
 
 
 # =============================================================================
@@ -309,7 +316,7 @@ def test_real_param_between_equal_bounds_with_any_exclusive_raises(
     are equal but not identity-equal; pins down value-equality (``==``) rather
     than identity (``is``) on the bounds-equal check.
     """
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         RealParam.between(
             5.0,
             float("5.0"),

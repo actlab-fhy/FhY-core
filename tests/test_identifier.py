@@ -13,7 +13,7 @@ from fhy_core.serialization import (
     SerializationFormat,
     SerializedDict,
 )
-from fhy_core.trait import Equal, PartialEqual
+from fhy_core.trait import Equal, Frozen, FrozenMutationError, PartialEqual
 
 # =============================================================================
 # Construction & ID generation
@@ -412,23 +412,73 @@ def test_deserialize_then_construct_avoids_collision() -> None:
 # =============================================================================
 # Class-level defaults (subprocess-isolated)
 #
-# The class-level default `_next_id = 0` is only observable in a fresh
-# process: any prior Identifier(...) in this test session has already mutated
-# it. We spawn a subprocess and observe the id of the very first identifier
-# created from a clean import.
+# `_next_id` is mutated by every Identifier construction, so its starting
+# state is only observable in a fresh process. Importing `fhy_core` (or any
+# submodule) may construct identifiers during module initialization; the
+# test reads `Identifier._next_id` immediately after import and then
+# verifies the next user-constructed identifier picks up that counter
+# contiguously and advances it by 1. The assertion is robust to future
+# additions of module-level interned objects.
 # =============================================================================
 
 
 @pytest.mark.slow
 @pytest.mark.subprocess
 def test_first_identifier_in_fresh_process_has_id_zero() -> None:
-    """Test the very first `Identifier` created in a fresh process has `id` `0`."""
+    """Test the `_next_id` counter is contiguous from a fresh process import.
+
+    Reads `Identifier._next_id` after package initialization and asserts that
+    a freshly-constructed `Identifier` picks up the counter and advances it
+    by exactly one. Combined with the contiguous-construction tests, this
+    pins down the "monotonically-increasing, never-reused" id contract from
+    a clean process start.
+    """
     output = subprocess.check_output(
         [
             sys.executable,
             "-c",
-            "from fhy_core.identifier import Identifier; print(Identifier('x').id)",
+            "import fhy_core  # ensure full package initialization\n"
+            "from fhy_core.identifier import Identifier\n"
+            "start_next_id = Identifier._next_id\n"
+            "fresh = Identifier('x')\n"
+            "print(start_next_id, fresh.id, Identifier._next_id)",
         ],
         text=True,
     ).strip()
-    assert output == "0"
+    start_next_id, fresh_id, next_id = (int(part) for part in output.split())
+    assert fresh_id == start_next_id
+    assert next_id == fresh_id + 1
+
+
+# =============================================================================
+# Identifier is frozen after construction
+# =============================================================================
+
+
+def test_identifier_is_frozen_after_construction() -> None:
+    """Test a freshly-constructed ``Identifier`` is frozen."""
+    identifier = Identifier("x")
+    assert isinstance(identifier, Frozen)
+    assert identifier.is_frozen
+
+
+def test_identifier_rejects_id_mutation_after_construction() -> None:
+    """Test assigning to ``_id`` on a constructed ``Identifier`` raises."""
+    identifier = Identifier("x")
+    with pytest.raises(FrozenMutationError):
+        identifier._id = 99
+
+
+def test_identifier_rejects_name_hint_mutation_after_construction() -> None:
+    """Test assigning to ``_name_hint`` on a constructed ``Identifier`` raises."""
+    identifier = Identifier("x")
+    with pytest.raises(FrozenMutationError):
+        identifier._name_hint = "rewritten"
+
+
+def test_deserialized_identifier_is_frozen() -> None:
+    """Test ``Identifier.deserialize_from_dict`` produces a frozen instance."""
+    identifier = Identifier.deserialize_from_dict({"id": 12345, "name_hint": "y"})
+    assert identifier.is_frozen
+    with pytest.raises(FrozenMutationError):
+        identifier._id = 0

@@ -8,7 +8,7 @@ __all__ = [
 ]
 
 import operator
-from typing import Any, Callable
+from typing import Any, Callable, ClassVar
 
 import sympy  # type: ignore
 import sympy.logic  # type: ignore
@@ -26,6 +26,7 @@ from fhy_core.expression.core import (
 )
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
+    CompilerPass,
     PassExecutionError,
     VisitablePass,
     register_pass,
@@ -111,7 +112,7 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             elif literal_expression.value == "False":
                 return sympy.false
             else:
-                return sympy.parse_expr(literal_expression.value)
+                return sympy.Float(literal_expression.value)
         else:
             raise TypeError(
                 f"Unsupported literal type: {type(literal_expression.value)}"
@@ -173,13 +174,54 @@ def substitute_sympy_expression_variables(
     )
 
 
-class SymPyToExpressionConverter:
+@register_pass(
+    "fhy_core.expression.from_sympy",
+    "Lift a SymPy expression into the FhY expression IR.",
+)
+class SymPyToExpressionConverter(
+    CompilerPass[sympy.Expr | sympy.logic.boolalg.Boolean, Expression]
+):
     """Converts a SymPy expression to an expression tree."""
 
-    def __call__(
-        self, sympy_expression: sympy.Expr | sympy.logic.boolalg.Boolean
+    _EXPR_DISPATCH: ClassVar[tuple[tuple[type, str], ...]] = (
+        (sympy.Add, "_convert_add"),
+        (sympy.Mul, "_convert_mul"),
+        (sympy.Mod, "_convert_mod"),
+        (sympy.Pow, "_convert_pow"),
+        (sympy.Symbol, "_convert_symbol"),
+        (sympy.Integer, "_convert_integer"),
+        (sympy.Float, "_convert_float"),
+    )
+    _BOOL_DISPATCH: ClassVar[tuple[tuple[type, str], ...]] = (
+        (sympy.logic.boolalg.Not, "_convert_not"),
+        (sympy.logic.boolalg.And, "_convert_and"),
+        (sympy.logic.boolalg.Or, "_convert_or"),
+        (sympy.logic.boolalg.Xor, "_convert_xor"),
+        (sympy.logic.boolalg.Nor, "_convert_nor"),
+        (sympy.logic.boolalg.Nand, "_convert_nand"),
+        (sympy.core.relational.Relational, "convert_relational"),
+        (sympy.logic.boolalg.Implies, "_convert_implies"),
+        (sympy.logic.boolalg.BooleanTrue, "_convert_boolean_true"),
+        (sympy.logic.boolalg.BooleanFalse, "_convert_boolean_false"),
+    )
+    _RELATIONAL_DISPATCH: ClassVar[tuple[tuple[type, str], ...]] = (
+        (sympy.Equality, "_convert_equality"),
+        (sympy.Unequality, "_convert_unequality"),
+        (sympy.StrictLessThan, "_convert_strict_less_than"),
+        (sympy.LessThan, "_convert_less_than"),
+        (sympy.StrictGreaterThan, "_convert_strict_greater_than"),
+        (sympy.GreaterThan, "_convert_greater_than"),
+    )
+
+    def run_pass(self, ir: sympy.Expr | sympy.logic.boolalg.Boolean) -> Expression:
+        return self.convert(ir)
+
+    def get_noop_output(
+        self, ir: sympy.Expr | sympy.logic.boolalg.Boolean
     ) -> Expression:
-        return self.convert(sympy_expression)
+        raise PassExecutionError(
+            f'Pass "{self.get_pass_name()}" does not define noop output.'
+        )
 
     def convert(self, node: sympy.Expr | sympy.logic.boolalg.Boolean) -> Expression:
         """Convert a SymPy node.
@@ -199,50 +241,16 @@ class SymPyToExpressionConverter:
             raise TypeError(f"Unsupported node type: {type(node)}")
 
     def convert_expr(self, expr: sympy.Expr) -> Expression:
-        if isinstance(expr, sympy.Add):
-            return self.convert_Add(expr)
-        elif isinstance(expr, sympy.Mul):
-            return self.convert_Mul(expr)
-        elif isinstance(expr, sympy.Mod):
-            return self.convert_Mod(expr)
-        elif isinstance(expr, sympy.Pow):
-            return self.convert_Pow(expr)
-        elif isinstance(expr, sympy.Symbol):
-            return self.convert_Symbol(expr)
-        elif isinstance(expr, sympy.Integer):
-            return self.convert_Integer(expr)
-        elif isinstance(expr, sympy.Float):
-            return self.convert_Float(expr)
-        else:
-            raise TypeError(f"Unsupported expression type: {type(expr)}")
+        return self._dispatch(expr, self._EXPR_DISPATCH, "Unsupported expression type")
 
     def convert_bool(
         self, boolean_expression: sympy.logic.boolalg.Boolean
     ) -> Expression:
-        if isinstance(boolean_expression, sympy.logic.boolalg.Not):
-            return self.convert_Not(boolean_expression)
-        elif isinstance(boolean_expression, sympy.logic.boolalg.And):
-            return self.convert_And(boolean_expression)
-        elif isinstance(boolean_expression, sympy.logic.boolalg.Or):
-            return self.convert_Or(boolean_expression)
-        elif isinstance(boolean_expression, sympy.logic.boolalg.Xor):
-            return self.convert_Xor(boolean_expression)
-        elif isinstance(boolean_expression, sympy.logic.boolalg.Nor):
-            return self.convert_Nor(boolean_expression)
-        elif isinstance(boolean_expression, sympy.logic.boolalg.Nand):
-            return self.convert_Nand(boolean_expression)
-        elif isinstance(boolean_expression, sympy.core.relational.Relational):
-            return self.convert_relational(boolean_expression)
-        elif isinstance(boolean_expression, sympy.logic.boolalg.Implies):
-            return self.convert_Implies(boolean_expression)
-        elif isinstance(boolean_expression, sympy.logic.boolalg.BooleanTrue):
-            return LiteralExpression(True)
-        elif isinstance(boolean_expression, sympy.logic.boolalg.BooleanFalse):
-            return LiteralExpression(False)
-        else:
-            raise TypeError(
-                f"Unsupported boolean expression type: {type(boolean_expression)}"
-            )
+        return self._dispatch(
+            boolean_expression,
+            self._BOOL_DISPATCH,
+            "Unsupported boolean expression type",
+        )
 
     def convert_relational(
         self, relational: sympy.core.relational.Relational
@@ -256,31 +264,23 @@ class SymPyToExpressionConverter:
             Expression.
 
         """
-        if isinstance(relational, sympy.Equality):
-            return self.convert_Equality(relational)
-        elif isinstance(relational, sympy.Unequality):
-            return self.convert_Unequality(relational)
-        elif isinstance(relational, sympy.StrictLessThan):
-            return self.convert_StrictLessThan(relational)
-        elif isinstance(relational, sympy.LessThan):
-            return self.convert_LessThan(relational)
-        elif isinstance(relational, sympy.StrictGreaterThan):
-            return self.convert_StrictGreaterThan(relational)
-        elif isinstance(relational, sympy.GreaterThan):
-            return self.convert_GreaterThan(relational)
-        else:
-            raise TypeError(f"Unsupported relational type: {type(relational)}")
+        return self._dispatch(
+            relational, self._RELATIONAL_DISPATCH, "Unsupported relational type"
+        )
 
-    def convert_Add(self, add: sympy.Add) -> Expression:
-        """Convert a SymPy Add node to an expression.
+    def _dispatch(
+        self,
+        node: Any,
+        table: tuple[tuple[type, str], ...],
+        error_label: str,
+    ) -> Expression:
+        for sympy_type, method_name in table:
+            if isinstance(node, sympy_type):
+                method = getattr(self, method_name)
+                return method(node)  # type: ignore[no-any-return]
+        raise TypeError(f"{error_label}: {type(node)}")
 
-        Args:
-            add: SymPy Add node to convert.
-
-        Returns:
-            Expression.
-
-        """
+    def _convert_add(self, add: sympy.Add) -> Expression:
         if len(add.args) == 0:
             return LiteralExpression(0)
         elif len(add.args) == 1:
@@ -290,16 +290,7 @@ class SymPyToExpressionConverter:
                 BinaryOperation.ADD, add
             )
 
-    def convert_Mul(self, mul: sympy.Mul) -> Expression:
-        """Convert a SymPy Mul node to an expression.
-
-        Args:
-            mul: SymPy Mul node to convert.
-
-        Returns:
-            expression.
-
-        """
+    def _convert_mul(self, mul: sympy.Mul) -> Expression:
         if len(mul.args) == 0:
             return LiteralExpression(1)
         elif len(mul.args) == 1:
@@ -309,81 +300,27 @@ class SymPyToExpressionConverter:
                 BinaryOperation.MULTIPLY, mul
             )
 
-    def convert_Mod(self, mod: sympy.Mod) -> BinaryExpression:
-        """Convert a SymPy Mod node to an expression.
-
-        Args:
-            mod: SymPy Mod node to convert.
-
-        Returns:
-            Binary expression.
-
-        """
+    def _convert_mod(self, mod: sympy.Mod) -> BinaryExpression:
         return self._convert_two_argument_binary_operation(BinaryOperation.MODULO, mod)
 
-    def convert_Pow(self, pow_: sympy.Pow) -> BinaryExpression:
-        """Convert a SymPy Pow node to an expression.
-
-        Args:
-            pow_: SymPy Pow node to convert.
-
-        Returns:
-            Binary expression.
-
-        """
+    def _convert_pow(self, pow_: sympy.Pow) -> BinaryExpression:
         return self._convert_two_argument_binary_operation(BinaryOperation.POWER, pow_)
 
-    def convert_Not(self, not_: sympy.logic.boolalg.Not) -> UnaryExpression:
-        """Convert a SymPy Not node to an expression.
-
-        Args:
-            not_: SymPy Not node to convert.
-
-        Returns:
-            Unary expression.
-
-        """
+    def _convert_not(self, not_: sympy.logic.boolalg.Not) -> UnaryExpression:
         operand = self.convert(not_.args[0])
         return UnaryExpression(UnaryOperation.LOGICAL_NOT, operand)
 
-    def convert_And(self, and_: sympy.logic.boolalg.And) -> BinaryExpression:
-        """Convert a SymPy And node to an expression.
-
-        Args:
-            and_: SymPy And node to convert.
-
-        Returns:
-            Binary expression.
-
-        """
+    def _convert_and(self, and_: sympy.logic.boolalg.And) -> BinaryExpression:
         return self._convert_commutative_and_associative_binary_operation(
             BinaryOperation.LOGICAL_AND, and_
         )
 
-    def convert_Or(self, or_: sympy.logic.boolalg.Or) -> BinaryExpression:
-        """Convert a SymPy Or node to an expression.
-
-        Args:
-            or_: SymPy Or node to convert.
-
-        Returns:
-            Binary expression.
-
-        """
+    def _convert_or(self, or_: sympy.logic.boolalg.Or) -> BinaryExpression:
         return self._convert_commutative_and_associative_binary_operation(
             BinaryOperation.LOGICAL_OR, or_
         )
 
-    def convert_Xor(self, xor: sympy.logic.boolalg.Xor) -> BinaryExpression:
-        """Convert a SymPy Xor node to an expression.
-
-        Args:
-            xor: SymPy Xor node to convert.
-
-        Returns:
-            Binary expression.
-
-        """
+    def _convert_xor(self, xor: sympy.logic.boolalg.Xor) -> BinaryExpression:
         left = self.convert(xor.args[0])
         right = self.convert(sympy.Xor(*xor.args[1:], evaluate=False))
         return BinaryExpression(
@@ -395,135 +332,71 @@ class SymPyToExpressionConverter:
             ),
         )
 
-    def convert_Nor(self, nor: sympy.logic.boolalg.Nor) -> Expression:
-        """Convert a SymPy Nor node to an expression.
-
-        Args:
-            nor: SymPy Nor node to convert.
-
-        Returns:
-            Expression.
-
-        """
+    def _convert_nor(self, nor: sympy.logic.boolalg.Nor) -> Expression:
         or_statement = self._convert_commutative_and_associative_binary_operation(
             BinaryOperation.LOGICAL_OR, nor
         )
         return UnaryExpression(UnaryOperation.LOGICAL_NOT, or_statement)
 
-    def convert_Nand(self, nand: sympy.logic.boolalg.Nand) -> Expression:
-        """Convert a SymPy Nand node to an expression.
-
-        Args:
-            nand: SymPy Nand node to convert.
-
-        Returns:
-            Expression.
-
-        """
+    def _convert_nand(self, nand: sympy.logic.boolalg.Nand) -> Expression:
         and_statement = self._convert_commutative_and_associative_binary_operation(
             BinaryOperation.LOGICAL_AND, nand
         )
         return UnaryExpression(UnaryOperation.LOGICAL_NOT, and_statement)
 
-    def convert_Equality(self, equivalent: sympy.Equality) -> BinaryExpression:
-        """Convert a SymPy Equality node to an expression.
-
-        Args:
-            equivalent: SymPy Equality node to convert.
-
-        Returns:
-            Binary expression.
-
-        """
+    def _convert_equality(self, equivalent: sympy.Equality) -> BinaryExpression:
         return self._convert_two_argument_binary_operation(
             BinaryOperation.EQUAL, equivalent
         )
 
-    def convert_Unequality(self, unequality: sympy.Unequality) -> BinaryExpression:
-        """Convert a SymPy Unequality node to an expression.
-
-        Args:
-            unequality: SymPy Unequality node to convert.
-
-        Returns:
-            Binary expression.
-
-        """
+    def _convert_unequality(self, unequality: sympy.Unequality) -> BinaryExpression:
         return self._convert_two_argument_binary_operation(
             BinaryOperation.NOT_EQUAL, unequality
         )
 
-    def convert_StrictLessThan(
+    def _convert_strict_less_than(
         self, strict_less_than: sympy.StrictLessThan
     ) -> BinaryExpression:
-        """Convert a SymPy StrictLessThan node to an expression.
-
-        Args:
-            strict_less_than: SymPy StrictLessThan node to convert.
-
-        Returns:
-            Binary expression.
-
-        """
         return self._convert_two_argument_binary_operation(
             BinaryOperation.LESS, strict_less_than
         )
 
-    def convert_LessThan(self, less_than: sympy.LessThan) -> BinaryExpression:
-        """Convert a SymPy LessThan node to an expression.
-
-        Args:
-            less_than: SymPy LessThan node to convert.
-
-        Returns:
-            Binary expression.
-
-        """
+    def _convert_less_than(self, less_than: sympy.LessThan) -> BinaryExpression:
         return self._convert_two_argument_binary_operation(
             BinaryOperation.LESS_EQUAL, less_than
         )
 
-    def convert_StrictGreaterThan(
+    def _convert_strict_greater_than(
         self, strict_greater_than: sympy.StrictGreaterThan
     ) -> BinaryExpression:
-        """Convert a SymPy StrictGreaterThan node to an expression.
-
-        Args:
-            strict_greater_than: SymPy StrictGreaterThan node to convert.
-
-        Returns:
-            Binary expression.
-
-        """
         return self._convert_two_argument_binary_operation(
             BinaryOperation.GREATER, strict_greater_than
         )
 
-    def convert_GreaterThan(self, greater_than: sympy.GreaterThan) -> BinaryExpression:
-        """Convert a SymPy GreaterThan node to an expression.
-
-        Args:
-            greater_than: SymPy GreaterThan node to convert.
-
-        Returns:
-            Binary expression.
-
-        """
+    def _convert_greater_than(
+        self, greater_than: sympy.GreaterThan
+    ) -> BinaryExpression:
         return self._convert_two_argument_binary_operation(
             BinaryOperation.GREATER_EQUAL, greater_than
         )
 
-    def convert_Implies(self, implies: sympy.logic.boolalg.Implies) -> BinaryExpression:
-        """Convert a SymPy Implies node to an expression.
-
-        Args:
-            implies: SymPy Implies node to convert.
-
-        Returns:
-            Binary expression.
-
-        """
+    def _convert_implies(
+        self, implies: sympy.logic.boolalg.Implies
+    ) -> BinaryExpression:
+        _ = implies
         raise NotImplementedError("Implies is not supported.")
+
+    def _convert_boolean_true(
+        self, node: sympy.logic.boolalg.BooleanTrue
+    ) -> LiteralExpression:
+        _ = node
+        return LiteralExpression(True)
+
+    def _convert_boolean_false(
+        self, node: sympy.logic.boolalg.BooleanFalse
+    ) -> LiteralExpression:
+        _ = node
+        return LiteralExpression(False)
 
     def _convert_commutative_and_associative_binary_operation(
         self,
@@ -550,26 +423,28 @@ class SymPyToExpressionConverter:
         right = self.convert(sympy_operation.args[1])
         return BinaryExpression(operation, left, right)
 
-    def convert_Symbol(self, symbol: sympy.Symbol) -> IdentifierExpression:
+    def _convert_symbol(self, symbol: sympy.Symbol) -> IdentifierExpression:
         symbol_name = symbol.name
         last_underscore_index = symbol_name.rfind("_")
         if last_underscore_index == -1:
             raise RuntimeError(
                 "When converting a symbol from SymPy to an identifier, the "
                 "symbol did not contain an underscore. This typically means "
-                "that the symbol was not generated by the "
-                "SymPyToExpressionConverter."
+                "that the symbol was not produced by the "
+                "ExpressionToSympyConverter, whose `format_identifier` "
+                "encodes identifiers as '<name_hint>_<id>'."
             )
         identifier_id = int(symbol_name[last_underscore_index + 1 :])
         identifier_name_hint = symbol_name[:last_underscore_index]
-        identifier = Identifier(identifier_name_hint)
-        identifier._id = identifier_id
+        identifier = Identifier.deserialize_from_dict(
+            {"id": identifier_id, "name_hint": identifier_name_hint}
+        )
         return IdentifierExpression(identifier)
 
-    def convert_Integer(self, int_: sympy.Integer) -> LiteralExpression:
+    def _convert_integer(self, int_: sympy.Integer) -> LiteralExpression:
         return LiteralExpression(int(int_))
 
-    def convert_Float(self, float_: sympy.Float) -> LiteralExpression:
+    def _convert_float(self, float_: sympy.Float) -> LiteralExpression:
         return LiteralExpression(float(float_))
 
 
@@ -599,7 +474,7 @@ def simplify_expression(
         environment: Environment to simplify the expression in. Defaults to None.
 
     Returns:
-        Result of the expression.
+        Simplified expression.
 
     """
     sympy_expression = convert_expression_to_sympy_expression(expression)

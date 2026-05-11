@@ -129,8 +129,25 @@ class InternedMixin(ABC, Generic[_K]):
 
     @classmethod
     def clear_interned_registry(cls) -> None:
-        """Clear this family's canonical-instance registry."""
+        """Clear this family's canonical-instance registry.
+
+        Note:
+            Subclasses that ship module-level canonical default instances
+            do not have those defaults automatically re-registered. Call
+            :meth:`register_default_instances` after clearing to restore
+            the canonical mapping.
+        """
         cls._get_interned_registry().clear()
+
+    @classmethod
+    def register_default_instances(cls) -> None:
+        """Re-register the canonical default instances shipped by this class.
+
+        Override on subclasses that bind module-level canonical defaults
+        (e.g. ``ValueDomain.DATA_DOMAIN``, ``OpAttribute.COMMUTATIVE``) so
+        callers can restore them after :meth:`clear_interned_registry`.
+        The base implementation is a no-op for classes without defaults.
+        """
 
     @abstractmethod
     def get_intern_key(self) -> _K:

@@ -7,7 +7,7 @@ import pytest
 
 from fhy_core.constraint import EquationConstraint
 from fhy_core.identifier import Identifier
-from fhy_core.param import IntParam, NatParam
+from fhy_core.param import IntParam, NatParam, ParamError
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -25,7 +25,7 @@ def test_nat_param_with_zero_included_admits_zero_and_positive_integers() -> Non
     param = NatParam()
     assert param.assign(0).is_value_set()
     assert param.assign(1).is_value_set()
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         param.assign(-1)
 
 
@@ -33,9 +33,9 @@ def test_nat_param_with_zero_excluded_rejects_zero() -> None:
     """Test a `NatParam` with zero excluded rejects zero."""
     param = NatParam(is_zero_included=False)
     assert param.assign(1).is_value_set()
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         param.assign(0)
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         param.assign(-1)
 
 
@@ -43,7 +43,7 @@ def test_nat_param_with_zero_excluded_preserves_zero_exclusion_after_add() -> No
     """Test adding constraints preserves the zero-excluded `NatParam` semantics."""
     param = NatParam(is_zero_included=False)
     updated = param.add_lower_bound_constraint(2, is_inclusive=True)
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         updated.add_lower_bound_constraint(0, is_inclusive=True)
 
 
@@ -123,8 +123,8 @@ def test_nat_param_bounded_construction_with_invalid_inputs_raises(
     factory: Any,
     ops: list[tuple[str, tuple[Any, ...]]],
 ) -> None:
-    """Test bounded `NatParam` constructions reject invalid bounds with `ValueError`."""
-    with pytest.raises(ValueError):
+    """Test bounded `NatParam` constructions reject invalid bounds with `ParamError`."""
+    with pytest.raises(ParamError):
         param = factory()
         for op in ops:
             name, args = op
@@ -166,7 +166,7 @@ def test_nat_param_add_lower_bound_constraint_threshold_matrix(
     """Test `NatParam.add_lower_bound_constraint` thresholds raise or succeed."""
     param = NatParam(is_zero_included=is_zero_included)
     if kind == "raises":
-        with pytest.raises(ValueError):
+        with pytest.raises(ParamError):
             param.add_lower_bound_constraint(lower_bound, is_inclusive=is_inclusive)
     else:
         param.add_lower_bound_constraint(lower_bound, is_inclusive=is_inclusive)
@@ -196,7 +196,7 @@ def test_nat_param_add_upper_bound_constraint_threshold_matrix(
     """Test `NatParam.add_upper_bound_constraint` thresholds raise or succeed."""
     param = NatParam(is_zero_included=is_zero_included)
     if kind == "raises":
-        with pytest.raises(ValueError):
+        with pytest.raises(ParamError):
             param.add_upper_bound_constraint(upper_bound, is_inclusive=is_inclusive)
     else:
         param.add_upper_bound_constraint(upper_bound, is_inclusive=is_inclusive)
@@ -329,7 +329,7 @@ def test_nat_param_deserialize_round_trip_preserves_zero_inclusion_flag() -> Non
     """Test `NatParam` round-trips ``is_zero_included=True`` through serialization.
 
     Pins down the ``is_zero_included = True`` assignment in
-    `deserialize_data_from_dict`: a ``True → False`` flip would yield a
+    `deserialize_data_from_dict`: a ``True -> False`` flip would yield a
     deserialized param that rejects ``0``.
     """
     original = NatParam(is_zero_included=True)

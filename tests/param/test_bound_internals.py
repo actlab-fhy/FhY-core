@@ -1,4 +1,4 @@
-"""Tests for private helpers in `fhy_core.param.core` and `fhy_core.param.bound`.
+"""Tests for private helpers in `fhy_core.param.bound`.
 
 The helpers exercised here cover validation paths that the public-API tests
 cannot easily reach because the public constructors and validators reject
@@ -21,10 +21,6 @@ from fhy_core.param import BoundIntParam
 from fhy_core.param.bound import (
     _get_bound_from_expression,
     _invert_binary_comparison_operation,
-)
-from fhy_core.param.core import (
-    ParamError,
-    _serialize_typed_wrapped_leaf_value,
 )
 
 # =============================================================================
@@ -94,44 +90,6 @@ def test_get_bound_from_expression_rejects_non_int_literal() -> None:
     """Test the helper raises `RuntimeError` for a non-`int` literal value."""
     with pytest.raises(RuntimeError, match="integer LiteralExpression"):
         _get_bound_from_expression(LiteralExpression(1.5), BinaryOperation.GREATER)
-
-
-# =============================================================================
-# `_serialize_typed_wrapped_leaf_value`
-# =============================================================================
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        pytest.param(True, id="bool"),
-        pytest.param(1, id="int"),
-        pytest.param(1.5, id="float"),
-        pytest.param("text", id="str"),
-        pytest.param(Identifier("x"), id="serializable"),
-    ],
-)
-def test_serialize_typed_wrapped_leaf_value_accepts_each_supported_type(
-    value: Any,
-) -> None:
-    """Test the helper serializes each supported leaf-value type without raising."""
-    _serialize_typed_wrapped_leaf_value(value)
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        pytest.param([1, 2, 3], id="list"),
-        pytest.param({1: 2}, id="dict"),
-        pytest.param(object(), id="opaque-object"),
-    ],
-)
-def test_serialize_typed_wrapped_leaf_value_rejects_unsupported_type(
-    value: Any,
-) -> None:
-    """Test the helper raises `ParamError` for a value of an unsupported type."""
-    with pytest.raises(ParamError, match="serializable leaf"):
-        _serialize_typed_wrapped_leaf_value(value)
 
 
 # =============================================================================

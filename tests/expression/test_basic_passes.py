@@ -108,14 +108,14 @@ def test_substitute_identifiers_recurses_into_unary_expression() -> None:
     assert result.is_structurally_equivalent(expected)
 
 
-def test_substitute_identifiers_rebuilds_literal_subexpressions_fresh() -> None:
-    """Test `substitute_identifiers` rebuilds literal sub-expressions as new nodes."""
+def test_substitute_identifiers_returns_literal_identity() -> None:
+    """Test ``substitute_identifiers`` returns the original literal instance."""
     literal = LiteralExpression(3)
 
     result = substitute_identifiers(literal, {})
 
     assert result.is_structurally_equivalent(literal)
-    assert result is not literal
+    assert result is literal
 
 
 def test_identifier_substituter_get_noop_output_returns_input() -> None:
@@ -169,3 +169,26 @@ def test_basic_expression_passes_are_registered_under_expected_names(
     assert isinstance(info, PassInfo)
     assert info.pass_type is pass_class
     assert info.description.strip() != ""
+
+
+# =============================================================================
+# IdentifierSubstituter returns the original LiteralExpression
+# =============================================================================
+
+
+def test_substitute_identifiers_preserves_literal_identity() -> None:
+    """Test ``substitute_identifiers`` returns the original ``LiteralExpression``."""
+    literal = LiteralExpression(5)
+    result = substitute_identifiers(literal, {})
+    assert result is literal
+
+
+def test_substitute_identifiers_preserves_nested_literal_identity() -> None:
+    """Test nested literals inside a substituted tree remain the same instance."""
+    literal = LiteralExpression(42)
+    tree = BinaryExpression(BinaryOperation.ADD, literal, literal)
+
+    result = substitute_identifiers(tree, {})
+    assert isinstance(result, BinaryExpression)
+    assert result.left is literal
+    assert result.right is literal

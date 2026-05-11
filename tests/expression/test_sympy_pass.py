@@ -1,25 +1,4 @@
-"""Tests for `fhy_core.expression.passes.sympy`.
-
-Notes on known-equivalent mutants not targeted by this file:
-
-- The ``evaluate=False`` at :mod:`fhy_core.expression.passes.sympy` lines 388
-  (``convert_Xor``) and line 535 for ``And``/``Or`` flavours is observably
-  indistinguishable from ``evaluate=True`` when the recursive tail contains
-  only symbolic arguments - SymPy yields identical node structure in both
-  cases. Only the ``Add``/``Mul`` flavours at line 535 are killable here
-  (arithmetic folding at the tail changes the tree shape).
-- The empty-args / single-arg guards in ``convert_Add`` and ``convert_Mul``
-  are unreachable through any public SymPy constructor and are therefore not
-  targeted.
-- ``Not.args[0]`` vs ``args[-1]`` is equivalent because SymPy's ``Not`` is
-  always unary.
-- The ``value == "True"`` / ``value == "False"`` string branches in
-  ``visit_literal_expression`` are unreachable: ``LiteralExpression``'s
-  ``__post_init__`` rejects any non-numeric string at construction. All
-  comparison-operator mutants on those branches are therefore unkillable
-  from the public surface.
-
-"""
+"""Tests for `fhy_core.expression.passes.sympy`."""
 
 from unittest.mock import Mock
 
@@ -455,6 +434,32 @@ def test_identifier_round_trips_through_sympy_for_tricky_name_hints(
     assert restored.identifier.id == identifier_id
 
 
+def test_convert_symbol_advances_identifier_id_counter_past_recovered_id() -> None:
+    """Test recovering an `Identifier` from a SymPy symbol advances `_next_id`.
+
+    `Identifier` documents that ids are never reused. The reverse converter
+    must therefore advance the global counter past any id it materializes,
+    so a subsequently constructed `Identifier` gets a strictly greater id.
+
+    The starting counter is captured up front and restored on teardown so
+    this test does not leak large id values into other tests in the same
+    pytest worker.
+    """
+    starting_next_id = Identifier._next_id
+    recovered_id = starting_next_id + 100
+    try:
+        recovered = convert_sympy_expression_to_expression(
+            sympy.Symbol(f"x_{recovered_id}")
+        )
+        assert isinstance(recovered, IdentifierExpression)
+        assert recovered.identifier.id == recovered_id
+
+        fresh = Identifier("y")
+        assert fresh.id > recovered_id
+    finally:
+        Identifier._next_id = starting_next_id
+
+
 def test_convert_add_of_literals_and_symbol_preserves_unevaluated_tail() -> None:
     """Test `convert_Add` preserves the multi-arg shape without folding the tail."""
     source = sympy.Add(
@@ -616,6 +621,12 @@ def test_sympy_converter_get_noop_output_raises() -> None:
         ExpressionToSympyConverter().get_noop_output(LiteralExpression(0))
 
 
+def test_sympy_to_expression_converter_get_noop_output_raises() -> None:
+    """Test `SymPyToExpressionConverter.get_noop_output` raises `PassExecutionError`."""
+    with pytest.raises(PassExecutionError, match=r"does not define noop output"):
+        SymPyToExpressionConverter().get_noop_output(sympy.Integer(0))
+
+
 def test_sympy_to_expression_convert_rejects_unknown_node_type() -> None:
     """Test `convert` raises `TypeError` for a node that is neither Expr nor Boolean."""
     with pytest.raises(TypeError, match=r"Unsupported node type"):
@@ -644,17 +655,14 @@ def test_sympy_to_expression_convert_relational_rejects_unsupported_subtype() ->
 
 
 @pytest.mark.parametrize(
-    "method_name, sympy_class, identity_value, sample_arg",
+    "method_name, sympy_class, identity_value",
     [
-        pytest.param("convert_Add", sympy.Add, 0, 7, id="add"),
-        pytest.param("convert_Mul", sympy.Mul, 1, 5, id="mul"),
+        pytest.param("_convert_add", sympy.Add, 0, id="add"),
+        pytest.param("_convert_mul", sympy.Mul, 1, id="mul"),
     ],
 )
 def test_sympy_to_expression_convert_commutative_op_zero_arg_returns_identity(
-    method_name: str,
-    sympy_class: type,
-    identity_value: int,
-    sample_arg: int,  # noqa: ARG001
+    method_name: str, sympy_class: type, identity_value: int
 ) -> None:
     """Test `convert_Add`/`convert_Mul` return the identity literal on zero args."""
     fake = Mock(spec=sympy_class)
@@ -666,8 +674,8 @@ def test_sympy_to_expression_convert_commutative_op_zero_arg_returns_identity(
 @pytest.mark.parametrize(
     "method_name, sympy_class, sample_arg",
     [
-        pytest.param("convert_Add", sympy.Add, 7, id="add"),
-        pytest.param("convert_Mul", sympy.Mul, 5, id="mul"),
+        pytest.param("_convert_add", sympy.Add, 7, id="add"),
+        pytest.param("_convert_mul", sympy.Mul, 5, id="mul"),
     ],
 )
 def test_sympy_to_expression_convert_commutative_op_one_arg_unwraps(
@@ -733,11 +741,27 @@ def test_sympy_to_expression_convert_nand_lowers_to_not_and() -> None:
 
 
 def test_sympy_to_expression_convert_implies_raises_not_implemented() -> None:
-    """Test `convert_Implies` raises `NotImplementedError`."""
+    """Test `convert_Implies` surfaces a `NotImplementedError` cause through the pass.
+
+    `SymPyToExpressionConverter` is a registered `CompilerPass`, so unexpected
+    exceptions raised by ``run_pass`` are wrapped in `PassExecutionError`. The
+    underlying `NotImplementedError` remains accessible via `__cause__`.
+    """
+    implies = sympy.Implies(sympy.Symbol("x_0"), sympy.Symbol("y_1"))
+
+    with pytest.raises(PassExecutionError, match=r"NotImplementedError") as exc_info:
+        convert_sympy_expression_to_expression(implies)
+
+    assert isinstance(exc_info.value.__cause__, NotImplementedError)
+    assert "Implies is not supported" in str(exc_info.value.__cause__)
+
+
+def test_convert_implies_via_convert_method_raises_not_implemented() -> None:
+    """Test calling `.convert(...)` directly preserves the original error type."""
     implies = sympy.Implies(sympy.Symbol("x_0"), sympy.Symbol("y_1"))
 
     with pytest.raises(NotImplementedError, match=r"Implies is not supported"):
-        convert_sympy_expression_to_expression(implies)
+        SymPyToExpressionConverter().convert(implies)
 
 
 def test_sympy_two_argument_helper_rejects_wrong_arg_count() -> None:
@@ -748,4 +772,4 @@ def test_sympy_two_argument_helper_rejects_wrong_arg_count() -> None:
     with pytest.raises(
         ValueError, match=r"Expected a binary operation to have exactly two arguments"
     ):
-        SymPyToExpressionConverter().convert_Pow(fake)
+        SymPyToExpressionConverter()._convert_pow(fake)

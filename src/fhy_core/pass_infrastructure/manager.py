@@ -1,7 +1,5 @@
 """Pass manager and analysis manager infrastructure."""
 
-from __future__ import annotations
-
 __all__ = [
     "Analysis",
     "AnalysisManager",
@@ -13,6 +11,8 @@ __all__ = [
     "PassRunRecord",
 ]
 
+import inspect
+import threading
 import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -22,17 +22,51 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 from fhy_core.identifier import Identifier
 from fhy_core.trait import Frozen, FrozenMixin, HasIdentifierMixin, PartialEqualMixin
 
-from .core import CompilerPass, PassExecutionError, PassResult, PreservedAnalyses
+from .core import (
+    CompilerPass,
+    PassDiagnostic,
+    PassExecutionError,
+    PassResult,
+    PreservedAnalyses,
+)
 
 _IRType = TypeVar("_IRType")
 _AnalysisResultT = TypeVar("_AnalysisResultT")
 
 
 class Analysis(ABC, Generic[_IRType, _AnalysisResultT]):
-    """Base class for reusable analyses cached by the pass manager."""
+    """Base class for reusable analyses cached by the pass manager.
+
+    Subclasses must support no-argument construction: the analysis manager
+    instantiates analyses internally via ``analysis_type()``. Optional
+    keyword arguments with defaults are fine; required positional arguments
+    are rejected at class-creation time with ``TypeError``.
+    """
 
     _analysis_name: ClassVar[Identifier | None] = None
     _analysis_name_lock: ClassVar[Lock] = Lock()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        signature = inspect.signature(cls.__init__)
+        for parameter in signature.parameters.values():
+            if parameter.name == "self":
+                continue
+            if parameter.kind in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            ):
+                continue
+            if parameter.default is inspect.Parameter.empty and parameter.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            ):
+                raise TypeError(
+                    f'Analysis subclass "{cls.__qualname__}" requires a no-arg '
+                    f'constructor; parameter "{parameter.name}" has no default. '
+                    f"AnalysisManager instantiates analyses with no arguments."
+                )
 
     @classmethod
     def get_analysis_name(cls) -> Identifier:
@@ -43,11 +77,8 @@ class Analysis(ABC, Generic[_IRType, _AnalysisResultT]):
         with Analysis._analysis_name_lock:
             if "_analysis_name" not in cls.__dict__ or cls._analysis_name is None:
                 cls._analysis_name = Identifier(f"{cls.__module__}.{cls.__qualname__}")
-            analysis_name = cls._analysis_name
-
-        if analysis_name is None:
-            raise RuntimeError("Failed to initialize analysis name.")
-        return analysis_name
+            assert cls._analysis_name is not None
+            return cls._analysis_name
 
     @abstractmethod
     def run(self, ir: _IRType) -> _AnalysisResultT:
@@ -63,14 +94,28 @@ class Analysis(ABC, Generic[_IRType, _AnalysisResultT]):
 
 
 class AnalysisManager(Generic[_IRType]):
-    """Caches analysis results and applies preservation/invalidation rules."""
+    """Caches analysis results and applies preservation/invalidation rules.
+
+    Thread-safe: all public methods may be called concurrently from multiple
+    threads, and the finalizer-driven cache eviction triggered by garbage
+    collection of cached IRs is also lock-guarded. Internal helper methods
+    are intended to be called only while the lock is already held; they do
+    not re-acquire it.
+
+    Cache identity uses ``id(ir)``. Cyclic-GC delays can cause spurious
+    cache misses if a Python id is reused before the original IR's finalizer
+    fires, but they cannot produce corrupted results: the second IR simply
+    fails to register a finalizer and runs uncached.
+    """
 
     _cache: dict[int, dict[Identifier, Any]]
     _finalizers: dict[int, Any]
+    _lock: threading.RLock
 
     def __init__(self) -> None:
         self._cache = {}
         self._finalizers = {}
+        self._lock = threading.RLock()
 
     def get(
         self, analysis_type: type[Analysis[_IRType, _AnalysisResultT]], ir: _IRType
@@ -85,23 +130,24 @@ class AnalysisManager(Generic[_IRType]):
             The analysis result for IR.
 
         """
-        if not self._is_cacheable_ir(ir):
-            self._drop_cached_ir(id(ir))
-            return analysis_type().run(ir)
-
-        ir_id = id(ir)
-        analysis_name = analysis_type.get_analysis_name()
-        bucket = self._cache.get(ir_id)
-        if bucket is None:
-            if not self._register_finalizer(ir, ir_id):
+        with self._lock:
+            if not self._is_cacheable_ir(ir):
+                self._drop_cached_ir(id(ir))
                 return analysis_type().run(ir)
-            bucket = {}
-            self._cache[ir_id] = bucket
-        if analysis_name in bucket:
-            return cast(_AnalysisResultT, bucket[analysis_name])
-        result = analysis_type().run(ir)
-        bucket[analysis_name] = result
-        return result
+
+            ir_id = id(ir)
+            analysis_name = analysis_type.get_analysis_name()
+            bucket = self._cache.get(ir_id)
+            if bucket is None:
+                if not self._register_finalizer(ir, ir_id):
+                    return analysis_type().run(ir)
+                bucket = {}
+                self._cache[ir_id] = bucket
+            if analysis_name in bucket:
+                return cast(_AnalysisResultT, bucket[analysis_name])
+            result = analysis_type().run(ir)
+            bucket[analysis_name] = result
+            return result
 
     def clear(self, ir: _IRType) -> None:
         """Clear all cached analyses for IR.
@@ -110,7 +156,8 @@ class AnalysisManager(Generic[_IRType]):
             ir: The IR to clear analyses for.
 
         """
-        self._drop_cached_ir(id(ir))
+        with self._lock:
+            self._drop_cached_ir(id(ir))
 
     def invalidate(self, ir: _IRType, preserved: PreservedAnalyses) -> None:
         """Invalidate non-preserved analyses for IR.
@@ -120,25 +167,26 @@ class AnalysisManager(Generic[_IRType]):
             preserved: The analyses to preserve.
 
         """
-        if not self._is_cacheable_ir(ir):
-            self._drop_cached_ir(id(ir))
-            return
+        with self._lock:
+            if not self._is_cacheable_ir(ir):
+                self._drop_cached_ir(id(ir))
+                return
 
-        ir_id = id(ir)
-        bucket = self._cache.get(ir_id)
-        if bucket is None:
-            return
-        if preserved.preserve_all:
-            return
-        analyses_to_drop = [
-            analysis_name
-            for analysis_name in bucket
-            if not preserved.is_preserved(analysis_name)
-        ]
-        for analysis_name in analyses_to_drop:
-            del bucket[analysis_name]
-        if not bucket:
-            self._drop_cached_ir(ir_id)
+            ir_id = id(ir)
+            bucket = self._cache.get(ir_id)
+            if bucket is None:
+                return
+            if preserved.preserve_all:
+                return
+            analyses_to_drop = [
+                analysis_name
+                for analysis_name in bucket
+                if not preserved.is_preserved(analysis_name)
+            ]
+            for analysis_name in analyses_to_drop:
+                del bucket[analysis_name]
+            if not bucket:
+                self._drop_cached_ir(ir_id)
 
     def transfer(
         self,
@@ -154,43 +202,44 @@ class AnalysisManager(Generic[_IRType]):
             preserved: The analyses to preserve across the replacement.
 
         """
-        from_cacheable = self._is_cacheable_ir(from_ir)
-        to_cacheable = self._is_cacheable_ir(to_ir)
-        if not from_cacheable and not to_cacheable:
-            return
-        if not from_cacheable:
-            self._drop_cached_ir(id(to_ir))
-            return
-
-        from_id = id(from_ir)
-        to_id = id(to_ir)
-        if from_id == to_id:
-            self.invalidate(from_ir, preserved)
-            return
-
-        from_bucket = self._cache.pop(from_id, {})
-        self._drop_finalizer(from_id)
-        self._drop_cached_ir(to_id)
-        if not from_bucket:
-            return
-        if not to_cacheable:
-            return
-
-        if preserved.preserve_all:
-            if not self._register_finalizer(to_ir, to_id):
+        with self._lock:
+            from_cacheable = self._is_cacheable_ir(from_ir)
+            to_cacheable = self._is_cacheable_ir(to_ir)
+            if not from_cacheable and not to_cacheable:
                 return
-            self._cache[to_id] = dict(from_bucket)
-            return
-
-        kept = {
-            analysis_name: result
-            for analysis_name, result in from_bucket.items()
-            if preserved.is_preserved(analysis_name)
-        }
-        if kept:
-            if not self._register_finalizer(to_ir, to_id):
+            if not from_cacheable:
+                self._drop_cached_ir(id(to_ir))
                 return
-            self._cache[to_id] = kept
+
+            from_id = id(from_ir)
+            to_id = id(to_ir)
+            if from_id == to_id:
+                self.invalidate(from_ir, preserved)
+                return
+
+            from_bucket = self._cache.pop(from_id, {})
+            self._drop_finalizer(from_id)
+            self._drop_cached_ir(to_id)
+            if not from_bucket:
+                return
+            if not to_cacheable:
+                return
+
+            if preserved.preserve_all:
+                if not self._register_finalizer(to_ir, to_id):
+                    return
+                self._cache[to_id] = dict(from_bucket)
+                return
+
+            kept = {
+                analysis_name: result
+                for analysis_name, result in from_bucket.items()
+                if preserved.is_preserved(analysis_name)
+            }
+            if kept:
+                if not self._register_finalizer(to_ir, to_id):
+                    return
+                self._cache[to_id] = kept
 
     @staticmethod
     def _is_cacheable_ir(ir: object) -> bool:
@@ -203,19 +252,19 @@ class AnalysisManager(Generic[_IRType]):
         manager = manager_ref()
         if manager is None:
             return
-        manager._cache.pop(ir_id, None)
-        manager._finalizers.pop(ir_id, None)
+        with manager._lock:
+            manager._cache.pop(ir_id, None)
+            manager._finalizers.pop(ir_id, None)
 
     def _register_finalizer(self, ir: object, ir_id: int) -> bool:
         if ir_id in self._finalizers:
             return True
         try:
-            weakref.ref(ir)
+            self._finalizers[ir_id] = weakref.finalize(
+                ir, AnalysisManager._evict_cached_ir, weakref.ref(self), ir_id
+            )
         except TypeError:
             return False
-        self._finalizers[ir_id] = weakref.finalize(
-            ir, AnalysisManager._evict_cached_ir, weakref.ref(self), ir_id
-        )
         return True
 
     def _drop_finalizer(self, ir_id: int) -> None:
@@ -234,9 +283,8 @@ class PassRunRecord(FrozenMixin, PartialEqualMixin):
 
     pass_name: str
     changed: bool
-    diagnostics: tuple[Any, ...]
-    preserved_analyses: tuple[Identifier, ...]
-    preserves_all_analyses: bool
+    diagnostics: tuple[PassDiagnostic, ...]
+    preserved_analyses: PreservedAnalyses
 
 
 @dataclass(frozen=True)
@@ -253,9 +301,13 @@ class FixpointGroupRecord(FrozenMixin, PartialEqualMixin):
     """Execution record for a fixpoint group."""
 
     group_name: Identifier
-    iterations: int
-    converged: bool
     iteration_records: tuple[FixpointIterationRecord, ...]
+    converged: bool
+
+    @property
+    def iterations(self) -> int:
+        """Return the number of iterations executed."""
+        return len(self.iteration_records)
 
 
 @dataclass(frozen=True)
@@ -270,7 +322,7 @@ class FixpointPassGroup(HasIdentifierMixin, Generic[_IRType]):
     """A repeatedly executed pass sequence until fixpoint or iteration budget."""
 
     _passes: list[CompilerPass[_IRType, _IRType]]
-    _identifier: Identifier
+    _name: Identifier
     _max_iterations: int
     _fail_on_non_convergence: bool
 
@@ -283,17 +335,17 @@ class FixpointPassGroup(HasIdentifierMixin, Generic[_IRType]):
     ) -> None:
         if max_iterations < 1:
             raise ValueError('"max_iterations" must be >= 1.')
-        self._identifier = name
+        self._name = name
         self._max_iterations = max_iterations
         self._fail_on_non_convergence = fail_on_non_convergence
         self._passes = []
 
     def get_identifier(self) -> Identifier:
-        return self._identifier
+        return self._name
 
     @property
     def name(self) -> Identifier:
-        return self._identifier
+        return self._name
 
     @property
     def max_iterations(self) -> int:
@@ -340,36 +392,23 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
     def analysis_manager(self) -> AnalysisManager[_IRType]:
         return self._analysis_manager
 
-    def add_pass(
-        self, compiler_pass: CompilerPass[_IRType, _IRType]
-    ) -> "PassManager[_IRType]":
+    def add_pass(self, compiler_pass: CompilerPass[_IRType, _IRType]) -> None:
         """Append one pass to the pipeline.
 
         Args:
             compiler_pass: The pass to add.
 
-        Returns:
-            This pass manager, for chaining.
-
         """
         self._items.append(compiler_pass)
-        return self
 
-    def add_fixpoint_group(
-        self,
-        group: FixpointPassGroup[_IRType],
-    ) -> "PassManager[_IRType]":
+    def add_fixpoint_group(self, group: FixpointPassGroup[_IRType]) -> None:
         """Append one fixpoint group to the pipeline.
 
         Args:
             group: The fixpoint group to add.
 
-        Returns:
-            This pass manager, for chaining.
-
         """
         self._items.append(group)
-        return self
 
     def run(self, ir: _IRType) -> PassManagerResult[_IRType]:
         """Run the pass pipeline over the IR.
@@ -443,10 +482,9 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
             )
 
         return current, FixpointGroupRecord(
-            group.name,
-            len(iteration_records),
-            converged,
-            tuple(iteration_records),
+            group_name=group.name,
+            iteration_records=tuple(iteration_records),
+            converged=converged,
         )
 
     def _execute_bound(
@@ -458,26 +496,25 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
 
         The analysis manager is attached to the pass for the duration of the
         execution so that ``CompilerPass.get_analysis`` sees a cache, and is
-        restored to its previous value afterward (usually ``None``).
+        restored to its previous binding afterward (usually unbound).
         """
         previous = compiler_pass.get_analysis_manager()
         compiler_pass.bind_analysis_manager(self._analysis_manager)
         try:
             return compiler_pass.execute(ir)
         finally:
-            compiler_pass.bind_analysis_manager(previous)
+            if previous is None:
+                compiler_pass.unbind_analysis_manager()
+            else:
+                compiler_pass.bind_analysis_manager(previous)
 
     @staticmethod
     def _make_pass_run_record(
         compiler_pass: CompilerPass[_IRType, _IRType], result: PassResult[_IRType]
     ) -> PassRunRecord:
-        preserved = result.preserved_analyses
         return PassRunRecord(
-            compiler_pass.get_pass_name(),
-            result.changed,
-            result.diagnostics,
-            tuple(
-                sorted(preserved.analysis_names, key=lambda identifier: identifier.id)
-            ),
-            preserved.preserve_all,
+            pass_name=compiler_pass.get_pass_name(),
+            changed=result.changed,
+            diagnostics=result.diagnostics,
+            preserved_analyses=result.preserved_analyses,
         )

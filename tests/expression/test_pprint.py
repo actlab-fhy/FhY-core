@@ -208,7 +208,7 @@ def test_pformat_native_float_literal_does_not_round_trip_through_parser() -> No
     floats as exact decimals. The pretty-printer emits the float's textual
     form; the parser stores that as a str literal, structurally unequal to
     the original native-float literal. This is the documented lossy case
-    in the round-trip contract — locked in here so the asymmetry can't
+    in the round-trip contract - locked in here so the asymmetry can't
     quietly disappear.
     """
     original = LiteralExpression(0.5)

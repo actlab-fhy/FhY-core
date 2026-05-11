@@ -88,8 +88,7 @@ def pformat_expression(
 ) -> str:
     """Pretty-format an expression.
 
-    Note:
-        There is no guarantee that the pretty-formatted expression can be parsed back.
+    The output is not guaranteed to be parseable back into an expression.
 
     Args:
         expression: Expression to pretty-format.

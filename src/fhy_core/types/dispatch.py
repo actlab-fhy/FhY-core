@@ -42,6 +42,7 @@ __all__ = [
     "substitute_data_template",
     "substitute_template",
     "unify",
+    "unify_expression",
 ]
 
 from collections.abc import Sequence
@@ -216,19 +217,25 @@ def _unify_expressions(
     ):
         return resolved_left, environment
     elif isinstance(resolved_left, IdentifierExpression):
-        if _is_identifier_in_expression(resolved_left.identifier, resolved_right):
+        substituted_right = _substitute_expression(resolved_right, environment)
+        if _is_identifier_in_expression(resolved_left.identifier, substituted_right):
             raise VerificationError(
                 f"Occurs check failed: identifier "
-                f"{resolved_left.identifier!r} appears in {resolved_right!r}."
+                f"{resolved_left.identifier!r} appears in {resolved_right!r} "
+                f"after substitution through existing bindings "
+                f"({substituted_right!r})."
             )
         return resolved_right, environment.with_expression_binding(
             resolved_left.identifier, resolved_right
         )
     elif isinstance(resolved_right, IdentifierExpression):
-        if _is_identifier_in_expression(resolved_right.identifier, resolved_left):
+        substituted_left = _substitute_expression(resolved_left, environment)
+        if _is_identifier_in_expression(resolved_right.identifier, substituted_left):
             raise VerificationError(
                 f"Occurs check failed: identifier "
-                f"{resolved_right.identifier!r} appears in {resolved_left!r}."
+                f"{resolved_right.identifier!r} appears in {resolved_left!r} "
+                f"after substitution through existing bindings "
+                f"({substituted_left!r})."
             )
         return resolved_left, environment.with_expression_binding(
             resolved_right.identifier, resolved_left
@@ -529,6 +536,37 @@ def unify(
             f"Cannot unify {expected!r} with {actual!r}: structural mismatch."
         )
     return expected, environment
+
+
+def unify_expression(
+    left_expression: Expression,
+    right_expression: Expression,
+    environment: TypeUnificationEnvironment,
+) -> tuple[Expression, TypeUnificationEnvironment]:
+    """Bidirectionally unify two expressions, allowing placeholders on either side.
+
+    Resolves any chained ``IdentifierExpression`` placeholders against the
+    current ``expression_bindings``, then unifies the resolved forms: a
+    placeholder on either side is bound to the other expression (subject to
+    the occurs check), and two concrete expressions must be structurally
+    equivalent.
+
+    Args:
+        left_expression: First expression, possibly containing placeholders.
+        right_expression: Second expression, possibly containing placeholders.
+        environment: Current binding environment.
+
+    Returns:
+        A tuple ``(unified_expression, new_environment)`` where
+        ``unified_expression`` is the more-specific reconciliation of the two
+        inputs and ``new_environment`` carries every binding learned during
+        unification.
+
+    Raises:
+        VerificationError: If the two expressions are incompatible or an
+            occurs check fails.
+    """
+    return _unify_expressions(left_expression, right_expression, environment)
 
 
 @singledispatch

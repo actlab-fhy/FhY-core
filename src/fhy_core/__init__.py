@@ -1,6 +1,6 @@
 """FhY compiler core utilities."""
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 __all__ = [
     "Constraint",
@@ -10,6 +10,7 @@ __all__ = [
     "NotInSetConstraint",
     "FhYCoreTypeError",
     "SymbolTableError",
+    "get_registered_errors",
     "register_error",
     "CompilerPass",
     "DiagnosticLevel",
@@ -44,7 +45,8 @@ __all__ = [
     "UnaryExpression",
     "UnaryOperation",
     "collect_identifiers",
-    "is_satisfiable",
+    "does_expression_imply",
+    "holds_for_all_free_assignments",
     "parse_expression",
     "pformat_expression",
     "replace_identifiers",
@@ -104,6 +106,7 @@ __all__ = [
     "BoundIntParam",
     "NatParam",
     "BoundNatParam",
+    "NumericParam",
     "OrdinalParam",
     "OrdinalValue",
     "Param",
@@ -142,6 +145,7 @@ __all__ = [
     "substitute_data_template",
     "substitute_template",
     "unify",
+    "unify_expression",
     "IntEnum",
     "Lattice",
     "PartiallyOrderedSet",
@@ -176,6 +180,14 @@ __all__ = [
     "configure_logging",
     "get_logger",
     "install_null_handler",
+    "ADDRESS_DOMAIN",
+    "DATA_DOMAIN",
+    "ValueDomain",
+    "ASSOCIATIVE",
+    "COMMUTATIVE",
+    "ELEMENTWISE",
+    "PURE",
+    "OpAttribute",
 ]
 
 
@@ -187,7 +199,7 @@ from .constraint import (
     NotInSetConstraint,
 )
 from .diagnostic import Note, NoteKind
-from .error import register_error
+from .error import get_registered_errors, register_error
 from .expression import (
     BinaryExpression,
     BinaryOperation,
@@ -198,7 +210,8 @@ from .expression import (
     UnaryOperation,
     check_expression_type,
     collect_identifiers,
-    is_satisfiable,
+    does_expression_imply,
+    holds_for_all_free_assignments,
     parse_expression,
     pformat_expression,
     replace_identifiers,
@@ -214,6 +227,13 @@ from .logger import (
     get_logger,
     install_null_handler,
 )
+from .op_attribute import (
+    ASSOCIATIVE,
+    COMMUTATIVE,
+    ELEMENTWISE,
+    PURE,
+    OpAttribute,
+)
 from .param import (
     BoundIntParam,
     BoundNatParam,
@@ -221,6 +241,7 @@ from .param import (
     CategoricalValue,
     IntParam,
     NatParam,
+    NumericParam,
     OrdinalParam,
     OrdinalValue,
     Param,
@@ -361,6 +382,7 @@ from .types import (
     substitute_data_template,
     substitute_template,
     unify,
+    unify_expression,
 )
 from .utils import (
     IntEnum,
@@ -373,3 +395,4 @@ from .utils import (
     invert_frozen_dict,
     is_strict_int,
 )
+from .value_domain import ADDRESS_DOMAIN, DATA_DOMAIN, ValueDomain

@@ -16,6 +16,7 @@ __all__ = [
     "register_pass",
 ]
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -31,9 +32,12 @@ from typing import (
     cast,
 )
 
+from frozendict import frozendict
+
 from fhy_core.diagnostic import Note
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
+from fhy_core.logger import get_logger
 from fhy_core.trait import FrozenMixin, PartialEqualMixin, Visitable
 from fhy_core.utils.enum import StrEnum
 
@@ -54,6 +58,15 @@ class DiagnosticLevel(StrEnum):
     ERROR = "error"
     WARNING = "warning"
     INFO = "info"
+
+
+_DIAGNOSTIC_TO_LOGGING_LEVEL: frozendict[DiagnosticLevel, int] = frozendict(
+    {
+        DiagnosticLevel.ERROR: logging.ERROR,
+        DiagnosticLevel.WARNING: logging.WARNING,
+        DiagnosticLevel.INFO: logging.INFO,
+    }
+)
 
 
 class TraversalOrder(StrEnum):
@@ -206,24 +219,53 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
         return tuple(self._diagnostics)
 
     def __call__(self, ir: _PassInputT) -> _PassOutputT:
+        """Run the pass and return only the output IR.
+
+        Use :meth:`execute` instead when diagnostics, the changed flag, or
+        preserved analyses are needed; this convenience form discards them.
+        """
         return self.execute(ir).output
 
     def execute(self, ir: _PassInputT) -> PassResult[_PassOutputT]:
-        """Execute the pass with validation and standardized error handling."""
-        self._diagnostics = []
-        self.validate_input(ir)
+        """Execute the pass with validation and standardized error handling.
 
-        self._record_run()
-        if not self.should_run(ir):
-            output = self.get_noop_output(ir)
-            preserved = self.get_preserved_analyses(ir, output, changed=False)
+        Every user-overridable lifecycle method is executed inside a guard
+        with a method-specific error contract:
+
+        - ``validate_input`` / ``validate_output``: any unexpected exception
+          is converted to ``PassValidationError`` after emitting an ERROR
+          diagnostic. ``PassValidationError`` raised directly by user code
+          passes through unchanged.
+        - ``should_run`` / ``get_noop_output`` / ``run_pass`` /
+          ``did_change`` / ``get_preserved_analyses``: any unexpected
+          exception is converted to ``PassExecutionError`` after emitting
+          an ERROR diagnostic. ``PassExecutionError`` raised directly by
+          user code passes through unchanged.
+
+        Run counters (``get_run_count`` / ``get_total_run_count``) increment
+        once per ``execute(ir)`` invocation where ``should_run(ir)`` returned
+        True. The counter increments before ``run_pass`` is invoked, so a
+        pass that raises during ``run_pass``, ``validate_output``,
+        ``did_change``, or ``get_preserved_analyses`` still counts toward
+        its run total. Skipped runs (``should_run`` returned False) do not
+        count.
+        """
+        self._diagnostics = []
+        self._guarded_validate_input(ir)
+
+        if not self._guarded_should_run(ir):
+            noop_output = self._guarded_get_noop_output(ir)
+            preserved_skip = self._guarded_get_preserved_analyses(
+                ir, noop_output, changed=False
+            )
             return PassResult(
-                output,
+                noop_output,
                 False,
                 diagnostics=tuple(self._diagnostics),
-                preserved_analyses=preserved,
+                preserved_analyses=preserved_skip,
             )
 
+        self._record_run()
         try:
             output = self.run_pass(ir)
         except (PassValidationError, PassExecutionError):
@@ -235,9 +277,9 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
             self.report(DiagnosticLevel.ERROR, message)
             raise PassExecutionError(message) from exc
 
-        self.validate_output(ir, output)
-        changed = self.did_change(ir, output)
-        preserved = self.get_preserved_analyses(ir, output, changed=changed)
+        self._guarded_validate_output(ir, output)
+        changed = self._guarded_did_change(ir, output)
+        preserved = self._guarded_get_preserved_analyses(ir, output, changed=changed)
         return PassResult(
             output=output,
             changed=changed,
@@ -245,21 +287,113 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
             preserved_analyses=preserved,
         )
 
+    def _guarded_validate_input(self, ir: _PassInputT) -> None:
+        try:
+            self.validate_input(ir)
+        except PassValidationError:
+            raise
+        except Exception as exc:
+            message = (
+                f'Pass "{self.get_pass_name()}" failed validate_input with '
+                f"{type(exc).__name__}: {exc}"
+            )
+            self.report(DiagnosticLevel.ERROR, message)
+            raise PassValidationError(message) from exc
+
+    def _guarded_validate_output(
+        self, input_ir: _PassInputT, output: _PassOutputT
+    ) -> None:
+        try:
+            self.validate_output(input_ir, output)
+        except PassValidationError:
+            raise
+        except Exception as exc:
+            message = (
+                f'Pass "{self.get_pass_name()}" failed validate_output with '
+                f"{type(exc).__name__}: {exc}"
+            )
+            self.report(DiagnosticLevel.ERROR, message)
+            raise PassValidationError(message) from exc
+
+    def _guarded_should_run(self, ir: _PassInputT) -> bool:
+        try:
+            return self.should_run(ir)
+        except PassExecutionError:
+            raise
+        except Exception as exc:
+            message = (
+                f'Pass "{self.get_pass_name()}" failed should_run with '
+                f"{type(exc).__name__}: {exc}"
+            )
+            self.report(DiagnosticLevel.ERROR, message)
+            raise PassExecutionError(message) from exc
+
+    def _guarded_get_noop_output(self, ir: _PassInputT) -> _PassOutputT:
+        try:
+            return self.get_noop_output(ir)
+        except PassExecutionError:
+            raise
+        except Exception as exc:
+            message = (
+                f'Pass "{self.get_pass_name()}" failed get_noop_output with '
+                f"{type(exc).__name__}: {exc}"
+            )
+            self.report(DiagnosticLevel.ERROR, message)
+            raise PassExecutionError(message) from exc
+
+    def _guarded_did_change(self, input_ir: _PassInputT, output: _PassOutputT) -> bool:
+        try:
+            return self.did_change(input_ir, output)
+        except PassExecutionError:
+            raise
+        except Exception as exc:
+            message = (
+                f'Pass "{self.get_pass_name()}" failed did_change with '
+                f"{type(exc).__name__}: {exc}"
+            )
+            self.report(DiagnosticLevel.ERROR, message)
+            raise PassExecutionError(message) from exc
+
+    def _guarded_get_preserved_analyses(
+        self, input_ir: _PassInputT, output: _PassOutputT, *, changed: bool
+    ) -> PreservedAnalyses:
+        try:
+            return self.get_preserved_analyses(input_ir, output, changed=changed)
+        except PassExecutionError:
+            raise
+        except Exception as exc:
+            message = (
+                f'Pass "{self.get_pass_name()}" failed get_preserved_analyses '
+                f"with {type(exc).__name__}: {exc}"
+            )
+            self.report(DiagnosticLevel.ERROR, message)
+            raise PassExecutionError(message) from exc
+
     def get_analysis_manager(self) -> "AnalysisManager[Any] | None":
         """Return the analysis manager currently bound to this pass, if any."""
         return self._analysis_manager
 
-    def bind_analysis_manager(
-        self, analysis_manager: "AnalysisManager[Any] | None"
-    ) -> None:
-        """Attach (or detach, with ``None``) an analysis manager to this pass.
+    def bind_analysis_manager(self, analysis_manager: "AnalysisManager[Any]") -> None:
+        """Attach an analysis manager to this pass.
 
-        Typically called by :class:`PassManager` before and after executing
-        this pass, so that :meth:`get_analysis` resolves against the cache.
-        Passing ``None`` returns the pass to standalone mode, in which
-        :meth:`get_analysis` recomputes results every call.
+        Typically called by :class:`PassManager` before executing this pass,
+        so that :meth:`get_analysis` resolves against the cache. Use
+        :meth:`unbind_analysis_manager` to detach.
         """
+        if analysis_manager is None:
+            raise TypeError(
+                "bind_analysis_manager requires a non-None AnalysisManager; "
+                "use unbind_analysis_manager() to detach."
+            )
         self._analysis_manager = analysis_manager
+
+    def unbind_analysis_manager(self) -> None:
+        """Detach the analysis manager, returning the pass to standalone mode.
+
+        After this call, :meth:`get_analysis` recomputes results on every
+        call. Calling this method when no manager is bound is a no-op.
+        """
+        self._analysis_manager = None
 
     def get_analysis(
         self,
@@ -291,7 +425,17 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
     def report(
         self, level: DiagnosticLevel, message: str | Note, detail: str | None = None
     ) -> None:
-        """Emit a diagnostic for this pass execution."""
+        """Emit a diagnostic for this pass execution.
+
+        The diagnostic is recorded on the in-memory list (returned via
+        :attr:`diagnostics` and ``PassResult.diagnostics``) and additionally
+        emitted on a per-pass-class logger named
+        ``<core-module>.<pass-name>``. The logging level mirrors the
+        diagnostic level (ERROR/WARNING/INFO). When ``detail`` is provided
+        it is appended to the log message as ``" | detail: <detail>"``;
+        the in-memory record stores the detail separately on the
+        :class:`PassDiagnostic`.
+        """
         note = message if isinstance(message, Note) else Note(message)
         self._diagnostics.append(
             PassDiagnostic(
@@ -301,6 +445,15 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
                 detail=detail,
             )
         )
+
+        log_message = note.message
+        if detail is not None:
+            log_message = f"{log_message} | detail: {detail}"
+        self._get_pass_logger().log(_DIAGNOSTIC_TO_LOGGING_LEVEL[level], log_message)
+
+    @classmethod
+    def _get_pass_logger(cls) -> logging.Logger:
+        return get_logger(__name__).getChild(cls.get_pass_name())
 
     def validate_input(self, ir: _PassInputT) -> None:
         """Validate input IR before execution."""
@@ -467,6 +620,11 @@ class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
         visit method and its child traversal have completed, regardless of
         traversal order. See the class docstring for dispatch details.
 
+        Precondition: the visit graph rooted at ``node`` must be finite and
+        acyclic. ``walk`` performs no cycle detection; cyclic or
+        DAG-with-shared-subtree IRs cause unbounded recursion until Python
+        raises ``RecursionError``. FhY IRs are tree-shaped by convention.
+
         Args:
             node: Node to visit.
 
@@ -579,11 +737,21 @@ def register_pass(name: str, description: str) -> Callable[[_PassClassT], _PassC
             )
         with CompilerPass._registry_lock:
             existing = CompilerPass._registry.get(name)
-            if existing is not None and existing.pass_type is not pass_cls:
-                raise PassRegistrationError(
-                    f'Pass name "{name}" is already registered by '
-                    f"{existing.pass_type.__qualname__}."
-                )
+            if existing is not None:
+                if existing.pass_type is not pass_cls:
+                    raise PassRegistrationError(
+                        f'Pass name "{name}" is already registered by '
+                        f"{existing.pass_type.__qualname__} "
+                        f"with description {existing.description!r}."
+                    )
+                if existing.description != description:
+                    raise PassRegistrationError(
+                        f'Pass name "{name}" is already registered by '
+                        f"{pass_cls.__qualname__} with description "
+                        f"{existing.description!r}; refusing to overwrite "
+                        f"with new description {description!r}."
+                    )
+                return pass_cls
 
             pass_cls._pass_name = name
             pass_cls._pass_description = description

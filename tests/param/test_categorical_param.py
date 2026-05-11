@@ -6,13 +6,13 @@ from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.identifier import Identifier
 from fhy_core.param import (
     CategoricalParam,
+    ParamError,
     create_single_valid_value_param,
 )
 from fhy_core.serialization import (
     DeserializationValueError,
     serialize_registry_wrapped_value,
 )
-from fhy_core.symbol_type import SymbolType
 
 from .conftest import (
     SerializableEqualHashable,
@@ -34,8 +34,23 @@ def test_categorical_param_initializes_from_set_of_values() -> None:
 
 def test_categorical_param_init_rejects_duplicate_values() -> None:
     """Test `CategoricalParam` rejects duplicate values with `ParamError`."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         CategoricalParam([1, 1])
+
+
+@pytest.mark.parametrize(
+    "empty",
+    [
+        pytest.param(set(), id="empty-set"),
+        pytest.param(frozenset(), id="empty-frozenset"),
+        pytest.param([], id="empty-list"),
+        pytest.param((), id="empty-tuple"),
+    ],
+)
+def test_categorical_param_init_rejects_empty_categories(empty: object) -> None:
+    """Test `CategoricalParam` rejects an empty collection with `ParamError`."""
+    with pytest.raises(ParamError, match="non-empty"):
+        CategoricalParam(empty)  # type: ignore[arg-type]  # test: invalid input
 
 
 def test_categorical_param_init_rejects_value_without_equal_semantics() -> None:
@@ -67,13 +82,13 @@ def test_create_single_valid_value_param_constrains_to_one_value() -> None:
     """Test `create_single_valid_value_param` constrains the parameter to one value."""
     param = create_single_valid_value_param("only")
     assert isinstance(param, CategoricalParam)
-    assert param.get_possible_values() == {"only"}
+    assert param.categories == frozenset({"only"})
 
     assignment = param.assign("only")
     assert assignment.is_value_set()
     assert assignment.value == "only"
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         param.assign("different")
 
 
@@ -93,8 +108,8 @@ def test_categorical_param_assigns_values_in_the_category_set(
 def test_categorical_param_assign_rejects_values_outside_the_category_set(
     categorical_param_abc: CategoricalParam[str],
 ) -> None:
-    """Test `CategoricalParam.assign` rejects values outside the category set."""
-    with pytest.raises(ValueError):
+    """Test `CategoricalParam.assign` raises `ParamError` for values outside the set."""
+    with pytest.raises(ParamError):
         categorical_param_abc.assign("d")
 
 
@@ -106,9 +121,9 @@ def test_categorical_param_admissibility_distinguishes_bool_from_int_categories(
     assert not param.is_value_admissible(True)
 
 
-def test_categorical_param_get_symbol_type_is_real() -> None:
-    """Test `CategoricalParam.get_symbol_type` returns ``SymbolType.REAL``."""
-    assert CategoricalParam({"a", "b"}).get_symbol_type() == SymbolType.REAL
+def test_categorical_param_does_not_define_get_symbol_type() -> None:
+    """Test ``CategoricalParam`` does not implement ``get_symbol_type``."""
+    assert not hasattr(CategoricalParam({"a", "b"}), "get_symbol_type")
 
 
 def test_categorical_param_str_lists_categories() -> None:
@@ -165,8 +180,8 @@ def test_categorical_param_add_constraint_combines_with_existing_membership(
 def test_categorical_param_rejects_non_set_constraint(
     categorical_param_abc: CategoricalParam[str],
 ) -> None:
-    """Test `CategoricalParam.add_constraint` rejects equation constraints."""
-    with pytest.raises(ValueError):
+    """Test `CategoricalParam.add_constraint` raises for equation constraints."""
+    with pytest.raises(ParamError):
         categorical_param_abc.add_constraint(
             EquationConstraint(
                 categorical_param_abc.variable,

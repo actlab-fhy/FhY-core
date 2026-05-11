@@ -65,7 +65,7 @@ def test_bound_int_param_between_with_inclusive_lower_exclusive_upper() -> None:
 
 def test_bound_int_param_between_with_strict_equal_bounds_raises() -> None:
     """Test `BoundIntParam.between(x, x)` raises when both bounds are exclusive."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         BoundIntParam.between(3, 3, is_lower_inclusive=False, is_upper_inclusive=False)
 
 
@@ -78,7 +78,7 @@ def test_bound_int_param_between_with_inclusive_equal_bounds_is_singleton() -> N
 
 def test_bound_int_param_between_with_reversed_bounds_raises() -> None:
     """Test `BoundIntParam.between` raises when ``lower > upper``."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         BoundIntParam.between(5, 3)
 
 
@@ -180,25 +180,25 @@ def test_bound_int_param_assign_accepts_int_values_only() -> None:
     p = BoundIntParam.with_lower_bound(0)
     assignment = p.assign(1)
     assert assignment.value == 1
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         p.assign(1.0)  # type: ignore[arg-type]  # test: invalid input
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         p.assign("1")  # type: ignore[arg-type]  # test: invalid input
 
 
 def test_bound_int_param_assign_rejects_value_outside_constraints() -> None:
     """Test `BoundIntParam.assign` rejects values outside the bounds."""
     p = BoundIntParam.between(3, 5, is_lower_inclusive=True, is_upper_inclusive=True)
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         p.assign(2)
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         p.assign(6)
     assignment = p.assign(4)
     assert assignment.value == 4
 
 
 # =============================================================================
-# Arithmetic — addition
+# Arithmetic - addition
 # =============================================================================
 
 
@@ -298,7 +298,7 @@ def test_bound_int_param_prefer_inclusive_changes_str_not_membership_addition() 
 
 
 # =============================================================================
-# Arithmetic — subtraction
+# Arithmetic - subtraction
 # =============================================================================
 
 
@@ -361,7 +361,7 @@ def test_bound_int_param_rsub_accepts_int_param_on_left() -> None:
 
 
 # =============================================================================
-# Arithmetic — negation
+# Arithmetic - negation
 # =============================================================================
 
 
@@ -682,7 +682,7 @@ def test_bound_int_param_addition_emits_form_per_prefer_inclusive(
 
 
 # =============================================================================
-# Structural equivalence — `_prefer_inclusive` flag
+# Structural equivalence - `_prefer_inclusive` flag
 # =============================================================================
 
 
@@ -838,7 +838,7 @@ def test_bound_int_param_add_constraint_rejects_each_invalid_bound_expression(
 
 
 # =============================================================================
-# Deserialization — structural rejection
+# Deserialization - structural rejection
 # =============================================================================
 
 

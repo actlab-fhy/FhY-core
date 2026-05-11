@@ -14,7 +14,10 @@ from fhy_core.expression import (
     pformat_expression,
 )
 from fhy_core.expression.passes.basic import IdentifierCollector, IdentifierSubstituter
-from fhy_core.expression.passes.sympy import ExpressionToSympyConverter
+from fhy_core.expression.passes.sympy import (
+    ExpressionToSympyConverter,
+    SymPyToExpressionConverter,
+)
 from fhy_core.expression.passes.type_checker import ExpressionTypeChecker
 from fhy_core.expression.passes.z3 import ExpressionToZ3Converter
 from fhy_core.pass_infrastructure import CompilerPass, PassInfo
@@ -28,7 +31,8 @@ from .conftest import mock_identifier
 _EXPECTED_REGISTRATIONS: list[tuple[str, type]] = [
     ("fhy_core.expression.collect_identifiers", IdentifierCollector),
     ("fhy_core.expression.substitute_identifiers", IdentifierSubstituter),
-    ("fhy_core.expression.type_check", ExpressionTypeChecker),
+    ("fhy_core.expression.type_checker", ExpressionTypeChecker),
+    ("fhy_core.expression.from_sympy", SymPyToExpressionConverter),
     ("fhy_core.expression.to_sympy", ExpressionToSympyConverter),
     ("fhy_core.expression.to_z3", ExpressionToZ3Converter),
 ]

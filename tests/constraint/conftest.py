@@ -62,7 +62,7 @@ class SerializableHashRaises(Serializable):
     """Serializable + nominally-Hashable value whose ``__hash__`` raises.
 
     Member validation accepts this instance (the ``Hashable`` ABC check
-    is structural — it just looks for a non-``None`` ``__hash__``
+    is structural - it just looks for a non-``None`` ``__hash__``
     attribute), but the subsequent ``frozenset(values)`` call inside
     ``_normalize_constraint_member_collection`` invokes ``hash`` and
     trips the defensive ``except TypeError`` on lines 164-165.

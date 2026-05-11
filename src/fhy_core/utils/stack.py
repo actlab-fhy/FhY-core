@@ -40,16 +40,13 @@ class Stack(Generic[T]):
     """
 
     _stack: deque[T]
-    _iter_index: int
 
     def __init__(self) -> None:
         self._stack = deque[T]()
-        self._iter_index = 0
 
     def clear(self) -> None:
         """Remove all elements within the stack."""
         self._stack.clear()
-        self._iter_index = 0
 
     def push(self, item: T) -> None:
         """Add an item to the stack."""
@@ -85,15 +82,4 @@ class Stack(Generic[T]):
         return len(self._stack)
 
     def __iter__(self) -> Iterator[T]:
-        self._iter_index = 0
-
-        return self
-
-    def __next__(self) -> T:
-        if self._iter_index >= len(self._stack):
-            raise StopIteration
-
-        item = self._stack[self._iter_index]
-        self._iter_index += 1
-
-        return item
+        return iter(self._stack)
