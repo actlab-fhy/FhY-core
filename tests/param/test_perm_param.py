@@ -30,6 +30,12 @@ def test_perm_param_init_rejects_duplicate_members() -> None:
         PermParam(["n", "c", "h", "n"])
 
 
+def test_perm_param_init_rejects_empty_members() -> None:
+    """Test `PermParam` rejects an empty member sequence with `ParamError`."""
+    with pytest.raises(ValueError, match="non-empty"):
+        PermParam([])
+
+
 def test_perm_param_init_detects_adjacent_duplicate_members() -> None:
     """Test `PermParam` detects an adjacent duplicate with no later occurrences.
 

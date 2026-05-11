@@ -38,6 +38,21 @@ def test_categorical_param_init_rejects_duplicate_values() -> None:
         CategoricalParam([1, 1])
 
 
+@pytest.mark.parametrize(
+    "empty",
+    [
+        pytest.param(set(), id="empty-set"),
+        pytest.param(frozenset(), id="empty-frozenset"),
+        pytest.param([], id="empty-list"),
+        pytest.param((), id="empty-tuple"),
+    ],
+)
+def test_categorical_param_init_rejects_empty_categories(empty: object) -> None:
+    """Test `CategoricalParam` rejects an empty category collection."""
+    with pytest.raises(ValueError, match="non-empty"):
+        CategoricalParam(empty)  # type: ignore[arg-type]  # test: invalid input
+
+
 def test_categorical_param_init_rejects_value_without_equal_semantics() -> None:
     """Test `CategoricalParam` rejects wrapped-leaf values without equal semantics."""
     with pytest.raises(TypeError):
@@ -67,7 +82,7 @@ def test_create_single_valid_value_param_constrains_to_one_value() -> None:
     """Test `create_single_valid_value_param` constrains the parameter to one value."""
     param = create_single_valid_value_param("only")
     assert isinstance(param, CategoricalParam)
-    assert param.get_possible_values() == {"only"}
+    assert param.categories == frozenset({"only"})
 
     assignment = param.assign("only")
     assert assignment.is_value_set()

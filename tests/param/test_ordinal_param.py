@@ -31,6 +31,12 @@ def test_ordinal_param_init_rejects_duplicate_values() -> None:
         OrdinalParam([1, 2, 1])
 
 
+def test_ordinal_param_init_rejects_empty_values() -> None:
+    """Test `OrdinalParam` rejects an empty value set with `ParamError`."""
+    with pytest.raises(ValueError, match="non-empty"):
+        OrdinalParam([])
+
+
 def test_ordinal_param_init_detects_duplicate_in_middle() -> None:
     """Test `OrdinalParam` detects a duplicate that lands adjacent after sorting.
 

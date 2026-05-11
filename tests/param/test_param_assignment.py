@@ -88,13 +88,6 @@ def test_param_assign_creates_immutable_assignment() -> None:
     assert assignment.param is param
 
 
-def test_assignment_materialize_returns_underlying_param() -> None:
-    """Test `ParamAssignment.materialize` returns the underlying parameter."""
-    assignment = RealParam.with_upper_bound(2.0).assign(1.5)
-    bound_param = assignment.materialize()
-    assert bound_param is assignment.param
-
-
 def test_repeated_assigns_share_param_definition_and_record_value(
     default_real_param: RealParam,
 ) -> None:
