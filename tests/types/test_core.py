@@ -1,7 +1,5 @@
 """Tests for `fhy_core.types.core`: concrete types, promotion, literals."""
 
-from dataclasses import FrozenInstanceError
-
 import pytest
 from frozendict import frozendict
 
@@ -75,7 +73,7 @@ def test_environment_is_a_frozen_dataclass(
     """Test the environment is frozen and rejects attribute assignment."""
     assert isinstance(empty_environment, Frozen)
     assert empty_environment.is_frozen
-    with pytest.raises((FrozenInstanceError, FrozenMutationError)):
+    with pytest.raises(FrozenMutationError):
         empty_environment.data_type_bindings = frozendict()  # type: ignore[misc]
 
 

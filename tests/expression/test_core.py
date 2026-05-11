@@ -25,7 +25,7 @@ from fhy_core.serialization import (
     DeserializationValueError,
     SerializedDict,
 )
-from fhy_core.trait import HasOperands, StructuralEquivalence
+from fhy_core.trait import FrozenMutationError, HasOperands, StructuralEquivalence
 
 from .conftest import mock_identifier
 
@@ -522,7 +522,7 @@ def test_binary_dunder_promotes_right_python_operand_to_expression(
     expected = BinaryExpression(
         expected_operation,
         left,
-        expected_right_type(right),  # type: ignore[call-arg]
+        expected_right_type(right),
     )
     assert binary_operator(left, right).is_structurally_equivalent(expected)
 
@@ -561,7 +561,7 @@ def test_binary_dunder_promotes_left_python_operand_to_expression(
     right = LiteralExpression(5)
     expected = BinaryExpression(
         expected_operation,
-        expected_left_type(left),  # type: ignore[call-arg]
+        expected_left_type(left),
         right,
     )
     assert binary_operator(left, right).is_structurally_equivalent(expected)
@@ -767,7 +767,7 @@ def test_expression_instances_are_frozen(
 ) -> None:
     """Test assigning to any field of an `Expression` instance is rejected."""
     instance, _ = _build_instance_pair(subclass)
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    with pytest.raises(FrozenMutationError):
         setattr(instance, field, None)
 
 
