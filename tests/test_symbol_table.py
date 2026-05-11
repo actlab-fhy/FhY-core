@@ -612,14 +612,14 @@ def test_get_symbol_from_namespace_inherited_from_parent(
 
 
 def test_cyclic_namespace_fails(empty_symbol_table: SymbolTable) -> None:
-    """Test that adding a cyclic namespace raises a RuntimeError."""
+    """Test cycle detection during lookup raises ``SymbolTableError``."""
     namespace_a = mock_identifier("namespace_a", 0)
     namespace_b = mock_identifier("namespace_b", 1)
 
     empty_symbol_table.add_namespace(namespace_a, namespace_b)
     empty_symbol_table.add_namespace(namespace_b, namespace_a)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(SymbolTableError):
         empty_symbol_table.is_symbol_defined_in_namespace(
             namespace_a, mock_identifier("some_symbol", 2)
         )
@@ -745,3 +745,63 @@ def test_update_namespaces() -> None:
     assert symbol_table_2.is_namespace_defined(namespace)
     assert symbol_table_2.is_symbol_defined_in_namespace(namespace, symbol_name)
     assert symbol_table_2.get_frame_from_namespace(namespace, symbol_name) == frame
+
+
+# =============================================================================
+# Cycle detection uses SymbolTableError
+# =============================================================================
+
+
+def test_get_frame_from_namespace_raises_symbol_table_error_on_cycle() -> None:
+    """Test cycle detection during lookup raises ``SymbolTableError``."""
+    table = SymbolTable()
+    namespace_a = mock_identifier("a", 100)
+    namespace_b = mock_identifier("b", 101)
+    table.add_namespace(namespace_a, parent_namespace_name=namespace_b)
+    table.add_namespace(namespace_b, parent_namespace_name=namespace_a)
+
+    with pytest.raises(SymbolTableError, match="is cyclic"):
+        table.get_frame_from_namespace(namespace_a, mock_identifier("nonexistent", 102))
+
+
+# =============================================================================
+# update_namespaces decouples inner dicts (no aliasing)
+# =============================================================================
+
+
+def test_update_namespaces_does_not_alias_inner_namespace_dicts() -> None:
+    """Test ``update_namespaces`` deep-copies inner namespace dicts."""
+    source = SymbolTable()
+    destination = SymbolTable()
+    namespace = mock_identifier("ns", 200)
+    first_symbol = mock_identifier("first", 201)
+    second_symbol = mock_identifier("second", 202)
+    first_frame = ImportSymbolTableFrame(first_symbol)
+    second_frame = ImportSymbolTableFrame(second_symbol)
+
+    source.add_namespace(namespace)
+    source.add_symbol(namespace, first_symbol, first_frame)
+
+    destination.update_namespaces(source)
+
+    source.add_symbol(namespace, second_symbol, second_frame)
+
+    assert not destination.is_symbol_defined_in_namespace(namespace, second_symbol)
+    assert source.is_symbol_defined_in_namespace(namespace, second_symbol)
+
+
+def test_update_namespaces_propagates_existing_symbols() -> None:
+    """Test ``update_namespaces`` copies pre-existing symbols into the destination."""
+    source = SymbolTable()
+    destination = SymbolTable()
+    namespace = mock_identifier("ns2", 300)
+    symbol = mock_identifier("sym", 301)
+    frame = ImportSymbolTableFrame(symbol)
+
+    source.add_namespace(namespace)
+    source.add_symbol(namespace, symbol, frame)
+    destination.update_namespaces(source)
+
+    assert destination.is_namespace_defined(namespace)
+    assert destination.is_symbol_defined_in_namespace(namespace, symbol)
+    assert destination.get_frame_from_namespace(namespace, symbol) == frame

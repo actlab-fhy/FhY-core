@@ -265,7 +265,7 @@ def test_set_constraint_deserialization_tolerates_extra_unknown_fields(
     The TypeGuard requires the *known* keys to be present and well-shaped
     but does not assert the absence of additional keys; deserialization
     picks just the known ones. Documents the forward-compatibility
-    contract — older readers can consume payloads written by a newer
+    contract - older readers can consume payloads written by a newer
     schema with added fields.
     """
     constraint = factory(mock_identifier("x", 0), {1, 2})  # type: ignore[call-arg]

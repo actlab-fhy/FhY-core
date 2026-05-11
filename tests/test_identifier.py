@@ -13,7 +13,7 @@ from fhy_core.serialization import (
     SerializationFormat,
     SerializedDict,
 )
-from fhy_core.trait import Equal, PartialEqual
+from fhy_core.trait import Equal, Frozen, FrozenMutationError, PartialEqual
 
 # =============================================================================
 # Construction & ID generation
@@ -448,3 +448,37 @@ def test_first_identifier_in_fresh_process_has_id_zero() -> None:
     start_next_id, fresh_id, next_id = (int(part) for part in output.split())
     assert fresh_id == start_next_id
     assert next_id == fresh_id + 1
+
+
+# =============================================================================
+# Identifier is frozen after construction
+# =============================================================================
+
+
+def test_identifier_is_frozen_after_construction() -> None:
+    """Test a freshly-constructed ``Identifier`` is frozen."""
+    identifier = Identifier("x")
+    assert isinstance(identifier, Frozen)
+    assert identifier.is_frozen
+
+
+def test_identifier_rejects_id_mutation_after_construction() -> None:
+    """Test assigning to ``_id`` on a constructed ``Identifier`` raises."""
+    identifier = Identifier("x")
+    with pytest.raises(FrozenMutationError):
+        identifier._id = 99
+
+
+def test_identifier_rejects_name_hint_mutation_after_construction() -> None:
+    """Test assigning to ``_name_hint`` on a constructed ``Identifier`` raises."""
+    identifier = Identifier("x")
+    with pytest.raises(FrozenMutationError):
+        identifier._name_hint = "rewritten"
+
+
+def test_deserialized_identifier_is_frozen() -> None:
+    """Test ``Identifier.deserialize_from_dict`` produces a frozen instance."""
+    identifier = Identifier.deserialize_from_dict({"id": 12345, "name_hint": "y"})
+    assert identifier.is_frozen
+    with pytest.raises(FrozenMutationError):
+        identifier._id = 0

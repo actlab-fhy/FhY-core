@@ -192,3 +192,38 @@ def test_poset_iter(basic_poset: PartiallyOrderedSet[int]) -> None:
         "Expected the poset to be iterable \
 multiple times."
     )
+
+
+# =============================================================================
+# iter_stable for deterministic iteration order
+# =============================================================================
+
+
+def test_iter_stable_breaks_ties_by_default_repr_key() -> None:
+    """Test ``iter_stable`` sorts tied nodes by ``repr`` under the default key."""
+    poset: PartiallyOrderedSet[str] = PartiallyOrderedSet()
+    for letter in ("b", "a", "c"):
+        poset.add_element(letter)
+
+    assert list(poset.iter_stable()) == ["a", "b", "c"]
+
+
+def test_iter_stable_respects_topological_order() -> None:
+    """Test ``iter_stable`` produces a valid topological order despite tie-breaking."""
+    poset: PartiallyOrderedSet[str] = PartiallyOrderedSet()
+    for letter in ("a", "b", "c"):
+        poset.add_element(letter)
+    poset.add_order("c", "a")
+
+    order = list(poset.iter_stable())
+    assert order.index("c") < order.index("a")
+
+
+def test_iter_stable_accepts_custom_key() -> None:
+    """Test ``iter_stable`` accepts a custom key function for tie-breaking."""
+    poset: PartiallyOrderedSet[str] = PartiallyOrderedSet()
+    for letter in ("apple", "banana", "cherry"):
+        poset.add_element(letter)
+
+    order = list(poset.iter_stable(key=lambda value: -ord(value[0])))
+    assert order == ["cherry", "banana", "apple"]

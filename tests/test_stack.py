@@ -107,3 +107,21 @@ def test_stack_next(text_stack: Stack[str]) -> None:
     assert next(generator) == "test"
     with pytest.raises(StopIteration):
         next(generator)
+
+
+def test_stack_supports_nested_iteration(text_stack: Stack[str]) -> None:
+    """Test that two concurrent iterators over the same stack are independent.
+
+    Nested iteration over the same stack should produce every (outer, inner)
+    pair without the inner loop's progress disturbing the outer loop. This
+    pins that ``__iter__`` returns a fresh iterator object on each call
+    rather than reusing instance state.
+    """
+    pairs = [(outer, inner) for outer in text_stack for inner in text_stack]
+
+    assert pairs == [
+        ("fhy", "fhy"),
+        ("fhy", "test"),
+        ("test", "fhy"),
+        ("test", "test"),
+    ]

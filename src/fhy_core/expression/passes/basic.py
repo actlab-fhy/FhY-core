@@ -93,7 +93,7 @@ class IdentifierSubstituter(VisitablePass[Expression, Expression]):
     def visit_literal_expression(
         self, literal_expression: LiteralExpression
     ) -> Expression:
-        return LiteralExpression(value=literal_expression.value)
+        return literal_expression
 
     def get_noop_output(self, ir: Expression) -> Expression:
         return ir

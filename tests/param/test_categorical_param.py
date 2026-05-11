@@ -13,7 +13,6 @@ from fhy_core.serialization import (
     DeserializationValueError,
     serialize_registry_wrapped_value,
 )
-from fhy_core.symbol_type import SymbolType
 
 from .conftest import (
     SerializableEqualHashable,
@@ -122,9 +121,9 @@ def test_categorical_param_admissibility_distinguishes_bool_from_int_categories(
     assert not param.is_value_admissible(True)
 
 
-def test_categorical_param_get_symbol_type_is_real() -> None:
-    """Test `CategoricalParam.get_symbol_type` returns ``SymbolType.REAL``."""
-    assert CategoricalParam({"a", "b"}).get_symbol_type() == SymbolType.REAL
+def test_categorical_param_does_not_define_get_symbol_type() -> None:
+    """Test ``CategoricalParam`` does not implement ``get_symbol_type``."""
+    assert not hasattr(CategoricalParam({"a", "b"}), "get_symbol_type")
 
 
 def test_categorical_param_str_lists_categories() -> None:

@@ -2,7 +2,8 @@
 
 __all__ = [
     "convert_expression_to_z3_expression",
-    "is_satisfiable",
+    "does_expression_imply",
+    "holds_for_all_free_assignments",
 ]
 
 import operator
@@ -184,20 +185,26 @@ def convert_expression_to_z3_expression(
     return z3_expression, converter.identifier_to_z3_expression
 
 
-def is_satisfiable(
+def holds_for_all_free_assignments(
     considered_identifiers: set[Identifier],
     expression: Expression,
     symbol_types: dict[Identifier, SymbolType],
 ) -> bool | None:
-    """Check whether the expression is satisfiable in the considered space.
+    """Check whether the expression has a witness for every free assignment.
 
-    The check has the form
+    Returns True iff
     ``forall <free identifiers>. exists <considered_identifiers>. expression``:
-    the expression must hold for some assignment to
-    ``considered_identifiers`` *for every* assignment to the remaining
-    free identifiers. When ``considered_identifiers`` is empty, the check
-    degenerates to "the expression holds for every assignment to its free
-    identifiers" -- i.e., the expression is a tautology.
+    for every assignment to the free identifiers (those *not* in
+    ``considered_identifiers``), there exists some assignment to the
+    considered identifiers that satisfies the expression. When
+    ``considered_identifiers`` is empty, the check degenerates to "the
+    expression holds for every assignment to its free identifiers" -- i.e.,
+    the expression is universally valid.
+
+    Note:
+        This is not the same as standard satisfiability
+        (``exists <all vars>. expression``). For an implication-style check
+        ``antecedent -> consequent``, prefer :func:`does_expression_imply`.
 
     Args:
         considered_identifiers: Identifiers existentially quantified by
@@ -209,8 +216,9 @@ def is_satisfiable(
             referenced by the expression must have an entry.
 
     Returns:
-        True if the expression is satisfiable in the sense above; False
-        if it is unsatisfiable; None if Z3 returns ``unknown``.
+        True if the expression has a witness for every free assignment;
+        False if some free assignment has no witness; None if Z3 returns
+        ``unknown``.
 
     Raises:
         RuntimeError: If the underlying solver returns an unrecognized
@@ -241,3 +249,41 @@ def is_satisfiable(
         return None
     else:
         raise RuntimeError("Unexpected Z3 result.")
+
+
+def does_expression_imply(
+    antecedent: Expression,
+    consequent: Expression,
+    symbol_types: dict[Identifier, SymbolType],
+) -> bool | None:
+    """Return whether ``antecedent`` logically implies ``consequent``.
+
+    Returns True iff ``forall <all identifiers>. antecedent -> consequent``,
+    i.e. there is no assignment to the free identifiers of either
+    expression that satisfies ``antecedent`` but not ``consequent``.
+
+    Args:
+        antecedent: The premise expression.
+        consequent: The conclusion expression.
+        symbol_types: Z3 sort to use for each identifier referenced by
+            either expression.
+
+    Returns:
+        True if the implication holds for every assignment; False if a
+        counterexample exists; None if Z3 returns ``unknown``.
+
+    Raises:
+        KeyError: If ``symbol_types`` is missing an entry for any
+            identifier referenced by either expression.
+        RuntimeError: If the underlying solver returns an unrecognized
+            result.
+
+    """
+    combined = antecedent.logical_and(consequent.logical_not())
+    all_identifiers = collect_identifiers(combined)
+    has_counterexample = holds_for_all_free_assignments(
+        all_identifiers, combined, symbol_types
+    )
+    if has_counterexample is None:
+        return None
+    return not has_counterexample

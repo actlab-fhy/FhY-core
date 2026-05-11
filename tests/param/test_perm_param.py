@@ -5,7 +5,6 @@ import pytest
 from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.identifier import Identifier
 from fhy_core.param import ParamError, PermParam
-from fhy_core.symbol_type import SymbolType
 
 from .conftest import (
     SerializableEqualHashable,
@@ -122,9 +121,9 @@ def test_perm_param_admissibility_rejects_value_outside_member_set() -> None:
     assert not param.is_value_admissible((1, 2, 5))
 
 
-def test_perm_param_get_symbol_type_is_real() -> None:
-    """Test `PermParam.get_symbol_type` returns ``SymbolType.REAL``."""
-    assert PermParam([1, 2, 3]).get_symbol_type() == SymbolType.REAL
+def test_perm_param_does_not_define_get_symbol_type() -> None:
+    """Test ``PermParam`` does not implement ``get_symbol_type``."""
+    assert not hasattr(PermParam([1, 2, 3]), "get_symbol_type")
 
 
 def test_perm_param_str_lists_members() -> None:

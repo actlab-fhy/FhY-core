@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import TypedDict, TypeGuard
 
 from .identifier import Identifier
+from .logger import get_logger
 from .serialization import (
     DeserializationDictStructureError,
     Serializable,
@@ -41,6 +42,8 @@ from .trait import (
     InternedMixin,
     StructuralEquivalenceMixin,
 )
+
+_LOGGER = get_logger(__name__)
 
 
 class _OpAttributeData(TypedDict):
@@ -75,6 +78,14 @@ class OpAttribute(
     instance constructed for a given ``Identifier`` becomes the canonical
     entry and subsequent constructions with the same key shadow into that
     entry without replacing it.
+
+    ``description`` is human-readable metadata only -- it does not
+    participate in equality, structural equivalence, hashing, or
+    interning. The first instance registered for a given ``Identifier``
+    becomes canonical; subsequent constructions and deserializations
+    with a different description are not rejected but do not update the
+    canonical description. ``deserialize_from_dict`` emits a warning
+    when the payload description differs from the canonical's.
 
     Attributes:
         name: Stable, process-global identifier for this attribute.
@@ -114,10 +125,30 @@ class OpAttribute(
                 cls, _OpAttributeData.__annotations__, data
             )
         name = Identifier.deserialize_from_dict(data["name"])
+        payload_description = data["description"]
         canonical = cls.get_interned(name)
         if canonical is not None:
+            if canonical.description != payload_description:
+                _LOGGER.warning(
+                    "OpAttribute %r already canonical with description %r; "
+                    "ignoring payload description %r.",
+                    name,
+                    canonical.description,
+                    payload_description,
+                )
             return canonical
-        return cls(name=name, description=data["description"])
+        return cls(name=name, description=payload_description)
+
+    @classmethod
+    def register_default_instances(cls) -> None:
+        """Re-register the canonical default ``OpAttribute``s shipped here.
+
+        After :meth:`clear_interned_registry` wipes the registry, call this
+        method to restore ``COMMUTATIVE``, ``ASSOCIATIVE``, ``PURE``, and
+        ``ELEMENTWISE`` so the module-level constants remain canonical.
+        """
+        for instance in _DEFAULT_INSTANCES:
+            instance.register_interned_instance()
 
 
 COMMUTATIVE: OpAttribute = OpAttribute(
@@ -135,4 +166,11 @@ PURE: OpAttribute = OpAttribute(
 ELEMENTWISE: OpAttribute = OpAttribute(
     Identifier("elementwise"),
     "Op acts independently on each element of its operands.",
+)
+
+_DEFAULT_INSTANCES: tuple[OpAttribute, ...] = (
+    COMMUTATIVE,
+    ASSOCIATIVE,
+    PURE,
+    ELEMENTWISE,
 )

@@ -148,7 +148,7 @@ def test_assignment_deserialize_rejects_value_invalid_for_param() -> None:
 
 
 # =============================================================================
-# Serialization — exception wrapping
+# Serialization - exception wrapping
 # =============================================================================
 
 

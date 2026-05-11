@@ -605,9 +605,12 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         elif isinstance(left_value_type, IndexType) and isinstance(
             right_value_type, IndexType
         ):
-            return (
-                self._infer_index_combine(operation, left_value_type, right_value_type),
-                result_qualifier,
+            raise self._context.type_error(
+                f"the {operation.name.lower()} operation between two index types "
+                "is not supported; arithmetic on two strided ranges does not "
+                "generally produce a result whose index bounds and stride can be "
+                "inferred safely. Index types are valid as operands of shift "
+                "(``index +/- int``) or scale (``index * positive int literal``)."
             )
 
         elif operation == BinaryOperation.ADD:
@@ -764,31 +767,6 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             )
         return scalar_expression
 
-    def _infer_index_combine(
-        self,
-        operation: BinaryOperation,
-        left_value_type: IndexType,
-        right_value_type: IndexType,
-    ) -> IndexType:
-        if operation == BinaryOperation.ADD:
-            return IndexType(
-                left_value_type.lower_bound + right_value_type.lower_bound,
-                left_value_type.upper_bound + right_value_type.upper_bound,
-                self._combine_index_strides_for_add(
-                    left_value_type.stride, right_value_type.stride
-                ),
-            )
-        elif operation == BinaryOperation.SUBTRACT:
-            raise self._context.type_error(
-                "subtraction is not defined between two index types; the "
-                "resulting stride semantics have not been defined"
-            )
-        else:
-            raise self._context.type_error(
-                f"the {operation.name.lower()} operation is not defined "
-                "between two index types"
-            )
-
     # --- Context-aware helpers ----------------------------------------------
 
     def _as_expression_value_type(
@@ -863,29 +841,6 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 f"{expected_type}; promoting them yields {promoted_type}, which "
                 "does not match the expected type"
             )
-
-    def _get_literal_stride_value(self, stride: Expression) -> int:
-        if not isinstance(stride, LiteralExpression):
-            raise self._context.type_error(
-                "combining two index types requires both strides to be integer "
-                f"literals, but got non-literal stride `{_format_expression(stride)}`"
-            )
-        value = stride.value
-        if not is_strict_int(value):
-            raise self._context.type_error(
-                f"an index stride literal must be an integer, but got {value!r}"
-            )
-        return value
-
-    def _combine_index_strides_for_add(
-        self, left_stride: Expression, right_stride: Expression
-    ) -> Expression:
-        return LiteralExpression(
-            min(
-                self._get_literal_stride_value(left_stride),
-                self._get_literal_stride_value(right_stride),
-            )
-        )
 
     def _scale_index_type(
         self, index_type: IndexType, scalar: LiteralExpression

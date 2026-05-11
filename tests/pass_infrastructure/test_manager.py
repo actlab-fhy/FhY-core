@@ -1,7 +1,9 @@
 """Tests the pass manager infrastructure."""
 
 import gc
+import threading
 import weakref
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -908,3 +910,59 @@ def test_unbind_analysis_manager_is_idempotent() -> None:
     compiler_pass.unbind_analysis_manager()  # already unbound; must not raise
 
     assert compiler_pass.get_analysis_manager() is None
+
+
+def test_analysis_manager_get_is_safe_under_concurrent_callers() -> None:
+    """Test concurrent ``get`` calls do not crash or produce inconsistent results."""
+    manager: AnalysisManager[Box] = AnalysisManager()
+    irs = [Box(i) for i in range(64)]
+
+    errors: list[BaseException] = []
+    errors_lock = threading.Lock()
+
+    def worker(ir: Box) -> int:
+        try:
+            for _ in range(20):
+                manager.get(BoxDoubleAnalysis, ir)
+                manager.invalidate(ir, PreservedAnalyses.none())
+                manager.get(BoxDoubleAnalysis, ir)
+            value = manager.get(BoxDoubleAnalysis, ir)
+            assert value == ir.value * 2
+            return value
+        except BaseException as exc:  # noqa: BLE001
+            with errors_lock:
+                errors.append(exc)
+            raise
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        list(executor.map(worker, irs * 4))
+
+    assert errors == []
+
+
+@pytest.mark.slow
+def test_analysis_manager_survives_concurrent_get_and_gc_eviction() -> None:
+    """Test concurrent ``get`` and finalizer-driven eviction do not corrupt state."""
+    manager: AnalysisManager[Box] = AnalysisManager()
+
+    errors: list[BaseException] = []
+    errors_lock = threading.Lock()
+
+    def worker(seed: int) -> None:
+        try:
+            for offset in range(50):
+                ir = Box(seed * 100 + offset)
+                manager.get(BoxDoubleAnalysis, ir)
+                # Drop the local reference; let the finalizer fire on GC.
+                del ir
+            gc.collect()
+        except BaseException as exc:  # noqa: BLE001
+            with errors_lock:
+                errors.append(exc)
+            raise
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(worker, range(32)))
+
+    gc.collect()
+    assert errors == []

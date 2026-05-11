@@ -50,6 +50,45 @@ At decode time, the registry is consulted first. This avoids importing
 arbitrary modules during deserialization and keeps reconstruction explicit.
 As a convenience, the module also supports a fallback that resolves classes
 by importing the module portion of the `type_id`.
+
+Security
+--------
+Default deserialization paths are safe against untrusted input: every
+``type_id`` is looked up only in the in-process registry, and unknown ids
+raise ``UnknownTypeIdError`` rather than triggering imports.
+
+``Serializable.from_bytes(..., allow_import_fallback=True)`` opts into
+``importlib.import_module`` for ``type_id`` lookups, which executes the
+named module's top-level code. The ``allowed_module_prefixes`` parameter
+(default ``("fhy_core.",)``) constrains which modules may be loaded, but
+even within that prefix, importing has side effects (registry
+registrations, logging configuration, etc.). Do **not** enable
+``allow_import_fallback`` with blobs whose origin you do not control or
+trust.
+
+Float and special-value contract
+--------------------------------
+Float values round-trip exactly within Python: ``json.dumps`` emits the
+shortest round-trip-safe ``repr`` and ``json.loads`` recovers the same
+``float``. Cross-language consumers (non-Python JSON parsers) may see
+different precision because of their own float-to-string conversion
+rules. Applications requiring bit-for-bit cross-runtime round-tripping
+should define a non-JSON binary codec by overriding ``get_binary_codec``
+and ``serialize_to_binary`` / ``deserialize_from_binary`` on the
+relevant class.
+
+``NaN`` and ``+/-Infinity`` are rejected at serialization time: both
+``serialize_to_binary`` (JSON codec) and ``to_json`` pass
+``allow_nan=False`` to ``json.dumps`` and re-raise the resulting
+``ValueError`` as ``SerializationValueError``. This prevents accidentally
+emitting non-standard ``"NaN"`` / ``"Infinity"`` tokens that strict
+third-party JSON parsers would reject. Applications that need
+NaN-tolerant serialization must use a non-JSON codec.
+
+``NaN`` compares unequal to itself by IEEE-754 rule, so two
+``LiteralExpression`` values wrapping ``NaN`` are not structurally
+equivalent. That is the standard IEEE-754 consequence, not an
+``fhy_core`` quirk.
 """
 
 __all__ = [
@@ -302,6 +341,22 @@ def _resolve_type_id(
     allow_import_fallback: bool = False,
     allowed_module_prefixes: tuple[str, ...] = ("fhy_core.",),
 ) -> type["Serializable"]:
+    """Resolve a ``type_id`` string to its registered class, or via import fallback.
+
+    The registry is consulted first; this is always safe. When
+    ``allow_import_fallback`` is True and the type is not registered, the
+    module named in ``type_id`` is loaded via ``importlib.import_module``,
+    subject to ``allowed_module_prefixes``.
+
+    Security:
+        ``importlib.import_module`` executes the named module's top-level
+        code. Even with the default prefix restriction
+        (``("fhy_core.",)``), enabling this path with untrusted blob input
+        is dangerous: a blob can choose which ``fhy_core`` module gets
+        imported and trigger its registry registrations, logging side
+        effects, etc. Keep ``allow_import_fallback=False`` unless the
+        ``type_id`` source is fully trusted.
+    """
     if type_id in _TYPE_REGISTRY:
         return _TYPE_REGISTRY[type_id]
 
@@ -706,9 +761,17 @@ class Serializable(ABC):
                 f'Class "{type(self)}" does not implement binary codec "{codec}".'
             )
         payload_dict = self.serialize_to_dict()
-        return json.dumps(payload_dict, separators=(",", ":"), sort_keys=True).encode(
-            "utf-8"
-        )
+        try:
+            return json.dumps(
+                payload_dict,
+                separators=(",", ":"),
+                sort_keys=True,
+                allow_nan=False,
+            ).encode("utf-8")
+        except ValueError as exc:
+            raise SerializationValueError(
+                "a JSON-finite numeric payload (no NaN or Infinity)", payload_dict
+            ) from exc
 
     @classmethod
     def deserialize_from_binary(
@@ -821,8 +884,25 @@ class Serializable(ABC):
         Returns:
             A JSON string representation of this object.
 
+        Raises:
+            SerializationValueError: If the payload contains ``NaN`` or
+                ``Infinity`` values, which JSON does not support per the
+                strict spec.
+
         """
-        return json.dumps(self.serialize_to_dict(), indent=indent, sort_keys=sort_keys)
+        payload = self.serialize_to_dict()
+        try:
+            return json.dumps(
+                payload,
+                indent=indent,
+                sort_keys=sort_keys,
+                allow_nan=False,
+            )
+        except ValueError as exc:
+            raise SerializationValueError(
+                "a JSON-finite numeric payload (no NaN or Infinity)",
+                payload,
+            ) from exc
 
     @classmethod
     def from_json(cls: type[_T], payload: str | bytes | bytearray) -> _T:
@@ -860,10 +940,19 @@ class Serializable(ABC):
 
         Args:
             data: The binary data containing the serialized object.
-            allow_import_fallback: Whether to allow importing classes from
-                external modules.
+            allow_import_fallback: When ``True``, ``type_id`` values not
+                present in the registered serialization registry trigger an
+                ``importlib.import_module`` call to load the module named in
+                the ``type_id`` (subject to ``allowed_module_prefixes``).
+                **Security: importing a module runs its top-level code;
+                enabling this with untrusted blob input lets the blob
+                choose which fhy_core module gets imported.** Keep this
+                ``False`` unless you control or trust the source of
+                ``data``. Defaults to ``False``.
             allowed_module_prefixes: A tuple of allowed module prefixes for
-                import fallback.
+                import fallback. Only consulted when
+                ``allow_import_fallback`` is ``True``. Defaults to
+                ``("fhy_core.",)`` to confine imports to the core package.
 
         Returns:
             The deserialized Serializable object.

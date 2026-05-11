@@ -15,6 +15,7 @@ from .serialization import (
     register_serializable,
 )
 from .trait.equality import EqualMixin
+from .trait.frozen import FrozenMixin
 
 
 class _IdentifierData(TypedDict):
@@ -36,7 +37,7 @@ def _is_valid_identifier_data(data: SerializedDict) -> TypeGuard[_IdentifierData
 
 @final
 @register_serializable(type_id="id")
-class Identifier(Serializable, EqualMixin):
+class Identifier(Serializable, FrozenMixin, EqualMixin):
     """Process-globally unique, named compiler symbol.
 
     Two ``Identifier`` instances are equal iff they share the same ``id``;
@@ -70,6 +71,7 @@ class Identifier(Serializable, EqualMixin):
             self._id = Identifier._next_id
             Identifier._next_id += 1
         self._name_hint = name_hint
+        self.freeze()
 
     @property
     def name_hint(self) -> str:
@@ -98,6 +100,7 @@ class Identifier(Serializable, EqualMixin):
         with Identifier._id_lock:
             if identifier._id >= Identifier._next_id:
                 Identifier._next_id = identifier._id + 1
+        identifier.freeze()
         return identifier
 
     def __eq__(self, other: Any) -> bool:

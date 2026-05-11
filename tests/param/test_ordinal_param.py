@@ -6,7 +6,6 @@ from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.identifier import Identifier
 from fhy_core.param import OrdinalParam, ParamError
 from fhy_core.serialization import DeserializationValueError
-from fhy_core.symbol_type import SymbolType
 
 from .conftest import (
     SerializableEqualNoOrder,
@@ -134,9 +133,9 @@ def test_ordinal_param_admissibility_distinguishes_bool_from_numeric_values() ->
     assert not param.is_value_admissible(True)
 
 
-def test_ordinal_param_get_symbol_type_is_real() -> None:
-    """Test `OrdinalParam.get_symbol_type` returns ``SymbolType.REAL``."""
-    assert OrdinalParam([1, 2, 3]).get_symbol_type() == SymbolType.REAL
+def test_ordinal_param_does_not_define_get_symbol_type() -> None:
+    """Test ``OrdinalParam`` does not implement ``get_symbol_type``."""
+    assert not hasattr(OrdinalParam([1, 2, 3]), "get_symbol_type")
 
 
 def test_ordinal_param_str_lists_possible_values() -> None:

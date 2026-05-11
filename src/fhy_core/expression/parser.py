@@ -87,15 +87,15 @@ class ExpressionParser:
         addition       ::= multiplication ( ( "+" | "-" ) multiplication )*
         multiplication ::= unary ( ( "*" | "/" | "//" | "%" ) unary )*
         unary          ::= ( "-" | "+" | "!" ) unary | exponentiation
-        exponentiation ::= primary ( "**" primary )*
+        exponentiation ::= primary ( "**" exponentiation )?
         primary        ::= number
                          | "True" | "False"
                          | identifier
                          | "(" expression ")"
 
-    Binary operators are left-associative except ``**`` which is
-    right-associative in typical usage but parsed here left-to-right at the
-    exponentiation precedence level.
+    Binary operators are left-associative except ``**``, which is
+    right-associative (consistent with Python and the conventional
+    mathematical reading of ``a**b**c`` as ``a**(b**c)``).
     """
 
     _tokens: list[str]
@@ -177,7 +177,11 @@ class ExpressionParser:
         return self._exponentiation()
 
     def _exponentiation(self) -> Expression:
-        return self._binary_operation(_EXPONENTIATION_SYMBOL_OPERATIONS, self._primary)
+        left = self._primary()
+        if self._match("**"):
+            right = self._exponentiation()
+            return BinaryExpression(BinaryOperation.POWER, left, right)
+        return left
 
     def _primary(self) -> Expression:
         if self._match_number():

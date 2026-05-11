@@ -2,7 +2,7 @@
 
 from importlib.util import find_spec
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -41,8 +41,14 @@ def mock_identifier(name_hint: str, identifier_id: int) -> Identifier:
     identifier._id = identifier_id
     identifier.name_hint = name_hint
     identifier.id = identifier_id
-    identifier.__eq__ = lambda self, other: self.id == other.id  # type: ignore[method-assign,assignment,misc]
-    identifier.__hash__ = lambda self: hash(self.id)  # type: ignore[method-assign,assignment,misc]
+    # Configure dunder methods via MagicMock's side_effect rather than direct
+    # function assignment so mock-library internals own the dunder wiring.
+    identifier.__eq__ = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda other: identifier.id == getattr(other, "id", object())
+    )
+    identifier.__hash__ = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda: hash(identifier.id)
+    )
     identifier.serialize_to_dict = lambda: {
         "id": identifier.id,
         "name_hint": identifier.name_hint,

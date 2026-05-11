@@ -329,7 +329,8 @@ def test_promote_primitive_data_types_raises_for_cross_family_pairs() -> None:
         (-1, CoreDataType.INT, CoreDataType.INT8),
         (-129, CoreDataType.INT, CoreDataType.INT16),
         (-1, CoreDataType.FLOAT64, CoreDataType.FLOAT64),
-        (1.5, CoreDataType.FLOAT, CoreDataType.FLOAT16),
+        (1.5, CoreDataType.FLOAT, CoreDataType.FLOAT64),
+        (3.141592653589793, CoreDataType.FLOAT, CoreDataType.FLOAT64),
     ],
 )
 def test_resolve_literal_core_data_type(
@@ -337,7 +338,14 @@ def test_resolve_literal_core_data_type(
     core_data_type: CoreDataType,
     expected_core_data_type: CoreDataType,
 ) -> None:
-    """Weak literal types should resolve to the narrowest compatible concrete type."""
+    """Weak literal types should resolve to a concrete type compatible with context.
+
+    Integer literals resolve to the narrowest concrete integer type that
+    represents the value. Float literals paired with the weak ``FLOAT``
+    context resolve to ``FLOAT64`` (Python's native float precision) so
+    that decimal precision is not silently lost; narrower float widths
+    must be requested explicitly via the context.
+    """
     assert (
         resolve_literal_core_data_type(literal, core_data_type)
         == expected_core_data_type
