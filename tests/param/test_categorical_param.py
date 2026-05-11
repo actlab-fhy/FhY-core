@@ -6,6 +6,7 @@ from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.identifier import Identifier
 from fhy_core.param import (
     CategoricalParam,
+    ParamError,
     create_single_valid_value_param,
 )
 from fhy_core.serialization import (
@@ -34,7 +35,7 @@ def test_categorical_param_initializes_from_set_of_values() -> None:
 
 def test_categorical_param_init_rejects_duplicate_values() -> None:
     """Test `CategoricalParam` rejects duplicate values with `ParamError`."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         CategoricalParam([1, 1])
 
 
@@ -48,8 +49,8 @@ def test_categorical_param_init_rejects_duplicate_values() -> None:
     ],
 )
 def test_categorical_param_init_rejects_empty_categories(empty: object) -> None:
-    """Test `CategoricalParam` rejects an empty category collection."""
-    with pytest.raises(ValueError, match="non-empty"):
+    """Test `CategoricalParam` rejects an empty collection with `ParamError`."""
+    with pytest.raises(ParamError, match="non-empty"):
         CategoricalParam(empty)  # type: ignore[arg-type]  # test: invalid input
 
 
@@ -88,7 +89,7 @@ def test_create_single_valid_value_param_constrains_to_one_value() -> None:
     assert assignment.is_value_set()
     assert assignment.value == "only"
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         param.assign("different")
 
 
@@ -108,8 +109,8 @@ def test_categorical_param_assigns_values_in_the_category_set(
 def test_categorical_param_assign_rejects_values_outside_the_category_set(
     categorical_param_abc: CategoricalParam[str],
 ) -> None:
-    """Test `CategoricalParam.assign` rejects values outside the category set."""
-    with pytest.raises(ValueError):
+    """Test `CategoricalParam.assign` raises `ParamError` for values outside the set."""
+    with pytest.raises(ParamError):
         categorical_param_abc.assign("d")
 
 
@@ -180,8 +181,8 @@ def test_categorical_param_add_constraint_combines_with_existing_membership(
 def test_categorical_param_rejects_non_set_constraint(
     categorical_param_abc: CategoricalParam[str],
 ) -> None:
-    """Test `CategoricalParam.add_constraint` rejects equation constraints."""
-    with pytest.raises(ValueError):
+    """Test `CategoricalParam.add_constraint` raises for equation constraints."""
+    with pytest.raises(ParamError):
         categorical_param_abc.add_constraint(
             EquationConstraint(
                 categorical_param_abc.variable,

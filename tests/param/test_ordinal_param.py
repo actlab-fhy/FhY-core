@@ -4,7 +4,7 @@ import pytest
 
 from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.identifier import Identifier
-from fhy_core.param import OrdinalParam
+from fhy_core.param import OrdinalParam, ParamError
 from fhy_core.serialization import DeserializationValueError
 from fhy_core.symbol_type import SymbolType
 
@@ -27,13 +27,13 @@ def test_ordinal_param_initializes_from_sequence_of_values() -> None:
 
 def test_ordinal_param_init_rejects_duplicate_values() -> None:
     """Test `OrdinalParam` rejects duplicate values with `ParamError`."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         OrdinalParam([1, 2, 1])
 
 
 def test_ordinal_param_init_rejects_empty_values() -> None:
     """Test `OrdinalParam` rejects an empty value set with `ParamError`."""
-    with pytest.raises(ValueError, match="non-empty"):
+    with pytest.raises(ParamError, match="non-empty"):
         OrdinalParam([])
 
 
@@ -44,7 +44,7 @@ def test_ordinal_param_init_detects_duplicate_in_middle() -> None:
     sorts to ``(1, 2, 2)`` must be rejected, killing both off-by-one and
     range-shrinking mutations on the inner ``range(len(values) - 1)`` walk.
     """
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         OrdinalParam([1, 2, 2])
 
 
@@ -55,7 +55,7 @@ def test_ordinal_param_init_detects_duplicate_in_two_value_sequence() -> None:
     mutations that shrink the comparison range to zero iterations (such as
     ``range(len(values) - 2)`` when ``len(values) == 2``).
     """
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         OrdinalParam([1, 1])
 
 
@@ -67,7 +67,7 @@ def test_ordinal_param_init_detects_distinct_float_objects_as_duplicates() -> No
     which would mask an identity-based comparison). The uniqueness check
     must use ``==``, not ``is``, on adjacent sorted values.
     """
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         OrdinalParam([float("1.5"), float("1.5")])
 
 
@@ -123,8 +123,8 @@ def test_ordinal_param_assigns_values_in_the_possible_set(
 def test_ordinal_param_assign_rejects_values_outside_the_possible_set(
     ordinal_param_123: OrdinalParam[int],
 ) -> None:
-    """Test `OrdinalParam.assign` rejects values outside the possible-value set."""
-    with pytest.raises(ValueError):
+    """Test `OrdinalParam.assign` raises `ParamError` for values outside the set."""
+    with pytest.raises(ParamError):
         ordinal_param_123.assign(4)
 
 
@@ -165,8 +165,8 @@ def test_ordinal_param_add_constraint_combines_with_existing_membership(
 def test_ordinal_param_rejects_non_set_constraint(
     ordinal_param_123: OrdinalParam[int],
 ) -> None:
-    """Test `OrdinalParam.add_constraint` rejects equation constraints."""
-    with pytest.raises(ValueError):
+    """Test `OrdinalParam.add_constraint` raises for equation constraints."""
+    with pytest.raises(ParamError):
         ordinal_param_123.add_constraint(
             EquationConstraint(
                 ordinal_param_123.variable,

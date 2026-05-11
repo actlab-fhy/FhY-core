@@ -234,7 +234,7 @@ def test_add_constraints_returns_a_clone_for_empty_collection(empty: object) -> 
 def test_add_constraints_validates_each_subclass_constraint_rule() -> None:
     """Test `add_constraints` enforces subclass-specific constraint validation."""
     param = OrdinalParam([1, 2, 3])
-    with pytest.raises(ValueError):
+    with pytest.raises(ParamError):
         param.add_constraints(
             [
                 InSetConstraint(param.variable, {1, 2}),

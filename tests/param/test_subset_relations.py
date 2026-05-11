@@ -105,6 +105,16 @@ def test_int_param_is_value_set_subset_is_true_for_other_int_param() -> None:
     )
 
 
+def test_real_param_is_value_set_subset_returns_false_against_non_real() -> None:
+    """Test `RealParam.is_value_set_subset` returns ``False`` for a non-`RealParam`."""
+    assert not RealParam().is_value_set_subset(IntParam())  # type: ignore[arg-type]  # test: cross class
+
+
+def test_int_param_is_value_set_subset_returns_false_against_non_int() -> None:
+    """Test `IntParam.is_value_set_subset` returns ``False`` for a non-`IntParam`."""
+    assert not IntParam().is_value_set_subset(RealParam())  # type: ignore[arg-type]  # test: cross class
+
+
 # =============================================================================
 # OrdinalParam subset relations
 # =============================================================================

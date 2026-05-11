@@ -7,6 +7,7 @@ import pytest
 from fhy_core.param import (
     IntParam,
     ParamAssignment,
+    ParamError,
     PermParam,
     RealParam,
 )
@@ -61,8 +62,8 @@ def test_real_param_with_value_creates_initialized_assignment() -> None:
 
 
 def test_real_param_with_value_rejects_invalid_value() -> None:
-    """Test `RealParam.with_value` raises for an invalid value."""
-    with pytest.raises(ValueError):
+    """Test `RealParam.with_value` raises `ParamError` for an invalid value."""
+    with pytest.raises(ParamError):
         RealParam.with_value("invalid")
 
 
@@ -74,8 +75,8 @@ def test_int_param_with_value_creates_initialized_assignment() -> None:
 
 
 def test_int_param_with_value_rejects_invalid_value() -> None:
-    """Test `IntParam.with_value` raises for an invalid value."""
-    with pytest.raises(ValueError):
+    """Test `IntParam.with_value` raises `ParamError` for an invalid value."""
+    with pytest.raises(ParamError):
         IntParam.with_value(1.2)  # type: ignore[arg-type]  # test: invalid input
 
 

@@ -691,7 +691,7 @@ class RealParam(Param[str | float]):
         )
 
     def is_value_set_subset(self, other: "Param[str | float]") -> bool:
-        return True
+        return isinstance(other, RealParam)
 
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "RealParam":
@@ -855,7 +855,7 @@ class IntParam(Param[int]):
         return isinstance(other, IntParam) and super().is_structurally_equivalent(other)
 
     def is_value_set_subset(self, other: "Param[int]") -> bool:
-        return True
+        return isinstance(other, IntParam)
 
     @classmethod
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "IntParam":
