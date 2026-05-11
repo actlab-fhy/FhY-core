@@ -522,7 +522,7 @@ def test_binary_dunder_promotes_right_python_operand_to_expression(
     expected = BinaryExpression(
         expected_operation,
         left,
-        expected_right_type(right),
+        expected_right_type(right),  # type: ignore[call-arg]
     )
     assert binary_operator(left, right).is_structurally_equivalent(expected)
 
@@ -561,7 +561,7 @@ def test_binary_dunder_promotes_left_python_operand_to_expression(
     right = LiteralExpression(5)
     expected = BinaryExpression(
         expected_operation,
-        expected_left_type(left),
+        expected_left_type(left),  # type: ignore[call-arg]
         right,
     )
     assert binary_operator(left, right).is_structurally_equivalent(expected)
