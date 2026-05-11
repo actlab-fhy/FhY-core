@@ -504,7 +504,7 @@ def test_integer_division_promotes_to_smallest_sufficient_float_width(
     operand_core_data_type: CoreDataType,
     expected_float_core_data_type: CoreDataType,
 ) -> None:
-    """Test same-type integer division promotes to the smallest float ≥ that width."""
+    """Test same-type integer division promotes to the smallest float >= that width."""
     left = Identifier("left")
     right = Identifier("right")
     checker = make_identifier_checker(

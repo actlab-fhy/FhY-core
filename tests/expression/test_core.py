@@ -710,7 +710,7 @@ def test_instance_logical_builder_requires_at_least_one_other(
     """Test `expr.logical_*()` with no others raises ``ValueError``.
 
     The instance method counts ``self`` toward the minimum-two contract, so a
-    no-other call still fails the ≥-2 check on the underlying module-level
+    no-other call still fails the >=-2 check on the underlying module-level
     function.
     """
     expression = LiteralExpression(True)

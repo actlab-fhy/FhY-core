@@ -329,7 +329,7 @@ def test_nat_param_deserialize_round_trip_preserves_zero_inclusion_flag() -> Non
     """Test `NatParam` round-trips ``is_zero_included=True`` through serialization.
 
     Pins down the ``is_zero_included = True`` assignment in
-    `deserialize_data_from_dict`: a ``True → False`` flip would yield a
+    `deserialize_data_from_dict`: a ``True -> False`` flip would yield a
     deserialized param that rejects ``0``.
     """
     original = NatParam(is_zero_included=True)

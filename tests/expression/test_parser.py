@@ -481,9 +481,9 @@ def test_tokenize_expression_rejects_unknown_ascii_characters(
 @pytest.mark.parametrize(
     "expression_str",
     [
-        pytest.param("café", id="latin_e_acute"),
-        pytest.param("αβ", id="greek_letters"),
-        pytest.param("a € b", id="euro_sign_between_identifiers"),
+        pytest.param("caf\u00e9", id="latin_e_acute"),
+        pytest.param("\u03b1\u03b2", id="greek_letters"),
+        pytest.param("a \u20ac b", id="euro_sign_between_identifiers"),
     ],
 )
 def test_tokenize_expression_rejects_non_ascii_characters(

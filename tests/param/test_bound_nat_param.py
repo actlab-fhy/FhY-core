@@ -75,7 +75,7 @@ def test_bound_nat_param_deserialize_round_trip_preserves_zero_excluded_flag() -
 
     Pins down the ``is_zero_included = False`` assignment in
     `BoundNatParam.deserialize_data_from_dict`'s
-    `is_zero_not_included_constraint_exists` branch. A ``False → True`` flip
+    `is_zero_not_included_constraint_exists` branch. A ``False -> True`` flip
     leaves admissibility unchanged on every integer (the basic ``var > 0``
     constraint from the payload survives the filter alongside the
     constructor's added ``var >= 0``), so ``is_value_valid`` cannot
