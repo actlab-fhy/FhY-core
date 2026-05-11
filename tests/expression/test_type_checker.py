@@ -1302,8 +1302,8 @@ def test_division_with_one_index_operand_uses_division_specific_message(
 # =============================================================================
 #
 # The type checker rejects every binary operation between two index types:
-# the sum or difference of two strided ranges is not in general a strided
-# range, so the result cannot be safely inferred as another ``IndexType``.
+# arithmetic on two strided ranges does not in general produce a result
+# whose bounds and stride can be inferred safely as another ``IndexType``.
 # Shift (``index +/- int``) and scale (``index * int literal``) remain
 # supported and are exercised in adjacent sections of this file.
 

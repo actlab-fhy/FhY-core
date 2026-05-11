@@ -890,9 +890,10 @@ class Serializable(ABC):
                 strict spec.
 
         """
+        payload = self.serialize_to_dict()
         try:
             return json.dumps(
-                self.serialize_to_dict(),
+                payload,
                 indent=indent,
                 sort_keys=sort_keys,
                 allow_nan=False,
@@ -900,7 +901,7 @@ class Serializable(ABC):
         except ValueError as exc:
             raise SerializationValueError(
                 "a JSON-finite numeric payload (no NaN or Infinity)",
-                self.serialize_to_dict(),
+                payload,
             ) from exc
 
     @classmethod

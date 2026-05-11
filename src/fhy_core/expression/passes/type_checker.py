@@ -607,10 +607,10 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         ):
             raise self._context.type_error(
                 f"the {operation.name.lower()} operation between two index types "
-                "is not supported; the sum or difference of two strided ranges is "
-                "not generally a strided range, so the resulting index bounds and "
-                "stride cannot be inferred. Index types are valid as operands of "
-                "shift (``index +/- int``) or scale (``index * positive int literal``)."
+                "is not supported; arithmetic on two strided ranges does not "
+                "generally produce a result whose index bounds and stride can be "
+                "inferred safely. Index types are valid as operands of shift "
+                "(``index +/- int``) or scale (``index * positive int literal``)."
             )
 
         elif operation == BinaryOperation.ADD:
