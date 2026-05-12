@@ -211,12 +211,22 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
             diagnostics=tuple(aggregated_diagnostics),
             records=tuple(records),
         )
+        error_count = 0
+        warning_count = 0
+        info_count = 0
+        for diagnostic in report.diagnostics:
+            if diagnostic.level == DiagnosticLevel.ERROR:
+                error_count += 1
+            elif diagnostic.level == DiagnosticLevel.WARNING:
+                warning_count += 1
+            elif diagnostic.level == DiagnosticLevel.INFO:
+                info_count += 1
         _LOGGER.info(
             "%s finished (errors=%d, warnings=%d, infos=%d)",
             self._name,
-            len(report.errors()),
-            len(report.warnings()),
-            len(report.infos()),
+            error_count,
+            warning_count,
+            info_count,
         )
         return report
 

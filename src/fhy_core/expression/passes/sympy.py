@@ -386,7 +386,7 @@ class SymPyToExpressionConverter(
     def _convert_implies(
         self, implies: sympy.logic.boolalg.Implies
     ) -> BinaryExpression:
-        _LOGGER.info("encountered unsupported Implies node %r", implies)
+        _LOGGER.warning("encountered unsupported Implies node %r", implies)
         _ = implies
         raise NotImplementedError("Implies is not supported.")
 

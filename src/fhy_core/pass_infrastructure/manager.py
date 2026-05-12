@@ -12,6 +12,7 @@ __all__ = [
 ]
 
 import inspect
+import logging
 import threading
 import time
 import weakref
@@ -206,7 +207,7 @@ class AnalysisManager(Generic[_IRType]):
                 for analysis_name in bucket
                 if not preserved.is_preserved(analysis_name)
             ]
-            if analyses_to_drop:
+            if analyses_to_drop and _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
                     "IR id=%d dropping=%s preserving=%s",
                     ir_id,

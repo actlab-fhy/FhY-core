@@ -243,7 +243,7 @@ def holds_for_all_free_assignments(
     solver = z3.Solver()
     solver.add(z3_expression)
 
-    _LOGGER.info(
+    _LOGGER.debug(
         "calling Z3 solver.check (referenced_identifiers=%d, considered=%d, "
         "quantified=%d)",
         len(identifier_to_z3_expression),
