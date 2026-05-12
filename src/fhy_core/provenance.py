@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict, TypeGuard
 
+from fhy_core.logger import get_logger
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -48,6 +49,8 @@ from fhy_core.serialization import (
 from fhy_core.trait.equality import EqualMixin
 from fhy_core.trait.frozen import FrozenMixin
 from fhy_core.utils.numeric_utils import is_strict_int
+
+_LOGGER = get_logger(__name__)
 
 
 class _PositionData(TypedDict):
@@ -267,14 +270,28 @@ class Provenance(WrappedFamilySerializable, FrozenMixin, EqualMixin, ABC):
     def fuse(*provenances: "Provenance", metadata: str | None = None) -> "Provenance":
         flat: list[Provenance] = []
         pending: list[Provenance] = list(reversed(provenances))
+        unknowns_dropped = 0
+        fused_collapsed = 0
         while pending:
             provenance = pending.pop()
             if isinstance(provenance, UnknownProvenance):
+                unknowns_dropped += 1
                 continue
             if isinstance(provenance, FusedProvenance) and provenance.metadata is None:
+                fused_collapsed += 1
                 pending.extend(reversed(provenance.sources))
                 continue
             flat.append(provenance)
+
+        if unknowns_dropped or fused_collapsed:
+            _LOGGER.debug(
+                "reduced input (inputs=%d, unknowns_dropped=%d, "
+                "fused_collapsed=%d, final_sources=%d)",
+                len(provenances),
+                unknowns_dropped,
+                fused_collapsed,
+                len(flat),
+            )
 
         if not flat:
             return UnknownProvenance()

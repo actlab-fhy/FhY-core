@@ -27,6 +27,7 @@ from typing import Any, Generic, TypeVar
 from fhy_core.diagnostic import Note
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
+from fhy_core.logger import get_logger
 from fhy_core.trait import FrozenMixin, HasIdentifierMixin, PartialEqualMixin
 
 from .core import (
@@ -38,6 +39,8 @@ from .core import (
     PreservedAnalyses,
 )
 from .manager import PassRunRecord
+
+_LOGGER = get_logger(__name__)
 
 _IRType = TypeVar("_IRType")
 
@@ -186,6 +189,12 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
         aggregated_diagnostics: list[PassDiagnostic] = []
         records: list[PassRunRecord] = []
 
+        _LOGGER.info(
+            "%s starting (validators=%d)",
+            self._name,
+            len(self._validators),
+        )
+
         for validator in self._validators:
             diagnostics = self._run_single_validator(validator, ir)
             aggregated_diagnostics.extend(diagnostics)
@@ -198,10 +207,28 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
                 )
             )
 
-        return ValidationReport(
+        report = ValidationReport(
             diagnostics=tuple(aggregated_diagnostics),
             records=tuple(records),
         )
+        error_count = 0
+        warning_count = 0
+        info_count = 0
+        for diagnostic in report.diagnostics:
+            if diagnostic.level == DiagnosticLevel.ERROR:
+                error_count += 1
+            elif diagnostic.level == DiagnosticLevel.WARNING:
+                warning_count += 1
+            elif diagnostic.level == DiagnosticLevel.INFO:
+                info_count += 1
+        _LOGGER.info(
+            "%s finished (errors=%d, warnings=%d, infos=%d)",
+            self._name,
+            error_count,
+            warning_count,
+            info_count,
+        )
+        return report
 
     @staticmethod
     def _run_single_validator(
@@ -221,6 +248,12 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
                 return captured
             # Infrastructure raised without emitting an ERROR; synthesize one
             # so the report accurately reflects the failure.
+            type(validator)._get_pass_logger().error(
+                "raised %s without reporting a diagnostic: %s",
+                type(exc).__name__,
+                exc,
+                exc_info=exc,
+            )
             return (
                 *captured,
                 PassDiagnostic(
@@ -235,6 +268,12 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
             )
         except Exception as exc:  # noqa: BLE001 - defense-in-depth
             captured = tuple(validator.diagnostics)
+            type(validator)._get_pass_logger().error(
+                "validator crashed with %s: %s",
+                type(exc).__name__,
+                exc,
+                exc_info=exc,
+            )
             synthesized = PassDiagnostic(
                 level=DiagnosticLevel.ERROR,
                 message=Note(

@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Generic, NoReturn, TypedDict, TypeGuard, TypeVar
 
 from fhy_core.identifier import Identifier
+from fhy_core.logger import get_logger
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -36,6 +37,8 @@ from fhy_core.trait import (
 from .error import register_error
 from .types import Type, TypeQualifier
 from .utils import StrEnum
+
+_LOGGER = get_logger(__name__)
 
 
 def _identifier_sort_key(identifier: Identifier) -> tuple[int, str]:
@@ -436,6 +439,7 @@ class SymbolTable(
             child_namespace: self._parent_namespace[child_namespace]
             for child_namespace in sorted_parents
         }
+        _LOGGER.debug("changed=%s", changed)
         return changed
 
     def verify(self) -> None:
@@ -528,6 +532,9 @@ class SymbolTable(
         self._table[namespace_name] = {}
         if parent_namespace_name:
             self._parent_namespace[namespace_name] = parent_namespace_name
+        _LOGGER.debug(
+            "added namespace %s (parent=%s)", namespace_name, parent_namespace_name
+        )
 
     def is_namespace_defined(self, namespace_name: Identifier) -> bool:
         """Check if a namespace exists in the symbol table.
@@ -593,6 +600,7 @@ class SymbolTable(
             )
         del self._table[namespace_name]
         self._parent_namespace.pop(namespace_name, None)
+        _LOGGER.debug("removed namespace %s", namespace_name)
 
     def remove_symbol(
         self, namespace_name: Identifier, symbol_name: Identifier
@@ -617,6 +625,9 @@ class SymbolTable(
                 f"Symbol {symbol_name} not defined in namespace {namespace_name}."
             )
         del self._table[namespace_name][symbol_name]
+        _LOGGER.debug(
+            "removed symbol %s from namespace %s", symbol_name, namespace_name
+        )
 
     def update_namespaces(self, other_symbol_table: "SymbolTable") -> None:
         """Update the symbol table with new namespaces from another symbol table.
@@ -657,6 +668,12 @@ class SymbolTable(
                 f"Symbol {symbol_name} already defined in namespace {namespace_name}."
             )
         self._table[namespace_name][symbol_name] = frame
+        _LOGGER.debug(
+            "added symbol %s to namespace %s (frame=%s)",
+            symbol_name,
+            namespace_name,
+            type(frame).__name__,
+        )
 
     def is_symbol_defined(self, symbol_name: Identifier) -> bool:
         """Check if a symbol exists in the symbol table.

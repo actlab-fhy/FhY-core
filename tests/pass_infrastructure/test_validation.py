@@ -1,5 +1,6 @@
 """Tests the validation pipeline infrastructure."""
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -502,3 +503,39 @@ def test_validation_manager_preserves_multiple_diagnostics_from_single_validator
     ]
     assert len(report.records) == 1
     assert len(report.records[0].diagnostics) == 4
+
+
+def test_validator_crash_logs_error_with_exc_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that an unexpected validator crash logs ERROR with exc_info attached."""
+
+    @register_pass(
+        "tests.validation.logging.crash", "Validator that crashes for logging."
+    )
+    class CrashingValidator(CompilerPass[ValueBox, None]):
+        def get_noop_output(self, ir: ValueBox) -> None:
+            return None
+
+        def run_pass(self, ir: ValueBox) -> None:
+            raise RuntimeError("validator went sideways")
+
+    manager = ValidationManager[ValueBox]()
+    manager.add(CrashingValidator())
+
+    with caplog.at_level(
+        logging.DEBUG,
+        logger="fhy_core.pass_infrastructure.core.tests.validation.logging.crash",
+    ):
+        manager.validate(ValueBox(0))
+
+    error_records = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.ERROR
+        and "validator went sideways" in record.getMessage()
+    ]
+    assert error_records, "expected ERROR record for validator crash"
+    assert any(record.exc_info is not None for record in error_records), (
+        "expected exc_info on at least one ERROR record"
+    )

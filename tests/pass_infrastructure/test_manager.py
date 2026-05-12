@@ -1,6 +1,7 @@
 """Tests the pass manager infrastructure."""
 
 import gc
+import logging
 import threading
 import weakref
 from concurrent.futures import ThreadPoolExecutor
@@ -24,6 +25,8 @@ from fhy_core.pass_infrastructure import (
     register_pass,
 )
 from fhy_core.trait import FrozenMixin, PartialEqual
+
+_MANAGER_LOGGER = "fhy_core.pass_infrastructure.manager"
 
 
 @dataclass
@@ -966,3 +969,138 @@ def test_analysis_manager_survives_concurrent_get_and_gc_eviction() -> None:
 
     gc.collect()
     assert errors == []
+
+
+def test_run_emits_pipeline_lifecycle_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that PassManager.run emits INFO start/end + DEBUG per-pass boundary."""
+
+    @register_pass("tests.pm.logging.identity", "Identity pass for logging.")
+    class IdentityPass(CompilerPass[int, int]):
+        def get_noop_output(self, ir: int) -> int:
+            return ir
+
+        def run_pass(self, ir: int) -> int:
+            return ir
+
+    manager = PassManager[int](name=Identifier("logging-pipeline"))
+    manager.add_pass(IdentityPass())
+
+    with caplog.at_level(logging.DEBUG, logger=_MANAGER_LOGGER):
+        manager.run(7)
+
+    start_messages = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.INFO and "starting" in record.getMessage()
+    ]
+    end_messages = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.INFO and "finished" in record.getMessage()
+    ]
+    pass_boundary = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.DEBUG
+        and record.name == _MANAGER_LOGGER
+        and "pass tests.pm.logging.identity finished" in record.getMessage()
+    ]
+    assert start_messages, "expected pipeline-start INFO record"
+    assert end_messages, "expected pipeline-end INFO record"
+    assert pass_boundary, "expected per-pass DEBUG boundary record"
+
+
+def test_fixpoint_non_convergence_logs_error_before_raise(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test ERROR log is emitted before raising on non-convergence."""
+
+    @register_pass("tests.pm.logging.flip", "Flip bit forever for logging.")
+    class FlipBitLoggingPass(CompilerPass[int, int]):
+        def get_noop_output(self, ir: int) -> int:
+            return ir
+
+        def run_pass(self, ir: int) -> int:
+            return 1 - ir
+
+    manager = PassManager[int]()
+    group = FixpointPassGroup[int](
+        name=Identifier("logging-flip-group"),
+        max_iterations=2,
+        fail_on_non_convergence=True,
+    )
+    group.add_pass(FlipBitLoggingPass())
+    manager.add_fixpoint_group(group)
+
+    with caplog.at_level(logging.DEBUG, logger=_MANAGER_LOGGER):
+        with pytest.raises(PassExecutionError):
+            manager.run(0)
+
+    error_records = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.ERROR and "did not converge" in record.getMessage()
+    ]
+    assert error_records, "expected ERROR record before PassExecutionError raise"
+
+
+def test_fixpoint_convergence_logs_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test INFO log on fixpoint convergence."""
+
+    @register_pass("tests.pm.logging.decrement", "Decrement-to-zero for logging.")
+    class DecrementLoggingPass(CompilerPass[int, int]):
+        def get_noop_output(self, ir: int) -> int:
+            return ir
+
+        def run_pass(self, ir: int) -> int:
+            return max(ir - 1, 0)
+
+    manager = PassManager[int]()
+    group = FixpointPassGroup[int](
+        name=Identifier("logging-dec-group"), max_iterations=10
+    )
+    group.add_pass(DecrementLoggingPass())
+    manager.add_fixpoint_group(group)
+
+    with caplog.at_level(logging.DEBUG, logger=_MANAGER_LOGGER):
+        manager.run(2)
+
+    finished_records = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.INFO
+        and record.funcName == "_run_fixpoint_group"
+        and "finished" in record.getMessage()
+        and "converged=True" in record.getMessage()
+    ]
+    assert finished_records, "expected INFO record on fixpoint convergence"
+
+
+def test_analysis_manager_logs_cache_hit_and_miss(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test AnalysisManager.get emits DEBUG records on hit and miss."""
+
+    class HitMissAnalysis(Analysis[Box, int]):
+        def run(self, ir: Box) -> int:
+            return ir.value
+
+    am = AnalysisManager[Box]()
+    box = Box(value=11)
+
+    with caplog.at_level(logging.DEBUG, logger=_MANAGER_LOGGER):
+        am.get(HitMissAnalysis, box)
+        am.get(HitMissAnalysis, box)
+
+    miss_records = [
+        record for record in caplog.records if "cache miss" in record.getMessage()
+    ]
+    hit_records = [
+        record for record in caplog.records if "cache hit" in record.getMessage()
+    ]
+    assert miss_records, "expected cache miss DEBUG record"
+    assert hit_records, "expected cache hit DEBUG record"

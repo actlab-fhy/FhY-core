@@ -137,7 +137,10 @@ from typing import (
 from frozendict import frozendict
 
 from .error import register_error
+from .logger import get_logger
 from .utils.enum import StrEnum
+
+_LOGGER = get_logger(__name__)
 
 SerializedValue: TypeAlias = Union[
     str, int, float, bool, None, Sequence["SerializedValue"], "SerializedDict"
@@ -358,6 +361,7 @@ def _resolve_type_id(
         ``type_id`` source is fully trusted.
     """
     if type_id in _TYPE_REGISTRY:
+        _LOGGER.debug("resolved type_id %r from registry", type_id)
         return _TYPE_REGISTRY[type_id]
 
     if not allow_import_fallback:
@@ -375,6 +379,13 @@ def _resolve_type_id(
             f"Allowed prefixes: {allowed_module_prefixes}"
         )
 
+    _LOGGER.warning(
+        "importing module %r to resolve type_id %r via import fallback "
+        "(allowed prefixes=%s); this executes module top-level code",
+        module_name,
+        type_id,
+        allowed_module_prefixes,
+    )
     try:
         module = importlib.import_module(module_name)
         obj: Any = module
@@ -604,6 +615,7 @@ def register_serializable(
                 )
 
         _TYPE_REGISTRY[ty_id] = c
+        _LOGGER.debug("registered %r -> %s", ty_id, c.__qualname__)
         return c
 
     return _wrapper(cls) if cls is not None else _wrapper
@@ -693,6 +705,13 @@ def _loads_from_binary(
         type_id,
         allow_import_fallback=allow_import_fallback,
         allowed_module_prefixes=allowed_module_prefixes,
+    )
+    _LOGGER.debug(
+        "decoded binary envelope (type_id=%r, version=%d, codec=%s, payload_len=%d)",
+        type_id,
+        version,
+        codec.value,
+        payload_len,
     )
     return cls.deserialize_from_binary(payload_bytes, codec=codec)
 
