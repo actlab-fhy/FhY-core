@@ -60,6 +60,7 @@ from ..expression.core import (
     UnaryExpression,
 )
 from ..identifier import Identifier
+from ..logger import get_logger
 from ..trait import FrozenMixin, StructuralEquivalenceMixin, VerificationError
 from .core import (
     DataType,
@@ -70,6 +71,8 @@ from .core import (
     Type,
     get_core_data_type_bit_width,
 )
+
+_LOGGER = get_logger(__name__)
 
 
 def _is_bindings_equivalent(
@@ -225,6 +228,11 @@ def _unify_expressions(
                 f"after substitution through existing bindings "
                 f"({substituted_right!r})."
             )
+        _LOGGER.debug(
+            "binding expression placeholder %r -> %r",
+            resolved_left.identifier,
+            resolved_right,
+        )
         return resolved_right, environment.with_expression_binding(
             resolved_left.identifier, resolved_right
         )
@@ -237,6 +245,11 @@ def _unify_expressions(
                 f"after substitution through existing bindings "
                 f"({substituted_left!r})."
             )
+        _LOGGER.debug(
+            "binding expression placeholder %r -> %r",
+            resolved_right.identifier,
+            resolved_left,
+        )
         return resolved_left, environment.with_expression_binding(
             resolved_right.identifier, resolved_left
         )
@@ -264,11 +277,21 @@ def _unify_data_types(
             )
         return left_data_type, environment
     elif isinstance(left_data_type, TemplateDataType):
+        _LOGGER.debug(
+            "binding data-type template %r -> %r",
+            left_data_type,
+            right_data_type,
+        )
         next_environment = bind_data_template(
             left_data_type, right_data_type, environment
         )
         return right_data_type, next_environment
     elif isinstance(right_data_type, TemplateDataType):
+        _LOGGER.debug(
+            "binding data-type template %r -> %r",
+            right_data_type,
+            left_data_type,
+        )
         next_environment = bind_data_template(
             right_data_type, left_data_type, environment
         )
@@ -443,6 +466,11 @@ def is_structurally_equivalent(left: Any, right: Any) -> bool:
         ``True`` when the two values are structurally equivalent under the
         registered handlers, ``False`` otherwise.
     """
+    _LOGGER.debug(
+        "default fired for (%s, %s); returning False",
+        type(left).__name__,
+        type(right).__name__,
+    )
     return False
 
 
@@ -470,6 +498,11 @@ def bind_template(
             (structural mismatch, conflicting bindings, or shape rank
             mismatch).
     """
+    _LOGGER.debug(
+        "default fired for pattern type=%s, actual type=%s",
+        type(pattern).__name__,
+        type(actual).__name__,
+    )
     if not is_structurally_equivalent(pattern, actual):
         raise VerificationError(
             f"Cannot bind {pattern!r} against {actual!r}: structural mismatch."
@@ -500,6 +533,7 @@ def substitute_template(type_: Any, environment: TypeUnificationEnvironment) -> 
             a non-``Type`` is a programmer/registration bug, not a
             verification failure.)
     """
+    _LOGGER.debug("default fired for type=%s", type(type_).__name__)
     if not isinstance(type_, Type):
         raise TypeError(
             f"substitute_template received {type(type_).__name__}, which is not a Type."
@@ -531,6 +565,11 @@ def unify(
         VerificationError: If the two types are incompatible, an occurs
             check fails, or a binding conflict is detected.
     """
+    _LOGGER.debug(
+        "default fired for expected type=%s, actual type=%s",
+        type(expected).__name__,
+        type(actual).__name__,
+    )
     if not is_structurally_equivalent(expected, actual):
         raise VerificationError(
             f"Cannot unify {expected!r} with {actual!r}: structural mismatch."
@@ -593,6 +632,11 @@ def bind_data_template(
         VerificationError: If ``pattern`` and ``actual`` are incompatible
             or if a binding conflict is detected.
     """
+    _LOGGER.debug(
+        "default fired for pattern type=%s, actual type=%s",
+        type(pattern).__name__,
+        type(actual).__name__,
+    )
     if not is_structurally_equivalent(pattern, actual):
         raise VerificationError(
             f"Cannot bind data type {pattern!r} against {actual!r}: "
@@ -625,6 +669,7 @@ def substitute_data_template(
             with a non-``DataType`` is a programmer/registration bug, not
             a verification failure.)
     """
+    _LOGGER.debug("default fired for type=%s", type(data_type).__name__)
     if not isinstance(data_type, DataType):
         raise TypeError(
             f"substitute_data_template received {type(data_type).__name__}, "
@@ -710,6 +755,9 @@ def _(
                 f"Conflicting full-type binding for {template_identifier!r}: "
                 f"{existing_full_type!r} vs {actual!r}."
             )
+        _LOGGER.debug(
+            "wildcard full-type binding %r -> %r", template_identifier, actual
+        )
         return next_environment.with_type_binding(template_identifier, actual)
     elif _is_wildcard_shape(pattern.shape):
         return next_environment

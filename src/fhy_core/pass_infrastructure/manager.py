@@ -13,6 +13,7 @@ __all__ = [
 
 import inspect
 import threading
+import time
 import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from threading import Lock
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from fhy_core.identifier import Identifier
+from fhy_core.logger import get_logger
 from fhy_core.trait import Frozen, FrozenMixin, HasIdentifierMixin, PartialEqualMixin
 
 from .core import (
@@ -29,6 +31,8 @@ from .core import (
     PassResult,
     PreservedAnalyses,
 )
+
+_LOGGER = get_logger(__name__)
 
 _IRType = TypeVar("_IRType")
 _AnalysisResultT = TypeVar("_AnalysisResultT")
@@ -130,21 +134,40 @@ class AnalysisManager(Generic[_IRType]):
             The analysis result for IR.
 
         """
+        analysis_name = analysis_type.get_analysis_name()
         with self._lock:
             if not self._is_cacheable_ir(ir):
+                _LOGGER.debug(
+                    "uncacheable IR id=%d, analysis=%s; computing uncached",
+                    id(ir),
+                    analysis_name,
+                )
                 self._drop_cached_ir(id(ir))
                 return analysis_type().run(ir)
 
             ir_id = id(ir)
-            analysis_name = analysis_type.get_analysis_name()
             bucket = self._cache.get(ir_id)
             if bucket is None:
                 if not self._register_finalizer(ir, ir_id):
+                    _LOGGER.debug(
+                        "finalizer registration failed for IR id=%d, analysis=%s; "
+                        "computing uncached",
+                        ir_id,
+                        analysis_name,
+                    )
                     return analysis_type().run(ir)
                 bucket = {}
                 self._cache[ir_id] = bucket
             if analysis_name in bucket:
+                _LOGGER.debug(
+                    "cache hit for IR id=%d, analysis=%s", ir_id, analysis_name
+                )
                 return cast(_AnalysisResultT, bucket[analysis_name])
+            _LOGGER.debug(
+                "cache miss for IR id=%d, analysis=%s; computing",
+                ir_id,
+                analysis_name,
+            )
             result = analysis_type().run(ir)
             bucket[analysis_name] = result
             return result
@@ -183,6 +206,13 @@ class AnalysisManager(Generic[_IRType]):
                 for analysis_name in bucket
                 if not preserved.is_preserved(analysis_name)
             ]
+            if analyses_to_drop:
+                _LOGGER.debug(
+                    "IR id=%d dropping=%s preserving=%s",
+                    ir_id,
+                    [str(name) for name in analyses_to_drop],
+                    [str(name) for name in bucket if name not in analyses_to_drop],
+                )
             for analysis_name in analyses_to_drop:
                 del bucket[analysis_name]
             if not bucket:
@@ -253,8 +283,11 @@ class AnalysisManager(Generic[_IRType]):
         if manager is None:
             return
         with manager._lock:
+            had_bucket = ir_id in manager._cache
             manager._cache.pop(ir_id, None)
             manager._finalizers.pop(ir_id, None)
+        if had_bucket:
+            _LOGGER.debug("GC evicted cached analyses for IR id=%d", ir_id)
 
     def _register_finalizer(self, ir: object, ir_id: int) -> bool:
         if ir_id in self._finalizers:
@@ -428,10 +461,24 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
         current = ir
         records: list[PassRunRecord | FixpointGroupRecord] = []
 
+        t0 = time.perf_counter()
+        _LOGGER.info(
+            "%s starting (items=%d, input id=%d)",
+            self._identifier,
+            len(self._items),
+            id(ir),
+        )
+
         for item in self._items:
             if isinstance(item, FixpointPassGroup):
                 current, record = self._run_fixpoint_group(item, current)
                 records.append(record)
+                _LOGGER.debug(
+                    "fixpoint group %s finished (converged=%s, iterations=%d)",
+                    record.group_name,
+                    record.converged,
+                    record.iterations,
+                )
                 continue
 
             result = self._execute_bound(item, current)
@@ -441,7 +488,23 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
             )
             current = result.output
             records.append(run_record)
+            _LOGGER.debug(
+                "pass %s finished "
+                "(changed=%s, diagnostics=%d, preserve_all=%s, preserved=%d)",
+                run_record.pass_name,
+                run_record.changed,
+                len(run_record.diagnostics),
+                run_record.preserved_analyses.preserve_all,
+                len(run_record.preserved_analyses.analysis_names),
+            )
 
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        _LOGGER.info(
+            "%s finished (output id=%d, elapsed=%.2fms)",
+            self._identifier,
+            id(current),
+            elapsed_ms,
+        )
         return PassManagerResult(output=current, records=tuple(records))
 
     def _run_fixpoint_group(
@@ -450,6 +513,14 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
         current = ir
         iteration_records: list[FixpointIterationRecord] = []
         converged = False
+
+        t0 = time.perf_counter()
+        _LOGGER.info(
+            "%s starting (max_iterations=%d, passes=%d)",
+            group.name,
+            group.max_iterations,
+            len(group.passes),
+        )
 
         for iteration in range(1, group.max_iterations + 1):
             changed_any = False
@@ -471,16 +542,37 @@ class PassManager(HasIdentifierMixin, Generic[_IRType]):
                     tuple(pass_runs),
                 )
             )
+            _LOGGER.debug(
+                "%s iteration %d (changed_any=%s)",
+                group.name,
+                iteration,
+                changed_any,
+            )
             if not changed_any:
                 converged = True
                 break
 
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
         if not converged and group.fail_on_non_convergence:
-            raise PassExecutionError(
+            message = (
                 f'Fixpoint group "{group.name}" did not converge in '
                 f"{group.max_iterations} iterations."
             )
+            _LOGGER.error(
+                "%s did not converge in %d iterations (elapsed=%.2fms); raising",
+                group.name,
+                group.max_iterations,
+                elapsed_ms,
+            )
+            raise PassExecutionError(message)
 
+        _LOGGER.info(
+            "%s finished (converged=%s, iterations=%d, elapsed=%.2fms)",
+            group.name,
+            converged,
+            len(iteration_records),
+            elapsed_ms,
+        )
         return current, FixpointGroupRecord(
             group_name=group.name,
             iteration_records=tuple(iteration_records),

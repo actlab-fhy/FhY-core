@@ -17,6 +17,7 @@ surface as observable test failures.
 
 import importlib
 import json
+import logging
 import struct
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -982,6 +983,27 @@ def test_from_bytes_with_import_fallback_resolves_unregistered_class(
         allowed_module_prefixes=("tests.",),
     )
     assert rebuilt == unregistered_span
+
+
+def test_from_bytes_import_fallback_emits_warning(
+    unregistered_span: _UnregisteredSpan,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test import fallback path emits a WARNING audit record before importing."""
+    with caplog.at_level(logging.WARNING, logger="fhy_core.serialization"):
+        Serializable.from_bytes(
+            unregistered_span.to_bytes(),
+            allow_import_fallback=True,
+            allowed_module_prefixes=("tests.",),
+        )
+
+    warning_records = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+        and "import fallback" in record.getMessage()
+    ]
+    assert warning_records, "expected WARNING record for import-fallback path"
 
 
 @pytest.mark.parametrize(

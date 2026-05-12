@@ -23,12 +23,15 @@ from fhy_core.expression.core import (
 )
 from fhy_core.expression.passes.basic import collect_identifiers
 from fhy_core.identifier import Identifier
+from fhy_core.logger import get_logger
 from fhy_core.pass_infrastructure import (
     PassExecutionError,
     VisitablePass,
     register_pass,
 )
 from fhy_core.symbol_type import SymbolType
+
+_LOGGER = get_logger(__name__)
 
 
 def _z3_floor_divide(left: z3.ExprRef, right: z3.ExprRef) -> z3.ExprRef:
@@ -240,12 +243,24 @@ def holds_for_all_free_assignments(
     solver = z3.Solver()
     solver.add(z3_expression)
 
+    _LOGGER.info(
+        "calling Z3 solver.check (referenced_identifiers=%d, considered=%d, "
+        "quantified=%d)",
+        len(identifier_to_z3_expression),
+        len(considered_identifiers),
+        len(quantified_variables),
+    )
     result = solver.check()
     if result == z3.unsat:
         return True
     elif result == z3.sat:
         return False
     elif result == z3.unknown:
+        _LOGGER.warning(
+            "Z3 returned `unknown` (considered=%d, quantified=%d); returning None",
+            len(considered_identifiers),
+            len(quantified_variables),
+        )
         return None
     else:
         raise RuntimeError("Unexpected Z3 result.")
@@ -279,6 +294,7 @@ def does_expression_imply(
             result.
 
     """
+    _LOGGER.debug("antecedent=%r, consequent=%r", antecedent, consequent)
     combined = antecedent.logical_and(consequent.logical_not())
     all_identifiers = collect_identifiers(combined)
     has_counterexample = holds_for_all_free_assignments(

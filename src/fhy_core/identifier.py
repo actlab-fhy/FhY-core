@@ -7,6 +7,7 @@ from typing import Any, ClassVar, TypedDict, TypeGuard, final
 
 from fhy_core.utils import is_strict_int
 
+from .logger import get_logger
 from .serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -16,6 +17,8 @@ from .serialization import (
 )
 from .trait.equality import EqualMixin
 from .trait.frozen import FrozenMixin
+
+_LOGGER = get_logger(__name__)
 
 
 class _IdentifierData(TypedDict):
@@ -97,9 +100,17 @@ class Identifier(Serializable, FrozenMixin, EqualMixin):
         identifier = cls.__new__(cls)
         identifier._id = data["id"]
         identifier._name_hint = data["name_hint"]
+        advanced = False
         with Identifier._id_lock:
             if identifier._id >= Identifier._next_id:
                 Identifier._next_id = identifier._id + 1
+                advanced = True
+        if advanced:
+            _LOGGER.debug(
+                "advanced _next_id past %d (name_hint=%r)",
+                identifier._id,
+                identifier._name_hint,
+            )
         identifier.freeze()
         return identifier
 

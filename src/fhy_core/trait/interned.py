@@ -7,8 +7,12 @@ from collections.abc import Hashable
 from functools import wraps
 from typing import Any, ClassVar, Generic, Protocol, TypeVar, cast, runtime_checkable
 
+from fhy_core.logger import get_logger
+
 from .frozen import Frozen
 from .verifiable import Verifiable
+
+_LOGGER = get_logger(__name__)
 
 _K = TypeVar("_K", bound=Hashable)
 _K_co = TypeVar("_K_co", bound=Hashable, covariant=True)
@@ -99,6 +103,12 @@ class InternedMixin(ABC, Generic[_K]):
         existing_instance = registry.get(key)
         if existing_instance is None or existing_instance is instance:
             registry[key] = instance
+        else:
+            _LOGGER.debug(
+                "shadowing new instance of %s for key %r (canonical instance retained)",
+                type(instance).__name__,
+                key,
+            )
 
     def _finalize_interned_instance(self) -> None:
         if isinstance(self, Verifiable):
@@ -137,6 +147,7 @@ class InternedMixin(ABC, Generic[_K]):
             :meth:`register_default_instances` after clearing to restore
             the canonical mapping.
         """
+        _LOGGER.debug("clearing intern registry for %s", cls.__name__)
         cls._get_interned_registry().clear()
 
     @classmethod

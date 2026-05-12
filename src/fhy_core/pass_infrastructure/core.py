@@ -250,10 +250,18 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
         its run total. Skipped runs (``should_run`` returned False) do not
         count.
         """
+        pass_logger = self._get_pass_logger()
+        pass_logger.debug(
+            "entering (prospective run #%d, input type=%s)",
+            self.get_run_count() + 1,
+            type(ir).__name__,
+        )
+
         self._diagnostics = []
         self._guarded_validate_input(ir)
 
         if not self._guarded_should_run(ir):
+            pass_logger.debug("skipped: should_run returned False")
             noop_output = self._guarded_get_noop_output(ir)
             preserved_skip = self._guarded_get_preserved_analyses(
                 ir, noop_output, changed=False
@@ -274,12 +282,18 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
             message = (
                 f'Pass "{self.get_pass_name()}" failed with {type(exc).__name__}: {exc}'
             )
-            self.report(DiagnosticLevel.ERROR, message)
+            self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
             raise PassExecutionError(message) from exc
 
         self._guarded_validate_output(ir, output)
         changed = self._guarded_did_change(ir, output)
         preserved = self._guarded_get_preserved_analyses(ir, output, changed=changed)
+        pass_logger.debug(
+            "finished (changed=%s, output type=%s, diagnostics=%d)",
+            changed,
+            type(output).__name__,
+            len(self._diagnostics),
+        )
         return PassResult(
             output=output,
             changed=changed,
@@ -297,7 +311,7 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
                 f'Pass "{self.get_pass_name()}" failed validate_input with '
                 f"{type(exc).__name__}: {exc}"
             )
-            self.report(DiagnosticLevel.ERROR, message)
+            self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
             raise PassValidationError(message) from exc
 
     def _guarded_validate_output(
@@ -312,7 +326,7 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
                 f'Pass "{self.get_pass_name()}" failed validate_output with '
                 f"{type(exc).__name__}: {exc}"
             )
-            self.report(DiagnosticLevel.ERROR, message)
+            self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
             raise PassValidationError(message) from exc
 
     def _guarded_should_run(self, ir: _PassInputT) -> bool:
@@ -325,7 +339,7 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
                 f'Pass "{self.get_pass_name()}" failed should_run with '
                 f"{type(exc).__name__}: {exc}"
             )
-            self.report(DiagnosticLevel.ERROR, message)
+            self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
             raise PassExecutionError(message) from exc
 
     def _guarded_get_noop_output(self, ir: _PassInputT) -> _PassOutputT:
@@ -338,7 +352,7 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
                 f'Pass "{self.get_pass_name()}" failed get_noop_output with '
                 f"{type(exc).__name__}: {exc}"
             )
-            self.report(DiagnosticLevel.ERROR, message)
+            self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
             raise PassExecutionError(message) from exc
 
     def _guarded_did_change(self, input_ir: _PassInputT, output: _PassOutputT) -> bool:
@@ -351,7 +365,7 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
                 f'Pass "{self.get_pass_name()}" failed did_change with '
                 f"{type(exc).__name__}: {exc}"
             )
-            self.report(DiagnosticLevel.ERROR, message)
+            self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
             raise PassExecutionError(message) from exc
 
     def _guarded_get_preserved_analyses(
@@ -366,7 +380,7 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
                 f'Pass "{self.get_pass_name()}" failed get_preserved_analyses '
                 f"with {type(exc).__name__}: {exc}"
             )
-            self.report(DiagnosticLevel.ERROR, message)
+            self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
             raise PassExecutionError(message) from exc
 
     def get_analysis_manager(self) -> "AnalysisManager[Any] | None":
@@ -423,7 +437,12 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
         return self._analysis_manager.get(analysis_type, ir)
 
     def report(
-        self, level: DiagnosticLevel, message: str | Note, detail: str | None = None
+        self,
+        level: DiagnosticLevel,
+        message: str | Note,
+        detail: str | None = None,
+        *,
+        exc_info: BaseException | bool | None = None,
     ) -> None:
         """Emit a diagnostic for this pass execution.
 
@@ -434,7 +453,10 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
         diagnostic level (ERROR/WARNING/INFO). When ``detail`` is provided
         it is appended to the log message as ``" | detail: <detail>"``;
         the in-memory record stores the detail separately on the
-        :class:`PassDiagnostic`.
+        :class:`PassDiagnostic`. When ``exc_info`` is provided, it is
+        forwarded to the underlying log call so the originating traceback
+        is preserved alongside the structured record; the in-memory
+        diagnostic does not carry it.
         """
         note = message if isinstance(message, Note) else Note(message)
         self._diagnostics.append(
@@ -449,7 +471,9 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
         log_message = note.message
         if detail is not None:
             log_message = f"{log_message} | detail: {detail}"
-        self._get_pass_logger().log(_DIAGNOSTIC_TO_LOGGING_LEVEL[level], log_message)
+        self._get_pass_logger().log(
+            _DIAGNOSTIC_TO_LOGGING_LEVEL[level], log_message, exc_info=exc_info
+        )
 
     @classmethod
     def _get_pass_logger(cls) -> logging.Logger:
@@ -751,12 +775,20 @@ def register_pass(name: str, description: str) -> Callable[[_PassClassT], _PassC
                         f"{existing.description!r}; refusing to overwrite "
                         f"with new description {description!r}."
                     )
+                get_logger(__name__).debug(
+                    "%s already registered as %s (idempotent re-registration)",
+                    name,
+                    pass_cls.__qualname__,
+                )
                 return pass_cls
 
             pass_cls._pass_name = name
             pass_cls._pass_description = description
             CompilerPass._registry[name] = PassInfo(name, description, pass_cls)
             CompilerPass._run_counts.setdefault(name, 0)
+            get_logger(__name__).debug(
+                "registered %s -> %s", name, pass_cls.__qualname__
+            )
 
         return pass_cls
 

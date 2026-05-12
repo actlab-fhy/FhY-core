@@ -25,12 +25,15 @@ from fhy_core.expression.core import (
     UnaryOperation,
 )
 from fhy_core.identifier import Identifier
+from fhy_core.logger import get_logger
 from fhy_core.pass_infrastructure import (
     CompilerPass,
     PassExecutionError,
     VisitablePass,
     register_pass,
 )
+
+_LOGGER = get_logger(__name__)
 
 
 @register_pass(
@@ -383,6 +386,7 @@ class SymPyToExpressionConverter(
     def _convert_implies(
         self, implies: sympy.logic.boolalg.Implies
     ) -> BinaryExpression:
+        _LOGGER.info("encountered unsupported Implies node %r", implies)
         _ = implies
         raise NotImplementedError("Implies is not supported.")
 
@@ -482,5 +486,7 @@ def simplify_expression(
         sympy_expression = substitute_sympy_expression_variables(
             sympy_expression, environment
         )
+    _LOGGER.debug("pre-simplify=%r", sympy_expression)
     result = sympy.simplify(sympy_expression)
+    _LOGGER.debug("post-simplify=%r", result)
     return convert_sympy_expression_to_expression(result)
