@@ -259,7 +259,9 @@ class Constraint(
     Subclasses model the three concrete constraint kinds in this module
     (``EquationConstraint``, ``InSetConstraint``, ``NotInSetConstraint``).
     Instances are frozen at the end of construction; subsequent
-    attribute mutation raises ``FrozenMutationError``.
+    attribute mutation raises ``FrozenMutationError``. Instances are
+    callable; ``constraint(value)`` is an alias for
+    ``constraint.is_satisfied(value)``.
 
     Subclassing contract:
         - Override ``is_satisfied`` to define the predicate.
@@ -287,7 +289,6 @@ class Constraint(
         return self._variable
 
     def __call__(self, value: Any) -> bool:
-        """Alias for ``is_satisfied(value)``."""
         return self.is_satisfied(value)
 
     @abstractmethod

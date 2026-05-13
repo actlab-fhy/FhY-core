@@ -47,7 +47,7 @@ def test_constraint_subclass_missing_abstract_method_cannot_instantiate(
 
 
 def test_constraint_subclass_with_full_overrides_instantiates() -> None:
-    """Test a subclass overriding every abstract method instantiates cleanly."""
+    """Test a subclass overriding every abstract method can be instantiated."""
 
     class _ConcreteConstraint(Constraint):
         def is_satisfied(self, value: object) -> bool:

@@ -68,7 +68,7 @@ class FrozenMixin(ABC):
     ``@dataclass(frozen=True)``.
 
     Auto-freeze on init:
-        Subclasses may opt into automatic freezing at the end of
+        Subclasses opt into automatic freezing at the end of
         ``__init__`` by passing ``freeze_on_init=True`` (and optionally
         ``freeze_on_init_deep=True``) as class-creation kwargs:
 
@@ -82,13 +82,10 @@ class FrozenMixin(ABC):
         inherit it unless they explicitly override the kwarg. Each
         subclass's ``__init__`` is wrapped so that the most-derived
         class's wrap calls ``self.freeze(deep=...)`` after construction.
-        Inner wraps in a multi-level inheritance chain skip the freeze
-        (so subclass state can be set after a parent's ``super().__init__``
-        returns).
+        Inner wraps in a multi-level inheritance chain do not freeze.
 
-        The wrap is idempotent: a subclass ``__init__`` that already
-        calls ``self.freeze(...)`` explicitly is unaffected because the
-        wrap checks ``is_frozen`` before re-freezing.
+        The wrap is idempotent: when an instance is already frozen at
+        the end of ``__init__``, the wrap performs no additional work.
 
     """
 

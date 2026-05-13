@@ -193,13 +193,9 @@ def test_set_constraint_distinguishes_one_from_one_float(
 def test_set_constraint_with_mixed_bool_and_int_stores_both(
     factory: SetConstraintFactory,
 ) -> None:
-    """Test ``[1, True]`` retains both members under type-strict equality.
-
-    A list (not a Python ``set``) is used at the call site because
-    ``{1, True}`` collapses to ``{1}`` before the constructor sees it.
-    Type-strict storage cannot recover what Python's set semantics
-    already discarded.
-    """
+    """Test ``[1, True]`` retains both members under type-strict equality."""
+    # A list literal is used at the call site; ``{1, True}`` would
+    # collapse to ``{1}`` before the constructor sees it.
     in_set = factory is InSetConstraint
     constraint = factory(mock_identifier("x", 0), [1, True])
 
