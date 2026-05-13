@@ -137,10 +137,13 @@ class VerifiableMixin(ABC):
     def verify(self) -> "ValidationReport[Any]":
         """Run every registered verification pass for ``type(self)``.
 
-        The :meth:`__new__` abstractness check guarantees that at least
-        one verification pass is registered for ``type(self)`` (otherwise
-        the instance could not have been constructed), so the default body
-        always has a pipeline to run.
+        The :meth:`__new__` abstractness check verified at instantiation
+        time that either :meth:`verify` was overridden or at least one
+        verification pass was registered for ``type(self)`` (walking its
+        MRO). That guarantee is point-in-time; if the verification registry
+        is mutated after the instance was constructed, this default
+        implementation may legitimately run with no registered passes and
+        return an empty aggregated report.
 
         Returns:
             The aggregated :class:`ValidationReport`. Callers inspect the
