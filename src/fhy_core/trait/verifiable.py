@@ -31,8 +31,8 @@ class VerificationError(Exception):
     This exception type is used by helpers that fail-fast when they detect
     a malformed structure (currently the type-unification and dispatch
     helpers in ``fhy_core.types.dispatch``). It is *not* raised by
-    :meth:`Verifiable.verify` or by :class:`CompilerPass` auto-verification
-    — those entry points return or carry a :class:`ValidationReport`.
+    :meth:`Verifiable.verify` or by :class:`CompilerPass` auto-verification:
+    those entry points return or carry a :class:`ValidationReport`.
     """
 
 

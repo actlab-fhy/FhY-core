@@ -120,11 +120,10 @@ class PassValidationError(RuntimeError):
     """Pass validation failure.
 
     Carries the underlying :class:`ValidationReport` when raised by the
-    auto-verification hook (see :class:`VerificationAnalysis`), enabling
-    callers to inspect the structured diagnostics rather than parsing the
-    formatted message. ``report`` is ``None`` when the error originated
-    from a user's ``validate_input`` / ``validate_output`` raising
-    something other than auto-verification.
+    auto-verification hook (see :class:`VerificationAnalysis`).
+    ``report`` is ``None`` when the error originated from a user's
+    ``validate_input`` / ``validate_output`` raising something other
+    than auto-verification.
     """
 
     _report: "ValidationReport[Any] | None"
@@ -140,7 +139,7 @@ class PassValidationError(RuntimeError):
 
     @property
     def report(self) -> "ValidationReport[Any] | None":
-        """Return the attached :class:`ValidationReport`, if any."""
+        """The attached :class:`ValidationReport`, or ``None`` if none was set."""
         return self._report
 
 

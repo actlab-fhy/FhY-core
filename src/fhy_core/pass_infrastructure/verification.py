@@ -1,28 +1,27 @@
 """Verification registry, analysis, and auto-verification helpers.
 
-This module exposes the type-keyed verification registry, the
-:class:`VerificationAnalysis` used to run and cache verification reports for
-an IR, the :func:`register_verification` decorator used by downstream IRs to
-register their verification passes, and the :func:`run_verification` helper
-used by :meth:`fhy_core.trait.VerifiableMixin.verify` and by
-:class:`CompilerPass` auto-verification when no analysis manager is bound.
+Exposes:
 
-Verification passes registered through :func:`register_verification` are
-``CompilerPass`` subclasses whose only effect is to ``report(...)``
-structural diagnostics about an IR. They are run through the existing
-:class:`ValidationManager`, so they inherit collect-all semantics and the
+- :class:`VerificationRegistry`: type-keyed registry of verification
+  pass classes.
+- :class:`VerificationAnalysis`: an :class:`Analysis` that runs the
+  registered pipeline for an IR and returns a
+  :class:`ValidationReport`.
+- :func:`register_verification`: decorator that registers a
+  ``CompilerPass`` subclass as a verification pass.
+- :func:`run_verification`: helper used by
+  :meth:`fhy_core.trait.VerifiableMixin.verify` and by
+  :class:`CompilerPass` auto-verification when no analysis manager is
+  bound.
+
+Verification passes are ``CompilerPass`` subclasses whose only effect
+is to ``report(...)`` structural diagnostics about an IR. They run
+through :class:`ValidationManager`, inheriting its collect-all and
 synthetic-error-on-crash behavior.
 
-This module is the integration point between the trait-level
-``VerifiableMixin`` and the pass-infrastructure-level
-``CompilerPass.validate_input`` / ``validate_output`` hooks. The trait module
-imports from here lazily (function-local) to avoid a module-load cycle.
-
-:class:`VerificationRegistry` is a class-level singleton: all state lives in
-``ClassVar`` attributes, there are no instances, and every method is a
-classmethod. The class itself is the registry. Tests achieve isolation by
-using a fresh IR type per test (see ``tests/pass_infrastructure/test_verification.py``
-for the pattern), so registrations naturally do not collide across tests.
+:class:`VerificationRegistry` is a class-level singleton: all state
+lives in ``ClassVar`` attributes, there are no instances, and every
+method is a classmethod.
 """
 
 __all__ = [
@@ -51,18 +50,17 @@ class VerificationRegistry:
     """Class-level singleton registry of verification pass classes.
 
     A verification pass is a ``CompilerPass`` subclass that reports
-    structural-invariant diagnostics about an IR. Registrations are keyed by
-    IR ``type``; lookups walk the IR's MRO so subclasses inherit
-    base-class verification passes.
+    structural-invariant diagnostics about an IR. Registrations are
+    keyed by IR ``type``; lookups walk the IR's MRO so subclasses
+    inherit base-class verification passes.
 
-    All state lives in ``ClassVar`` attributes; there are no instances. The
-    class itself is the registry, mirroring the
-    :attr:`CompilerPass._registry` pattern used elsewhere in the package.
+    All state lives in ``ClassVar`` attributes; there are no instances.
+    The class itself is the registry.
 
-    Registration is module-load-time by convention. Late registration after
-    cached :class:`VerificationAnalysis` results exist does not retroactively
-    invalidate those caches; callers who need that must clear the relevant
-    :class:`AnalysisManager` themselves.
+    Registration is module-load-time by convention. Late registration
+    after cached :class:`VerificationAnalysis` results exist does not
+    retroactively invalidate those caches; callers who need that must
+    clear the relevant :class:`AnalysisManager` themselves.
     """
 
     _passes_by_type: ClassVar[dict[type, list[type[CompilerPass[Any, Any]]]]] = {}
@@ -76,16 +74,15 @@ class VerificationRegistry:
     ) -> None:
         """Register one verification pass for an IR type.
 
-        Idempotent: re-registering the same ``(ir_type, pass_class)`` pair
-        is a no-op. Registering a different ``pass_class`` under an existing
-        slot is allowed because each type can carry multiple verification
-        passes; ordering follows registration order.
+        Idempotent: re-registering the same ``(ir_type, pass_class)``
+        pair is a no-op. Distinct pass classes registered under the same
+        IR type are appended in registration order.
 
         Args:
             ir_type: The IR type this verification pass applies to.
             pass_class: A ``CompilerPass`` subclass. Typically an
-                :class:`AnalysisVisitablePass` subclass whose visitor methods
-                call ``self.report(...)``.
+                :class:`AnalysisVisitablePass` subclass whose visitor
+                methods call ``self.report(...)``.
 
         Raises:
             PassRegistrationError: If ``pass_class`` is not a
@@ -145,17 +142,16 @@ class VerificationRegistry:
 class VerificationAnalysis(Analysis[Any, ValidationReport[Any]]):
     """Analysis that runs the verification pipeline for an IR.
 
-    The pipeline is built from
-    :meth:`VerificationRegistry.get_passes_for(type(ir))` and run through a
-    fresh :class:`ValidationManager`. The aggregated
-    :class:`ValidationReport` is the analysis result. When no passes are
-    registered for the IR's type (or any of its base classes), the report is
-    empty.
+    Builds a fresh :class:`ValidationManager` from
+    :meth:`VerificationRegistry.get_passes_for(type(ir))` and runs it
+    against the IR. The aggregated :class:`ValidationReport` is the
+    analysis result. When no passes are registered for the IR's type
+    (or any of its base classes), the report is empty.
 
-    Because this is a singleton analysis class with a stable
-    ``analysis_name``, results compose with :class:`AnalysisManager` exactly
-    like any other analysis: cached per IR identity, invalidated on
-    pass-reported changes unless the pass declares this analysis preserved.
+    Has a stable ``analysis_name``, so results compose with
+    :class:`AnalysisManager`: cached per IR identity, invalidated on
+    pass-reported changes unless the pass declares this analysis
+    preserved.
     """
 
     def run(self, ir: Any) -> ValidationReport[Any]:
@@ -186,30 +182,27 @@ def register_verification(
 
     The decorated class is:
 
-    - added to the global pass registry under ``name`` and ``description``
-      (so :meth:`CompilerPass.create` and :meth:`get_registered_passes` see
-      it like any other pass),
+    - added to the global pass registry under ``name`` and
+      ``description``,
     - added to the :class:`VerificationRegistry` under ``ir_type``,
-    - stamped with ``_auto_verify = False`` so the pass does not
-      recursively trigger auto-verification on its own input/output during
-      a verification run.
+    - assigned ``_auto_verify = False``.
 
     Args:
         ir_type: The IR type this verification pass applies to.
-        name: Stable pass name, with the same uniqueness and validity rules
-            as :func:`register_pass`.
+        name: Stable pass name, with the same uniqueness and validity
+            rules as :func:`register_pass`.
         description: Human-readable description, with the same rules as
             :func:`register_pass`.
 
     Returns:
-        A decorator that takes a ``CompilerPass`` subclass and returns it
-        after registration.
+        A decorator that takes a ``CompilerPass`` subclass and returns
+        it after registration.
 
     Raises:
         PassRegistrationError: If the decorated class is not a
             ``CompilerPass`` subclass, if the name is empty or already
-            registered to a different class, or if the description is empty
-            or conflicts with an existing registration.
+            registered to a different class, or if the description is
+            empty or conflicts with an existing registration.
 
     """
 
@@ -230,17 +223,15 @@ def register_verification(
 def run_verification(ir: Any) -> ValidationReport[Any]:
     """Run the verification pipeline for ``ir`` and return the report.
 
-    This helper bypasses any :class:`AnalysisManager` and always recomputes
-    the report. It is the body of :meth:`VerifiableMixin.verify` and the
-    fallback used by :class:`CompilerPass` auto-verification when no
-    analysis manager is bound.
+    Bypasses any :class:`AnalysisManager` and recomputes the report on
+    every call.
 
     Args:
         ir: The IR to verify.
 
     Returns:
-        The aggregated :class:`ValidationReport`. Empty when no passes are
-        registered for ``type(ir)`` or any of its base classes.
+        The aggregated :class:`ValidationReport`. Empty when no passes
+        are registered for ``type(ir)`` or any of its base classes.
 
     """
     return VerificationAnalysis().run(ir)

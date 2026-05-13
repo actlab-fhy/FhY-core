@@ -1,25 +1,16 @@
 """Diagnostic message and report types.
 
-This module provides the layer-agnostic vocabulary for structured
-diagnostics:
+Provides the layer-agnostic vocabulary for structured diagnostics:
 
 - :class:`Note` and :class:`NoteKind` describe an individual message.
 - :class:`DiagnosticLevel` classifies a message as ERROR, WARNING, or
   INFO.
 - :class:`Diagnostic` bundles a level, a :class:`Note`, the source
   identifier of whatever emitted it, and an optional detail string.
-- :class:`ValidationReport` aggregates multiple :class:`Diagnostic`
-  instances plus an opaque sequence of per-source execution records. The
-  ``records`` field is generic so the pass infrastructure can specialize
-  it without forcing this module to depend on pass-specific types.
-- :class:`ValidationFailedError` is the exception raised when a report
-  with ERROR diagnostics is escalated via
-  :meth:`ValidationReport.raise_if_failed`.
-
-These types live here, rather than in ``fhy_core.pass_infrastructure``,
-because the abstraction belongs to the diagnostic layer: a non-pass
-caller (a self-verifying lattice, a symbol table) needs to construct a
-report without pulling in pass-execution machinery.
+- :class:`ValidationReport` aggregates :class:`Diagnostic` instances
+  plus a generic sequence of per-source execution records.
+- :class:`ValidationFailedError` is raised when a report with ERROR
+  diagnostics is escalated via :meth:`ValidationReport.raise_if_failed`.
 """
 
 __all__ = [
@@ -122,7 +113,7 @@ class Diagnostic(FrozenMixin, PartialEqualMixin):
 
     @property
     def message_text(self) -> str:
-        """Return the underlying message text without the kind prefix."""
+        """The underlying message text, without the kind prefix."""
         return self.message.message
 
 
@@ -134,8 +125,7 @@ class ValidationFailedError(RuntimeError):
     """Raised when a :class:`ValidationReport` is escalated and has errors.
 
     The triggering report is available via :attr:`report`. The exception
-    message is the formatted report, so uncaught exceptions print a
-    useful summary.
+    message is the report's :meth:`ValidationReport.format` output.
     """
 
     _report: "ValidationReport[Any]"
@@ -146,7 +136,7 @@ class ValidationFailedError(RuntimeError):
 
     @property
     def report(self) -> "ValidationReport[Any]":
-        """Return the validation report that triggered this failure."""
+        """The validation report that triggered this failure."""
         return self._report
 
 
@@ -154,10 +144,8 @@ class ValidationFailedError(RuntimeError):
 class ValidationReport(FrozenMixin, PartialEqualMixin, Generic[_RecordT]):
     """Aggregated diagnostics plus optional per-source execution records.
 
-    ``ValidationReport`` is generic over its record type so the
-    diagnostic layer does not depend on pass-execution machinery. The
-    pass infrastructure specializes it with ``PassRunRecord``; non-pass
-    callers (for example a self-verifying lattice) leave the parameter
+    Generic over the record type. The pass infrastructure specializes
+    it with :class:`PassRunRecord`; non-pass callers leave the parameter
     unbound and produce a report with no records.
 
     Attributes:
@@ -209,6 +197,13 @@ class ValidationReport(FrozenMixin, PartialEqualMixin, Generic[_RecordT]):
         """Raise :class:`ValidationFailedError` if any ERROR diagnostics exist.
 
         No-op when the report contains only warnings/infos or nothing at all.
+
+        Raises:
+            ValidationFailedError: If at least one diagnostic has level
+                :attr:`DiagnosticLevel.ERROR`. The error carries this
+                report on its :attr:`ValidationFailedError.report`
+                attribute.
+
         """
         if self.has_errors():
             raise ValidationFailedError(self)
