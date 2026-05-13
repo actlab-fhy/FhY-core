@@ -123,7 +123,7 @@ class VerifiableMixin(ABC):
             VerificationRegistry,
         )
 
-        if VerificationRegistry.global_().get_passes_for(cls):
+        if VerificationRegistry.get_passes_for(cls):
             cls._verifiable_instantiation_ok = True
             return super().__new__(cls)
 

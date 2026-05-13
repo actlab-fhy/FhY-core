@@ -1,8 +1,14 @@
-"""Tests for the verification registry, analysis, and auto-verification hooks."""
+"""Tests for the verification registry, analysis, and auto-verification hooks.
+
+Test isolation strategy: every test that touches the verification registry
+uses an IR class that is unique to that test, either defined inline or
+produced by the ``fresh_box_ir`` fixture. Because the registry is keyed by
+IR type and each test's type is distinct, registrations from one test
+cannot pollute another.
+"""
 
 import gc
 import weakref
-from collections.abc import Iterator
 from dataclasses import dataclass
 
 import pytest
@@ -36,72 +42,62 @@ from fhy_core.trait import FrozenMixin, VerifiableMixin, Visitable
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class FrozenBox(FrozenMixin, Visitable):
-    """Frozen, visitable IR for cache-aware tests."""
+@pytest.fixture
+def fresh_box_ir() -> type:
+    """Return a fresh frozen, visitable IR class scoped to this test.
 
-    value: int
+    Using a per-test class makes the verification registry naturally
+    isolated: registrations live under this class, and other tests'
+    classes do not see them.
+    """
 
-    def __post_init__(self) -> None:
-        self.freeze()
+    @dataclass
+    class _BoxIR(FrozenMixin, Visitable):
+        value: int
 
+        def __post_init__(self) -> None:
+            self.freeze()
 
-@dataclass
-class OtherFrozenBox(FrozenMixin, Visitable):
-    """A second frozen IR type, used to test type-keyed dispatch."""
-
-    value: int
-
-    def __post_init__(self) -> None:
-        self.freeze()
+    return _BoxIR
 
 
 @pytest.fixture
-def isolated_registry() -> Iterator[VerificationRegistry]:
-    """Swap in a fresh global VerificationRegistry for the test.
+def other_box_ir() -> type:
+    """Return a second frozen IR class disjoint from ``fresh_box_ir``."""
 
-    Restores the prior global on teardown so tests run in any order without
-    leaking registrations.
-    """
-    fresh = VerificationRegistry()
-    previous = VerificationRegistry.set_global(fresh)
-    try:
-        yield fresh
-    finally:
-        VerificationRegistry.set_global(previous)
+    @dataclass
+    class _OtherBoxIR(FrozenMixin, Visitable):
+        value: int
+
+        def __post_init__(self) -> None:
+            self.freeze()
+
+    return _OtherBoxIR
 
 
 def build_clean_pass(
-    pass_name: str,
-) -> type[AnalysisVisitablePass[FrozenBox]]:
+    pass_name: str, ir_type: type
+) -> type[AnalysisVisitablePass[object]]:
     """Return a verification pass class that reports nothing."""
 
-    @register_verification(
-        FrozenBox, pass_name, f"Clean verification pass: {pass_name}"
-    )
-    class _CleanPass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    @register_verification(ir_type, pass_name, f"Clean verification pass: {pass_name}")
+    class _CleanPass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
     return _CleanPass
 
 
 def build_error_pass(
-    pass_name: str,
-    message: str,
-    ir_type: type = FrozenBox,
-) -> type[AnalysisVisitablePass[FrozenBox]]:
+    pass_name: str, message: str, ir_type: type
+) -> type[AnalysisVisitablePass[object]]:
     """Return a verification pass that emits one ERROR diagnostic."""
 
     @register_verification(
         ir_type, pass_name, f"Error-emitting verification pass: {pass_name}"
     )
-    class _ErrorPass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
-            _ = node
-            self.report(DiagnosticLevel.ERROR, message)
-
-        def visit_other_frozen_box(self, node: OtherFrozenBox) -> None:
+    class _ErrorPass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, message)
 
@@ -109,16 +105,15 @@ def build_error_pass(
 
 
 def build_warning_pass(
-    pass_name: str,
-    message: str,
-) -> type[AnalysisVisitablePass[FrozenBox]]:
+    pass_name: str, message: str, ir_type: type
+) -> type[AnalysisVisitablePass[object]]:
     """Return a verification pass that emits one WARNING diagnostic."""
 
     @register_verification(
-        FrozenBox, pass_name, f"Warning-emitting verification pass: {pass_name}"
+        ir_type, pass_name, f"Warning-emitting verification pass: {pass_name}"
     )
-    class _WarningPass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _WarningPass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
             self.report(DiagnosticLevel.WARNING, message)
 
@@ -126,16 +121,15 @@ def build_warning_pass(
 
 
 def build_crashing_pass(
-    pass_name: str,
-    exception_message: str,
-) -> type[AnalysisVisitablePass[FrozenBox]]:
+    pass_name: str, exception_message: str, ir_type: type
+) -> type[AnalysisVisitablePass[object]]:
     """Return a verification pass that crashes inside its visitor."""
 
     @register_verification(
-        FrozenBox, pass_name, f"Crashing verification pass: {pass_name}"
+        ir_type, pass_name, f"Crashing verification pass: {pass_name}"
     )
-    class _CrashingPass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _CrashingPass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
             raise RuntimeError(exception_message)
 
@@ -147,157 +141,140 @@ def build_crashing_pass(
 # ---------------------------------------------------------------------------
 
 
-def test_registry_register_stores_pass_class_for_type() -> None:
+def test_registry_register_stores_pass_class_for_type(fresh_box_ir: type) -> None:
     """Test that register places a pass class under its IR type key."""
-    registry = VerificationRegistry()
 
     @register_pass("tests.vr.register_basic", "Pass for register_basic test.")
-    class _Pass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _Pass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
-    registry.register(FrozenBox, _Pass)
+    VerificationRegistry.register(fresh_box_ir, _Pass)
 
-    assert registry.get_passes_for(FrozenBox) == (_Pass,)
+    assert VerificationRegistry.get_passes_for(fresh_box_ir) == (_Pass,)
 
 
-def test_registry_register_returns_none() -> None:
+def test_registry_register_returns_none(fresh_box_ir: type) -> None:
     """Test that register returns None (no fluent chaining)."""
-    registry = VerificationRegistry()
 
     @register_pass(
         "tests.vr.register_returns_none", "Pass for register_returns_none test."
     )
-    class _Pass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _Pass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
-    assert registry.register(FrozenBox, _Pass) is None  # type: ignore[func-returns-value]
+    assert VerificationRegistry.register(fresh_box_ir, _Pass) is None  # type: ignore[func-returns-value]
 
 
 def test_registry_get_passes_for_unknown_type_returns_empty() -> None:
     """Test that lookup for a type with no registrations returns an empty tuple."""
-    registry = VerificationRegistry()
 
-    assert registry.get_passes_for(FrozenBox) == ()
+    class _Unknown:
+        pass
+
+    assert VerificationRegistry.get_passes_for(_Unknown) == ()
 
 
-def test_registry_register_is_idempotent_for_same_pair() -> None:
+def test_registry_register_is_idempotent_for_same_pair(fresh_box_ir: type) -> None:
     """Test that re-registering the same (type, pass) pair is a no-op."""
-    registry = VerificationRegistry()
 
     @register_pass("tests.vr.idempotent", "Pass for idempotent registration test.")
-    class _Pass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _Pass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
-    registry.register(FrozenBox, _Pass)
-    registry.register(FrozenBox, _Pass)
+    VerificationRegistry.register(fresh_box_ir, _Pass)
+    VerificationRegistry.register(fresh_box_ir, _Pass)
 
-    assert registry.get_passes_for(FrozenBox) == (_Pass,)
+    assert VerificationRegistry.get_passes_for(fresh_box_ir) == (_Pass,)
 
 
-def test_registry_register_preserves_order_of_multiple_passes() -> None:
+def test_registry_register_preserves_order_of_multiple_passes(
+    fresh_box_ir: type,
+) -> None:
     """Test that multiple registrations preserve insertion order under one type."""
-    registry = VerificationRegistry()
 
     @register_pass("tests.vr.order_a", "First pass for ordering test.")
-    class _PassA(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _PassA(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
     @register_pass("tests.vr.order_b", "Second pass for ordering test.")
-    class _PassB(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _PassB(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
-    registry.register(FrozenBox, _PassA)
-    registry.register(FrozenBox, _PassB)
+    VerificationRegistry.register(fresh_box_ir, _PassA)
+    VerificationRegistry.register(fresh_box_ir, _PassB)
 
-    assert registry.get_passes_for(FrozenBox) == (_PassA, _PassB)
+    assert VerificationRegistry.get_passes_for(fresh_box_ir) == (_PassA, _PassB)
 
 
-def test_registry_get_passes_for_walks_mro_base_first() -> None:
+def test_registry_get_passes_for_walks_mro_base_first(fresh_box_ir: type) -> None:
     """Test that lookup walks the MRO with base-class passes first."""
-    registry = VerificationRegistry()
 
     @register_pass("tests.vr.mro_base", "Base-class pass for MRO test.")
-    class _BasePass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _BasePass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
     @register_pass("tests.vr.mro_sub", "Subclass pass for MRO test.")
-    class _SubPass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _SubPass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
     @dataclass
-    class _SubBox(FrozenBox):
+    class _SubBoxIR(fresh_box_ir):  # type: ignore[misc,valid-type]
         pass
 
-    registry.register(FrozenBox, _BasePass)
-    registry.register(_SubBox, _SubPass)
+    VerificationRegistry.register(fresh_box_ir, _BasePass)
+    VerificationRegistry.register(_SubBoxIR, _SubPass)
 
-    result = registry.get_passes_for(_SubBox)
-
-    assert result == (_BasePass, _SubPass)
+    assert VerificationRegistry.get_passes_for(_SubBoxIR) == (_BasePass, _SubPass)
 
 
-def test_registry_get_passes_for_deduplicates_across_mro() -> None:
+def test_registry_get_passes_for_deduplicates_across_mro(fresh_box_ir: type) -> None:
     """Test that a pass registered against both base and subclass appears once."""
-    registry = VerificationRegistry()
 
     @register_pass("tests.vr.dedup_shared", "Shared pass registered twice.")
-    class _SharedPass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _SharedPass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
     @dataclass
-    class _SubBox(FrozenBox):
+    class _SubBoxIR(fresh_box_ir):  # type: ignore[misc,valid-type]
         pass
 
-    registry.register(FrozenBox, _SharedPass)
-    registry.register(_SubBox, _SharedPass)
+    VerificationRegistry.register(fresh_box_ir, _SharedPass)
+    VerificationRegistry.register(_SubBoxIR, _SharedPass)
 
-    assert registry.get_passes_for(_SubBox) == (_SharedPass,)
+    assert VerificationRegistry.get_passes_for(_SubBoxIR) == (_SharedPass,)
 
 
-def test_registry_rejects_non_compiler_pass_class() -> None:
+def test_registry_rejects_non_compiler_pass_class(fresh_box_ir: type) -> None:
     """Test that register rejects a non-CompilerPass class."""
-    registry = VerificationRegistry()
 
     class _NotAPass:
         pass
 
     with pytest.raises(PassRegistrationError, match="CompilerPass"):
-        registry.register(FrozenBox, _NotAPass)  # type: ignore[arg-type]
+        VerificationRegistry.register(fresh_box_ir, _NotAPass)  # type: ignore[arg-type]
 
 
-def test_registry_isolates_types_in_separate_keys() -> None:
+def test_registry_isolates_types_in_separate_keys(
+    fresh_box_ir: type, other_box_ir: type
+) -> None:
     """Test that registering for one type does not affect lookup of another."""
-    registry = VerificationRegistry()
 
-    @register_pass("tests.vr.isolate_a", "Pass for isolation test (FrozenBox).")
-    class _BoxPass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    @register_pass("tests.vr.isolate_a", "Pass for isolation test.")
+    class _BoxPass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
-    registry.register(FrozenBox, _BoxPass)
+    VerificationRegistry.register(fresh_box_ir, _BoxPass)
 
-    assert registry.get_passes_for(OtherFrozenBox) == ()
-
-
-def test_registry_set_global_swaps_singleton() -> None:
-    """Test that set_global replaces the global registry and returns the previous."""
-    fresh = VerificationRegistry()
-
-    previous = VerificationRegistry.set_global(fresh)
-    try:
-        assert VerificationRegistry.global_() is fresh
-    finally:
-        restored = VerificationRegistry.set_global(previous)
-        assert restored is fresh
-        assert VerificationRegistry.global_() is previous
+    assert VerificationRegistry.get_passes_for(other_box_ir) == ()
 
 
 # ---------------------------------------------------------------------------
@@ -322,12 +299,10 @@ def test_verification_analysis_name_is_stable_across_instances() -> None:
 
 
 def test_verification_analysis_returns_empty_report_when_no_passes_registered(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that the analysis returns an empty report when no passes match."""
-    _ = isolated_registry
-
-    report = VerificationAnalysis().run(FrozenBox(0))
+    report = VerificationAnalysis().run(fresh_box_ir(0))
 
     assert isinstance(report, ValidationReport)
     assert report.diagnostics == ()
@@ -335,28 +310,26 @@ def test_verification_analysis_returns_empty_report_when_no_passes_registered(
 
 
 def test_verification_analysis_aggregates_diagnostics_in_registration_order(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that diagnostics aggregate in pipeline order across registered passes."""
-    _ = isolated_registry
-    build_error_pass("tests.va.order.first", "first-error")
-    build_warning_pass("tests.va.order.second", "second-warning")
-    build_error_pass("tests.va.order.third", "third-error")
+    build_error_pass("tests.va.order.first", "first-error", fresh_box_ir)
+    build_warning_pass("tests.va.order.second", "second-warning", fresh_box_ir)
+    build_error_pass("tests.va.order.third", "third-error", fresh_box_ir)
 
-    report = VerificationAnalysis().run(FrozenBox(1))
+    report = VerificationAnalysis().run(fresh_box_ir(1))
 
     messages = [diagnostic.message_text for diagnostic in report.diagnostics]
     assert messages == ["first-error", "second-warning", "third-error"]
 
 
 def test_verification_analysis_returns_error_carrying_report_for_failing_ir(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that a failing verification surfaces in the returned report."""
-    _ = isolated_registry
-    build_error_pass("tests.va.failure", "structural-failure")
+    build_error_pass("tests.va.failure", "structural-failure", fresh_box_ir)
 
-    report = VerificationAnalysis().run(FrozenBox(2))
+    report = VerificationAnalysis().run(fresh_box_ir(2))
 
     assert report.has_errors() is True
     assert any(
@@ -366,28 +339,26 @@ def test_verification_analysis_returns_error_carrying_report_for_failing_ir(
 
 
 def test_verification_analysis_dispatches_by_concrete_ir_type(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type, other_box_ir: type
 ) -> None:
     """Test that the analysis uses ``type(ir)`` for registry dispatch."""
-    _ = isolated_registry
-    build_error_pass("tests.va.dispatch.box", "box-only-error")
+    build_error_pass("tests.va.dispatch.box", "box-only-error", fresh_box_ir)
 
-    report_box = VerificationAnalysis().run(FrozenBox(0))
-    report_other = VerificationAnalysis().run(OtherFrozenBox(0))
+    report_box = VerificationAnalysis().run(fresh_box_ir(0))
+    report_other = VerificationAnalysis().run(other_box_ir(0))
 
     assert report_box.has_errors() is True
     assert report_other.has_errors() is False
 
 
 def test_verification_analysis_wraps_crashed_pass_as_synthetic_error(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that a verification pass that raises is captured as an ERROR diagnostic."""
-    _ = isolated_registry
-    build_crashing_pass("tests.va.crash", "boom-from-verifier")
-    build_error_pass("tests.va.after_crash", "still-runs")
+    build_crashing_pass("tests.va.crash", "boom-from-verifier", fresh_box_ir)
+    build_error_pass("tests.va.after_crash", "still-runs", fresh_box_ir)
 
-    report = VerificationAnalysis().run(FrozenBox(0))
+    report = VerificationAnalysis().run(fresh_box_ir(0))
 
     error_messages = [diagnostic.message_text for diagnostic in report.errors()]
     assert any("boom-from-verifier" in message for message in error_messages)
@@ -400,18 +371,17 @@ def test_verification_analysis_wraps_crashed_pass_as_synthetic_error(
 
 
 def test_register_verification_adds_class_to_pass_registry(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that the decorator registers with the global CompilerPass registry."""
-    _ = isolated_registry
 
     @register_verification(
-        FrozenBox,
+        fresh_box_ir,
         "tests.rv.in_pass_registry",
         "Pass registered via register_verification.",
     )
-    class _Pass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _Pass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
     assert "tests.rv.in_pass_registry" in CompilerPass.get_registered_passes()
@@ -422,99 +392,91 @@ def test_register_verification_adds_class_to_pass_registry(
 
 
 def test_register_verification_adds_class_to_verification_registry(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that the decorator registers with the verification registry."""
 
     @register_verification(
-        FrozenBox, "tests.rv.in_verification_registry", "Pass for registry-add test."
+        fresh_box_ir,
+        "tests.rv.in_verification_registry",
+        "Pass for registry-add test.",
     )
-    class _Pass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _Pass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
-    assert _Pass in isolated_registry.get_passes_for(FrozenBox)
+    assert _Pass in VerificationRegistry.get_passes_for(fresh_box_ir)
 
 
 def test_register_verification_disables_auto_verify_on_decorated_class(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that the decorator stamps ``_auto_verify = False`` on the class."""
-    _ = isolated_registry
 
     @register_verification(
-        FrozenBox, "tests.rv.auto_verify_off", "Pass for _auto_verify flag test."
+        fresh_box_ir,
+        "tests.rv.auto_verify_off",
+        "Pass for _auto_verify flag test.",
     )
-    class _Pass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _Pass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
     assert _Pass._auto_verify is False
 
 
 def test_register_verification_rejects_non_compiler_pass(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that non-CompilerPass targets are rejected."""
-    _ = isolated_registry
-
     with pytest.raises(PassRegistrationError, match="CompilerPass"):
 
         @register_verification(
-            FrozenBox, "tests.rv.bad_target", "Decorator applied to non-pass."
+            fresh_box_ir, "tests.rv.bad_target", "Decorator applied to non-pass."
         )
         class _NotAPass:  # type: ignore[type-var]  # test: deliberately invalid
             pass
 
 
-def test_register_verification_rejects_empty_name(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_register_verification_rejects_empty_name(fresh_box_ir: type) -> None:
     """Test that an empty pass name is rejected."""
-    _ = isolated_registry
-
     with pytest.raises(PassRegistrationError, match="name"):
 
-        @register_verification(FrozenBox, "", "non-empty description")
-        class _Pass(AnalysisVisitablePass[FrozenBox]):
-            def visit_frozen_box(self, node: FrozenBox) -> None:
+        @register_verification(fresh_box_ir, "", "non-empty description")
+        class _Pass(AnalysisVisitablePass[object]):
+            def visit_unknown(self, node: object) -> None:
                 _ = node
 
 
-def test_register_verification_rejects_empty_description(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_register_verification_rejects_empty_description(fresh_box_ir: type) -> None:
     """Test that an empty description is rejected."""
-    _ = isolated_registry
-
     with pytest.raises(PassRegistrationError, match="description"):
 
-        @register_verification(FrozenBox, "tests.rv.empty_desc", "")
-        class _Pass(AnalysisVisitablePass[FrozenBox]):
-            def visit_frozen_box(self, node: FrozenBox) -> None:
+        @register_verification(fresh_box_ir, "tests.rv.empty_desc", "")
+        class _Pass(AnalysisVisitablePass[object]):
+            def visit_unknown(self, node: object) -> None:
                 _ = node
 
 
-def test_register_verification_rejects_duplicate_name(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_register_verification_rejects_duplicate_name(fresh_box_ir: type) -> None:
     """Test that a name already used by a different class is rejected."""
-    _ = isolated_registry
 
     @register_verification(
-        FrozenBox, "tests.rv.dup_name", "Original holder of the duplicate name."
+        fresh_box_ir, "tests.rv.dup_name", "Original holder of the duplicate name."
     )
-    class _Original(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _Original(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
+
+    _ = _Original
 
     with pytest.raises(PassRegistrationError, match="already registered"):
 
         @register_verification(
-            FrozenBox, "tests.rv.dup_name", "Different class, same name."
+            fresh_box_ir, "tests.rv.dup_name", "Different class, same name."
         )
-        class _Duplicate(AnalysisVisitablePass[FrozenBox]):
-            def visit_frozen_box(self, node: FrozenBox) -> None:
+        class _Duplicate(AnalysisVisitablePass[object]):
+            def visit_unknown(self, node: object) -> None:
                 _ = node
 
 
@@ -524,13 +486,12 @@ def test_register_verification_rejects_duplicate_name(
 
 
 def test_run_verification_returns_report_without_raising_on_errors(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that run_verification returns a report regardless of errors."""
-    _ = isolated_registry
-    build_error_pass("tests.rv_helper.error", "irrecoverable")
+    build_error_pass("tests.rv_helper.error", "irrecoverable", fresh_box_ir)
 
-    report = run_verification(FrozenBox(0))
+    report = run_verification(fresh_box_ir(0))
 
     assert isinstance(report, ValidationReport)
     assert report.has_errors() is True
@@ -540,12 +501,10 @@ def test_run_verification_returns_report_without_raising_on_errors(
 
 
 def test_run_verification_returns_empty_report_when_no_passes_registered(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that run_verification returns an empty report when no passes match."""
-    _ = isolated_registry
-
-    report = run_verification(FrozenBox(0))
+    report = run_verification(fresh_box_ir(0))
 
     assert isinstance(report, ValidationReport)
     assert report.diagnostics == ()
@@ -556,11 +515,10 @@ def test_run_verification_returns_empty_report_when_no_passes_registered(
 # ---------------------------------------------------------------------------
 
 
-def test_verifiable_subclass_without_override_or_passes_cannot_be_instantiated(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_verifiable_subclass_without_override_or_passes_cannot_be_instantiated() -> (
+    None
+):
     """Test that instantiation fails when no override and no registered passes exist."""
-    _ = isolated_registry
 
     class _Unverifiable(VerifiableMixin):
         def __init__(self, value: int) -> None:
@@ -570,17 +528,14 @@ def test_verifiable_subclass_without_override_or_passes_cannot_be_instantiated(
         _Unverifiable(0)
 
 
-def test_verifiable_subclass_with_override_can_be_instantiated_without_passes(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_verifiable_subclass_with_override_can_be_instantiated_without_passes() -> None:
     """Test that overriding verify bypasses the registry-passes requirement."""
-    _ = isolated_registry
 
     class _OverridesVerify(VerifiableMixin):
         def __init__(self, value: int) -> None:
             self.value = value
 
-        def verify(self) -> ValidationReport:
+        def verify(self) -> ValidationReport[object]:
             return ValidationReport()
 
     instance = _OverridesVerify(7)
@@ -588,56 +543,45 @@ def test_verifiable_subclass_with_override_can_be_instantiated_without_passes(
     assert instance.value == 7
 
 
-def test_verifiable_subclass_with_registered_passes_can_be_instantiated(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_verifiable_subclass_with_registered_passes_can_be_instantiated() -> None:
     """Test that registering passes makes a subclass instantiable."""
 
     class _NeedsRegisteredPass(VerifiableMixin, Visitable):
         def __init__(self, value: int) -> None:
             self.value = value
 
-        @classmethod
-        def get_visit_method_suffix(cls) -> str:
-            return "needs_registered_pass"
-
     @register_verification(
         _NeedsRegisteredPass,
         "tests.vm_new.permits_instantiation",
         "Pass that makes _NeedsRegisteredPass instantiable.",
     )
-    class _CheckPass(AnalysisVisitablePass[_NeedsRegisteredPass]):
-        def visit_needs_registered_pass(self, node: _NeedsRegisteredPass) -> None:
+    class _CheckPass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
-    _ = _CheckPass  # silence unused-warning; the decorator registers the class.
-
+    _ = _CheckPass
     instance = _NeedsRegisteredPass(3)
 
     assert instance.value == 3
 
 
-def test_verifiable_subclass_becomes_instantiable_after_late_registration(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_verifiable_subclass_becomes_instantiable_after_late_registration() -> None:
     """Test that a failed instantiation can be retried after registration."""
 
     class _Late(VerifiableMixin, Visitable):
         def __init__(self, value: int) -> None:
             self.value = value
 
-        @classmethod
-        def get_visit_method_suffix(cls) -> str:
-            return "late"
-
     with pytest.raises(TypeError, match="_Late"):
         _Late(0)
 
     @register_verification(
-        _Late, "tests.vm_new.late_registration", "Pass registered after first failure."
+        _Late,
+        "tests.vm_new.late_registration",
+        "Pass registered after first failure.",
     )
-    class _LateCheck(AnalysisVisitablePass[_Late]):
-        def visit_late(self, node: _Late) -> None:
+    class _LateCheck(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
     _ = _LateCheck
@@ -648,7 +592,7 @@ def test_verifiable_subclass_becomes_instantiable_after_late_registration(
 
 
 def test_verifiable_subclass_caches_positive_instantiation_result(
-    isolated_registry: VerificationRegistry,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test that a class flagged ``ok`` is not re-checked on later instantiations."""
 
@@ -656,23 +600,26 @@ def test_verifiable_subclass_caches_positive_instantiation_result(
         def __init__(self, value: int) -> None:
             self.value = value
 
-        @classmethod
-        def get_visit_method_suffix(cls) -> str:
-            return "cached"
-
     @register_verification(
         _Cached, "tests.vm_new.positive_cache", "Pass for positive-cache test."
     )
-    class _CachedCheck(AnalysisVisitablePass[_Cached]):
-        def visit_cached(self, node: _Cached) -> None:
+    class _CachedCheck(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
     _ = _CachedCheck
-    _Cached(0)
-    # After the first successful instantiation, dropping the registration
-    # entirely (by swapping in a fresh registry) must not break subsequent
-    # instantiations — the class-level "ok" cache survives.
-    VerificationRegistry.set_global(VerificationRegistry())
+    _Cached(0)  # primes the cache
+
+    # If subsequent instantiations consulted the registry again, breaking the
+    # registry's public lookup method would cause the test to fail. The
+    # positive-result cache means the lookup is never invoked again.
+    def _unreachable(_ir_type: type) -> tuple[type[CompilerPass[object, object]], ...]:
+        raise AssertionError(
+            "VerificationRegistry.get_passes_for should not be called after the "
+            "positive-result cache is primed."
+        )
+
+    monkeypatch.setattr(VerificationRegistry, "get_passes_for", _unreachable)
 
     follow_up = _Cached(1)
 
@@ -690,28 +637,20 @@ def test_verifiable_mixin_itself_cannot_be_instantiated() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_verify_default_returns_report_from_registered_passes(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_verify_default_returns_report_from_registered_passes() -> None:
     """Test that verify returns the report produced by registered passes."""
 
     class _IR(VerifiableMixin, Visitable):
         def __init__(self, value: int) -> None:
             self.value = value
 
-        @classmethod
-        def get_visit_method_suffix(cls) -> str:
-            return "ir"
-
     @register_verification(_IR, "tests.vm_verify.error", "Pass that reports an error.")
-    class _ErrorCheck(AnalysisVisitablePass[_IR]):
-        def visit_ir(self, node: _IR) -> None:
+    class _ErrorCheck(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, "verify-failure")
 
     _ = _ErrorCheck
-    _ = isolated_registry
-
     report = _IR(0).verify()
 
     assert isinstance(report, ValidationReport)
@@ -720,29 +659,22 @@ def test_verify_default_returns_report_from_registered_passes(
     )
 
 
-def test_verify_default_aggregates_multiple_registered_passes(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_verify_default_aggregates_multiple_registered_passes() -> None:
     """Test that diagnostics from multiple passes aggregate in registration order."""
-    _ = isolated_registry
 
     class _IR(VerifiableMixin, Visitable):
         def __init__(self, value: int) -> None:
             self.value = value
 
-        @classmethod
-        def get_visit_method_suffix(cls) -> str:
-            return "ir"
-
     @register_verification(_IR, "tests.vm_verify.first", "First check.")
-    class _First(AnalysisVisitablePass[_IR]):
-        def visit_ir(self, node: _IR) -> None:
+    class _First(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
             self.report(DiagnosticLevel.INFO, "info-one")
 
     @register_verification(_IR, "tests.vm_verify.second", "Second check.")
-    class _Second(AnalysisVisitablePass[_IR]):
-        def visit_ir(self, node: _IR) -> None:
+    class _Second(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
             self.report(DiagnosticLevel.WARNING, "warn-two")
 
@@ -756,65 +688,48 @@ def test_verify_default_aggregates_multiple_registered_passes(
     ]
 
 
-def test_verify_override_takes_precedence_over_registry(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_verify_override_takes_precedence_over_registry() -> None:
     """Test that a subclass override of verify bypasses the registry."""
-    _ = isolated_registry
-
-    sentinel_report = ValidationReport()
+    sentinel_report: ValidationReport[object] = ValidationReport()
 
     class _IR(VerifiableMixin, Visitable):
         def __init__(self, value: int) -> None:
             self.value = value
 
-        @classmethod
-        def get_visit_method_suffix(cls) -> str:
-            return "ir"
-
-        def verify(self) -> ValidationReport:
+        def verify(self) -> ValidationReport[object]:
             return sentinel_report
 
     @register_verification(
         _IR, "tests.vm_verify.bypassed", "Pass that should not be invoked."
     )
-    class _UnusedCheck(AnalysisVisitablePass[_IR]):
+    class _UnusedCheck(AnalysisVisitablePass[object]):
         invoked = False
 
-        def visit_ir(self, node: _IR) -> None:
+        def visit_unknown(self, node: object) -> None:
             type(self).invoked = True
             self.report(DiagnosticLevel.ERROR, "would-fail-if-invoked")
 
     _ = _UnusedCheck
-
     report = _IR(0).verify()
 
     assert report is sentinel_report
     assert _UnusedCheck.invoked is False
 
 
-def test_verify_default_report_can_be_raised_as_validation_failed_error(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_verify_default_report_can_be_raised_as_validation_failed_error() -> None:
     """Test that callers can convert the returned report to ValidationFailedError."""
-    _ = isolated_registry
 
     class _IR(VerifiableMixin, Visitable):
         def __init__(self, value: int) -> None:
             self.value = value
 
-        @classmethod
-        def get_visit_method_suffix(cls) -> str:
-            return "ir"
-
     @register_verification(_IR, "tests.vm_verify.raise", "Verify that raise works.")
-    class _RaiseCheck(AnalysisVisitablePass[_IR]):
-        def visit_ir(self, node: _IR) -> None:
+    class _RaiseCheck(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, "structurally-broken")
 
     _ = _RaiseCheck
-
     report = _IR(0).verify()
 
     with pytest.raises(ValidationFailedError) as excinfo:
@@ -834,22 +749,21 @@ def test_auto_verify_default_is_true_on_compiler_pass() -> None:
 
 
 def test_auto_verify_pre_raises_pass_validation_error_when_input_is_malformed(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that pre-pass auto-verify raises when the input IR fails verification."""
-    _ = isolated_registry
-    build_error_pass("tests.av.pre.fail", "pre-failure")
+    build_error_pass("tests.av.pre.fail", "pre-failure", fresh_box_ir)
 
     @register_pass("tests.av.pre.identity", "Identity pass for pre-verify test.")
-    class _IdentityPass(CompilerPass[FrozenBox, FrozenBox]):
-        def get_noop_output(self, ir: FrozenBox) -> FrozenBox:
+    class _IdentityPass(CompilerPass[object, object]):
+        def get_noop_output(self, ir: object) -> object:
             return ir
 
-        def run_pass(self, ir: FrozenBox) -> FrozenBox:
+        def run_pass(self, ir: object) -> object:
             return ir
 
     with pytest.raises(PassValidationError) as excinfo:
-        _IdentityPass().execute(FrozenBox(0))
+        _IdentityPass().execute(fresh_box_ir(0))
 
     assert isinstance(excinfo.value.report, ValidationReport)
     assert excinfo.value.report.has_errors() is True
@@ -860,36 +774,25 @@ def test_auto_verify_pre_raises_pass_validation_error_when_input_is_malformed(
 
 
 def test_auto_verify_post_raises_when_pass_produces_malformed_output(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type, other_box_ir: type
 ) -> None:
     """Test that post-pass auto-verify raises when the output IR fails verification."""
-    _ = isolated_registry
-
-    @register_verification(
-        OtherFrozenBox,
-        "tests.av.post.check",
-        "Check the output IR for the failing pass.",
-    )
-    class _Check(AnalysisVisitablePass[OtherFrozenBox]):
-        def visit_other_frozen_box(self, node: OtherFrozenBox) -> None:
-            _ = node
-            self.report(DiagnosticLevel.ERROR, "post-corruption")
-
-    _ = _Check
+    build_error_pass("tests.av.post.check", "post-corruption", other_box_ir)
 
     @register_pass(
         "tests.av.post.corrupting",
         "Output is well-formed for input verification but fails output verification.",
     )
-    class _CorruptingPass(CompilerPass[FrozenBox, OtherFrozenBox]):
-        def get_noop_output(self, ir: FrozenBox) -> OtherFrozenBox:
-            return OtherFrozenBox(ir.value)
+    class _CorruptingPass(CompilerPass[object, object]):
+        def get_noop_output(self, ir: object) -> object:
+            return other_box_ir(0)
 
-        def run_pass(self, ir: FrozenBox) -> OtherFrozenBox:
-            return OtherFrozenBox(ir.value)
+        def run_pass(self, ir: object) -> object:
+            assert isinstance(ir, fresh_box_ir)
+            return other_box_ir(ir.value)
 
     with pytest.raises(PassValidationError) as excinfo:
-        _CorruptingPass().execute(FrozenBox(0))
+        _CorruptingPass().execute(fresh_box_ir(0))
 
     assert excinfo.value.report is not None
     assert any(
@@ -899,59 +802,60 @@ def test_auto_verify_post_raises_when_pass_produces_malformed_output(
 
 
 def test_auto_verify_false_on_pass_class_disables_pre_and_post(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that ``_auto_verify = False`` skips both hooks for the pass class."""
-    _ = isolated_registry
-    build_error_pass("tests.av.disabled.fail", "would-fail-if-enabled")
+    build_error_pass("tests.av.disabled.fail", "would-fail-if-enabled", fresh_box_ir)
 
     @register_pass("tests.av.disabled.identity", "Identity pass with auto-verify off.")
-    class _NoAutoVerifyPass(CompilerPass[FrozenBox, FrozenBox]):
+    class _NoAutoVerifyPass(CompilerPass[object, object]):
         _auto_verify = False
 
-        def get_noop_output(self, ir: FrozenBox) -> FrozenBox:
+        def get_noop_output(self, ir: object) -> object:
             return ir
 
-        def run_pass(self, ir: FrozenBox) -> FrozenBox:
+        def run_pass(self, ir: object) -> object:
             return ir
 
-    result = _NoAutoVerifyPass().execute(FrozenBox(0))
+    input_ir = fresh_box_ir(0)
+    result = _NoAutoVerifyPass().execute(input_ir)
 
-    assert result.output == FrozenBox(0)
+    assert result.output == input_ir
 
 
 def test_verification_pass_does_not_recurse_into_auto_verify(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that registered verification passes have ``_auto_verify = False``."""
-    _ = isolated_registry
 
     @register_verification(
-        FrozenBox, "tests.av.recurse.check", "Verification pass that must not recurse."
+        fresh_box_ir,
+        "tests.av.recurse.check",
+        "Verification pass that must not recurse.",
     )
-    class _Check(AnalysisVisitablePass[FrozenBox]):
+    class _Check(AnalysisVisitablePass[object]):
         invocations = 0
 
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+        def visit_unknown(self, node: object) -> None:
             _ = node
             type(self).invocations += 1
 
     assert _Check._auto_verify is False
 
     @register_pass(
-        "tests.av.recurse.trigger", "Pass that triggers auto-verify on FrozenBox."
+        "tests.av.recurse.trigger", "Pass that triggers auto-verify on the IR."
     )
-    class _TriggerPass(CompilerPass[FrozenBox, FrozenBox]):
-        def get_noop_output(self, ir: FrozenBox) -> FrozenBox:
+    class _TriggerPass(CompilerPass[object, object]):
+        def get_noop_output(self, ir: object) -> object:
             return ir
 
-        def run_pass(self, ir: FrozenBox) -> FrozenBox:
+        def run_pass(self, ir: object) -> object:
             return ir
 
-    _TriggerPass().execute(FrozenBox(0))
+    _TriggerPass().execute(fresh_box_ir(0))
 
-    # Pre + post hooks each call the verifier once for an unchanged identity
-    # pass, so the visit count should be at most twice — not infinite.
+    # Pre + post hooks each consult the verifier once for an unchanged
+    # identity pass, so the visit count is at most 2 - not infinite.
     assert _Check.invocations >= 1
     assert _Check.invocations <= 2
 
@@ -962,79 +866,76 @@ def test_verification_pass_does_not_recurse_into_auto_verify(
 
 
 def test_auto_verify_uses_analysis_manager_cache_across_passes(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that an unchanged IR is verified once across two pipeline passes."""
-    _ = isolated_registry
 
     @register_verification(
-        FrozenBox, "tests.cache.count", "Counting verification pass."
+        fresh_box_ir, "tests.cache.count", "Counting verification pass."
     )
-    class _CountingCheck(AnalysisVisitablePass[FrozenBox]):
+    class _CountingCheck(AnalysisVisitablePass[object]):
         invocations = 0
 
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+        def visit_unknown(self, node: object) -> None:
             _ = node
             type(self).invocations += 1
 
     @register_pass("tests.cache.identity_a", "Identity pass A.")
-    class _IdentityA(CompilerPass[FrozenBox, FrozenBox]):
-        def get_noop_output(self, ir: FrozenBox) -> FrozenBox:
+    class _IdentityA(CompilerPass[object, object]):
+        def get_noop_output(self, ir: object) -> object:
             return ir
 
-        def run_pass(self, ir: FrozenBox) -> FrozenBox:
+        def run_pass(self, ir: object) -> object:
             return ir
 
     @register_pass("tests.cache.identity_b", "Identity pass B.")
-    class _IdentityB(CompilerPass[FrozenBox, FrozenBox]):
-        def get_noop_output(self, ir: FrozenBox) -> FrozenBox:
+    class _IdentityB(CompilerPass[object, object]):
+        def get_noop_output(self, ir: object) -> object:
             return ir
 
-        def run_pass(self, ir: FrozenBox) -> FrozenBox:
+        def run_pass(self, ir: object) -> object:
             return ir
 
-    manager = PassManager[FrozenBox]()
+    manager = PassManager[object]()
     manager.add_pass(_IdentityA())
     manager.add_pass(_IdentityB())
-    manager.run(FrozenBox(0))
+    manager.run(fresh_box_ir(0))
 
     # Pre-A computes; post-A returns the same IR and stays cached; pre-B hits
     # the cache; post-B returns the same IR and reuses it again. Total: 1.
     assert _CountingCheck.invocations == 1
 
 
-def test_auto_verify_recomputes_when_pass_changes_ir(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_auto_verify_recomputes_when_pass_changes_ir(fresh_box_ir: type) -> None:
     """Test that mutating the IR forces a fresh verification run on the new IR."""
-    _ = isolated_registry
 
     @register_verification(
-        FrozenBox,
+        fresh_box_ir,
         "tests.cache.mutate.count",
         "Counting verification pass for mutation.",
     )
-    class _CountingCheck(AnalysisVisitablePass[FrozenBox]):
+    class _CountingCheck(AnalysisVisitablePass[object]):
         invocations = 0
 
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+        def visit_unknown(self, node: object) -> None:
             _ = node
             type(self).invocations += 1
 
-    @register_pass("tests.cache.mutate.inc", "Increment the FrozenBox value.")
-    class _IncrementPass(CompilerPass[FrozenBox, FrozenBox]):
-        def get_noop_output(self, ir: FrozenBox) -> FrozenBox:
+    @register_pass("tests.cache.mutate.inc", "Increment the IR value.")
+    class _IncrementPass(CompilerPass[object, object]):
+        def get_noop_output(self, ir: object) -> object:
             return ir
 
-        def run_pass(self, ir: FrozenBox) -> FrozenBox:
-            return FrozenBox(ir.value + 1)
+        def run_pass(self, ir: object) -> object:
+            assert isinstance(ir, fresh_box_ir)
+            return fresh_box_ir(ir.value + 1)
 
-    manager = PassManager[FrozenBox]()
+    manager = PassManager[object]()
     manager.add_pass(_IncrementPass())
-    manager.run(FrozenBox(0))
+    manager.run(fresh_box_ir(0))
 
-    # Pre-verify of FrozenBox(0): 1 run.
-    # Post-verify of FrozenBox(1): 1 run (different IR identity, fresh entry).
+    # Pre-verify of FreshBox(0): 1 run.
+    # Post-verify of FreshBox(1): 1 run (different IR identity, fresh entry).
     assert _CountingCheck.invocations == 2
 
 
@@ -1044,52 +945,56 @@ def test_auto_verify_recomputes_when_pass_changes_ir(
 
 
 def test_user_story_pipeline_blames_pass_that_produced_invalid_ir(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that a corrupting pass surfaces in the report attached to the error."""
-    _ = isolated_registry
 
     @register_verification(
-        FrozenBox, "tests.story.positive_only", "FrozenBox values must be non-negative."
+        fresh_box_ir,
+        "tests.story.positive_only",
+        "IR values must be non-negative.",
     )
-    class _PositiveOnly(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
-            if node.value < 0:
+    class _PositiveOnly(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
+            if isinstance(node, fresh_box_ir) and node.value < 0:
                 self.report(DiagnosticLevel.ERROR, f"negative value: {node.value}")
 
     _ = _PositiveOnly
 
     @register_pass("tests.story.first_clean", "First pass: clean.")
-    class _FirstClean(CompilerPass[FrozenBox, FrozenBox]):
-        def get_noop_output(self, ir: FrozenBox) -> FrozenBox:
+    class _FirstClean(CompilerPass[object, object]):
+        def get_noop_output(self, ir: object) -> object:
             return ir
 
-        def run_pass(self, ir: FrozenBox) -> FrozenBox:
-            return FrozenBox(ir.value + 1)
+        def run_pass(self, ir: object) -> object:
+            assert isinstance(ir, fresh_box_ir)
+            return fresh_box_ir(ir.value + 1)
 
     @register_pass("tests.story.corrupt", "Middle pass: produces negative output.")
-    class _CorruptingPass(CompilerPass[FrozenBox, FrozenBox]):
-        def get_noop_output(self, ir: FrozenBox) -> FrozenBox:
+    class _CorruptingPass(CompilerPass[object, object]):
+        def get_noop_output(self, ir: object) -> object:
             return ir
 
-        def run_pass(self, ir: FrozenBox) -> FrozenBox:
-            return FrozenBox(-100)
+        def run_pass(self, ir: object) -> object:
+            _ = ir
+            return fresh_box_ir(-100)
 
     @register_pass("tests.story.last_clean", "Last pass: clean.")
-    class _LastClean(CompilerPass[FrozenBox, FrozenBox]):
-        def get_noop_output(self, ir: FrozenBox) -> FrozenBox:
+    class _LastClean(CompilerPass[object, object]):
+        def get_noop_output(self, ir: object) -> object:
             return ir
 
-        def run_pass(self, ir: FrozenBox) -> FrozenBox:
-            return FrozenBox(ir.value + 1)
+        def run_pass(self, ir: object) -> object:
+            assert isinstance(ir, fresh_box_ir)
+            return fresh_box_ir(ir.value + 1)
 
-    manager = PassManager[FrozenBox]()
+    manager = PassManager[object]()
     manager.add_pass(_FirstClean())
     manager.add_pass(_CorruptingPass())
     manager.add_pass(_LastClean())
 
     with pytest.raises(PassValidationError) as excinfo:
-        manager.run(FrozenBox(0))
+        manager.run(fresh_box_ir(0))
 
     assert excinfo.value.report is not None
     error_messages = [
@@ -1104,10 +1009,9 @@ def test_user_story_pipeline_blames_pass_that_produced_invalid_ir(
 
 
 def test_registering_verification_pass_with_global_pass_name_collision(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that a verification name colliding with an existing pass is rejected."""
-    _ = isolated_registry
 
     @register_pass("tests.adv.name_collision", "General pass that owns the name first.")
     class _Original(CompilerPass[int, int]):
@@ -1117,25 +1021,28 @@ def test_registering_verification_pass_with_global_pass_name_collision(
         def run_pass(self, ir: int) -> int:
             return ir
 
+    _ = _Original
+
     with pytest.raises(PassRegistrationError, match="already registered"):
 
         @register_verification(
-            FrozenBox, "tests.adv.name_collision", "Verification reusing the name."
+            fresh_box_ir,
+            "tests.adv.name_collision",
+            "Verification reusing the name.",
         )
-        class _Verifier(AnalysisVisitablePass[FrozenBox]):
-            def visit_frozen_box(self, node: FrozenBox) -> None:
+        class _Verifier(AnalysisVisitablePass[object]):
+            def visit_unknown(self, node: object) -> None:
                 _ = node
 
 
 def test_verification_pass_crashing_mid_run_does_not_stop_pipeline(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that one crashing verifier does not prevent the rest from running."""
-    _ = isolated_registry
-    build_crashing_pass("tests.adv.mid_crash", "mid-crash-boom")
-    build_error_pass("tests.adv.after_crash", "follow-up-error")
+    build_crashing_pass("tests.adv.mid_crash", "mid-crash-boom", fresh_box_ir)
+    build_error_pass("tests.adv.after_crash", "follow-up-error", fresh_box_ir)
 
-    report = VerificationAnalysis().run(FrozenBox(0))
+    report = VerificationAnalysis().run(fresh_box_ir(0))
 
     error_messages = [diagnostic.message_text for diagnostic in report.errors()]
     assert any("mid-crash-boom" in message for message in error_messages)
@@ -1143,38 +1050,39 @@ def test_verification_pass_crashing_mid_run_does_not_stop_pipeline(
 
 
 def test_registry_mutation_between_passes_does_not_invalidate_cached_results(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test the documented "registration is module-load-time" caching contract.
 
     Once an analysis result is cached for a given IR identity, appending to
     the registry does not retroactively invalidate that cache. This pins
-    the contract — callers who need the invalidation must clear the cache
+    the contract - callers who need the invalidation must clear the cache
     themselves.
     """
-    _ = isolated_registry
 
     @register_verification(
-        FrozenBox, "tests.adv.registry_mutation.initial", "Initial pass."
+        fresh_box_ir, "tests.adv.registry_mutation.initial", "Initial pass."
     )
-    class _Initial(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _Initial(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
     _ = _Initial
 
-    manager = AnalysisManager[FrozenBox]()
-    ir = FrozenBox(0)
+    manager: AnalysisManager[object] = AnalysisManager()
+    ir = fresh_box_ir(0)
 
     first_report = manager.get(VerificationAnalysis, ir)
     assert first_report.has_errors() is False
 
     # Late registration: adds a NEW failing pass after caching has begun.
     @register_verification(
-        FrozenBox, "tests.adv.registry_mutation.late", "Late-added failing pass."
+        fresh_box_ir,
+        "tests.adv.registry_mutation.late",
+        "Late-added failing pass.",
     )
-    class _Late(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _Late(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, "late-failure")
 
@@ -1191,41 +1099,32 @@ def test_registry_mutation_between_passes_does_not_invalidate_cached_results(
 
 
 def test_verification_report_format_uses_validation_report_protocol(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that the returned report formats via the standard ValidationReport API."""
-    _ = isolated_registry
-    build_error_pass("tests.adv.format", "format-me")
+    build_error_pass("tests.adv.format", "format-me", fresh_box_ir)
 
-    report = run_verification(FrozenBox(0))
+    report = run_verification(fresh_box_ir(0))
 
     assert "format-me" in report.format()
     assert "[ERROR]" in report.format()
 
 
-def test_verify_report_supports_partial_equal_like_other_reports(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_verify_report_supports_partial_equal_like_other_reports() -> None:
     """Test that the report returned by verify still satisfies the report contract."""
-    _ = isolated_registry
 
     class _IR(VerifiableMixin, Visitable):
         def __init__(self, value: int) -> None:
             self.value = value
 
-        @classmethod
-        def get_visit_method_suffix(cls) -> str:
-            return "ir"
-
     @register_verification(
         _IR, "tests.adv.partial_equal_report", "Verify report PartialEqual contract."
     )
-    class _Check(AnalysisVisitablePass[_IR]):
-        def visit_ir(self, node: _IR) -> None:
+    class _Check(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
     _ = _Check
-
     report = _IR(0).verify()
 
     assert isinstance(report, ValidationReport)
@@ -1236,18 +1135,15 @@ def test_verify_report_supports_partial_equal_like_other_reports(
 # ---------------------------------------------------------------------------
 
 
-def test_verify_override_inherited_through_intermediate_class_satisfies_check(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_verify_override_inherited_through_intermediate_class_satisfies_check() -> None:
     """Test that an override on a parent class lets a leaf class instantiate."""
-    _ = isolated_registry
-    sentinel = ValidationReport()
+    sentinel: ValidationReport[object] = ValidationReport()
 
     class _ParentWithOverride(VerifiableMixin):
         def __init__(self, value: int) -> None:
             self.value = value
 
-        def verify(self) -> ValidationReport:
+        def verify(self) -> ValidationReport[object]:
             return sentinel
 
     class _Leaf(_ParentWithOverride):
@@ -1259,32 +1155,24 @@ def test_verify_override_inherited_through_intermediate_class_satisfies_check(
     assert instance.verify() is sentinel
 
 
-def test_verifiable_subclass_with_passes_from_base_satisfies_check(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_verifiable_subclass_with_passes_from_base_satisfies_check() -> None:
     """Test that passes registered on a base class let a subclass instantiate."""
 
     class _BaseIR(VerifiableMixin, Visitable):
         def __init__(self, value: int) -> None:
             self.value = value
 
-        @classmethod
-        def get_visit_method_suffix(cls) -> str:
-            return "base_ir"
-
     @register_verification(
         _BaseIR, "tests.vm_new.base_passes_inherited", "Pass on the base class."
     )
-    class _BaseCheck(AnalysisVisitablePass[_BaseIR]):
-        def visit_base_ir(self, node: _BaseIR) -> None:
+    class _BaseCheck(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
 
     _ = _BaseCheck
 
     class _SubIR(_BaseIR):
         pass
-
-    _ = isolated_registry
 
     instance = _SubIR(2)
 
@@ -1297,24 +1185,24 @@ def test_verifiable_subclass_with_passes_from_base_satisfies_check(
 
 
 def test_auto_verify_is_silent_when_no_passes_registered_for_ir_type(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that auto-verify is a no-op when the registry has no entries for the IR."""
-    _ = isolated_registry
 
     @register_pass(
         "tests.av.empty_registry", "Identity pass with no registered verifiers."
     )
-    class _IdentityPass(CompilerPass[FrozenBox, FrozenBox]):
-        def get_noop_output(self, ir: FrozenBox) -> FrozenBox:
+    class _IdentityPass(CompilerPass[object, object]):
+        def get_noop_output(self, ir: object) -> object:
             return ir
 
-        def run_pass(self, ir: FrozenBox) -> FrozenBox:
+        def run_pass(self, ir: object) -> object:
             return ir
 
-    result = _IdentityPass().execute(FrozenBox(7))
+    input_ir = fresh_box_ir(7)
+    result = _IdentityPass().execute(input_ir)
 
-    assert result.output == FrozenBox(7)
+    assert result.output == input_ir
     assert result.changed is False
 
 
@@ -1323,15 +1211,12 @@ def test_auto_verify_is_silent_when_no_passes_registered_for_ir_type(
 # ---------------------------------------------------------------------------
 
 
-def test_verification_analysis_cache_does_not_pin_ir(
-    isolated_registry: VerificationRegistry,
-) -> None:
+def test_verification_analysis_cache_does_not_pin_ir(fresh_box_ir: type) -> None:
     """Test that caching a verification report does not block IR garbage collection."""
-    _ = isolated_registry
-    build_clean_pass("tests.cache.gc.clean")
+    build_clean_pass("tests.cache.gc.clean", fresh_box_ir)
 
-    manager = AnalysisManager[FrozenBox]()
-    ir = FrozenBox(11)
+    manager: AnalysisManager[object] = AnalysisManager()
+    ir = fresh_box_ir(11)
     weak_ir = weakref.ref(ir)
 
     manager.get(VerificationAnalysis, ir)
@@ -1353,7 +1238,7 @@ def test_pass_validation_error_carries_optional_report() -> None:
     bare = PassValidationError("bare-message")
     assert bare.report is None
 
-    diagnostics_report = ValidationReport()
+    diagnostics_report: ValidationReport[object] = ValidationReport()
     with_report = PassValidationError("with-message", report=diagnostics_report)
     assert with_report.report is diagnostics_report
 
@@ -1369,51 +1254,52 @@ def test_pass_validation_error_remains_runtime_error_subclass() -> None:
 
 
 def test_pass_manager_surfaces_auto_verify_failure_to_caller(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that auto-verify failures propagate out of PassManager.run."""
-    _ = isolated_registry
-    build_error_pass("tests.pm_av.failure", "auto-verify-blocked")
+    build_error_pass("tests.pm_av.failure", "auto-verify-blocked", fresh_box_ir)
 
     @register_pass("tests.pm_av.identity", "Identity pass under auto-verify.")
-    class _IdentityPass(CompilerPass[FrozenBox, FrozenBox]):
-        def get_noop_output(self, ir: FrozenBox) -> FrozenBox:
+    class _IdentityPass(CompilerPass[object, object]):
+        def get_noop_output(self, ir: object) -> object:
             return ir
 
-        def run_pass(self, ir: FrozenBox) -> FrozenBox:
+        def run_pass(self, ir: object) -> object:
             return ir
 
-    manager = PassManager[FrozenBox]()
+    manager = PassManager[object]()
     manager.add_pass(_IdentityPass())
 
     with pytest.raises(PassValidationError, match="auto-verify-blocked"):
-        manager.run(FrozenBox(0))
+        manager.run(fresh_box_ir(0))
 
 
 def test_pass_manager_continues_when_pass_disables_auto_verify(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that disabling auto-verify on a pass class lets the pipeline complete."""
-    _ = isolated_registry
-    build_error_pass("tests.pm_av.continues_failure", "would-block-if-enabled")
+    build_error_pass(
+        "tests.pm_av.continues_failure", "would-block-if-enabled", fresh_box_ir
+    )
 
     @register_pass(
         "tests.pm_av.identity_no_verify", "Identity pass with auto-verify disabled."
     )
-    class _IdentityPass(CompilerPass[FrozenBox, FrozenBox]):
+    class _IdentityPass(CompilerPass[object, object]):
         _auto_verify = False
 
-        def get_noop_output(self, ir: FrozenBox) -> FrozenBox:
+        def get_noop_output(self, ir: object) -> object:
             return ir
 
-        def run_pass(self, ir: FrozenBox) -> FrozenBox:
+        def run_pass(self, ir: object) -> object:
             return ir
 
-    manager = PassManager[FrozenBox]()
+    manager = PassManager[object]()
     manager.add_pass(_IdentityPass())
-    result = manager.run(FrozenBox(0))
+    input_ir = fresh_box_ir(0)
+    result = manager.run(input_ir)
 
-    assert result.output == FrozenBox(0)
+    assert result.output == input_ir
 
 
 # ---------------------------------------------------------------------------
@@ -1430,22 +1316,22 @@ def test_verification_module_exports_expected_public_symbols() -> None:
 
 
 def test_diagnostic_note_construction_round_trips_through_report(
-    isolated_registry: VerificationRegistry,
+    fresh_box_ir: type,
 ) -> None:
     """Test that the Note message attached by a verifier surfaces in the report."""
-    _ = isolated_registry
 
     @register_verification(
-        FrozenBox, "tests.sanity.note_round_trip", "Emit a structured Note diagnostic."
+        fresh_box_ir,
+        "tests.sanity.note_round_trip",
+        "Emit a structured Note diagnostic.",
     )
-    class _NotePass(AnalysisVisitablePass[FrozenBox]):
-        def visit_frozen_box(self, node: FrozenBox) -> None:
+    class _NotePass(AnalysisVisitablePass[object]):
+        def visit_unknown(self, node: object) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, Note("structured-message"))
 
     _ = _NotePass
-
-    report = run_verification(FrozenBox(0))
+    report = run_verification(fresh_box_ir(0))
 
     assert any(
         diagnostic.message_text == "structured-message"

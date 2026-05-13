@@ -17,6 +17,12 @@ This module is the integration point between the trait-level
 ``VerifiableMixin`` and the pass-infrastructure-level
 ``CompilerPass.validate_input`` / ``validate_output`` hooks. The trait module
 imports from here lazily (function-local) to avoid a module-load cycle.
+
+:class:`VerificationRegistry` is a class-level singleton: all state lives in
+``ClassVar`` attributes, there are no instances, and every method is a
+classmethod. The class itself is the registry. Tests achieve isolation by
+using a fresh IR type per test (see ``tests/pass_infrastructure/test_verification.py``
+for the pattern), so registrations naturally do not collide across tests.
 """
 
 __all__ = [
@@ -27,7 +33,7 @@ __all__ = [
 ]
 
 from threading import Lock
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, ClassVar, TypeVar
 
 from fhy_core.diagnostic import ValidationReport
 from fhy_core.logger import get_logger
@@ -42,13 +48,16 @@ _PassClassT = TypeVar("_PassClassT", bound=type[CompilerPass[Any, Any]])
 
 
 class VerificationRegistry:
-    """Type-keyed registry of verification pass classes.
+    """Class-level singleton registry of verification pass classes.
 
     A verification pass is a ``CompilerPass`` subclass that reports
     structural-invariant diagnostics about an IR. Registrations are keyed by
     IR ``type``; lookups walk the IR's MRO so subclasses inherit
-    base-class verification passes. The process-wide singleton accessor
-    is :meth:`global_`.
+    base-class verification passes.
+
+    All state lives in ``ClassVar`` attributes; there are no instances. The
+    class itself is the registry, mirroring the
+    :attr:`CompilerPass._registry` pattern used elsewhere in the package.
 
     Registration is module-load-time by convention. Late registration after
     cached :class:`VerificationAnalysis` results exist does not retroactively
@@ -56,51 +65,12 @@ class VerificationRegistry:
     :class:`AnalysisManager` themselves.
     """
 
-    _passes_by_type: dict[type, list[type[CompilerPass[Any, Any]]]]
-    _lock: Lock
-
-    def __init__(self) -> None:
-        """Construct an empty registry.
-
-        Most code uses :meth:`global_`; constructing standalone registries
-        is reserved for tests that need an isolated instance.
-        """
-        self._passes_by_type = {}
-        self._lock = Lock()
+    _passes_by_type: ClassVar[dict[type, list[type[CompilerPass[Any, Any]]]]] = {}
+    _lock: ClassVar[Lock] = Lock()
 
     @classmethod
-    def global_(cls) -> "VerificationRegistry":
-        """Return the process-wide verification registry singleton.
-
-        Returns:
-            The shared registry used by :func:`register_verification`,
-            :func:`run_verification`, and auto-verification.
-
-        """
-        return _global_registry
-
-    @classmethod
-    def set_global(cls, registry: "VerificationRegistry") -> "VerificationRegistry":
-        """Swap the process-wide verification registry singleton.
-
-        Intended for tests that need to isolate registrations across cases.
-        Production code should not call this.
-
-        Args:
-            registry: The new global registry instance.
-
-        Returns:
-            The previous global registry, so the caller can restore it
-            (e.g., in a pytest fixture teardown).
-
-        """
-        global _global_registry  # noqa: PLW0603 - documented test injection seam
-        previous = _global_registry
-        _global_registry = registry
-        return previous
-
     def register(
-        self,
+        cls,
         ir_type: type,
         pass_class: type[CompilerPass[Any, Any]],
     ) -> None:
@@ -127,8 +97,8 @@ class VerificationRegistry:
                 f"Cannot register non-CompilerPass type as a verification pass: "
                 f"{getattr(pass_class, '__qualname__', repr(pass_class))}."
             )
-        with self._lock:
-            bucket = self._passes_by_type.setdefault(ir_type, [])
+        with cls._lock:
+            bucket = cls._passes_by_type.setdefault(ir_type, [])
             if pass_class in bucket:
                 _LOGGER.debug(
                     "verification pass %s already registered for %s (idempotent)",
@@ -143,7 +113,8 @@ class VerificationRegistry:
                 ir_type.__qualname__,
             )
 
-    def get_passes_for(self, ir_type: type) -> tuple[type[CompilerPass[Any, Any]], ...]:
+    @classmethod
+    def get_passes_for(cls, ir_type: type) -> tuple[type[CompilerPass[Any, Any]], ...]:
         """Return all verification passes applicable to ``ir_type``.
 
         Walks ``ir_type.__mro__`` and concatenates the lists in MRO order,
@@ -158,21 +129,16 @@ class VerificationRegistry:
             A tuple of pass classes in execution order, possibly empty.
 
         """
-        with self._lock:
+        with cls._lock:
             seen: set[type[CompilerPass[Any, Any]]] = set()
             ordered: list[type[CompilerPass[Any, Any]]] = []
-            # MRO order is most-derived first; walk it in reverse so that
-            # base-class passes appear in the output before subclass passes.
-            for cls in reversed(ir_type.__mro__):
-                for pass_cls in self._passes_by_type.get(cls, ()):
+            for mro_cls in reversed(ir_type.__mro__):
+                for pass_cls in cls._passes_by_type.get(mro_cls, ()):
                     if pass_cls in seen:
                         continue
                     seen.add(pass_cls)
                     ordered.append(pass_cls)
             return tuple(ordered)
-
-
-_global_registry: VerificationRegistry = VerificationRegistry()
 
 
 class VerificationAnalysis(Analysis[Any, ValidationReport[Any]]):
@@ -201,7 +167,7 @@ class VerificationAnalysis(Analysis[Any, ValidationReport[Any]]):
             The aggregated :class:`ValidationReport`.
 
         """
-        pass_classes = VerificationRegistry.global_().get_passes_for(type(ir))
+        pass_classes = VerificationRegistry.get_passes_for(type(ir))
         if not pass_classes:
             return ValidationReport()
         manager: ValidationManager[Any] = ValidationManager()
@@ -222,7 +188,7 @@ def register_verification(
     - added to the global pass registry under ``name`` and ``description``
       (so :meth:`CompilerPass.create` and :meth:`get_registered_passes` see
       it like any other pass),
-    - added to the global :class:`VerificationRegistry` under ``ir_type``,
+    - added to the :class:`VerificationRegistry` under ``ir_type``,
     - stamped with ``_auto_verify = False`` so the pass does not
       recursively trigger auto-verification on its own input/output during
       a verification run.
@@ -254,7 +220,7 @@ def register_verification(
             )
         pass_class._auto_verify = False
         register_pass(name, description)(pass_class)
-        VerificationRegistry.global_().register(ir_type, pass_class)
+        VerificationRegistry.register(ir_type, pass_class)
         return pass_class
 
     return _decorator
