@@ -2,7 +2,7 @@
 
 `ValidationManager` is a sibling to `PassManager`: it sequences validation
 passes and aggregates every diagnostic they emit into a single
-`ValidationReport`.
+`ValidationReport[PassRunRecord]`.
 
 Unlike `PassManager`, which is fail-fast and shaped around `IR -> IR`
 transformations, `ValidationManager`:
@@ -16,109 +16,32 @@ transformations, `ValidationManager`:
 """
 
 __all__ = [
-    "ValidationFailedError",
     "ValidationManager",
-    "ValidationReport",
 ]
 
-from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
-from fhy_core.diagnostic import Note
-from fhy_core.error import register_error
+from fhy_core.diagnostic import (
+    Diagnostic,
+    DiagnosticLevel,
+    Note,
+    ValidationReport,
+)
 from fhy_core.identifier import Identifier
-from fhy_core.trait import FrozenMixin, HasIdentifierMixin, PartialEqualMixin
+from fhy_core.logger import get_logger
+from fhy_core.trait import HasIdentifierMixin
 
 from .core import (
     CompilerPass,
-    DiagnosticLevel,
-    PassDiagnostic,
     PassExecutionError,
     PassValidationError,
     PreservedAnalyses,
 )
 from .manager import PassRunRecord
 
+_LOGGER = get_logger(__name__)
+
 _IRType = TypeVar("_IRType")
-
-
-@register_error
-class ValidationFailedError(RuntimeError):
-    """Raised when a validation pipeline produced one or more ERROR diagnostics.
-
-    The associated :class:`ValidationReport` is available via
-    :attr:`ValidationFailedError.report`. The exception message is the
-    formatted report, so uncaught exceptions print a useful summary.
-    """
-
-    _report: "ValidationReport"
-
-    def __init__(self, report: "ValidationReport") -> None:
-        super().__init__(report.format())
-        self._report = report
-
-    @property
-    def report(self) -> "ValidationReport":
-        """Return the validation report that triggered this failure."""
-        return self._report
-
-
-@dataclass(frozen=True)
-class ValidationReport(FrozenMixin, PartialEqualMixin):
-    """Aggregated result of running a :class:`ValidationManager` pipeline.
-
-    Attributes:
-        diagnostics: Every diagnostic, across every validator, in the order
-            each validator emitted them.
-        records: Per-validator execution metadata, one entry per registered
-            validator, in pipeline order.
-
-    """
-
-    diagnostics: tuple[PassDiagnostic, ...] = field(default_factory=tuple)
-    records: tuple[PassRunRecord, ...] = field(default_factory=tuple)
-
-    def errors(self) -> tuple[PassDiagnostic, ...]:
-        """Return only the ERROR-level diagnostics."""
-        return tuple(d for d in self.diagnostics if d.level == DiagnosticLevel.ERROR)
-
-    def warnings(self) -> tuple[PassDiagnostic, ...]:
-        """Return only the WARNING-level diagnostics."""
-        return tuple(d for d in self.diagnostics if d.level == DiagnosticLevel.WARNING)
-
-    def infos(self) -> tuple[PassDiagnostic, ...]:
-        """Return only the INFO-level diagnostics."""
-        return tuple(d for d in self.diagnostics if d.level == DiagnosticLevel.INFO)
-
-    def has_errors(self) -> bool:
-        """Return True when at least one ERROR-level diagnostic is present."""
-        return any(d.level == DiagnosticLevel.ERROR for d in self.diagnostics)
-
-    def format(self) -> str:
-        """Return a human-readable rendering of every diagnostic.
-
-        Each diagnostic is rendered on its own line as
-        ``[LEVEL] <pass-name>: <message>``; optional detail is appended on an
-        indented continuation line.
-        """
-        if not self.diagnostics:
-            return "No validation diagnostics."
-        lines: list[str] = []
-        for diagnostic in self.diagnostics:
-            prefix = f"[{diagnostic.level.value.upper()}] {diagnostic.pass_name}: "
-            body = diagnostic.message_text
-            lines.append(f"{prefix}{body}")
-            if diagnostic.detail:
-                lines.append(f"    detail: {diagnostic.detail}")
-        return "\n".join(lines)
-
-    def raise_if_failed(self) -> None:
-        """Raise :class:`ValidationFailedError` if any ERROR diagnostics exist.
-
-        No-op when the report contains only warnings/infos or nothing at all.
-        """
-        if self.has_errors():
-            raise ValidationFailedError(self)
 
 
 class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
@@ -171,7 +94,7 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
         """
         self._validators.append(validator)
 
-    def validate(self, ir: _IRType) -> ValidationReport:
+    def validate(self, ir: _IRType) -> ValidationReport[PassRunRecord]:
         """Run every validator and return the aggregated report.
 
         Args:
@@ -180,11 +103,18 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
         Returns:
             A :class:`ValidationReport` whose ``diagnostics`` are the
             concatenation of every validator's diagnostics, in pipeline
-            order.
+            order, and whose ``records`` carry one
+            :class:`PassRunRecord` per validator.
 
         """
-        aggregated_diagnostics: list[PassDiagnostic] = []
+        aggregated_diagnostics: list[Diagnostic] = []
         records: list[PassRunRecord] = []
+
+        _LOGGER.info(
+            "%s starting (validators=%d)",
+            self._name,
+            len(self._validators),
+        )
 
         for validator in self._validators:
             diagnostics = self._run_single_validator(validator, ir)
@@ -198,15 +128,33 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
                 )
             )
 
-        return ValidationReport(
+        report: ValidationReport[PassRunRecord] = ValidationReport(
             diagnostics=tuple(aggregated_diagnostics),
             records=tuple(records),
         )
+        error_count = 0
+        warning_count = 0
+        info_count = 0
+        for diagnostic in report.diagnostics:
+            if diagnostic.level == DiagnosticLevel.ERROR:
+                error_count += 1
+            elif diagnostic.level == DiagnosticLevel.WARNING:
+                warning_count += 1
+            elif diagnostic.level == DiagnosticLevel.INFO:
+                info_count += 1
+        _LOGGER.info(
+            "%s finished (errors=%d, warnings=%d, infos=%d)",
+            self._name,
+            error_count,
+            warning_count,
+            info_count,
+        )
+        return report
 
     @staticmethod
     def _run_single_validator(
         validator: CompilerPass[_IRType, Any], ir: _IRType
-    ) -> tuple[PassDiagnostic, ...]:
+    ) -> tuple[Diagnostic, ...]:
         """Execute one validator and return its captured diagnostics.
 
         Never raises. Converts an unexpected validator crash into a synthetic
@@ -221,26 +169,38 @@ class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
                 return captured
             # Infrastructure raised without emitting an ERROR; synthesize one
             # so the report accurately reflects the failure.
+            type(validator)._get_pass_logger().error(
+                "raised %s without reporting a diagnostic: %s",
+                type(exc).__name__,
+                exc,
+                exc_info=exc,
+            )
             return (
                 *captured,
-                PassDiagnostic(
+                Diagnostic(
                     level=DiagnosticLevel.ERROR,
                     message=Note(
                         f'Validator "{validator.get_pass_name()}" raised '
                         f'"{type(exc).__name__}" without reporting a diagnostic: '
                         f"{exc}"
                     ),
-                    pass_name=validator.get_pass_name(),
+                    source=validator.get_pass_name(),
                 ),
             )
         except Exception as exc:  # noqa: BLE001 - defense-in-depth
             captured = tuple(validator.diagnostics)
-            synthesized = PassDiagnostic(
+            type(validator)._get_pass_logger().error(
+                "validator crashed with %s: %s",
+                type(exc).__name__,
+                exc,
+                exc_info=exc,
+            )
+            synthesized = Diagnostic(
                 level=DiagnosticLevel.ERROR,
                 message=Note(
                     f'Validator "{validator.get_pass_name()}" crashed with '
                     f"{type(exc).__name__}: {exc}"
                 ),
-                pass_name=validator.get_pass_name(),
+                source=validator.get_pass_name(),
             )
             return (*captured, synthesized)

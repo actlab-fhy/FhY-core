@@ -42,11 +42,19 @@ from ..expression.core import Expression, LiteralExpression
 from ..expression.pprint import pformat_expression
 from ..identifier import Identifier
 from ..lattice import Lattice
+from ..logger import get_logger
 from ..utils import StrEnum, format_comma_separated_list
+
+_LOGGER = get_logger(__name__)
 
 
 class _DispatchedStructuralEquivalence(
-    WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC
+    WrappedFamilySerializable,
+    FrozenMixin,
+    StructuralEquivalenceMixin,
+    ABC,
+    freeze_on_init=True,
+    freeze_on_init_deep=True,
 ):
     """Shared base for ``Type`` and ``DataType``.
 
@@ -178,7 +186,7 @@ def _define_integer_data_type_lattice() -> Lattice[CoreDataType]:
     lattice.add_order(CoreDataType.UINT16, CoreDataType.INT32)
     lattice.add_order(CoreDataType.UINT32, CoreDataType.INT64)
 
-    lattice.verify()
+    lattice.verify().raise_if_failed()
     return lattice
 
 
@@ -201,7 +209,7 @@ def _define_float_complex_data_type_lattice() -> Lattice[CoreDataType]:
     lattice.add_order(CoreDataType.COMPLEX32, CoreDataType.COMPLEX64)
     lattice.add_order(CoreDataType.COMPLEX64, CoreDataType.COMPLEX128)
 
-    lattice.verify()
+    lattice.verify().raise_if_failed()
     return lattice
 
 
@@ -260,16 +268,20 @@ def promote_core_data_types(
         core_data_type1 in _INTEGER_DATA_TYPES
         and core_data_type2 in _INTEGER_DATA_TYPES
     ):
-        return _INTEGER_DATA_TYPE_LATTICE.get_least_upper_bound(
+        result = _INTEGER_DATA_TYPE_LATTICE.get_least_upper_bound(
             core_data_type1, core_data_type2
         )
+        _LOGGER.debug("(%s, %s) -> %s", core_data_type1, core_data_type2, result)
+        return result
     elif (
         core_data_type1 in _FLOAT_COMPLEX_DATA_TYPES
         and core_data_type2 in _FLOAT_COMPLEX_DATA_TYPES
     ):
-        return _FLOAT_COMPLEX_DATA_TYPE_LATTICE.get_least_upper_bound(
+        result = _FLOAT_COMPLEX_DATA_TYPE_LATTICE.get_least_upper_bound(
             core_data_type1, core_data_type2
         )
+        _LOGGER.debug("(%s, %s) -> %s", core_data_type1, core_data_type2, result)
+        return result
     else:
         raise FhYCoreTypeError(
             "Unsupported primitive data type promotion: "
@@ -337,27 +349,40 @@ def resolve_literal_core_data_type(
 
     if isinstance(literal, float):
         if core_data_type in _FLOAT_COMPLEX_DATA_TYPES:
-            return _resolve_to_concrete_float_complex(core_data_type)
+            result = _resolve_to_concrete_float_complex(core_data_type)
+            _LOGGER.debug(
+                "resolve_literal_core_data_type: (%r, %s) -> %s",
+                literal,
+                core_data_type,
+                result,
+            )
+            return result
         raise FhYCoreTypeError(
             f"Float literal {literal} is incompatible with {core_data_type}."
         )
 
     if literal >= 0 and core_data_type in _UINT_DATA_TYPES:
         minimal_uint = _get_smallest_uint_core_data_type(literal)
-        return promote_core_data_types(
+        result = promote_core_data_types(
             minimal_uint,
             CoreDataType.UINT8
             if core_data_type == CoreDataType.UINT
             else core_data_type,
         )
+        _LOGGER.debug("(%r, %s) -> %s", literal, core_data_type, result)
+        return result
     if core_data_type in _SIGNED_INT_DATA_TYPES:
         minimal_int = _get_smallest_int_core_data_type(literal)
-        return promote_core_data_types(
+        result = promote_core_data_types(
             minimal_int,
             CoreDataType.INT8 if core_data_type == CoreDataType.INT else core_data_type,
         )
+        _LOGGER.debug("(%r, %s) -> %s", literal, core_data_type, result)
+        return result
     if core_data_type in _FLOAT_COMPLEX_DATA_TYPES:
-        return _resolve_to_concrete_float_complex(core_data_type)
+        result = _resolve_to_concrete_float_complex(core_data_type)
+        _LOGGER.debug("(%r, %s) -> %s", literal, core_data_type, result)
+        return result
 
     raise FhYCoreTypeError(f"Literal {literal} is incompatible with {core_data_type}.")
 
@@ -381,7 +406,6 @@ class PrimitiveDataType(DataType):
     def __init__(self, core_data_type: CoreDataType) -> None:
         super().__init__()
         self._core_data_type = core_data_type
-        self.freeze(deep=True)
 
     @property
     def core_data_type(self) -> CoreDataType:
@@ -442,7 +466,6 @@ class TemplateDataType(DataType):
         super().__init__()
         self._data_type = data_type
         self._widths = tuple(widths) if widths is not None else None
-        self.freeze(deep=True)
 
     @property
     def data_type(self) -> Identifier:
@@ -495,11 +518,13 @@ def promote_primitive_data_types(
     Raises:
         FhYCoreTypeError: If the promotion is not supported.
     """
-    return PrimitiveDataType(
+    result = PrimitiveDataType(
         promote_core_data_types(
             primitive_data_type1.core_data_type, primitive_data_type2.core_data_type
         )
     )
+    _LOGGER.debug("(%s, %s) -> %s", primitive_data_type1, primitive_data_type2, result)
+    return result
 
 
 class _NumericalTypeData(TypedDict):
@@ -576,7 +601,6 @@ class NumericalType(Type):
         super().__init__()
         self._data_type = data_type
         self._shape = tuple(shape) if shape is not None else ()
-        self.freeze(deep=True)
 
     @property
     def data_type(self) -> DataType:
@@ -673,7 +697,6 @@ class IndexType(Type):
         self._lower_bound = lower_bound
         self._upper_bound = upper_bound
         self._stride = stride if stride is not None else LiteralExpression(1)
-        self.freeze(deep=True)
 
     @property
     def lower_bound(self) -> Expression:

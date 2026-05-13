@@ -1,11 +1,19 @@
 # mypy: disable-error-code="misc"
 """Tests the basic compiler traits."""
 
-from dataclasses import FrozenInstanceError, dataclass
+from dataclasses import dataclass
 
 import pytest
 from frozendict import frozendict
 
+from fhy_core import DATA_DOMAIN
+from fhy_core.diagnostic import (
+    Diagnostic,
+    DiagnosticLevel,
+    Note,
+    ValidationFailedError,
+    ValidationReport,
+)
 from fhy_core.identifier import Identifier
 from fhy_core.provenance import Provenance
 from fhy_core.trait import (
@@ -28,7 +36,6 @@ from fhy_core.trait import (
     PartialOrderable,
     PartialOrderableMixin,
     VerifiableMixin,
-    VerificationError,
 )
 
 from .conftest import mock_identifier
@@ -165,10 +172,19 @@ class _VerifiedFrozenInternedValue(InternedMixin[str], FrozenMixin, VerifiableMi
     def get_intern_key(self) -> str:
         return self.key
 
-    def verify(self) -> None:
+    def verify(self) -> ValidationReport[object]:
         type(self).verify_calls += 1
         if not self.key:
-            raise VerificationError("missing intern key")
+            return ValidationReport(
+                diagnostics=(
+                    Diagnostic(
+                        level=DiagnosticLevel.ERROR,
+                        message=Note("missing intern key"),
+                        source=type(self).__name__,
+                    ),
+                )
+            )
+        return ValidationReport()
 
 
 class _RaisingInternedValue(InternedMixin[str]):
@@ -371,7 +387,7 @@ def test_native_frozen_dataclass_runtime_protocol() -> None:
 def test_native_frozen_dataclass_blocks_mutation() -> None:
     """Test native frozen dataclass blocks direct attribute mutation."""
     point = _AutoFrozenPoint(1, 2)
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(FrozenMutationError):
         point.x = 4
 
 
@@ -395,8 +411,26 @@ def test_native_frozen_dataclass_with_frozen_mixin() -> None:
     assert isinstance(point, Frozen)
     assert point.is_frozen is True
     point.assert_frozen()
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(FrozenMutationError):
         setattr(point, "x", 4)
+
+
+def test_frozen_dataclass_mixin_delete_raises_frozen_mutation_error() -> None:
+    """Test `@dataclass(frozen=True) + FrozenMixin` raises on deletion."""
+
+    @dataclass(frozen=True)
+    class _NativeFrozenDeletable(FrozenMixin):
+        value: int
+
+    instance = _NativeFrozenDeletable(1)
+    with pytest.raises(FrozenMutationError):
+        delattr(instance, "value")
+
+
+def test_frozen_dataclass_mixin_raises_consistent_error_for_existing_classes() -> None:
+    """Test fhy_core's own frozen-dataclass classes raise `FrozenMutationError`."""
+    with pytest.raises(FrozenMutationError):
+        DATA_DOMAIN.description = "rewritten"
 
 
 def test_interned_runtime_protocol() -> None:
@@ -450,7 +484,7 @@ def test_interned_finalize_propagates_verification_errors() -> None:
     _VerifiedFrozenInternedValue.clear_interned_registry()
     _VerifiedFrozenInternedValue.verify_calls = 0
 
-    with pytest.raises(VerificationError):
+    with pytest.raises(ValidationFailedError):
         _VerifiedFrozenInternedValue("", [1])
 
     assert _VerifiedFrozenInternedValue.get_interned("") is None
@@ -464,3 +498,144 @@ def test_interned_does_not_register_when_init_raises() -> None:
         _RaisingInternedValue("boom")
 
     assert _RaisingInternedValue.get_interned("boom") is None
+
+
+# =============================================================================
+# FrozenMixin auto-freeze on init
+# =============================================================================
+
+
+class _AutoFreezeShallow(FrozenMixin, freeze_on_init=True):
+    def __init__(self, value: int, items: list[int]) -> None:
+        self.value = value
+        self.items = items
+
+
+class _AutoFreezeDeep(FrozenMixin, freeze_on_init=True, freeze_on_init_deep=True):
+    def __init__(self, value: int, items: list[int]) -> None:
+        self.value = value
+        self.items = items
+
+
+class _NoAutoFreeze(FrozenMixin, freeze_on_init=False):
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+
+class _BaseWithAutoFreeze(FrozenMixin, freeze_on_init=True, freeze_on_init_deep=True):
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+
+class _InheritsAutoFreezePolicy(_BaseWithAutoFreeze):
+    def __init__(self, value: int, extra: int) -> None:
+        super().__init__(value)
+        self.extra = extra
+
+
+class _OverridesPolicyToFalse(_BaseWithAutoFreeze, freeze_on_init=False):
+    def __init__(self, value: int) -> None:
+        super().__init__(value)
+
+
+class _InheritsWithoutOwnInit(_BaseWithAutoFreeze):
+    pass
+
+
+class _ExplicitSelfFreeze(FrozenMixin, freeze_on_init=True, freeze_on_init_deep=True):
+    def __init__(self, value: int) -> None:
+        self.value = value
+        self.freeze(deep=True)
+
+
+class _RaisingAutoFreeze(FrozenMixin, freeze_on_init=True):
+    def __init__(self, value: int) -> None:
+        self.value = value
+        raise RuntimeError("init failed")
+
+
+@dataclass(frozen=True)
+class _AutoFreezeDataclass(FrozenMixin, freeze_on_init=True, freeze_on_init_deep=True):
+    value: int
+    items: list[int]
+
+
+def test_frozen_on_init_freezes_instance_when_kwarg_true() -> None:
+    """Test ``freeze_on_init=True`` makes new instances frozen by construction."""
+    instance = _AutoFreezeShallow(1, [2, 3])
+
+    assert instance.is_frozen is True
+
+
+def test_frozen_on_init_does_not_freeze_when_kwarg_false() -> None:
+    """Test ``freeze_on_init=False`` leaves new instances mutable."""
+    instance = _NoAutoFreeze(1)
+
+    assert instance.is_frozen is False
+    instance.value = 99
+    assert instance.value == 99
+
+
+def test_frozen_on_init_deep_replaces_mutable_containers() -> None:
+    """Test ``freeze_on_init_deep=True`` deep-freezes nested mutable state."""
+    instance = _AutoFreezeDeep(1, [2, 3])
+
+    assert isinstance(instance.items, tuple)
+
+
+def test_frozen_on_init_shallow_does_not_recurse_into_lists() -> None:
+    """Test the default shallow freeze leaves nested lists mutable."""
+    instance = _AutoFreezeShallow(1, [2, 3])
+
+    assert isinstance(instance.items, list)
+
+
+def test_frozen_on_init_policy_is_inherited_by_subclass() -> None:
+    """Test a subclass inherits its parent's ``freeze_on_init`` policy."""
+    instance = _InheritsAutoFreezePolicy(1, 2)
+
+    assert instance.is_frozen is True
+
+
+def test_frozen_on_init_policy_can_be_overridden_to_false() -> None:
+    """Test a subclass can set ``freeze_on_init=False`` to opt out."""
+    instance = _OverridesPolicyToFalse(1)
+
+    assert instance.is_frozen is False
+
+
+def test_frozen_on_init_with_subclass_without_own_init_still_freezes() -> None:
+    """Test a subclass that inherits ``__init__`` still ends up frozen."""
+    instance = _InheritsWithoutOwnInit(1)
+
+    assert instance.is_frozen is True
+
+
+def test_frozen_on_init_idempotent_when_init_explicitly_freezes() -> None:
+    """Test the wrap is a no-op when ``__init__`` already calls ``freeze``."""
+    instance = _ExplicitSelfFreeze(1)
+
+    assert instance.is_frozen is True
+
+
+def test_frozen_on_init_does_not_freeze_when_init_raises() -> None:
+    """Test a failure inside ``__init__`` does not trigger the auto-freeze."""
+    with pytest.raises(RuntimeError, match="init failed"):
+        _RaisingAutoFreeze(1)
+
+
+def test_frozen_on_init_supports_frozen_dataclass_with_deep_state() -> None:
+    """Test ``freeze_on_init_deep=True`` works on a `@dataclass(frozen=True)`."""
+    instance = _AutoFreezeDataclass(1, [2, 3])
+
+    assert instance.is_frozen is True
+    assert isinstance(instance.items, tuple)
+
+
+def test_frozen_on_init_subclass_can_mutate_state_before_outermost_freeze() -> None:
+    """Test nested ``__init__`` chains let the most-derived class set state."""
+    instance = _InheritsAutoFreezePolicy(value=1, extra=2)
+
+    assert instance.is_frozen is True
+    assert instance.value == 1
+    assert instance.extra == 2

@@ -1,25 +1,28 @@
 """Tests the validation pipeline infrastructure."""
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from fhy_core.diagnostic import Note
+from fhy_core.diagnostic import (
+    Diagnostic,
+    DiagnosticLevel,
+    Note,
+    ValidationFailedError,
+    ValidationReport,
+)
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     AnalysisVisitablePass,
     CompilerPass,
-    DiagnosticLevel,
-    PassDiagnostic,
     PassExecutionError,
     PassRunRecord,
     PassValidationError,
     PreservedAnalyses,
-    ValidationFailedError,
     ValidationManager,
-    ValidationReport,
     register_pass,
 )
 from fhy_core.trait import FrozenMixin, PartialEqual, Visitable
@@ -89,7 +92,7 @@ def _clean_validator(pass_name: str) -> CompilerPass[ValueBox, None]:
 
 def test_empty_report_has_no_errors_and_formats_placeholder_text() -> None:
     """Test that an empty report has no errors and formats a placeholder string."""
-    report = ValidationReport()
+    report: ValidationReport[object] = ValidationReport()
     assert report.diagnostics == ()
     assert report.records == ()
     assert report.has_errors() is False
@@ -102,30 +105,30 @@ def test_empty_report_has_no_errors_and_formats_placeholder_text() -> None:
 def test_report_filters_diagnostics_by_level() -> None:
     """Test that errors(), warnings(), and infos() partition diagnostics by level."""
     diagnostics = (
-        PassDiagnostic(DiagnosticLevel.ERROR, Note("bad"), "v1"),
-        PassDiagnostic(DiagnosticLevel.WARNING, Note("meh"), "v2"),
-        PassDiagnostic(DiagnosticLevel.INFO, Note("fyi"), "v3"),
-        PassDiagnostic(DiagnosticLevel.ERROR, Note("worse"), "v4"),
+        Diagnostic(DiagnosticLevel.ERROR, Note("bad"), "v1"),
+        Diagnostic(DiagnosticLevel.WARNING, Note("meh"), "v2"),
+        Diagnostic(DiagnosticLevel.INFO, Note("fyi"), "v3"),
+        Diagnostic(DiagnosticLevel.ERROR, Note("worse"), "v4"),
     )
-    report = ValidationReport(diagnostics=diagnostics)
+    report: ValidationReport[object] = ValidationReport(diagnostics=diagnostics)
 
     assert report.has_errors() is True
-    assert tuple(d.pass_name for d in report.errors()) == ("v1", "v4")
-    assert tuple(d.pass_name for d in report.warnings()) == ("v2",)
-    assert tuple(d.pass_name for d in report.infos()) == ("v3",)
+    assert tuple(d.source for d in report.errors()) == ("v1", "v4")
+    assert tuple(d.source for d in report.warnings()) == ("v2",)
+    assert tuple(d.source for d in report.infos()) == ("v3",)
 
 
 def test_report_format_renders_level_pass_and_detail() -> None:
     """Test that format() includes level, pass name, message, and indented detail."""
-    report = ValidationReport(
+    report: ValidationReport[object] = ValidationReport(
         diagnostics=(
-            PassDiagnostic(
+            Diagnostic(
                 DiagnosticLevel.ERROR,
                 Note("missing return"),
                 "shape.check",
                 detail="function foo() has no return statement",
             ),
-            PassDiagnostic(DiagnosticLevel.WARNING, Note("unused"), "scope.check"),
+            Diagnostic(DiagnosticLevel.WARNING, Note("unused"), "scope.check"),
         )
     )
 
@@ -138,24 +141,24 @@ def test_report_format_renders_level_pass_and_detail() -> None:
 
 def test_raise_if_failed_is_noop_when_only_warnings_present() -> None:
     """Test that raise_if_failed does not raise when no ERROR diagnostics exist."""
-    report = ValidationReport(
-        diagnostics=(PassDiagnostic(DiagnosticLevel.WARNING, Note("ok-ish"), "v"),)
+    report: ValidationReport[object] = ValidationReport(
+        diagnostics=(Diagnostic(DiagnosticLevel.WARNING, Note("ok-ish"), "v"),)
     )
     report.raise_if_failed()
 
 
 def test_raise_if_failed_is_noop_when_only_infos_present() -> None:
     """Test that raise_if_failed does not raise on INFO-only reports."""
-    report = ValidationReport(
-        diagnostics=(PassDiagnostic(DiagnosticLevel.INFO, Note("fyi"), "v"),)
+    report: ValidationReport[object] = ValidationReport(
+        diagnostics=(Diagnostic(DiagnosticLevel.INFO, Note("fyi"), "v"),)
     )
     report.raise_if_failed()
 
 
 def test_raise_if_failed_raises_validation_failed_with_formatted_message() -> None:
     """Test that raise_if_failed raises ValidationFailedError on errors."""
-    report = ValidationReport(
-        diagnostics=(PassDiagnostic(DiagnosticLevel.ERROR, Note("boom"), "v.explode"),)
+    report: ValidationReport[object] = ValidationReport(
+        diagnostics=(Diagnostic(DiagnosticLevel.ERROR, Note("boom"), "v.explode"),)
     )
 
     with pytest.raises(ValidationFailedError) as excinfo:
@@ -241,7 +244,7 @@ def test_validation_manager_wraps_validator_crash_as_error_diagnostic() -> None:
 
     assert report.has_errors() is True
     assert len(report.records) == 2
-    crasher_errors = [d for d in report.errors() if d.pass_name == "tests.vm.crasher"]
+    crasher_errors = [d for d in report.errors() if d.source == "tests.vm.crasher"]
     assert crasher_errors, "Crasher should have produced an ERROR diagnostic"
     assert "internal boom" in crasher_errors[-1].message_text
     assert any(d.message_text == "still-runs" for d in report.errors())
@@ -443,7 +446,7 @@ def test_validation_manager_attributes_each_diagnostic_to_emitting_validator() -
 
     report = manager.validate(ValueBox(0))
 
-    assert [(d.pass_name, d.message_text) for d in report.diagnostics] == [
+    assert [(d.source, d.message_text) for d in report.diagnostics] == [
         ("tests.vm.attr.first", "first-msg"),
         ("tests.vm.attr.second", "second-msg"),
     ]
@@ -502,3 +505,39 @@ def test_validation_manager_preserves_multiple_diagnostics_from_single_validator
     ]
     assert len(report.records) == 1
     assert len(report.records[0].diagnostics) == 4
+
+
+def test_validator_crash_logs_error_with_exc_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that an unexpected validator crash logs ERROR with exc_info attached."""
+
+    @register_pass(
+        "tests.validation.logging.crash", "Validator that crashes for logging."
+    )
+    class CrashingValidator(CompilerPass[ValueBox, None]):
+        def get_noop_output(self, ir: ValueBox) -> None:
+            return None
+
+        def run_pass(self, ir: ValueBox) -> None:
+            raise RuntimeError("validator went sideways")
+
+    manager = ValidationManager[ValueBox]()
+    manager.add(CrashingValidator())
+
+    with caplog.at_level(
+        logging.DEBUG,
+        logger="fhy_core.pass_infrastructure.core.tests.validation.logging.crash",
+    ):
+        manager.validate(ValueBox(0))
+
+    error_records = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.ERROR
+        and "validator went sideways" in record.getMessage()
+    ]
+    assert error_records, "expected ERROR record for validator crash"
+    assert any(record.exc_info is not None for record in error_records), (
+        "expected exc_info on at least one ERROR record"
+    )

@@ -51,6 +51,7 @@ from fhy_core.expression import (
     replace_identifiers,
 )
 from fhy_core.identifier import Identifier
+from fhy_core.logger import get_logger
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -65,6 +66,8 @@ from fhy_core.serialization import (
 from fhy_core.symbol_type import SymbolType
 from fhy_core.trait import Equal, FrozenMixin, Orderable, StructuralEquivalenceMixin
 from fhy_core.utils import Self, format_comma_separated_list, is_strict_int
+
+_LOGGER = get_logger(__name__)
 
 _T = TypeVar("_T")
 
@@ -105,7 +108,13 @@ def _is_valid_param_assignment_data(
 
 
 @register_serializable(type_id="param_assignment")
-class ParamAssignment(Serializable, FrozenMixin, Generic[_T]):
+class ParamAssignment(
+    Serializable,
+    FrozenMixin,
+    Generic[_T],
+    freeze_on_init=True,
+    freeze_on_init_deep=True,
+):
     """Immutable binding of a parameter definition to a concrete value."""
 
     _param: "Param[_T]"
@@ -129,7 +138,6 @@ class ParamAssignment(Serializable, FrozenMixin, Generic[_T]):
 
         object.__setattr__(self, "_param", param)
         object.__setattr__(self, "_value", value)
-        self.freeze(deep=True)
 
     @property
     def param(self) -> "Param[_T]":
@@ -176,7 +184,13 @@ class ParamAssignment(Serializable, FrozenMixin, Generic[_T]):
 
 
 class Param(
-    WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC, Generic[_T]
+    WrappedFamilySerializable,
+    FrozenMixin,
+    StructuralEquivalenceMixin,
+    ABC,
+    Generic[_T],
+    freeze_on_init=True,
+    freeze_on_init_deep=True,
 ):
     """Abstract base class for constrained parameters."""
 
@@ -186,7 +200,6 @@ class Param(
     def __init__(self, *, name: Identifier | None = None) -> None:
         self._variable = name or Identifier("param")
         self._constraints = ()
-        self.freeze(deep=True)
 
     @property
     def variable(self) -> Identifier:
@@ -318,9 +331,18 @@ class Param(
             existing.is_structurally_equivalent(constraint)
             for existing in self._constraints
         ):
+            _LOGGER.debug(
+                "deduplicated structurally-equivalent constraint on %r",
+                self._variable,
+            )
             return self
         new_param = self._clone()
         object.__setattr__(new_param, "_constraints", self._constraints + (constraint,))
+        _LOGGER.debug(
+            "added constraint on %r (total=%d)",
+            self._variable,
+            len(new_param._constraints),
+        )
         return new_param
 
     def add_constraints(self, constraints: Collection[Constraint]) -> Self:
@@ -558,6 +580,12 @@ class NumericParam(Param[_T], ABC, Generic[_T]):
                 other_constraint_expression,
                 {constrained_variable: self.get_symbol_type()},
             )
+            if implies is None:
+                _LOGGER.debug(
+                    "Z3 returned unknown; treating as subset=True (self=%r, other=%r)",
+                    self._variable,
+                    other._variable,
+                )
             # Z3 `unknown` is treated as "not a counterexample": when the
             # solver cannot decide implication, the subset relation is
             # reported as True rather than as a proof of failure.

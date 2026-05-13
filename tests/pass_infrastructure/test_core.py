@@ -4,11 +4,10 @@ import logging
 
 import pytest
 
-from fhy_core.diagnostic import Note
+from fhy_core.diagnostic import DiagnosticLevel, Note
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     CompilerPass,
-    DiagnosticLevel,
     PassExecutionError,
     PassInfo,
     PassRegistrationError,
@@ -690,3 +689,65 @@ def test_report_logging_does_not_disturb_diagnostics_list(
         result = AdditivePass().execute(0)
 
     assert any(d.message_text == "additive-msg" for d in result.diagnostics)
+
+
+def test_guarded_exception_attaches_exc_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that the synthesized ERROR log from a crashing run_pass carries exc_info."""
+
+    @register_pass(
+        "tests.log.guarded_exc_info", "Verifies exc_info travels with guarded errors."
+    )
+    class CrashingPass(CompilerPass[int, int]):
+        def get_noop_output(self, ir: int) -> int:
+            return ir
+
+        def run_pass(self, ir: int) -> int:
+            raise ValueError("boom")
+
+    with caplog.at_level(logging.DEBUG, logger=_PASS_INFRA_LOGGER_PREFIX):
+        with pytest.raises(PassExecutionError):
+            CrashingPass().execute(0)
+
+    error_records = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.ERROR and "boom" in record.getMessage()
+    ]
+    assert error_records, "expected ERROR record for crash"
+    assert any(record.exc_info is not None for record in error_records), (
+        "expected exc_info on at least one ERROR record"
+    )
+
+
+def test_execute_emits_lifecycle_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test CompilerPass.execute emits DEBUG entry/exit records."""
+
+    @register_pass("tests.log.lifecycle", "Verifies execute lifecycle DEBUGs.")
+    class LifecyclePass(CompilerPass[int, int]):
+        def get_noop_output(self, ir: int) -> int:
+            return ir
+
+        def run_pass(self, ir: int) -> int:
+            return ir + 1
+
+    with caplog.at_level(logging.DEBUG, logger=_PASS_INFRA_LOGGER_PREFIX):
+        LifecyclePass().execute(0)
+
+    entry = [
+        record
+        for record in caplog.records
+        if "entering" in record.getMessage()
+        and record.name.endswith("tests.log.lifecycle")
+    ]
+    finished = [
+        record
+        for record in caplog.records
+        if "finished" in record.getMessage()
+        and record.name.endswith("tests.log.lifecycle")
+    ]
+    assert entry, "expected entry DEBUG record"
+    assert finished, "expected finished DEBUG record"

@@ -26,7 +26,7 @@ from abc import ABC
 from dataclasses import dataclass
 from enum import Enum, auto
 from functools import singledispatch
-from typing import Any, TypedDict, TypeGuard
+from typing import Any, TypeAlias, TypedDict, TypeGuard
 
 from frozendict import frozendict
 
@@ -46,6 +46,8 @@ from fhy_core.trait import (
     VisitableMixin,
 )
 from fhy_core.utils import invert_frozen_dict
+
+LiteralType: TypeAlias = str | float | int | bool
 
 
 def _build_right_folded_binary_tree(
@@ -565,8 +567,6 @@ class IdentifierExpression(Expression):
             )
         return cls(Identifier.deserialize_from_dict(data["identifier"]))
 
-
-LiteralType = str | float | int | bool
 
 _INTEGER_LITERAL_PATTERN = re.compile(r"\d+")
 _FLOAT_LITERAL_PATTERN = re.compile(r"\d+\.\d*|\.\d+")
