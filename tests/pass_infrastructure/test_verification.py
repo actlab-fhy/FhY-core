@@ -1294,8 +1294,14 @@ def test_pass_manager_surfaces_auto_verify_failure_to_caller(
     manager = PassManager[object]()
     manager.add_pass(_IdentityPass())
 
-    with pytest.raises(PassValidationError, match="auto-verify-blocked"):
+    with pytest.raises(PassValidationError) as excinfo:
         manager.run(fresh_box_ir(0))
+
+    assert excinfo.value.report is not None
+    assert any(
+        diagnostic.message_text == "auto-verify-blocked"
+        for diagnostic in excinfo.value.report.errors()
+    )
 
 
 def test_pass_manager_continues_when_pass_disables_auto_verify(

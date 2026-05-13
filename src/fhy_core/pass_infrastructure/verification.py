@@ -212,9 +212,9 @@ def register_verification(
                 f"Cannot register non-CompilerPass type as a verification pass: "
                 f"{getattr(pass_class, '__qualname__', repr(pass_class))}."
             )
-        pass_class._auto_verify = False
         register_pass(name, description)(pass_class)
         VerificationRegistry.register(ir_type, pass_class)
+        pass_class._auto_verify = False
         return pass_class
 
     return _decorator

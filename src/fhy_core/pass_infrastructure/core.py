@@ -357,14 +357,12 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
         report = self.get_analysis(VerificationAnalysis, ir)
         if not report.has_errors():
             return
-        errors = report.errors()
-        formatted_report = report.format()
         summary = (
             f'Pass "{self.get_pass_name()}" {phase_summary}: '
-            f"verification reported {len(errors)} error(s)."
+            f"verification reported {len(report.errors())} error(s)."
         )
-        self.report(DiagnosticLevel.ERROR, summary, detail=formatted_report)
-        raise PassValidationError(f"{summary}\n{formatted_report}", report=report)
+        self.report(DiagnosticLevel.ERROR, summary, detail=report.format())
+        raise PassValidationError(summary, report=report)
 
     def _guarded_should_run(self, ir: _PassInputT) -> bool:
         try:
