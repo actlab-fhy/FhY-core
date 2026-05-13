@@ -2,12 +2,20 @@
 
 __all__ = ["Lattice"]
 
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
-from fhy_core.trait.verifiable import VerifiableMixin, VerificationError
+from fhy_core.diagnostic import (
+    Diagnostic,
+    DiagnosticLevel,
+    Note,
+    ValidationReport,
+)
+from fhy_core.trait.verifiable import VerifiableMixin
 from fhy_core.utils.poset import PartiallyOrderedSet
 
 T = TypeVar("T")
+
+_LATTICE_VERIFY_SOURCE = "fhy_core.lattice.Lattice.verify"
 
 
 class Lattice(Generic[T], VerifiableMixin):
@@ -56,28 +64,42 @@ class Lattice(Generic[T], VerifiableMixin):
                     return False
         return True
 
-    def verify(self) -> None:
+    def verify(self) -> ValidationReport[Any]:
         """Verify that this structure is a valid lattice.
 
         A valid lattice is a poset in which every pair of elements has both a
         unique greatest lower bound (meet) and a unique least upper bound
         (join).
 
-        Raises:
-            VerificationError: If some pair of elements lacks a unique meet or
-                a unique join.
+        Returns:
+            A :class:`ValidationReport` containing one ERROR diagnostic for
+            every pair of elements that lacks a unique meet or a unique
+            join. The report is empty when the structure is a valid
+            lattice.
 
         """
+        diagnostics: list[Diagnostic] = []
+
+        def append_error(message: str) -> None:
+            diagnostics.append(
+                Diagnostic(
+                    level=DiagnosticLevel.ERROR,
+                    message=Note(message),
+                    source=_LATTICE_VERIFY_SOURCE,
+                )
+            )
+
         for x in self._poset:
             for y in self._poset:
                 if self.get_meet(x, y) is None:
-                    raise VerificationError(
+                    append_error(
                         f"Lattice has no unique meet for elements {x!r} and {y!r}."
                     )
                 if self.get_join(x, y) is None:
-                    raise VerificationError(
+                    append_error(
                         f"Lattice has no unique join for elements {x!r} and {y!r}."
                     )
+        return ValidationReport(diagnostics=tuple(diagnostics))
 
     def has_meet(self, x: T, y: T) -> bool:
         """Check if two elements have a greatest lower bound.

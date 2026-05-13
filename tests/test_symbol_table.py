@@ -2,6 +2,7 @@
 
 import pytest
 
+from fhy_core.diagnostic import ValidationFailedError
 from fhy_core.serialization import DeserializationDictStructureError
 from fhy_core.symbol_table import (
     FunctionKeyword,
@@ -17,7 +18,6 @@ from fhy_core.trait import (
     Frozen,
     StructuralEquivalence,
     Verifiable,
-    VerificationError,
 )
 from fhy_core.types import CoreDataType, NumericalType, PrimitiveDataType, TypeQualifier
 
@@ -427,42 +427,50 @@ def test_symbol_table_is_structural_equivalence_runtime_protocol() -> None:
     assert isinstance(symbol_table, StructuralEquivalence)
 
 
-def test_symbol_table_verify_returns_none_for_valid_table() -> None:
-    """Test symbol table verification passes for valid tables."""
+def test_symbol_table_verify_returns_clean_report_for_valid_table() -> None:
+    """Test symbol table verification returns an empty report for valid tables."""
     symbol_table = SymbolTable()
     namespace = mock_identifier("namespace", 0)
     symbol_name = mock_identifier("symbol", 1)
     symbol_table.add_namespace(namespace)
     symbol_table.add_symbol(namespace, symbol_name, ImportSymbolTableFrame(symbol_name))
 
-    symbol_table.verify()
+    report = symbol_table.verify()
+
+    assert report.has_errors() is False
 
 
-def test_symbol_table_verify_raises_for_missing_parent_namespace() -> None:
-    """Test verification raises when a parent namespace is missing."""
+def test_symbol_table_verify_reports_error_for_missing_parent_namespace() -> None:
+    """Test verification reports an error when a parent namespace is missing."""
     symbol_table = SymbolTable()
     child_namespace = mock_identifier("child", 0)
     missing_parent = mock_identifier("missing_parent", 1)
     symbol_table.add_namespace(child_namespace, missing_parent)
 
-    with pytest.raises(VerificationError):
-        symbol_table.verify()
+    report = symbol_table.verify()
+
+    assert report.has_errors() is True
+    with pytest.raises(ValidationFailedError):
+        report.raise_if_failed()
 
 
-def test_symbol_table_verify_raises_for_cyclic_parent_chain() -> None:
-    """Test verification raises when parent namespace graph has a cycle."""
+def test_symbol_table_verify_reports_error_for_cyclic_parent_chain() -> None:
+    """Test verification reports an error when parent namespace graph has a cycle."""
     symbol_table = SymbolTable()
     namespace_a = mock_identifier("namespace_a", 0)
     namespace_b = mock_identifier("namespace_b", 1)
     symbol_table.add_namespace(namespace_a, namespace_b)
     symbol_table.add_namespace(namespace_b, namespace_a)
 
-    with pytest.raises(VerificationError):
-        symbol_table.verify()
+    report = symbol_table.verify()
+
+    assert report.has_errors() is True
+    with pytest.raises(ValidationFailedError):
+        report.raise_if_failed()
 
 
-def test_symbol_table_verify_raises_for_mismatched_frame_identifier() -> None:
-    """Test verification raises when symbol key and frame identifier mismatch."""
+def test_symbol_table_verify_reports_error_for_mismatched_frame_identifier() -> None:
+    """Test verification reports an error when symbol key differs from frame name."""
     symbol_table = SymbolTable()
     namespace = mock_identifier("namespace", 0)
     symbol_name = mock_identifier("symbol", 1)
@@ -470,8 +478,11 @@ def test_symbol_table_verify_raises_for_mismatched_frame_identifier() -> None:
     symbol_table.add_namespace(namespace)
     symbol_table.add_symbol(namespace, symbol_name, ImportSymbolTableFrame(frame_name))
 
-    with pytest.raises(VerificationError):
-        symbol_table.verify()
+    report = symbol_table.verify()
+
+    assert report.has_errors() is True
+    with pytest.raises(ValidationFailedError):
+        report.raise_if_failed()
 
 
 def test_symbol_table_canonicalize_reports_change_when_order_unsorted() -> None:

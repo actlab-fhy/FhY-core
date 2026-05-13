@@ -186,7 +186,7 @@ def _define_integer_data_type_lattice() -> Lattice[CoreDataType]:
     lattice.add_order(CoreDataType.UINT16, CoreDataType.INT32)
     lattice.add_order(CoreDataType.UINT32, CoreDataType.INT64)
 
-    lattice.verify()
+    lattice.verify().raise_if_failed()
     return lattice
 
 
@@ -209,7 +209,7 @@ def _define_float_complex_data_type_lattice() -> Lattice[CoreDataType]:
     lattice.add_order(CoreDataType.COMPLEX32, CoreDataType.COMPLEX64)
     lattice.add_order(CoreDataType.COMPLEX64, CoreDataType.COMPLEX128)
 
-    lattice.verify()
+    lattice.verify().raise_if_failed()
     return lattice
 
 

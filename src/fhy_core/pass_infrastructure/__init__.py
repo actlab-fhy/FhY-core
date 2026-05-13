@@ -3,8 +3,6 @@
 from .core import (
     AnalysisVisitablePass,
     CompilerPass,
-    DiagnosticLevel,
-    PassDiagnostic,
     PassExecutionError,
     PassInfo,
     PassRegistrationError,
@@ -25,10 +23,12 @@ from .manager import (
     PassManagerResult,
     PassRunRecord,
 )
-from .validation import (
-    ValidationFailedError,
-    ValidationManager,
-    ValidationReport,
+from .validation import ValidationManager
+from .verification import (
+    VerificationAnalysis,
+    VerificationRegistry,
+    register_verification,
+    run_verification,
 )
 
 __all__ = [
@@ -36,11 +36,9 @@ __all__ = [
     "AnalysisManager",
     "AnalysisVisitablePass",
     "CompilerPass",
-    "DiagnosticLevel",
     "FixpointGroupRecord",
     "FixpointIterationRecord",
     "FixpointPassGroup",
-    "PassDiagnostic",
     "PassExecutionError",
     "PassInfo",
     "PassManager",
@@ -51,9 +49,11 @@ __all__ = [
     "PassValidationError",
     "PreservedAnalyses",
     "TraversalOrder",
-    "ValidationFailedError",
     "ValidationManager",
-    "ValidationReport",
+    "VerificationAnalysis",
+    "VerificationRegistry",
     "VisitablePass",
     "register_pass",
+    "register_verification",
+    "run_verification",
 ]

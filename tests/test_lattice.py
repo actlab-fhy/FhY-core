@@ -4,8 +4,9 @@ from typing import Any
 
 import pytest
 
+from fhy_core.diagnostic import ValidationFailedError
 from fhy_core.lattice import Lattice
-from fhy_core.trait.verifiable import Verifiable, VerificationError
+from fhy_core.trait.verifiable import Verifiable
 
 
 @pytest.fixture()
@@ -354,20 +355,27 @@ def test_verify_passes_on_valid_lattice(
 
 def test_verify_passes_on_empty_lattice(empty_lattice: Lattice[Any]) -> None:
     """Test that an empty lattice is a valid lattice."""
-    empty_lattice.verify()
+    report = empty_lattice.verify()
+    assert report.has_errors() is False
 
 
-def test_verify_raises_when_join_is_not_unique(
+def test_verify_reports_error_when_join_is_not_unique(
     non_lattice_with_bottom_and_multiple_upper_bounds: Lattice[int],
 ) -> None:
-    """Test that a non-lattice verify() raises a VerificationError."""
-    with pytest.raises(VerificationError):
-        non_lattice_with_bottom_and_multiple_upper_bounds.verify()
+    """Test that a non-lattice surfaces a ValidationFailedError via raise_if_failed."""
+    report = non_lattice_with_bottom_and_multiple_upper_bounds.verify()
+
+    assert report.has_errors() is True
+    with pytest.raises(ValidationFailedError):
+        report.raise_if_failed()
 
 
-def test_verify_raises_when_meet_is_not_defined(
+def test_verify_reports_error_when_meet_is_not_defined(
     basic_non_lattice_poset: Lattice[int],
 ) -> None:
-    """Test that a non-lattice raises a VerificationError when verifying."""
-    with pytest.raises(VerificationError):
-        basic_non_lattice_poset.verify()
+    """Test that a non-lattice surfaces a ValidationFailedError via raise_if_failed."""
+    report = basic_non_lattice_poset.verify()
+
+    assert report.has_errors() is True
+    with pytest.raises(ValidationFailedError):
+        report.raise_if_failed()

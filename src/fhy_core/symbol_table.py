@@ -13,8 +13,14 @@ __all__ = [
 from abc import ABC
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Generic, NoReturn, TypedDict, TypeGuard, TypeVar
+from typing import Any, Generic, NoReturn, TypedDict, TypeGuard, TypeVar
 
+from fhy_core.diagnostic import (
+    Diagnostic,
+    DiagnosticLevel,
+    Note,
+    ValidationReport,
+)
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
 from fhy_core.serialization import (
@@ -31,7 +37,6 @@ from fhy_core.trait import (
     FrozenMixin,
     StructuralEquivalenceMixin,
     VerifiableMixin,
-    VerificationError,
 )
 
 from .error import register_error
@@ -39,6 +44,8 @@ from .types import Type, TypeQualifier
 from .utils import StrEnum
 
 _LOGGER = get_logger(__name__)
+
+_SYMBOL_TABLE_VERIFY_SOURCE = "fhy_core.symbol_table.SymbolTable.verify"
 
 
 def _identifier_sort_key(identifier: Identifier) -> tuple[int, str]:
@@ -442,39 +449,51 @@ class SymbolTable(
         _LOGGER.debug("changed=%s", changed)
         return changed
 
-    def verify(self) -> None:
+    def verify(self) -> ValidationReport[Any]:
         """Verify structural invariants of the symbol table.
 
-        Raises:
-            VerificationError: If structural verification fails.
+        Returns:
+            A :class:`ValidationReport` containing one ERROR diagnostic for
+            every violated invariant. The report is empty when every
+            invariant holds.
 
         """
+        diagnostics: list[Diagnostic] = []
+
+        def append_error(message: str) -> None:
+            diagnostics.append(
+                Diagnostic(
+                    level=DiagnosticLevel.ERROR,
+                    message=Note(message),
+                    source=_SYMBOL_TABLE_VERIFY_SOURCE,
+                )
+            )
+
         for namespace_name in self._parent_namespace:
             if namespace_name not in self._table:
-                raise VerificationError(
+                append_error(
                     f"Parent namespace mapping references missing namespace "
                     f"{namespace_name}."
                 )
 
         for namespace_name, parent_namespace_name in self._parent_namespace.items():
             if parent_namespace_name not in self._table:
-                raise VerificationError(
+                append_error(
                     f"Namespace {namespace_name} references missing parent "
                     f"namespace {parent_namespace_name}."
                 )
             if namespace_name == parent_namespace_name:
-                raise VerificationError(
-                    f"Namespace {namespace_name} cannot be its own parent."
-                )
+                append_error(f"Namespace {namespace_name} cannot be its own parent.")
 
         for namespace_name in self._table:
             seen_namespace_names = set()
             current_namespace_name: Identifier | None = namespace_name
             while current_namespace_name is not None:
                 if current_namespace_name in seen_namespace_names:
-                    raise VerificationError(
+                    append_error(
                         f"Namespace {namespace_name} has a cyclic parent chain."
                     )
+                    break
                 seen_namespace_names.add(current_namespace_name)
                 current_namespace_name = self._parent_namespace.get(
                     current_namespace_name
@@ -483,10 +502,12 @@ class SymbolTable(
         for namespace_name, namespace_symbols in self._table.items():
             for symbol_name, frame in namespace_symbols.items():
                 if frame.name != symbol_name:
-                    raise VerificationError(
-                        f"Namespace {namespace_name} has symbol entry {symbol_name} "
-                        f"whose frame name is {frame.name}."
+                    append_error(
+                        f"Namespace {namespace_name} has symbol entry "
+                        f"{symbol_name} whose frame name is {frame.name}."
                     )
+
+        return ValidationReport(diagnostics=tuple(diagnostics))
 
     def is_structurally_equivalent(self, other: object) -> bool:
         if not isinstance(other, SymbolTable):
