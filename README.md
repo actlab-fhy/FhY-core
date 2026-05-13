@@ -18,10 +18,12 @@ Each utility is independently usable and designed to be extended downstream.
 | Parameter                                | Real, integer, ordinal, categorical, and permutation parameter types with constraint attachment and sampling/validation hooks for tuning and search. |
 | Types                                    | Extensible type system with open dispatchers for binding, substitution, unification, and structural equivalence; expression type checking layered on top. |
 | Symbol Table                             | Lexically nested symbol table with scope push/pop, shadowing rules, and lookup utilities for compiler frontends. |
-| Pass Infrastructure                      | `CompilerPass`, `VisitablePass`, and `register_pass` for authoring IR passes, with `PassDiagnostic`/`DiagnosticLevel` reporting and preserved-analysis tracking. |
-| Pass Manager                             | `PassManager` sequences transformations and returns `PassManagerResult`/`PassRunRecord`; `FixpointPassGroup` drives until-fixpoint iteration. |
+| Pass Infrastructure                      | `CompilerPass`, `VisitablePass`, `AnalysisVisitablePass`, and `register_pass` for authoring IR passes, with `PassInfo`/`PassResult`/`PreservedAnalyses` metadata and `PassRegistrationError`/`PassValidationError`/`PassExecutionError` for typed failures. |
+| Pass Manager                             | `PassManager` sequences transformations and returns `PassManagerResult`/`PassRunRecord`; `FixpointPassGroup` drives until-fixpoint iteration with `FixpointGroupRecord`/`FixpointIterationRecord` traces. |
 | Analysis Manager                         | `Analysis`/`AnalysisVisitablePass` with `AnalysisManager` for caching analysis results and invalidating them across pass runs. |
-| Validation Manager                       | `ValidationManager` runs every validator against the IR (collect-all, never fail-fast) and returns a `ValidationReport`; `ValidationFailedError` surfaces ERROR diagnostics. |
+| Validation Manager                       | `ValidationManager` runs every validator against the IR (collect-all, never fail-fast) and aggregates their diagnostics into a single report. |
+| Verification Registry                    | `VerificationRegistry` + `@register_verification` declare per-class verification passes (walking MRO); `run_verification` and `VerificationAnalysis` execute them, backing the default `VerifiableMixin.verify`. |
+| Diagnostic                               | `Diagnostic`/`DiagnosticLevel` and `Note`/`NoteKind` for structured compiler messages, plus `ValidationReport` for aggregating them and `ValidationFailedError` (raised by `ValidationReport.raise_if_failed`) for surfacing ERROR diagnostics as exceptions. |
 | Serializable Trait                       | `Serializable`/`WrappedFamilySerializable` with dict, JSON, and binary formats plus registered type IDs for round-tripping IR and metadata. |
 | Value Domain                             | `ValueDomain` open registry classifying the kind of value an IR operation handles (e.g., `DATA_DOMAIN`, `ADDRESS_DOMAIN`), with optional parent hierarchies. |
 | Op Attribute                             | `OpAttribute` open registry of semantic tags attachable to compiler operations (`COMMUTATIVE`, `ASSOCIATIVE`, `PURE`, `ELEMENTWISE`). |
@@ -30,10 +32,10 @@ Each utility is independently usable and designed to be extended downstream.
 | Compiler Traits - Type Carrier           | `HasType` mixin for nodes that carry an explicit, queryable type. |
 | Compiler Traits - Operands               | `HasOperands` mixin exposing a uniform operand interface for operation/expression nodes. |
 | Compiler Traits - Results                | `HasResults` mixin for operation-like nodes producing one or more named results. |
-| Compiler Traits - Freezing               | `Frozen`/`FrozenMixin` for runtime and dataclass immutability with explicit freeze semantics. |
+| Compiler Traits - Freezing               | `Frozen` protocol and `FrozenMixin` for runtime and dataclass immutability, with optional auto-freeze-on-init, deep-freeze, and `FrozenMutationError`/`FrozenValidationError` for mutation and verification failures. |
 | Compiler Traits - Equality               | `PartialEqual`/`Equal` for dataclass-aware structural equality. |
 | Compiler Traits - Ordering               | `PartialOrderable`/`Orderable` for dataclass-aware ordering and comparison. |
-| Compiler Traits - Verification           | `Verifiable` + `VerificationError` for structural invariant checks on IR nodes. |
+| Compiler Traits - Verification           | `Verifiable` protocol and `VerifiableMixin` for self-verifying IR nodes; `verify()` returns the aggregated diagnostic report from passes registered via `register_verification`. `VerificationError` remains for fail-fast structural-correctness helpers. |
 | Compiler Traits - Folding                | `Foldable` hook for constant-fold-style evaluation of nodes. |
 | Compiler Traits - Canonicalization       | `Canonicalizable` hook for local rewrites into a canonical form. |
 | Compiler Traits - Structural Equivalence | `StructuralEquivalence` for shape- and value-level comparisons between IR fragments. |
