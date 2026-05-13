@@ -172,7 +172,7 @@ class _VerifiedFrozenInternedValue(InternedMixin[str], FrozenMixin, VerifiableMi
     def get_intern_key(self) -> str:
         return self.key
 
-    def verify(self) -> ValidationReport:
+    def verify(self) -> ValidationReport[object]:
         type(self).verify_calls += 1
         if not self.key:
             return ValidationReport(

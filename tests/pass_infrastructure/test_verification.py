@@ -42,8 +42,22 @@ from fhy_core.trait import FrozenMixin, VerifiableMixin, Visitable
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class _BoxIR(FrozenMixin, Visitable):
+    """Base IR class used by per-test fixtures.
+
+    Each test's fixture produces a fresh subclass for registry isolation;
+    test code annotates against this base type to access ``value``.
+    """
+
+    value: int = 0
+
+    def __post_init__(self) -> None:
+        self.freeze()
+
+
 @pytest.fixture
-def fresh_box_ir() -> type:
+def fresh_box_ir() -> type[_BoxIR]:
     """Return a fresh frozen, visitable IR class scoped to this test.
 
     Using a per-test class makes the verification registry naturally
@@ -52,37 +66,31 @@ def fresh_box_ir() -> type:
     """
 
     @dataclass
-    class _BoxIR(FrozenMixin, Visitable):
-        value: int
+    class _FreshBoxIR(_BoxIR):
+        pass
 
-        def __post_init__(self) -> None:
-            self.freeze()
-
-    return _BoxIR
+    return _FreshBoxIR
 
 
 @pytest.fixture
-def other_box_ir() -> type:
+def other_box_ir() -> type[_BoxIR]:
     """Return a second frozen IR class disjoint from ``fresh_box_ir``."""
 
     @dataclass
-    class _OtherBoxIR(FrozenMixin, Visitable):
-        value: int
-
-        def __post_init__(self) -> None:
-            self.freeze()
+    class _OtherBoxIR(_BoxIR):
+        pass
 
     return _OtherBoxIR
 
 
 def build_clean_pass(
     pass_name: str, ir_type: type
-) -> type[AnalysisVisitablePass[object]]:
+) -> type[AnalysisVisitablePass[Visitable]]:
     """Return a verification pass class that reports nothing."""
 
     @register_verification(ir_type, pass_name, f"Clean verification pass: {pass_name}")
-    class _CleanPass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _CleanPass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     return _CleanPass
@@ -90,14 +98,14 @@ def build_clean_pass(
 
 def build_error_pass(
     pass_name: str, message: str, ir_type: type
-) -> type[AnalysisVisitablePass[object]]:
+) -> type[AnalysisVisitablePass[Visitable]]:
     """Return a verification pass that emits one ERROR diagnostic."""
 
     @register_verification(
         ir_type, pass_name, f"Error-emitting verification pass: {pass_name}"
     )
-    class _ErrorPass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _ErrorPass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, message)
 
@@ -106,14 +114,14 @@ def build_error_pass(
 
 def build_warning_pass(
     pass_name: str, message: str, ir_type: type
-) -> type[AnalysisVisitablePass[object]]:
+) -> type[AnalysisVisitablePass[Visitable]]:
     """Return a verification pass that emits one WARNING diagnostic."""
 
     @register_verification(
         ir_type, pass_name, f"Warning-emitting verification pass: {pass_name}"
     )
-    class _WarningPass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _WarningPass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.WARNING, message)
 
@@ -122,14 +130,14 @@ def build_warning_pass(
 
 def build_crashing_pass(
     pass_name: str, exception_message: str, ir_type: type
-) -> type[AnalysisVisitablePass[object]]:
+) -> type[AnalysisVisitablePass[Visitable]]:
     """Return a verification pass that crashes inside its visitor."""
 
     @register_verification(
         ir_type, pass_name, f"Crashing verification pass: {pass_name}"
     )
-    class _CrashingPass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _CrashingPass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
             raise RuntimeError(exception_message)
 
@@ -141,12 +149,14 @@ def build_crashing_pass(
 # ---------------------------------------------------------------------------
 
 
-def test_registry_register_stores_pass_class_for_type(fresh_box_ir: type) -> None:
+def test_registry_register_stores_pass_class_for_type(
+    fresh_box_ir: type[_BoxIR],
+) -> None:
     """Test that register places a pass class under its IR type key."""
 
     @register_pass("tests.vr.register_basic", "Pass for register_basic test.")
-    class _Pass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _Pass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     VerificationRegistry.register(fresh_box_ir, _Pass)
@@ -154,17 +164,17 @@ def test_registry_register_stores_pass_class_for_type(fresh_box_ir: type) -> Non
     assert VerificationRegistry.get_passes_for(fresh_box_ir) == (_Pass,)
 
 
-def test_registry_register_returns_none(fresh_box_ir: type) -> None:
+def test_registry_register_returns_none(fresh_box_ir: type[_BoxIR]) -> None:
     """Test that register returns None (no fluent chaining)."""
 
     @register_pass(
         "tests.vr.register_returns_none", "Pass for register_returns_none test."
     )
-    class _Pass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _Pass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
-    assert VerificationRegistry.register(fresh_box_ir, _Pass) is None  # type: ignore[func-returns-value]
+    assert VerificationRegistry.register(fresh_box_ir, _Pass) is None
 
 
 def test_registry_get_passes_for_unknown_type_returns_empty() -> None:
@@ -176,12 +186,14 @@ def test_registry_get_passes_for_unknown_type_returns_empty() -> None:
     assert VerificationRegistry.get_passes_for(_Unknown) == ()
 
 
-def test_registry_register_is_idempotent_for_same_pair(fresh_box_ir: type) -> None:
+def test_registry_register_is_idempotent_for_same_pair(
+    fresh_box_ir: type[_BoxIR],
+) -> None:
     """Test that re-registering the same (type, pass) pair is a no-op."""
 
     @register_pass("tests.vr.idempotent", "Pass for idempotent registration test.")
-    class _Pass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _Pass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     VerificationRegistry.register(fresh_box_ir, _Pass)
@@ -191,18 +203,18 @@ def test_registry_register_is_idempotent_for_same_pair(fresh_box_ir: type) -> No
 
 
 def test_registry_register_preserves_order_of_multiple_passes(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that multiple registrations preserve insertion order under one type."""
 
     @register_pass("tests.vr.order_a", "First pass for ordering test.")
-    class _PassA(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _PassA(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     @register_pass("tests.vr.order_b", "Second pass for ordering test.")
-    class _PassB(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _PassB(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     VerificationRegistry.register(fresh_box_ir, _PassA)
@@ -211,17 +223,19 @@ def test_registry_register_preserves_order_of_multiple_passes(
     assert VerificationRegistry.get_passes_for(fresh_box_ir) == (_PassA, _PassB)
 
 
-def test_registry_get_passes_for_walks_mro_base_first(fresh_box_ir: type) -> None:
+def test_registry_get_passes_for_walks_mro_base_first(
+    fresh_box_ir: type[_BoxIR],
+) -> None:
     """Test that lookup walks the MRO with base-class passes first."""
 
     @register_pass("tests.vr.mro_base", "Base-class pass for MRO test.")
-    class _BasePass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _BasePass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     @register_pass("tests.vr.mro_sub", "Subclass pass for MRO test.")
-    class _SubPass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _SubPass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     @dataclass
@@ -234,12 +248,14 @@ def test_registry_get_passes_for_walks_mro_base_first(fresh_box_ir: type) -> Non
     assert VerificationRegistry.get_passes_for(_SubBoxIR) == (_BasePass, _SubPass)
 
 
-def test_registry_get_passes_for_deduplicates_across_mro(fresh_box_ir: type) -> None:
+def test_registry_get_passes_for_deduplicates_across_mro(
+    fresh_box_ir: type[_BoxIR],
+) -> None:
     """Test that a pass registered against both base and subclass appears once."""
 
     @register_pass("tests.vr.dedup_shared", "Shared pass registered twice.")
-    class _SharedPass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _SharedPass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     @dataclass
@@ -252,7 +268,7 @@ def test_registry_get_passes_for_deduplicates_across_mro(fresh_box_ir: type) -> 
     assert VerificationRegistry.get_passes_for(_SubBoxIR) == (_SharedPass,)
 
 
-def test_registry_rejects_non_compiler_pass_class(fresh_box_ir: type) -> None:
+def test_registry_rejects_non_compiler_pass_class(fresh_box_ir: type[_BoxIR]) -> None:
     """Test that register rejects a non-CompilerPass class."""
 
     class _NotAPass:
@@ -263,13 +279,13 @@ def test_registry_rejects_non_compiler_pass_class(fresh_box_ir: type) -> None:
 
 
 def test_registry_isolates_types_in_separate_keys(
-    fresh_box_ir: type, other_box_ir: type
+    fresh_box_ir: type[_BoxIR], other_box_ir: type
 ) -> None:
     """Test that registering for one type does not affect lookup of another."""
 
     @register_pass("tests.vr.isolate_a", "Pass for isolation test.")
-    class _BoxPass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _BoxPass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     VerificationRegistry.register(fresh_box_ir, _BoxPass)
@@ -299,7 +315,7 @@ def test_verification_analysis_name_is_stable_across_instances() -> None:
 
 
 def test_verification_analysis_returns_empty_report_when_no_passes_registered(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that the analysis returns an empty report when no passes match."""
     report = VerificationAnalysis().run(fresh_box_ir(0))
@@ -310,7 +326,7 @@ def test_verification_analysis_returns_empty_report_when_no_passes_registered(
 
 
 def test_verification_analysis_aggregates_diagnostics_in_registration_order(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that diagnostics aggregate in pipeline order across registered passes."""
     build_error_pass("tests.va.order.first", "first-error", fresh_box_ir)
@@ -324,7 +340,7 @@ def test_verification_analysis_aggregates_diagnostics_in_registration_order(
 
 
 def test_verification_analysis_returns_error_carrying_report_for_failing_ir(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that a failing verification surfaces in the returned report."""
     build_error_pass("tests.va.failure", "structural-failure", fresh_box_ir)
@@ -339,7 +355,7 @@ def test_verification_analysis_returns_error_carrying_report_for_failing_ir(
 
 
 def test_verification_analysis_dispatches_by_concrete_ir_type(
-    fresh_box_ir: type, other_box_ir: type
+    fresh_box_ir: type[_BoxIR], other_box_ir: type
 ) -> None:
     """Test that the analysis uses ``type(ir)`` for registry dispatch."""
     build_error_pass("tests.va.dispatch.box", "box-only-error", fresh_box_ir)
@@ -352,7 +368,7 @@ def test_verification_analysis_dispatches_by_concrete_ir_type(
 
 
 def test_verification_analysis_wraps_crashed_pass_as_synthetic_error(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that a verification pass that raises is captured as an ERROR diagnostic."""
     build_crashing_pass("tests.va.crash", "boom-from-verifier", fresh_box_ir)
@@ -371,7 +387,7 @@ def test_verification_analysis_wraps_crashed_pass_as_synthetic_error(
 
 
 def test_register_verification_adds_class_to_pass_registry(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that the decorator registers with the global CompilerPass registry."""
 
@@ -380,8 +396,8 @@ def test_register_verification_adds_class_to_pass_registry(
         "tests.rv.in_pass_registry",
         "Pass registered via register_verification.",
     )
-    class _Pass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _Pass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     assert "tests.rv.in_pass_registry" in CompilerPass.get_registered_passes()
@@ -392,7 +408,7 @@ def test_register_verification_adds_class_to_pass_registry(
 
 
 def test_register_verification_adds_class_to_verification_registry(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that the decorator registers with the verification registry."""
 
@@ -401,15 +417,15 @@ def test_register_verification_adds_class_to_verification_registry(
         "tests.rv.in_verification_registry",
         "Pass for registry-add test.",
     )
-    class _Pass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _Pass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     assert _Pass in VerificationRegistry.get_passes_for(fresh_box_ir)
 
 
 def test_register_verification_disables_auto_verify_on_decorated_class(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that the decorator stamps ``_auto_verify = False`` on the class."""
 
@@ -418,15 +434,15 @@ def test_register_verification_disables_auto_verify_on_decorated_class(
         "tests.rv.auto_verify_off",
         "Pass for _auto_verify flag test.",
     )
-    class _Pass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _Pass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     assert _Pass._auto_verify is False
 
 
 def test_register_verification_rejects_non_compiler_pass(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that non-CompilerPass targets are rejected."""
     with pytest.raises(PassRegistrationError, match="CompilerPass"):
@@ -438,34 +454,38 @@ def test_register_verification_rejects_non_compiler_pass(
             pass
 
 
-def test_register_verification_rejects_empty_name(fresh_box_ir: type) -> None:
+def test_register_verification_rejects_empty_name(fresh_box_ir: type[_BoxIR]) -> None:
     """Test that an empty pass name is rejected."""
     with pytest.raises(PassRegistrationError, match="name"):
 
         @register_verification(fresh_box_ir, "", "non-empty description")
-        class _Pass(AnalysisVisitablePass[object]):
-            def visit_unknown(self, node: object) -> None:
+        class _Pass(AnalysisVisitablePass[Visitable]):
+            def visit_unknown(self, node: Visitable) -> None:
                 _ = node
 
 
-def test_register_verification_rejects_empty_description(fresh_box_ir: type) -> None:
+def test_register_verification_rejects_empty_description(
+    fresh_box_ir: type[_BoxIR],
+) -> None:
     """Test that an empty description is rejected."""
     with pytest.raises(PassRegistrationError, match="description"):
 
         @register_verification(fresh_box_ir, "tests.rv.empty_desc", "")
-        class _Pass(AnalysisVisitablePass[object]):
-            def visit_unknown(self, node: object) -> None:
+        class _Pass(AnalysisVisitablePass[Visitable]):
+            def visit_unknown(self, node: Visitable) -> None:
                 _ = node
 
 
-def test_register_verification_rejects_duplicate_name(fresh_box_ir: type) -> None:
+def test_register_verification_rejects_duplicate_name(
+    fresh_box_ir: type[_BoxIR],
+) -> None:
     """Test that a name already used by a different class is rejected."""
 
     @register_verification(
         fresh_box_ir, "tests.rv.dup_name", "Original holder of the duplicate name."
     )
-    class _Original(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _Original(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     _ = _Original
@@ -475,8 +495,8 @@ def test_register_verification_rejects_duplicate_name(fresh_box_ir: type) -> Non
         @register_verification(
             fresh_box_ir, "tests.rv.dup_name", "Different class, same name."
         )
-        class _Duplicate(AnalysisVisitablePass[object]):
-            def visit_unknown(self, node: object) -> None:
+        class _Duplicate(AnalysisVisitablePass[Visitable]):
+            def visit_unknown(self, node: Visitable) -> None:
                 _ = node
 
 
@@ -486,7 +506,7 @@ def test_register_verification_rejects_duplicate_name(fresh_box_ir: type) -> Non
 
 
 def test_run_verification_returns_report_without_raising_on_errors(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that run_verification returns a report regardless of errors."""
     build_error_pass("tests.rv_helper.error", "irrecoverable", fresh_box_ir)
@@ -501,7 +521,7 @@ def test_run_verification_returns_report_without_raising_on_errors(
 
 
 def test_run_verification_returns_empty_report_when_no_passes_registered(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that run_verification returns an empty report when no passes match."""
     report = run_verification(fresh_box_ir(0))
@@ -555,8 +575,8 @@ def test_verifiable_subclass_with_registered_passes_can_be_instantiated() -> Non
         "tests.vm_new.permits_instantiation",
         "Pass that makes _NeedsRegisteredPass instantiable.",
     )
-    class _CheckPass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _CheckPass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     _ = _CheckPass
@@ -580,8 +600,8 @@ def test_verifiable_subclass_becomes_instantiable_after_late_registration() -> N
         "tests.vm_new.late_registration",
         "Pass registered after first failure.",
     )
-    class _LateCheck(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _LateCheck(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     _ = _LateCheck
@@ -603,8 +623,8 @@ def test_verifiable_subclass_caches_positive_instantiation_result(
     @register_verification(
         _Cached, "tests.vm_new.positive_cache", "Pass for positive-cache test."
     )
-    class _CachedCheck(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _CachedCheck(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     _ = _CachedCheck
@@ -645,8 +665,8 @@ def test_verify_default_returns_report_from_registered_passes() -> None:
             self.value = value
 
     @register_verification(_IR, "tests.vm_verify.error", "Pass that reports an error.")
-    class _ErrorCheck(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _ErrorCheck(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, "verify-failure")
 
@@ -667,14 +687,14 @@ def test_verify_default_aggregates_multiple_registered_passes() -> None:
             self.value = value
 
     @register_verification(_IR, "tests.vm_verify.first", "First check.")
-    class _First(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _First(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.INFO, "info-one")
 
     @register_verification(_IR, "tests.vm_verify.second", "Second check.")
-    class _Second(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _Second(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.WARNING, "warn-two")
 
@@ -702,10 +722,10 @@ def test_verify_override_takes_precedence_over_registry() -> None:
     @register_verification(
         _IR, "tests.vm_verify.bypassed", "Pass that should not be invoked."
     )
-    class _UnusedCheck(AnalysisVisitablePass[object]):
+    class _UnusedCheck(AnalysisVisitablePass[Visitable]):
         invoked = False
 
-        def visit_unknown(self, node: object) -> None:
+        def visit_unknown(self, node: Visitable) -> None:
             type(self).invoked = True
             self.report(DiagnosticLevel.ERROR, "would-fail-if-invoked")
 
@@ -724,8 +744,8 @@ def test_verify_default_report_can_be_raised_as_validation_failed_error() -> Non
             self.value = value
 
     @register_verification(_IR, "tests.vm_verify.raise", "Verify that raise works.")
-    class _RaiseCheck(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _RaiseCheck(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, "structurally-broken")
 
@@ -749,7 +769,7 @@ def test_auto_verify_default_is_true_on_compiler_pass() -> None:
 
 
 def test_auto_verify_pre_raises_pass_validation_error_when_input_is_malformed(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that pre-pass auto-verify raises when the input IR fails verification."""
     build_error_pass("tests.av.pre.fail", "pre-failure", fresh_box_ir)
@@ -774,7 +794,7 @@ def test_auto_verify_pre_raises_pass_validation_error_when_input_is_malformed(
 
 
 def test_auto_verify_post_raises_when_pass_produces_malformed_output(
-    fresh_box_ir: type, other_box_ir: type
+    fresh_box_ir: type[_BoxIR], other_box_ir: type
 ) -> None:
     """Test that post-pass auto-verify raises when the output IR fails verification."""
     build_error_pass("tests.av.post.check", "post-corruption", other_box_ir)
@@ -802,7 +822,7 @@ def test_auto_verify_post_raises_when_pass_produces_malformed_output(
 
 
 def test_auto_verify_false_on_pass_class_disables_pre_and_post(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that ``_auto_verify = False`` skips both hooks for the pass class."""
     build_error_pass("tests.av.disabled.fail", "would-fail-if-enabled", fresh_box_ir)
@@ -824,7 +844,7 @@ def test_auto_verify_false_on_pass_class_disables_pre_and_post(
 
 
 def test_verification_pass_does_not_recurse_into_auto_verify(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that registered verification passes have ``_auto_verify = False``."""
 
@@ -833,10 +853,10 @@ def test_verification_pass_does_not_recurse_into_auto_verify(
         "tests.av.recurse.check",
         "Verification pass that must not recurse.",
     )
-    class _Check(AnalysisVisitablePass[object]):
+    class _Check(AnalysisVisitablePass[Visitable]):
         invocations = 0
 
-        def visit_unknown(self, node: object) -> None:
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
             type(self).invocations += 1
 
@@ -866,17 +886,17 @@ def test_verification_pass_does_not_recurse_into_auto_verify(
 
 
 def test_auto_verify_uses_analysis_manager_cache_across_passes(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that an unchanged IR is verified once across two pipeline passes."""
 
     @register_verification(
         fresh_box_ir, "tests.cache.count", "Counting verification pass."
     )
-    class _CountingCheck(AnalysisVisitablePass[object]):
+    class _CountingCheck(AnalysisVisitablePass[Visitable]):
         invocations = 0
 
-        def visit_unknown(self, node: object) -> None:
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
             type(self).invocations += 1
 
@@ -906,7 +926,9 @@ def test_auto_verify_uses_analysis_manager_cache_across_passes(
     assert _CountingCheck.invocations == 1
 
 
-def test_auto_verify_recomputes_when_pass_changes_ir(fresh_box_ir: type) -> None:
+def test_auto_verify_recomputes_when_pass_changes_ir(
+    fresh_box_ir: type[_BoxIR],
+) -> None:
     """Test that mutating the IR forces a fresh verification run on the new IR."""
 
     @register_verification(
@@ -914,10 +936,10 @@ def test_auto_verify_recomputes_when_pass_changes_ir(fresh_box_ir: type) -> None
         "tests.cache.mutate.count",
         "Counting verification pass for mutation.",
     )
-    class _CountingCheck(AnalysisVisitablePass[object]):
+    class _CountingCheck(AnalysisVisitablePass[Visitable]):
         invocations = 0
 
-        def visit_unknown(self, node: object) -> None:
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
             type(self).invocations += 1
 
@@ -945,7 +967,7 @@ def test_auto_verify_recomputes_when_pass_changes_ir(fresh_box_ir: type) -> None
 
 
 def test_user_story_pipeline_blames_pass_that_produced_invalid_ir(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that a corrupting pass surfaces in the report attached to the error."""
 
@@ -954,8 +976,8 @@ def test_user_story_pipeline_blames_pass_that_produced_invalid_ir(
         "tests.story.positive_only",
         "IR values must be non-negative.",
     )
-    class _PositiveOnly(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _PositiveOnly(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             if isinstance(node, fresh_box_ir) and node.value < 0:
                 self.report(DiagnosticLevel.ERROR, f"negative value: {node.value}")
 
@@ -1009,7 +1031,7 @@ def test_user_story_pipeline_blames_pass_that_produced_invalid_ir(
 
 
 def test_registering_verification_pass_with_global_pass_name_collision(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that a verification name colliding with an existing pass is rejected."""
 
@@ -1030,13 +1052,13 @@ def test_registering_verification_pass_with_global_pass_name_collision(
             "tests.adv.name_collision",
             "Verification reusing the name.",
         )
-        class _Verifier(AnalysisVisitablePass[object]):
-            def visit_unknown(self, node: object) -> None:
+        class _Verifier(AnalysisVisitablePass[Visitable]):
+            def visit_unknown(self, node: Visitable) -> None:
                 _ = node
 
 
 def test_verification_pass_crashing_mid_run_does_not_stop_pipeline(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that one crashing verifier does not prevent the rest from running."""
     build_crashing_pass("tests.adv.mid_crash", "mid-crash-boom", fresh_box_ir)
@@ -1050,7 +1072,7 @@ def test_verification_pass_crashing_mid_run_does_not_stop_pipeline(
 
 
 def test_registry_mutation_between_passes_does_not_invalidate_cached_results(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test the documented "registration is module-load-time" caching contract.
 
@@ -1063,8 +1085,8 @@ def test_registry_mutation_between_passes_does_not_invalidate_cached_results(
     @register_verification(
         fresh_box_ir, "tests.adv.registry_mutation.initial", "Initial pass."
     )
-    class _Initial(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _Initial(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     _ = _Initial
@@ -1081,8 +1103,8 @@ def test_registry_mutation_between_passes_does_not_invalidate_cached_results(
         "tests.adv.registry_mutation.late",
         "Late-added failing pass.",
     )
-    class _Late(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _Late(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, "late-failure")
 
@@ -1099,7 +1121,7 @@ def test_registry_mutation_between_passes_does_not_invalidate_cached_results(
 
 
 def test_verification_report_format_uses_validation_report_protocol(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that the returned report formats via the standard ValidationReport API."""
     build_error_pass("tests.adv.format", "format-me", fresh_box_ir)
@@ -1120,8 +1142,8 @@ def test_verify_report_supports_partial_equal_like_other_reports() -> None:
     @register_verification(
         _IR, "tests.adv.partial_equal_report", "Verify report PartialEqual contract."
     )
-    class _Check(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _Check(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     _ = _Check
@@ -1165,8 +1187,8 @@ def test_verifiable_subclass_with_passes_from_base_satisfies_check() -> None:
     @register_verification(
         _BaseIR, "tests.vm_new.base_passes_inherited", "Pass on the base class."
     )
-    class _BaseCheck(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _BaseCheck(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     _ = _BaseCheck
@@ -1185,7 +1207,7 @@ def test_verifiable_subclass_with_passes_from_base_satisfies_check() -> None:
 
 
 def test_auto_verify_is_silent_when_no_passes_registered_for_ir_type(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that auto-verify is a no-op when the registry has no entries for the IR."""
 
@@ -1211,7 +1233,9 @@ def test_auto_verify_is_silent_when_no_passes_registered_for_ir_type(
 # ---------------------------------------------------------------------------
 
 
-def test_verification_analysis_cache_does_not_pin_ir(fresh_box_ir: type) -> None:
+def test_verification_analysis_cache_does_not_pin_ir(
+    fresh_box_ir: type[_BoxIR],
+) -> None:
     """Test that caching a verification report does not block IR garbage collection."""
     build_clean_pass("tests.cache.gc.clean", fresh_box_ir)
 
@@ -1254,7 +1278,7 @@ def test_pass_validation_error_remains_runtime_error_subclass() -> None:
 
 
 def test_pass_manager_surfaces_auto_verify_failure_to_caller(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that auto-verify failures propagate out of PassManager.run."""
     build_error_pass("tests.pm_av.failure", "auto-verify-blocked", fresh_box_ir)
@@ -1275,7 +1299,7 @@ def test_pass_manager_surfaces_auto_verify_failure_to_caller(
 
 
 def test_pass_manager_continues_when_pass_disables_auto_verify(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that disabling auto-verify on a pass class lets the pipeline complete."""
     build_error_pass(
@@ -1316,7 +1340,7 @@ def test_verification_module_exports_expected_public_symbols() -> None:
 
 
 def test_diagnostic_note_construction_round_trips_through_report(
-    fresh_box_ir: type,
+    fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that the Note message attached by a verifier surfaces in the report."""
 
@@ -1325,8 +1349,8 @@ def test_diagnostic_note_construction_round_trips_through_report(
         "tests.sanity.note_round_trip",
         "Emit a structured Note diagnostic.",
     )
-    class _NotePass(AnalysisVisitablePass[object]):
-        def visit_unknown(self, node: object) -> None:
+    class _NotePass(AnalysisVisitablePass[Visitable]):
+        def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, Note("structured-message"))
 

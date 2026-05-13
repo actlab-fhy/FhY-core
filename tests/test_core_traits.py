@@ -31,7 +31,7 @@ class _TypedValue(HasTypeMixin[str]):
 class _VerifiableNode(VerifiableMixin):
     is_valid: bool
 
-    def verify(self) -> ValidationReport:
+    def verify(self) -> ValidationReport[object]:
         if self.is_valid:
             return ValidationReport()
         return ValidationReport(

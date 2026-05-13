@@ -92,7 +92,7 @@ def _clean_validator(pass_name: str) -> CompilerPass[ValueBox, None]:
 
 def test_empty_report_has_no_errors_and_formats_placeholder_text() -> None:
     """Test that an empty report has no errors and formats a placeholder string."""
-    report = ValidationReport()
+    report: ValidationReport[object] = ValidationReport()
     assert report.diagnostics == ()
     assert report.records == ()
     assert report.has_errors() is False
@@ -110,7 +110,7 @@ def test_report_filters_diagnostics_by_level() -> None:
         Diagnostic(DiagnosticLevel.INFO, Note("fyi"), "v3"),
         Diagnostic(DiagnosticLevel.ERROR, Note("worse"), "v4"),
     )
-    report = ValidationReport(diagnostics=diagnostics)
+    report: ValidationReport[object] = ValidationReport(diagnostics=diagnostics)
 
     assert report.has_errors() is True
     assert tuple(d.source for d in report.errors()) == ("v1", "v4")
@@ -120,7 +120,7 @@ def test_report_filters_diagnostics_by_level() -> None:
 
 def test_report_format_renders_level_pass_and_detail() -> None:
     """Test that format() includes level, pass name, message, and indented detail."""
-    report = ValidationReport(
+    report: ValidationReport[object] = ValidationReport(
         diagnostics=(
             Diagnostic(
                 DiagnosticLevel.ERROR,
@@ -141,7 +141,7 @@ def test_report_format_renders_level_pass_and_detail() -> None:
 
 def test_raise_if_failed_is_noop_when_only_warnings_present() -> None:
     """Test that raise_if_failed does not raise when no ERROR diagnostics exist."""
-    report = ValidationReport(
+    report: ValidationReport[object] = ValidationReport(
         diagnostics=(Diagnostic(DiagnosticLevel.WARNING, Note("ok-ish"), "v"),)
     )
     report.raise_if_failed()
@@ -149,7 +149,7 @@ def test_raise_if_failed_is_noop_when_only_warnings_present() -> None:
 
 def test_raise_if_failed_is_noop_when_only_infos_present() -> None:
     """Test that raise_if_failed does not raise on INFO-only reports."""
-    report = ValidationReport(
+    report: ValidationReport[object] = ValidationReport(
         diagnostics=(Diagnostic(DiagnosticLevel.INFO, Note("fyi"), "v"),)
     )
     report.raise_if_failed()
@@ -157,7 +157,7 @@ def test_raise_if_failed_is_noop_when_only_infos_present() -> None:
 
 def test_raise_if_failed_raises_validation_failed_with_formatted_message() -> None:
     """Test that raise_if_failed raises ValidationFailedError on errors."""
-    report = ValidationReport(
+    report: ValidationReport[object] = ValidationReport(
         diagnostics=(Diagnostic(DiagnosticLevel.ERROR, Note("boom"), "v.explode"),)
     )
 
