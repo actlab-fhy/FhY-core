@@ -86,9 +86,9 @@ class SerializableHashRaises(Serializable):
 
     Member validation accepts this instance (the ``Hashable`` ABC check
     is structural - it just looks for a non-``None`` ``__hash__``
-    attribute), but the subsequent ``frozenset(values)`` call inside
-    ``_normalize_constraint_member_collection`` invokes ``hash`` and
-    trips the defensive ``except TypeError`` re-wrap.
+    attribute), but the explicit per-item ``hash`` call inside
+    ``_normalize_constraint_member_collection`` then trips a ``TypeError``
+    that gets re-wrapped as a ``ConstraintError``.
     """
 
     def __hash__(self) -> int:

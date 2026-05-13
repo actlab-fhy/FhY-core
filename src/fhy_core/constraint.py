@@ -52,7 +52,6 @@ from fhy_core.serialization import (
     DeserializationValueError,
     Serializable,
     SerializedDict,
-    SerializedValue,
     WrappedFamilySerializable,
     deserialize_registry_wrapped_value,
     is_serialized_dict,
@@ -200,6 +199,10 @@ def _normalize_constraint_member_collection(
 ) -> frozenset[_TypedMember]:
     """Validate, wrap, and freeze a collection of constraint members.
 
+    Validation, wrapping, and hashing all happen in a single pass over
+    ``values`` so a one-shot iterable would still produce the right
+    result even though the parameter type is ``Collection``.
+
     Args:
         values: Iterable of raw constraint members.
 
@@ -211,10 +214,9 @@ def _normalize_constraint_member_collection(
             after validation.
 
     """
-    for value in values:
-        _validate_constraint_member(value)
     wrapped_values: list[_TypedMember] = []
     for value in values:
+        _validate_constraint_member(value)
         wrapped = _wrap_member(value)
         try:
             hash(wrapped)
@@ -227,17 +229,13 @@ def _normalize_constraint_member_collection(
     return frozenset(wrapped_values)
 
 
-def _serialize_constraint_member(value: ConstraintMember) -> SerializedValue:
+def _serialize_constraint_member(value: ConstraintMember) -> SerializedDict:
     return serialize_registry_wrapped_value(value)
 
 
 def _deserialize_constraint_member(
-    field_name: str, value: SerializedValue
+    field_name: str, value: SerializedDict
 ) -> ConstraintMember:
-    assert is_serialized_dict(value), (
-        "_deserialize_constraint_member precondition: the upstream TypeGuard "
-        "guarantees a wrapped dict."
-    )
     try:
         member = deserialize_registry_wrapped_value(value)
     except (DeserializationDictStructureError, DeserializationValueError) as exc:
@@ -359,13 +357,18 @@ class EquationConstraint(Constraint):
 
     Indeterminate case:
         If the simplifier cannot reduce the substituted expression to a
-        ``LiteralExpression(bool=...)`` -- for example because the
+        ``LiteralExpression`` at all -- for example because the
         expression references additional free identifiers, or because
         the simplifier just cannot decide -- ``is_satisfied`` logs a
         ``WARNING`` through the module logger and returns ``False``.
         Callers that need to distinguish "constraint rejects this
         value" from "constraint cannot decide" should configure log
         capture or escalate the warning channel.
+
+        A reduction to a literal whose value is not ``bool`` (for
+        example ``LiteralExpression(1)``) also returns ``False`` but
+        is treated as a decided "no" rather than as an indeterminate
+        case: no warning is emitted.
 
     """
 
@@ -433,7 +436,7 @@ def _render_member_set_str(members: frozenset[_TypedMember]) -> str:
     return f"{{{rendered_members}}}"
 
 
-def _serialize_member_set(members: frozenset[_TypedMember]) -> list[SerializedValue]:
+def _serialize_member_set(members: frozenset[_TypedMember]) -> list[SerializedDict]:
     return sorted(
         [_serialize_constraint_member(_unwrap_member(member)) for member in members],
         key=repr,
@@ -442,7 +445,7 @@ def _serialize_member_set(members: frozenset[_TypedMember]) -> list[SerializedVa
 
 class _InSetConstraintData(TypedDict):
     variable: SerializedDict
-    valid_values: list[SerializedValue]
+    valid_values: list[SerializedDict]
 
 
 def _is_valid_in_set_constraint_data(
@@ -545,7 +548,7 @@ class InSetConstraint(Constraint):
 
 class _NotInSetConstraintData(TypedDict):
     variable: SerializedDict
-    invalid_values: list[SerializedValue]
+    invalid_values: list[SerializedDict]
 
 
 def _is_valid_not_in_set_constraint_data(
