@@ -40,7 +40,7 @@ def _is_valid_identifier_data(data: SerializedDict) -> TypeGuard[_IdentifierData
 
 @final
 @register_serializable(type_id="id")
-class Identifier(Serializable, FrozenMixin, EqualMixin):
+class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     """Process-globally unique, named compiler symbol.
 
     Two ``Identifier`` instances are equal iff they share the same ``id``;
@@ -74,7 +74,6 @@ class Identifier(Serializable, FrozenMixin, EqualMixin):
             self._id = Identifier._next_id
             Identifier._next_id += 1
         self._name_hint = name_hint
-        self.freeze()
 
     @property
     def name_hint(self) -> str:

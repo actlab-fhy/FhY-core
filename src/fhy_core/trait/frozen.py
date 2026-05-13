@@ -7,10 +7,11 @@ __all__ = [
     "FrozenValidationError",
 ]
 
+import functools
 from abc import ABC
 from dataclasses import FrozenInstanceError, is_dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, TypeVar, runtime_checkable
 
 from frozendict import frozendict
 
@@ -18,6 +19,8 @@ from fhy_core.error import register_error
 
 _FROZEN_FLAG = "_fhy_core_is_frozen"
 _FROZEN_DISPATCH_FLAG = "_fhy_core_frozen_dispatch_installed"
+_FREEZE_ON_INIT_WRAP_INSTALLED_FLAG = "_fhy_core_freeze_on_init_wrap_installed"
+_FREEZE_ON_INIT_WRAPPER_FLAG = "_fhy_core_freeze_on_init_wrapper"
 _IMMUTABLE_ATOMS = (str, bytes, int, float, complex, bool, type(None))
 
 _FrozenMixinT = TypeVar("_FrozenMixinT", bound="FrozenMixin")
@@ -64,7 +67,47 @@ class FrozenMixin(ABC):
     once frozen, including for subclasses also decorated with
     ``@dataclass(frozen=True)``.
 
+    Auto-freeze on init:
+        Subclasses may opt into automatic freezing at the end of
+        ``__init__`` by passing ``freeze_on_init=True`` (and optionally
+        ``freeze_on_init_deep=True``) as class-creation kwargs:
+
+        ```python
+        class MyClass(FrozenMixin, freeze_on_init=True, freeze_on_init_deep=True):
+            def __init__(self, value):
+                self.value = value
+        ```
+
+        The policy is sticky: once set on a base class, descendants
+        inherit it unless they explicitly override the kwarg. Each
+        subclass's ``__init__`` is wrapped so that the most-derived
+        class's wrap calls ``self.freeze(deep=...)`` after construction.
+        Inner wraps in a multi-level inheritance chain skip the freeze
+        (so subclass state can be set after a parent's ``super().__init__``
+        returns).
+
+        The wrap is idempotent: a subclass ``__init__`` that already
+        calls ``self.freeze(...)`` explicitly is unaffected because the
+        wrap checks ``is_frozen`` before re-freezing.
+
     """
+
+    _FREEZE_ON_INIT: ClassVar[bool] = False
+    _FREEZE_ON_INIT_DEEP: ClassVar[bool] = False
+
+    def __init_subclass__(
+        cls,
+        *,
+        freeze_on_init: bool | None = None,
+        freeze_on_init_deep: bool | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init_subclass__(**kwargs)
+
+        if freeze_on_init is not None:
+            cls._FREEZE_ON_INIT = freeze_on_init
+        if freeze_on_init_deep is not None:
+            cls._FREEZE_ON_INIT_DEEP = freeze_on_init_deep
 
     if not TYPE_CHECKING:
         # Defined only at runtime so it does not advertise a permissive
@@ -79,6 +122,10 @@ class FrozenMixin(ABC):
             del args, kwargs
             if not cls.__dict__.get(_FROZEN_DISPATCH_FLAG, False):
                 FrozenMixin._install_frozen_dispatch(cls)
+            if cls._FREEZE_ON_INIT and not cls.__dict__.get(
+                _FREEZE_ON_INIT_WRAP_INSTALLED_FLAG, False
+            ):
+                FrozenMixin._install_freeze_on_init_wrap(cls)
             return super().__new__(cls)
 
     @property
@@ -178,6 +225,21 @@ class FrozenMixin(ABC):
                 f'Cannot delete "{name}" on frozen {type(self).__name__}.'
             )
         object.__delattr__(self, name)
+
+    @staticmethod
+    def _install_freeze_on_init_wrap(subclass: type) -> None:
+        cls = subclass
+        original_init = cls.__init__  # type: ignore[misc]
+
+        @functools.wraps(original_init)
+        def wrapped(self: "FrozenMixin", *args: Any, **kwargs: Any) -> None:
+            original_init(self, *args, **kwargs)
+            if type(self) is cls:
+                self.freeze(deep=cls._FREEZE_ON_INIT_DEEP)
+
+        setattr(wrapped, _FREEZE_ON_INIT_WRAPPER_FLAG, True)
+        cls.__init__ = wrapped  # type: ignore[misc]
+        setattr(cls, _FREEZE_ON_INIT_WRAP_INSTALLED_FLAG, True)
 
     @staticmethod
     def _install_frozen_dispatch(subclass: type) -> None:
