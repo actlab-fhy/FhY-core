@@ -2,6 +2,8 @@
 
 from typing import Any
 
+import pytest
+
 from fhy_core.constraint import (
     Constraint,
     EquationConstraint,
@@ -18,7 +20,9 @@ from ..conftest import (  # noqa: F401  # re-exported below
 )
 
 __all__ = [
+    "ALL_KINDS",
     "HashableNotSerializable",
+    "SET_KINDS",
     "SerializableEqualHashable",
     "SerializableHashRaises",
     "UnhashableTuple",
@@ -45,13 +49,32 @@ def build_not_in_set_constraint(variable: Identifier) -> Constraint:
     return NotInSetConstraint(variable, {1, 2})
 
 
+SET_KINDS = [
+    pytest.param(InSetConstraint, id="in_set"),
+    pytest.param(NotInSetConstraint, id="not_in_set"),
+]
+"""Parametrize list of the two set-constraint factories.
+
+Use this in tests that only need the constraint class. Tests that also
+need per-kind expected outcomes (member polarity, str marker, etc.)
+should declare their own richer parametrize alongside this one.
+"""
+
+ALL_KINDS = [
+    pytest.param(build_equation_constraint, id="equation"),
+    pytest.param(build_in_set_constraint, id="in_set"),
+    pytest.param(build_not_in_set_constraint, id="not_in_set"),
+]
+"""Parametrize list of single-argument factories for every constraint kind."""
+
+
 class UnhashableTuple(tuple):  # type: ignore[type-arg]
     """A tuple subclass that explicitly opts out of hashability.
 
     Setting ``__hash__ = None`` makes instances fail the
-    ``isinstance(value, Hashable)`` check on line 138 of constraint.py
-    even though the underlying type is a ``tuple`` and would otherwise
-    pass the recursive validation pass.
+    ``isinstance(value, Hashable)`` check in
+    ``_validate_constraint_member`` even though the underlying type is
+    a ``tuple`` and would otherwise pass the recursive validation pass.
     """
 
     __hash__ = None  # type: ignore[assignment]
@@ -65,7 +88,7 @@ class SerializableHashRaises(Serializable):
     is structural - it just looks for a non-``None`` ``__hash__``
     attribute), but the subsequent ``frozenset(values)`` call inside
     ``_normalize_constraint_member_collection`` invokes ``hash`` and
-    trips the defensive ``except TypeError`` on lines 164-165.
+    trips the defensive ``except TypeError`` re-wrap.
     """
 
     def __hash__(self) -> int:
@@ -85,10 +108,8 @@ class SerializableHashRaises(Serializable):
 class HashableNotSerializable:
     """Hashable value that is intentionally not a `Serializable` subclass.
 
-    Drives the `_is_serializable_hashable` mutation that flips ``and`` to
-    ``or``: the mutant accepts anything that is `Hashable` even when it is
-    not `Serializable`, so a successful construction would indicate the
-    relaxed validator is in effect.
+    Drives the `_is_serializable_hashable` predicate: a value that is
+    Hashable but not Serializable must be rejected.
     """
 
     _value: int
