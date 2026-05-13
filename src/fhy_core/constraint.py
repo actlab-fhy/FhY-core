@@ -229,6 +229,39 @@ def _normalize_constraint_member_collection(
     return frozenset(wrapped_values)
 
 
+def _lift_member_to_literal_expression(value: ConstraintMember) -> LiteralExpression:
+    """Lifts a constraint member to a ``LiteralExpression``.
+
+    Raises:
+        ConstraintError: If the member is not a ``LiteralType``, if
+            ``LiteralExpression`` refuses the value, or if
+            ``LiteralExpression``'s canonicalization would change the
+            value's type and break the constraint's type-strict
+            equality with the converted expression.
+
+    """
+    if not isinstance(value, LiteralType):
+        raise ConstraintError(
+            f"Conversion of type {type(value).__name__} to an expression is "
+            "not supported."
+        )
+    try:
+        literal = LiteralExpression(value)
+    except ValueError as exc:
+        raise ConstraintError(
+            f"Member {value!r} cannot be represented as a literal expression: {exc}"
+        ) from exc
+    if type(literal.value) is not type(value):
+        raise ConstraintError(
+            f"Member {value!r} of type {type(value).__name__} would be "
+            f"canonicalized to type {type(literal.value).__name__} in the "
+            "converted expression, which would break type-strict equality "
+            "between the constraint and its expression. Convert the member "
+            "to the canonical type before constructing the constraint."
+        )
+    return literal
+
+
 def _serialize_constraint_member(value: ConstraintMember) -> SerializedDict:
     return serialize_registry_wrapped_value(value)
 
@@ -508,15 +541,11 @@ class InSetConstraint(Constraint):
         )
 
     def _build_leaf_expression(self, wrapped: _TypedMember) -> Expression:
-        value = _unwrap_member(wrapped)
-        if not isinstance(value, LiteralType):
-            raise ConstraintError(
-                f"Conversion of type {type(value)} to an expression is not supported."
-            )
+        literal = _lift_member_to_literal_expression(_unwrap_member(wrapped))
         return BinaryExpression(
             BinaryOperation.EQUAL,
             IdentifierExpression(self.variable),
-            LiteralExpression(value),
+            literal,
         )
 
     def serialize_data_to_dict(self) -> SerializedDict:
@@ -608,15 +637,11 @@ class NotInSetConstraint(Constraint):
         )
 
     def _build_leaf_expression(self, wrapped: _TypedMember) -> Expression:
-        value = _unwrap_member(wrapped)
-        if not isinstance(value, LiteralType):
-            raise ConstraintError(
-                f"Conversion of type {type(value)} to an expression is not supported."
-            )
+        literal = _lift_member_to_literal_expression(_unwrap_member(wrapped))
         return BinaryExpression(
             BinaryOperation.NOT_EQUAL,
             IdentifierExpression(self.variable),
-            LiteralExpression(value),
+            literal,
         )
 
     def serialize_data_to_dict(self) -> SerializedDict:

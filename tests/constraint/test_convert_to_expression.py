@@ -111,6 +111,37 @@ def test_non_literal_member_rejected_by_conversion(
 @pytest.mark.parametrize(
     "factory", [InSetConstraint, NotInSetConstraint], ids=["in_set", "not_in_set"]
 )
+def test_integer_form_string_member_rejected_by_conversion(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test integer-form string members raise ``ConstraintError`` from conversion.
+
+    ``LiteralExpression("1")`` canonicalizes to ``LiteralExpression(1)``
+    (int), which would silently break type-strict equality between
+    the constraint and its converted expression.
+    """
+    constraint = factory(mock_identifier("x", 0), ["1"])
+
+    with pytest.raises(ConstraintError, match="type-strict"):
+        constraint.convert_to_expression()
+
+
+@pytest.mark.parametrize(
+    "factory", [InSetConstraint, NotInSetConstraint], ids=["in_set", "not_in_set"]
+)
+def test_non_grammar_string_member_rejected_by_conversion_as_constraint_error(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test non-grammar string members raise ``ConstraintError`` not ``ValueError``."""
+    constraint = factory(mock_identifier("x", 0), ["hello"])
+
+    with pytest.raises(ConstraintError):
+        constraint.convert_to_expression()
+
+
+@pytest.mark.parametrize(
+    "factory", [InSetConstraint, NotInSetConstraint], ids=["in_set", "not_in_set"]
+)
 def test_multi_value_convert_to_expression_is_deterministic_across_construction_orders(
     factory: SetConstraintFactory,
 ) -> None:
