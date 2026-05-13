@@ -4,11 +4,10 @@ import logging
 
 import pytest
 
-from fhy_core.diagnostic import Note
+from fhy_core.diagnostic import DiagnosticLevel, Note
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     CompilerPass,
-    DiagnosticLevel,
     PassExecutionError,
     PassInfo,
     PassRegistrationError,

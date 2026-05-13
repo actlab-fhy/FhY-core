@@ -3,8 +3,6 @@
 __all__ = [
     "AnalysisVisitablePass",
     "CompilerPass",
-    "DiagnosticLevel",
-    "PassDiagnostic",
     "PassExecutionError",
     "PassInfo",
     "PassRegistrationError",
@@ -34,7 +32,7 @@ from typing import (
 
 from frozendict import frozendict
 
-from fhy_core.diagnostic import Note
+from fhy_core.diagnostic import Diagnostic, DiagnosticLevel, Note
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
@@ -42,6 +40,8 @@ from fhy_core.trait import FrozenMixin, PartialEqualMixin, Visitable
 from fhy_core.utils.enum import StrEnum
 
 if TYPE_CHECKING:
+    from fhy_core.diagnostic import ValidationReport
+
     from .manager import Analysis, AnalysisManager
 
 _PassInputT = TypeVar("_PassInputT")
@@ -50,14 +50,6 @@ _PassClassT = TypeVar("_PassClassT", bound=type["CompilerPass[Any, Any]"])
 _VisitableNodeT = TypeVar("_VisitableNodeT", bound=Visitable)
 _AnalysisIRT = TypeVar("_AnalysisIRT")
 _AnalysisResultT = TypeVar("_AnalysisResultT")
-
-
-class DiagnosticLevel(StrEnum):
-    """Diagnostic severity levels."""
-
-    ERROR = "error"
-    WARNING = "warning"
-    INFO = "info"
 
 
 _DIAGNOSTIC_TO_LOGGING_LEVEL: frozendict[DiagnosticLevel, int] = frozendict(
@@ -74,20 +66,6 @@ class TraversalOrder(StrEnum):
 
     PRE = "pre"
     POST = "post"
-
-
-@dataclass(frozen=True)
-class PassDiagnostic(FrozenMixin, PartialEqualMixin):
-    """Structured diagnostic emitted by a pass."""
-
-    level: DiagnosticLevel
-    message: Note
-    pass_name: str
-    detail: str | None = None
-
-    @property
-    def message_text(self) -> str:
-        return self.message.message
 
 
 @dataclass(frozen=True)
@@ -139,7 +117,30 @@ class PassRegistrationError(RuntimeError):
 
 @register_error
 class PassValidationError(RuntimeError):
-    """Pass validation failure."""
+    """Pass validation failure.
+
+    Carries the underlying :class:`ValidationReport` when raised by the
+    auto-verification hook (see :class:`VerificationAnalysis`).
+    ``report`` is ``None`` when the error originated from a user's
+    ``validate_input`` / ``validate_output`` raising something other
+    than auto-verification.
+    """
+
+    _report: "ValidationReport[Any] | None"
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        report: "ValidationReport[Any] | None" = None,
+    ) -> None:
+        super().__init__(message)
+        self._report = report
+
+    @property
+    def report(self) -> "ValidationReport[Any] | None":
+        """The attached :class:`ValidationReport`, or ``None`` if none was set."""
+        return self._report
 
 
 @register_error
@@ -153,7 +154,7 @@ class PassResult(FrozenMixin, PartialEqualMixin, Generic[_PassOutputT]):
 
     output: _PassOutputT
     changed: bool
-    diagnostics: tuple[PassDiagnostic, ...] = field(default_factory=tuple)
+    diagnostics: tuple[Diagnostic, ...] = field(default_factory=tuple)
     preserved_analyses: PreservedAnalyses = field(
         default_factory=PreservedAnalyses.none
     )
@@ -169,7 +170,15 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
 
     _pass_name: ClassVar[str | None] = None
     _pass_description: ClassVar[str] = ""
-    _diagnostics: list[PassDiagnostic]
+    _auto_verify: ClassVar[bool] = True
+    """When True, ``_guarded_validate_input`` and ``_guarded_validate_output``
+    additionally run :class:`VerificationAnalysis` against the input and
+    output IR and raise :class:`PassValidationError` (carrying the
+    :class:`ValidationReport`) if it reports errors. When False, the
+    auto-verify hooks are skipped entirely. Verification pass classes
+    registered through ``register_verification`` are stamped to ``False``
+    automatically to prevent recursive verification."""
+    _diagnostics: list[Diagnostic]
     _analysis_manager: "AnalysisManager[Any] | None"
 
     def __init__(self) -> None:
@@ -214,7 +223,7 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
         return pass_info.pass_type(*args, **kwargs)
 
     @property
-    def diagnostics(self) -> tuple[PassDiagnostic, ...]:
+    def diagnostics(self) -> tuple[Diagnostic, ...]:
         """Return diagnostics emitted during the most recent run."""
         return tuple(self._diagnostics)
 
@@ -314,6 +323,9 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
             self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
             raise PassValidationError(message) from exc
 
+        if type(self)._auto_verify:
+            self._auto_verify_input(ir)
+
     def _guarded_validate_output(
         self, input_ir: _PassInputT, output: _PassOutputT
     ) -> None:
@@ -328,6 +340,29 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
             )
             self.report(DiagnosticLevel.ERROR, message, exc_info=exc)
             raise PassValidationError(message) from exc
+
+        if type(self)._auto_verify:
+            self._auto_verify_output(output)
+
+    def _auto_verify_input(self, ir: _PassInputT) -> None:
+        self._auto_verify_ir(ir, "rejected input IR")
+
+    def _auto_verify_output(self, output: _PassOutputT) -> None:
+        self._auto_verify_ir(output, "produced invalid output IR")
+
+    def _auto_verify_ir(self, ir: object, phase_summary: str) -> None:
+        # Lazy import: verification.py imports CompilerPass from this module.
+        from .verification import VerificationAnalysis  # noqa: PLC0415
+
+        report = self.get_analysis(VerificationAnalysis, ir)
+        if not report.has_errors():
+            return
+        summary = (
+            f'Pass "{self.get_pass_name()}" {phase_summary}: '
+            f"verification reported {len(report.errors())} error(s)."
+        )
+        self.report(DiagnosticLevel.ERROR, summary, detail=report.format())
+        raise PassValidationError(summary, report=report)
 
     def _guarded_should_run(self, ir: _PassInputT) -> bool:
         try:
@@ -453,17 +488,17 @@ class CompilerPass(ABC, Generic[_PassInputT, _PassOutputT]):
         diagnostic level (ERROR/WARNING/INFO). When ``detail`` is provided
         it is appended to the log message as ``" | detail: <detail>"``;
         the in-memory record stores the detail separately on the
-        :class:`PassDiagnostic`. When ``exc_info`` is provided, it is
+        :class:`Diagnostic`. When ``exc_info`` is provided, it is
         forwarded to the underlying log call so the originating traceback
         is preserved alongside the structured record; the in-memory
         diagnostic does not carry it.
         """
         note = message if isinstance(message, Note) else Note(message)
         self._diagnostics.append(
-            PassDiagnostic(
+            Diagnostic(
                 level=level,
                 message=note,
-                pass_name=self.get_pass_name(),
+                source=self.get_pass_name(),
                 detail=detail,
             )
         )

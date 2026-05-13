@@ -21,13 +21,13 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
+from fhy_core.diagnostic import Diagnostic
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
 from fhy_core.trait import Frozen, FrozenMixin, HasIdentifierMixin, PartialEqualMixin
 
 from .core import (
     CompilerPass,
-    PassDiagnostic,
     PassExecutionError,
     PassResult,
     PreservedAnalyses,
@@ -317,7 +317,7 @@ class PassRunRecord(FrozenMixin, PartialEqualMixin):
 
     pass_name: str
     changed: bool
-    diagnostics: tuple[PassDiagnostic, ...]
+    diagnostics: tuple[Diagnostic, ...]
     preserved_analyses: PreservedAnalyses
 
 

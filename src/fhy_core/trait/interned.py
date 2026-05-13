@@ -112,7 +112,7 @@ class InternedMixin(ABC, Generic[_K]):
 
     def _finalize_interned_instance(self) -> None:
         if isinstance(self, Verifiable):
-            self.verify()
+            self.verify().raise_if_failed()
         if isinstance(self, Frozen) and not self.is_frozen:
             self.freeze(deep=True)
 
