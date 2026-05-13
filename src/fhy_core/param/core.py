@@ -108,7 +108,13 @@ def _is_valid_param_assignment_data(
 
 
 @register_serializable(type_id="param_assignment")
-class ParamAssignment(Serializable, FrozenMixin, Generic[_T]):
+class ParamAssignment(
+    Serializable,
+    FrozenMixin,
+    Generic[_T],
+    freeze_on_init=True,
+    freeze_on_init_deep=True,
+):
     """Immutable binding of a parameter definition to a concrete value."""
 
     _param: "Param[_T]"
@@ -132,7 +138,6 @@ class ParamAssignment(Serializable, FrozenMixin, Generic[_T]):
 
         object.__setattr__(self, "_param", param)
         object.__setattr__(self, "_value", value)
-        self.freeze(deep=True)
 
     @property
     def param(self) -> "Param[_T]":
@@ -179,7 +184,13 @@ class ParamAssignment(Serializable, FrozenMixin, Generic[_T]):
 
 
 class Param(
-    WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC, Generic[_T]
+    WrappedFamilySerializable,
+    FrozenMixin,
+    StructuralEquivalenceMixin,
+    ABC,
+    Generic[_T],
+    freeze_on_init=True,
+    freeze_on_init_deep=True,
 ):
     """Abstract base class for constrained parameters."""
 
@@ -189,7 +200,6 @@ class Param(
     def __init__(self, *, name: Identifier | None = None) -> None:
         self._variable = name or Identifier("param")
         self._constraints = ()
-        self.freeze(deep=True)
 
     @property
     def variable(self) -> Identifier:

@@ -2,7 +2,7 @@
 
 Validation is exercised through the public `InSetConstraint` and
 `NotInSetConstraint` constructors. Tests are parametrized across both
-kinds and across each rejection scenario.
+kinds.
 """
 
 from typing import Any, Callable
@@ -13,11 +13,11 @@ from fhy_core.constraint import (
     Constraint,
     ConstraintError,
     InSetConstraint,
-    NotInSetConstraint,
 )
 from fhy_core.identifier import Identifier
 
 from .conftest import (
+    SET_KINDS,
     HashableNotSerializable,
     SerializableHashRaises,
     UnhashableTuple,
@@ -26,13 +26,8 @@ from .conftest import (
 
 SetConstraintFactory = Callable[[Identifier, Any], Constraint]
 
-_KINDS = [
-    pytest.param(InSetConstraint, id="in_set"),
-    pytest.param(NotInSetConstraint, id="not_in_set"),
-]
 
-
-@pytest.mark.parametrize("factory", _KINDS)
+@pytest.mark.parametrize("factory", SET_KINDS)
 @pytest.mark.parametrize(
     "values",
     [
@@ -50,7 +45,7 @@ def test_set_constraint_rejects_none_member(
         factory(mock_identifier("x", 0), values)
 
 
-@pytest.mark.parametrize("factory", _KINDS)
+@pytest.mark.parametrize("factory", SET_KINDS)
 @pytest.mark.parametrize(
     "values",
     [
@@ -65,25 +60,37 @@ def test_set_constraint_rejects_none_member(
 def test_set_constraint_rejects_unsupported_member(
     factory: SetConstraintFactory, values: Any
 ) -> None:
-    """Test members must be primitive, ``Serializable+Hashable``, or a valid container.
-
-    Anything else raises ``ConstraintError`` during construction.
-    """
+    """Test member must be a primitive, hashable serializable, or container."""
     with pytest.raises(ConstraintError):
         factory(mock_identifier("x", 0), values)
 
 
-@pytest.mark.parametrize("factory", _KINDS)
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_rejects_unhashable_outer_container_before_nested(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test outer-container hashability is checked before nested validation."""
+    # The outer container is an UnhashableTuple AND contains a None.
+    # The error message should mention the outer-container hashability
+    # failure, not the None.
+    outer = UnhashableTuple((None,))
+
+    with pytest.raises(ConstraintError, match="(?i)hashable"):
+        factory(mock_identifier("x", 0), [outer])
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
 def test_set_constraint_supports_deeply_nested_collection_members(
     factory: SetConstraintFactory,
 ) -> None:
     """Test the recursive validator accepts deeply nested tuple/frozenset members."""
     nested_member = (1, (2, 3), frozenset({4, 5}))
     constraint = factory(mock_identifier("x", 0), [nested_member])
+
     assert constraint.is_satisfied(nested_member) is (factory is InSetConstraint)
 
 
-@pytest.mark.parametrize("factory", _KINDS)
+@pytest.mark.parametrize("factory", SET_KINDS)
 @pytest.mark.parametrize(
     "value",
     [
@@ -96,12 +103,21 @@ def test_set_constraint_supports_deeply_nested_collection_members(
 def test_set_constraint_rejects_non_primitive_builtin_types(
     factory: SetConstraintFactory, value: Any
 ) -> None:
-    """Test non-allow-listed builtin types are rejected as members.
-
-    The primitive literal allow-list is ``{str, int, float, bool}``;
-    other builtin scalars/sequences (``complex``, ``bytes``,
-    ``bytearray``, ``range``) are not allow-listed and are not
-    ``Serializable``.
-    """
+    """Test non-allow-listed builtin types are rejected as members."""
     with pytest.raises(ConstraintError):
         factory(mock_identifier("x", 0), [value])
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_unhashable_after_validation_error_names_offending_value(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test the post-validation hash error embeds the offending value."""
+    bad = SerializableHashRaises()
+
+    with pytest.raises(ConstraintError) as exc_info:
+        factory(mock_identifier("x", 0), [bad])
+
+    assert "SerializableHashRaises" in str(exc_info.value) or repr(bad) in str(
+        exc_info.value
+    )

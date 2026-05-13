@@ -1,10 +1,4 @@
-"""Serialization round-trips and deserialization-error coverage.
-
-The TypeGuard validators (`_is_valid_*_constraint_data`) are reached
-through the public ``deserialize_from_dict`` API, so the parametrized
-``rejects_malformed_payload`` tests here drive the long
-``and ... and ...`` chain mutations.
-"""
+"""Serialization round-trips and deserialization-error coverage."""
 
 from typing import Any, Callable, cast
 
@@ -28,7 +22,7 @@ from fhy_core.serialization import (
     SerializedDict,
 )
 
-from .conftest import SerializableEqualHashable, mock_identifier
+from .conftest import SET_KINDS, SerializableEqualHashable, mock_identifier
 
 SetConstraintType = type[Constraint]
 
@@ -52,6 +46,7 @@ def test_equation_constraint_round_trip_dict_serialization() -> None:
             "expression": expression.serialize_to_dict(),
         },
     }
+
     assert constraint.serialize_to_dict() == expected
     rebuilt = EquationConstraint.deserialize_from_dict(constraint.serialize_to_dict())
     assert isinstance(rebuilt, EquationConstraint)
@@ -64,20 +59,22 @@ def test_equation_constraint_round_trip_dict_serialization() -> None:
 # =============================================================================
 
 
-_SET_KINDS = [
+_SET_KINDS_WITH_FIELD = [
     pytest.param(InSetConstraint, "valid_values", id="in_set"),
     pytest.param(NotInSetConstraint, "invalid_values", id="not_in_set"),
 ]
 
 
-@pytest.mark.parametrize("factory, _field", _SET_KINDS)
+@pytest.mark.parametrize("factory, _field", _SET_KINDS_WITH_FIELD)
 def test_set_constraint_round_trip_dict_serialization(
     factory: SetConstraintType, _field: str
 ) -> None:
     """Test a set constraint round-trips through dict serialization."""
     x = mock_identifier("x", 0)
     constraint = factory(x, {1, 2})  # type: ignore[call-arg]
+
     rebuilt = type(constraint).deserialize_from_dict(constraint.serialize_to_dict())
+
     assert isinstance(rebuilt, factory)
     assert rebuilt.variable == x
     for member in (1, 2):
@@ -85,7 +82,7 @@ def test_set_constraint_round_trip_dict_serialization(
     assert rebuilt.is_satisfied(99) == constraint.is_satisfied(99)
 
 
-@pytest.mark.parametrize("factory, _field", _SET_KINDS)
+@pytest.mark.parametrize("factory, _field", _SET_KINDS_WITH_FIELD)
 def test_set_constraint_round_trip_with_serializable_member(
     factory: SetConstraintType, _field: str
 ) -> None:
@@ -93,14 +90,16 @@ def test_set_constraint_round_trip_with_serializable_member(
     x = mock_identifier("x", 0)
     member = SerializableEqualHashable(7)
     constraint = factory(x, {member})  # type: ignore[call-arg]
+
     rebuilt = type(constraint).deserialize_from_dict(constraint.serialize_to_dict())
+
     assert rebuilt.is_satisfied(member) == constraint.is_satisfied(member)
     assert rebuilt.is_satisfied(
         SerializableEqualHashable(8)
     ) == constraint.is_satisfied(SerializableEqualHashable(8))
 
 
-@pytest.mark.parametrize("factory, _field", _SET_KINDS)
+@pytest.mark.parametrize("factory, _field", _SET_KINDS_WITH_FIELD)
 def test_set_constraint_round_trip_with_nested_collection_member(
     factory: SetConstraintType, _field: str
 ) -> None:
@@ -108,15 +107,51 @@ def test_set_constraint_round_trip_with_nested_collection_member(
     x = mock_identifier("x", 0)
     nested_member = (1, (2, 3), frozenset({4, 5}))
     constraint = factory(x, [nested_member])  # type: ignore[call-arg]
+
     rebuilt = type(constraint).deserialize_from_dict(constraint.serialize_to_dict())
+
     assert rebuilt.is_satisfied(nested_member) == constraint.is_satisfied(nested_member)
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_round_trip_preserves_type_strict_distinct_members(
+    factory: SetConstraintType,
+) -> None:
+    """Test ``[True, 1, 1.0]`` survives a round trip with all three members distinct."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, [True, 1, 1.0])  # type: ignore[call-arg]
+
+    rebuilt = type(constraint).deserialize_from_dict(constraint.serialize_to_dict())
+
+    in_set = factory is InSetConstraint
+    assert rebuilt.is_satisfied(True) is in_set
+    assert rebuilt.is_satisfied(1) is in_set
+    assert rebuilt.is_satisfied(1.0) is in_set
+
+
+@pytest.mark.parametrize("factory, field", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_serialization_keeps_bool_int_and_float_distinct(
+    factory: SetConstraintType, field: str
+) -> None:
+    """Test ``[True, 1, 1.0]`` serializes to three distinct member entries."""
+    constraint = factory(
+        mock_identifier("x", 0),  # type: ignore[call-arg]
+        [True, 1, 1.0],
+    )
+
+    payload = cast(dict[str, Any], constraint.serialize_to_dict()["__data__"])
+    serialized = payload[field]
+
+    assert len(serialized) == 3
 
 
 def test_in_set_constraint_serialized_values_are_repr_sorted() -> None:
     """Test serialized members are emitted in repr-sorted order for determinism."""
     constraint = InSetConstraint(mock_identifier("x", 0), {3, 1, 2})
+
     payload_data = cast(dict[str, Any], constraint.serialize_to_dict()["__data__"])
     serialized_values: list[Any] = payload_data["valid_values"]
+
     assert serialized_values == sorted(serialized_values, key=repr)
 
 
@@ -199,6 +234,7 @@ def test_set_constraint_rejects_malformed_payload(
         bad = _drop(resolved_args[0])(payload)
     else:
         bad = _replace(resolved_args[0], resolved_args[1])(payload)
+
     with pytest.raises(DeserializationDictStructureError):
         factory.deserialize_data_from_dict(bad)
 
@@ -208,39 +244,26 @@ def test_set_constraint_rejects_malformed_payload(
 # =============================================================================
 
 
-@pytest.mark.parametrize("factory, field", _SET_KINDS)
+@pytest.mark.parametrize("factory, field", _SET_KINDS_WITH_FIELD)
 def test_set_member_deserializer_rewraps_dict_structure_error(
     factory: type[Constraint], field: str
 ) -> None:
-    """Test the member deserializer re-wraps a wrapped-member structure error.
-
-    A wrapped member missing ``__type__`` raises a structure error from
-    ``deserialize_registry_wrapped_value``; the constraint deserializer
-    must catch it and re-raise as ``DeserializationValueError``.
-
-    The except-clause mutation that swaps ``DeserializationDictStructureError``
-    out of the catch tuple lets the inner error escape unchanged.
-    """
+    """Test a wrapped-member structure error is re-raised as a value error."""
     x = mock_identifier("x", 0)
     bad_payload: SerializedDict = {
         "variable": x.serialize_to_dict(),
         field: [{"not_a_wrapped": "value"}],
     }
+
     with pytest.raises(DeserializationValueError):
         factory.deserialize_data_from_dict(bad_payload)
 
 
-@pytest.mark.parametrize("factory, field", _SET_KINDS)
+@pytest.mark.parametrize("factory, field", _SET_KINDS_WITH_FIELD)
 def test_set_member_deserializer_rewraps_value_error_with_field_name(
     factory: type[Constraint], field: str
 ) -> None:
-    """Test the member deserializer embeds the field name in re-wrapped errors.
-
-    The inner ``DeserializationValueError`` must be re-raised with the
-    field name in the message. The mutation that drops
-    ``DeserializationValueError`` from the catch tuple lets the inner
-    exception bypass the field-name re-wrapping.
-    """
+    """Test the member deserializer embeds the field name in re-wrapped errors."""
     x = mock_identifier("x", 0)
     bad_payload: SerializedDict = {
         "variable": x.serialize_to_dict(),
@@ -251,32 +274,29 @@ def test_set_member_deserializer_rewraps_value_error_with_field_name(
             }
         ],
     }
+
     with pytest.raises(DeserializationValueError) as exc_info:
         factory.deserialize_data_from_dict(bad_payload)
+
     assert field in str(exc_info.value)
 
 
-@pytest.mark.parametrize("factory, _field", _SET_KINDS)
+@pytest.mark.parametrize("factory, _field", _SET_KINDS_WITH_FIELD)
 def test_set_constraint_deserialization_tolerates_extra_unknown_fields(
     factory: type[Constraint], _field: str
 ) -> None:
-    """Test deserialization silently ignores unknown extra fields.
-
-    The TypeGuard requires the *known* keys to be present and well-shaped
-    but does not assert the absence of additional keys; deserialization
-    picks just the known ones. Documents the forward-compatibility
-    contract - older readers can consume payloads written by a newer
-    schema with added fields.
-    """
+    """Test deserialization silently ignores unknown extra fields."""
     constraint = factory(mock_identifier("x", 0), {1, 2})  # type: ignore[call-arg]
     payload = constraint.serialize_to_dict()
     cast(dict[str, Any], payload["__data__"])["unknown_future_field"] = "ignore me"
+
     rebuilt = factory.deserialize_from_dict(payload)
+
     for member in (1, 2):
         assert rebuilt.is_satisfied(member) == constraint.is_satisfied(member)
 
 
-@pytest.mark.parametrize("factory, field", _SET_KINDS)
+@pytest.mark.parametrize("factory, field", _SET_KINDS_WITH_FIELD)
 def test_set_member_deserializer_rejects_none_after_deserialization(
     factory: type[Constraint], field: str
 ) -> None:
@@ -286,5 +306,6 @@ def test_set_member_deserializer_rejects_none_after_deserialization(
         "variable": x.serialize_to_dict(),
         field: [{"__type__": "builtins.NoneType", "__data__": None}],
     }
+
     with pytest.raises((DeserializationValueError, ValueError)):
         factory.deserialize_data_from_dict(bad_payload)

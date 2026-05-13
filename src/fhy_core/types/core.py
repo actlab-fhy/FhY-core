@@ -49,7 +49,12 @@ _LOGGER = get_logger(__name__)
 
 
 class _DispatchedStructuralEquivalence(
-    WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC
+    WrappedFamilySerializable,
+    FrozenMixin,
+    StructuralEquivalenceMixin,
+    ABC,
+    freeze_on_init=True,
+    freeze_on_init_deep=True,
 ):
     """Shared base for ``Type`` and ``DataType``.
 
@@ -401,7 +406,6 @@ class PrimitiveDataType(DataType):
     def __init__(self, core_data_type: CoreDataType) -> None:
         super().__init__()
         self._core_data_type = core_data_type
-        self.freeze(deep=True)
 
     @property
     def core_data_type(self) -> CoreDataType:
@@ -462,7 +466,6 @@ class TemplateDataType(DataType):
         super().__init__()
         self._data_type = data_type
         self._widths = tuple(widths) if widths is not None else None
-        self.freeze(deep=True)
 
     @property
     def data_type(self) -> Identifier:
@@ -598,7 +601,6 @@ class NumericalType(Type):
         super().__init__()
         self._data_type = data_type
         self._shape = tuple(shape) if shape is not None else ()
-        self.freeze(deep=True)
 
     @property
     def data_type(self) -> DataType:
@@ -695,7 +697,6 @@ class IndexType(Type):
         self._lower_bound = lower_bound
         self._upper_bound = upper_bound
         self._stride = stride if stride is not None else LiteralExpression(1)
-        self.freeze(deep=True)
 
     @property
     def lower_bound(self) -> Expression:

@@ -1,10 +1,4 @@
-"""Tests covering `ConstraintError` identity.
-
-The ``@register_error`` decorator records `ConstraintError` in the
-private ``_COMPILER_ERRORS`` registry, but that registry has no public
-reader; the registration mutation is therefore equivalent through the
-public interface alone and is documented as such, not tested here.
-"""
+"""Tests covering `ConstraintError` identity."""
 
 from fhy_core.constraint import ConstraintError
 
