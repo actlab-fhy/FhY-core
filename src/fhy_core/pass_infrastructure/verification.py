@@ -117,10 +117,11 @@ class VerificationRegistry:
     def get_passes_for(cls, ir_type: type) -> tuple[type[CompilerPass[Any, Any]], ...]:
         """Return all verification passes applicable to ``ir_type``.
 
-        Walks ``ir_type.__mro__`` and concatenates the lists in MRO order,
-        so base-class passes appear first and subclass passes appear last.
-        Duplicate pass classes (e.g., registered against both a base and a
-        subclass) appear exactly once, at their first MRO position.
+        Walks ``reversed(ir_type.__mro__)`` and concatenates the lists in
+        base-to-derived order, so base-class passes appear first and
+        subclass passes appear last. Duplicate pass classes (e.g.,
+        registered against both a base and a subclass) appear exactly
+        once, at their first position in that reverse-MRO traversal.
 
         Args:
             ir_type: The IR type to look up.

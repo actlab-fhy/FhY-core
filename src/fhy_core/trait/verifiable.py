@@ -6,9 +6,9 @@ This module hosts three related but independent symbols:
   Implementations return a :class:`ValidationReport`.
 - :class:`VerifiableMixin`: a concrete mixin that backs ``verify()`` with
   the verification registry by default.
-- :class:`VerificationError`: a general-purpose exception used by ad-hoc
-  structural-correctness checks elsewhere in the codebase (lattice,
-  symbol-table, type-unification helpers). It is *not* raised by
+- :class:`VerificationError`: a general-purpose exception for fail-fast
+  structural-correctness helpers (currently the type-unification and
+  dispatch helpers in ``fhy_core.types.dispatch``). It is *not* raised by
   :meth:`Verifiable.verify` or by auto-verification on ``CompilerPass``;
   those entry points speak in reports.
 """
@@ -26,11 +26,11 @@ if TYPE_CHECKING:
 
 @register_error
 class VerificationError(Exception):
-    """Raised by ad-hoc structural-correctness checks.
+    """Raised by fail-fast structural-correctness helpers.
 
     This exception type is used by helpers that fail-fast when they detect
-    a malformed structure (e.g., lattice non-property, type-unification
-    mismatch, symbol-table corruption). It is *not* raised by
+    a malformed structure (currently the type-unification and dispatch
+    helpers in ``fhy_core.types.dispatch``). It is *not* raised by
     :meth:`Verifiable.verify` or by :class:`CompilerPass` auto-verification
     — those entry points return or carry a :class:`ValidationReport`.
     """
