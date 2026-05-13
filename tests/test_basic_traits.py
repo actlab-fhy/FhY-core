@@ -7,6 +7,13 @@ import pytest
 from frozendict import frozendict
 
 from fhy_core import DATA_DOMAIN
+from fhy_core.diagnostic import (
+    Diagnostic,
+    DiagnosticLevel,
+    Note,
+    ValidationFailedError,
+    ValidationReport,
+)
 from fhy_core.identifier import Identifier
 from fhy_core.provenance import Provenance
 from fhy_core.trait import (
@@ -29,7 +36,6 @@ from fhy_core.trait import (
     PartialOrderable,
     PartialOrderableMixin,
     VerifiableMixin,
-    VerificationError,
 )
 
 from .conftest import mock_identifier
@@ -166,10 +172,19 @@ class _VerifiedFrozenInternedValue(InternedMixin[str], FrozenMixin, VerifiableMi
     def get_intern_key(self) -> str:
         return self.key
 
-    def verify(self) -> None:
+    def verify(self) -> ValidationReport:
         type(self).verify_calls += 1
         if not self.key:
-            raise VerificationError("missing intern key")
+            return ValidationReport(
+                diagnostics=(
+                    Diagnostic(
+                        level=DiagnosticLevel.ERROR,
+                        message=Note("missing intern key"),
+                        source=type(self).__name__,
+                    ),
+                )
+            )
+        return ValidationReport()
 
 
 class _RaisingInternedValue(InternedMixin[str]):
@@ -469,7 +484,7 @@ def test_interned_finalize_propagates_verification_errors() -> None:
     _VerifiedFrozenInternedValue.clear_interned_registry()
     _VerifiedFrozenInternedValue.verify_calls = 0
 
-    with pytest.raises(VerificationError):
+    with pytest.raises(ValidationFailedError):
         _VerifiedFrozenInternedValue("", [1])
 
     assert _VerifiedFrozenInternedValue.get_interned("") is None

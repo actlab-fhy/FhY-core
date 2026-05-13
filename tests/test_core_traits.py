@@ -4,12 +4,18 @@ from dataclasses import dataclass
 
 import pytest
 
+from fhy_core.diagnostic import (
+    Diagnostic,
+    DiagnosticLevel,
+    Note,
+    ValidationFailedError,
+    ValidationReport,
+)
 from fhy_core.trait import (
     HasType,
     HasTypeMixin,
     Verifiable,
     VerifiableMixin,
-    VerificationError,
 )
 
 
@@ -25,9 +31,18 @@ class _TypedValue(HasTypeMixin[str]):
 class _VerifiableNode(VerifiableMixin):
     is_valid: bool
 
-    def verify(self) -> None:
-        if not self.is_valid:
-            raise VerificationError("Node invariant violation.")
+    def verify(self) -> ValidationReport:
+        if self.is_valid:
+            return ValidationReport()
+        return ValidationReport(
+            diagnostics=(
+                Diagnostic(
+                    level=DiagnosticLevel.ERROR,
+                    message=Note("Node invariant violation."),
+                    source="_VerifiableNode",
+                ),
+            )
+        )
 
 
 def test_has_type_runtime_protocol() -> None:
@@ -51,11 +66,17 @@ def test_verifiable_runtime_protocol() -> None:
 def test_verifiable_mixin_contract() -> None:
     """Test `VerifiableMixin` contract."""
     node = _VerifiableNode(True)
-    node.verify()
+    report = node.verify()
+
+    assert report.has_errors() is False
 
 
-def test_verifiable_invariant_violation_raises() -> None:
-    """Test `VerifiableMixin` raises on invariant violation."""
+def test_verifiable_invariant_violation_reports_error() -> None:
+    """Test `VerifiableMixin` returns a failing report on invariant violation."""
     node = _VerifiableNode(False)
-    with pytest.raises(VerificationError):
-        node.verify()
+
+    report = node.verify()
+
+    assert report.has_errors() is True
+    with pytest.raises(ValidationFailedError):
+        report.raise_if_failed()

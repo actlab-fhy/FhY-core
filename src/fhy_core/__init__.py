@@ -13,9 +13,9 @@ __all__ = [
     "get_registered_errors",
     "register_error",
     "CompilerPass",
+    "Diagnostic",
     "DiagnosticLevel",
     "PassInfo",
-    "PassDiagnostic",
     "PassExecutionError",
     "PassRegistrationError",
     "PassResult",
@@ -34,8 +34,12 @@ __all__ = [
     "ValidationFailedError",
     "ValidationManager",
     "ValidationReport",
+    "VerificationAnalysis",
+    "VerificationRegistry",
     "VisitablePass",
     "register_pass",
+    "register_verification",
+    "run_verification",
     "BinaryExpression",
     "BinaryOperation",
     "Expression",
@@ -198,7 +202,14 @@ from .constraint import (
     InSetConstraint,
     NotInSetConstraint,
 )
-from .diagnostic import Note, NoteKind
+from .diagnostic import (
+    Diagnostic,
+    DiagnosticLevel,
+    Note,
+    NoteKind,
+    ValidationFailedError,
+    ValidationReport,
+)
 from .error import get_registered_errors, register_error
 from .expression import (
     BinaryExpression,
@@ -259,11 +270,9 @@ from .pass_infrastructure import (
     AnalysisManager,
     AnalysisVisitablePass,
     CompilerPass,
-    DiagnosticLevel,
     FixpointGroupRecord,
     FixpointIterationRecord,
     FixpointPassGroup,
-    PassDiagnostic,
     PassExecutionError,
     PassInfo,
     PassManager,
@@ -274,11 +283,13 @@ from .pass_infrastructure import (
     PassValidationError,
     PreservedAnalyses,
     TraversalOrder,
-    ValidationFailedError,
     ValidationManager,
-    ValidationReport,
+    VerificationAnalysis,
+    VerificationRegistry,
     VisitablePass,
     register_pass,
+    register_verification,
+    run_verification,
 )
 from .provenance import (
     CallSiteProvenance,
