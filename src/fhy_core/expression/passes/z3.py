@@ -15,9 +15,11 @@ from frozendict import frozendict
 from fhy_core.expression.core import (
     BinaryExpression,
     BinaryOperation,
+    CallExpression,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    TernaryExpression,
     UnaryExpression,
     UnaryOperation,
 )
@@ -126,6 +128,21 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
             raise ValueError(f"Unsupported identifier type: {identifier_type}.")
         self._identifier_to_z3_expression[identifier_expression.identifier] = result
         return result
+
+    def visit_ternary_expression(
+        self, ternary_expression: TernaryExpression
+    ) -> z3.ExprRef:
+        condition = self.visit(ternary_expression.condition)
+        true_value = self.visit(ternary_expression.true_value)
+        false_value = self.visit(ternary_expression.false_value)
+        return z3.If(condition, true_value, false_value)
+
+    def visit_call_expression(self, call_expression: CallExpression) -> z3.ExprRef:
+        name = call_expression.function_name
+        raise TypeError(
+            "Cannot lower an un-inlined CallExpression to Z3; "
+            f"call `inline_functions` first to expand {name!r}."
+        )
 
     def visit_literal_expression(
         self, literal_expression: LiteralExpression

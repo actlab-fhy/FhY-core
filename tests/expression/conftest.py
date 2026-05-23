@@ -1,5 +1,10 @@
 """Shared helpers for the `tests/expression` sub-package."""
 
+from collections.abc import Iterator
+
+import pytest
+
+from fhy_core.expression import registry as _registry
 from fhy_core.expression.passes.type_checker import ExpressionTypeChecker
 from fhy_core.identifier import Identifier
 from fhy_core.types import Type, TypeQualifier
@@ -11,6 +16,23 @@ __all__ = [
     "make_identifier_checker",
     "make_single_type_checker",
 ]
+
+
+@pytest.fixture()
+def function_registry_snapshot() -> Iterator[None]:
+    """Snapshot the process-wide function registry around the test.
+
+    Captures the registry's contents before the test runs, then restores
+    them after the test completes. Tests that mutate the registry
+    request this fixture explicitly. Built-in registrations
+    (``max``, ``min``) survive across tests because they are in the
+    snapshot.
+    """
+    snapshot = dict(_registry.get_registered_functions())
+    try:
+        yield
+    finally:
+        _registry._set_registry_state_for_tests(snapshot)
 
 
 def _unexpected_lookup(identifier: Identifier) -> tuple[Type, TypeQualifier]:

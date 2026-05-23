@@ -358,11 +358,102 @@ def test_resolve_large_positive_literal_to_uint64_without_signed_context() -> No
     )
 
 
-def test_resolve_literal_core_data_type_raises_not_implemented_for_bool() -> None:
-    """Test `bool` literals raise `NotImplementedError` as a deliberate marker."""
-    bool_literal: int = True  # boolean literals are intentional input here
-    with pytest.raises(NotImplementedError, match="oolean"):
-        resolve_literal_core_data_type(bool_literal, CoreDataType.INT32)
+def test_resolve_literal_core_data_type_resolves_bool_against_bool_context() -> None:
+    """Test `bool` literals resolve to `BOOL` when checked against `BOOL`."""
+    assert resolve_literal_core_data_type(True, CoreDataType.BOOL) == CoreDataType.BOOL
+    assert resolve_literal_core_data_type(False, CoreDataType.BOOL) == CoreDataType.BOOL
+
+
+@pytest.mark.parametrize(
+    "core_data_type",
+    [
+        CoreDataType.INT32,
+        CoreDataType.UINT8,
+        CoreDataType.FLOAT64,
+        CoreDataType.COMPLEX64,
+    ],
+)
+def test_resolve_literal_core_data_type_rejects_bool_against_numeric_context(
+    core_data_type: CoreDataType,
+) -> None:
+    """Test `bool` literals against numeric contexts raise `FhYCoreTypeError`."""
+    with pytest.raises(FhYCoreTypeError):
+        resolve_literal_core_data_type(True, core_data_type)
+
+
+@pytest.mark.parametrize("literal", [0, 1, -1, 3.14])
+def test_resolve_literal_core_data_type_rejects_numeric_against_bool_context(
+    literal: int | float,
+) -> None:
+    """Test numeric literals against the `BOOL` context raise `FhYCoreTypeError`."""
+    with pytest.raises(FhYCoreTypeError):
+        resolve_literal_core_data_type(literal, CoreDataType.BOOL)
+
+
+# =============================================================================
+# BOOL core data type
+# =============================================================================
+
+
+def test_bool_core_data_type_enum_member_exists() -> None:
+    """Test `CoreDataType.BOOL` is a member of the enum with string value `bool`."""
+    assert CoreDataType.BOOL.value == "bool"
+
+
+def test_bool_core_data_type_bit_width_is_one() -> None:
+    """Test the bit width of `BOOL` is reported as `1` (one-bit value)."""
+    assert get_core_data_type_bit_width(CoreDataType.BOOL) == 1
+
+
+def test_bool_core_data_type_is_not_weak() -> None:
+    """Test `BOOL` is not classified as a weak literal type."""
+    assert is_weak_core_data_type(CoreDataType.BOOL) is False
+
+
+def test_promote_core_data_types_bool_with_bool_returns_bool() -> None:
+    """Test promoting `BOOL` with itself yields `BOOL`."""
+    assert (
+        promote_core_data_types(CoreDataType.BOOL, CoreDataType.BOOL)
+        == CoreDataType.BOOL
+    )
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        CoreDataType.INT,
+        CoreDataType.INT32,
+        CoreDataType.UINT,
+        CoreDataType.UINT8,
+        CoreDataType.FLOAT,
+        CoreDataType.FLOAT64,
+        CoreDataType.COMPLEX64,
+    ],
+)
+def test_promote_core_data_types_bool_with_non_bool_raises(
+    other: CoreDataType,
+) -> None:
+    """Test promoting `BOOL` with any non-`BOOL` core data type raises."""
+    with pytest.raises(FhYCoreTypeError):
+        promote_core_data_types(CoreDataType.BOOL, other)
+    with pytest.raises(FhYCoreTypeError):
+        promote_core_data_types(other, CoreDataType.BOOL)
+
+
+def test_promote_primitive_data_types_bool_with_bool_returns_bool_primitive() -> None:
+    """Test promoting two `BOOL` primitives yields a `BOOL` primitive."""
+    bool_data_type = PrimitiveDataType(CoreDataType.BOOL)
+    promoted = promote_primitive_data_types(bool_data_type, bool_data_type)
+    assert isinstance(promoted, PrimitiveDataType)
+    assert promoted.core_data_type == CoreDataType.BOOL
+
+
+def test_promote_primitive_data_types_bool_with_int_raises() -> None:
+    """Test `BOOL` and any non-`BOOL` primitive do not promote together."""
+    bool_data_type = PrimitiveDataType(CoreDataType.BOOL)
+    int32 = PrimitiveDataType(CoreDataType.INT32)
+    with pytest.raises(FhYCoreTypeError):
+        promote_primitive_data_types(bool_data_type, int32)
 
 
 def test_resolve_literal_core_data_type_rejects_float_against_integer_target() -> None:

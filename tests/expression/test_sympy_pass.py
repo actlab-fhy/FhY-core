@@ -8,9 +8,11 @@ import sympy  # type: ignore[import-untyped]
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
+    CallExpression,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    TernaryExpression,
     UnaryExpression,
     UnaryOperation,
     convert_expression_to_sympy_expression,
@@ -773,3 +775,81 @@ def test_sympy_two_argument_helper_rejects_wrong_arg_count() -> None:
         ValueError, match=r"Expected a binary operation to have exactly two arguments"
     ):
         SymPyToExpressionConverter()._convert_pow(fake)
+
+
+# =============================================================================
+# TernaryExpression <-> SymPy.Piecewise
+# =============================================================================
+
+
+def test_convert_ternary_expression_to_sympy_piecewise() -> None:
+    """Test ``TernaryExpression`` lowers to a ``sympy.Piecewise`` two-branch form.
+
+    The condition is symbolic so sympy does not fold the ``Piecewise``
+    at construction time.
+    """
+    x_identifier = mock_identifier("x", 0)
+    expression = TernaryExpression(
+        BinaryExpression(
+            BinaryOperation.GREATER,
+            IdentifierExpression(x_identifier),
+            LiteralExpression(0),
+        ),
+        LiteralExpression(1),
+        LiteralExpression(2),
+    )
+
+    result = convert_expression_to_sympy_expression(expression)
+
+    assert isinstance(result, sympy.Piecewise)
+
+
+def test_sympy_piecewise_lifts_to_ternary_expression() -> None:
+    """Test a two-branch ``sympy.Piecewise`` lifts back to a ``TernaryExpression``.
+
+    The first branch's condition is symbolic so sympy does not fold the
+    ``Piecewise`` at construction.
+    """
+    sympy_expression = sympy.Piecewise(
+        (sympy.Integer(1), sympy.Symbol("flag_0")), (sympy.Integer(2), True)
+    )
+
+    result = convert_sympy_expression_to_expression(sympy_expression)
+
+    assert isinstance(result, TernaryExpression)
+
+
+def test_ternary_expression_round_trips_through_sympy() -> None:
+    """Test ``TernaryExpression`` round-trips structurally through SymPy.
+
+    Both branches are leaves whose sympy lowerings preserve their shape;
+    unary-negate branches do not round-trip because sympy represents
+    ``-x`` as ``Mul(-1, x)``.
+    """
+    original = TernaryExpression(
+        BinaryExpression(
+            BinaryOperation.GREATER,
+            IdentifierExpression(mock_identifier("x", 0)),
+            LiteralExpression(0),
+        ),
+        IdentifierExpression(mock_identifier("x", 0)),
+        LiteralExpression(0),
+    )
+
+    intermediate = convert_expression_to_sympy_expression(original)
+    restored = convert_sympy_expression_to_expression(intermediate)
+
+    assert restored.is_structurally_equivalent(original)
+
+
+# =============================================================================
+# CallExpression interplay with the SymPy converter
+# =============================================================================
+
+
+def test_convert_call_expression_to_sympy_rejects_unresolved_call() -> None:
+    """Test SymPy lowering rejects ``CallExpression`` (callers inline first)."""
+    expression = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
+
+    with pytest.raises(PassExecutionError, match="TypeError"):
+        convert_expression_to_sympy_expression(expression)

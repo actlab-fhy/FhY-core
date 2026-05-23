@@ -7,9 +7,11 @@ import pytest
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
+    CallExpression,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    TernaryExpression,
     UnaryExpression,
     UnaryOperation,
     parse_expression,
@@ -260,3 +262,80 @@ def test_pretty_formatter_get_noop_output_raises() -> None:
 
     with pytest.raises(PassExecutionError, match=r"does not define noop output"):
         formatter.get_noop_output(LiteralExpression(0))
+
+
+# =============================================================================
+# TernaryExpression rendering
+# =============================================================================
+
+
+def test_pformat_ternary_expression_renders_as_question_colon_form() -> None:
+    """Test ``TernaryExpression`` renders as ``(c ? t : f)`` in default form."""
+    expression = TernaryExpression(
+        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+    )
+
+    assert pformat_expression(expression) == "(True ? 1 : 2)"
+
+
+def test_pformat_ternary_expression_renders_in_functional_form() -> None:
+    """Test ``TernaryExpression`` renders as ``(ternary c t f)`` functionally."""
+    expression = TernaryExpression(
+        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+    )
+
+    assert pformat_expression(expression, functional=True) == "(ternary True 1 2)"
+
+
+def test_pformat_nested_ternary_renders_inner_form_inside_branch() -> None:
+    """Test nested ternary expressions render with the inner form inside the branch."""
+    expression = TernaryExpression(
+        LiteralExpression(True),
+        TernaryExpression(
+            LiteralExpression(False), LiteralExpression(1), LiteralExpression(2)
+        ),
+        LiteralExpression(3),
+    )
+
+    assert pformat_expression(expression) == "(True ? (False ? 1 : 2) : 3)"
+
+
+# =============================================================================
+# CallExpression rendering
+# =============================================================================
+
+
+def test_pformat_call_expression_renders_function_name_with_arguments() -> None:
+    """Test ``call(name, args)`` renders as ``name(arg1, arg2, ...)``."""
+    expression = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
+
+    assert pformat_expression(expression) == "max(1, 2)"
+
+
+def test_pformat_call_expression_with_zero_arguments_renders_with_empty_parens() -> (
+    None
+):
+    """Test a zero-argument ``CallExpression`` renders as ``name()``."""
+    expression = CallExpression("noargs", ())
+
+    assert pformat_expression(expression) == "noargs()"
+
+
+def test_pformat_call_expression_renders_in_functional_form() -> None:
+    """Test ``CallExpression`` renders as ``(name arg1 arg2 ...)`` functionally."""
+    expression = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
+
+    assert pformat_expression(expression, functional=True) == "(max 1 2)"
+
+
+def test_pformat_call_expression_renders_nested_call_in_argument_position() -> None:
+    """Test nested ``CallExpression`` renders with the inner call inside an argument."""
+    expression = CallExpression(
+        "max",
+        (
+            CallExpression("min", (LiteralExpression(1), LiteralExpression(2))),
+            LiteralExpression(3),
+        ),
+    )
+
+    assert pformat_expression(expression) == "max(min(1, 2), 3)"

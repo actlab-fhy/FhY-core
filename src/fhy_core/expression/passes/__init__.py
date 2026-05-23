@@ -1,6 +1,10 @@
 """Analysis and transformation functions for expressions."""
 
 __all__ = [
+    "BUILTIN_FUNCTIONS",
+    "BuiltinFunctions",
+    "FunctionArityError",
+    "FunctionInliner",
     "check_expression_type",
     "collect_identifiers",
     "convert_expression_to_sympy_expression",
@@ -9,6 +13,7 @@ __all__ = [
     "does_expression_imply",
     "get_core_data_type_from_literal_type",
     "holds_for_all_free_assignments",
+    "inline_functions",
     "replace_identifiers",
     "simplify_expression",
     "substitute_identifiers",
@@ -21,6 +26,8 @@ from .basic import (
     replace_identifiers,
     substitute_identifiers,
 )
+from .builtins import BUILTIN_FUNCTIONS, BuiltinFunctions
+from .inline import FunctionArityError, FunctionInliner, inline_functions
 from .sympy import (
     convert_expression_to_sympy_expression,
     convert_sympy_expression_to_expression,

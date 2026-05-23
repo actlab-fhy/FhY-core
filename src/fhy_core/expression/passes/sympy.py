@@ -18,9 +18,11 @@ from frozendict import frozendict
 from fhy_core.expression.core import (
     BinaryExpression,
     BinaryOperation,
+    CallExpression,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    TernaryExpression,
     UnaryExpression,
     UnaryOperation,
 )
@@ -96,6 +98,25 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
         identifier = identifier_expression.identifier
         return sympy.Symbol(self.format_identifier(identifier))
+
+    def visit_ternary_expression(
+        self, ternary_expression: TernaryExpression
+    ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
+        condition = self.visit(ternary_expression.condition)
+        true_value = self.visit(ternary_expression.true_value)
+        false_value = self.visit(ternary_expression.false_value)
+        return sympy.Piecewise(
+            (true_value, condition), (false_value, True), evaluate=False
+        )
+
+    def visit_call_expression(
+        self, call_expression: CallExpression
+    ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
+        name = call_expression.function_name
+        raise TypeError(
+            "Cannot lower an un-inlined CallExpression to SymPy; "
+            f"call `inline_functions` first to expand {name!r}."
+        )
 
     def visit_literal_expression(
         self, literal_expression: LiteralExpression
@@ -187,6 +208,7 @@ class SymPyToExpressionConverter(
     """Converts a SymPy expression to an expression tree."""
 
     _EXPR_DISPATCH: ClassVar[tuple[tuple[type, str], ...]] = (
+        (sympy.Piecewise, "_convert_piecewise"),
         (sympy.Add, "_convert_add"),
         (sympy.Mul, "_convert_mul"),
         (sympy.Mod, "_convert_mod"),
@@ -450,6 +472,24 @@ class SymPyToExpressionConverter(
 
     def _convert_float(self, float_: sympy.Float) -> LiteralExpression:
         return LiteralExpression(float(float_))
+
+    def _convert_piecewise(self, piecewise: sympy.Piecewise) -> Expression:
+        if not piecewise.args:
+            raise ValueError("Cannot convert an empty Piecewise expression.")
+        return self._convert_piecewise_branches(tuple(piecewise.args))
+
+    def _convert_piecewise_branches(
+        self,
+        branches: tuple[tuple[sympy.Expr, sympy.Expr], ...],
+    ) -> Expression:
+        if len(branches) == 1:
+            value, _ = branches[0]
+            return self.convert(value)
+        head_value, head_condition = branches[0]
+        true_value = self.convert(head_value)
+        condition = self.convert(head_condition)
+        false_value = self._convert_piecewise_branches(branches[1:])
+        return TernaryExpression(condition, true_value, false_value)
 
 
 def convert_sympy_expression_to_expression(

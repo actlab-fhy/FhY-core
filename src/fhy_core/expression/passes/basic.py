@@ -7,9 +7,11 @@ __all__ = [
 
 from fhy_core.expression.core import (
     BinaryExpression,
+    CallExpression,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    TernaryExpression,
     UnaryExpression,
 )
 from fhy_core.identifier import Identifier
@@ -94,6 +96,21 @@ class IdentifierSubstituter(VisitablePass[Expression, Expression]):
         self, literal_expression: LiteralExpression
     ) -> Expression:
         return literal_expression
+
+    def visit_ternary_expression(
+        self, ternary_expression: TernaryExpression
+    ) -> Expression:
+        return TernaryExpression(
+            self.visit(ternary_expression.condition),
+            self.visit(ternary_expression.true_value),
+            self.visit(ternary_expression.false_value),
+        )
+
+    def visit_call_expression(self, call_expression: CallExpression) -> Expression:
+        new_arguments = tuple(
+            self.visit(argument) for argument in call_expression.arguments
+        )
+        return CallExpression(call_expression.function_name, new_arguments)
 
     def get_noop_output(self, ir: Expression) -> Expression:
         return ir

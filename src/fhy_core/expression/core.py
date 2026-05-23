@@ -15,10 +15,14 @@ __all__ = [
     "BINARY_OPERATION_SYMBOLS",
     "BINARY_SYMBOL_OPERATIONS",
     "BinaryExpression",
+    "CallExpression",
     "IdentifierExpression",
     "LiteralExpression",
+    "TernaryExpression",
+    "call",
     "logical_and",
     "logical_or",
+    "ternary",
 ]
 
 import re
@@ -121,6 +125,65 @@ def logical_or(
 
     """
     return _build_right_folded_binary_tree(BinaryOperation.LOGICAL_OR, *expressions)
+
+
+def ternary(
+    condition: "Expression | Identifier | LiteralType",
+    true_value: "Expression | Identifier | LiteralType",
+    false_value: "Expression | Identifier | LiteralType",
+) -> "TernaryExpression":
+    """Build a ``TernaryExpression`` from three operands.
+
+    Each operand may be an ``Expression`` (used as-is), an ``Identifier``
+    (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
+    (wrapped in ``LiteralExpression``); the same coercion rules as the
+    operator dunders apply.
+
+    Args:
+        condition: Scalar boolean expression operand.
+        true_value: Expression chosen when ``condition`` is true.
+        false_value: Expression chosen when ``condition`` is false.
+
+    Returns:
+        A ``TernaryExpression`` over the three coerced operands.
+
+    Raises:
+        ValueError: If an operand has an unsupported type.
+
+    """
+    return TernaryExpression(
+        Expression._get_expression_from_other(condition),
+        Expression._get_expression_from_other(true_value),
+        Expression._get_expression_from_other(false_value),
+    )
+
+
+def call(
+    function_name: str,
+    *arguments: "Expression | Identifier | LiteralType",
+) -> "CallExpression":
+    """Build a ``CallExpression`` from a name and positional arguments.
+
+    Each argument may be an ``Expression`` (used as-is), an ``Identifier``
+    (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
+    (wrapped in ``LiteralExpression``); the same coercion rules as the
+    operator dunders apply.
+
+    Args:
+        function_name: Registry key of the function being called.
+        arguments: Positional argument operands.
+
+    Returns:
+        A ``CallExpression`` over the coerced arguments.
+
+    Raises:
+        ValueError: If an argument has an unsupported type.
+
+    """
+    coerced = tuple(
+        Expression._get_expression_from_other(argument) for argument in arguments
+    )
+    return CallExpression(function_name, coerced)
 
 
 class Expression(
@@ -313,6 +376,56 @@ class Expression(
 
         """
         return logical_or(self, *others)
+
+    @staticmethod
+    def ternary(
+        condition: "Expression | Identifier | LiteralType",
+        true_value: "Expression | Identifier | LiteralType",
+        false_value: "Expression | Identifier | LiteralType",
+    ) -> "TernaryExpression":
+        """Build a ``TernaryExpression`` from three operands.
+
+        Each operand may be an ``Expression``, an ``Identifier``, or a
+        value of ``LiteralType``; the same coercion rules as the operator
+        dunders apply.
+
+        Args:
+            condition: Scalar boolean expression operand.
+            true_value: Expression chosen when ``condition`` is true.
+            false_value: Expression chosen when ``condition`` is false.
+
+        Returns:
+            A ``TernaryExpression`` over the three coerced operands.
+
+        Raises:
+            ValueError: If an operand has an unsupported type.
+
+        """
+        return ternary(condition, true_value, false_value)
+
+    @staticmethod
+    def call(
+        function_name: str,
+        *arguments: "Expression | Identifier | LiteralType",
+    ) -> "CallExpression":
+        """Build a ``CallExpression`` from a name and positional arguments.
+
+        Each argument may be an ``Expression``, an ``Identifier``, or a
+        value of ``LiteralType``; the same coercion rules as the operator
+        dunders apply.
+
+        Args:
+            function_name: Registry key of the function being called.
+            arguments: Positional argument operands.
+
+        Returns:
+            A ``CallExpression`` over the coerced arguments.
+
+        Raises:
+            ValueError: If an argument has an unsupported type.
+
+        """
+        return call(function_name, *arguments)
 
     @staticmethod
     def _get_expression_from_other(other: Any) -> "Expression":
@@ -638,6 +751,132 @@ class LiteralExpression(Expression):
         return cls(data["value"])
 
 
+class _TernaryExpressionData(TypedDict):
+    condition: SerializedDict
+    true_value: SerializedDict
+    false_value: SerializedDict
+
+
+def _is_valid_ternary_expression_data(
+    data: SerializedDict,
+) -> TypeGuard[_TernaryExpressionData]:
+    return (
+        "condition" in data
+        and is_serialized_dict(data["condition"])
+        and "true_value" in data
+        and is_serialized_dict(data["true_value"])
+        and "false_value" in data
+        and is_serialized_dict(data["false_value"])
+    )
+
+
+@register_serializable(type_id="ternary_expression")
+@dataclass(frozen=True, eq=False)
+class TernaryExpression(Expression, HasOperandsMixin[Expression]):
+    """Ternary conditional expression: ``condition ? true_value : false_value``.
+
+    A pure 3-arg form: when ``condition`` evaluates to true the
+    expression takes the value of ``true_value``; otherwise it takes the
+    value of ``false_value``. Both branches are part of the expression
+    tree; the form does not imply lazy evaluation at the IR level.
+
+    Attributes:
+        condition: Scalar boolean expression.
+        true_value: Result when ``condition`` is true.
+        false_value: Result when ``condition`` is false.
+
+    """
+
+    condition: Expression
+    true_value: Expression
+    false_value: Expression
+
+    def get_operands(self) -> tuple[Expression, Expression, Expression]:
+        return (self.condition, self.true_value, self.false_value)
+
+    def get_visit_children(self) -> tuple["Expression", ...]:
+        return (self.condition, self.true_value, self.false_value)
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {
+            "condition": self.condition.serialize_to_dict(),
+            "true_value": self.true_value.serialize_to_dict(),
+            "false_value": self.false_value.serialize_to_dict(),
+        }
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "TernaryExpression":
+        if not _is_valid_ternary_expression_data(data):
+            raise DeserializationDictStructureError(
+                cls, _TernaryExpressionData.__annotations__, data
+            )
+        return cls(
+            Expression.deserialize_from_dict(data["condition"]),
+            Expression.deserialize_from_dict(data["true_value"]),
+            Expression.deserialize_from_dict(data["false_value"]),
+        )
+
+
+class _CallExpressionData(TypedDict):
+    function_name: str
+    arguments: list[SerializedDict]
+
+
+def _is_valid_call_expression_data(
+    data: SerializedDict,
+) -> TypeGuard[_CallExpressionData]:
+    return (
+        "function_name" in data
+        and isinstance(data["function_name"], str)
+        and "arguments" in data
+        and isinstance(data["arguments"], list)
+        and all(is_serialized_dict(argument) for argument in data["arguments"])
+    )
+
+
+@register_serializable(type_id="call_expression")
+@dataclass(frozen=True, eq=False)
+class CallExpression(Expression, HasOperandsMixin[Expression]):
+    """Reference to a registered function applied to argument expressions.
+
+    The node stores the function's registry key and the argument
+    expressions. Arity is not validated at construction time; resolution
+    and arity checking happen in the type-checker and the inliner so the
+    AST itself can be built without the registry having to be loaded.
+
+    Attributes:
+        function_name: Key under which the called function is registered.
+        arguments: Positional argument expressions, in declared order.
+
+    """
+
+    function_name: str
+    arguments: tuple[Expression, ...]
+
+    def get_operands(self) -> tuple[Expression, ...]:
+        return self.arguments
+
+    def get_visit_children(self) -> tuple["Expression", ...]:
+        return self.arguments
+
+    def serialize_data_to_dict(self) -> SerializedDict:
+        return {
+            "function_name": self.function_name,
+            "arguments": [argument.serialize_to_dict() for argument in self.arguments],
+        }
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data: SerializedDict) -> "CallExpression":
+        if not _is_valid_call_expression_data(data):
+            raise DeserializationDictStructureError(
+                cls, _CallExpressionData.__annotations__, data
+            )
+        arguments = tuple(
+            Expression.deserialize_from_dict(argument) for argument in data["arguments"]
+        )
+        return cls(data["function_name"], arguments)
+
+
 @singledispatch
 def _is_expression_structurally_equivalent(
     expression: Expression, other: object
@@ -680,4 +919,27 @@ def _(expression: LiteralExpression, other: object) -> bool:
         isinstance(other, LiteralExpression)
         and type(expression.value) is type(other.value)
         and expression.value == other.value
+    )
+
+
+@_is_expression_structurally_equivalent.register
+def _(expression: TernaryExpression, other: object) -> bool:
+    return (
+        isinstance(other, TernaryExpression)
+        and expression.condition.is_structurally_equivalent(other.condition)
+        and expression.true_value.is_structurally_equivalent(other.true_value)
+        and expression.false_value.is_structurally_equivalent(other.false_value)
+    )
+
+
+@_is_expression_structurally_equivalent.register
+def _(expression: CallExpression, other: object) -> bool:
+    return (
+        isinstance(other, CallExpression)
+        and expression.function_name == other.function_name
+        and len(expression.arguments) == len(other.arguments)
+        and all(
+            left.is_structurally_equivalent(right)
+            for left, right in zip(expression.arguments, other.arguments)
+        )
     )
