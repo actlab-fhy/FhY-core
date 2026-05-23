@@ -22,6 +22,8 @@ __all__ = [
     "call",
     "logical_and",
     "logical_or",
+    "make_binary_expression",
+    "make_unary_expression",
     "ternary",
 ]
 
@@ -52,6 +54,62 @@ from fhy_core.trait import (
 from fhy_core.utils import invert_frozen_dict
 
 LiteralType: TypeAlias = str | float | int | bool
+
+
+def make_binary_expression(
+    operation: "BinaryOperation",
+    left: "Expression | Identifier | LiteralType",
+    right: "Expression | Identifier | LiteralType",
+) -> "BinaryExpression":
+    """Build a ``BinaryExpression`` from two coercible operands.
+
+    Each operand may be an ``Expression`` (used as-is), an ``Identifier``
+    (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
+    (wrapped in ``LiteralExpression``); the same coercion rules as the
+    operator dunders apply.
+
+    Args:
+        operation: Binary operation to apply.
+        left: Left operand.
+        right: Right operand.
+
+    Returns:
+        A ``BinaryExpression`` over the two coerced operands.
+
+    Raises:
+        ValueError: If an operand has an unsupported type.
+
+    """
+    return BinaryExpression(
+        operation,
+        Expression._get_expression_from_other(left),
+        Expression._get_expression_from_other(right),
+    )
+
+
+def make_unary_expression(
+    operation: "UnaryOperation",
+    operand: "Expression | Identifier | LiteralType",
+) -> "UnaryExpression":
+    """Build a ``UnaryExpression`` from one coercible operand.
+
+    The operand may be an ``Expression`` (used as-is), an ``Identifier``
+    (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
+    (wrapped in ``LiteralExpression``); the same coercion rules as the
+    operator dunders apply.
+
+    Args:
+        operation: Unary operation to apply.
+        operand: Operand to wrap.
+
+    Returns:
+        A ``UnaryExpression`` over the coerced operand.
+
+    Raises:
+        ValueError: If the operand has an unsupported type.
+
+    """
+    return UnaryExpression(operation, Expression._get_expression_from_other(operand))
 
 
 def _build_right_folded_binary_tree(
@@ -199,10 +257,10 @@ class Expression(
         return _is_expression_structurally_equivalent(self, other)
 
     def __neg__(self) -> "UnaryExpression":
-        return UnaryExpression(UnaryOperation.NEGATE, self)
+        return make_unary_expression(UnaryOperation.NEGATE, self)
 
     def __pos__(self) -> "UnaryExpression":
-        return UnaryExpression(UnaryOperation.POSITIVE, self)
+        return make_unary_expression(UnaryOperation.POSITIVE, self)
 
     def logical_not(self) -> "UnaryExpression":
         """Create a logical NOT expression.
@@ -211,77 +269,49 @@ class Expression(
             Logical NOT expression.
 
         """
-        return UnaryExpression(UnaryOperation.LOGICAL_NOT, self)
+        return make_unary_expression(UnaryOperation.LOGICAL_NOT, self)
 
     def __add__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.ADD, self, self._get_expression_from_other(other)
-        )
+        return make_binary_expression(BinaryOperation.ADD, self, other)
 
     def __radd__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.ADD, self._get_expression_from_other(other), self
-        )
+        return make_binary_expression(BinaryOperation.ADD, other, self)
 
     def __sub__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.SUBTRACT, self, self._get_expression_from_other(other)
-        )
+        return make_binary_expression(BinaryOperation.SUBTRACT, self, other)
 
     def __rsub__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.SUBTRACT, self._get_expression_from_other(other), self
-        )
+        return make_binary_expression(BinaryOperation.SUBTRACT, other, self)
 
     def __mul__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.MULTIPLY, self, self._get_expression_from_other(other)
-        )
+        return make_binary_expression(BinaryOperation.MULTIPLY, self, other)
 
     def __rmul__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.MULTIPLY, self._get_expression_from_other(other), self
-        )
+        return make_binary_expression(BinaryOperation.MULTIPLY, other, self)
 
     def __truediv__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.DIVIDE, self, self._get_expression_from_other(other)
-        )
+        return make_binary_expression(BinaryOperation.DIVIDE, self, other)
 
     def __rtruediv__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.DIVIDE, self._get_expression_from_other(other), self
-        )
+        return make_binary_expression(BinaryOperation.DIVIDE, other, self)
 
     def __floordiv__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.FLOOR_DIVIDE, self, self._get_expression_from_other(other)
-        )
+        return make_binary_expression(BinaryOperation.FLOOR_DIVIDE, self, other)
 
     def __rfloordiv__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.FLOOR_DIVIDE, self._get_expression_from_other(other), self
-        )
+        return make_binary_expression(BinaryOperation.FLOOR_DIVIDE, other, self)
 
     def __mod__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.MODULO, self, self._get_expression_from_other(other)
-        )
+        return make_binary_expression(BinaryOperation.MODULO, self, other)
 
     def __rmod__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.MODULO, self._get_expression_from_other(other), self
-        )
+        return make_binary_expression(BinaryOperation.MODULO, other, self)
 
     def __pow__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.POWER, self, self._get_expression_from_other(other)
-        )
+        return make_binary_expression(BinaryOperation.POWER, self, other)
 
     def __rpow__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.POWER, self._get_expression_from_other(other), self
-        )
+        return make_binary_expression(BinaryOperation.POWER, other, self)
 
     def equals(self, other: Any) -> "BinaryExpression":
         """Create an equality expression.
@@ -293,9 +323,7 @@ class Expression(
             Equality expression.
 
         """
-        return BinaryExpression(
-            BinaryOperation.EQUAL, self, self._get_expression_from_other(other)
-        )
+        return make_binary_expression(BinaryOperation.EQUAL, self, other)
 
     def not_equals(self, other: Any) -> "BinaryExpression":
         """Create an inequality expression.
@@ -307,29 +335,19 @@ class Expression(
             Inequality expression.
 
         """
-        return BinaryExpression(
-            BinaryOperation.NOT_EQUAL, self, self._get_expression_from_other(other)
-        )
+        return make_binary_expression(BinaryOperation.NOT_EQUAL, self, other)
 
     def __lt__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.LESS, self, self._get_expression_from_other(other)
-        )
+        return make_binary_expression(BinaryOperation.LESS, self, other)
 
     def __le__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.LESS_EQUAL, self, self._get_expression_from_other(other)
-        )
+        return make_binary_expression(BinaryOperation.LESS_EQUAL, self, other)
 
     def __gt__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.GREATER, self, self._get_expression_from_other(other)
-        )
+        return make_binary_expression(BinaryOperation.GREATER, self, other)
 
     def __ge__(self, other: Any) -> "BinaryExpression":
-        return BinaryExpression(
-            BinaryOperation.GREATER_EQUAL, self, self._get_expression_from_other(other)
-        )
+        return make_binary_expression(BinaryOperation.GREATER_EQUAL, self, other)
 
     def logical_and(
         self, *others: "Expression | Identifier | LiteralType"

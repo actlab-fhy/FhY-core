@@ -34,6 +34,8 @@ __all__ = [
     "is_function_registered",
     "logical_and",
     "logical_or",
+    "make_binary_expression",
+    "make_unary_expression",
     "parse_expression",
     "pformat_expression",
     "register_function",
@@ -60,6 +62,8 @@ from .core import (
     call,
     logical_and,
     logical_or,
+    make_binary_expression,
+    make_unary_expression,
     ternary,
 )
 from .parser import ParseError, parse_expression, tokenize_expression

@@ -62,12 +62,11 @@ from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
 from fhy_core.utils import format_comma_separated_list
 
 from .expression import (
-    BinaryExpression,
     BinaryOperation,
     Expression,
-    IdentifierExpression,
     LiteralExpression,
     LiteralType,
+    make_binary_expression,
     pformat_expression,
     simplify_expression,
 )
@@ -542,11 +541,7 @@ class InSetConstraint(Constraint):
 
     def _build_leaf_expression(self, wrapped: _TypedMember) -> Expression:
         literal = _lift_member_to_literal_expression(_unwrap_member(wrapped))
-        return BinaryExpression(
-            BinaryOperation.EQUAL,
-            IdentifierExpression(self.variable),
-            literal,
-        )
+        return make_binary_expression(BinaryOperation.EQUAL, self.variable, literal)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -638,11 +633,7 @@ class NotInSetConstraint(Constraint):
 
     def _build_leaf_expression(self, wrapped: _TypedMember) -> Expression:
         literal = _lift_member_to_literal_expression(_unwrap_member(wrapped))
-        return BinaryExpression(
-            BinaryOperation.NOT_EQUAL,
-            IdentifierExpression(self.variable),
-            literal,
-        )
+        return make_binary_expression(BinaryOperation.NOT_EQUAL, self.variable, literal)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {

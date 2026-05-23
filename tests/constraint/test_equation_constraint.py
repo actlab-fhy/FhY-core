@@ -12,6 +12,8 @@ from fhy_core.expression import (
     LiteralExpression,
     UnaryExpression,
     UnaryOperation,
+    logical_and,
+    make_binary_expression,
     pformat_expression,
 )
 
@@ -171,9 +173,7 @@ def test_equation_constraint_variable_property_returns_constructor_argument() ->
 def test_equation_constraint_convert_to_expression_returns_inner_expression() -> None:
     """Test ``convert_to_expression`` returns the wrapped expression unchanged."""
     x = mock_identifier("x", 0)
-    expression = BinaryExpression(
-        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(True)
-    )
+    expression = make_binary_expression(BinaryOperation.EQUAL, x, True)
     constraint = EquationConstraint(x, expression)
 
     assert constraint.convert_to_expression().is_structurally_equivalent(expression)
@@ -237,11 +237,7 @@ def test_equation_constraint_returns_false_and_logs_when_simplifier_yields_non_l
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
     z = mock_identifier("z", 2)
-    expression = BinaryExpression(
-        BinaryOperation.LOGICAL_AND,
-        IdentifierExpression(y),
-        IdentifierExpression(z),
-    )
+    expression = logical_and(y, z)
     constraint = EquationConstraint(x, expression)
 
     with caplog.at_level(logging.WARNING, logger="fhy_core.constraint"):

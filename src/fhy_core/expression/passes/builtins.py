@@ -15,7 +15,7 @@ from typing import TypedDict
 
 from fhy_core.identifier import Identifier
 
-from ..core import IdentifierExpression, TernaryExpression
+from ..core import ternary
 from ..registry import RegisteredFunction, register_function
 
 
@@ -33,23 +33,13 @@ class BuiltinFunctions(TypedDict):
 def _register_max() -> RegisteredFunction:
     a = Identifier("a")
     b = Identifier("b")
-    body = TernaryExpression(
-        IdentifierExpression(a) > IdentifierExpression(b),
-        IdentifierExpression(a),
-        IdentifierExpression(b),
-    )
-    return register_function("max", parameters=[a, b], body=body)
+    return register_function("max", parameters=[a, b], body=ternary(a > b, a, b))
 
 
 def _register_min() -> RegisteredFunction:
     a = Identifier("a")
     b = Identifier("b")
-    body = TernaryExpression(
-        IdentifierExpression(a) < IdentifierExpression(b),
-        IdentifierExpression(a),
-        IdentifierExpression(b),
-    )
-    return register_function("min", parameters=[a, b], body=body)
+    return register_function("min", parameters=[a, b], body=ternary(a < b, a, b))
 
 
 BUILTIN_FUNCTIONS: BuiltinFunctions = {

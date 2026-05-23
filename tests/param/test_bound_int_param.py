@@ -9,8 +9,8 @@ from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
-    IdentifierExpression,
     LiteralExpression,
+    make_binary_expression,
 )
 from fhy_core.identifier import Identifier
 from fhy_core.param import BoundIntParam, IntParam, ParamError
@@ -586,10 +586,7 @@ def _build_literal_left_constraint(
 ) -> EquationConstraint:
     """Build a ``literal op variable`` `EquationConstraint`."""
     return EquationConstraint(
-        variable,
-        BinaryExpression(
-            op, LiteralExpression(literal_value), IdentifierExpression(variable)
-        ),
+        variable, make_binary_expression(op, literal_value, variable)
     )
 
 
@@ -783,21 +780,9 @@ def _build_bound_constraint_with_expression(
         # Non-`BinaryExpression` falls through ``_is_valid_bound_expression`` early.
         pytest.param(lambda var: LiteralExpression(0), id="non-binary"),
         # Non-comparison binary operation (e.g. ``ADD``).
-        pytest.param(
-            lambda var: BinaryExpression(
-                BinaryOperation.ADD, IdentifierExpression(var), LiteralExpression(0)
-            ),
-            id="non-comparison-op",
-        ),
+        pytest.param(lambda var: var + 0, id="non-comparison-op"),
         # Identifier on both sides (no literal operand).
-        pytest.param(
-            lambda var: BinaryExpression(
-                BinaryOperation.GREATER_EQUAL,
-                IdentifierExpression(var),
-                IdentifierExpression(Identifier("y")),
-            ),
-            id="no-literal-operand",
-        ),
+        pytest.param(lambda var: var >= Identifier("y"), id="no-literal-operand"),
         # Literal on both sides (no identifier operand).
         pytest.param(
             lambda var: BinaryExpression(
@@ -808,14 +793,7 @@ def _build_bound_constraint_with_expression(
             id="no-identifier-operand",
         ),
         # Non-`int` literal.
-        pytest.param(
-            lambda var: BinaryExpression(
-                BinaryOperation.GREATER_EQUAL,
-                IdentifierExpression(var),
-                LiteralExpression(1.5),
-            ),
-            id="non-int-literal",
-        ),
+        pytest.param(lambda var: var >= 1.5, id="non-int-literal"),
     ],
 )
 def test_bound_int_param_add_constraint_rejects_each_invalid_bound_expression(

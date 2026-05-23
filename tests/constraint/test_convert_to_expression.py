@@ -13,8 +13,8 @@ from fhy_core.constraint import (
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
-    IdentifierExpression,
     LiteralExpression,
+    make_binary_expression,
 )
 from fhy_core.identifier import Identifier
 
@@ -69,7 +69,7 @@ def test_singleton_set_returns_single_leaf(
 
     expression = constraint.convert_to_expression()
 
-    expected = BinaryExpression(leaf_op, IdentifierExpression(x), LiteralExpression(42))
+    expected = make_binary_expression(leaf_op, x, 42)
     assert isinstance(expression, BinaryExpression)
     assert expression.operation == leaf_op
     assert expected.is_structurally_equivalent(expression)
@@ -87,10 +87,10 @@ def test_multi_value_set_returns_combinator_of_leaves(
 
     expression = constraint.convert_to_expression()
 
-    expected = BinaryExpression(
+    expected = make_binary_expression(
         combinator,
-        BinaryExpression(leaf_op, IdentifierExpression(x), LiteralExpression(1)),
-        BinaryExpression(leaf_op, IdentifierExpression(x), LiteralExpression(2)),
+        make_binary_expression(leaf_op, x, 1),
+        make_binary_expression(leaf_op, x, 2),
     )
     assert expected.is_structurally_equivalent(expression)
 
