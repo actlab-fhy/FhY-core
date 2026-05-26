@@ -9,6 +9,7 @@ __all__ = [
     "PassResult",
     "PassValidationError",
     "PreservedAnalyses",
+    "RewritablePass",
     "TraversalOrder",
     "VisitablePass",
     "register_pass",
@@ -26,8 +27,10 @@ from typing import (
     ClassVar,
     Generic,
     Mapping,
+    Protocol,
     TypeVar,
     cast,
+    runtime_checkable,
 )
 
 from frozendict import frozendict
@@ -38,6 +41,7 @@ from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
 from fhy_core.trait import FrozenMixin, PartialEqualMixin, Visitable
 from fhy_core.utils.enum import StrEnum
+from fhy_core.utils.self import Self
 
 if TYPE_CHECKING:
     from fhy_core.diagnostic import ValidationReport
@@ -770,6 +774,155 @@ class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
         return cast(Sequence[_VisitableNodeT], node.get_visit_children())
 
     def visit_unknown(self, node: _VisitableNodeT) -> None: ...
+
+
+@runtime_checkable
+class _VisitableRewritable(Protocol):
+    """Internal protocol combining `Visitable` + `Rewritable[Self]`.
+
+    The bound on :class:`RewritablePass`'s node type. A node satisfies
+    this protocol when it provides both:
+
+    - the :class:`~fhy_core.trait.Visitable` API
+      (``get_visit_method_suffix``, ``get_visit_children``), and
+    - a ``rebuild_with_visit_children(new_children: Sequence[Self]) -> Self``
+      method (the :class:`~fhy_core.trait.Rewritable` API specialized
+      to the node's own type).
+    """
+
+    @classmethod
+    def get_visit_method_suffix(cls) -> str: ...
+
+    def get_visit_children(self) -> Sequence[Self]: ...
+
+    def rebuild_with_visit_children(self, new_children: Sequence[Self]) -> Self: ...
+
+
+_RewritableNodeT = TypeVar("_RewritableNodeT", bound=_VisitableRewritable)
+
+
+class RewritablePass(
+    CompilerPass[_RewritableNodeT, _RewritableNodeT], ABC, Generic[_RewritableNodeT]
+):
+    """Compiler pass that rewrites a tree of ``Visitable + Rewritable`` nodes.
+
+    Subclasses override per-node ``visit_<kind>`` methods to rewrite a
+    node:
+
+    - Return ``None`` to leave the node unchanged.
+    - Return a node of the same kind to replace it.
+
+    The framework handles the recursive walk. For each node, it first
+    transforms every child via :meth:`transform`. If any child changed,
+    it rebuilds the node (via
+    :meth:`~fhy_core.trait.RewritableMixin.rebuild_with_visit_children`)
+    with the new children before calling ``visit_<kind>`` on the result.
+    Each visitor therefore sees a node whose children are already in
+    their post-transform form.
+
+    The public entry point is :meth:`transform`, which returns the
+    fully-rewritten tree (identity-preserved when nothing changed).
+    Invoking the pass as a callable (``rewriter(node)``) routes through
+    the standard pass pipeline and ends up calling :meth:`transform`.
+
+    Node-type requirement:
+        The node type must satisfy both the
+        :class:`~fhy_core.trait.Visitable` and
+        :class:`~fhy_core.trait.Rewritable` protocols. The type bound
+        enforces this at ``RewritablePass[_NodeT]`` specialization
+        time; nodes mixing in
+        :class:`~fhy_core.trait.VisitableMixin` and
+        :class:`~fhy_core.trait.RewritableMixin` (parameterized at
+        their own type) qualify naturally.
+    """
+
+    _VISIT_METHOD_PREFIX: ClassVar[str] = "visit_"
+
+    def run_pass(self, ir: _RewritableNodeT) -> _RewritableNodeT:
+        """Pass-framework entry: forwards to :meth:`transform`."""
+        return self.transform(ir)
+
+    def get_noop_output(self, ir: _RewritableNodeT) -> _RewritableNodeT:
+        """Return the input unchanged when the pass is skipped."""
+        return ir
+
+    def did_change(self, input_ir: _RewritableNodeT, output: _RewritableNodeT) -> bool:
+        """Identity-based change detection (``output is not input_ir``).
+
+        The rewriter promises identity preservation on no-op rewrites,
+        so object identity is the precise signal.
+        """
+        return input_ir is not output
+
+    def visit(self, node: _RewritableNodeT) -> _RewritableNodeT:
+        """Convenience entry: delegates to :meth:`transform`."""
+        return self.transform(node)
+
+    def transform(self, node: _RewritableNodeT) -> _RewritableNodeT:
+        """Rewrite ``node`` and return either it or a new tree.
+
+        Identity-preserving: when no node in the tree is rewritten, the
+        input ``node`` is returned unchanged (same object identity).
+
+        Args:
+            node: Root node to rewrite.
+
+        Returns:
+            The rewritten tree, or the input unchanged.
+        """
+        rewritten = self._transform_optional(node)
+        return node if rewritten is None else rewritten
+
+    def visit_unknown(self, node: _RewritableNodeT) -> _RewritableNodeT | None:
+        """Default per-node handler when no ``visit_<kind>`` is defined.
+
+        Returns ``None`` (no rewrite). The rewriter framework treats
+        ``None`` as "leave this node alone, but still propagate any
+        child rewrites." This differs from
+        :meth:`VisitablePass.visit_unknown` (which raises): the
+        rewriter's semantics are that an unhandled node is preserved,
+        not an error.
+        """
+        _ = node
+        return None
+
+    def _transform_optional(self, node: _RewritableNodeT) -> _RewritableNodeT | None:
+        """Transform ``node``; return ``None`` when no node was rewritten."""
+        rebuilt = self._rebuild_with_transformed_children(node)
+        node_to_visit = rebuilt if rebuilt is not None else node
+        per_node = self._dispatch_per_node_visitor(node_to_visit)
+        if per_node is not None:
+            return per_node
+        return rebuilt
+
+    def _rebuild_with_transformed_children(
+        self, node: _RewritableNodeT
+    ) -> _RewritableNodeT | None:
+        """Rebuild ``node`` with transformed children, or ``None``."""
+        original_children = tuple(node.get_visit_children())
+        if not original_children:
+            return None
+        transformed_children = tuple(
+            self._transform_optional(child) for child in original_children
+        )
+        if all(child is None for child in transformed_children):
+            return None
+        merged_children = tuple(
+            transformed if transformed is not None else original
+            for transformed, original in zip(transformed_children, original_children)
+        )
+        return node.rebuild_with_visit_children(merged_children)
+
+    def _dispatch_per_node_visitor(
+        self, node: _RewritableNodeT
+    ) -> _RewritableNodeT | None:
+        method_name = (
+            f"{self._VISIT_METHOD_PREFIX}{type(node).get_visit_method_suffix()}"
+        )
+        method = getattr(self, method_name, None)
+        if method is None or not callable(method):
+            return self.visit_unknown(node)
+        return method(node)  # type: ignore[no-any-return]
 
 
 def register_pass(name: str, description: str) -> Callable[[_PassClassT], _PassClassT]:

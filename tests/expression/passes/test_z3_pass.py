@@ -36,7 +36,7 @@ from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
 from fhy_core.symbol_type import SymbolType
 
-from .conftest import mock_identifier
+from ..conftest import mock_identifier
 
 pytestmark = pytest.mark.z3
 

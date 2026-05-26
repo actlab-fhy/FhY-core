@@ -11,6 +11,7 @@ from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
     CallExpression,
+    FunctionSort,
     IdentifierExpression,
     LiteralExpression,
     TernaryExpression,
@@ -32,7 +33,7 @@ from fhy_core.types import (
     TypeQualifier,
 )
 
-from .conftest import make_identifier_checker, make_single_type_checker
+from ..conftest import make_identifier_checker, make_single_type_checker
 
 
 def _make_scalar(core_data_type: CoreDataType) -> NumericalType:
@@ -369,6 +370,8 @@ def test_synthesize_call_with_wrong_arity_raises(
     register_function(
         "test_synthesize_arity",
         parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=IdentifierExpression(parameter),
     )
 
@@ -381,18 +384,21 @@ def test_synthesize_call_with_wrong_arity_raises(
         synthesize_expression_type(expression, _lookup_failure)
 
 
-def test_synthesize_call_returns_body_type_under_argument_types(
+def test_synthesize_call_returns_sort_derived_type(
     function_registry_snapshot: None,
 ) -> None:
-    """Test ``call(name, args)`` synthesizes the body's type under the args.
+    """Test ``call(name, args)`` synthesizes the declared result sort's core type.
 
-    With a weak-typed argument and no outer context, the body's identifier
-    inherits the argument's weak type unchanged.
+    The call-site result type is driven by the function's declared
+    ``result_sort`` (concrete ``FLOAT64`` for ``REAL``), not by walking
+    the body and propagating the argument types.
     """
     parameter = Identifier("x")
     register_function(
         "test_synthesize_identity",
         parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=IdentifierExpression(parameter),
     )
 
@@ -403,13 +409,18 @@ def test_synthesize_call_returns_body_type_under_argument_types(
 
     result_type, _ = synthesize_expression_type(expression, _lookup_failure)
 
-    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.UINT))
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.FLOAT64))
 
 
-def test_synthesize_call_to_max_returns_promoted_numeric_type(
+def test_synthesize_call_to_max_returns_sort_derived_float64(
     function_registry_snapshot: None,
 ) -> None:
-    """Test ``max(a, b)`` of two scalar numerics synthesizes the promoted type."""
+    """Test ``max(a, b)`` returns the declared ``REAL`` sort's concrete ``FLOAT64``.
+
+    ``max`` is registered as ``REAL`` -> ``REAL``; the call-site result is
+    the sort-derived concrete type, not a promotion of the argument
+    types.
+    """
     a = Identifier("a")
     b = Identifier("b")
     checker = make_identifier_checker(
@@ -424,4 +435,4 @@ def test_synthesize_call_to_max_returns_promoted_numeric_type(
 
     result_type, _ = checker.synthesize(expression)
 
-    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.INT32))
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.FLOAT64))

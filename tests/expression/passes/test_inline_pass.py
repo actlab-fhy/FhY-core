@@ -1,7 +1,5 @@
 """Tests for ``FunctionInliner`` and ``inline_functions``."""
 
-from typing import cast
-
 import pytest
 
 from fhy_core.expression import (
@@ -10,6 +8,7 @@ from fhy_core.expression import (
     CallExpression,
     Expression,
     FunctionInliner,
+    FunctionSort,
     IdentifierExpression,
     LiteralExpression,
     TernaryExpression,
@@ -78,6 +77,8 @@ def test_inline_functions_substitutes_call_with_registered_body(
     register_function(
         "test_double",
         parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=IdentifierExpression(parameter) + IdentifierExpression(parameter),
     )
 
@@ -98,6 +99,8 @@ def test_inline_functions_substitutes_parameter_in_ternary_body(
     register_function(
         "test_ternary_body",
         parameters=[a, b],
+        parameter_sorts=[FunctionSort.REAL, FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=TernaryExpression(
             IdentifierExpression(a) > IdentifierExpression(b),
             IdentifierExpression(a),
@@ -123,6 +126,8 @@ def test_inline_functions_inlines_call_nested_inside_arithmetic(
     register_function(
         "test_double_nested",
         parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=IdentifierExpression(parameter) + IdentifierExpression(parameter),
     )
 
@@ -149,6 +154,8 @@ def test_inline_functions_recursively_inlines_nested_calls(
     register_function(
         "test_double_recursive",
         parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=IdentifierExpression(parameter) + IdentifierExpression(parameter),
     )
 
@@ -170,12 +177,16 @@ def test_inline_functions_inlines_call_that_references_another_registered_functi
     register_function(
         "test_inner",
         parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=IdentifierExpression(parameter) + LiteralExpression(1),
     )
     outer_parameter = Identifier("y")
     register_function(
         "test_outer",
         parameters=[outer_parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=CallExpression("test_inner", (IdentifierExpression(outer_parameter),))
         + LiteralExpression(2),
     )
@@ -209,6 +220,8 @@ def test_inline_functions_raises_when_argument_count_exceeds_parameters(
     register_function(
         "test_arity_too_many",
         parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=IdentifierExpression(parameter),
     )
 
@@ -229,6 +242,8 @@ def test_inline_functions_raises_when_argument_count_is_too_few(
     register_function(
         "test_arity_too_few",
         parameters=[a, b],
+        parameter_sorts=[FunctionSort.REAL, FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=IdentifierExpression(a) + IdentifierExpression(b),
     )
 
@@ -246,6 +261,8 @@ def test_inline_functions_raises_for_recursive_function(
     register_function(
         "test_recursive_self",
         parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=CallExpression("test_recursive_self", (IdentifierExpression(parameter),)),
     )
 
@@ -263,12 +280,16 @@ def test_inline_functions_raises_for_mutually_recursive_functions(
     register_function(
         "test_mutual_a",
         parameters=[parameter_a],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=CallExpression("test_mutual_b", (IdentifierExpression(parameter_a),)),
     )
     parameter_b = Identifier("b")
     register_function(
         "test_mutual_b",
         parameters=[parameter_b],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=CallExpression("test_mutual_a", (IdentifierExpression(parameter_b),)),
     )
 
@@ -287,8 +308,7 @@ def _contains_call_expression(expression: Expression) -> bool:
     if isinstance(expression, CallExpression):
         return True
     return any(
-        _contains_call_expression(cast(Expression, child))
-        for child in expression.get_visit_children()
+        _contains_call_expression(child) for child in expression.get_visit_children()
     )
 
 
@@ -300,6 +320,8 @@ def test_inline_functions_result_contains_no_call_expression(
     register_function(
         "test_no_residual_calls",
         parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=IdentifierExpression(parameter),
     )
 
@@ -325,6 +347,8 @@ def test_function_inliner_callable_returns_inlined_expression(
     register_function(
         "test_inliner_callable",
         parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=IdentifierExpression(parameter) + LiteralExpression(1),
     )
 
@@ -346,6 +370,8 @@ def test_inline_functions_does_not_modify_input_expression(
     register_function(
         "test_pure_inline",
         parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=IdentifierExpression(parameter),
     )
 

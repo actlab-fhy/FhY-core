@@ -1,8 +1,11 @@
 """Analysis and transformation functions for expressions."""
 
 __all__ = [
+    "BUILTIN_CONSTANTS",
     "BUILTIN_FUNCTIONS",
+    "BuiltinConstants",
     "BuiltinFunctions",
+    "ExpressionEvaluator",
     "FunctionArityError",
     "FunctionInliner",
     "check_expression_type",
@@ -11,6 +14,7 @@ __all__ = [
     "convert_expression_to_z3_expression",
     "convert_sympy_expression_to_expression",
     "does_expression_imply",
+    "evaluate_expression",
     "get_core_data_type_from_literal_type",
     "holds_for_all_free_assignments",
     "inline_functions",
@@ -26,7 +30,13 @@ from .basic import (
     replace_identifiers,
     substitute_identifiers,
 )
-from .builtins import BUILTIN_FUNCTIONS, BuiltinFunctions
+from .builtins import (
+    BUILTIN_CONSTANTS,
+    BUILTIN_FUNCTIONS,
+    BuiltinConstants,
+    BuiltinFunctions,
+)
+from .evaluate import ExpressionEvaluator, evaluate_expression
 from .inline import FunctionArityError, FunctionInliner, inline_functions
 from .sympy import (
     convert_expression_to_sympy_expression,

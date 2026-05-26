@@ -28,7 +28,7 @@ from fhy_core.expression.passes.sympy import (
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
 
-from .conftest import mock_identifier
+from ..conftest import mock_identifier
 
 # =============================================================================
 # Expression -> SymPy
@@ -636,10 +636,16 @@ def test_sympy_to_expression_convert_rejects_unknown_node_type() -> None:
 
 
 def test_sympy_to_expression_convert_expr_rejects_unsupported_expr_subtype() -> None:
-    """Test `convert_expr` raises `TypeError` for an unsupported `sympy.Expr`."""
+    """Test `convert_expr` raises `TypeError` for an unsupported `sympy.Expr`.
+
+    ``sympy.Derivative`` is not in the per-name native lift mapping, the
+    constant atom mapping, the ``Pow(x, 1/2)`` sqrt special case, or
+    the arithmetic dispatch table, so it falls through to the typed
+    rejection.
+    """
     x = sympy.Symbol("x_0")
     with pytest.raises(TypeError, match=r"Unsupported expression type"):
-        SymPyToExpressionConverter().convert_expr(sympy.exp(x))
+        SymPyToExpressionConverter().convert_expr(sympy.Derivative(x, x))
 
 
 def test_sympy_to_expression_convert_bool_rejects_unsupported_boolean_subtype() -> None:

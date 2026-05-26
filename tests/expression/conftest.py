@@ -32,7 +32,7 @@ def function_registry_snapshot() -> Iterator[None]:
     try:
         yield
     finally:
-        _registry._set_registry_state_for_tests(snapshot)
+        _registry.set_registry_state_for_tests(snapshot)
 
 
 def _unexpected_lookup(identifier: Identifier) -> tuple[Type, TypeQualifier]:

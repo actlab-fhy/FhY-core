@@ -7,19 +7,15 @@ __all__ = [
 ]
 
 from fhy_core.error import register_error
-from fhy_core.identifier import Identifier
-from fhy_core.pass_infrastructure import VisitablePass, register_pass
+from fhy_core.pass_infrastructure import RewritablePass, register_pass
 
-from ..core import (
-    BinaryExpression,
-    CallExpression,
-    Expression,
-    IdentifierExpression,
-    LiteralExpression,
-    TernaryExpression,
-    UnaryExpression,
+from ..core import CallExpression, Expression
+from ..registry import (
+    NativeConstant,
+    NativeFunction,
+    RegisteredFunction,
+    get_registered_function,
 )
-from ..registry import get_registered_function
 from .basic import substitute_identifiers
 
 
@@ -28,31 +24,45 @@ class FunctionArityError(ValueError):
     """Argument count does not match the registered function's parameters."""
 
 
+def _check_call_arity(
+    name: str, expected_count: int, arguments: tuple[Expression, ...]
+) -> None:
+    """Raise ``FunctionArityError`` when the actual argument count differs."""
+    if len(arguments) != expected_count:
+        raise FunctionArityError(
+            f"Function {name!r} expects {expected_count} argument(s), "
+            f"but got {len(arguments)}."
+        )
+
+
 @register_pass(
     "fhy_core.expression.inline_functions",
-    "Replace registered-function CallExpression nodes with their inlined bodies.",
+    "Replace expression-bodied CallExpression nodes with their inlined bodies.",
 )
-class FunctionInliner(VisitablePass[Expression, Expression]):
-    """Inline registered functions in an expression tree.
+class FunctionInliner(RewritablePass[Expression]):
+    """Inline registered-function call expressions.
 
-    For each ``CallExpression``, the registered function body is fetched
-    and its parameters substituted with the (already-inlined) argument
-    expressions. Substitution is structural and uses the existing
-    ``substitute_identifiers`` machinery; nested calls are inlined
-    bottom-up. Recursive registrations are detected on the call stack
-    and rejected.
+    For a ``CallExpression`` whose target is a :class:`RegisteredFunction`,
+    the body is fetched and its parameters substituted with the
+    already-inlined argument expressions; nested calls are inlined
+    bottom-up; transitively-recursive registrations are rejected.
 
-    Direct calls to ``visit`` surface the underlying domain errors
+    Native function calls (:class:`NativeFunction`) are opaque to the
+    inliner and pass through with their arguments inlined; the
+    evaluator folds them when the arguments are literals. Calls whose
+    target is a :class:`NativeConstant` are rejected as a usage error.
+
+    Direct calls to ``transform`` surface the underlying domain errors
     listed below. Invoking the pass through ``__call__`` / ``execute``
     (the standard pass-framework path used by ``inline_functions``)
     wraps each of these in ``PassExecutionError`` with the original
     attached as ``__cause__`` and named in the wrapper message.
 
     Raises:
-        FunctionLookupError: If a call references a name with no
-            registered function.
+        FunctionLookupError: If a call references an unregistered name.
         FunctionArityError: If a call's argument count does not match
-            the registered function's parameter count.
+            the registered function's parameter count, or if the call
+            target is a registered constant.
         RecursionError: If a registered function (transitively) calls
             itself.
 
@@ -64,55 +74,34 @@ class FunctionInliner(VisitablePass[Expression, Expression]):
         super().__init__()
         self._in_progress = set()
 
-    def visit_literal_expression(
-        self, literal_expression: LiteralExpression
-    ) -> Expression:
-        return literal_expression
-
-    def visit_identifier_expression(
-        self, identifier_expression: IdentifierExpression
-    ) -> Expression:
-        return identifier_expression
-
-    def visit_unary_expression(self, unary_expression: UnaryExpression) -> Expression:
-        return UnaryExpression(
-            unary_expression.operation, self.visit(unary_expression.operand)
-        )
-
-    def visit_binary_expression(
-        self, binary_expression: BinaryExpression
-    ) -> Expression:
-        return BinaryExpression(
-            binary_expression.operation,
-            self.visit(binary_expression.left),
-            self.visit(binary_expression.right),
-        )
-
-    def visit_ternary_expression(
-        self, ternary_expression: TernaryExpression
-    ) -> Expression:
-        return TernaryExpression(
-            self.visit(ternary_expression.condition),
-            self.visit(ternary_expression.true_value),
-            self.visit(ternary_expression.false_value),
-        )
-
-    def visit_call_expression(self, call_expression: CallExpression) -> Expression:
-        name = call_expression.function_name
+    def visit_call_expression(self, expression: CallExpression) -> Expression | None:
+        name = expression.function_name
         self._reject_if_recursive(name)
-
-        inlined_arguments = tuple(
-            self.visit(argument) for argument in call_expression.arguments
-        )
         registered = get_registered_function(name)
-        self._check_arity(name, registered.parameters, inlined_arguments)
+        if isinstance(registered, NativeConstant):
+            raise FunctionArityError(
+                f"{name!r} is a registered constant, not a function; reference "
+                f"it as an identifier instead of calling it."
+            )
+        if isinstance(registered, NativeFunction):
+            _check_call_arity(
+                name, len(registered.parameter_sorts), expression.arguments
+            )
+            return None
+        return self._inline_expression_bodied_call(name, registered, expression)
 
-        substitutions = dict(zip(registered.parameters, inlined_arguments))
+    def _inline_expression_bodied_call(
+        self,
+        name: str,
+        registered: RegisteredFunction,
+        expression: CallExpression,
+    ) -> Expression:
+        _check_call_arity(name, len(registered.parameters), expression.arguments)
+        substitutions = dict(zip(registered.parameters, expression.arguments))
         substituted_body = substitute_identifiers(registered.body, substitutions)
-
         self._in_progress.add(name)
         try:
-            return self.visit(substituted_body)
+            return self.transform(substituted_body)
         finally:
             self._in_progress.discard(name)
 
@@ -122,40 +111,27 @@ class FunctionInliner(VisitablePass[Expression, Expression]):
                 f"Function {name!r} is (transitively) recursive and cannot be inlined."
             )
 
-    @staticmethod
-    def _check_arity(
-        name: str,
-        parameters: tuple[Identifier, ...],
-        arguments: tuple[Expression, ...],
-    ) -> None:
-        if len(arguments) != len(parameters):
-            raise FunctionArityError(
-                f"Function {name!r} expects {len(parameters)} argument(s), "
-                f"but got {len(arguments)}."
-            )
-
-    def get_noop_output(self, ir: Expression) -> Expression:
-        return ir
-
 
 def inline_functions(expression: Expression) -> Expression:
-    """Inline every ``CallExpression`` in ``expression``.
+    """Inline every expression-bodied ``CallExpression`` in ``expression``.
 
     Args:
         expression: Expression tree to inline.
 
     Returns:
-        An expression tree containing no ``CallExpression`` nodes.
+        An expression tree where every expression-bodied call has been
+        replaced by its body (with parameters substituted). Native
+        function call nodes remain in the tree with their arguments
+        recursively inlined; the evaluator handles them.
 
     Raises:
         PassExecutionError: If a call references an unregistered
             function (``FunctionLookupError`` as cause), if a call's
             argument count does not match the registered function's
-            parameter count (``FunctionArityError`` as cause), or if a
-            registered function transitively calls itself
-            (``RecursionError`` as cause). The original exception is
-            attached via ``__cause__``; the wrapper message names the
-            inner type so callers can match on it.
+            parameter count or the call target is a constant
+            (``FunctionArityError`` as cause), or if a registered
+            function transitively calls itself (``RecursionError`` as
+            cause).
 
     """
     return FunctionInliner()(expression)

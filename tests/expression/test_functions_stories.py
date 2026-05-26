@@ -14,6 +14,7 @@ from fhy_core.expression import (
     BinaryOperation,
     CallExpression,
     Expression,
+    FunctionSort,
     IdentifierExpression,
     LiteralExpression,
     TernaryExpression,
@@ -257,6 +258,8 @@ def test_user_story_register_and_inline_custom_abs_function(
     register_function(
         "test_user_story_abs",
         parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
         body=ternary(
             IdentifierExpression(parameter) < 0,
             -IdentifierExpression(parameter),

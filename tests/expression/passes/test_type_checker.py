@@ -43,7 +43,7 @@ from fhy_core.types import (
     TypeQualifier,
 )
 
-from .conftest import make_identifier_checker, make_single_type_checker
+from ..conftest import make_identifier_checker, make_single_type_checker
 
 
 def _make_scalar(core_data_type: CoreDataType) -> NumericalType:

@@ -29,6 +29,7 @@ __all__ = [
 
 import re
 from abc import ABC
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
 from functools import singledispatch
@@ -48,6 +49,7 @@ from fhy_core.serialization import (
 from fhy_core.trait import (
     FrozenMixin,
     HasOperandsMixin,
+    RewritableMixin,
     StructuralEquivalenceMixin,
     VisitableMixin,
 )
@@ -249,12 +251,26 @@ class Expression(
     FrozenMixin,
     StructuralEquivalenceMixin,
     VisitableMixin,
+    RewritableMixin["Expression"],
     ABC,
 ):
     """Abstract base class for expressions."""
 
     def is_structurally_equivalent(self, other: object) -> bool:
         return _is_expression_structurally_equivalent(self, other)
+
+    def get_visit_children(self) -> tuple["Expression", ...]:
+        return ()
+
+    def rebuild_with_visit_children(
+        self, new_children: Sequence["Expression"]
+    ) -> "Expression":
+        if not new_children:
+            return self
+        raise NotImplementedError(
+            f"{type(self).__name__} has children but does not implement "
+            "`rebuild_with_visit_children`."
+        )
 
     def __neg__(self) -> "UnaryExpression":
         return make_unary_expression(UnaryOperation.NEGATE, self)
@@ -519,6 +535,12 @@ class UnaryExpression(Expression, HasOperandsMixin[Expression]):
     def get_visit_children(self) -> tuple["Expression", ...]:
         return (self.operand,)
 
+    def rebuild_with_visit_children(
+        self, new_children: Sequence["Expression"]
+    ) -> "UnaryExpression":
+        (operand,) = new_children
+        return UnaryExpression(self.operation, operand)
+
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "operation": UNARY_OPERATION_FUNCTION_NAMES[self.operation],
@@ -642,6 +664,12 @@ class BinaryExpression(Expression, HasOperandsMixin[Expression]):
 
     def get_visit_children(self) -> tuple["Expression", ...]:
         return (self.left, self.right)
+
+    def rebuild_with_visit_children(
+        self, new_children: Sequence["Expression"]
+    ) -> "BinaryExpression":
+        left, right = new_children
+        return BinaryExpression(self.operation, left, right)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -815,6 +843,12 @@ class TernaryExpression(Expression, HasOperandsMixin[Expression]):
     def get_visit_children(self) -> tuple["Expression", ...]:
         return (self.condition, self.true_value, self.false_value)
 
+    def rebuild_with_visit_children(
+        self, new_children: Sequence["Expression"]
+    ) -> "TernaryExpression":
+        condition, true_value, false_value = new_children
+        return TernaryExpression(condition, true_value, false_value)
+
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "condition": self.condition.serialize_to_dict(),
@@ -876,6 +910,11 @@ class CallExpression(Expression, HasOperandsMixin[Expression]):
 
     def get_visit_children(self) -> tuple["Expression", ...]:
         return self.arguments
+
+    def rebuild_with_visit_children(
+        self, new_children: Sequence["Expression"]
+    ) -> "CallExpression":
+        return CallExpression(self.function_name, tuple(new_children))
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {

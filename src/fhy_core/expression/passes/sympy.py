@@ -26,6 +26,11 @@ from fhy_core.expression.core import (
     UnaryExpression,
     UnaryOperation,
 )
+from fhy_core.expression.registry import (
+    FunctionLookupError,
+    NativeConstant,
+    get_registered_function,
+)
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
 from fhy_core.pass_infrastructure import (
@@ -34,6 +39,104 @@ from fhy_core.pass_infrastructure import (
     VisitablePass,
     register_pass,
 )
+
+
+def _sympy_exp2(value: Any) -> Any:
+    return sympy.Pow(2, value)
+
+
+def _sympy_log2(value: Any) -> Any:
+    return sympy.log(value, 2)
+
+
+def _sympy_log10(value: Any) -> Any:
+    return sympy.log(value, 10)
+
+
+def _sympy_round(value: Any) -> Any:
+    return sympy.Function("round")(value)
+
+
+# Native-function name <-> sympy operator. ``log2``/``log10`` lower
+# through ``sympy.log(arg, base)`` (which sympy rewrites to a Mul-of-
+# logs); they do not round-trip back to their named form. Every other
+# entry round-trips through ``_NATIVE_FUNCTION_LIFT_DISPATCH``.
+_NATIVE_FUNCTION_LOWER: dict[str, Callable[..., Any]] = {
+    "exp": sympy.exp,
+    "exp2": _sympy_exp2,
+    "log": sympy.log,
+    "log2": _sympy_log2,
+    "log10": _sympy_log10,
+    "sqrt": sympy.sqrt,
+    "sin": sympy.sin,
+    "cos": sympy.cos,
+    "tan": sympy.tan,
+    "arcsin": sympy.asin,
+    "arccos": sympy.acos,
+    "arctan": sympy.atan,
+    "sinh": sympy.sinh,
+    "cosh": sympy.cosh,
+    "tanh": sympy.tanh,
+    "erf": sympy.erf,
+    "round": _sympy_round,
+    "floor": sympy.floor,
+    "ceil": sympy.ceiling,
+}
+
+# Native-function lift dispatch: each sympy function class maps to the
+# native name it lifts to.
+_NATIVE_FUNCTION_LIFT_DISPATCH: tuple[tuple[type, str], ...] = (
+    (sympy.exp, "exp"),
+    (sympy.sin, "sin"),
+    (sympy.cos, "cos"),
+    (sympy.tan, "tan"),
+    (sympy.asin, "arcsin"),
+    (sympy.acos, "arccos"),
+    (sympy.atan, "arctan"),
+    (sympy.sinh, "sinh"),
+    (sympy.cosh, "cosh"),
+    (sympy.tanh, "tanh"),
+    (sympy.erf, "erf"),
+    (sympy.log, "log"),
+    (sympy.floor, "floor"),
+    (sympy.ceiling, "ceil"),
+)
+
+# Native-constant lowering / lifting.
+_NATIVE_CONSTANT_LOWER: dict[str, Any] = {
+    "pi": sympy.pi,
+    "e": sympy.E,
+}
+_NATIVE_CONSTANT_LIFT: dict[Any, str] = {
+    sympy.pi: "pi",
+    sympy.E: "e",
+}
+
+
+def _try_get_native_constant_sympy_value(name: str) -> Any | None:
+    """Return the sympy value for a registered constant, or ``None``."""
+    try:
+        entry = get_registered_function(name)
+    except FunctionLookupError:
+        return None
+    if not isinstance(entry, NativeConstant):
+        return None
+    if name in _NATIVE_CONSTANT_LOWER:
+        return _NATIVE_CONSTANT_LOWER[name]
+    if isinstance(entry.value, bool):
+        return sympy.true if entry.value else sympy.false
+    if isinstance(entry.value, int):
+        return sympy.Integer(entry.value)
+    return sympy.Float(entry.value)
+
+
+def _try_lift_native_constant(expr: sympy.Expr) -> Expression | None:
+    """Return the IR expression for a sympy constant atom, or ``None``."""
+    for sympy_value, name in _NATIVE_CONSTANT_LIFT.items():
+        if expr == sympy_value:
+            return IdentifierExpression(Identifier(name))
+    return None
+
 
 _LOGGER = get_logger(__name__)
 
@@ -97,6 +200,9 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
         self, identifier_expression: IdentifierExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
         identifier = identifier_expression.identifier
+        constant_value = _try_get_native_constant_sympy_value(identifier.name_hint)
+        if constant_value is not None:
+            return constant_value
         return sympy.Symbol(self.format_identifier(identifier))
 
     def visit_ternary_expression(
@@ -113,10 +219,16 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
         self, call_expression: CallExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
         name = call_expression.function_name
-        raise TypeError(
-            "Cannot lower an un-inlined CallExpression to SymPy; "
-            f"call `inline_functions` first to expand {name!r}."
-        )
+        if name not in _NATIVE_FUNCTION_LOWER:
+            raise TypeError(
+                "Cannot lower a non-native CallExpression to SymPy; "
+                f"call `inline_functions` first to expand {name!r}."
+            )
+        sympy_operator = _NATIVE_FUNCTION_LOWER[name]
+        sympy_arguments = [
+            self.visit(argument) for argument in call_expression.arguments
+        ]
+        return sympy_operator(*sympy_arguments)
 
     def visit_literal_expression(
         self, literal_expression: LiteralExpression
@@ -266,7 +378,28 @@ class SymPyToExpressionConverter(
             raise TypeError(f"Unsupported node type: {type(node)}")
 
     def convert_expr(self, expr: sympy.Expr) -> Expression:
+        constant_lift = _try_lift_native_constant(expr)
+        if constant_lift is not None:
+            return constant_lift
+        native_lift = self._try_lift_native_function_call(expr)
+        if native_lift is not None:
+            return native_lift
+        sqrt_lift = self._try_lift_sqrt_pow(expr)
+        if sqrt_lift is not None:
+            return sqrt_lift
         return self._dispatch(expr, self._EXPR_DISPATCH, "Unsupported expression type")
+
+    def _try_lift_native_function_call(self, expr: sympy.Expr) -> Expression | None:
+        for sympy_class, native_name in _NATIVE_FUNCTION_LIFT_DISPATCH:
+            if isinstance(expr, sympy_class):
+                lifted_arguments = tuple(self.convert(arg) for arg in expr.args)  # type: ignore[attr-defined]
+                return CallExpression(native_name, lifted_arguments)
+        return None
+
+    def _try_lift_sqrt_pow(self, expr: sympy.Expr) -> Expression | None:
+        if isinstance(expr, sympy.Pow) and expr.args[1] == sympy.Rational(1, 2):
+            return CallExpression("sqrt", (self.convert(expr.args[0]),))
+        return None
 
     def convert_bool(
         self, boolean_expression: sympy.logic.boolalg.Boolean

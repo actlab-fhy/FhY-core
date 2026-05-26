@@ -53,11 +53,18 @@ from fhy_core.expression.core import (
     UnaryExpression,
     UnaryOperation,
 )
+from fhy_core.expression.errors import FunctionLookupError
 from fhy_core.expression.pprint import pformat_expression
 from fhy_core.expression.registry import (
-    FunctionLookupError,
+    NativeConstant,
+    NativeFunction,
     RegisteredFunction,
     get_registered_function,
+)
+from fhy_core.expression.sort import (
+    FunctionSort,
+    get_result_core_data_type_for_sort,
+    is_core_data_type_compatible_with_sort,
 )
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
@@ -334,6 +341,34 @@ class _TypeCheckContext:
         )
 
 
+def _try_resolve_native_constant_type(
+    identifier_name: str,
+) -> tuple[Type, TypeQualifier] | None:
+    """Return the IR type for a constant reference, or ``None`` if absent."""
+    try:
+        entry = get_registered_function(identifier_name)
+    except FunctionLookupError:
+        return None
+    if not isinstance(entry, NativeConstant):
+        return None
+    return (
+        NumericalType(
+            PrimitiveDataType(get_result_core_data_type_for_sort(entry.sort))
+        ),
+        TypeQualifier.PARAM,
+    )
+
+
+def _promote_argument_qualifiers(
+    argument_types: tuple[tuple[Type, TypeQualifier], ...],
+) -> TypeQualifier:
+    """Promote a sequence of argument qualifiers to a single result qualifier."""
+    result: TypeQualifier = TypeQualifier.PARAM
+    for _, qualifier in argument_types:
+        result = promote_type_qualifiers(result, qualifier)
+    return result
+
+
 @register_pass(
     "fhy_core.expression.type_checker",
     "Bidirectionally synthesize and check expression types.",
@@ -384,9 +419,22 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         self, identifier_expression: IdentifierExpression
     ) -> tuple[Type, TypeQualifier]:
         with self._context.entering(identifier_expression):
-            identifier_type, identifier_qualifier = self._get_identifier_type(
-                identifier_expression.identifier
-            )
+            # The local lookup is caller-supplied and may raise an
+            # arbitrary exception when the identifier is unbound (tests
+            # commonly raise ``AssertionError``). When the local lookup
+            # fails, fall back to a registered native constant before
+            # propagating the original failure.
+            try:
+                identifier_type, identifier_qualifier = self._get_identifier_type(
+                    identifier_expression.identifier
+                )
+            except Exception:  # noqa: BLE001
+                constant_type = _try_resolve_native_constant_type(
+                    identifier_expression.identifier.name_hint
+                )
+                if constant_type is not None:
+                    return constant_type
+                raise
             if identifier_qualifier == TypeQualifier.OUTPUT:
                 raise self._context.type_error(
                     f"identifier `{_format_expression(identifier_expression)}` has "
@@ -735,12 +783,17 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         operation: BinaryOperation,
     ) -> tuple[ExpressionValueType, TypeQualifier]:
         if not (
-            operation in _ARITHMETIC_OPERATIONS
+            (
+                operation in _ARITHMETIC_OPERATIONS
+                or operation in _ORDERING_OPERATIONS
+                or operation in _EQUALITY_OPERATIONS
+            )
             and isinstance(operand_expression, LiteralExpression)
             and isinstance(operand_value_type, NumericalType)
             and _is_weak_numerical_type(operand_value_type)
             and isinstance(other_value_type, NumericalType)
             and not _is_weak_numerical_type(other_value_type)
+            and not _is_boolean_numerical_type(other_value_type)
         ):
             return operand_value_type, operand_qualifier
         checked_type, operand_qualifier = self.check(
@@ -817,19 +870,32 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         expected_type: Type | None = None,  # noqa: ARG002
     ) -> tuple[Type, TypeQualifier]:
         with self._context.entering(call_expression):
-            registered = self._resolve_call_function(call_expression)
-            self._check_call_arity(call_expression, registered)
+            entry = self._resolve_call_function(call_expression)
+            if isinstance(entry, NativeConstant):
+                raise self._context.type_error(
+                    f"{call_expression.function_name!r} is a registered "
+                    f"constant, not a function; reference it as an identifier "
+                    f"instead of calling it"
+                )
+            self._check_call_arity(
+                entry.name,
+                len(entry.parameter_sorts),
+                len(call_expression.arguments),
+            )
             argument_types = tuple(
                 self._infer(argument) for argument in call_expression.arguments
             )
-            body_checker = ExpressionTypeChecker(
-                self._make_body_lookup(registered, argument_types)
+            self._check_arguments_against_sorts(
+                entry.name, entry.parameter_sorts, argument_types
             )
-            return body_checker.synthesize(registered.body)
+            result_type = NumericalType(
+                PrimitiveDataType(get_result_core_data_type_for_sort(entry.result_sort))
+            )
+            return result_type, _promote_argument_qualifiers(argument_types)
 
     def _resolve_call_function(
         self, call_expression: CallExpression
-    ) -> RegisteredFunction:
+    ) -> RegisteredFunction | NativeFunction | NativeConstant:
         try:
             return get_registered_function(call_expression.function_name)
         except FunctionLookupError as exc:
@@ -838,34 +904,48 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             ) from exc
 
     def _check_call_arity(
-        self,
-        call_expression: CallExpression,
-        registered: RegisteredFunction,
+        self, function_name: str, expected_count: int, actual_count: int
     ) -> None:
-        if len(call_expression.arguments) == len(registered.parameters):
+        if actual_count == expected_count:
             return
         raise self._context.type_error(
-            f"function {registered.name!r} expects "
-            f"{len(registered.parameters)} argument(s), but got "
-            f"{len(call_expression.arguments)}"
+            f"function {function_name!r} expects {expected_count} argument(s), "
+            f"but got {actual_count}"
         )
 
-    def _make_body_lookup(
+    def _check_arguments_against_sorts(
         self,
-        registered: RegisteredFunction,
+        function_name: str,
+        parameter_sorts: tuple[FunctionSort, ...],
         argument_types: tuple[tuple[Type, TypeQualifier], ...],
-    ) -> Callable[[Identifier], tuple[Type, TypeQualifier]]:
-        parameter_bindings: dict[Identifier, tuple[Type, TypeQualifier]] = dict(
-            zip(registered.parameters, argument_types)
-        )
-        outer_lookup = self._get_identifier_type
+    ) -> None:
+        for index, (parameter_sort, (argument_type, _)) in enumerate(
+            zip(parameter_sorts, argument_types)
+        ):
+            self._check_argument_sort(
+                function_name, index, parameter_sort, argument_type
+            )
 
-        def lookup(identifier: Identifier) -> tuple[Type, TypeQualifier]:
-            if identifier in parameter_bindings:
-                return parameter_bindings[identifier]
-            return outer_lookup(identifier)
-
-        return lookup
+    def _check_argument_sort(
+        self,
+        function_name: str,
+        argument_index: int,
+        parameter_sort: FunctionSort,
+        argument_type: Type,
+    ) -> None:
+        if not isinstance(argument_type, NumericalType) or not isinstance(
+            argument_type.data_type, PrimitiveDataType
+        ):
+            raise self._context.type_error(
+                f"argument {argument_index} of function {function_name!r} "
+                f"expects sort {parameter_sort}, but got {argument_type}"
+            )
+        core_data_type = argument_type.data_type.core_data_type
+        if not is_core_data_type_compatible_with_sort(core_data_type, parameter_sort):
+            raise self._context.type_error(
+                f"argument {argument_index} of function {function_name!r} "
+                f"expects sort {parameter_sort}, but got {argument_type}"
+            )
 
     def _dispatch_arithmetic_binary(
         self,
