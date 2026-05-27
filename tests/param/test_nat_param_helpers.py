@@ -17,11 +17,10 @@ from _pytest.mark.structures import ParameterSet
 
 from fhy_core.constraint import Constraint, EquationConstraint
 from fhy_core.expression import (
-    BinaryExpression,
     BinaryOperation,
     Expression,
-    IdentifierExpression,
     LiteralExpression,
+    make_binary_expression,
 )
 from fhy_core.identifier import Identifier
 from fhy_core.param.fundamental import (
@@ -40,10 +39,7 @@ def _build_basic_constraint(
 ) -> EquationConstraint:
     """Build ``variable <operation> literal_value`` as an `EquationConstraint`."""
     return EquationConstraint(
-        variable,
-        BinaryExpression(
-            operation, IdentifierExpression(variable), LiteralExpression(literal_value)
-        ),
+        variable, make_binary_expression(operation, variable, literal_value)
     )
 
 
@@ -108,12 +104,7 @@ class TestIsTheBasicNatParamConstraint:
         """Test the predicate is ``False`` when left is not an identifier expr."""
         var = Identifier("x")
         constraint = _wrap_with_expression(
-            var,
-            BinaryExpression(
-                BinaryOperation.GREATER_EQUAL,
-                LiteralExpression(0),
-                LiteralExpression(0),
-            ),
+            var, make_binary_expression(BinaryOperation.GREATER_EQUAL, 0, 0)
         )
         assert not is_the_basic_nat_param_constraint(constraint, var, True)
 
@@ -128,14 +119,7 @@ class TestIsTheBasicNatParamConstraint:
         """Test the predicate is ``False`` when the right operand is not a literal."""
         var = Identifier("x")
         other_var = Identifier("y")
-        constraint = _wrap_with_expression(
-            var,
-            BinaryExpression(
-                BinaryOperation.GREATER_EQUAL,
-                IdentifierExpression(var),
-                IdentifierExpression(other_var),
-            ),
-        )
+        constraint = _wrap_with_expression(var, var >= other_var)
         assert not is_the_basic_nat_param_constraint(constraint, var, True)
 
     def test_returns_false_when_right_literal_value_is_not_an_int(self) -> None:
@@ -238,14 +222,7 @@ _NON_MATCHING_CONSTRAINT_BUILDERS: list[ParameterSet] = [
         id="mismatched-variable",
     ),
     pytest.param(
-        lambda v, w: _wrap_with_expression(
-            v,
-            BinaryExpression(
-                BinaryOperation.GREATER,
-                IdentifierExpression(v),
-                IdentifierExpression(w),
-            ),
-        ),
+        lambda v, w: _wrap_with_expression(v, v > w),
         id="non-literal-right-operand",
     ),
     pytest.param(

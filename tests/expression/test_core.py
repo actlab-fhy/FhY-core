@@ -18,6 +18,8 @@ from fhy_core.expression import (
     collect_identifiers,
     logical_and,
     logical_or,
+    make_binary_expression,
+    make_unary_expression,
 )
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
@@ -504,7 +506,6 @@ _NON_EXPRESSION_RIGHT_OPERANDS: tuple[tuple[Any, type[Expression]], ...] = (
     (10, LiteralExpression),
     (10.5, LiteralExpression),
     (False, LiteralExpression),
-    ("2.5", LiteralExpression),
     (mock_identifier("y", 42), IdentifierExpression),
 )
 
@@ -531,7 +532,6 @@ _NON_EXPRESSION_LEFT_OPERANDS: tuple[tuple[Any, type[Expression]], ...] = (
     (6, LiteralExpression),
     (10.3, LiteralExpression),
     (True, LiteralExpression),
-    ("2.4", LiteralExpression),
     (mock_identifier("x", 1), IdentifierExpression),
 )
 
@@ -556,8 +556,6 @@ def test_binary_dunder_promotes_left_python_operand_to_expression(
     expected_left_type: type[Expression],
 ) -> None:
     """Test reflected binary dunders wrap a non-`Expression` left operand."""
-    if binary_operator is operator.mod and isinstance(left, str):
-        pytest.skip("Python reserves `str % <value>` for formatting.")
     right = LiteralExpression(5)
     expected = BinaryExpression(
         expected_operation,
@@ -589,6 +587,22 @@ def test_binary_dunder_rejects_unsupported_type_on_right() -> None:
         match=r"Unable to cast \[\] with type <class 'list'> to an expression.",
     ):
         LiteralExpression(5) + []
+
+
+def test_binary_dunder_rejects_str_operand_on_right() -> None:
+    """Test a binary dunder rejects a ``str`` right operand.
+
+    Implicit ``str`` coercion was removed because ``LiteralExpression``
+    happily round-trips ``"5"`` into the integer literal ``5``,
+    producing a surprising result when a caller meant to pass a
+    string. The explicit form ``LiteralExpression("5")`` is still
+    accepted.
+    """
+    with pytest.raises(
+        ValueError,
+        match=r"Unable to cast '5' with type <class 'str'> to an expression.",
+    ):
+        LiteralExpression(5) + "5"
 
 
 def test_binary_dunder_rejects_unsupported_type_on_left() -> None:
@@ -1183,3 +1197,122 @@ def test_unregistered_expression_subclass_raises_not_implemented_on_equivalence(
 
     with pytest.raises(NotImplementedError, match="_UnregisteredExpression"):
         instance.is_structurally_equivalent(LiteralExpression(1))
+
+
+# =============================================================================
+# logical_and / logical_or: right-fold and arity
+# =============================================================================
+
+
+def test_logical_and_right_folds_three_operands() -> None:
+    """Test `logical_and(a, b, c)` produces ``a && (b && c)``."""
+    a = LiteralExpression(True)
+    b = LiteralExpression(False)
+    c = LiteralExpression(True)
+
+    result = logical_and(a, b, c)
+
+    expected = BinaryExpression(
+        BinaryOperation.LOGICAL_AND,
+        a,
+        BinaryExpression(BinaryOperation.LOGICAL_AND, b, c),
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_logical_or_right_folds_three_operands() -> None:
+    """Test `logical_or(a, b, c)` produces ``a || (b || c)``."""
+    a = LiteralExpression(True)
+    b = LiteralExpression(False)
+    c = LiteralExpression(True)
+
+    result = logical_or(a, b, c)
+
+    expected = BinaryExpression(
+        BinaryOperation.LOGICAL_OR,
+        a,
+        BinaryExpression(BinaryOperation.LOGICAL_OR, b, c),
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_logical_and_right_folds_four_operands() -> None:
+    """Test `logical_and(a, b, c, d)` produces ``a && (b && (c && d))``."""
+    a, b, c, d = (
+        LiteralExpression(True),
+        LiteralExpression(False),
+        LiteralExpression(True),
+        LiteralExpression(False),
+    )
+
+    result = logical_and(a, b, c, d)
+
+    expected = BinaryExpression(
+        BinaryOperation.LOGICAL_AND,
+        a,
+        BinaryExpression(
+            BinaryOperation.LOGICAL_AND,
+            b,
+            BinaryExpression(BinaryOperation.LOGICAL_AND, c, d),
+        ),
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_logical_and_rejects_fewer_than_two_operands() -> None:
+    """Test `logical_and` with one operand raises ``ValueError``."""
+    with pytest.raises(ValueError, match="requires at least two"):
+        logical_and(LiteralExpression(True))
+
+
+def test_logical_and_rejects_zero_operands() -> None:
+    """Test `logical_and` with no operands raises ``ValueError``."""
+    with pytest.raises(ValueError, match="requires at least two"):
+        logical_and()
+
+
+def test_logical_or_rejects_fewer_than_two_operands() -> None:
+    """Test `logical_or` with one operand raises ``ValueError``."""
+    with pytest.raises(ValueError, match="requires at least two"):
+        logical_or(LiteralExpression(False))
+
+
+# =============================================================================
+# make_binary_expression / make_unary_expression: direct construction
+# =============================================================================
+
+
+def test_make_binary_expression_constructs_with_literal_coercion() -> None:
+    """Test `make_binary_expression` coerces ``int``/``float`` operands."""
+    result = make_binary_expression(BinaryOperation.ADD, 1, 2.5)
+
+    expected = BinaryExpression(
+        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2.5)
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_make_binary_expression_rejects_unsupported_left_operand() -> None:
+    """Test `make_binary_expression` rejects an unsupported left operand type."""
+    with pytest.raises(ValueError, match="Unable to cast"):
+        make_binary_expression(BinaryOperation.ADD, [], LiteralExpression(1))  # type: ignore[arg-type]
+
+
+def test_make_binary_expression_rejects_unsupported_right_operand() -> None:
+    """Test `make_binary_expression` rejects an unsupported right operand type."""
+    with pytest.raises(ValueError, match="Unable to cast"):
+        make_binary_expression(BinaryOperation.ADD, LiteralExpression(1), {})  # type: ignore[arg-type]
+
+
+def test_make_unary_expression_constructs_with_literal_coercion() -> None:
+    """Test `make_unary_expression` coerces a numeric operand."""
+    result = make_unary_expression(UnaryOperation.NEGATE, 5)
+
+    expected = UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(5))
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_make_unary_expression_rejects_unsupported_operand() -> None:
+    """Test `make_unary_expression` raises ``ValueError`` for an unsupported type."""
+    with pytest.raises(ValueError, match="Unable to cast"):
+        make_unary_expression(UnaryOperation.NEGATE, object())  # type: ignore[arg-type]

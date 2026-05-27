@@ -1,5 +1,10 @@
 """Shared helpers for the `tests/expression` sub-package."""
 
+from collections.abc import Iterator
+
+import pytest
+
+from fhy_core.expression import registry as _registry
 from fhy_core.expression.passes.type_checker import ExpressionTypeChecker
 from fhy_core.identifier import Identifier
 from fhy_core.types import Type, TypeQualifier
@@ -13,8 +18,21 @@ __all__ = [
 ]
 
 
-def _unexpected_lookup(identifier: Identifier) -> tuple[Type, TypeQualifier]:
-    raise AssertionError(f"Unexpected identifier lookup: {identifier}")
+@pytest.fixture()
+def function_registry_snapshot() -> Iterator[None]:
+    """Snapshot the process-wide function registry around the test.
+
+    Captures the registry's contents before the test runs, then restores
+    them after the test completes. Tests that mutate the registry
+    request this fixture explicitly. Built-in registrations
+    (``max``, ``min``) survive across tests because they are in the
+    snapshot.
+    """
+    snapshot = dict(_registry.get_registered_entries())
+    try:
+        yield
+    finally:
+        _registry.set_registry_state_for_tests(snapshot)
 
 
 def make_identifier_checker(
@@ -22,15 +40,16 @@ def make_identifier_checker(
 ) -> ExpressionTypeChecker:
     """Build an `ExpressionTypeChecker` whose lookup is driven by `bindings`.
 
-    Unknown identifiers raise `AssertionError` so unintended lookups surface
-    as test failures rather than silent defaults.
+    Unknown identifiers raise `KeyError` so the type checker can fall
+    back to the registered-constant resolver and, failing that, frame
+    the failure as an "identifier is not bound" type error.
 
     """
 
     def lookup(identifier: Identifier) -> tuple[Type, TypeQualifier]:
         if identifier in bindings:
             return bindings[identifier]
-        return _unexpected_lookup(identifier)
+        raise KeyError(identifier.name_hint)
 
     return ExpressionTypeChecker(lookup)
 

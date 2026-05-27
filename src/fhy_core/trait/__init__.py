@@ -29,6 +29,8 @@ __all__ = [
     "OrderableMixin",
     "PartialOrderable",
     "PartialOrderableMixin",
+    "Rewritable",
+    "RewritableMixin",
     "StructuralEquivalence",
     "StructuralEquivalenceMixin",
     "Verifiable",
@@ -59,6 +61,7 @@ from .orderable import (
     PartialOrderable,
     PartialOrderableMixin,
 )
+from .rewritable import Rewritable, RewritableMixin
 from .structural_equivalence import (
     StructuralEquivalence,
     StructuralEquivalenceMixin,

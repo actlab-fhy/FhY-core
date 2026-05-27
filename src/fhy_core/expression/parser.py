@@ -15,9 +15,11 @@ from .core import (
     UNARY_SYMBOL_OPERATIONS,
     BinaryExpression,
     BinaryOperation,
+    CallExpression,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    TernaryExpression,
     UnaryExpression,
 )
 
@@ -50,7 +52,7 @@ _TOKEN_PATTERN = _build_token_pattern(
     r"\|\|",
     r"<=|>=|==|!=",
     r"//",
-    r"[-!+*/%<>()]",
+    r"[-!+*/%<>(),?:]",
 )
 
 
@@ -79,7 +81,8 @@ class ExpressionParser:
 
     Grammar (BNF, lowest-to-highest precedence)::
 
-        expression     ::= logical_or
+        expression     ::= ternary
+        ternary        ::= logical_or ( "?" expression ":" ternary )?
         logical_or     ::= logical_and ( "||" logical_and )*
         logical_and    ::= equality ( "&&" equality )*
         equality       ::= comparison ( ( "==" | "!=" ) comparison )*
@@ -90,12 +93,20 @@ class ExpressionParser:
         exponentiation ::= primary ( "**" exponentiation )?
         primary        ::= number
                          | "True" | "False"
+                         | identifier "(" arguments? ")"
                          | identifier
                          | "(" expression ")"
+        arguments      ::= expression ( "," expression )*
 
     Binary operators are left-associative except ``**``, which is
     right-associative (consistent with Python and the conventional
     mathematical reading of ``a**b**c`` as ``a**(b**c)``).
+
+    The ternary form ``cond ? t : f`` is right-associative and has the
+    lowest precedence so it composes naturally with the operator chain.
+    Any identifier followed by ``(`` parses as a ``CallExpression``;
+    arity is not checked at parse time. Bare identifiers parse as
+    ``IdentifierExpression``.
     """
 
     _tokens: list[str]
@@ -137,7 +148,16 @@ class ExpressionParser:
         return expression
 
     def _expression(self) -> Expression:
-        return self._logical_or()
+        return self._ternary()
+
+    def _ternary(self) -> Expression:
+        condition = self._logical_or()
+        if not self._match("?"):
+            return condition
+        true_value = self._expression()
+        self._consume_token(":", 'Expected ":" in ternary expression')
+        false_value = self._ternary()
+        return TernaryExpression(condition, true_value, false_value)
 
     def _binary_operation(
         self,
@@ -186,16 +206,9 @@ class ExpressionParser:
     def _primary(self) -> Expression:
         if self._match_number():
             return LiteralExpression(self._get_previous_token())
-        elif self._match_identifier():
-            previous_token = self._get_previous_token()
-            if previous_token == "True":
-                return LiteralExpression(True)
-            elif previous_token == "False":
-                return LiteralExpression(False)
-            else:
-                identifier = self._get_identifier_from_symbol(previous_token)
-                return IdentifierExpression(identifier)
-        elif self._match("("):
+        if self._match_identifier():
+            return self._primary_after_identifier(self._get_previous_token())
+        if self._match("("):
             expression = self._expression()
             self._consume_token(")", 'Expected ")" after expression')
             return expression
@@ -209,6 +222,26 @@ class ExpressionParser:
             f'Unexpected token "{current_token}" at position '
             f"{self._current} while parsing an expression."
         )
+
+    def _primary_after_identifier(self, previous_token: str) -> Expression:
+        if previous_token == "True":
+            return LiteralExpression(True)
+        if previous_token == "False":
+            return LiteralExpression(False)
+        if self._peek_at_current_token() == "(":
+            return self._function_call(previous_token)
+        identifier = self._get_identifier_from_symbol(previous_token)
+        return IdentifierExpression(identifier)
+
+    def _function_call(self, function_name: str) -> CallExpression:
+        self._consume_token("(", f'Expected "(" after function name "{function_name}"')
+        arguments: list[Expression] = []
+        if self._peek_at_current_token() != ")":
+            arguments.append(self._expression())
+            while self._match(","):
+                arguments.append(self._expression())
+        self._consume_token(")", f'Expected ")" after arguments to "{function_name}"')
+        return CallExpression(function_name, tuple(arguments))
 
     def _get_identifier_from_symbol(self, symbol: str) -> Identifier:
         if symbol not in self._identifiers:

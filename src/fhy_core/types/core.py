@@ -84,7 +84,12 @@ class DataType(_DispatchedStructuralEquivalence, ABC):
 
 
 class CoreDataType(StrEnum):
-    """Core data type primitives."""
+    """Core data type primitives.
+
+    ``BOOL`` is a fully-concrete one-bit boolean core data type. It does
+    not participate in the integer or float/complex promotion lattices
+    and does not promote with any other core data type.
+    """
 
     UINT = "uint"
     INT = "int"
@@ -102,6 +107,7 @@ class CoreDataType(StrEnum):
     COMPLEX32 = "complex32"
     COMPLEX64 = "complex64"
     COMPLEX128 = "complex128"
+    BOOL = "bool"
 
 
 def get_core_data_type_bit_width(core_data_type: CoreDataType) -> int | None:
@@ -118,6 +124,8 @@ def get_core_data_type_bit_width(core_data_type: CoreDataType) -> int | None:
     match core_data_type:
         case CoreDataType.UINT | CoreDataType.INT | CoreDataType.FLOAT:
             return None
+        case CoreDataType.BOOL:
+            return 1
         case CoreDataType.UINT8 | CoreDataType.INT8:
             return 8
         case CoreDataType.UINT16 | CoreDataType.INT16 | CoreDataType.FLOAT16:
@@ -247,6 +255,18 @@ _FLOAT_COMPLEX_DATA_TYPES: frozenset[CoreDataType] = frozenset(
     }
 )
 
+# BOOL is outside both partitions (it has its own promotion rules in
+# `promote_core_data_types`). This assertion catches future drift: if
+# someone adds a `CoreDataType` enum member without slotting it into a
+# partition (or marking it as a side branch like BOOL), the package
+# fails to import.
+assert _INTEGER_DATA_TYPES | _FLOAT_COMPLEX_DATA_TYPES | {
+    CoreDataType.BOOL
+} == frozenset(CoreDataType), (
+    "CoreDataType partition drift: integer + float/complex + BOOL must "
+    "cover every CoreDataType member."
+)
+
 
 def promote_core_data_types(
     core_data_type1: CoreDataType, core_data_type2: CoreDataType
@@ -261,9 +281,18 @@ def promote_core_data_types(
         Common type to which both core data types can be promoted.
 
     Raises:
-        FhYCoreTypeError: If the promotion is not supported.
+        FhYCoreTypeError: If the promotion is not supported. ``BOOL`` only
+            promotes with itself; any other pairing involving ``BOOL`` is
+            rejected.
 
     """
+    if core_data_type1 == CoreDataType.BOOL and core_data_type2 == CoreDataType.BOOL:
+        return CoreDataType.BOOL
+    if CoreDataType.BOOL in {core_data_type1, core_data_type2}:
+        raise FhYCoreTypeError(
+            "Unsupported primitive data type promotion involving boolean: "
+            f"{core_data_type1}, {core_data_type2}"
+        )
     if (
         core_data_type1 in _INTEGER_DATA_TYPES
         and core_data_type2 in _INTEGER_DATA_TYPES
@@ -317,7 +346,7 @@ def _resolve_to_concrete_float_complex(target: CoreDataType) -> CoreDataType:
 
 
 def resolve_literal_core_data_type(
-    literal: int | float, core_data_type: CoreDataType
+    literal: bool | int | float, core_data_type: CoreDataType
 ) -> CoreDataType:
     """Resolve a weak literal type to a concrete type compatible with the context.
 
@@ -326,6 +355,9 @@ def resolve_literal_core_data_type(
     point literals paired with the weak ``FLOAT`` context resolve to
     ``FLOAT64`` (matching Python's native ``float`` precision); narrower
     concrete float types must be requested explicitly via the context.
+    Boolean literals resolve to ``BOOL`` only when paired with a ``BOOL``
+    context; any other pairing involving a boolean literal or the ``BOOL``
+    context is rejected.
 
     Args:
         literal: Literal value whose concrete type should be resolved.
@@ -336,16 +368,20 @@ def resolve_literal_core_data_type(
         the requested context.
 
     Raises:
-        NotImplementedError: If `literal` is a `bool`. Boolean literals are
-            reserved for a future `BOOL` core data type and are surfaced as
-            a deliberate "not yet supported" marker, distinct from the
-            type-incompatibility path.
         FhYCoreTypeError: If the literal cannot be represented in the requested
             type family.
 
     """
     if isinstance(literal, bool):
-        raise NotImplementedError("Boolean literals are not yet supported.")
+        if core_data_type == CoreDataType.BOOL:
+            return CoreDataType.BOOL
+        raise FhYCoreTypeError(
+            f"Boolean literal {literal!r} is incompatible with {core_data_type}."
+        )
+    if core_data_type == CoreDataType.BOOL:
+        raise FhYCoreTypeError(
+            f"Non-boolean literal {literal!r} is incompatible with the BOOL context."
+        )
 
     if isinstance(literal, float):
         if core_data_type in _FLOAT_COMPLEX_DATA_TYPES:
