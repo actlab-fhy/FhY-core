@@ -27,9 +27,10 @@ from fhy_core.expression.core import (
     UnaryOperation,
 )
 from fhy_core.expression.registry import (
-    FunctionLookupError,
+    EntryLookupError,
     NativeConstant,
-    get_registered_function,
+    RegisteredFunction,
+    get_registered_entry,
 )
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
@@ -57,10 +58,14 @@ def _sympy_round(value: Any) -> Any:
     return sympy.Function("round")(value)
 
 
-# Native-function name <-> sympy operator. ``log2``/``log10`` lower
-# through ``sympy.log(arg, base)`` (which sympy rewrites to a Mul-of-
-# logs); they do not round-trip back to their named form. Every other
-# entry round-trips through ``_NATIVE_FUNCTION_LIFT_DISPATCH``.
+# Native-function name <-> sympy operator. Entries appearing in
+# ``_NATIVE_FUNCTION_LIFT_DISPATCH`` below round-trip back to their
+# named form. The following do not round-trip: ``log2``/``log10`` lower
+# through ``sympy.log(arg, base)`` (sympy rewrites these to a Mul-of-
+# logs and they lift back as that mul rather than as ``log2``/``log10``);
+# ``exp2`` lowers to ``sympy.Pow(2, value)`` and lifts as ``Pow`` (or
+# as ``sqrt`` when the exponent is exactly 1/2); ``round`` lowers to an
+# opaque ``sympy.Function("round")`` and has no inverse lifting entry.
 _NATIVE_FUNCTION_LOWER: dict[str, Callable[..., Any]] = {
     "exp": sympy.exp,
     "exp2": _sympy_exp2,
@@ -116,8 +121,8 @@ _NATIVE_CONSTANT_LIFT: dict[Any, str] = {
 def _try_get_native_constant_sympy_value(name: str) -> Any | None:
     """Return the sympy value for a registered constant, or ``None``."""
     try:
-        entry = get_registered_function(name)
-    except FunctionLookupError:
+        entry = get_registered_entry(name)
+    except EntryLookupError:
         return None
     if not isinstance(entry, NativeConstant):
         return None
@@ -219,16 +224,32 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
         self, call_expression: CallExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
         name = call_expression.function_name
-        if name not in _NATIVE_FUNCTION_LOWER:
-            raise TypeError(
-                "Cannot lower a non-native CallExpression to SymPy; "
+        if name in _NATIVE_FUNCTION_LOWER:
+            sympy_operator = _NATIVE_FUNCTION_LOWER[name]
+            sympy_arguments = [
+                self.visit(argument) for argument in call_expression.arguments
+            ]
+            return sympy_operator(*sympy_arguments)
+        raise self._make_unsupported_call_error(name)
+
+    @staticmethod
+    def _make_unsupported_call_error(name: str) -> TypeError:
+        """Construct a precise error for an unsupported ``CallExpression``."""
+        try:
+            entry = get_registered_entry(name)
+        except EntryLookupError:
+            return TypeError(f"cannot lower call to unknown function {name!r} to SymPy")
+        if isinstance(entry, RegisteredFunction):
+            return TypeError(
+                f"Cannot lower an expression-bodied function call to SymPy; "
                 f"call `inline_functions` first to expand {name!r}."
             )
-        sympy_operator = _NATIVE_FUNCTION_LOWER[name]
-        sympy_arguments = [
-            self.visit(argument) for argument in call_expression.arguments
-        ]
-        return sympy_operator(*sympy_arguments)
+        if isinstance(entry, NativeConstant):
+            return TypeError(
+                f"call to {name!r} is to a registered native constant, which "
+                f"is not callable"
+            )
+        return TypeError(f"native function {name!r} has no SymPy lowering registered")
 
     def visit_literal_expression(
         self, literal_expression: LiteralExpression

@@ -14,6 +14,8 @@ from fhy_core.expression import (
     TernaryExpression,
     inline_functions,
     register_function,
+    register_native_constant,
+    register_native_function,
 )
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
@@ -205,10 +207,10 @@ def test_inline_functions_inlines_call_that_references_another_registered_functi
 
 
 def test_inline_functions_raises_for_unknown_function_name() -> None:
-    """Test a call to an unregistered function surfaces ``FunctionLookupError``."""
+    """Test a call to an unregistered function surfaces ``EntryLookupError``."""
     expression = CallExpression("not_registered", (LiteralExpression(1),))
 
-    with pytest.raises(PassExecutionError, match="FunctionLookupError"):
+    with pytest.raises(PassExecutionError, match="EntryLookupError"):
         inline_functions(expression)
 
 
@@ -383,3 +385,65 @@ def test_inline_functions_does_not_modify_input_expression(
 
     assert expression.function_name == original_function_name
     assert expression.arguments == original_arguments
+
+
+# =============================================================================
+# inline_functions: NativeConstant and NativeFunction call targets
+# =============================================================================
+
+
+def test_inline_functions_rejects_call_to_native_constant(
+    function_registry_snapshot: None,
+) -> None:
+    """Test calling a registered native constant raises ``FunctionArityError``."""
+    register_native_constant("test_inline_const", FunctionSort.REAL, 3.14)
+
+    expression = CallExpression("test_inline_const", ())
+
+    with pytest.raises(PassExecutionError, match="FunctionArityError"):
+        inline_functions(expression)
+
+
+def test_inline_functions_passes_through_native_function_call_unchanged(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a call to a native function is preserved untouched.
+
+    The inliner does not fold native calls; that is the evaluator's
+    job. The call passes through with arguments rewritten (children
+    are still recursively inlined).
+    """
+    register_native_function(
+        "test_inline_native_passthrough",
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        implementation=lambda value: value * 2,
+    )
+
+    expression = CallExpression(
+        "test_inline_native_passthrough",
+        (IdentifierExpression(Identifier("x")),),
+    )
+
+    result = inline_functions(expression)
+
+    assert isinstance(result, CallExpression)
+    assert result.function_name == "test_inline_native_passthrough"
+    assert len(result.arguments) == 1
+
+
+def test_inline_functions_rejects_wrong_arity_to_native_function(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a native call with the wrong arity raises ``FunctionArityError``."""
+    register_native_function(
+        "test_inline_native_arity",
+        parameter_sorts=[FunctionSort.REAL, FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        implementation=lambda a, b: a + b,
+    )
+
+    expression = CallExpression("test_inline_native_arity", (LiteralExpression(1),))
+
+    with pytest.raises(PassExecutionError, match="FunctionArityError"):
+        inline_functions(expression)

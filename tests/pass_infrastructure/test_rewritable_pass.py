@@ -662,3 +662,43 @@ def test_node_without_rebuild_with_visit_children_raises_at_first_rebuild() -> N
 
     with pytest.raises(NotImplementedError, match="_BrokenContainer"):
         _DoubleLeavesRewriter().transform(original)
+
+
+# =============================================================================
+# Pass-framework integration: execute() and PassResult
+# =============================================================================
+
+
+def test_rewritable_pass_execute_returns_pass_result_with_changed_true() -> None:
+    """Test ``.execute(node)`` returns a ``PassResult`` reporting the rewrite."""
+    original = ToyLeaf(5)
+
+    result = _DoubleLeavesRewriter().execute(original)
+
+    assert isinstance(result.output, ToyLeaf)
+    assert result.output.value == 10
+    assert result.changed is True
+
+
+def test_rewritable_pass_execute_reports_no_change_when_nothing_rewrites() -> None:
+    """Test ``.execute(node)`` reports ``changed=False`` for a no-op pass."""
+    original = ToyLeaf(5)
+
+    result = _IdentityRewriter().execute(original)
+
+    assert result.output is original
+    assert result.changed is False
+
+
+def test_rewritable_pass_execute_returns_preserved_analyses_attribute() -> None:
+    """Test ``.execute(node)`` returns a ``PassResult`` carrying ``preserved_analyses``.
+
+    The default rewriter does not declare analyses; the result still
+    exposes the attribute (which is empty / "preserve nothing").
+    """
+    original = ToyLeaf(5)
+
+    result = _DoubleLeavesRewriter().execute(original)
+
+    assert hasattr(result, "preserved_analyses")
+    assert hasattr(result, "diagnostics")

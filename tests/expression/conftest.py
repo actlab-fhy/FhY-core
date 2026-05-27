@@ -28,15 +28,11 @@ def function_registry_snapshot() -> Iterator[None]:
     (``max``, ``min``) survive across tests because they are in the
     snapshot.
     """
-    snapshot = dict(_registry.get_registered_functions())
+    snapshot = dict(_registry.get_registered_entries())
     try:
         yield
     finally:
         _registry.set_registry_state_for_tests(snapshot)
-
-
-def _unexpected_lookup(identifier: Identifier) -> tuple[Type, TypeQualifier]:
-    raise AssertionError(f"Unexpected identifier lookup: {identifier}")
 
 
 def make_identifier_checker(
@@ -44,15 +40,16 @@ def make_identifier_checker(
 ) -> ExpressionTypeChecker:
     """Build an `ExpressionTypeChecker` whose lookup is driven by `bindings`.
 
-    Unknown identifiers raise `AssertionError` so unintended lookups surface
-    as test failures rather than silent defaults.
+    Unknown identifiers raise `KeyError` so the type checker can fall
+    back to the registered-constant resolver and, failing that, frame
+    the failure as an "identifier is not bound" type error.
 
     """
 
     def lookup(identifier: Identifier) -> tuple[Type, TypeQualifier]:
         if identifier in bindings:
             return bindings[identifier]
-        return _unexpected_lookup(identifier)
+        raise KeyError(identifier.name_hint)
 
     return ExpressionTypeChecker(lookup)
 

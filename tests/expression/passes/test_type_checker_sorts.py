@@ -51,7 +51,7 @@ def _scalar(core_data_type: CoreDataType) -> NumericalType:
 
 
 def _unexpected_lookup(identifier: Identifier) -> tuple[Type, TypeQualifier]:
-    raise AssertionError(f"unexpected identifier lookup: {identifier}")
+    raise KeyError(identifier.name_hint)
 
 
 def _single_lookup(
@@ -132,19 +132,6 @@ class TestNativeCallSiteSortInference:
         result_type, _ = synthesize_expression_type(expression, _unexpected_lookup)
 
         assert result_type.is_structurally_equivalent(_scalar(CoreDataType.BOOL))
-
-    def test_native_call_with_complex_result_sort_returns_complex128_type(
-        self, function_registry_snapshot: None
-    ) -> None:
-        """Test a native with declared `COMPLEX` result sort yields `COMPLEX128`."""
-        register_real_unary_native(
-            "test_tc_complex_native", result_sort=FunctionSort.COMPLEX
-        )
-        expression = CallExpression("test_tc_complex_native", (LiteralExpression(0.0),))
-
-        result_type, _ = synthesize_expression_type(expression, _unexpected_lookup)
-
-        assert result_type.is_structurally_equivalent(_scalar(CoreDataType.COMPLEX128))
 
     def test_native_call_propagates_param_qualifier_when_all_args_are_param(
         self, function_registry_snapshot: None

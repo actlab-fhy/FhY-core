@@ -107,6 +107,34 @@ def test_pformat_expression_with_show_id_includes_name_hint_and_id() -> None:
     assert str(identifier.id) in result
 
 
+def test_pformat_expression_with_show_id_propagates_into_ternary() -> None:
+    """Test ``show_id=True`` reaches identifiers nested in a ``TernaryExpression``."""
+    condition_identifier = Identifier("cond")
+    expression = TernaryExpression(
+        IdentifierExpression(condition_identifier),
+        LiteralExpression(1),
+        LiteralExpression(0),
+    )
+
+    result = pformat_expression(expression, show_id=True)
+
+    assert condition_identifier.name_hint in result
+    assert str(condition_identifier.id) in result
+
+
+def test_pformat_expression_with_show_id_propagates_into_call_arguments() -> None:
+    """Test ``show_id=True`` reaches identifiers nested in call arguments."""
+    argument_identifier = Identifier("arg")
+    expression = CallExpression(
+        "nested_show_id", (IdentifierExpression(argument_identifier),)
+    )
+
+    result = pformat_expression(expression, show_id=True)
+
+    assert argument_identifier.name_hint in result
+    assert str(argument_identifier.id) in result
+
+
 # =============================================================================
 # ExpressionPrettyFormatter defaults
 # =============================================================================

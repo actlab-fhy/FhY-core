@@ -47,7 +47,7 @@ def _scalar(core_data_type: CoreDataType) -> NumericalType:
 
 
 def _no_identifiers(identifier: Identifier) -> tuple[Type, TypeQualifier]:
-    raise AssertionError(f"unexpected lookup: {identifier}")
+    raise KeyError(identifier.name_hint)
 
 
 # =============================================================================

@@ -1,4 +1,26 @@
-"""Inline registered-function call expressions."""
+"""Inline expression-bodied function calls.
+
+Inlining is a bottom-up rewrite over the expression IR. For each
+``CallExpression``, the inliner resolves the call target in the
+registry and dispatches by entry kind:
+
+- :class:`RegisteredFunction`: expression-bodied. The call is inlined
+  by substituting the call's argument expressions for the function's
+  parameter identifiers in the body. Self-recursive and mutually
+  recursive calls are detected via a per-pass ``_in_progress`` set and
+  raise :class:`RecursionError`.
+- :class:`NativeFunction`: Python-backed. Native calls pass through
+  the inliner unchanged; folding to a literal is handled later by
+  :class:`ExpressionEvaluator`. The inliner still validates declared
+  arity against the call site's argument count.
+- :class:`NativeConstant`: not callable. Reaching a call site whose
+  target resolves to a constant raises :class:`FunctionArityError`.
+
+Calls to unregistered names raise :class:`EntryLookupError`. The
+public entry point is :func:`inline_functions`; the :class:`FunctionInliner`
+class exists so callers running the inliner inside a pass manager can
+collect diagnostics and ``PassResult`` metadata.
+"""
 
 __all__ = [
     "FunctionArityError",
@@ -14,7 +36,7 @@ from ..registry import (
     NativeConstant,
     NativeFunction,
     RegisteredFunction,
-    get_registered_function,
+    get_registered_entry,
 )
 from .basic import substitute_identifiers
 
@@ -59,7 +81,7 @@ class FunctionInliner(RewritablePass[Expression]):
     attached as ``__cause__`` and named in the wrapper message.
 
     Raises:
-        FunctionLookupError: If a call references an unregistered name.
+        EntryLookupError: If a call references an unregistered name.
         FunctionArityError: If a call's argument count does not match
             the registered function's parameter count, or if the call
             target is a registered constant.
@@ -77,7 +99,7 @@ class FunctionInliner(RewritablePass[Expression]):
     def visit_call_expression(self, expression: CallExpression) -> Expression | None:
         name = expression.function_name
         self._reject_if_recursive(name)
-        registered = get_registered_function(name)
+        registered = get_registered_entry(name)
         if isinstance(registered, NativeConstant):
             raise FunctionArityError(
                 f"{name!r} is a registered constant, not a function; reference "
@@ -126,7 +148,7 @@ def inline_functions(expression: Expression) -> Expression:
 
     Raises:
         PassExecutionError: If a call references an unregistered
-            function (``FunctionLookupError`` as cause), if a call's
+            function (``EntryLookupError`` as cause), if a call's
             argument count does not match the registered function's
             parameter count or the call target is a constant
             (``FunctionArityError`` as cause), or if a registered

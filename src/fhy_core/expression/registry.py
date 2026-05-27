@@ -21,21 +21,22 @@ directly.
 """
 
 __all__ = [
-    "FunctionLookupError",
-    "FunctionRegistrationError",
+    "EntryLookupError",
+    "EntryRegistrationError",
     "NativeConstant",
     "NativeFunction",
     "RegisteredEntry",
     "RegisteredFunction",
-    "get_registered_function",
-    "get_registered_functions",
-    "is_function_registered",
+    "get_registered_entry",
+    "get_registered_entries",
+    "is_entry_registered",
     "register_function",
     "register_native_constant",
     "register_native_function",
     "set_registry_state_for_tests",
 ]
 
+import inspect
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from threading import Lock
@@ -46,7 +47,7 @@ from frozendict import frozendict
 from fhy_core.identifier import Identifier
 
 from .core import Expression
-from .errors import FunctionLookupError, FunctionRegistrationError
+from .errors import EntryLookupError, EntryRegistrationError
 from .passes.basic import collect_identifiers
 from .passes.body_type_checker import RegisteredFunctionBodyTypeChecker
 from .sort import FunctionSort, is_python_value_compatible_with_sort
@@ -77,6 +78,16 @@ class RegisteredFunction:
     result_sort: FunctionSort
     body: Expression
 
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("RegisteredFunction.name must be non-empty.")
+        if len(self.parameters) != len(self.parameter_sorts):
+            raise ValueError(
+                f"RegisteredFunction {self.name!r}: parameter_sorts length "
+                f"({len(self.parameter_sorts)}) does not match parameters "
+                f"length ({len(self.parameters)})."
+            )
+
 
 @dataclass(frozen=True)
 class NativeFunction:
@@ -94,10 +105,10 @@ class NativeFunction:
             ``len(parameter_sorts)``.
         result_sort: Declared result sort.
         implementation: Python callable. Receives positional Python
-            values (``bool``, ``int``, ``float``, ``complex``) coerced
-            from the literal arguments and returns a Python ``bool``,
-            ``int``, ``float``, or ``complex`` whose runtime type is
-            compatible with ``result_sort``.
+            values (``bool``, ``int``, ``float``) coerced from the
+            literal arguments and returns a Python ``bool``, ``int``,
+            or ``float`` whose runtime type is compatible with
+            ``result_sort``.
 
     Notes:
         Numerical results from ``math``-backed implementations follow
@@ -110,7 +121,11 @@ class NativeFunction:
     name: str
     parameter_sorts: tuple[FunctionSort, ...]
     result_sort: FunctionSort
-    implementation: Callable[..., bool | int | float | complex]
+    implementation: Callable[..., bool | int | float]
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("NativeFunction.name must be non-empty.")
 
 
 @dataclass(frozen=True)
@@ -137,7 +152,16 @@ class NativeConstant:
 
     name: str
     sort: FunctionSort
-    value: bool | int | float | complex
+    value: bool | int | float
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("NativeConstant.name must be non-empty.")
+        if not is_python_value_compatible_with_sort(self.value, self.sort):
+            raise ValueError(
+                f"NativeConstant {self.name!r}: value {self.value!r} is not "
+                f"compatible with the declared sort {self.sort}."
+            )
 
 
 RegisteredEntry: TypeAlias = RegisteredFunction | NativeFunction | NativeConstant
@@ -151,7 +175,7 @@ def _insert_unique_entry(name: str, entry: RegisteredEntry) -> None:
     """Insert ``entry`` under ``name`` if the name is free; otherwise raise."""
     with _REGISTRY_LOCK:
         if name in _REGISTRY:
-            raise FunctionRegistrationError(f"A name is already registered: {name!r}.")
+            raise EntryRegistrationError(f"A name is already registered: {name!r}.")
         _REGISTRY[name] = entry
 
 
@@ -159,19 +183,6 @@ def _remove_entry(name: str) -> None:
     """Remove ``name`` from the registry if present."""
     with _REGISTRY_LOCK:
         _REGISTRY.pop(name, None)
-
-
-def _check_parameter_sort_arity(
-    name: str,
-    parameters: tuple[Identifier, ...],
-    parameter_sorts: tuple[FunctionSort, ...],
-) -> None:
-    if len(parameters) != len(parameter_sorts):
-        raise FunctionRegistrationError(
-            f"Function {name!r}: parameter_sorts length "
-            f"({len(parameter_sorts)}) does not match parameters length "
-            f"({len(parameters)})."
-        )
 
 
 def _registered_constant_names() -> set[str]:
@@ -206,7 +217,7 @@ def _reject_captured_free_identifiers(
     captured_names = ", ".join(
         sorted(identifier.name_hint for identifier in truly_captured)
     )
-    raise FunctionRegistrationError(
+    raise EntryRegistrationError(
         f"Function {name!r} body references identifiers not in its "
         f"parameters: {captured_names}."
     )
@@ -256,29 +267,30 @@ def register_function(
         The newly stored ``RegisteredFunction``.
 
     Raises:
-        FunctionRegistrationError: On duplicate name, sort-arity
+        EntryRegistrationError: On duplicate name, sort-arity
             mismatch, captured free identifier, or body-result sort
             mismatch.
 
     """
     parameter_tuple = tuple(parameters)
     parameter_sort_tuple = tuple(parameter_sorts)
-    _check_parameter_sort_arity(name, parameter_tuple, parameter_sort_tuple)
+    try:
+        registered = RegisteredFunction(
+            name=name,
+            parameters=parameter_tuple,
+            parameter_sorts=parameter_sort_tuple,
+            result_sort=result_sort,
+            body=body,
+        )
+    except ValueError as exc:
+        raise EntryRegistrationError(str(exc)) from exc
     _reject_captured_free_identifiers(name, parameter_tuple, body)
-
-    registered = RegisteredFunction(
-        name=name,
-        parameters=parameter_tuple,
-        parameter_sorts=parameter_sort_tuple,
-        result_sort=result_sort,
-        body=body,
-    )
     _insert_unique_entry(name, registered)
     try:
         _check_body_against_result_sort(
             name, parameter_tuple, parameter_sort_tuple, result_sort, body
         )
-    except FunctionRegistrationError:
+    except EntryRegistrationError:
         _remove_entry(name)
         raise
     return registered
@@ -288,7 +300,7 @@ def register_native_function(
     name: str,
     parameter_sorts: Sequence[FunctionSort],
     result_sort: FunctionSort,
-    implementation: Callable[..., bool | int | float | complex],
+    implementation: Callable[..., bool | int | float],
 ) -> NativeFunction:
     """Register a native (Python-backed) function.
 
@@ -308,29 +320,89 @@ def register_native_function(
     Returns:
         The newly stored ``NativeFunction``.
 
+    Raises:
+        EntryRegistrationError: On duplicate name, empty name, or when
+            the implementation's inspectable signature cannot accept
+            ``len(parameter_sorts)`` positional arguments. Some
+            C-implemented callables (e.g. some ``math`` builtins) do
+            not expose an inspectable signature; arity is not checked
+            in that case.
+
     Notes:
         Standard-library ``math`` implementations are backed by the
         platform's C math library; results may differ in their final
         bits across operating systems and CPU families.
 
-    Raises:
-        FunctionRegistrationError: On duplicate name.
-
     """
-    registered = NativeFunction(
-        name=name,
-        parameter_sorts=tuple(parameter_sorts),
-        result_sort=result_sort,
-        implementation=implementation,
-    )
+    parameter_sort_tuple = tuple(parameter_sorts)
+    _check_native_implementation_arity(name, len(parameter_sort_tuple), implementation)
+    try:
+        registered = NativeFunction(
+            name=name,
+            parameter_sorts=parameter_sort_tuple,
+            result_sort=result_sort,
+            implementation=implementation,
+        )
+    except ValueError as exc:
+        raise EntryRegistrationError(str(exc)) from exc
     _insert_unique_entry(name, registered)
     return registered
+
+
+def _check_native_implementation_arity(
+    name: str,
+    parameter_sort_count: int,
+    implementation: Callable[..., bool | int | float],
+) -> None:
+    """Best-effort check that ``implementation`` accepts the declared arity.
+
+    Uses :func:`inspect.signature` to count positional parameters. When
+    the implementation is a C builtin that does not expose an
+    inspectable signature, no check is performed.
+    """
+    try:
+        sig = inspect.signature(implementation)
+    except (ValueError, TypeError):
+        return
+    positional = [
+        parameter
+        for parameter in sig.parameters.values()
+        if parameter.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    ]
+    has_var_positional = any(
+        parameter.kind is inspect.Parameter.VAR_POSITIONAL
+        for parameter in sig.parameters.values()
+    )
+    required = [
+        parameter
+        for parameter in positional
+        if parameter.default is inspect.Parameter.empty
+    ]
+    if has_var_positional:
+        if parameter_sort_count < len(required):
+            raise EntryRegistrationError(
+                f"NativeFunction {name!r}: implementation requires at least "
+                f"{len(required)} positional argument(s), but parameter_sorts "
+                f"has {parameter_sort_count}."
+            )
+        return
+    if not len(required) <= parameter_sort_count <= len(positional):
+        raise EntryRegistrationError(
+            f"NativeFunction {name!r}: parameter_sorts arity "
+            f"{parameter_sort_count} does not match the implementation's "
+            f"accepted positional-argument range "
+            f"[{len(required)}, {len(positional)}]."
+        )
 
 
 def register_native_constant(
     name: str,
     sort: FunctionSort,
-    value: bool | int | float | complex,
+    value: bool | int | float,
 ) -> NativeConstant:
     """Register a named constant in the registry.
 
@@ -345,26 +417,24 @@ def register_native_constant(
     Returns:
         The newly stored ``NativeConstant``.
 
+    Raises:
+        EntryRegistrationError: On duplicate name, empty name, or
+            sort-value incompatibility.
+
     Notes:
         Constants seeded from ``math`` carry the same platform-bit
         caveat as native function results.
 
-    Raises:
-        FunctionRegistrationError: On duplicate name or sort-value
-            incompatibility.
-
     """
-    if not is_python_value_compatible_with_sort(value, sort):
-        raise FunctionRegistrationError(
-            f"Constant {name!r}: value {value!r} is not compatible with "
-            f"the declared sort {sort}."
-        )
-    registered = NativeConstant(name=name, sort=sort, value=value)
+    try:
+        registered = NativeConstant(name=name, sort=sort, value=value)
+    except ValueError as exc:
+        raise EntryRegistrationError(str(exc)) from exc
     _insert_unique_entry(name, registered)
     return registered
 
 
-def get_registered_function(name: str) -> RegisteredEntry:
+def get_registered_entry(name: str) -> RegisteredEntry:
     """Return the entry registered under ``name``.
 
     The return type widens to ``RegisteredEntry`` (the union of
@@ -379,23 +449,23 @@ def get_registered_function(name: str) -> RegisteredEntry:
         The stored entry.
 
     Raises:
-        FunctionLookupError: If no entry is registered under ``name``.
+        EntryLookupError: If no entry is registered under ``name``.
 
     """
     with _REGISTRY_LOCK:
         registered = _REGISTRY.get(name)
     if registered is None:
-        raise FunctionLookupError(f"No entry is registered under the name {name!r}.")
+        raise EntryLookupError(f"No entry is registered under the name {name!r}.")
     return registered
 
 
-def get_registered_functions() -> Mapping[str, RegisteredEntry]:
+def get_registered_entries() -> Mapping[str, RegisteredEntry]:
     """Return an immutable snapshot of the current registry."""
     with _REGISTRY_LOCK:
         return frozendict(_REGISTRY)
 
 
-def is_function_registered(name: str) -> bool:
+def is_entry_registered(name: str) -> bool:
     """Return whether any entry is registered under ``name``."""
     with _REGISTRY_LOCK:
         return name in _REGISTRY
@@ -409,8 +479,8 @@ def set_registry_state_for_tests(
     Intended for the test-isolation fixture in
     ``tests/expression/conftest.py``: the fixture snapshots the
     registry before each test and calls this hook to restore the
-    snapshot after the test runs. The leading underscore marks this
-    as private; it should not be used outside test infrastructure.
+    snapshot after the test runs. The ``_for_tests`` suffix marks
+    this as a test-only seam; production code must not call it.
     """
     with _REGISTRY_LOCK:
         _REGISTRY.clear()

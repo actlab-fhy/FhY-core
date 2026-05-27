@@ -1,9 +1,9 @@
 """Tests for `FunctionSort` and the sort-compatibility helpers.
 
-`FunctionSort` is a `StrEnum` with five members forming a containment
-chain `NAT < INT < REAL < COMPLEX` plus the side-branch member `BOOL`.
-The helpers translate between sorts and IR core data types: the call-
-site type checker uses `is_core_data_type_compatible_with_sort` and
+`FunctionSort` is a `StrEnum` with four members forming a containment
+chain `NAT < INT < REAL` plus the side-branch member `BOOL`. The
+helpers translate between sorts and IR core data types: the call-site
+type checker uses `is_core_data_type_compatible_with_sort` and
 `get_result_core_data_type_for_sort`; registration of native constants
 uses `is_python_value_compatible_with_sort` to validate the runtime
 type of the value.
@@ -33,14 +33,13 @@ from fhy_core.types.core import CoreDataType
 class TestFunctionSort:
     """Tests for the `FunctionSort` enum surface."""
 
-    def test_members_are_bool_nat_int_real_complex(self) -> None:
-        """Test the enum exposes exactly the five expected members."""
+    def test_members_are_bool_nat_int_real(self) -> None:
+        """Test the enum exposes exactly the four expected members."""
         assert {member.name for member in FunctionSort} == {
             "BOOL",
             "NAT",
             "INT",
             "REAL",
-            "COMPLEX",
         }
 
     def test_str_enum_values_match_lowercase_names(self) -> None:
@@ -49,7 +48,6 @@ class TestFunctionSort:
         assert FunctionSort.NAT.value == "nat"
         assert FunctionSort.INT.value == "int"
         assert FunctionSort.REAL.value == "real"
-        assert FunctionSort.COMPLEX.value == "complex"
 
     def test_members_are_string_instances(self) -> None:
         """Test members participate as strings (StrEnum semantics)."""
@@ -188,31 +186,6 @@ class TestIsCoreDataTypeCompatibleWithSort:
             core_data_type, FunctionSort.REAL
         )
 
-    # ---- COMPLEX sort ----
-
-    @pytest.mark.parametrize(
-        "core_data_type",
-        [
-            *_UINT_CORE_TYPES,
-            *_SIGNED_INT_CORE_TYPES,
-            *_REAL_FLOAT_CORE_TYPES,
-            *_COMPLEX_CORE_TYPES,
-        ],
-    )
-    def test_complex_sort_accepts_every_non_bool_numerical_core_type(
-        self, core_data_type: CoreDataType
-    ) -> None:
-        """Test `COMPLEX` accepts every non-`BOOL` numerical core data type."""
-        assert is_core_data_type_compatible_with_sort(
-            core_data_type, FunctionSort.COMPLEX
-        )
-
-    def test_complex_sort_rejects_bool_core_type(self) -> None:
-        """Test `COMPLEX` rejects the `BOOL` core data type."""
-        assert not is_core_data_type_compatible_with_sort(
-            CoreDataType.BOOL, FunctionSort.COMPLEX
-        )
-
 
 # =============================================================================
 # `get_result_core_data_type_for_sort`
@@ -256,17 +229,6 @@ class TestGetResultCoreDataTypeForSort:
             == CoreDataType.FLOAT64
         )
 
-    def test_complex_sort_maps_to_concrete_complex128_core_type(self) -> None:
-        """Test the `COMPLEX` sort maps to the concrete `CoreDataType.COMPLEX128`.
-
-        Matches the precision of Python's native ``complex`` (two
-        doubles).
-        """
-        assert (
-            get_result_core_data_type_for_sort(FunctionSort.COMPLEX)
-            == CoreDataType.COMPLEX128
-        )
-
 
 # =============================================================================
 # `is_python_value_compatible_with_sort`
@@ -283,10 +245,8 @@ class TestIsPythonValueCompatibleWithSort:
         """Test the `BOOL` sort accepts `True` and `False`."""
         assert is_python_value_compatible_with_sort(value, FunctionSort.BOOL)
 
-    @pytest.mark.parametrize("value", [0, 1, -1, 0.0, 1.5, -2.5, 1j, 1 + 2j])
-    def test_bool_sort_rejects_non_bool_values(
-        self, value: int | float | complex
-    ) -> None:
+    @pytest.mark.parametrize("value", [0, 1, -1, 0.0, 1.5, -2.5])
+    def test_bool_sort_rejects_non_bool_values(self, value: int | float) -> None:
         """Test the `BOOL` sort rejects every non-`bool` numerical value."""
         assert not is_python_value_compatible_with_sort(value, FunctionSort.BOOL)
 
@@ -311,11 +271,9 @@ class TestIsPythonValueCompatibleWithSort:
         """
         assert not is_python_value_compatible_with_sort(value, FunctionSort.NAT)
 
-    @pytest.mark.parametrize("value", [0.0, 1.5, -2.5, 1j, 1 + 2j])
-    def test_nat_sort_rejects_float_and_complex_values(
-        self, value: float | complex
-    ) -> None:
-        """Test the `NAT` sort rejects `float` and `complex` values."""
+    @pytest.mark.parametrize("value", [0.0, 1.5, -2.5])
+    def test_nat_sort_rejects_float_values(self, value: float) -> None:
+        """Test the `NAT` sort rejects `float` values."""
         assert not is_python_value_compatible_with_sort(value, FunctionSort.NAT)
 
     # ---- INT sort ----
@@ -330,11 +288,9 @@ class TestIsPythonValueCompatibleWithSort:
         """Test the `INT` sort rejects `bool` values (strict-`bool` rule)."""
         assert not is_python_value_compatible_with_sort(value, FunctionSort.INT)
 
-    @pytest.mark.parametrize("value", [0.0, 1.5, -2.5, 1j, 1 + 2j])
-    def test_int_sort_rejects_float_and_complex_values(
-        self, value: float | complex
-    ) -> None:
-        """Test the `INT` sort rejects `float` and `complex` values."""
+    @pytest.mark.parametrize("value", [0.0, 1.5, -2.5])
+    def test_int_sort_rejects_float_values(self, value: float) -> None:
+        """Test the `INT` sort rejects `float` values."""
         assert not is_python_value_compatible_with_sort(value, FunctionSort.INT)
 
     # ---- REAL sort ----
@@ -349,11 +305,6 @@ class TestIsPythonValueCompatibleWithSort:
         """Test the `REAL` sort rejects `bool` values (strict-`bool` rule)."""
         assert not is_python_value_compatible_with_sort(value, FunctionSort.REAL)
 
-    @pytest.mark.parametrize("value", [1j, 1 + 2j])
-    def test_real_sort_rejects_complex_values(self, value: complex) -> None:
-        """Test the `REAL` sort rejects `complex` values."""
-        assert not is_python_value_compatible_with_sort(value, FunctionSort.REAL)
-
     def test_real_sort_accepts_special_float_values(self) -> None:
         """Test the `REAL` sort accepts `math.inf` and `math.nan`.
 
@@ -363,17 +314,3 @@ class TestIsPythonValueCompatibleWithSort:
         assert is_python_value_compatible_with_sort(math.inf, FunctionSort.REAL)
         assert is_python_value_compatible_with_sort(math.nan, FunctionSort.REAL)
         assert is_python_value_compatible_with_sort(-math.inf, FunctionSort.REAL)
-
-    # ---- COMPLEX sort ----
-
-    @pytest.mark.parametrize("value", [0, 1, -1, 0.0, 1.5, -2.5, 1j, 1 + 2j])
-    def test_complex_sort_accepts_every_non_bool_numerical_value(
-        self, value: int | float | complex
-    ) -> None:
-        """Test the `COMPLEX` sort accepts every non-`bool` numerical value."""
-        assert is_python_value_compatible_with_sort(value, FunctionSort.COMPLEX)
-
-    @pytest.mark.parametrize("value", [True, False])
-    def test_complex_sort_rejects_bool_values(self, value: bool) -> None:
-        """Test the `COMPLEX` sort rejects `bool` values (strict-`bool` rule)."""
-        assert not is_python_value_compatible_with_sort(value, FunctionSort.COMPLEX)

@@ -38,9 +38,9 @@ from fhy_core.expression import (
     UnaryExpression,
     call,
     evaluate_expression,
-    get_registered_function,
+    get_registered_entry,
     inline_functions,
-    is_function_registered,
+    is_entry_registered,
 )
 from fhy_core.identifier import Identifier
 
@@ -174,13 +174,13 @@ def test_builtin_constants_mapping_contains_every_expected_entry() -> None:
 @pytest.mark.parametrize("name", sorted(_EXPECTED_BUILTIN_FUNCTIONS))
 def test_each_builtin_function_is_registered_at_import(name: str) -> None:
     """Test every entry in ``BUILTIN_FUNCTIONS`` is in the registry."""
-    assert is_function_registered(name)
+    assert is_entry_registered(name)
 
 
 @pytest.mark.parametrize("name", sorted(_EXPECTED_BUILTIN_CONSTANTS))
 def test_each_builtin_constant_is_registered_at_import(name: str) -> None:
     """Test every entry in ``BUILTIN_CONSTANTS`` is in the registry."""
-    assert is_function_registered(name)
+    assert is_entry_registered(name)
 
 
 @pytest.mark.parametrize("name", sorted(_EXPECTED_BUILTIN_FUNCTIONS))
@@ -203,21 +203,21 @@ def test_each_builtin_constant_entry_carries_canonical_name(name: str) -> None:
 @pytest.mark.parametrize("name", sorted(_EXPECTED_COMPOSED_FUNCTIONS))
 def test_each_composed_built_in_is_a_registered_function(name: str) -> None:
     """Test each composed entry is a `RegisteredFunction` (expression-bodied)."""
-    entry = get_registered_function(name)
+    entry = get_registered_entry(name)
     assert isinstance(entry, RegisteredFunction)
 
 
 @pytest.mark.parametrize("name", sorted(_EXPECTED_NATIVE_FUNCTIONS))
 def test_each_native_built_in_is_a_native_function(name: str) -> None:
     """Test each native entry is a `NativeFunction`."""
-    entry = get_registered_function(name)
+    entry = get_registered_entry(name)
     assert isinstance(entry, NativeFunction)
 
 
 @pytest.mark.parametrize("name", sorted(_EXPECTED_BUILTIN_CONSTANTS))
 def test_each_built_in_constant_is_a_native_constant(name: str) -> None:
     """Test each constant entry is a `NativeConstant`."""
-    entry = get_registered_function(name)
+    entry = get_registered_entry(name)
     assert isinstance(entry, NativeConstant)
 
 
@@ -339,7 +339,7 @@ def test_seeded_constant_value_matches_math_module(
     name: str, expected_value: float
 ) -> None:
     """Test the seeded constants carry the value from Python's ``math`` module."""
-    entry = get_registered_function(name)
+    entry = get_registered_entry(name)
     assert isinstance(entry, NativeConstant)
     assert entry.value == expected_value
 
@@ -349,7 +349,7 @@ def test_seeded_nan_constant_is_nan() -> None:
 
     ``math.nan`` does not equal itself; the check is via ``math.isnan``.
     """
-    entry = get_registered_function("nan")
+    entry = get_registered_entry("nan")
     assert isinstance(entry, NativeConstant)
     assert isinstance(entry.value, float)
     assert math.isnan(entry.value)
@@ -386,7 +386,7 @@ def test_seeded_native_implementation_matches_math_callable(
     name: str, math_callable: object
 ) -> None:
     """Test each seeded native binds to the expected ``math`` callable."""
-    entry = get_registered_function(name)
+    entry = get_registered_entry(name)
     assert isinstance(entry, NativeFunction)
     assert entry.implementation is math_callable
 
@@ -414,3 +414,49 @@ def test_min_inlining_yields_less_ternary() -> None:
     result = inline_functions(CallExpression("min", (a, b)))
 
     assert _structure_summary(result).startswith("ternary(<")
+
+
+# =============================================================================
+# Native math semantics: exp2 / round
+# =============================================================================
+
+
+def test_exp2_native_folds_to_two_to_the_power_of_argument() -> None:
+    """Test ``exp2(3)`` folds to ``8.0``.
+
+    Pins the semantics of the seeded ``exp2`` binding (``2 ** x``) so a
+    future refactor to a non-equivalent implementation surfaces here
+    rather than silently changing rounding behavior.
+    """
+    expression = CallExpression("exp2", (LiteralExpression(3),))
+    result = evaluate_expression(expression)
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == 8.0
+
+
+def test_round_native_folds_with_python_banker_rounding() -> None:
+    """Test ``round(2.5)`` folds to ``2`` (banker's rounding, not 3).
+
+    Pins down that the seeded binding uses Python's built-in ``round``
+    semantics. A future refactor to ``int(value + 0.5)`` style rounding
+    would surface here.
+    """
+    expression = CallExpression("round", (LiteralExpression(2.5),))
+    result = evaluate_expression(expression)
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == 2
+
+
+def test_round_native_rounds_to_even_for_other_half_values() -> None:
+    """Test ``round(3.5)`` folds to ``4`` (banker's rounding).
+
+    The "round half to even" rule rounds ``2.5`` down to ``2`` and
+    ``3.5`` up to ``4``. Tested as a pair to make the rule unambiguous.
+    """
+    expression = CallExpression("round", (LiteralExpression(3.5),))
+    result = evaluate_expression(expression)
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == 4

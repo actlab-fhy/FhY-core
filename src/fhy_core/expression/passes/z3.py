@@ -1,6 +1,8 @@
 """Expression passes that interface with Z3."""
 
 __all__ = [
+    "assert_expression_implies",
+    "assert_holds_for_all_free_assignments",
     "convert_expression_to_z3_expression",
     "does_expression_imply",
     "holds_for_all_free_assignments",
@@ -23,7 +25,14 @@ from fhy_core.expression.core import (
     UnaryExpression,
     UnaryOperation,
 )
+from fhy_core.expression.errors import UndecidableError
 from fhy_core.expression.passes.basic import collect_identifiers
+from fhy_core.expression.registry import (
+    EntryLookupError,
+    NativeConstant,
+    RegisteredFunction,
+    get_registered_entry,
+)
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
 from fhy_core.pass_infrastructure import (
@@ -139,9 +148,24 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
 
     def visit_call_expression(self, call_expression: CallExpression) -> z3.ExprRef:
         name = call_expression.function_name
+        try:
+            entry = get_registered_entry(name)
+        except EntryLookupError as exc:
+            raise TypeError(
+                f"cannot lower call to unknown function {name!r} to Z3"
+            ) from exc
+        if isinstance(entry, RegisteredFunction):
+            raise TypeError(
+                f"Cannot lower an expression-bodied function call to Z3; "
+                f"call `inline_functions` first to expand {name!r}."
+            )
+        if isinstance(entry, NativeConstant):
+            raise TypeError(
+                f"call to {name!r} is to a registered native constant, which "
+                f"is not callable"
+            )
         raise TypeError(
-            "Cannot lower an un-inlined CallExpression to Z3; "
-            f"call `inline_functions` first to expand {name!r}."
+            f"Z3 does not support native function calls; {name!r} cannot be lowered"
         )
 
     def visit_literal_expression(
@@ -320,3 +344,78 @@ def does_expression_imply(
     if has_counterexample is None:
         return None
     return not has_counterexample
+
+
+def assert_holds_for_all_free_assignments(
+    considered_identifiers: set[Identifier],
+    expression: Expression,
+    symbol_types: dict[Identifier, SymbolType],
+) -> bool:
+    """Strict variant of :func:`holds_for_all_free_assignments`.
+
+    Raises :class:`UndecidableError` when the underlying solver returns
+    ``unknown`` instead of returning ``None``. Callers that need a
+    decided ``True``/``False`` should prefer this companion; the
+    lenient variant remains available for callers that want to handle
+    ``unknown`` themselves.
+
+    Args:
+        considered_identifiers: As for
+            :func:`holds_for_all_free_assignments`.
+        expression: As for :func:`holds_for_all_free_assignments`.
+        symbol_types: As for :func:`holds_for_all_free_assignments`.
+
+    Returns:
+        The decided ``bool`` result.
+
+    Raises:
+        UndecidableError: When Z3 returns ``unknown``.
+        KeyError: If ``symbol_types`` is missing an entry.
+        RuntimeError: If the underlying solver returns an unrecognized
+            result.
+
+    """
+    result = holds_for_all_free_assignments(
+        considered_identifiers, expression, symbol_types
+    )
+    if result is None:
+        raise UndecidableError(
+            "Z3 returned `unknown` for "
+            "`holds_for_all_free_assignments`; the property is undecidable "
+            "with the current solver configuration."
+        )
+    return result
+
+
+def assert_expression_implies(
+    antecedent: Expression,
+    consequent: Expression,
+    symbol_types: dict[Identifier, SymbolType],
+) -> bool:
+    """Strict variant of :func:`does_expression_imply`.
+
+    Raises :class:`UndecidableError` when the underlying solver returns
+    ``unknown`` instead of returning ``None``.
+
+    Args:
+        antecedent: As for :func:`does_expression_imply`.
+        consequent: As for :func:`does_expression_imply`.
+        symbol_types: As for :func:`does_expression_imply`.
+
+    Returns:
+        The decided ``bool`` result.
+
+    Raises:
+        UndecidableError: When Z3 returns ``unknown``.
+        KeyError: If ``symbol_types`` is missing an entry.
+        RuntimeError: If the underlying solver returns an unrecognized
+            result.
+
+    """
+    result = does_expression_imply(antecedent, consequent, symbol_types)
+    if result is None:
+        raise UndecidableError(
+            "Z3 returned `unknown` for `does_expression_imply`; the "
+            "implication is undecidable with the current solver configuration."
+        )
+    return result

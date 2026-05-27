@@ -28,10 +28,10 @@ from fhy_core.utils import StrEnum
 class FunctionSort(StrEnum):
     """Coarse mathematical sort of a function parameter or result.
 
-    Sorts form a containment chain
-    ``NAT < INT < REAL < COMPLEX``: an argument whose core data type
-    satisfies a narrower sort also satisfies every wider sort. ``BOOL``
-    is a side branch and is never compatible with the numeric sorts.
+    Sorts form a containment chain ``NAT < INT < REAL``: an argument
+    whose core data type satisfies a narrower sort also satisfies every
+    wider sort. ``BOOL`` is a side branch and is never compatible with
+    the numeric sorts.
 
     Members:
         BOOL: A boolean value. Compatible only with ``CoreDataType.BOOL``.
@@ -41,15 +41,12 @@ class FunctionSort(StrEnum):
             and unsigned integer families.
         REAL: A real number. Compatible with the integer and real-
             float families.
-        COMPLEX: A complex number. Compatible with the integer, real-
-            float, and complex families.
     """
 
     BOOL = "bool"
     NAT = "nat"
     INT = "int"
     REAL = "real"
-    COMPLEX = "complex"
 
 
 _UINT_CORE_DATA_TYPES: frozenset[CoreDataType] = frozenset(
@@ -84,20 +81,8 @@ _REAL_FLOAT_CORE_DATA_TYPES: frozenset[CoreDataType] = frozenset(
     }
 )
 
-_COMPLEX_CORE_DATA_TYPES: frozenset[CoreDataType] = frozenset(
-    {
-        CoreDataType.COMPLEX32,
-        CoreDataType.COMPLEX64,
-        CoreDataType.COMPLEX128,
-    }
-)
-
 _REAL_CORE_DATA_TYPES: frozenset[CoreDataType] = (
     _INTEGER_CORE_DATA_TYPES | _REAL_FLOAT_CORE_DATA_TYPES
-)
-
-_COMPLEX_COMPATIBLE_CORE_DATA_TYPES: frozenset[CoreDataType] = (
-    _REAL_CORE_DATA_TYPES | _COMPLEX_CORE_DATA_TYPES
 )
 
 
@@ -106,20 +91,18 @@ _SORT_TO_COMPATIBLE_CORE_DATA_TYPES: dict[FunctionSort, frozenset[CoreDataType]]
     FunctionSort.NAT: _UINT_CORE_DATA_TYPES,
     FunctionSort.INT: _INTEGER_CORE_DATA_TYPES,
     FunctionSort.REAL: _REAL_CORE_DATA_TYPES,
-    FunctionSort.COMPLEX: _COMPLEX_COMPATIBLE_CORE_DATA_TYPES,
 }
 
 
 # Concrete (non-weak) result types so downstream arithmetic on the
 # returned value triggers the type-checker's weak-literal rescue against
 # this operand. Widths match Python's native runtime types (int / float
-# / complex map to INT64 / FLOAT64 / COMPLEX128).
+# map to INT64 / FLOAT64).
 _SORT_TO_RESULT_CORE_DATA_TYPE: dict[FunctionSort, CoreDataType] = {
     FunctionSort.BOOL: CoreDataType.BOOL,
     FunctionSort.NAT: CoreDataType.UINT32,
     FunctionSort.INT: CoreDataType.INT64,
     FunctionSort.REAL: CoreDataType.FLOAT64,
-    FunctionSort.COMPLEX: CoreDataType.COMPLEX128,
 }
 
 
@@ -158,14 +141,14 @@ def get_result_core_data_type_for_sort(sort: FunctionSort) -> CoreDataType:
 
 
 def is_python_value_compatible_with_sort(
-    value: bool | int | float | complex, sort: FunctionSort
+    value: bool | int | float, sort: FunctionSort
 ) -> bool:
     """Return whether a Python runtime ``value`` is compatible with ``sort``.
 
     The check is strict on ``bool``: ``True`` / ``False`` satisfy only
-    ``BOOL``, not ``NAT`` / ``INT`` / ``REAL`` / ``COMPLEX``, even
-    though Python's ``bool`` is a subclass of ``int``. This prevents
-    silently registering a boolean as a numeric constant.
+    ``BOOL``, not ``NAT`` / ``INT`` / ``REAL``, even though Python's
+    ``bool`` is a subclass of ``int``. This prevents silently
+    registering a boolean as a numeric constant.
 
     Args:
         value: Python runtime value to classify.
@@ -185,7 +168,5 @@ def is_python_value_compatible_with_sort(
         return isinstance(value, int) and value >= 0
     elif sort is FunctionSort.INT:
         return isinstance(value, int)
-    elif sort is FunctionSort.REAL:
-        return isinstance(value, (int, float))
     else:
-        return isinstance(value, (int, float, complex))
+        return isinstance(value, (int, float))

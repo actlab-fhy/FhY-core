@@ -45,7 +45,7 @@ _INT32 = _make_scalar(CoreDataType.INT32)
 
 
 def _lookup_failure(identifier: Identifier) -> tuple[Type, TypeQualifier]:
-    raise AssertionError(f"unexpected lookup: {identifier}")
+    raise KeyError(identifier.name_hint)
 
 
 # =============================================================================

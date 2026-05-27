@@ -469,3 +469,107 @@ def test_evaluate_does_not_mutate_input_expression(
 
     assert expression.function_name == original_name
     assert expression.arguments == original_arguments
+
+
+# =============================================================================
+# String-form numeric literal coercion (parser output)
+# =============================================================================
+
+
+def test_evaluate_coerces_string_form_float_literal_to_float(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``LiteralExpression("3.14")`` is coerced to a float for native calls.
+
+    Numeric tokens from ``parse_expression`` are stored as ``str`` on
+    ``LiteralExpression``. The evaluator's coercion helper converts the
+    string to a numeric value before invoking the native implementation.
+    """
+    register_real_unary_native("test_eval_str_coerce", math.sqrt)
+
+    expression = CallExpression("test_eval_str_coerce", (LiteralExpression("4.0"),))
+    result = evaluate_expression(expression)
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == 2.0
+
+
+def test_evaluate_coerces_string_form_integer_literal_to_int(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``LiteralExpression("4")`` is coerced to an int for native calls."""
+    register_real_unary_native("test_eval_str_int_coerce", math.sqrt)
+
+    expression = CallExpression("test_eval_str_int_coerce", (LiteralExpression("9"),))
+    result = evaluate_expression(expression)
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == 3.0
+
+
+# =============================================================================
+# Distinguished error cases for call targets
+# =============================================================================
+
+
+def test_evaluate_raises_for_unregistered_call_name() -> None:
+    """Test a call to an unregistered name surfaces ``EntryLookupError``."""
+    expression = CallExpression("test_eval_never_registered", (LiteralExpression(0),))
+
+    with pytest.raises(PassExecutionError, match="EntryLookupError"):
+        evaluate_expression(expression)
+
+
+def test_evaluate_raises_for_call_to_native_constant(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a call to a registered native constant raises ``FunctionArityError``."""
+    register_native_constant("test_eval_constant_called", FunctionSort.REAL, 2.5)
+
+    expression = CallExpression("test_eval_constant_called", ())
+
+    with pytest.raises(PassExecutionError, match="FunctionArityError"):
+        evaluate_expression(expression)
+
+
+def test_evaluate_preserves_call_to_registered_function_unchanged(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a call to an expression-bodied function is preserved (not inlined).
+
+    The evaluator emits a diagnostic recommending ``inline_functions``
+    and leaves the call node unchanged.
+    """
+    parameter = Identifier("x")
+    register_function(
+        "test_eval_unfolded_call",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(parameter),
+    )
+
+    expression = CallExpression("test_eval_unfolded_call", (LiteralExpression(3),))
+    result = evaluate_expression(expression)
+
+    assert isinstance(result, CallExpression)
+    assert result.function_name == "test_eval_unfolded_call"
+
+
+def test_evaluate_raises_native_result_sort_error_for_wrong_return_type(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a native returning a wrong-sort value raises ``NativeResultSortError``."""
+    register_native_function(
+        "test_eval_wrong_return_sort",
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.INT,
+        implementation=lambda _value: 1.5,
+    )
+
+    expression = CallExpression(
+        "test_eval_wrong_return_sort", (LiteralExpression(0.0),)
+    )
+
+    with pytest.raises(PassExecutionError, match="NativeResultSortError"):
+        evaluate_expression(expression)

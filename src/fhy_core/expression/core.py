@@ -254,7 +254,18 @@ class Expression(
     RewritableMixin["Expression"],
     ABC,
 ):
-    """Abstract base class for expressions."""
+    """Abstract base class for expressions.
+
+    Expression subclasses are ``@dataclass(frozen=True, eq=False)`` so
+    that the comparison dunders (``__lt__``, ``__eq__``, etc.) can
+    return :class:`BinaryExpression` IR nodes instead of ``bool``. As a
+    consequence, ``__eq__`` and ``__hash__`` fall back to object
+    identity. Two structurally equivalent expressions are therefore
+    **distinct dict keys** and **distinct set members**: use
+    :meth:`is_structurally_equivalent` for value-equality semantics,
+    and avoid using :class:`Expression` instances as dict keys when you
+    expect value-based lookups.
+    """
 
     def is_structurally_equivalent(self, other: object) -> bool:
         return _is_expression_structurally_equivalent(self, other)
@@ -467,7 +478,7 @@ class Expression(
             return other
         elif isinstance(other, Identifier):
             return IdentifierExpression(other)
-        elif type(other) is bool or type(other) in (int, float, str):
+        elif type(other) is bool or type(other) in (int, float):
             return LiteralExpression(other)
         else:
             raise ValueError(
@@ -904,6 +915,10 @@ class CallExpression(Expression, HasOperandsMixin[Expression]):
 
     function_name: str
     arguments: tuple[Expression, ...]
+
+    def __post_init__(self) -> None:
+        if not self.function_name:
+            raise ValueError("CallExpression.function_name must be non-empty.")
 
     def get_operands(self) -> tuple[Expression, ...]:
         return self.arguments

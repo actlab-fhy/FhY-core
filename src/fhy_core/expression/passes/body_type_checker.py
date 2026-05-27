@@ -9,10 +9,12 @@ sort, then checks that the synthesized core data type is compatible
 with the declared ``result_sort``.
 
 Forward-declared calls inside the body (calls to functions not yet
-registered) are tolerated: synthesis raises a chain culminating in
-:class:`FunctionLookupError`, which the pass treats as "trust the
-declared target sort; the call-site check enforces the actual signature
-at use time."
+registered) are tolerated: the body checker constructs its
+:class:`ExpressionTypeChecker` with ``defer_on_unknown_call=True`` so
+that an unresolved call name raises :class:`EntryLookupError` directly
+instead of being framed as a type error. The body checker catches the
+raw lookup error and returns ``None``: "trust the declared target sort;
+the call-site check enforces the actual signature at use time."
 """
 
 __all__ = ["RegisteredFunctionBodyTypeChecker"]
@@ -26,41 +28,31 @@ from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import CompilerPass, register_pass
 from fhy_core.types import (
     CoreDataType,
+    FhYCoreTypeError,
     NumericalType,
     PrimitiveDataType,
     TypeQualifier,
 )
 
 from ..core import Expression
-from ..errors import FunctionLookupError, FunctionRegistrationError
+from ..errors import EntryLookupError, EntryRegistrationError
 from ..sort import FunctionSort, is_core_data_type_compatible_with_sort
 
 if TYPE_CHECKING:
     from .type_checker import ExpressionTypeChecker
 
 # Concrete core data types used as the parameter lookup when body-
-# checking a registered function. Concrete (rather than weak) types let
-# the arithmetic weak-literal rescue triggers for numeric literals
-# inside the body.
+# checking a registered function. Concrete (non-weak) types so
+# downstream arithmetic on the parameter value triggers the
+# type-checker's weak-literal rescue against this operand.
 _BODY_CHECK_CONCRETE_TYPES: frozendict[FunctionSort, CoreDataType] = frozendict(
     {
         FunctionSort.BOOL: CoreDataType.BOOL,
         FunctionSort.NAT: CoreDataType.UINT32,
         FunctionSort.INT: CoreDataType.INT64,
         FunctionSort.REAL: CoreDataType.FLOAT64,
-        FunctionSort.COMPLEX: CoreDataType.COMPLEX128,
     }
 )
-
-
-def _has_unknown_function_cause(exc: BaseException) -> bool:
-    """Return whether ``exc`` (or its cause chain) is a ``FunctionLookupError``."""
-    current: BaseException | None = exc
-    while current is not None:
-        if isinstance(current, FunctionLookupError):
-            return True
-        current = current.__cause__
-    return False
 
 
 @register_pass(
@@ -75,20 +67,29 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
     parameters, parameter sorts, declared result sort), then call it on
     the body expression. The pass either returns ``None`` (validation
     succeeded, or the body forward-references an unregistered function)
-    or raises :class:`FunctionRegistrationError`.
+    or raises :class:`EntryRegistrationError`.
 
     Invoke the pass either via :meth:`check` (raises
-    ``FunctionRegistrationError`` directly) or via the standard
+    ``EntryRegistrationError`` directly) or via the standard
     pass-framework path ``__call__`` / ``execute`` (which wraps the
     domain error in ``PassExecutionError``). The registry uses
     :meth:`check`.
 
     Raises:
-        FunctionRegistrationError: When the body's synthesized core data
-            type is not compatible with ``result_sort``, when the body
-            synthesizes a non-scalar / non-numerical type, or when the
-            body references an undeclared identifier whose name does not
-            match any registered constant.
+        EntryRegistrationError: When the body synthesizes a non-scalar
+            or non-numerical type; when its synthesized core data type
+            is not compatible with ``result_sort``; when it references
+            an identifier that is neither a declared parameter nor a
+            registered native constant; or when type synthesis fails
+            with a recognized error (``FhYCoreTypeError``,
+            ``NotImplementedError``, ``ValueError`` from an unsupported
+            literal kind), wrapped with the original as ``__cause__``.
+
+    Notes:
+        Forward-referenced calls inside the body (calls to functions
+        not yet registered) are tolerated: the pass returns ``None``
+        without raising. The call-site type checker enforces the
+        actual signature when the body is later evaluated.
 
     """
 
@@ -117,7 +118,7 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
             body: Body expression to check.
 
         Raises:
-            FunctionRegistrationError: When the body does not satisfy
+            EntryRegistrationError: When the body does not satisfy
                 the result-sort contract; see the class docstring.
 
         """
@@ -158,7 +159,7 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
         # The `ExpressionTypeChecker` import lives inside this method to
         # break a one-step import cycle: `type_checker` imports
         # `RegisteredFunction`, `NativeFunction`, `NativeConstant`, and
-        # `get_registered_function` from `..registry`, and `..registry`
+        # `get_registered_entry` from `..registry`, and `..registry`
         # imports this pass at module-top to call it from
         # `register_function`. Deferring this import lets the registry
         # finish loading before `type_checker` is pulled in.
@@ -167,12 +168,9 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
         def lookup(identifier: Identifier) -> tuple[NumericalType, TypeQualifier]:
             if identifier in parameter_to_type:
                 return parameter_to_type[identifier]
-            raise FunctionRegistrationError(
-                f"Function {self._name!r} body uses identifier "
-                f"{identifier.name_hint!r} that is not declared as a parameter."
-            )
+            raise KeyError(identifier.name_hint)
 
-        return ExpressionTypeChecker(lookup)
+        return ExpressionTypeChecker(lookup, defer_on_unknown_call=True)
 
     def _synthesize_body_type(
         self,
@@ -181,12 +179,10 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
     ) -> NumericalType | None:
         try:
             body_type, _ = checker.synthesize(body)
-        except FunctionRegistrationError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            if _has_unknown_function_cause(exc):
-                return None
-            raise FunctionRegistrationError(
+        except EntryLookupError:
+            return None
+        except (FhYCoreTypeError, NotImplementedError, ValueError) as exc:
+            raise EntryRegistrationError(
                 f"Function {self._name!r} body failed to type-check: {exc}"
             ) from exc
         return body_type  # type: ignore[return-value]
@@ -198,7 +194,7 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
         if not isinstance(body_type, NumericalType) or not isinstance(
             body_type.data_type, PrimitiveDataType
         ):
-            raise FunctionRegistrationError(
+            raise EntryRegistrationError(
                 f"Function {self._name!r} body must synthesize a scalar "
                 f"numerical type, but got {body_type}."
             )
@@ -206,7 +202,7 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
         if not is_core_data_type_compatible_with_sort(
             body_core_data_type, self._result_sort
         ):
-            raise FunctionRegistrationError(
+            raise EntryRegistrationError(
                 f"Function {self._name!r} body synthesized type "
                 f"{body_core_data_type} is not compatible with the declared "
                 f"result sort {self._result_sort}."

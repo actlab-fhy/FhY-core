@@ -53,13 +53,13 @@ from fhy_core.expression.core import (
     UnaryExpression,
     UnaryOperation,
 )
-from fhy_core.expression.errors import FunctionLookupError
+from fhy_core.expression.errors import EntryLookupError
 from fhy_core.expression.pprint import pformat_expression
 from fhy_core.expression.registry import (
     NativeConstant,
     NativeFunction,
     RegisteredFunction,
-    get_registered_function,
+    get_registered_entry,
 )
 from fhy_core.expression.sort import (
     FunctionSort,
@@ -346,8 +346,8 @@ def _try_resolve_native_constant_type(
 ) -> tuple[Type, TypeQualifier] | None:
     """Return the IR type for a constant reference, or ``None`` if absent."""
     try:
-        entry = get_registered_function(identifier_name)
-    except FunctionLookupError:
+        entry = get_registered_entry(identifier_name)
+    except EntryLookupError:
         return None
     if not isinstance(entry, NativeConstant):
         return None
@@ -374,17 +374,38 @@ def _promote_argument_qualifiers(
     "Bidirectionally synthesize and check expression types.",
 )
 class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]]):
-    """Bidirectional type checker for expressions."""
+    """Bidirectional type checker for expressions.
+
+    Args:
+        get_identifier_type: Callable mapping an :class:`Identifier` to
+            its IR type and qualifier. Raises :class:`KeyError` to
+            signal an unbound identifier; the type checker catches this
+            and falls back to a registered ``NativeConstant`` lookup
+            before raising a typed-error. Any other exception
+            propagates unchanged.
+        defer_on_unknown_call: When ``True``, an unresolved call name
+            in :meth:`_resolve_call_function` propagates its raw
+            :class:`EntryLookupError` instead of being framed as a
+            type error. Used by
+            :class:`RegisteredFunctionBodyTypeChecker` to tolerate
+            forward references inside a function body. Defaults to
+            ``False`` (raise framed type errors).
+    """
 
     _get_identifier_type: Callable[[Identifier], tuple[Type, TypeQualifier]]
     _context: _TypeCheckContext
+    _defer_on_unknown_call: bool
 
     def __init__(
-        self, get_identifier_type: Callable[[Identifier], tuple[Type, TypeQualifier]]
+        self,
+        get_identifier_type: Callable[[Identifier], tuple[Type, TypeQualifier]],
+        *,
+        defer_on_unknown_call: bool = False,
     ) -> None:
         super().__init__()
         self._get_identifier_type = get_identifier_type
         self._context = _TypeCheckContext()
+        self._defer_on_unknown_call = defer_on_unknown_call
 
     def synthesize(self, expression: Expression) -> tuple[Type, TypeQualifier]:
         """Synthesize a type for an expression."""
@@ -419,22 +440,26 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         self, identifier_expression: IdentifierExpression
     ) -> tuple[Type, TypeQualifier]:
         with self._context.entering(identifier_expression):
-            # The local lookup is caller-supplied and may raise an
-            # arbitrary exception when the identifier is unbound (tests
-            # commonly raise ``AssertionError``). When the local lookup
-            # fails, fall back to a registered native constant before
-            # propagating the original failure.
+            # The lookup contract: callers raise ``KeyError`` to signal
+            # an unbound identifier. On ``KeyError`` we fall back to a
+            # registered native constant before framing the failure as
+            # a type error. Any other exception (e.g. ``AssertionError``
+            # from a test fixture, or an unexpected runtime error)
+            # propagates unchanged.
             try:
                 identifier_type, identifier_qualifier = self._get_identifier_type(
                     identifier_expression.identifier
                 )
-            except Exception:  # noqa: BLE001
+            except KeyError as exc:
                 constant_type = _try_resolve_native_constant_type(
                     identifier_expression.identifier.name_hint
                 )
                 if constant_type is not None:
                     return constant_type
-                raise
+                raise self._context.type_error(
+                    f"identifier "
+                    f"`{_format_expression(identifier_expression)}` is not bound"
+                ) from exc
             if identifier_qualifier == TypeQualifier.OUTPUT:
                 raise self._context.type_error(
                     f"identifier `{_format_expression(identifier_expression)}` has "
@@ -897,8 +922,10 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         self, call_expression: CallExpression
     ) -> RegisteredFunction | NativeFunction | NativeConstant:
         try:
-            return get_registered_function(call_expression.function_name)
-        except FunctionLookupError as exc:
+            return get_registered_entry(call_expression.function_name)
+        except EntryLookupError as exc:
+            if self._defer_on_unknown_call:
+                raise
             raise self._context.type_error(
                 f"call to unknown function {call_expression.function_name!r}: {exc}"
             ) from exc

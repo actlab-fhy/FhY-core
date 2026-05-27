@@ -8,6 +8,8 @@ __all__ = [
     "ExpressionEvaluator",
     "FunctionArityError",
     "FunctionInliner",
+    "assert_expression_implies",
+    "assert_holds_for_all_free_assignments",
     "check_expression_type",
     "collect_identifiers",
     "convert_expression_to_sympy_expression",
@@ -50,6 +52,8 @@ from .type_checker import (
     synthesize_expression_type,
 )
 from .z3 import (
+    assert_expression_implies,
+    assert_holds_for_all_free_assignments,
     convert_expression_to_z3_expression,
     does_expression_imply,
     holds_for_all_free_assignments,

@@ -137,6 +137,36 @@ def test_identifier_pow_literal_preserves_operand_order() -> None:
     assert expression.is_structurally_equivalent(expected)
 
 
+_REFLECTED_ARITHMETIC_DUNDER_CASES = [
+    pytest.param(lambda lit, a: lit * a, BinaryOperation.MULTIPLY, id="rmul"),
+    pytest.param(lambda lit, a: lit / a, BinaryOperation.DIVIDE, id="rtruediv"),
+    pytest.param(lambda lit, a: lit // a, BinaryOperation.FLOOR_DIVIDE, id="rfloordiv"),
+    pytest.param(lambda lit, a: lit % a, BinaryOperation.MODULO, id="rmod"),
+    pytest.param(lambda lit, a: lit**a, BinaryOperation.POWER, id="rpow"),
+]
+
+
+@pytest.mark.parametrize(
+    ("reflected_dunder", "expected_operation"),
+    _REFLECTED_ARITHMETIC_DUNDER_CASES,
+)
+def test_reflected_arithmetic_dunder_places_literal_on_left(
+    reflected_dunder: Callable[[int, Identifier], BinaryExpression],
+    expected_operation: BinaryOperation,
+) -> None:
+    """Test each reflected dunder places the literal on the left of the binary."""
+    a = Identifier("a")
+    literal = 5
+
+    expression = reflected_dunder(literal, a)
+
+    expected = BinaryExpression(
+        expected_operation, LiteralExpression(literal), IdentifierExpression(a)
+    )
+    assert isinstance(expression, BinaryExpression)
+    assert expression.is_structurally_equivalent(expected)
+
+
 # =============================================================================
 # Comparison dunders
 # =============================================================================
@@ -247,5 +277,47 @@ def test_identifier_arithmetic_composes_with_expression_operands() -> None:
             IdentifierExpression(b),
             LiteralExpression(2),
         ),
+    )
+    assert expression.is_structurally_equivalent(expected)
+
+
+# =============================================================================
+# Logical methods on Identifier
+# =============================================================================
+
+
+def test_identifier_logical_not_method_builds_logical_not_unary() -> None:
+    """Test ``Identifier.logical_not()`` returns a ``LOGICAL_NOT`` unary."""
+    a = Identifier("a")
+
+    expression = a.logical_not()
+
+    expected = UnaryExpression(UnaryOperation.LOGICAL_NOT, IdentifierExpression(a))
+    assert isinstance(expression, UnaryExpression)
+    assert expression.is_structurally_equivalent(expected)
+
+
+def test_identifier_logical_and_method_builds_logical_and_with_other() -> None:
+    """Test ``Identifier.logical_and(other)`` builds a ``LOGICAL_AND`` binary."""
+    a = Identifier("a")
+    b = Identifier("b")
+
+    expression = a.logical_and(b)
+
+    expected = BinaryExpression(
+        BinaryOperation.LOGICAL_AND, IdentifierExpression(a), IdentifierExpression(b)
+    )
+    assert expression.is_structurally_equivalent(expected)
+
+
+def test_identifier_logical_or_method_builds_logical_or_with_other() -> None:
+    """Test ``Identifier.logical_or(other)`` builds a ``LOGICAL_OR`` binary."""
+    a = Identifier("a")
+    b = Identifier("b")
+
+    expression = a.logical_or(b)
+
+    expected = BinaryExpression(
+        BinaryOperation.LOGICAL_OR, IdentifierExpression(a), IdentifierExpression(b)
     )
     assert expression.is_structurally_equivalent(expected)

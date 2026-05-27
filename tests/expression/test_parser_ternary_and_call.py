@@ -10,6 +10,7 @@ from fhy_core.expression import (
     CallExpression,
     IdentifierExpression,
     LiteralExpression,
+    ParseError,
     TernaryExpression,
     UnaryExpression,
     UnaryOperation,
@@ -135,7 +136,7 @@ def test_parse_ternary_inside_parenthesised_subexpression() -> None:
 )
 def test_parse_ternary_with_malformed_syntax_raises(malformed: str) -> None:
     """Test malformed ternary syntax raises ``ParseError`` from the parser."""
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ParseError):
         parse_expression(malformed)
 
 
@@ -272,5 +273,5 @@ def test_parser_does_not_special_case_max_for_variadic_arguments() -> None:
 )
 def test_parse_call_raises_for_malformed_argument_list(malformed: str) -> None:
     """Test malformed call argument lists raise ``ParseError`` (``RuntimeError``)."""
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ParseError):
         parse_expression(malformed)

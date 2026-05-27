@@ -13,6 +13,18 @@ The evaluator performs two narrow rewrites:
 Every other node is preserved (with its children recursively evaluated)
 by the :class:`RewritablePass` base class. Literal arithmetic is not
 folded; that remains a :func:`simplify_expression` (sympy) job.
+
+Call-site preconditions: the evaluator distinguishes four cases for
+``visit_call_expression``. A call to an unregistered name raises
+:class:`EntryLookupError` (typo / unknown function). A call whose
+target is a :class:`NativeConstant` raises :class:`FunctionArityError`
+(constants are not callable). A call whose target is a
+:class:`RegisteredFunction` (expression-bodied) emits a
+``WARNING``-level diagnostic recommending ``inline_functions`` and
+leaves the node unchanged. A call to a :class:`NativeFunction` with
+all-literal arguments folds, with the implementation's return value
+validated against the declared ``result_sort`` (raises
+:class:`NativeResultSortError` on mismatch).
 """
 
 __all__ = [
@@ -20,6 +32,7 @@ __all__ = [
     "evaluate_expression",
 ]
 
+from fhy_core.diagnostic import DiagnosticLevel
 from fhy_core.pass_infrastructure import RewritablePass, register_pass
 
 from ..core import (
@@ -28,35 +41,26 @@ from ..core import (
     IdentifierExpression,
     LiteralExpression,
 )
+from ..errors import EntryLookupError, NativeResultSortError
 from ..registry import (
-    FunctionLookupError,
     NativeConstant,
-    NativeFunction,
-    get_registered_function,
+    RegisteredFunction,
+    get_registered_entry,
 )
+from ..sort import is_python_value_compatible_with_sort
+from .inline import FunctionArityError
 
 
 def _try_get_native_constant_value(
     name: str,
-) -> bool | int | float | complex | None:
+) -> bool | int | float | None:
     """Return the constant value bound to ``name``, or ``None`` if absent."""
     try:
-        entry = get_registered_function(name)
-    except FunctionLookupError:
+        entry = get_registered_entry(name)
+    except EntryLookupError:
         return None
     if isinstance(entry, NativeConstant):
         return entry.value
-    return None
-
-
-def _try_get_native_function(name: str) -> NativeFunction | None:
-    """Return the native function bound to ``name``, or ``None`` if absent."""
-    try:
-        entry = get_registered_function(name)
-    except FunctionLookupError:
-        return None
-    if isinstance(entry, NativeFunction):
-        return entry
     return None
 
 
@@ -90,18 +94,9 @@ def _coerce_literal_value_for_native(
 
 
 def _build_literal_expression(
-    value: bool | int | float | complex,
+    value: bool | int | float,
 ) -> LiteralExpression:
-    """Wrap a native-result value in a :class:`LiteralExpression`.
-
-    Raises ``TypeError`` for ``complex`` values because
-    ``LiteralExpression`` does not support complex literals.
-    """
-    if isinstance(value, complex) and not isinstance(value, (bool, int, float)):
-        raise TypeError(
-            f"Native function returned complex value {value!r}; "
-            "`LiteralExpression` does not support complex values yet."
-        )
+    """Wrap a native-result value in a :class:`LiteralExpression`."""
     return LiteralExpression(value)
 
 
@@ -118,11 +113,27 @@ class ExpressionEvaluator(RewritablePass[Expression]):
     :class:`RewritablePass` base.
 
     Raises:
-        PassExecutionError: Via the standard pass-framework guard if
-            the native implementation raises during evaluation; the
-            underlying exception (typically ``ValueError``,
-            ``OverflowError``, or ``ZeroDivisionError`` from ``math``)
-            is attached as ``__cause__``.
+        PassExecutionError: Via the standard pass-framework guard, with
+            the underlying error attached as ``__cause__``. The
+            underlying errors are:
+
+            - :class:`EntryLookupError` when a ``CallExpression``
+              references an unregistered function name.
+            - :class:`FunctionArityError` when the call target is a
+              registered :class:`NativeConstant` (not callable).
+            - :class:`NativeResultSortError` when a
+              :class:`NativeFunction` implementation returns a value
+              whose Python runtime type is not compatible with its
+              declared ``result_sort``.
+            - ``ValueError``, ``OverflowError``, or
+              ``ZeroDivisionError`` from a native implementation's
+              own raises (e.g. ``math.sqrt(-1)``).
+
+    Notes:
+        Calls to an expression-bodied :class:`RegisteredFunction` emit
+        a ``WARNING``-level diagnostic via the pass framework and the
+        node is preserved unchanged; run :func:`inline_functions`
+        before :func:`evaluate_expression` to fold those calls.
 
     """
 
@@ -135,13 +146,31 @@ class ExpressionEvaluator(RewritablePass[Expression]):
         return _build_literal_expression(constant_value)
 
     def visit_call_expression(self, expression: CallExpression) -> Expression | None:
-        native = _try_get_native_function(expression.function_name)
-        if native is None:
+        entry = get_registered_entry(expression.function_name)
+        if isinstance(entry, NativeConstant):
+            raise FunctionArityError(
+                f"call to {expression.function_name!r} is to a registered "
+                f"native constant, which is not callable"
+            )
+        if isinstance(entry, RegisteredFunction):
+            self.report(
+                DiagnosticLevel.WARNING,
+                f"call to {expression.function_name!r} was not inlined; "
+                f"run `inline_functions` before `evaluate_expression`",
+            )
             return None
+        # entry is NativeFunction
         argument_values = _try_extract_native_argument_values(expression.arguments)
         if argument_values is None:
             return None
-        return _build_literal_expression(native.implementation(*argument_values))
+        result = entry.implementation(*argument_values)
+        if not is_python_value_compatible_with_sort(result, entry.result_sort):
+            raise NativeResultSortError(
+                f"NativeFunction {entry.name!r} returned {result!r} "
+                f"(Python type {type(result).__name__}), which is not "
+                f"compatible with the declared result sort {entry.result_sort}."
+            )
+        return _build_literal_expression(result)
 
 
 def evaluate_expression(expression: Expression) -> Expression:

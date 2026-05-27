@@ -255,6 +255,18 @@ _FLOAT_COMPLEX_DATA_TYPES: frozenset[CoreDataType] = frozenset(
     }
 )
 
+# BOOL is outside both partitions (it has its own promotion rules in
+# `promote_core_data_types`). This assertion catches future drift: if
+# someone adds a `CoreDataType` enum member without slotting it into a
+# partition (or marking it as a side branch like BOOL), the package
+# fails to import.
+assert _INTEGER_DATA_TYPES | _FLOAT_COMPLEX_DATA_TYPES | {
+    CoreDataType.BOOL
+} == frozenset(CoreDataType), (
+    "CoreDataType partition drift: integer + float/complex + BOOL must "
+    "cover every CoreDataType member."
+)
+
 
 def promote_core_data_types(
     core_data_type1: CoreDataType, core_data_type2: CoreDataType

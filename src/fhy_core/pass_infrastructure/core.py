@@ -79,6 +79,13 @@ class PreservedAnalyses(FrozenMixin, PartialEqualMixin):
     preserve_all: bool = field(default=False)
     analysis_names: frozenset[Identifier] = field(default_factory=frozenset)
 
+    def __post_init__(self) -> None:
+        if self.preserve_all and self.analysis_names:
+            raise ValueError(
+                "PreservedAnalyses: analysis_names must be empty when "
+                "preserve_all=True."
+            )
+
     @classmethod
     def all(cls) -> "PreservedAnalyses":
         """Create a preserved set representing all analyses."""
@@ -882,6 +889,21 @@ class RewritablePass(
         :meth:`VisitablePass.visit_unknown` (which raises): the
         rewriter's semantics are that an unhandled node is preserved,
         not an error.
+
+        This lenient default is intentional for the common
+        *selectively-transformative* pattern (e.g. an inliner that
+        rewrites :class:`CallExpression` only, or an evaluator that
+        rewrites literal-argument calls and constant references). Such
+        passes intentionally do not enumerate every node kind in the
+        IR; the lenient default lets them rely on the framework's
+        recursive walk to preserve everything else.
+
+        Subclasses that genuinely require *exhaustive* coverage (e.g.
+        a verifier that must explicitly accept or reject every node
+        kind) override this method to raise. When new node kinds are
+        later added to the IR, an exhaustive subclass will fail loudly
+        the first time it encounters the new kind, forcing the author
+        to extend its visitor set.
         """
         _ = node
         return None
