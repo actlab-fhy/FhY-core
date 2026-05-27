@@ -1295,13 +1295,13 @@ def test_make_binary_expression_constructs_with_literal_coercion() -> None:
 def test_make_binary_expression_rejects_unsupported_left_operand() -> None:
     """Test `make_binary_expression` rejects an unsupported left operand type."""
     with pytest.raises(ValueError, match="Unable to cast"):
-        make_binary_expression(BinaryOperation.ADD, [], LiteralExpression(1))
+        make_binary_expression(BinaryOperation.ADD, [], LiteralExpression(1))  # type: ignore[arg-type]
 
 
 def test_make_binary_expression_rejects_unsupported_right_operand() -> None:
     """Test `make_binary_expression` rejects an unsupported right operand type."""
     with pytest.raises(ValueError, match="Unable to cast"):
-        make_binary_expression(BinaryOperation.ADD, LiteralExpression(1), {})
+        make_binary_expression(BinaryOperation.ADD, LiteralExpression(1), {})  # type: ignore[arg-type]
 
 
 def test_make_unary_expression_constructs_with_literal_coercion() -> None:
@@ -1315,4 +1315,4 @@ def test_make_unary_expression_constructs_with_literal_coercion() -> None:
 def test_make_unary_expression_rejects_unsupported_operand() -> None:
     """Test `make_unary_expression` raises ``ValueError`` for an unsupported type."""
     with pytest.raises(ValueError, match="Unable to cast"):
-        make_unary_expression(UnaryOperation.NEGATE, object())
+        make_unary_expression(UnaryOperation.NEGATE, object())  # type: ignore[arg-type]

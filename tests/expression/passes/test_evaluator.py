@@ -46,7 +46,7 @@ from fhy_core.pass_infrastructure import PassExecutionError
 
 def register_real_unary_native(
     name: str,
-    implementation: Callable[..., bool | int | float | complex],
+    implementation: Callable[..., bool | int | float],
     result_sort: FunctionSort = FunctionSort.REAL,
 ) -> NativeFunction:
     """Register a unary native function with a ``REAL`` parameter."""
