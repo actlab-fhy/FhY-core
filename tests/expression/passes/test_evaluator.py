@@ -349,7 +349,7 @@ def test_evaluate_recurses_into_ternary_branches(
     x = Identifier("x")
 
     expression = TernaryExpression(
-        x > 0,
+        IdentifierExpression(x) > 0,
         call("test_eval_into_ternary", LiteralExpression(0.0)),
         LiteralExpression(0),
     )

@@ -3,7 +3,7 @@
 __all__ = ["Identifier"]
 
 from threading import Lock
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, TypeGuard, final
+from typing import Any, ClassVar, TypedDict, TypeGuard, final
 
 from fhy_core.utils import is_strict_int
 
@@ -18,41 +18,7 @@ from .serialization import (
 from .trait.equality import EqualMixin
 from .trait.frozen import FrozenMixin
 
-if TYPE_CHECKING:
-    from .expression import (
-        BinaryExpression,
-        BinaryOperation,
-        UnaryExpression,
-        UnaryOperation,
-    )
-
 _LOGGER = get_logger(__name__)
-
-
-def _get_binary_operation_type() -> "type[BinaryOperation]":
-    from .expression.core import BinaryOperation as _BinaryOperation  # noqa: PLC0415
-
-    return _BinaryOperation
-
-
-def _get_unary_operation_type() -> "type[UnaryOperation]":
-    from .expression.core import UnaryOperation as _UnaryOperation  # noqa: PLC0415
-
-    return _UnaryOperation
-
-
-def _make_binary_expression(
-    op: "BinaryOperation", left: Any, right: Any
-) -> "BinaryExpression":
-    from .expression.core import make_binary_expression  # noqa: PLC0415
-
-    return make_binary_expression(op, left, right)
-
-
-def _make_unary_expression(op: "UnaryOperation", operand: Any) -> "UnaryExpression":
-    from .expression.core import make_unary_expression  # noqa: PLC0415
-
-    return make_unary_expression(op, operand)
 
 
 class _IdentifierData(TypedDict):
@@ -92,15 +58,6 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     round-trippable through the constructor. Use the structured ``id`` and
     ``name_hint`` properties (or ``serialize_to_dict``) when a parseable
     representation is needed.
-
-    The arithmetic and comparison dunders (``+``, ``-``, ``*``, ``<``,
-    ``>=``, etc.) build ``BinaryExpression`` / ``UnaryExpression`` nodes
-    so callers can write ``a + b`` instead of wrapping each operand in
-    ``IdentifierExpression``. Because the comparison dunders return
-    expression nodes rather than ``bool``, sorting ``Identifier``
-    instances is not supported via ``<`` / ``>``; callers must supply an
-    explicit ``key=`` to ``sorted`` (for example, ``key=lambda i: i.id``
-    for a stable ordering on the unique ID).
 
     The class is ``@final`` and is not intended to be subclassed; callers
     should treat it as a closed implementation that provides a single
@@ -167,97 +124,3 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
 
     def __repr__(self) -> str:
         return f"{self._name_hint}::{self._id}"
-
-    def __neg__(self) -> "UnaryExpression":
-        return _make_unary_expression(_get_unary_operation_type().NEGATE, self)
-
-    def __pos__(self) -> "UnaryExpression":
-        return _make_unary_expression(_get_unary_operation_type().POSITIVE, self)
-
-    def __add__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(_get_binary_operation_type().ADD, self, other)
-
-    def __radd__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(_get_binary_operation_type().ADD, other, self)
-
-    def __sub__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(
-            _get_binary_operation_type().SUBTRACT, self, other
-        )
-
-    def __rsub__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(
-            _get_binary_operation_type().SUBTRACT, other, self
-        )
-
-    def __mul__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(
-            _get_binary_operation_type().MULTIPLY, self, other
-        )
-
-    def __rmul__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(
-            _get_binary_operation_type().MULTIPLY, other, self
-        )
-
-    def __truediv__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(_get_binary_operation_type().DIVIDE, self, other)
-
-    def __rtruediv__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(_get_binary_operation_type().DIVIDE, other, self)
-
-    def __floordiv__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(
-            _get_binary_operation_type().FLOOR_DIVIDE, self, other
-        )
-
-    def __rfloordiv__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(
-            _get_binary_operation_type().FLOOR_DIVIDE, other, self
-        )
-
-    def __mod__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(_get_binary_operation_type().MODULO, self, other)
-
-    def __rmod__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(_get_binary_operation_type().MODULO, other, self)
-
-    def __pow__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(_get_binary_operation_type().POWER, self, other)
-
-    def __rpow__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(_get_binary_operation_type().POWER, other, self)
-
-    def __lt__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(_get_binary_operation_type().LESS, self, other)
-
-    def __le__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(
-            _get_binary_operation_type().LESS_EQUAL, self, other
-        )
-
-    def __gt__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(
-            _get_binary_operation_type().GREATER, self, other
-        )
-
-    def __ge__(self, other: Any) -> "BinaryExpression":
-        return _make_binary_expression(
-            _get_binary_operation_type().GREATER_EQUAL, self, other
-        )
-
-    def logical_not(self) -> "UnaryExpression":
-        """Build a ``LOGICAL_NOT`` expression with this identifier as operand."""
-        return _make_unary_expression(_get_unary_operation_type().LOGICAL_NOT, self)
-
-    def logical_and(self, *others: Any) -> "BinaryExpression":
-        """Build a right-folded ``LOGICAL_AND`` tree with this and ``others``."""
-        from .expression import logical_and as _logical_and  # noqa: PLC0415
-
-        return _logical_and(self, *others)
-
-    def logical_or(self, *others: Any) -> "BinaryExpression":
-        """Build a right-folded ``LOGICAL_OR`` tree with this and ``others``."""
-        from .expression import logical_or as _logical_or  # noqa: PLC0415
-
-        return _logical_or(self, *others)

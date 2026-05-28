@@ -19,6 +19,7 @@ from fhy_core.constraint import Constraint, EquationConstraint
 from fhy_core.expression import (
     BinaryOperation,
     Expression,
+    IdentifierExpression,
     LiteralExpression,
     make_binary_expression,
 )
@@ -119,7 +120,7 @@ class TestIsTheBasicNatParamConstraint:
         """Test the predicate is ``False`` when the right operand is not a literal."""
         var = Identifier("x")
         other_var = Identifier("y")
-        constraint = _wrap_with_expression(var, var >= other_var)
+        constraint = _wrap_with_expression(var, IdentifierExpression(var) >= other_var)
         assert not is_the_basic_nat_param_constraint(constraint, var, True)
 
     def test_returns_false_when_right_literal_value_is_not_an_int(self) -> None:
@@ -222,7 +223,7 @@ _NON_MATCHING_CONSTRAINT_BUILDERS: list[ParameterSet] = [
         id="mismatched-variable",
     ),
     pytest.param(
-        lambda v, w: _wrap_with_expression(v, v > w),
+        lambda v, w: _wrap_with_expression(v, IdentifierExpression(v) > w),
         id="non-literal-right-operand",
     ),
     pytest.param(
