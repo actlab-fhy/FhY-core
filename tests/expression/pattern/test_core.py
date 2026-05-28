@@ -3,6 +3,7 @@
 from collections.abc import Callable
 
 import pytest
+from frozendict import frozendict
 
 from fhy_core.expression import (
     BinaryExpression,
@@ -31,18 +32,9 @@ from fhy_core.expression.pattern import (
     does_pattern_match,
     match_pattern,
 )
-from fhy_core.identifier import Identifier
 from fhy_core.trait import FrozenMutationError
 
 from ..conftest import mock_identifier
-
-_X_CAPTURE = mock_identifier("x", 1000)
-_Y_CAPTURE = mock_identifier("y", 1001)
-_A_CAPTURE = mock_identifier("a", 1002)
-_B_CAPTURE = mock_identifier("b", 1003)
-_C_CAPTURE = mock_identifier("c", 1004)
-_T_CAPTURE = mock_identifier("t", 1005)
-_F_CAPTURE = mock_identifier("f", 1006)
 
 
 def _make_simple_binary_expression(operation: BinaryOperation) -> BinaryExpression:
@@ -67,39 +59,51 @@ def test_match_bindings_try_bind_records_first_binding() -> None:
     bindings = MatchBindings.empty()
     expression = LiteralExpression(5)
 
-    bound = bindings.try_bind(_X_CAPTURE, expression)
+    bound = bindings.try_bind("x", expression)
 
     assert bound is not None
-    assert bound.has(_X_CAPTURE)
-    assert bound.get(_X_CAPTURE) is expression
+    assert bound.has("x")
+    assert bound.get("x") is expression
 
 
 def test_match_bindings_try_bind_leaves_receiver_untouched() -> None:
     """Test ``try_bind`` does not mutate the receiver."""
     bindings = MatchBindings.empty()
 
-    bindings.try_bind(_X_CAPTURE, LiteralExpression(1))
+    bindings.try_bind("x", LiteralExpression(1))
 
-    assert not bindings.has(_X_CAPTURE)
+    assert not bindings.has("x")
     assert bindings.is_empty()
 
 
 def test_match_bindings_try_bind_repeated_with_equivalent_returns_self() -> None:
     """Test re-binding to a structurally equivalent expression returns the receiver."""
-    bindings = MatchBindings.empty().try_bind(_X_CAPTURE, LiteralExpression(5))
+    bindings = MatchBindings.empty().try_bind("x", LiteralExpression(5))
     assert bindings is not None
 
-    rebound = bindings.try_bind(_X_CAPTURE, LiteralExpression(5))
+    rebound = bindings.try_bind("x", LiteralExpression(5))
 
     assert rebound is bindings
 
 
-def test_match_bindings_try_bind_repeated_with_distinct_returns_none() -> None:
-    """Test re-binding to a structurally distinct expression returns ``None``."""
-    bindings = MatchBindings.empty().try_bind(_X_CAPTURE, LiteralExpression(5))
+def test_match_bindings_try_bind_retains_original_expression_on_reconfirm() -> None:
+    """Test ``try_bind`` retains the first-bound expression on reconfirm."""
+    original = LiteralExpression(5)
+    bindings = MatchBindings.empty().try_bind("x", original)
     assert bindings is not None
 
-    rebound = bindings.try_bind(_X_CAPTURE, LiteralExpression(6))
+    rebound = bindings.try_bind("x", LiteralExpression(5))
+
+    assert rebound is not None
+    assert rebound.get("x") is original
+
+
+def test_match_bindings_try_bind_repeated_with_distinct_returns_none() -> None:
+    """Test re-binding to a structurally distinct expression returns ``None``."""
+    bindings = MatchBindings.empty().try_bind("x", LiteralExpression(5))
+    assert bindings is not None
+
+    rebound = bindings.try_bind("x", LiteralExpression(6))
 
     assert rebound is None
 
@@ -112,10 +116,10 @@ def test_match_bindings_try_bind_repeated_with_equivalent_compound() -> None:
     equivalent = BinaryExpression(
         BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
     )
-    bindings = MatchBindings.empty().try_bind(_X_CAPTURE, expression)
+    bindings = MatchBindings.empty().try_bind("x", expression)
     assert bindings is not None
 
-    rebound = bindings.try_bind(_X_CAPTURE, equivalent)
+    rebound = bindings.try_bind("x", equivalent)
 
     assert rebound is bindings
 
@@ -125,36 +129,36 @@ def test_match_bindings_get_raises_key_error_for_unbound_name() -> None:
     bindings = MatchBindings.empty()
 
     with pytest.raises(KeyError):
-        bindings.get(_X_CAPTURE)
+        bindings.get("x")
 
 
 def test_match_bindings_has_reports_bound_name() -> None:
     """Test ``has`` returns ``True`` after binding and ``False`` before."""
     bindings = MatchBindings.empty()
 
-    assert not bindings.has(_X_CAPTURE)
+    assert not bindings.has("x")
 
-    bound = bindings.try_bind(_X_CAPTURE, LiteralExpression(0))
+    bound = bindings.try_bind("x", LiteralExpression(0))
     assert bound is not None
 
-    assert bound.has(_X_CAPTURE)
+    assert bound.has("x")
 
 
 def test_match_bindings_names_after_multiple_binds() -> None:
     """Test ``names`` reports the set of bound names."""
     bindings = MatchBindings.empty()
-    step_one = bindings.try_bind(_X_CAPTURE, LiteralExpression(1))
+    step_one = bindings.try_bind("x", LiteralExpression(1))
     assert step_one is not None
-    step_two = step_one.try_bind(_Y_CAPTURE, LiteralExpression(2))
+    step_two = step_one.try_bind("y", LiteralExpression(2))
     assert step_two is not None
 
-    assert step_two.names() == frozenset({_X_CAPTURE, _Y_CAPTURE})
+    assert step_two.names() == frozenset({"x", "y"})
 
 
 def test_match_bindings_equality_by_structure() -> None:
     """Test two ``MatchBindings`` with the same content compare equal."""
-    left = MatchBindings.empty().try_bind(_X_CAPTURE, LiteralExpression(7))
-    right = MatchBindings.empty().try_bind(_X_CAPTURE, LiteralExpression(7))
+    left = MatchBindings.empty().try_bind("x", LiteralExpression(7))
+    right = MatchBindings.empty().try_bind("x", LiteralExpression(7))
     assert left is not None and right is not None
 
     assert left == right
@@ -163,10 +167,20 @@ def test_match_bindings_equality_by_structure() -> None:
 
 def test_match_bindings_inequality_for_distinct_content() -> None:
     """Test bindings with different content do not compare equal."""
-    left = MatchBindings.empty().try_bind(_X_CAPTURE, LiteralExpression(1))
-    right = MatchBindings.empty().try_bind(_X_CAPTURE, LiteralExpression(2))
+    left = MatchBindings.empty().try_bind("x", LiteralExpression(1))
+    right = MatchBindings.empty().try_bind("x", LiteralExpression(2))
     assert left is not None and right is not None
 
+    assert left != right
+
+
+def test_match_bindings_hash_collides_on_matching_key_sets() -> None:
+    """Test ``__hash__`` collapses on the key set; ``__eq__`` distinguishes values."""
+    left = MatchBindings.empty().try_bind("x", LiteralExpression(1))
+    right = MatchBindings.empty().try_bind("x", LiteralExpression(2))
+    assert left is not None and right is not None
+
+    assert hash(left) == hash(right)
     assert left != right
 
 
@@ -188,63 +202,23 @@ def test_match_bindings_equality_against_non_match_bindings_is_false() -> None:
 
 def test_match_bindings_with_different_key_sets_are_unequal() -> None:
     """Test ``MatchBindings`` with different key sets do not compare equal."""
-    left = MatchBindings.empty().try_bind(_X_CAPTURE, LiteralExpression(1))
-    right = MatchBindings.empty().try_bind(_Y_CAPTURE, LiteralExpression(1))
+    left = MatchBindings.empty().try_bind("x", LiteralExpression(1))
+    right = MatchBindings.empty().try_bind("y", LiteralExpression(1))
     assert left is not None and right is not None
 
     assert left != right
 
 
-def test_match_bindings_get_accepts_string_name_for_unique_match() -> None:
-    """Test ``MatchBindings.get(str)`` resolves to the unique matching identifier."""
-    expression = LiteralExpression(5)
-    bindings = MatchBindings.empty().try_bind(_X_CAPTURE, expression)
-    assert bindings is not None
-
-    assert bindings.get("x") is expression
+def test_match_bindings_post_init_rejects_non_string_keys() -> None:
+    """Test the constructor rejects keys that are not strings."""
+    with pytest.raises(TypeError, match="keys"):
+        MatchBindings(frozendict({0: LiteralExpression(1)}))  # type: ignore[dict-item]
 
 
-def test_match_bindings_get_string_raises_key_error_for_missing_name() -> None:
-    """Test ``MatchBindings.get(str)`` raises ``KeyError`` when no name_hint matches."""
-    bindings = MatchBindings.empty().try_bind(_X_CAPTURE, LiteralExpression(5))
-    assert bindings is not None
-
-    with pytest.raises(KeyError):
-        bindings.get("y")
-
-
-def test_match_bindings_get_string_raises_value_error_on_ambiguous_match() -> None:
-    """Test ``MatchBindings.get(str)`` raises ``ValueError`` when multiple match."""
-    first = mock_identifier("dup", 2000)
-    second = mock_identifier("dup", 2001)
-    bindings = MatchBindings.empty().try_bind(first, LiteralExpression(1))
-    assert bindings is not None
-    bindings = bindings.try_bind(second, LiteralExpression(2))
-    assert bindings is not None
-
-    with pytest.raises(ValueError, match="ambiguous"):
-        bindings.get("dup")
-
-
-def test_match_bindings_has_accepts_string_name() -> None:
-    """Test ``MatchBindings.has(str)`` matches by ``name_hint``."""
-    bindings = MatchBindings.empty().try_bind(_X_CAPTURE, LiteralExpression(5))
-    assert bindings is not None
-
-    assert bindings.has("x")
-    assert not bindings.has("y")
-
-
-def test_match_bindings_has_string_returns_true_for_ambiguous_match() -> None:
-    """Test ``MatchBindings.has(str)`` returns ``True`` even when several match."""
-    first = mock_identifier("dup", 2002)
-    second = mock_identifier("dup", 2003)
-    bindings = MatchBindings.empty().try_bind(first, LiteralExpression(1))
-    assert bindings is not None
-    bindings = bindings.try_bind(second, LiteralExpression(2))
-    assert bindings is not None
-
-    assert bindings.has("dup")
+def test_match_bindings_post_init_rejects_non_expression_values() -> None:
+    """Test the constructor rejects values that are not `Expression`."""
+    with pytest.raises(TypeError, match="Expression"):
+        MatchBindings(frozendict({"x": "not an expression"}))  # type: ignore[dict-item]
 
 
 # ===========================================================================
@@ -275,7 +249,7 @@ def test_wildcard_pattern_matches_any_compound_expression() -> None:
 
 def test_wildcard_pattern_match_under_returns_input_bindings() -> None:
     """Test ``WildcardPattern.match_under`` returns the supplied bindings unchanged."""
-    starting = MatchBindings.empty().try_bind(_A_CAPTURE, LiteralExpression(0))
+    starting = MatchBindings.empty().try_bind("a", LiteralExpression(0))
     assert starting is not None
     pattern = WildcardPattern()
 
@@ -291,77 +265,28 @@ def test_wildcard_pattern_match_under_returns_input_bindings() -> None:
 
 def test_capture_pattern_with_wildcard_sub_pattern_binds_any_expression() -> None:
     """Test a wildcard-backed capture binds the matched expression."""
-    pattern = CapturePattern(_X_CAPTURE, WildcardPattern())
-    expression = LiteralExpression(5)
-
-    result = pattern.match(expression)
-
-    assert result is not None
-    assert result.get(_X_CAPTURE) is expression
-
-
-def test_capture_pattern_accepts_string_name_and_wraps_in_identifier() -> None:
-    """Test ``CapturePattern("x", ...)`` wraps the string in a fresh ``Identifier``."""
-    pattern = CapturePattern("x", WildcardPattern())
-
-    assert isinstance(pattern.name, Identifier)
-    assert pattern.name.name_hint == "x"
-
-
-def test_capture_pattern_accepts_identifier_name_unchanged() -> None:
-    """Test ``CapturePattern(identifier, ...)`` stores the identifier verbatim."""
-    pattern = CapturePattern(_X_CAPTURE, WildcardPattern())
-
-    assert pattern.name is _X_CAPTURE
-
-
-def test_capture_pattern_string_name_produces_fresh_identifier_per_construction() -> (
-    None
-):
-    """Test each ``CapturePattern("x", ...)`` produces a distinct ``Identifier``."""
-    first = CapturePattern("x", WildcardPattern())
-    second = CapturePattern("x", WildcardPattern())
-
-    assert first.name != second.name
-
-
-def test_capture_pattern_string_name_binds_under_wrapped_identifier() -> None:
-    """Test the string-form capture binds under the wrapped identifier."""
     pattern = CapturePattern("x", WildcardPattern())
     expression = LiteralExpression(5)
 
     result = pattern.match(expression)
 
     assert result is not None
-    assert result.get(pattern.name) is expression
+    assert result.get("x") is expression
 
 
-def test_capture_pattern_runs_sub_pattern_before_capture() -> None:
-    """Test the sub-pattern is checked before the capture takes effect."""
-    pattern = CapturePattern(_X_CAPTURE, LiteralPattern(value=5))
+def test_capture_pattern_stores_name_as_plain_string() -> None:
+    """Test ``CapturePattern.name`` is stored as a plain string."""
+    pattern = CapturePattern("x", WildcardPattern())
 
-    result = pattern.match(LiteralExpression(6))
-
-    assert result is None
+    assert pattern.name == "x"
 
 
-def test_capture_pattern_succeeds_when_sub_pattern_matches() -> None:
-    """Test capture succeeds when the sub-pattern matches."""
-    pattern = CapturePattern(_X_CAPTURE, LiteralPattern(value=5))
-    expression = LiteralExpression(5)
-
-    result = pattern.match(expression)
-
-    assert result is not None
-    assert result.get(_X_CAPTURE) is expression
-
-
-def test_capture_pattern_repeated_consistent_capture_succeeds() -> None:
-    """Test repeated captures with structurally equivalent expressions succeed."""
+def test_capture_pattern_siblings_with_shared_name_share_the_same_capture() -> None:
+    """Test two sibling ``CapturePattern("x", ...)`` share one capture key."""
     pattern = BinaryExpressionPattern(
         BinaryOperation.SUBTRACT,
-        CapturePattern(_X_CAPTURE, WildcardPattern()),
-        CapturePattern(_X_CAPTURE, WildcardPattern()),
+        CapturePattern("x", WildcardPattern()),
+        CapturePattern("x", WildcardPattern()),
     )
     expression = BinaryExpression(
         BinaryOperation.SUBTRACT, LiteralExpression(5), LiteralExpression(5)
@@ -370,15 +295,52 @@ def test_capture_pattern_repeated_consistent_capture_succeeds() -> None:
     result = pattern.match(expression)
 
     assert result is not None
-    assert result.get(_X_CAPTURE).is_structurally_equivalent(LiteralExpression(5))
+    assert result.names() == frozenset({"x"})
+
+
+def test_capture_pattern_runs_sub_pattern_before_capture() -> None:
+    """Test the sub-pattern is checked before the capture takes effect."""
+    pattern = CapturePattern("x", LiteralPattern(value=5))
+
+    result = pattern.match(LiteralExpression(6))
+
+    assert result is None
+
+
+def test_capture_pattern_succeeds_when_sub_pattern_matches() -> None:
+    """Test capture succeeds when the sub-pattern matches."""
+    pattern = CapturePattern("x", LiteralPattern(value=5))
+    expression = LiteralExpression(5)
+
+    result = pattern.match(expression)
+
+    assert result is not None
+    assert result.get("x") is expression
+
+
+def test_capture_pattern_repeated_consistent_capture_succeeds() -> None:
+    """Test repeated captures with structurally equivalent expressions succeed."""
+    pattern = BinaryExpressionPattern(
+        BinaryOperation.SUBTRACT,
+        CapturePattern("x", WildcardPattern()),
+        CapturePattern("x", WildcardPattern()),
+    )
+    expression = BinaryExpression(
+        BinaryOperation.SUBTRACT, LiteralExpression(5), LiteralExpression(5)
+    )
+
+    result = pattern.match(expression)
+
+    assert result is not None
+    assert result.get("x").is_structurally_equivalent(LiteralExpression(5))
 
 
 def test_capture_pattern_repeated_inconsistent_capture_fails() -> None:
     """Test repeating a capture name with a structurally distinct expression fails."""
     pattern = BinaryExpressionPattern(
         BinaryOperation.SUBTRACT,
-        CapturePattern(_X_CAPTURE, WildcardPattern()),
-        CapturePattern(_X_CAPTURE, WildcardPattern()),
+        CapturePattern("x", WildcardPattern()),
+        CapturePattern("x", WildcardPattern()),
     )
     expression = BinaryExpression(
         BinaryOperation.SUBTRACT, LiteralExpression(5), LiteralExpression(6)
@@ -387,6 +349,18 @@ def test_capture_pattern_repeated_inconsistent_capture_fails() -> None:
     result = pattern.match(expression)
 
     assert result is None
+
+
+def test_capture_pattern_nested_capture_records_both_bindings() -> None:
+    """Test nesting ``CapturePattern`` records both outer and inner captures."""
+    pattern = CapturePattern("outer", CapturePattern("inner", WildcardPattern()))
+    expression = LiteralExpression(5)
+
+    result = pattern.match(expression)
+
+    assert result is not None
+    assert result.get("outer") is expression
+    assert result.get("inner") is expression
 
 
 # ===========================================================================
@@ -515,7 +489,7 @@ def test_unary_expression_pattern_rejects_non_unary_expression() -> None:
 def test_unary_expression_pattern_threads_bindings_through_operand() -> None:
     """Test ``UnaryExpressionPattern`` records bindings from the operand sub-pattern."""
     pattern = UnaryExpressionPattern(
-        UnaryOperation.NEGATE, CapturePattern(_X_CAPTURE, WildcardPattern())
+        UnaryOperation.NEGATE, CapturePattern("x", WildcardPattern())
     )
     operand = LiteralExpression(5)
     expression = UnaryExpression(UnaryOperation.NEGATE, operand)
@@ -523,7 +497,7 @@ def test_unary_expression_pattern_threads_bindings_through_operand() -> None:
     result = pattern.match(expression)
 
     assert result is not None
-    assert result.get(_X_CAPTURE) is operand
+    assert result.get("x") is operand
 
 
 def test_unary_expression_pattern_propagates_operand_failure() -> None:
@@ -587,8 +561,8 @@ def test_binary_expression_pattern_threads_bindings_through_operands() -> None:
     """Test bindings from the left and right operand sub-patterns combine."""
     pattern = BinaryExpressionPattern(
         BinaryOperation.ADD,
-        CapturePattern(_A_CAPTURE, WildcardPattern()),
-        CapturePattern(_B_CAPTURE, WildcardPattern()),
+        CapturePattern("a", WildcardPattern()),
+        CapturePattern("b", WildcardPattern()),
     )
     left = LiteralExpression(1)
     right = LiteralExpression(2)
@@ -597,8 +571,8 @@ def test_binary_expression_pattern_threads_bindings_through_operands() -> None:
     result = pattern.match(expression)
 
     assert result is not None
-    assert result.get(_A_CAPTURE) is left
-    assert result.get(_B_CAPTURE) is right
+    assert result.get("a") is left
+    assert result.get("b") is right
 
 
 def test_binary_expression_pattern_propagates_left_failure() -> None:
@@ -652,9 +626,9 @@ def test_ternary_expression_pattern_rejects_non_ternary_expression() -> None:
 def test_ternary_expression_pattern_threads_bindings_through_branches() -> None:
     """Test bindings from each ternary branch combine."""
     pattern = TernaryExpressionPattern(
-        CapturePattern(_C_CAPTURE, WildcardPattern()),
-        CapturePattern(_T_CAPTURE, WildcardPattern()),
-        CapturePattern(_F_CAPTURE, WildcardPattern()),
+        CapturePattern("c", WildcardPattern()),
+        CapturePattern("t", WildcardPattern()),
+        CapturePattern("f", WildcardPattern()),
     )
     condition = LiteralExpression(True)
     true_value = LiteralExpression(1)
@@ -664,9 +638,9 @@ def test_ternary_expression_pattern_threads_bindings_through_branches() -> None:
     result = pattern.match(expression)
 
     assert result is not None
-    assert result.get(_C_CAPTURE) is condition
-    assert result.get(_T_CAPTURE) is true_value
-    assert result.get(_F_CAPTURE) is false_value
+    assert result.get("c") is condition
+    assert result.get("t") is true_value
+    assert result.get("f") is false_value
 
 
 def test_ternary_expression_pattern_propagates_branch_failure() -> None:
@@ -761,8 +735,8 @@ def test_call_expression_pattern_threads_bindings_through_arguments() -> None:
     pattern = CallExpressionPattern(
         function_name="f",
         arguments=(
-            CapturePattern(_A_CAPTURE, WildcardPattern()),
-            CapturePattern(_B_CAPTURE, WildcardPattern()),
+            CapturePattern("a", WildcardPattern()),
+            CapturePattern("b", WildcardPattern()),
         ),
     )
     a_argument = LiteralExpression(1)
@@ -772,8 +746,8 @@ def test_call_expression_pattern_threads_bindings_through_arguments() -> None:
     result = pattern.match(expression)
 
     assert result is not None
-    assert result.get(_A_CAPTURE) is a_argument
-    assert result.get(_B_CAPTURE) is b_argument
+    assert result.get("a") is a_argument
+    assert result.get("b") is b_argument
 
 
 def test_call_expression_pattern_rejects_non_call_expression() -> None:
@@ -840,7 +814,7 @@ def test_predicate_pattern_propagates_exceptions() -> None:
 
 def test_predicate_pattern_captures_nothing() -> None:
     """Test ``PredicatePattern`` does not add any bindings on a successful match."""
-    starting = MatchBindings.empty().try_bind(_X_CAPTURE, LiteralExpression(0))
+    starting = MatchBindings.empty().try_bind("x", LiteralExpression(0))
     assert starting is not None
     pattern = PredicatePattern(lambda _: True)
 
@@ -873,8 +847,8 @@ def test_alternatives_pattern_returns_first_match() -> None:
     """Test ``AlternativesPattern`` returns bindings from the first matching child."""
     pattern = AlternativesPattern(
         (
-            CapturePattern(_X_CAPTURE, LiteralPattern()),
-            CapturePattern(_X_CAPTURE, IdentifierPattern()),
+            CapturePattern("x", LiteralPattern()),
+            CapturePattern("x", IdentifierPattern()),
         )
     )
     expression = LiteralExpression(5)
@@ -882,7 +856,7 @@ def test_alternatives_pattern_returns_first_match() -> None:
     result = pattern.match(expression)
 
     assert result is not None
-    assert result.get(_X_CAPTURE) is expression
+    assert result.get("x") is expression
 
 
 def test_alternatives_pattern_falls_through_to_later_alternative() -> None:
@@ -890,8 +864,8 @@ def test_alternatives_pattern_falls_through_to_later_alternative() -> None:
     x = mock_identifier("x", 0)
     pattern = AlternativesPattern(
         (
-            CapturePattern(_X_CAPTURE, LiteralPattern()),
-            CapturePattern(_X_CAPTURE, IdentifierPattern()),
+            CapturePattern("x", LiteralPattern()),
+            CapturePattern("x", IdentifierPattern()),
         )
     )
     expression = IdentifierExpression(x)
@@ -899,7 +873,7 @@ def test_alternatives_pattern_falls_through_to_later_alternative() -> None:
     result = pattern.match(expression)
 
     assert result is not None
-    assert result.get(_X_CAPTURE) is expression
+    assert result.get("x") is expression
 
 
 def test_alternatives_pattern_fails_when_all_alternatives_fail() -> None:
@@ -915,12 +889,12 @@ def test_alternatives_pattern_isolates_failed_attempts() -> None:
         (
             BinaryExpressionPattern(
                 BinaryOperation.ADD,
-                CapturePattern(_X_CAPTURE, LiteralPattern(value=99)),
+                CapturePattern("x", LiteralPattern(value=99)),
                 WildcardPattern(),
             ),
             BinaryExpressionPattern(
                 BinaryOperation.ADD,
-                CapturePattern(_X_CAPTURE, WildcardPattern()),
+                CapturePattern("x", WildcardPattern()),
                 WildcardPattern(),
             ),
         )
@@ -930,7 +904,30 @@ def test_alternatives_pattern_isolates_failed_attempts() -> None:
     result = pattern.match(expression)
 
     assert result is not None
-    assert result.get(_X_CAPTURE).is_structurally_equivalent(LiteralExpression(1))
+    assert result.get("x").is_structurally_equivalent(LiteralExpression(1))
+
+
+def test_alternatives_pattern_discards_captures_from_failed_alternative() -> None:
+    """Test a capture that fired inside a failed alternative does not leak."""
+    pattern = AlternativesPattern(
+        (
+            BinaryExpressionPattern(
+                BinaryOperation.ADD,
+                CapturePattern("captured_in_failed", LiteralPattern(value=1)),
+                LiteralPattern(value=99),
+            ),
+            CapturePattern("captured_in_successful", WildcardPattern()),
+        )
+    )
+    expression = BinaryExpression(
+        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
+    )
+
+    result = pattern.match(expression)
+
+    assert result is not None
+    assert not result.has("captured_in_failed")
+    assert result.has("captured_in_successful")
 
 
 # ===========================================================================
@@ -943,8 +940,8 @@ def test_repeated_capture_across_call_arguments_requires_equivalence() -> None:
     pattern = CallExpressionPattern(
         function_name="f",
         arguments=(
-            CapturePattern(_X_CAPTURE, WildcardPattern()),
-            CapturePattern(_X_CAPTURE, WildcardPattern()),
+            CapturePattern("x", WildcardPattern()),
+            CapturePattern("x", WildcardPattern()),
         ),
     )
     equal_call = CallExpression("f", (LiteralExpression(1), LiteralExpression(1)))
@@ -1032,8 +1029,8 @@ def test_match_pattern_against_deeply_nested_expression() -> None:
         lambda: LiteralPattern(value=5),
         lambda: BinaryExpressionPattern(
             BinaryOperation.ADD,
-            CapturePattern(_A_CAPTURE, WildcardPattern()),
-            CapturePattern(_B_CAPTURE, WildcardPattern()),
+            CapturePattern("a", WildcardPattern()),
+            CapturePattern("b", WildcardPattern()),
         ),
         lambda: AlternativesPattern((LiteralPattern(value=5), IdentifierPattern())),
     ],

@@ -18,7 +18,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import final
 
+from fhy_core.diagnostic import DiagnosticLevel
 from fhy_core.pass_infrastructure import RewritablePass, register_pass
+from fhy_core.trait import FrozenMixin
 
 from ..core import Expression
 from .core import MatchBindings, Pattern
@@ -26,7 +28,7 @@ from .core import MatchBindings, Pattern
 
 @final
 @dataclass(frozen=True)
-class RewriteRule:
+class RewriteRule(FrozenMixin):
     """A pattern paired with a rewrite that consumes the bindings.
 
     Attributes:
@@ -37,15 +39,17 @@ class RewriteRule:
             When supplied, the rule fires only when
             ``guard(bindings)`` returns ``True``. ``None`` disables
             the guard.
-        name: Optional human-readable rule name for diagnostics and
-            pass logs. The empty string indicates an unnamed rule.
+        name: Optional human-readable rule name. When supplied and
+            the rule fires inside a `RewriteRuleApplier`, an ``INFO``
+            diagnostic naming the rule is emitted. ``None`` indicates
+            an unnamed rule and suppresses the diagnostic.
 
     """
 
     pattern: Pattern
     rewrite: Callable[[MatchBindings], Expression]
     guard: Callable[[MatchBindings], bool] | None = None
-    name: str = ""
+    name: str | None = None
 
 
 def apply_rewrite_rule(rule: RewriteRule, expression: Expression) -> Expression | None:
@@ -60,18 +64,28 @@ def apply_rewrite_rule(rule: RewriteRule, expression: Expression) -> Expression 
         guard (if any) returns ``True``; otherwise ``None``.
 
     Raises:
-        Exception: Re-raises whatever the rule's ``guard`` or
-            ``rewrite`` callable raised. The framework does not
-            swallow caller-supplied exceptions.
+        TypeError: When ``rule.rewrite`` returns a non-`Expression`.
+            The error message names the rule so the offending callback
+            is identifiable in a stack trace.
+
+    Notes:
+        Exceptions raised by ``rule.guard`` or ``rule.rewrite``
+        propagate to the caller unchanged.
 
     """
     bindings = rule.pattern.match(expression)
     if bindings is None:
         return None
-    elif rule.guard is not None and not rule.guard(bindings):
+    if rule.guard is not None and not rule.guard(bindings):
         return None
-    else:
-        return rule.rewrite(bindings)
+    result = rule.rewrite(bindings)
+    if not isinstance(result, Expression):
+        rule_label = rule.name if rule.name is not None else "<unnamed>"
+        raise TypeError(
+            f"RewriteRule {rule_label!r} rewrite callable must return an "
+            f"Expression; got {type(result).__name__}."
+        )
+    return result
 
 
 def apply_rewrite_rules(
@@ -89,16 +103,27 @@ def apply_rewrite_rules(
         rules: Rule sequence in priority (first-match) order.
 
     Returns:
-        The rewritten expression tree. Identity-preserving: when
-        no rule fires anywhere, the input ``expression`` is returned
-        unchanged.
+        The rewritten expression tree. Identity is preserved iff
+        zero rules fire across the entire walk: even one fire at
+        any depth causes the entire ancestor chain to be rebuilt
+        as new objects.
 
     Raises:
+        PassValidationError: When the underlying ``CompilerPass.execute``
+            input or output validation rejects ``expression``.
         PassExecutionError: When a rule's ``guard`` or ``rewrite``
-            callable raises something other than
-            ``PassExecutionError`` / ``PassValidationError``. The
-            original is attached as ``__cause__``, matching the
-            standard ``RewritablePass`` behavior.
+            callable raises any exception other than
+            ``PassValidationError`` or ``PassExecutionError``. The
+            original exception is attached as ``__cause__``. The
+            two pass-framework exceptions are re-raised unchanged.
+            Wrapping happens in ``CompilerPass.execute``.
+
+    Notes:
+        Traversal is bottom-up: a node's children are already in
+        their post-rewrite form when its rules are tried. A rule
+        whose pattern matches the *pre*-rewrite shape of a child
+        will not fire at the parent level once that child has been
+        rewritten.
 
     """
     return RewriteRuleApplier(rules)(expression)
@@ -116,10 +141,6 @@ class RewriteRuleApplier(RewritablePass[Expression]):
     metadata. Direct use of `apply_rewrite_rules` is the more
     common path; this class is the underlying pass type and is
     registered with the global pass registry.
-
-    Attributes:
-        rules: Rule sequence in priority (first-match) order.
-
     """
 
     _rules: tuple[RewriteRule, ...]
@@ -134,8 +155,21 @@ class RewriteRuleApplier(RewritablePass[Expression]):
         return self._rules
 
     def visit_unknown(self, node: Expression) -> Expression | None:
+        """Apply rules in order to ``node`` and return the first match.
+
+        Returns ``None`` when no rule fires, signaling the framework
+        to retain the node (possibly with already-rewritten children).
+        Rewrites are *not* re-examined within the same walk. When a
+        named rule fires, an ``INFO`` diagnostic is emitted naming
+        the rule.
+        """
         for rule in self._rules:
             rewritten = apply_rewrite_rule(rule, node)
             if rewritten is not None:
+                if rule.name is not None:
+                    self.report(
+                        DiagnosticLevel.INFO,
+                        f"Applied rewrite rule {rule.name!r}.",
+                    )
                 return rewritten
         return None

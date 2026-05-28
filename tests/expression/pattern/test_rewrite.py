@@ -11,6 +11,7 @@ from fhy_core.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    TernaryExpression,
     UnaryExpression,
     UnaryOperation,
 )
@@ -28,10 +29,9 @@ from fhy_core.expression.pattern import (
 )
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import CompilerPass, PassExecutionError
+from fhy_core.trait import FrozenMutationError
 
 from ..conftest import mock_identifier
-
-_X_CAPTURE = mock_identifier("x", 1000)
 
 
 def _make_x_plus_zero(identifier: Identifier) -> BinaryExpression:
@@ -57,10 +57,10 @@ def _make_x_plus_zero_rule() -> RewriteRule:
     return RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.ADD,
-            CapturePattern(_X_CAPTURE, WildcardPattern()),
+            CapturePattern("x", WildcardPattern()),
             LiteralPattern(value=0),
         ),
-        rewrite=lambda bindings: bindings.get(_X_CAPTURE),
+        rewrite=lambda bindings: bindings.get("x"),
         name="x + 0 -> x",
     )
 
@@ -70,8 +70,8 @@ def _make_x_minus_x_rule() -> RewriteRule:
     return RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.SUBTRACT,
-            CapturePattern(_X_CAPTURE, WildcardPattern()),
-            CapturePattern(_X_CAPTURE, WildcardPattern()),
+            CapturePattern("x", WildcardPattern()),
+            CapturePattern("x", WildcardPattern()),
         ),
         rewrite=lambda _: LiteralExpression(0),
         name="x - x -> 0",
@@ -83,10 +83,10 @@ def _make_x_times_one_rule() -> RewriteRule:
     return RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.MULTIPLY,
-            CapturePattern(_X_CAPTURE, WildcardPattern()),
+            CapturePattern("x", WildcardPattern()),
             LiteralPattern(value=1),
         ),
-        rewrite=lambda bindings: bindings.get(_X_CAPTURE),
+        rewrite=lambda bindings: bindings.get("x"),
         name="x * 1 -> x",
     )
 
@@ -97,17 +97,17 @@ def _make_x_times_one_rule() -> RewriteRule:
 
 
 def test_rewrite_rule_defaults_for_optional_fields() -> None:
-    """Test ``RewriteRule`` defaults ``guard`` to ``None`` and ``name`` to ``''``."""
+    """Test ``RewriteRule`` defaults ``guard`` and ``name`` to ``None``."""
     rule = RewriteRule(
         pattern=WildcardPattern(),
         rewrite=lambda _: LiteralExpression(0),
     )
 
     assert rule.guard is None
-    assert rule.name == ""
+    assert rule.name is None
 
 
-def test_rewrite_rule_is_frozen_and_hashable() -> None:
+def test_rewrite_rule_is_hashable_and_equal_by_content() -> None:
     """Test ``RewriteRule`` instances are hashable and equal by content."""
     pattern = LiteralPattern(value=5)
     rewrite = lambda _: LiteralExpression(0)  # noqa: E731
@@ -117,6 +117,17 @@ def test_rewrite_rule_is_frozen_and_hashable() -> None:
 
     assert left == right
     assert hash(left) == hash(right)
+
+
+def test_rewrite_rule_is_frozen() -> None:
+    """Test ``RewriteRule`` rejects post-construction mutation."""
+    rule = RewriteRule(
+        pattern=WildcardPattern(),
+        rewrite=lambda _: LiteralExpression(0),
+    )
+
+    with pytest.raises(FrozenMutationError):
+        rule.name = "renamed"  # type: ignore[misc]
 
 
 # ===========================================================================
@@ -153,11 +164,11 @@ def test_apply_rewrite_rule_returns_none_when_guard_returns_false() -> None:
     rule = RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.ADD,
-            CapturePattern(_X_CAPTURE, WildcardPattern()),
+            CapturePattern("x", WildcardPattern()),
             LiteralPattern(),
         ),
         guard=lambda _: False,
-        rewrite=lambda bindings: bindings.get(_X_CAPTURE),
+        rewrite=lambda bindings: bindings.get("x"),
     )
 
     assert apply_rewrite_rule(rule, _make_x_plus_zero(x)) is None
@@ -169,11 +180,11 @@ def test_apply_rewrite_rule_fires_when_guard_returns_true() -> None:
     rule = RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.ADD,
-            CapturePattern(_X_CAPTURE, WildcardPattern()),
+            CapturePattern("x", WildcardPattern()),
             LiteralPattern(),
         ),
         guard=lambda _: True,
-        rewrite=lambda bindings: bindings.get(_X_CAPTURE),
+        rewrite=lambda bindings: bindings.get("x"),
     )
 
     result = apply_rewrite_rule(rule, _make_x_plus_zero(x))
@@ -207,6 +218,31 @@ def test_apply_rewrite_rule_propagates_rewrite_exception() -> None:
     rule = RewriteRule(pattern=WildcardPattern(), rewrite=rewrite)
 
     with pytest.raises(RuntimeError, match="rewrite failed"):
+        apply_rewrite_rule(rule, LiteralExpression(5))
+
+
+def test_apply_rewrite_rule_raises_type_error_when_rewrite_returns_non_expression() -> (
+    None
+):
+    """Test ``apply_rewrite_rule`` rejects a rewrite that returns a non-`Expression`."""
+    rule = RewriteRule(
+        pattern=WildcardPattern(),
+        rewrite=lambda _: None,  # type: ignore[arg-type,return-value]
+        name="bug",
+    )
+
+    with pytest.raises(TypeError, match="bug"):
+        apply_rewrite_rule(rule, LiteralExpression(5))
+
+
+def test_apply_rewrite_rule_type_error_names_unnamed_rule_with_placeholder() -> None:
+    """Test the rewrite-return-type check uses ``<unnamed>`` for nameless rules."""
+    rule = RewriteRule(
+        pattern=WildcardPattern(),
+        rewrite=lambda _: 42,  # type: ignore[arg-type,return-value]
+    )
+
+    with pytest.raises(TypeError, match="<unnamed>"):
         apply_rewrite_rule(rule, LiteralExpression(5))
 
 
@@ -359,6 +395,24 @@ def test_apply_rewrite_rules_threads_rewritten_children_into_parent_match() -> N
     assert result.is_structurally_equivalent(IdentifierExpression(x))
 
 
+def test_apply_rewrite_rules_rewrites_inside_ternary_branch() -> None:
+    """Test a rewrite inside one ternary branch leaves the sibling branches intact."""
+    condition_id = mock_identifier("c", 0)
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    condition = IdentifierExpression(condition_id)
+    true_branch = _make_x_plus_zero(x)
+    false_branch = IdentifierExpression(y)
+    expression = TernaryExpression(condition, true_branch, false_branch)
+
+    result = apply_rewrite_rules(expression, [_make_x_plus_zero_rule()])
+
+    assert isinstance(result, TernaryExpression)
+    assert result.condition is condition
+    assert result.true_value.is_structurally_equivalent(IdentifierExpression(x))
+    assert result.false_value is false_branch
+
+
 # ===========================================================================
 # apply_rewrite_rules: capture consistency, advanced
 # ===========================================================================
@@ -387,6 +441,39 @@ def test_apply_rewrite_rules_x_minus_x_does_not_match_distinct_operands() -> Non
     result = apply_rewrite_rules(expression, [_make_x_minus_x_rule()])
 
     assert result is expression
+
+
+# ===========================================================================
+# apply_rewrite_rules: exception wrapping
+# ===========================================================================
+
+
+def test_apply_rewrite_rules_wraps_guard_exception_as_pass_execution_error() -> None:
+    """Test ``apply_rewrite_rules`` wraps a guard exception as `PassExecutionError`."""
+
+    def guard(_: MatchBindings) -> bool:
+        raise RuntimeError("guard failed")
+
+    rule = RewriteRule(
+        pattern=WildcardPattern(),
+        guard=guard,
+        rewrite=lambda _: LiteralExpression(0),
+    )
+
+    with pytest.raises(PassExecutionError):
+        apply_rewrite_rules(LiteralExpression(5), [rule])
+
+
+def test_apply_rewrite_rules_wraps_rewrite_exception_as_pass_execution_error() -> None:
+    """Test ``apply_rewrite_rules`` wraps a rewrite exception as a pass error."""
+
+    def rewrite(_: MatchBindings) -> Expression:
+        raise RuntimeError("rewrite failed")
+
+    rule = RewriteRule(pattern=WildcardPattern(), rewrite=rewrite)
+
+    with pytest.raises(PassExecutionError):
+        apply_rewrite_rules(LiteralExpression(5), [rule])
 
 
 # ===========================================================================
@@ -452,6 +539,17 @@ def test_rewrite_rule_applier_exposes_rules() -> None:
     assert applier.rules == rules
 
 
+def test_rewrite_rule_applier_defensively_copies_rule_sequence() -> None:
+    """Test the applier is unaffected by mutation of the input rule sequence."""
+    rule = _make_x_plus_zero_rule()
+    mutable: list[RewriteRule] = [rule]
+
+    applier = RewriteRuleApplier(mutable)
+    mutable.clear()
+
+    assert applier.rules == (rule,)
+
+
 def test_rewrite_rule_applier_wraps_guard_exception_as_pass_execution_error() -> None:
     """Test ``execute`` wraps a guard exception as ``PassExecutionError``."""
 
@@ -482,6 +580,32 @@ def test_rewrite_rule_applier_wraps_rewrite_exception_as_pass_execution_error() 
         applier.execute(LiteralExpression(5))
 
 
+def test_rewrite_rule_applier_emits_diagnostic_when_named_rule_fires() -> None:
+    """Test a named rule firing emits an ``INFO`` diagnostic naming the rule."""
+    x = mock_identifier("x", 0)
+    rule = _make_x_plus_zero_rule()
+    applier = RewriteRuleApplier([rule])
+
+    pass_result = applier.execute(_make_x_plus_zero(x))
+
+    assert rule.name is not None
+    matching = [d for d in pass_result.diagnostics if rule.name in d.message_text]
+    assert len(matching) == 1
+
+
+def test_rewrite_rule_applier_does_not_emit_diagnostic_for_unnamed_rule() -> None:
+    """Test an unnamed rule firing does not emit a diagnostic."""
+    rule = RewriteRule(
+        pattern=WildcardPattern(),
+        rewrite=lambda _: LiteralExpression(0),
+    )
+    applier = RewriteRuleApplier([rule])
+
+    pass_result = applier.execute(LiteralExpression(5))
+
+    assert pass_result.diagnostics == ()
+
+
 # ===========================================================================
 # Adversarial cases
 # ===========================================================================
@@ -490,8 +614,8 @@ def test_rewrite_rule_applier_wraps_rewrite_exception_as_pass_execution_error() 
 def test_apply_rewrite_rules_with_identity_rewrite_reports_unchanged() -> None:
     """Test a rule whose rewrite returns the matched expression preserves identity."""
     rule = RewriteRule(
-        pattern=CapturePattern(_X_CAPTURE, WildcardPattern()),
-        rewrite=lambda bindings: bindings.get(_X_CAPTURE),
+        pattern=CapturePattern("x", WildcardPattern()),
+        rewrite=lambda bindings: bindings.get("x"),
     )
     expression = LiteralExpression(5)
 
