@@ -20,12 +20,8 @@ from fhy_core.expression.sort import FunctionSort
 from fhy_core.identifier import Identifier
 from fhy_core.trait import AlphaEquivalence, AlphaRenaming
 
+from ..conftest import mock_identifier
 from .conftest import function_registry_snapshot  # noqa: F401  # fixture re-export
-
-
-def _make_identifiers(*names: str) -> tuple[Identifier, ...]:
-    """Construct one `Identifier` per ``names`` entry."""
-    return tuple(Identifier(name) for name in names)
 
 
 def _make_registered_function(
@@ -53,7 +49,7 @@ def _make_registered_function(
 def test_expression_implements_alpha_equivalence_protocol() -> None:
     """Test every concrete `Expression` node satisfies the `AlphaEquivalence`
     runtime protocol."""
-    (x,) = _make_identifiers("x")
+    x = mock_identifier("x", 0)
     expressions: list[Expression] = [
         LiteralExpression(1),
         IdentifierExpression(x),
@@ -74,7 +70,7 @@ def test_expression_implements_alpha_equivalence_protocol() -> None:
 def test_registered_function_implements_alpha_equivalence_protocol() -> None:
     """Test `RegisteredFunction` satisfies the `AlphaEquivalence` runtime
     protocol."""
-    (x,) = _make_identifiers("x")
+    x = mock_identifier("x", 0)
     function = _make_registered_function(
         name="identity_int",
         parameters=(x,),
@@ -140,7 +136,7 @@ def test_literal_expression_is_not_alpha_equivalent_to_non_expression() -> None:
 def test_identifier_expression_is_alpha_equivalent_under_identity() -> None:
     """Test two `IdentifierExpression`s on the same `Identifier` are alpha-equivalent
     under the empty renaming."""
-    (x,) = _make_identifiers("x")
+    x = mock_identifier("x", 0)
     left = IdentifierExpression(x)
     right = IdentifierExpression(x)
 
@@ -150,7 +146,8 @@ def test_identifier_expression_is_alpha_equivalent_under_identity() -> None:
 def test_identifier_expression_distinguishes_distinct_free_identifiers() -> None:
     """Test two distinct free `Identifier`s with the same name_hint are not
     alpha-equivalent under the empty renaming."""
-    x, x_again = _make_identifiers("x", "x")
+    x = mock_identifier("x", 0)
+    x_again = mock_identifier("x", 1)
     left = IdentifierExpression(x)
     right = IdentifierExpression(x_again)
 
@@ -159,7 +156,8 @@ def test_identifier_expression_distinguishes_distinct_free_identifiers() -> None
 
 def test_identifier_expression_uses_supplied_free_renaming() -> None:
     """Test the free renaming maps distinct identifiers to alpha-equivalence."""
-    x, xprime = _make_identifiers("x", "x")
+    x = mock_identifier("x", 0)
+    xprime = mock_identifier("x", 1)
     renaming = AlphaRenaming.with_free_renaming({x: xprime})
 
     assert IdentifierExpression(x).is_alpha_equivalent_under(
@@ -169,7 +167,8 @@ def test_identifier_expression_uses_supplied_free_renaming() -> None:
 
 def test_identifier_expression_resolves_through_binder_frame() -> None:
     """Test the renaming's binder frame is consulted when resolving."""
-    x, y = _make_identifiers("x", "y")
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
     renaming = AlphaRenaming.empty().extend({x: y})
 
     assert IdentifierExpression(x).is_alpha_equivalent_under(
@@ -182,7 +181,9 @@ def test_identifier_expression_returns_false_when_renaming_resolves_differently(
 ):
     """Test alpha-equivalence fails when the renaming maps self to a third
     identifier."""
-    x, y, z = _make_identifiers("x", "y", "z")
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    z = mock_identifier("z", 2)
     renaming = AlphaRenaming.empty().extend({x: y})
 
     assert not IdentifierExpression(x).is_alpha_equivalent_under(
@@ -216,7 +217,8 @@ def test_unary_expression_distinguishes_operation_kind() -> None:
 
 def test_unary_expression_threads_renaming_into_operand() -> None:
     """Test `UnaryExpression` propagates the renaming to its operand."""
-    x, y = _make_identifiers("x", "y")
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
     renaming = AlphaRenaming.empty().extend({x: y})
     left = UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(x))
     right = UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(y))
@@ -279,7 +281,8 @@ def test_binary_expression_distinguishes_operation_kind() -> None:
 
 def test_binary_expression_threads_renaming_into_both_operands() -> None:
     """Test `BinaryExpression` propagates the renaming to both operands."""
-    x, y = _make_identifiers("x", "y")
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
     renaming = AlphaRenaming.empty().extend({x: y})
     left = BinaryExpression(
         BinaryOperation.ADD, IdentifierExpression(x), IdentifierExpression(x)
@@ -357,7 +360,8 @@ def test_ternary_expression_distinguishes_false_branch() -> None:
 
 def test_ternary_expression_threads_renaming_into_all_branches() -> None:
     """Test `TernaryExpression` propagates the renaming to each branch."""
-    x, y = _make_identifiers("x", "y")
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
     renaming = AlphaRenaming.empty().extend({x: y})
     left = TernaryExpression(
         IdentifierExpression(x), IdentifierExpression(x), IdentifierExpression(x)
@@ -401,7 +405,8 @@ def test_call_expression_distinguishes_arity() -> None:
 
 def test_call_expression_threads_renaming_into_arguments() -> None:
     """Test `CallExpression` propagates the renaming to each argument."""
-    x, y = _make_identifiers("x", "y")
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
     renaming = AlphaRenaming.empty().extend({x: y})
     left = CallExpression("max", (IdentifierExpression(x), LiteralExpression(0)))
     right = CallExpression("max", (IdentifierExpression(y), LiteralExpression(0)))
@@ -461,7 +466,7 @@ def test_expression_returns_false_for_cross_type_comparison(
 
 def test_registered_function_is_alpha_equivalent_to_itself() -> None:
     """Test alpha-equivalence is reflexive on `RegisteredFunction`."""
-    (x,) = _make_identifiers("x")
+    x = mock_identifier("x", 0)
     function = _make_registered_function(
         name="square_int",
         parameters=(x,),
@@ -480,7 +485,8 @@ def test_registered_function_is_alpha_equivalent_to_itself() -> None:
 def test_registered_function_is_alpha_equivalent_under_parameter_rename() -> None:
     """Test two `RegisteredFunction`s identical except for parameter
     `Identifier`s are alpha-equivalent."""
-    x, y = _make_identifiers("x", "y")
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
     left = _make_registered_function(
         name="square_int",
         parameters=(x,),
@@ -509,7 +515,8 @@ def test_registered_function_is_alpha_equivalent_under_parameter_rename() -> Non
 
 def test_registered_function_distinguishes_parameter_arity() -> None:
     """Test alpha-equivalence fails when the parameter count differs."""
-    x, y = _make_identifiers("x", "y")
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
     left = _make_registered_function(
         name="f",
         parameters=(x,),
@@ -530,7 +537,7 @@ def test_registered_function_distinguishes_parameter_arity() -> None:
 
 def test_registered_function_distinguishes_parameter_sort() -> None:
     """Test alpha-equivalence fails when a parameter sort differs."""
-    (x,) = _make_identifiers("x")
+    x = mock_identifier("x", 0)
     left = _make_registered_function(
         name="f",
         parameters=(x,),
@@ -551,7 +558,7 @@ def test_registered_function_distinguishes_parameter_sort() -> None:
 
 def test_registered_function_distinguishes_result_sort() -> None:
     """Test alpha-equivalence fails when the result sort differs."""
-    (x,) = _make_identifiers("x")
+    x = mock_identifier("x", 0)
     left = _make_registered_function(
         name="f",
         parameters=(x,),
@@ -573,7 +580,7 @@ def test_registered_function_distinguishes_result_sort() -> None:
 def test_registered_function_ignores_name_for_alpha_equivalence() -> None:
     """Test alpha-equivalence treats `name` as registry identity, not body
     semantics."""
-    (x,) = _make_identifiers("x")
+    x = mock_identifier("x", 0)
     left = _make_registered_function(
         name="f",
         parameters=(x,),
@@ -594,7 +601,9 @@ def test_registered_function_ignores_name_for_alpha_equivalence() -> None:
 
 def test_registered_function_requires_matching_free_identifiers_by_default() -> None:
     """Test free identifiers in the body must be equal by default."""
-    x, free_a, free_b = _make_identifiers("x", "a", "b")
+    x = mock_identifier("x", 0)
+    free_a = mock_identifier("a", 1)
+    free_b = mock_identifier("b", 2)
     left = _make_registered_function(
         name="f",
         parameters=(x,),
@@ -619,7 +628,10 @@ def test_registered_function_requires_matching_free_identifiers_by_default() -> 
 
 def test_registered_function_honors_free_identifier_renaming() -> None:
     """Test free identifiers in the body match via the supplied free renaming."""
-    x, y, free_a, free_b = _make_identifiers("x", "y", "a", "b")
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    free_a = mock_identifier("a", 2)
+    free_b = mock_identifier("b", 3)
     left = _make_registered_function(
         name="f",
         parameters=(x,),
@@ -645,7 +657,7 @@ def test_registered_function_honors_free_identifier_renaming() -> None:
 
 def test_registered_function_distinguishes_body_shape() -> None:
     """Test alpha-equivalence fails when bodies have different shapes."""
-    (x,) = _make_identifiers("x")
+    x = mock_identifier("x", 0)
     left = _make_registered_function(
         name="f",
         parameters=(x,),
@@ -671,7 +683,7 @@ def test_registered_function_distinguishes_body_shape() -> None:
 def test_registered_function_is_not_alpha_equivalent_to_unrelated_type() -> None:
     """Test alpha-equivalence returns False (not raises) when comparing a
     `RegisteredFunction` to a non-`RegisteredFunction` object."""
-    (x,) = _make_identifiers("x")
+    x = mock_identifier("x", 0)
     function = _make_registered_function(
         name="f",
         parameters=(x,),
@@ -690,7 +702,7 @@ def test_registered_function_is_not_alpha_equivalent_to_unrelated_type() -> None
 
 
 def _structurally_paired_expressions() -> list[tuple[Expression, Expression]]:
-    (x,) = _make_identifiers("x")
+    x = mock_identifier("x", 0)
     return [
         (LiteralExpression(1), LiteralExpression(1)),
         (LiteralExpression(2.5), LiteralExpression(2.5)),
@@ -756,7 +768,7 @@ def test_structurally_equivalent_implies_alpha_equivalent(
 @pytest.fixture()
 def every_expression_node() -> list[Expression]:
     """Return one instance of each concrete Expression node."""
-    (x,) = _make_identifiers("x")
+    x = mock_identifier("x", 0)
     return [
         LiteralExpression(1),
         LiteralExpression(2.5),
@@ -789,7 +801,8 @@ def test_alpha_equivalence_is_reflexive_on_each_expression_node(
 def test_deeply_nested_expression_is_alpha_equivalent_under_uniform_rename() -> None:
     """Test alpha-equivalence threads a renaming through a deeply nested
     Expression tree."""
-    x, y = _make_identifiers("x", "y")
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
     left: Expression = IdentifierExpression(x)
     right: Expression = IdentifierExpression(y)
     for _ in range(10):
@@ -817,7 +830,8 @@ def test_registered_function_alpha_equivalence_works_when_body_uses_native_call(
         result_sort=FunctionSort.INT,
         implementation=lambda value: value * value,
     )
-    x, y = _make_identifiers("x", "y")
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
     left = _make_registered_function(
         name="apply_square",
         parameters=(x,),
