@@ -1,4 +1,4 @@
-"""Tests for ``FunctionInliner`` and ``inline_functions``."""
+"""Tests for ``inline_functions``."""
 
 import pytest
 
@@ -7,7 +7,6 @@ from fhy_core.expression import (
     BinaryOperation,
     CallExpression,
     Expression,
-    FunctionInliner,
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
@@ -334,34 +333,6 @@ def test_inline_functions_result_contains_no_call_expression(
     result = inline_functions(expression)
 
     assert not _contains_call_expression(result)
-
-
-# =============================================================================
-# FunctionInliner: pass-style invocation
-# =============================================================================
-
-
-def test_function_inliner_callable_returns_inlined_expression(
-    function_registry_snapshot: None,
-) -> None:
-    """Test ``FunctionInliner()`` as a callable yields the inlined expression."""
-    parameter = Identifier("x")
-    register_function(
-        "test_inliner_callable",
-        parameters=[parameter],
-        parameter_sorts=[FunctionSort.REAL],
-        result_sort=FunctionSort.REAL,
-        body=IdentifierExpression(parameter) + LiteralExpression(1),
-    )
-
-    inliner = FunctionInliner()
-    expression = CallExpression("test_inliner_callable", (LiteralExpression(5),))
-
-    result = inliner(expression)
-
-    assert result.is_structurally_equivalent(
-        LiteralExpression(5) + LiteralExpression(1)
-    )
 
 
 def test_inline_functions_does_not_modify_input_expression(
