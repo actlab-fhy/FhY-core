@@ -24,7 +24,7 @@ from typing import TypedDict, cast
 
 from fhy_core.identifier import Identifier
 
-from ..core import (
+from .core import (
     BinaryOperation,
     LiteralExpression,
     UnaryOperation,
@@ -35,7 +35,7 @@ from ..core import (
     make_unary_expression,
     ternary,
 )
-from ..registry import (
+from .registry import (
     NativeConstant,
     NativeFunction,
     RegisteredFunction,
@@ -43,7 +43,7 @@ from ..registry import (
     register_native_constant,
     register_native_function,
 )
-from ..sort import FunctionSort
+from .sort import FunctionSort
 
 
 class BuiltinFunctions(TypedDict):

@@ -1,4 +1,4 @@
-"""Tests for `ExpressionEvaluator` and `evaluate_expression`.
+"""Tests for `evaluate_expression`.
 
 The evaluator is a bottom-up rewriter that performs two narrow
 substitutions:
@@ -26,7 +26,6 @@ from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
     CallExpression,
-    ExpressionEvaluator,
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
@@ -392,25 +391,6 @@ def test_evaluate_wraps_native_zero_division_error_in_pass_execution_error(
 
     with pytest.raises(PassExecutionError, match="ZeroDivisionError"):
         evaluate_expression(expression)
-
-
-# =============================================================================
-# ExpressionEvaluator pass-style usage
-# =============================================================================
-
-
-def test_expression_evaluator_callable_returns_evaluated_expression(
-    function_registry_snapshot: None,
-) -> None:
-    """Test ``ExpressionEvaluator()`` as a callable yields the evaluated expression."""
-    register_real_unary_native("test_evaluator_callable", math.exp)
-    evaluator = ExpressionEvaluator()
-
-    expression = CallExpression("test_evaluator_callable", (LiteralExpression(0.0),))
-    result = evaluator(expression)
-
-    assert isinstance(result, LiteralExpression)
-    assert result.value == 1.0
 
 
 # =============================================================================

@@ -17,10 +17,9 @@ raw lookup error and returns ``None``: "trust the declared target sort;
 the call-site check enforces the actual signature at use time."
 """
 
-__all__ = ["RegisteredFunctionBodyTypeChecker"]
+__all__ = ["check_registered_function_body", "RegisteredFunctionBodyTypeChecker"]
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 from frozendict import frozendict
 
@@ -37,9 +36,7 @@ from fhy_core.types import (
 from ..core import Expression
 from ..errors import EntryLookupError, EntryRegistrationError
 from ..sort import FunctionSort, is_core_data_type_compatible_with_sort
-
-if TYPE_CHECKING:
-    from .type_checker import ExpressionTypeChecker
+from .type_checker import CallTargetResolver, ExpressionTypeChecker
 
 # Concrete core data types used as the parameter lookup when body-
 # checking a registered function. Concrete (non-weak) types so
@@ -97,6 +94,7 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
     _parameters: tuple[Identifier, ...]
     _parameter_sorts: tuple[FunctionSort, ...]
     _result_sort: FunctionSort
+    _resolve_call_target: CallTargetResolver
 
     def __init__(
         self,
@@ -104,12 +102,14 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
         parameters: Sequence[Identifier],
         parameter_sorts: Sequence[FunctionSort],
         result_sort: FunctionSort,
+        resolve_call_target: CallTargetResolver,
     ) -> None:
         super().__init__()
         self._name = name
         self._parameters = tuple(parameters)
         self._parameter_sorts = tuple(parameter_sorts)
         self._result_sort = result_sort
+        self._resolve_call_target = resolve_call_target
 
     def check(self, body: Expression) -> None:
         """Validate ``body`` against the declared parameter and result sorts.
@@ -155,26 +155,21 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
     def _make_body_type_checker(
         self,
         parameter_to_type: frozendict[Identifier, tuple[NumericalType, TypeQualifier]],
-    ) -> "ExpressionTypeChecker":
-        # The `ExpressionTypeChecker` import lives inside this method to
-        # break a one-step import cycle: `type_checker` imports
-        # `RegisteredFunction`, `NativeFunction`, `NativeConstant`, and
-        # `get_registered_entry` from `..registry`, and `..registry`
-        # imports this pass at module-top to call it from
-        # `register_function`. Deferring this import lets the registry
-        # finish loading before `type_checker` is pulled in.
-        from .type_checker import ExpressionTypeChecker  # noqa: PLC0415
-
+    ) -> ExpressionTypeChecker:
         def lookup(identifier: Identifier) -> tuple[NumericalType, TypeQualifier]:
             if identifier in parameter_to_type:
                 return parameter_to_type[identifier]
             raise KeyError(identifier.name_hint)
 
-        return ExpressionTypeChecker(lookup, defer_on_unknown_call=True)
+        return ExpressionTypeChecker(
+            lookup,
+            resolve_call_target=self._resolve_call_target,
+            defer_on_unknown_call=True,
+        )
 
     def _synthesize_body_type(
         self,
-        checker: "ExpressionTypeChecker",
+        checker: ExpressionTypeChecker,
         body: Expression,
     ) -> NumericalType | None:
         try:
@@ -207,3 +202,38 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
                 f"{body_core_data_type} is not compatible with the declared "
                 f"result sort {self._result_sort}."
             )
+
+
+def check_registered_function_body(
+    name: str,
+    parameters: Sequence[Identifier],
+    parameter_sorts: Sequence[FunctionSort],
+    result_sort: FunctionSort,
+    body: Expression,
+    resolve_call_target: CallTargetResolver,
+) -> None:
+    """Validate a registered function's body against its declared result sort.
+
+    Args:
+        name: Function name; used in error messages.
+        parameters: Formal parameter identifiers in declaration order.
+        parameter_sorts: Per-parameter declared sorts.
+        result_sort: Declared result sort.
+        body: Body expression to check.
+        resolve_call_target: Lookup for call-site name resolution.
+
+    Raises:
+        PassExecutionError: When the body does not satisfy the declared
+            result-sort contract. The underlying
+            :class:`EntryRegistrationError` is available as ``__cause__``.
+            See :class:`RegisteredFunctionBodyTypeChecker` for the full
+            list of failure conditions.
+
+    """
+    RegisteredFunctionBodyTypeChecker(
+        name=name,
+        parameters=parameters,
+        parameter_sorts=parameter_sorts,
+        result_sort=result_sort,
+        resolve_call_target=resolve_call_target,
+    )(body)
