@@ -23,13 +23,14 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from fhy_core.identifier import Identifier
+from fhy_core.trait import AlphaEquivalenceMixin, AlphaRenaming
 
 from ..core import Expression
 from ..sort import FunctionSort, is_python_value_compatible_with_sort
 
 
 @dataclass(frozen=True)
-class RegisteredFunction:
+class RegisteredFunction(AlphaEquivalenceMixin):
     """A named pure function over the expression IR.
 
     Attributes:
@@ -62,6 +63,19 @@ class RegisteredFunction:
                 f"({len(self.parameter_sorts)}) does not match parameters "
                 f"length ({len(self.parameters)})."
             )
+
+    def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
+        if not isinstance(other, RegisteredFunction):
+            return False
+        elif self.parameter_sorts != other.parameter_sorts:
+            return False
+        elif self.result_sort != other.result_sort:
+            return False
+        elif len(self.parameters) != len(other.parameters):
+            return False
+        else:
+            extended = renaming.extend(dict(zip(self.parameters, other.parameters)))
+            return self.body.is_alpha_equivalent_under(other.body, extended)
 
 
 @dataclass(frozen=True)
