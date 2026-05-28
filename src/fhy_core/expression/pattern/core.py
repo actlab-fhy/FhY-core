@@ -53,21 +53,42 @@ from ..core import (
 @final
 @dataclass(frozen=True)
 class MatchBindings(FrozenMixin):
-    """Immutable map from capture identifier to matched expression.
+    """Immutable map from capture name to matched expression.
+
+    Capture names are plain strings: ``CapturePattern("x", ...)``
+    used in two positions of a compound pattern shares the same
+    capture and triggers the repeated-capture rule below.
 
     A `MatchBindings` is produced by `Pattern.match` (or returned
     unchanged by patterns that capture nothing). The only mutation
-    seam is `try_bind`, which honors the "repeated capture identifier
+    seam is `try_bind`, which honors the "repeated capture name
     must map to a structurally equivalent expression" rule.
+
+    Equality and hash semantics. Two `MatchBindings` are equal when
+    their bound capture-name sets match and each pair of values is
+    structurally equivalent. The hash is computed over the bound
+    capture-name set only; two instances with identical key sets
+    but different bound expressions collide in hash and are
+    distinguished by `__eq__`.
     """
 
-    bindings: frozendict[Identifier, Expression] = field(
-        default_factory=frozendict[Identifier, Expression]
-    )
+    bindings: frozendict[str, Expression] = field(default_factory=frozendict)
+
+    def __post_init__(self) -> None:
+        for key, value in self.bindings.items():
+            if not isinstance(key, str):
+                raise TypeError(
+                    f"MatchBindings keys must be str; got {type(key).__name__}."
+                )
+            if not isinstance(value, Expression):
+                raise TypeError(
+                    f"MatchBindings values must be Expression; "
+                    f"got {type(value).__name__} for key {key!r}."
+                )
 
     @classmethod
     def empty(cls) -> "MatchBindings":
-        """Return the bindings used by `Pattern.match` at the root.
+        """Return an empty `MatchBindings`.
 
         Returns:
             An empty `MatchBindings`.
@@ -76,115 +97,75 @@ class MatchBindings(FrozenMixin):
         return cls()
 
     def is_empty(self) -> bool:
-        """Return whether no identifiers are bound.
+        """Return whether no capture names are bound.
 
         Returns:
-            ``True`` when no capture identifiers are bound; otherwise
+            ``True`` when no capture names are bound; otherwise
             ``False``.
 
         """
         return len(self.bindings) == 0
 
-    def names(self) -> frozenset[Identifier]:
-        """Return the set of currently-bound capture identifiers.
+    def names(self) -> frozenset[str]:
+        """Return the set of currently-bound capture names.
 
         Returns:
-            The frozen set of capture identifiers.
+            The frozen set of capture names.
 
         """
         return frozenset(self.bindings.keys())
 
-    def get(self, name: Identifier | str) -> Expression:
+    def get(self, name: str) -> Expression:
         """Return the expression bound to ``name``.
 
         Args:
-            name: Capture identifier to look up. A ``str`` is
-                resolved to the unique bound `Identifier` whose
-                ``name_hint`` matches.
+            name: Capture name to look up.
 
         Returns:
             The bound expression.
 
         Raises:
-            KeyError: If ``name`` is not bound, or if ``name`` is a
-                ``str`` that matches no bound identifier.
-            ValueError: If ``name`` is a ``str`` matching more than one
-                bound identifier (ambiguous lookup).
+            KeyError: If ``name`` is not bound.
 
         """
-        return self.bindings[self._resolve_name(name)]
+        return self.bindings[name]
 
-    def has(self, name: Identifier | str) -> bool:
+    def has(self, name: str) -> bool:
         """Return whether ``name`` is bound.
 
         Args:
-            name: Capture identifier to check. A ``str`` matches when
-                any bound `Identifier`'s ``name_hint`` equals it.
+            name: Capture name to check.
 
         Returns:
             ``True`` when ``name`` is bound; otherwise ``False``.
 
         """
-        if isinstance(name, Identifier):
-            return name in self.bindings
-        return any(identifier.name_hint == name for identifier in self.bindings)
+        return name in self.bindings
 
-    def _resolve_name(self, name: Identifier | str) -> Identifier:
-        """Resolve a name to the unique bound `Identifier`.
-
-        Args:
-            name: Capture identifier or its ``name_hint``.
-
-        Returns:
-            The `Identifier` to look up.
-
-        Raises:
-            KeyError: If ``name`` is a ``str`` that matches no bound
-                identifier.
-            ValueError: If ``name`` is a ``str`` matching more than one
-                bound identifier.
-
-        """
-        if isinstance(name, Identifier):
-            return name
-        matches = [
-            identifier for identifier in self.bindings if identifier.name_hint == name
-        ]
-        if len(matches) == 1:
-            return matches[0]
-        if not matches:
-            raise KeyError(name)
-        raise ValueError(
-            f"Capture name {name!r} is ambiguous: matches "
-            f"{len(matches)} bound identifiers."
-        )
-
-    def try_bind(
-        self, name: Identifier, expression: Expression
-    ) -> "MatchBindings | None":
+    def try_bind(self, name: str, expression: Expression) -> "MatchBindings | None":
         """Attempt to add or reconfirm a capture binding.
 
         When ``name`` is not bound, returns a new `MatchBindings`
         with ``name`` mapped to ``expression``. When ``name`` is
         already bound to a structurally equivalent expression,
-        returns the receiver itself. Otherwise returns ``None`` ---
-        the caller's match must fail.
+        returns the receiver itself; the originally-bound expression
+        is retained and the new ``expression`` is discarded, so
+        downstream consumers see the first-bound instance. Otherwise
+        returns ``None`` --- the caller's match must fail.
 
         Args:
-            name: Capture identifier to bind.
+            name: Capture name to bind.
             expression: Expression to bind ``name`` to.
 
         Returns:
             A new `MatchBindings`, the receiver itself, or ``None``.
 
         """
-        existing = self.bindings.get(name)
-        if existing is None:
+        if name not in self.bindings:
             return MatchBindings(self.bindings.set(name, expression))
-        elif existing.is_structurally_equivalent(expression):
+        if self.bindings[name].is_structurally_equivalent(expression):
             return self
-        else:
-            return None
+        return None
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, MatchBindings):
@@ -263,33 +244,25 @@ class WildcardPattern(Pattern):
 
 
 @final
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True)
 class CapturePattern(Pattern):
-    """Match a sub-expression and bind it to a capture identifier.
+    """Match a sub-expression and bind it to a capture name.
 
-    The constructor accepts either an `Identifier` or a ``str``;
-    strings are wrapped in a fresh `Identifier` so callers writing
-    patterns by hand do not have to construct identifiers themselves.
-    Each ``str``-form construction produces a distinct `Identifier`;
-    reuse a shared `Identifier` (or the same `CapturePattern`
-    instance) across positions when the same capture must appear
-    twice in one pattern.
+    Capture names are plain strings: writing ``CapturePattern("x", …)``
+    in two positions of the same compound pattern shares one capture,
+    so the matched sub-expressions must be structurally equivalent for
+    the overall pattern to succeed.
 
     Attributes:
-        name: Capture identifier under which the matched expression
-            is recorded in `MatchBindings`.
+        name: Capture name under which the matched expression is
+            recorded in `MatchBindings`.
         sub_pattern: Inner pattern the expression must match before
             capture. Use `WildcardPattern()` for "any expression."
 
     """
 
-    name: Identifier
+    name: str
     sub_pattern: Pattern
-
-    def __init__(self, name: Identifier | str, sub_pattern: Pattern) -> None:
-        coerced = Identifier(name) if isinstance(name, str) else name
-        object.__setattr__(self, "name", coerced)
-        object.__setattr__(self, "sub_pattern", sub_pattern)
 
     def match_under(
         self, expression: Expression, bindings: MatchBindings
@@ -324,6 +297,8 @@ class LiteralPattern(Pattern):
         elif self.value is None:
             return bindings
         elif (
+            # bool is a subclass of int: a type-identity check prevents
+            # LiteralPattern(value=1) from matching LiteralExpression(True).
             type(self.value) is type(expression.value)
             and self.value == expression.value
         ):
@@ -341,7 +316,8 @@ class IdentifierPattern(Pattern):
         identifier: Required identifier. ``None`` means "any
             identifier." When supplied, the candidate's identifier
             must be the same `Identifier` object (process-global
-            identity).
+            identity; see :class:`Identifier` for the equality
+            contract).
 
     """
 
@@ -457,9 +433,11 @@ class CallExpressionPattern(Pattern):
         function_name: Required function name. ``None`` means "any
             function name."
         arguments: Tuple of patterns the arguments must match
-            position-wise. ``None`` means "any number of arguments,
-            any pattern." When supplied, the pattern matches only
-            when ``len(self.arguments) == len(call.arguments)``.
+            position-wise. The empty tuple ``()`` matches only
+            zero-argument calls; ``None`` means "any arity, any
+            arguments." When a non-``None`` tuple is supplied, the
+            pattern matches only when
+            ``len(self.arguments) == len(call.arguments)``.
 
     """
 
@@ -522,7 +500,10 @@ class AlternativesPattern(Pattern):
     Sub-patterns are tried left-to-right; the bindings from the first
     successful sub-pattern are returned. Each attempt starts from
     the input bindings, so a failed attempt does not taint the
-    accumulator for the next.
+    accumulator for the next; captures from a failed alternative
+    are discarded. Captures inside the chosen alternative are
+    visible to subsequent siblings in the enclosing compound
+    pattern.
 
     Attributes:
         alternatives: Tuple of sub-patterns. Must be non-empty.
