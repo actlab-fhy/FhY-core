@@ -30,13 +30,13 @@ _LOGGER = get_logger(__name__)
 
 
 def _get_binary_operation_type() -> "type[BinaryOperation]":
-    from .expression import BinaryOperation as _BinaryOperation  # noqa: PLC0415
+    from .expression.core import BinaryOperation as _BinaryOperation  # noqa: PLC0415
 
     return _BinaryOperation
 
 
 def _get_unary_operation_type() -> "type[UnaryOperation]":
-    from .expression import UnaryOperation as _UnaryOperation  # noqa: PLC0415
+    from .expression.core import UnaryOperation as _UnaryOperation  # noqa: PLC0415
 
     return _UnaryOperation
 
@@ -44,13 +44,13 @@ def _get_unary_operation_type() -> "type[UnaryOperation]":
 def _make_binary_expression(
     op: "BinaryOperation", left: Any, right: Any
 ) -> "BinaryExpression":
-    from .expression import make_binary_expression  # noqa: PLC0415
+    from .expression.core import make_binary_expression  # noqa: PLC0415
 
     return make_binary_expression(op, left, right)
 
 
 def _make_unary_expression(op: "UnaryOperation", operand: Any) -> "UnaryExpression":
-    from .expression import make_unary_expression  # noqa: PLC0415
+    from .expression.core import make_unary_expression  # noqa: PLC0415
 
     return make_unary_expression(op, operand)
 

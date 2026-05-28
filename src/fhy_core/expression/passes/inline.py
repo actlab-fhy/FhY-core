@@ -29,6 +29,7 @@ __all__ = [
 ]
 
 from fhy_core.error import register_error
+from fhy_core.expression.passes.basic import substitute_identifiers
 from fhy_core.pass_infrastructure import RewritablePass, register_pass
 
 from ..core import CallExpression, Expression
@@ -38,7 +39,6 @@ from ..registry import (
     RegisteredFunction,
     get_registered_entry,
 )
-from .basic import substitute_identifiers
 
 
 @register_error

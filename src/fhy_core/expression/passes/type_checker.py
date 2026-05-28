@@ -33,9 +33,11 @@ them, so callers can see either form on a failed type check.
 """
 
 __all__ = [
+    "CallTargetResolver",
+    "ExpressionTypeChecker",
+    "check_expression_type",
     "get_core_data_type_from_literal_type",
     "synthesize_expression_type",
-    "check_expression_type",
 ]
 
 from contextlib import contextmanager
@@ -55,12 +57,12 @@ from fhy_core.expression.core import (
 )
 from fhy_core.expression.errors import EntryLookupError
 from fhy_core.expression.pprint import pformat_expression
-from fhy_core.expression.registry import (
+from fhy_core.expression.registry.entries import (
     NativeConstant,
     NativeFunction,
     RegisteredFunction,
-    get_registered_entry,
 )
+from fhy_core.expression.registry.storage import get_registered_entry
 from fhy_core.expression.sort import (
     FunctionSort,
     get_result_core_data_type_for_sort,
@@ -90,6 +92,11 @@ from fhy_core.types import (
 from fhy_core.utils import Stack, is_strict_int
 
 ExpressionValueType: TypeAlias = NumericalType | IndexType
+
+CallTargetResolver: TypeAlias = Callable[
+    [str], RegisteredFunction | NativeFunction | NativeConstant
+]
+"""Resolve a call-site name to its registered entry, or raise ``EntryLookupError``."""
 
 _ARITHMETIC_OPERATIONS = frozenset(
     {
@@ -343,10 +350,11 @@ class _TypeCheckContext:
 
 def _try_resolve_native_constant_type(
     identifier_name: str,
+    resolve_call_target: CallTargetResolver,
 ) -> tuple[Type, TypeQualifier] | None:
     """Return the IR type for a constant reference, or ``None`` if absent."""
     try:
-        entry = get_registered_entry(identifier_name)
+        entry = resolve_call_target(identifier_name)
     except EntryLookupError:
         return None
     if not isinstance(entry, NativeConstant):
@@ -383,6 +391,11 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             and falls back to a registered ``NativeConstant`` lookup
             before raising a typed-error. Any other exception
             propagates unchanged.
+        resolve_call_target: Callable that maps a function or constant
+            name to its registered entry. Injected rather than hard-
+            wired to the global registry so the type checker stays
+            decoupled from registry-load ordering and is independently
+            testable.
         defer_on_unknown_call: When ``True``, an unresolved call name
             in :meth:`_resolve_call_function` propagates its raw
             :class:`EntryLookupError` instead of being framed as a
@@ -393,6 +406,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
     """
 
     _get_identifier_type: Callable[[Identifier], tuple[Type, TypeQualifier]]
+    _resolve_call_target: CallTargetResolver
     _context: _TypeCheckContext
     _defer_on_unknown_call: bool
 
@@ -400,10 +414,12 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         self,
         get_identifier_type: Callable[[Identifier], tuple[Type, TypeQualifier]],
         *,
+        resolve_call_target: CallTargetResolver,
         defer_on_unknown_call: bool = False,
     ) -> None:
         super().__init__()
         self._get_identifier_type = get_identifier_type
+        self._resolve_call_target = resolve_call_target
         self._context = _TypeCheckContext()
         self._defer_on_unknown_call = defer_on_unknown_call
 
@@ -452,7 +468,8 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 )
             except KeyError as exc:
                 constant_type = _try_resolve_native_constant_type(
-                    identifier_expression.identifier.name_hint
+                    identifier_expression.identifier.name_hint,
+                    self._resolve_call_target,
                 )
                 if constant_type is not None:
                     return constant_type
@@ -922,7 +939,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         self, call_expression: CallExpression
     ) -> RegisteredFunction | NativeFunction | NativeConstant:
         try:
-            return get_registered_entry(call_expression.function_name)
+            return self._resolve_call_target(call_expression.function_name)
         except EntryLookupError as exc:
             if self._defer_on_unknown_call:
                 raise
@@ -1366,7 +1383,9 @@ def synthesize_expression_type(
         A tuple containing the synthesized type and the type qualifier.
 
     """
-    return ExpressionTypeChecker(get_identifier_type).synthesize(expression)
+    return ExpressionTypeChecker(
+        get_identifier_type, resolve_call_target=get_registered_entry
+    ).synthesize(expression)
 
 
 def check_expression_type(
@@ -1385,4 +1404,6 @@ def check_expression_type(
         A tuple containing the checked type and the type qualifier.
 
     """
-    return ExpressionTypeChecker(get_identifier_type).check(expression, expected_type)
+    return ExpressionTypeChecker(
+        get_identifier_type, resolve_call_target=get_registered_entry
+    ).check(expression, expected_type)

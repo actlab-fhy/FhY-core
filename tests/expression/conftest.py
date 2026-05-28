@@ -51,7 +51,9 @@ def make_identifier_checker(
             return bindings[identifier]
         raise KeyError(identifier.name_hint)
 
-    return ExpressionTypeChecker(lookup)
+    return ExpressionTypeChecker(
+        lookup, resolve_call_target=_registry.get_registered_entry
+    )
 
 
 def make_single_type_checker(
@@ -66,4 +68,6 @@ def make_single_type_checker(
     def lookup(_: Identifier) -> tuple[Type, TypeQualifier]:
         return constant_result
 
-    return ExpressionTypeChecker(lookup)
+    return ExpressionTypeChecker(
+        lookup, resolve_call_target=_registry.get_registered_entry
+    )
