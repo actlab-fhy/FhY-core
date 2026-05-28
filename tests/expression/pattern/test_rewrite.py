@@ -31,6 +31,8 @@ from fhy_core.pass_infrastructure import CompilerPass, PassExecutionError
 
 from ..conftest import mock_identifier
 
+_X_CAPTURE = mock_identifier("x", 1000)
+
 
 def _make_x_plus_zero(identifier: Identifier) -> BinaryExpression:
     """Build the expression ``x + 0`` for a given identifier ``x``."""
@@ -55,10 +57,10 @@ def _make_x_plus_zero_rule() -> RewriteRule:
     return RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.ADD,
-            CapturePattern("x", WildcardPattern()),
+            CapturePattern(_X_CAPTURE, WildcardPattern()),
             LiteralPattern(value=0),
         ),
-        rewrite=lambda bindings: bindings.get("x"),
+        rewrite=lambda bindings: bindings.get(_X_CAPTURE),
         name="x + 0 -> x",
     )
 
@@ -68,8 +70,8 @@ def _make_x_minus_x_rule() -> RewriteRule:
     return RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.SUBTRACT,
-            CapturePattern("x", WildcardPattern()),
-            CapturePattern("x", WildcardPattern()),
+            CapturePattern(_X_CAPTURE, WildcardPattern()),
+            CapturePattern(_X_CAPTURE, WildcardPattern()),
         ),
         rewrite=lambda _: LiteralExpression(0),
         name="x - x -> 0",
@@ -81,10 +83,10 @@ def _make_x_times_one_rule() -> RewriteRule:
     return RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.MULTIPLY,
-            CapturePattern("x", WildcardPattern()),
+            CapturePattern(_X_CAPTURE, WildcardPattern()),
             LiteralPattern(value=1),
         ),
-        rewrite=lambda bindings: bindings.get("x"),
+        rewrite=lambda bindings: bindings.get(_X_CAPTURE),
         name="x * 1 -> x",
     )
 
@@ -151,11 +153,11 @@ def test_apply_rewrite_rule_returns_none_when_guard_returns_false() -> None:
     rule = RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.ADD,
-            CapturePattern("x", WildcardPattern()),
+            CapturePattern(_X_CAPTURE, WildcardPattern()),
             LiteralPattern(),
         ),
         guard=lambda _: False,
-        rewrite=lambda bindings: bindings.get("x"),
+        rewrite=lambda bindings: bindings.get(_X_CAPTURE),
     )
 
     assert apply_rewrite_rule(rule, _make_x_plus_zero(x)) is None
@@ -167,11 +169,11 @@ def test_apply_rewrite_rule_fires_when_guard_returns_true() -> None:
     rule = RewriteRule(
         pattern=BinaryExpressionPattern(
             BinaryOperation.ADD,
-            CapturePattern("x", WildcardPattern()),
+            CapturePattern(_X_CAPTURE, WildcardPattern()),
             LiteralPattern(),
         ),
         guard=lambda _: True,
-        rewrite=lambda bindings: bindings.get("x"),
+        rewrite=lambda bindings: bindings.get(_X_CAPTURE),
     )
 
     result = apply_rewrite_rule(rule, _make_x_plus_zero(x))
@@ -488,8 +490,8 @@ def test_rewrite_rule_applier_wraps_rewrite_exception_as_pass_execution_error() 
 def test_apply_rewrite_rules_with_identity_rewrite_reports_unchanged() -> None:
     """Test a rule whose rewrite returns the matched expression preserves identity."""
     rule = RewriteRule(
-        pattern=CapturePattern("x", WildcardPattern()),
-        rewrite=lambda bindings: bindings.get("x"),
+        pattern=CapturePattern(_X_CAPTURE, WildcardPattern()),
+        rewrite=lambda bindings: bindings.get(_X_CAPTURE),
     )
     expression = LiteralExpression(5)
 
