@@ -175,7 +175,7 @@ def test_match_bindings_is_frozen() -> None:
     bindings = MatchBindings.empty()
 
     with pytest.raises(FrozenMutationError):
-        bindings.something_new = 1  # type: ignore[attr-defined]
+        bindings.something_new = 1
 
 
 def test_match_bindings_equality_against_non_match_bindings_is_false() -> None:
