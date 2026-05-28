@@ -588,6 +588,7 @@ def test_rewrite_rule_applier_emits_diagnostic_when_named_rule_fires() -> None:
 
     pass_result = applier.execute(_make_x_plus_zero(x))
 
+    assert rule.name is not None
     matching = [d for d in pass_result.diagnostics if rule.name in d.message_text]
     assert len(matching) == 1
 
