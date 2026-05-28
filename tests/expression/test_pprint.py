@@ -1,7 +1,5 @@
 """Tests for `fhy_core.expression.pprint`."""
 
-from unittest.mock import patch
-
 import pytest
 
 from fhy_core.expression import (
@@ -14,14 +12,11 @@ from fhy_core.expression import (
     TernaryExpression,
     UnaryExpression,
     UnaryOperation,
-    parse_expression,
     pformat_expression,
 )
 from fhy_core.expression.pprint import ExpressionPrettyFormatter
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
-
-from .conftest import mock_identifier
 
 # =============================================================================
 # Symbolic format (default)
@@ -153,117 +148,6 @@ def test_pretty_formatter_default_uses_symbolic_notation() -> None:
         BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
     )
     assert ExpressionPrettyFormatter()(expression) == "(1 + 2)"
-
-
-# =============================================================================
-# Symbolic-format round-trip with the parser
-# =============================================================================
-
-
-@pytest.mark.parametrize(
-    "expression",
-    [
-        pytest.param(LiteralExpression(5), id="native_int_literal"),
-        pytest.param(LiteralExpression("3.5"), id="str_form_float_literal"),
-        pytest.param(LiteralExpression(True), id="bool_literal"),
-        pytest.param(IdentifierExpression(mock_identifier("x", 0)), id="identifier"),
-        pytest.param(
-            UnaryExpression(
-                UnaryOperation.NEGATE,
-                IdentifierExpression(mock_identifier("x", 0)),
-            ),
-            id="unary_negate",
-        ),
-        pytest.param(
-            UnaryExpression(
-                UnaryOperation.LOGICAL_NOT,
-                IdentifierExpression(mock_identifier("flag", 0)),
-            ),
-            id="unary_logical_not",
-        ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.ADD,
-                LiteralExpression(1),
-                BinaryExpression(
-                    BinaryOperation.MULTIPLY,
-                    LiteralExpression(2),
-                    LiteralExpression(3),
-                ),
-            ),
-            id="add_times_precedence",
-        ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.LOGICAL_AND,
-                IdentifierExpression(mock_identifier("a", 0)),
-                BinaryExpression(
-                    BinaryOperation.LOGICAL_OR,
-                    IdentifierExpression(mock_identifier("b", 1)),
-                    IdentifierExpression(mock_identifier("c", 2)),
-                ),
-            ),
-            id="and_or",
-        ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.POWER,
-                IdentifierExpression(mock_identifier("x", 0)),
-                LiteralExpression(2),
-            ),
-            id="power",
-        ),
-    ],
-)
-@patch("fhy_core.identifier.Identifier._next_id", 0)
-def test_pformat_expression_round_trips_through_parse_expression(
-    expression: Expression,
-) -> None:
-    """Test ``parse_expression(pformat_expression(e))`` round-trips back to ``e``.
-
-    Round-trip is guaranteed for ``int`` / ``bool`` / str-form-float literals
-    and for tree shapes the pretty-printer emits in the parser-recognized
-    form. Native ``float`` literals are explicitly lossy and are exercised
-    separately below.
-    """
-    formatted = pformat_expression(expression)
-    reparsed = parse_expression(formatted)
-    assert reparsed.is_structurally_equivalent(expression)
-
-
-def test_pformat_native_float_literal_does_not_round_trip_through_parser() -> None:
-    """Test ``parse(pformat(LiteralExpression(<float>)))`` is structurally non-equiv.
-
-    The design treats native ``float`` as IEEE-754-imprecise and str-form
-    floats as exact decimals. The pretty-printer emits the float's textual
-    form; the parser stores that as a str literal, structurally unequal to
-    the original native-float literal. This is the documented lossy case
-    in the round-trip contract - locked in here so the asymmetry can't
-    quietly disappear.
-    """
-    original = LiteralExpression(0.5)
-
-    reparsed = parse_expression(pformat_expression(original))
-
-    assert isinstance(reparsed, LiteralExpression)
-    assert type(reparsed.value) is str
-    assert reparsed.value == "0.5"
-    assert not original.is_structurally_equivalent(reparsed)
-
-
-def test_pformat_int_literal_round_trips_through_parser() -> None:
-    """Test ``parse(pformat(LiteralExpression(<int>)))`` is structurally equivalent.
-
-    Positive control for the native-float lossy case above.
-    """
-    original = LiteralExpression(42)
-
-    reparsed = parse_expression(pformat_expression(original))
-
-    assert original.is_structurally_equivalent(reparsed)
-    assert isinstance(reparsed, LiteralExpression)
-    assert type(reparsed.value) is int
-    assert reparsed.value == 42
 
 
 # =============================================================================

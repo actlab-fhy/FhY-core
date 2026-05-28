@@ -5,8 +5,6 @@ type-checker, pretty-printer) in shapes that mirror real callers. They
 are coarser-grained than the per-module unit tests in this directory.
 """
 
-from unittest.mock import patch
-
 import pytest
 
 from fhy_core.expression import (
@@ -22,8 +20,6 @@ from fhy_core.expression import (
     UnaryOperation,
     call,
     inline_functions,
-    parse_expression,
-    pformat_expression,
     register_function,
     ternary,
 )
@@ -54,12 +50,11 @@ def _no_identifiers(identifier: Identifier) -> tuple[Type, TypeQualifier]:
 pytestmark = pytest.mark.integration
 
 
-@patch("fhy_core.identifier.Identifier._next_id", 0)
-def test_parse_max_call_then_inline_yields_expected_ternary_tree() -> None:
-    """Test ``max(1, 2)`` parses, inlines, and equals a literal ternary tree."""
-    parsed = parse_expression("max(1, 2)")
+def test_max_call_then_inline_yields_expected_ternary_tree() -> None:
+    """Test ``max(1, 2)`` inlines to a literal ternary tree."""
+    expression = call("max", LiteralExpression(1), LiteralExpression(2))
 
-    inlined = inline_functions(parsed)
+    inlined = inline_functions(expression)
 
     expected = TernaryExpression(
         BinaryExpression(
@@ -74,53 +69,38 @@ def test_parse_max_call_then_inline_yields_expected_ternary_tree() -> None:
     assert inlined.is_structurally_equivalent(expected)
 
 
-@patch("fhy_core.identifier.Identifier._next_id", 0)
-def test_parse_ternary_then_synthesize_type_returns_branch_type() -> None:
-    """Test ``True ? 1 : 2`` parses and synthesizes to the branches' type.
+def test_ternary_synthesize_type_returns_branch_type() -> None:
+    """Test ``True ? 1 : 2`` synthesizes to the branches' type.
 
     Two weak unsigned-int literal branches stay weak ``UINT`` without an
     outer context.
     """
-    parsed = parse_expression("True ? 1 : 2")
+    expression = ternary(
+        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+    )
 
-    result_type, _ = synthesize_expression_type(parsed, _no_identifiers)
+    result_type, _ = synthesize_expression_type(expression, _no_identifiers)
 
     assert result_type.is_structurally_equivalent(_scalar(CoreDataType.UINT))
 
 
-@patch("fhy_core.identifier.Identifier._next_id", 0)
-def test_parse_inline_synthesize_for_max_min_clamp() -> None:
-    """Test a clamp expression parses, inlines, and synthesizes a numeric type.
+def test_inline_synthesize_for_max_min_clamp() -> None:
+    """Test a clamp expression inlines and synthesizes a numeric type.
 
     ``max(low, min(value, high))`` is the canonical 3-argument clamp. With
     literal integer bounds and no outer context, the result type is the
     weak ``UINT``.
     """
-    parsed = parse_expression("max(0, min(5, 10))")
+    expression = call(
+        "max",
+        LiteralExpression(0),
+        call("min", LiteralExpression(5), LiteralExpression(10)),
+    )
 
-    inlined = inline_functions(parsed)
+    inlined = inline_functions(expression)
     result_type, _ = synthesize_expression_type(inlined, _no_identifiers)
 
     assert result_type.is_structurally_equivalent(_scalar(CoreDataType.UINT))
-
-
-# =============================================================================
-# Integration: pretty-printer round-trip
-# =============================================================================
-
-
-def test_pretty_print_and_parse_round_trip_for_ternary_and_call() -> None:
-    """Test ``parse(pformat(ternary(call(...))))`` round-trips structurally."""
-    expression = TernaryExpression(
-        LiteralExpression(True),
-        CallExpression("max", (LiteralExpression(1), LiteralExpression(2))),
-        LiteralExpression(0),
-    )
-
-    formatted = pformat_expression(expression)
-    reparsed = parse_expression(formatted)
-
-    assert reparsed.is_structurally_equivalent(expression)
 
 
 # =============================================================================
