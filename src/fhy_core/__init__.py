@@ -101,6 +101,9 @@ __all__ = [
     "NamedProvenance",
     "CallSiteProvenance",
     "FusedProvenance",
+    "AlphaEquivalence",
+    "AlphaEquivalenceMixin",
+    "AlphaRenaming",
     "HasIdentifier",
     "HasIdentifierMixin",
     "Interned",
@@ -109,6 +112,7 @@ __all__ = [
     "FrozenMixin",
     "FrozenMutationError",
     "FrozenValidationError",
+    "is_identifier_mapping_alpha_equivalent_under",
     "HasType",
     "HasTypeMixin",
     "HasOperands",
@@ -404,6 +408,9 @@ from .symbol_table import (
 )
 from .symbol_type import SymbolType  # noqa: F401  # re-exported in __all__
 from .trait import (
+    AlphaEquivalence,
+    AlphaEquivalenceMixin,
+    AlphaRenaming,
     Canonicalizable,
     CanonicalizableMixin,
     Equal,
@@ -441,6 +448,7 @@ from .trait import (
     VerificationError,
     Visitable,
     VisitableMixin,
+    is_identifier_mapping_alpha_equivalent_under,
 )
 from .types import (
     CoreDataType,

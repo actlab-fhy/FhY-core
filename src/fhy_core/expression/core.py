@@ -47,6 +47,8 @@ from fhy_core.serialization import (
     register_serializable,
 )
 from fhy_core.trait import (
+    AlphaEquivalenceMixin,
+    AlphaRenaming,
     FrozenMixin,
     HasOperandsMixin,
     RewritableMixin,
@@ -250,6 +252,7 @@ class Expression(
     WrappedFamilySerializable,
     FrozenMixin,
     StructuralEquivalenceMixin,
+    AlphaEquivalenceMixin,
     VisitableMixin,
     RewritableMixin["Expression"],
     ABC,
@@ -269,6 +272,9 @@ class Expression(
 
     def is_structurally_equivalent(self, other: object) -> bool:
         return _is_expression_structurally_equivalent(self, other)
+
+    def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
+        return _is_expression_alpha_equivalent_under(self, other, renaming)
 
     def get_visit_children(self) -> tuple["Expression", ...]:
         return ()
@@ -1012,6 +1018,79 @@ def _(expression: CallExpression, other: object) -> bool:
         and len(expression.arguments) == len(other.arguments)
         and all(
             left.is_structurally_equivalent(right)
+            for left, right in zip(expression.arguments, other.arguments)
+        )
+    )
+
+
+@singledispatch
+def _is_expression_alpha_equivalent_under(
+    expression: Expression, other: object, renaming: AlphaRenaming
+) -> bool:
+    del other, renaming
+    raise NotImplementedError(
+        f"is_alpha_equivalent_under is not registered for {type(expression).__name__}."
+    )
+
+
+@_is_expression_alpha_equivalent_under.register
+def _(expression: UnaryExpression, other: object, renaming: AlphaRenaming) -> bool:
+    return (
+        isinstance(other, UnaryExpression)
+        and expression.operation == other.operation
+        and expression.operand.is_alpha_equivalent_under(other.operand, renaming)
+    )
+
+
+@_is_expression_alpha_equivalent_under.register
+def _(expression: BinaryExpression, other: object, renaming: AlphaRenaming) -> bool:
+    return (
+        isinstance(other, BinaryExpression)
+        and expression.operation == other.operation
+        and expression.left.is_alpha_equivalent_under(other.left, renaming)
+        and expression.right.is_alpha_equivalent_under(other.right, renaming)
+    )
+
+
+@_is_expression_alpha_equivalent_under.register
+def _(expression: IdentifierExpression, other: object, renaming: AlphaRenaming) -> bool:
+    return isinstance(
+        other, IdentifierExpression
+    ) and renaming.are_identifiers_alpha_equivalent(
+        expression.identifier, other.identifier
+    )
+
+
+@_is_expression_alpha_equivalent_under.register
+def _(expression: LiteralExpression, other: object, renaming: AlphaRenaming) -> bool:
+    del renaming
+    return (
+        isinstance(other, LiteralExpression)
+        and type(expression.value) is type(other.value)
+        and expression.value == other.value
+    )
+
+
+@_is_expression_alpha_equivalent_under.register
+def _(expression: TernaryExpression, other: object, renaming: AlphaRenaming) -> bool:
+    return (
+        isinstance(other, TernaryExpression)
+        and expression.condition.is_alpha_equivalent_under(other.condition, renaming)
+        and expression.true_value.is_alpha_equivalent_under(other.true_value, renaming)
+        and expression.false_value.is_alpha_equivalent_under(
+            other.false_value, renaming
+        )
+    )
+
+
+@_is_expression_alpha_equivalent_under.register
+def _(expression: CallExpression, other: object, renaming: AlphaRenaming) -> bool:
+    return (
+        isinstance(other, CallExpression)
+        and expression.function_name == other.function_name
+        and len(expression.arguments) == len(other.arguments)
+        and all(
+            left.is_alpha_equivalent_under(right, renaming)
             for left, right in zip(expression.arguments, other.arguments)
         )
     )
