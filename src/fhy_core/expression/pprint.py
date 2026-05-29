@@ -10,9 +10,11 @@ from .core import (
     UNARY_OPERATION_FUNCTION_NAMES,
     UNARY_OPERATION_SYMBOLS,
     BinaryExpression,
+    CallExpression,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    TernaryExpression,
     UnaryExpression,
 )
 
@@ -77,6 +79,25 @@ class ExpressionPrettyFormatter(VisitablePass[Expression, str]):
     def visit_literal_expression(self, literal_expression: LiteralExpression) -> str:
         return str(literal_expression.value)
 
+    def visit_ternary_expression(self, ternary_expression: TernaryExpression) -> str:
+        condition = self.visit(ternary_expression.condition)
+        true_value = self.visit(ternary_expression.true_value)
+        false_value = self.visit(ternary_expression.false_value)
+        if self._is_printed_functional:
+            return f"(ternary {condition} {true_value} {false_value})"
+        return f"({condition} ? {true_value} : {false_value})"
+
+    def visit_call_expression(self, call_expression: CallExpression) -> str:
+        rendered_arguments = [
+            self.visit(argument) for argument in call_expression.arguments
+        ]
+        name = call_expression.function_name
+        if self._is_printed_functional:
+            if rendered_arguments:
+                return f"({name} {' '.join(rendered_arguments)})"
+            return f"({name})"
+        return f"{name}({', '.join(rendered_arguments)})"
+
     def get_noop_output(self, ir: Expression) -> str:
         raise PassExecutionError(
             f'Pass "{self.get_pass_name()}" does not define noop output.'
@@ -87,8 +108,6 @@ def pformat_expression(
     expression: Expression, show_id: bool = False, functional: bool = False
 ) -> str:
     """Pretty-format an expression.
-
-    The output is not guaranteed to be parseable back into an expression.
 
     Args:
         expression: Expression to pretty-format.

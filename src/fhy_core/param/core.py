@@ -429,18 +429,18 @@ def _create_bound_constraint(
     is_lower: bool,
     is_inclusive: bool,
 ) -> EquationConstraint:
-    param_variable_expression = IdentifierExpression(param_variable)
+    variable_expression = IdentifierExpression(param_variable)
     if is_lower:
         constraint_equation = (
-            param_variable_expression >= bound
+            variable_expression >= bound
             if is_inclusive
-            else param_variable_expression > bound
+            else variable_expression > bound
         )
     else:
         constraint_equation = (
-            param_variable_expression <= bound
+            variable_expression <= bound
             if is_inclusive
-            else param_variable_expression < bound
+            else variable_expression < bound
         )
     return EquationConstraint(param_variable, constraint_equation)
 

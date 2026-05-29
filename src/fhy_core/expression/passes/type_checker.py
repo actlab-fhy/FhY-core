@@ -8,8 +8,8 @@ expected type. Both entry points return ``(Type, TypeQualifier)``.
 
 This module raises :class:`FhYCoreTypeError` for type-rule violations and
 :class:`NotImplementedError` for expression shapes / operations that are
-not yet supported (boolean / string literals, boolean-result operations,
-tensor operands, unknown ``UnaryOperation`` / ``Expression`` subclasses).
+not yet supported (string literals, tensor operands, unknown
+``UnaryOperation`` / ``Expression`` subclasses).
 
 :class:`FhYCoreTypeError` instances raised through
 :meth:`_TypeCheckContext.type_error` carry a context-framed message of one
@@ -33,9 +33,11 @@ them, so callers can see either form on a failed type check.
 """
 
 __all__ = [
+    "CallTargetResolver",
+    "ExpressionTypeChecker",
+    "check_expression_type",
     "get_core_data_type_from_literal_type",
     "synthesize_expression_type",
-    "check_expression_type",
 ]
 
 from contextlib import contextmanager
@@ -44,14 +46,28 @@ from typing import Callable, Iterator, TypeAlias
 from fhy_core.expression.core import (
     BinaryExpression,
     BinaryOperation,
+    CallExpression,
     Expression,
     IdentifierExpression,
     LiteralExpression,
     LiteralType,
+    TernaryExpression,
     UnaryExpression,
     UnaryOperation,
 )
+from fhy_core.expression.errors import EntryLookupError
 from fhy_core.expression.pprint import pformat_expression
+from fhy_core.expression.registry.entries import (
+    NativeConstant,
+    NativeFunction,
+    RegisteredFunction,
+)
+from fhy_core.expression.registry.storage import get_registered_entry
+from fhy_core.expression.sort import (
+    FunctionSort,
+    get_result_core_data_type_for_sort,
+    is_core_data_type_compatible_with_sort,
+)
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     PassExecutionError,
@@ -77,6 +93,11 @@ from fhy_core.utils import Stack, is_strict_int
 
 ExpressionValueType: TypeAlias = NumericalType | IndexType
 
+CallTargetResolver: TypeAlias = Callable[
+    [str], RegisteredFunction | NativeFunction | NativeConstant
+]
+"""Resolve a call-site name to its registered entry, or raise ``EntryLookupError``."""
+
 _ARITHMETIC_OPERATIONS = frozenset(
     {
         BinaryOperation.ADD,
@@ -88,6 +109,23 @@ _ARITHMETIC_OPERATIONS = frozenset(
         BinaryOperation.POWER,
     }
 )
+
+_LOGICAL_BOOLEAN_OPERATIONS = frozenset(
+    {BinaryOperation.LOGICAL_AND, BinaryOperation.LOGICAL_OR}
+)
+
+_EQUALITY_OPERATIONS = frozenset({BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL})
+
+_ORDERING_OPERATIONS = frozenset(
+    {
+        BinaryOperation.LESS,
+        BinaryOperation.LESS_EQUAL,
+        BinaryOperation.GREATER,
+        BinaryOperation.GREATER_EQUAL,
+    }
+)
+
+_COMPARISON_OPERATIONS = _EQUALITY_OPERATIONS | _ORDERING_OPERATIONS
 
 _UNSIGNED_CORE_DATA_TYPES = frozenset(
     {
@@ -147,24 +185,25 @@ _REAL_FLOAT_CORE_DATA_TYPES_BY_BIT_WIDTH = (
 
 
 def get_core_data_type_from_literal_type(literal: LiteralType) -> CoreDataType:
-    """Return the weak core data type assigned to a literal.
+    """Return the core data type assigned to a literal.
 
-    Only numeric literals (``int`` and ``float``) participate in the type
-    system; ``bool`` and ``str`` values are accepted by
-    :class:`~fhy_core.expression.core.LiteralExpression` for other purposes
-    (e.g. serialization round-trips) but have no numeric core data type and
-    are rejected here with :class:`NotImplementedError`. Callers that may
-    receive non-numeric literals should either filter them earlier or catch
-    ``NotImplementedError`` explicitly.
+    Numeric literals (``int`` and ``float``) participate in the type
+    system via the weak ``UINT``/``INT``/``FLOAT`` types; ``bool``
+    literals are concrete ``BOOL``. ``str`` values are accepted by
+    :class:`~fhy_core.expression.core.LiteralExpression` for other
+    purposes (e.g. serialization round-trips) but have no core data type
+    and are rejected here with :class:`NotImplementedError`. Callers that
+    may receive string literals should either filter them earlier or
+    catch ``NotImplementedError`` explicitly.
 
     Raises:
-        NotImplementedError: If ``literal`` is a ``bool`` or ``str``.
+        NotImplementedError: If ``literal`` is a ``str``.
         ValueError: If ``literal`` is none of the supported literal types.
 
     """
     match literal:
         case bool():
-            raise NotImplementedError("Boolean literals are not yet supported.")
+            return CoreDataType.BOOL
         case int() if literal >= 0:
             return CoreDataType.UINT
         case int() if literal < 0:
@@ -185,6 +224,17 @@ def _format_expression(expression: Expression) -> str:
 def _is_weak_numerical_type(numerical_type: NumericalType) -> bool:
     return is_weak_core_data_type(
         _get_primitive_data_type(numerical_type).core_data_type
+    )
+
+
+_BOOLEAN_NUMERICAL_TYPE = NumericalType(PrimitiveDataType(CoreDataType.BOOL))
+
+
+def _is_boolean_numerical_type(value_type: ExpressionValueType) -> bool:
+    return (
+        isinstance(value_type, NumericalType)
+        and isinstance(value_type.data_type, PrimitiveDataType)
+        and value_type.data_type.core_data_type == CoreDataType.BOOL
     )
 
 
@@ -298,22 +348,80 @@ class _TypeCheckContext:
         )
 
 
+def _try_resolve_native_constant_type(
+    identifier_name: str,
+    resolve_call_target: CallTargetResolver,
+) -> tuple[Type, TypeQualifier] | None:
+    """Return the IR type for a constant reference, or ``None`` if absent."""
+    try:
+        entry = resolve_call_target(identifier_name)
+    except EntryLookupError:
+        return None
+    if not isinstance(entry, NativeConstant):
+        return None
+    return (
+        NumericalType(
+            PrimitiveDataType(get_result_core_data_type_for_sort(entry.sort))
+        ),
+        TypeQualifier.PARAM,
+    )
+
+
+def _promote_argument_qualifiers(
+    argument_types: tuple[tuple[Type, TypeQualifier], ...],
+) -> TypeQualifier:
+    """Promote a sequence of argument qualifiers to a single result qualifier."""
+    result: TypeQualifier = TypeQualifier.PARAM
+    for _, qualifier in argument_types:
+        result = promote_type_qualifiers(result, qualifier)
+    return result
+
+
 @register_pass(
     "fhy_core.expression.type_checker",
     "Bidirectionally synthesize and check expression types.",
 )
 class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]]):
-    """Bidirectional type checker for expressions."""
+    """Bidirectional type checker for expressions.
+
+    Args:
+        get_identifier_type: Callable mapping an :class:`Identifier` to
+            its IR type and qualifier. Raises :class:`KeyError` to
+            signal an unbound identifier; the type checker catches this
+            and falls back to a registered ``NativeConstant`` lookup
+            before raising a typed-error. Any other exception
+            propagates unchanged.
+        resolve_call_target: Callable that maps a function or constant
+            name to its registered entry. Injected rather than hard-
+            wired to the global registry so the type checker stays
+            decoupled from registry-load ordering and is independently
+            testable.
+        defer_on_unknown_call: When ``True``, an unresolved call name
+            in :meth:`_resolve_call_function` propagates its raw
+            :class:`EntryLookupError` instead of being framed as a
+            type error. Used by
+            :class:`RegisteredFunctionBodyTypeChecker` to tolerate
+            forward references inside a function body. Defaults to
+            ``False`` (raise framed type errors).
+    """
 
     _get_identifier_type: Callable[[Identifier], tuple[Type, TypeQualifier]]
+    _resolve_call_target: CallTargetResolver
     _context: _TypeCheckContext
+    _defer_on_unknown_call: bool
 
     def __init__(
-        self, get_identifier_type: Callable[[Identifier], tuple[Type, TypeQualifier]]
+        self,
+        get_identifier_type: Callable[[Identifier], tuple[Type, TypeQualifier]],
+        *,
+        resolve_call_target: CallTargetResolver,
+        defer_on_unknown_call: bool = False,
     ) -> None:
         super().__init__()
         self._get_identifier_type = get_identifier_type
+        self._resolve_call_target = resolve_call_target
         self._context = _TypeCheckContext()
+        self._defer_on_unknown_call = defer_on_unknown_call
 
     def synthesize(self, expression: Expression) -> tuple[Type, TypeQualifier]:
         """Synthesize a type for an expression."""
@@ -348,9 +456,27 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         self, identifier_expression: IdentifierExpression
     ) -> tuple[Type, TypeQualifier]:
         with self._context.entering(identifier_expression):
-            identifier_type, identifier_qualifier = self._get_identifier_type(
-                identifier_expression.identifier
-            )
+            # The lookup contract: callers raise ``KeyError`` to signal
+            # an unbound identifier. On ``KeyError`` we fall back to a
+            # registered native constant before framing the failure as
+            # a type error. Any other exception (e.g. ``AssertionError``
+            # from a test fixture, or an unexpected runtime error)
+            # propagates unchanged.
+            try:
+                identifier_type, identifier_qualifier = self._get_identifier_type(
+                    identifier_expression.identifier
+                )
+            except KeyError as exc:
+                constant_type = _try_resolve_native_constant_type(
+                    identifier_expression.identifier.name_hint,
+                    self._resolve_call_target,
+                )
+                if constant_type is not None:
+                    return constant_type
+                raise self._context.type_error(
+                    f"identifier "
+                    f"`{_format_expression(identifier_expression)}` is not bound"
+                ) from exc
             if identifier_qualifier == TypeQualifier.OUTPUT:
                 raise self._context.type_error(
                     f"identifier `{_format_expression(identifier_expression)}` has "
@@ -373,6 +499,16 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             TypeQualifier.PARAM,
         )
 
+    def visit_ternary_expression(
+        self, ternary_expression: TernaryExpression
+    ) -> tuple[Type, TypeQualifier]:
+        return self._infer_ternary_expression(ternary_expression)
+
+    def visit_call_expression(
+        self, call_expression: CallExpression
+    ) -> tuple[Type, TypeQualifier]:
+        return self._infer_call_expression(call_expression)
+
     def get_noop_output(self, ir: Expression) -> tuple[Type, TypeQualifier]:
         raise PassExecutionError(
             f'Pass "{self.get_pass_name()}" does not define noop output for {ir!r}.'
@@ -392,6 +528,10 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 return self.visit_identifier_expression(expression)
             case LiteralExpression():
                 return self._infer_literal_expression(expression, expected_type)
+            case TernaryExpression():
+                return self._infer_ternary_expression(expression, expected_type)
+            case CallExpression():
+                return self._infer_call_expression(expression, expected_type)
             case _:
                 raise NotImplementedError(
                     f"Unsupported expression type: {type(expression)}"
@@ -415,10 +555,19 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                     f"{expected_type}"
                 )
 
-            resolved_core_data_type = resolve_literal_core_data_type(
-                _get_numeric_literal_value(literal_expression),
-                _get_primitive_data_type(expected_value_type).core_data_type,
-            )
+            expected_core_data_type = _get_primitive_data_type(
+                expected_value_type
+            ).core_data_type
+            literal_value = literal_expression.value
+            if isinstance(literal_value, bool):
+                resolved_core_data_type = resolve_literal_core_data_type(
+                    literal_value, expected_core_data_type
+                )
+            else:
+                resolved_core_data_type = resolve_literal_core_data_type(
+                    _get_numeric_literal_value(literal_expression),
+                    expected_core_data_type,
+                )
             return (
                 NumericalType(PrimitiveDataType(resolved_core_data_type)),
                 TypeQualifier.PARAM,
@@ -440,12 +589,20 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
 
             match unary_expression.operation:
                 case UnaryOperation.POSITIVE:
+                    if _is_boolean_numerical_type(operand_value_type):
+                        raise self._context.type_error(
+                            "unary positive is not defined for boolean operands"
+                        )
                     return operand_value_type, operand_qualifier
                 case UnaryOperation.NEGATE:
                     if isinstance(operand_value_type, IndexType):
                         raise self._context.type_error(
                             "unary negation is not defined for index types; the "
                             "resulting bounds and stride cannot be inferred safely"
+                        )
+                    if _is_boolean_numerical_type(operand_value_type):
+                        raise self._context.type_error(
+                            "unary negation is not defined for boolean operands"
                         )
                     if isinstance(
                         unary_expression.operand, LiteralExpression
@@ -464,9 +621,12 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                         )
                     return operand_value_type, operand_qualifier
                 case UnaryOperation.LOGICAL_NOT:
-                    raise NotImplementedError(
-                        "Boolean result types are not yet supported."
-                    )
+                    if not _is_boolean_numerical_type(operand_value_type):
+                        raise self._context.type_error(
+                            f"logical NOT requires a boolean operand, but got "
+                            f"{operand_value_type}"
+                        )
+                    return _BOOLEAN_NUMERICAL_TYPE, operand_qualifier
                 case _:
                     raise NotImplementedError(
                         f"unary operation {unary_expression.operation} is not supported"
@@ -514,8 +674,30 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 operation,
             )
 
-            if operation not in _ARITHMETIC_OPERATIONS:
-                raise NotImplementedError("Boolean result types are not yet supported.")
+            if operation in _LOGICAL_BOOLEAN_OPERATIONS:
+                return self._infer_logical_binary(
+                    operation,
+                    left_value_type,
+                    right_value_type,
+                    left_qualifier,
+                    right_qualifier,
+                )
+            if operation in _COMPARISON_OPERATIONS:
+                return self._infer_comparison_binary(
+                    operation,
+                    left_value_type,
+                    right_value_type,
+                    left_qualifier,
+                    right_qualifier,
+                )
+
+            if _is_boolean_numerical_type(
+                left_value_type
+            ) or _is_boolean_numerical_type(right_value_type):
+                raise self._context.type_error(
+                    f"the {operation.name.lower()} operation is not defined "
+                    f"for boolean operands"
+                )
 
             return self._dispatch_arithmetic_binary(
                 binary_expression,
@@ -525,6 +707,92 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 left_qualifier,
                 right_qualifier,
             )
+
+    def _infer_logical_binary(
+        self,
+        operation: BinaryOperation,
+        left_value_type: ExpressionValueType,
+        right_value_type: ExpressionValueType,
+        left_qualifier: TypeQualifier,
+        right_qualifier: TypeQualifier,
+    ) -> tuple[Type, TypeQualifier]:
+        if not (
+            _is_boolean_numerical_type(left_value_type)
+            and _is_boolean_numerical_type(right_value_type)
+        ):
+            raise self._context.type_error(
+                f"logical {operation.name.lower()} requires boolean operands, "
+                f"but got {left_value_type} and {right_value_type}"
+            )
+        return (
+            _BOOLEAN_NUMERICAL_TYPE,
+            promote_type_qualifiers(left_qualifier, right_qualifier),
+        )
+
+    def _infer_comparison_binary(
+        self,
+        operation: BinaryOperation,
+        left_value_type: ExpressionValueType,
+        right_value_type: ExpressionValueType,
+        left_qualifier: TypeQualifier,
+        right_qualifier: TypeQualifier,
+    ) -> tuple[Type, TypeQualifier]:
+        result_qualifier = promote_type_qualifiers(left_qualifier, right_qualifier)
+        left_is_bool = _is_boolean_numerical_type(left_value_type)
+        right_is_bool = _is_boolean_numerical_type(right_value_type)
+
+        if operation in _ORDERING_OPERATIONS and (left_is_bool or right_is_bool):
+            raise self._context.type_error(
+                f"ordering operation {operation.name.lower()} is not defined for "
+                f"boolean operands"
+            )
+
+        if operation in _EQUALITY_OPERATIONS and (left_is_bool or right_is_bool):
+            if not (left_is_bool and right_is_bool):
+                raise self._context.type_error(
+                    f"equality operation {operation.name.lower()} is not defined "
+                    f"between boolean and non-boolean operands "
+                    f"({left_value_type}, {right_value_type})"
+                )
+            return _BOOLEAN_NUMERICAL_TYPE, result_qualifier
+
+        if isinstance(left_value_type, IndexType) and isinstance(
+            right_value_type, IndexType
+        ):
+            if operation in _EQUALITY_OPERATIONS:
+                if not left_value_type.is_structurally_equivalent(right_value_type):
+                    raise self._context.type_error(
+                        f"equality on index types requires structural equivalence, "
+                        f"but {left_value_type} and {right_value_type} differ"
+                    )
+                return _BOOLEAN_NUMERICAL_TYPE, result_qualifier
+            raise self._context.type_error(
+                f"ordering operation {operation.name.lower()} is not defined "
+                f"between two index types"
+            )
+
+        if isinstance(left_value_type, IndexType) or isinstance(
+            right_value_type, IndexType
+        ):
+            non_index_value_type = (
+                right_value_type
+                if isinstance(left_value_type, IndexType)
+                else left_value_type
+            )
+            raise self._context.type_error(
+                f"comparison {operation.name.lower()} is not defined between "
+                f"index type and {non_index_value_type}"
+            )
+
+        # Both are non-boolean ``NumericalType`` here. The comparison
+        # result is always ``BOOL``; this call only validates that the
+        # two operand types share a common promoted type, raising
+        # ``FhYCoreTypeError`` otherwise.
+        promote_primitive_data_types(
+            _get_primitive_data_type(left_value_type),
+            _get_primitive_data_type(right_value_type),
+        )
+        return _BOOLEAN_NUMERICAL_TYPE, result_qualifier
 
     @staticmethod
     def _propagate_expected_type_to_literal_operands(
@@ -557,12 +825,17 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         operation: BinaryOperation,
     ) -> tuple[ExpressionValueType, TypeQualifier]:
         if not (
-            operation in _ARITHMETIC_OPERATIONS
+            (
+                operation in _ARITHMETIC_OPERATIONS
+                or operation in _ORDERING_OPERATIONS
+                or operation in _EQUALITY_OPERATIONS
+            )
             and isinstance(operand_expression, LiteralExpression)
             and isinstance(operand_value_type, NumericalType)
             and _is_weak_numerical_type(operand_value_type)
             and isinstance(other_value_type, NumericalType)
             and not _is_weak_numerical_type(other_value_type)
+            and not _is_boolean_numerical_type(other_value_type)
         ):
             return operand_value_type, operand_qualifier
         checked_type, operand_qualifier = self.check(
@@ -572,6 +845,151 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             operand_expression, checked_type
         )
         return operand_value_type, operand_qualifier
+
+    def _infer_ternary_expression(
+        self,
+        ternary_expression: TernaryExpression,
+        expected_type: Type | None = None,
+    ) -> tuple[Type, TypeQualifier]:
+        with self._context.entering(ternary_expression):
+            condition_type, condition_qualifier = self._infer(
+                ternary_expression.condition, _BOOLEAN_NUMERICAL_TYPE
+            )
+            condition_value_type = self._as_expression_value_type(
+                ternary_expression.condition, condition_type
+            )
+            if not _is_boolean_numerical_type(condition_value_type):
+                raise self._context.type_error(
+                    f"ternary condition must be boolean, but got {condition_value_type}"
+                )
+
+            branch_expected = self._ternary_branch_expected_type(expected_type)
+
+            true_type, true_qualifier = self._infer(
+                ternary_expression.true_value, branch_expected
+            )
+            false_type, false_qualifier = self._infer(
+                ternary_expression.false_value, branch_expected
+            )
+
+            true_value_type = self._as_expression_value_type(
+                ternary_expression.true_value, true_type
+            )
+            false_value_type = self._as_expression_value_type(
+                ternary_expression.false_value, false_type
+            )
+
+            if not (
+                isinstance(true_value_type, NumericalType)
+                and isinstance(false_value_type, NumericalType)
+            ):
+                raise self._context.type_error(
+                    "ternary branches must both be scalar numerical types, but "
+                    f"got {true_value_type} and {false_value_type}"
+                )
+
+            result_primitive = promote_primitive_data_types(
+                _get_primitive_data_type(true_value_type),
+                _get_primitive_data_type(false_value_type),
+            )
+            result_qualifier = promote_type_qualifiers(
+                condition_qualifier,
+                promote_type_qualifiers(true_qualifier, false_qualifier),
+            )
+            return NumericalType(result_primitive), result_qualifier
+
+    @staticmethod
+    def _ternary_branch_expected_type(
+        expected_type: Type | None,
+    ) -> Type | None:
+        if isinstance(expected_type, NumericalType) and expected_type.is_scalar():
+            return expected_type
+        return None
+
+    def _infer_call_expression(
+        self,
+        call_expression: CallExpression,
+        expected_type: Type | None = None,  # noqa: ARG002
+    ) -> tuple[Type, TypeQualifier]:
+        with self._context.entering(call_expression):
+            entry = self._resolve_call_function(call_expression)
+            if isinstance(entry, NativeConstant):
+                raise self._context.type_error(
+                    f"{call_expression.function_name!r} is a registered "
+                    f"constant, not a function; reference it as an identifier "
+                    f"instead of calling it"
+                )
+            self._check_call_arity(
+                entry.name,
+                len(entry.parameter_sorts),
+                len(call_expression.arguments),
+            )
+            argument_types = tuple(
+                self._infer(argument) for argument in call_expression.arguments
+            )
+            self._check_arguments_against_sorts(
+                entry.name, entry.parameter_sorts, argument_types
+            )
+            result_type = NumericalType(
+                PrimitiveDataType(get_result_core_data_type_for_sort(entry.result_sort))
+            )
+            return result_type, _promote_argument_qualifiers(argument_types)
+
+    def _resolve_call_function(
+        self, call_expression: CallExpression
+    ) -> RegisteredFunction | NativeFunction | NativeConstant:
+        try:
+            return self._resolve_call_target(call_expression.function_name)
+        except EntryLookupError as exc:
+            if self._defer_on_unknown_call:
+                raise
+            raise self._context.type_error(
+                f"call to unknown function {call_expression.function_name!r}: {exc}"
+            ) from exc
+
+    def _check_call_arity(
+        self, function_name: str, expected_count: int, actual_count: int
+    ) -> None:
+        if actual_count == expected_count:
+            return
+        raise self._context.type_error(
+            f"function {function_name!r} expects {expected_count} argument(s), "
+            f"but got {actual_count}"
+        )
+
+    def _check_arguments_against_sorts(
+        self,
+        function_name: str,
+        parameter_sorts: tuple[FunctionSort, ...],
+        argument_types: tuple[tuple[Type, TypeQualifier], ...],
+    ) -> None:
+        for index, (parameter_sort, (argument_type, _)) in enumerate(
+            zip(parameter_sorts, argument_types)
+        ):
+            self._check_argument_sort(
+                function_name, index, parameter_sort, argument_type
+            )
+
+    def _check_argument_sort(
+        self,
+        function_name: str,
+        argument_index: int,
+        parameter_sort: FunctionSort,
+        argument_type: Type,
+    ) -> None:
+        if not isinstance(argument_type, NumericalType) or not isinstance(
+            argument_type.data_type, PrimitiveDataType
+        ):
+            raise self._context.type_error(
+                f"argument {argument_index} of function {function_name!r} "
+                f"expects sort {parameter_sort}, but got {argument_type}"
+            )
+        core_data_type = argument_type.data_type.core_data_type
+        if not is_core_data_type_compatible_with_sort(core_data_type, parameter_sort):
+            raise self._context.type_error(
+                f"argument {argument_index} of function {function_name!r} "
+                f"expects sort {parameter_sort}, but got {argument_type}"
+            )
 
     def _dispatch_arithmetic_binary(
         self,
@@ -965,7 +1383,9 @@ def synthesize_expression_type(
         A tuple containing the synthesized type and the type qualifier.
 
     """
-    return ExpressionTypeChecker(get_identifier_type).synthesize(expression)
+    return ExpressionTypeChecker(
+        get_identifier_type, resolve_call_target=get_registered_entry
+    ).synthesize(expression)
 
 
 def check_expression_type(
@@ -984,4 +1404,6 @@ def check_expression_type(
         A tuple containing the checked type and the type qualifier.
 
     """
-    return ExpressionTypeChecker(get_identifier_type).check(expression, expected_type)
+    return ExpressionTypeChecker(
+        get_identifier_type, resolve_call_target=get_registered_entry
+    ).check(expression, expected_type)

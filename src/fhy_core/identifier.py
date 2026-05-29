@@ -54,9 +54,9 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     greater than the next-to-be-issued value advances the counter past it.
 
     ``repr`` of an ``Identifier`` returns ``"<name_hint>::<id>"``. The form
-    is for debugging only --- it is not a serialization protocol and is not
+    is for debugging only. It is not a serialization protocol and is not
     round-trippable through the constructor. Use the structured ``id`` and
-    ``name_hint`` properties (or ``serialize_to_dict``) when a parseable
+    ``name_hint`` properties (or ``serialize_to_dict``) when a structured
     representation is needed.
 
     The class is ``@final`` and is not intended to be subclassed; callers

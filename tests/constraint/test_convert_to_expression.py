@@ -13,8 +13,8 @@ from fhy_core.constraint import (
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
-    IdentifierExpression,
     LiteralExpression,
+    make_binary_expression,
 )
 from fhy_core.identifier import Identifier
 
@@ -69,7 +69,7 @@ def test_singleton_set_returns_single_leaf(
 
     expression = constraint.convert_to_expression()
 
-    expected = BinaryExpression(leaf_op, IdentifierExpression(x), LiteralExpression(42))
+    expected = make_binary_expression(leaf_op, x, 42)
     assert isinstance(expression, BinaryExpression)
     assert expression.operation == leaf_op
     assert expected.is_structurally_equivalent(expression)
@@ -87,10 +87,10 @@ def test_multi_value_set_returns_combinator_of_leaves(
 
     expression = constraint.convert_to_expression()
 
-    expected = BinaryExpression(
+    expected = make_binary_expression(
         combinator,
-        BinaryExpression(leaf_op, IdentifierExpression(x), LiteralExpression(1)),
-        BinaryExpression(leaf_op, IdentifierExpression(x), LiteralExpression(2)),
+        make_binary_expression(leaf_op, x, 1),
+        make_binary_expression(leaf_op, x, 2),
     )
     assert expected.is_structurally_equivalent(expression)
 
@@ -111,24 +111,6 @@ def test_non_literal_member_rejected_by_conversion(
 @pytest.mark.parametrize(
     "factory", [InSetConstraint, NotInSetConstraint], ids=["in_set", "not_in_set"]
 )
-def test_integer_form_string_member_rejected_by_conversion(
-    factory: SetConstraintFactory,
-) -> None:
-    """Test integer-form string members raise ``ConstraintError`` from conversion.
-
-    ``LiteralExpression("1")`` canonicalizes to ``LiteralExpression(1)``
-    (int), which would silently break type-strict equality between
-    the constraint and its converted expression.
-    """
-    constraint = factory(mock_identifier("x", 0), ["1"])
-
-    with pytest.raises(ConstraintError, match="type-strict"):
-        constraint.convert_to_expression()
-
-
-@pytest.mark.parametrize(
-    "factory", [InSetConstraint, NotInSetConstraint], ids=["in_set", "not_in_set"]
-)
 def test_non_grammar_string_member_rejected_by_conversion_as_constraint_error(
     factory: SetConstraintFactory,
 ) -> None:
@@ -136,6 +118,36 @@ def test_non_grammar_string_member_rejected_by_conversion_as_constraint_error(
     constraint = factory(mock_identifier("x", 0), ["hello"])
 
     with pytest.raises(ConstraintError):
+        constraint.convert_to_expression()
+
+
+@pytest.mark.parametrize(
+    "factory", [InSetConstraint, NotInSetConstraint], ids=["in_set", "not_in_set"]
+)
+@pytest.mark.parametrize(
+    "string_member",
+    [
+        pytest.param("1", id="integer_grammar"),
+        pytest.param("01", id="integer_grammar_leading_zero"),
+        pytest.param("1.5", id="float_grammar"),
+        pytest.param(".5", id="float_grammar_no_integer_part"),
+    ],
+)
+def test_numeric_string_member_rejected_by_conversion(
+    factory: SetConstraintFactory, string_member: str
+) -> None:
+    """Test numeric-string members raise ``ConstraintError`` from conversion.
+
+    Constraint membership is type-strict (``1`` and ``"1"`` are
+    distinct), but ``LiteralExpression`` equivalence canonicalizes
+    string-form literals against the matching numeric bucket. Lifting a
+    string member to ``LiteralExpression`` would silently widen the
+    constraint's membership semantics, so conversion rejects ``str``
+    members.
+    """
+    constraint = factory(mock_identifier("x", 0), [string_member])
+
+    with pytest.raises(ConstraintError, match="type-strict"):
         constraint.convert_to_expression()
 
 

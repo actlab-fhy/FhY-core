@@ -62,12 +62,11 @@ from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
 from fhy_core.utils import format_comma_separated_list
 
 from .expression import (
-    BinaryExpression,
     BinaryOperation,
     Expression,
-    IdentifierExpression,
     LiteralExpression,
     LiteralType,
+    make_binary_expression,
     pformat_expression,
     simplify_expression,
 )
@@ -233,11 +232,12 @@ def _lift_member_to_literal_expression(value: ConstraintMember) -> LiteralExpres
     """Lifts a constraint member to a ``LiteralExpression``.
 
     Raises:
-        ConstraintError: If the member is not a ``LiteralType``, if
-            ``LiteralExpression`` refuses the value, or if
-            ``LiteralExpression``'s canonicalization would change the
-            value's type and break the constraint's type-strict
-            equality with the converted expression.
+        ConstraintError: If the member is not a ``LiteralType``, if it
+            is a ``str`` (constraint membership is type-strict, but
+            ``LiteralExpression`` equivalence canonicalizes ``"1"`` to
+            int ``1`` and ``"1.5"`` to a ``Decimal``, so the converted
+            expression would not match the constraint's membership
+            semantics), or if ``LiteralExpression`` refuses the value.
 
     """
     if not isinstance(value, LiteralType):
@@ -245,21 +245,20 @@ def _lift_member_to_literal_expression(value: ConstraintMember) -> LiteralExpres
             f"Conversion of type {type(value).__name__} to an expression is "
             "not supported."
         )
+    if isinstance(value, str):
+        raise ConstraintError(
+            f"Member {value!r} is a string; constraint membership uses "
+            "type-strict equality, but the converted expression's literal "
+            "equivalence would canonicalize the string against int and "
+            "float members. Convert the member to the canonical numeric "
+            "type before constructing the constraint."
+        )
     try:
-        literal = LiteralExpression(value)
+        return LiteralExpression(value)
     except ValueError as exc:
         raise ConstraintError(
             f"Member {value!r} cannot be represented as a literal expression: {exc}"
         ) from exc
-    if type(literal.value) is not type(value):
-        raise ConstraintError(
-            f"Member {value!r} of type {type(value).__name__} would be "
-            f"canonicalized to type {type(literal.value).__name__} in the "
-            "converted expression, which would break type-strict equality "
-            "between the constraint and its expression. Convert the member "
-            "to the canonical type before constructing the constraint."
-        )
-    return literal
 
 
 def _serialize_constraint_member(value: ConstraintMember) -> SerializedDict:
@@ -542,11 +541,7 @@ class InSetConstraint(Constraint):
 
     def _build_leaf_expression(self, wrapped: _TypedMember) -> Expression:
         literal = _lift_member_to_literal_expression(_unwrap_member(wrapped))
-        return BinaryExpression(
-            BinaryOperation.EQUAL,
-            IdentifierExpression(self.variable),
-            literal,
-        )
+        return make_binary_expression(BinaryOperation.EQUAL, self.variable, literal)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -638,11 +633,7 @@ class NotInSetConstraint(Constraint):
 
     def _build_leaf_expression(self, wrapped: _TypedMember) -> Expression:
         literal = _lift_member_to_literal_expression(_unwrap_member(wrapped))
-        return BinaryExpression(
-            BinaryOperation.NOT_EQUAL,
-            IdentifierExpression(self.variable),
-            literal,
-        )
+        return make_binary_expression(BinaryOperation.NOT_EQUAL, self.variable, literal)
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {

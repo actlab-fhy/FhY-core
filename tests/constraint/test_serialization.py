@@ -11,10 +11,9 @@ from fhy_core.constraint import (
     NotInSetConstraint,
 )
 from fhy_core.expression import (
-    BinaryExpression,
     BinaryOperation,
-    IdentifierExpression,
     LiteralExpression,
+    make_binary_expression,
 )
 from fhy_core.serialization import (
     DeserializationDictStructureError,
@@ -35,9 +34,7 @@ SetConstraintType = type[Constraint]
 def test_equation_constraint_round_trip_dict_serialization() -> None:
     """Test an `EquationConstraint` round-trips through dict serialization."""
     x = mock_identifier("x", 0)
-    expression = BinaryExpression(
-        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(True)
-    )
+    expression = make_binary_expression(BinaryOperation.EQUAL, x, True)
     constraint = EquationConstraint(x, expression)
     expected = {
         "__type__": "equation_constraint",

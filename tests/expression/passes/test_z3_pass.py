@@ -20,9 +20,11 @@ import z3  # type: ignore[import-untyped]
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
+    CallExpression,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    TernaryExpression,
     UnaryExpression,
     UnaryOperation,
     convert_expression_to_z3_expression,
@@ -34,7 +36,7 @@ from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
 from fhy_core.symbol_type import SymbolType
 
-from .conftest import mock_identifier
+from ..conftest import mock_identifier
 
 pytestmark = pytest.mark.z3
 
@@ -644,3 +646,57 @@ def test_does_expression_imply_raises_on_missing_symbol_type() -> None:
 
     with pytest.raises(KeyError, match=r"symbol_types is missing entries"):
         does_expression_imply(antecedent, consequent, {x: SymbolType.INT})
+
+
+# =============================================================================
+# TernaryExpression -> z3.If
+# =============================================================================
+
+
+def test_convert_ternary_expression_to_z3_if() -> None:
+    """Test ``TernaryExpression`` lowers to ``z3.If``."""
+    x = mock_identifier("x", 0)
+    expression = TernaryExpression(
+        BinaryExpression(
+            BinaryOperation.GREATER,
+            IdentifierExpression(x),
+            LiteralExpression(0),
+        ),
+        IdentifierExpression(x),
+        UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(x)),
+    )
+
+    z3_expression, _ = convert_expression_to_z3_expression(
+        expression, {x: SymbolType.INT}
+    )
+
+    assert isinstance(z3_expression, z3.ExprRef)
+
+
+def test_convert_ternary_with_boolean_literal_branches_to_z3_if() -> None:
+    """Test ``cond ? True : False`` lowers cleanly via z3 with bool symbols."""
+    flag = mock_identifier("flag", 0)
+    expression = TernaryExpression(
+        IdentifierExpression(flag),
+        LiteralExpression(True),
+        LiteralExpression(False),
+    )
+
+    z3_expression, _ = convert_expression_to_z3_expression(
+        expression, {flag: SymbolType.BOOL}
+    )
+
+    assert isinstance(z3_expression, z3.ExprRef)
+
+
+# =============================================================================
+# CallExpression interplay with the z3 converter
+# =============================================================================
+
+
+def test_convert_call_expression_to_z3_rejects_unresolved_call() -> None:
+    """Test the z3 lowering rejects ``CallExpression`` (callers must inline first)."""
+    expression = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
+
+    with pytest.raises(PassExecutionError, match="TypeError"):
+        convert_expression_to_z3_expression(expression, {})

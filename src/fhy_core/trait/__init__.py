@@ -1,6 +1,9 @@
 """Compiler object traits package."""
 
 __all__ = [
+    "AlphaEquivalence",
+    "AlphaEquivalenceMixin",
+    "AlphaRenaming",
     "Canonicalizable",
     "CanonicalizableMixin",
     "Equal",
@@ -29,6 +32,8 @@ __all__ = [
     "OrderableMixin",
     "PartialOrderable",
     "PartialOrderableMixin",
+    "Rewritable",
+    "RewritableMixin",
     "StructuralEquivalence",
     "StructuralEquivalenceMixin",
     "Verifiable",
@@ -36,8 +41,15 @@ __all__ = [
     "Visitable",
     "VisitableMixin",
     "VerificationError",
+    "is_identifier_mapping_alpha_equivalent_under",
 ]
 
+from .alpha_equivalence import (
+    AlphaEquivalence,
+    AlphaEquivalenceMixin,
+    AlphaRenaming,
+    is_identifier_mapping_alpha_equivalent_under,
+)
 from .canonicalizable import Canonicalizable, CanonicalizableMixin
 from .equality import Equal, EqualMixin, PartialEqual, PartialEqualMixin
 from .foldable import Foldable, FoldableMixin
@@ -59,6 +71,7 @@ from .orderable import (
     PartialOrderable,
     PartialOrderableMixin,
 )
+from .rewritable import Rewritable, RewritableMixin
 from .structural_equivalence import (
     StructuralEquivalence,
     StructuralEquivalenceMixin,

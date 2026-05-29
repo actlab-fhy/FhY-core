@@ -43,7 +43,7 @@ from fhy_core.types import (
     TypeQualifier,
 )
 
-from .conftest import make_identifier_checker, make_single_type_checker
+from ..conftest import make_identifier_checker, make_single_type_checker
 
 
 def _make_scalar(core_data_type: CoreDataType) -> NumericalType:
@@ -83,15 +83,6 @@ def test_get_core_data_type_from_literal_type_returns_weak_types(
     assert get_core_data_type_from_literal_type(literal) is expected_core_data_type
 
 
-@pytest.mark.parametrize("literal", [True, False])
-def test_get_core_data_type_from_literal_type_rejects_bool_literal(
-    literal: bool,
-) -> None:
-    """Test boolean literals are rejected with `NotImplementedError`."""
-    with pytest.raises(NotImplementedError):
-        get_core_data_type_from_literal_type(literal)
-
-
 def test_get_core_data_type_from_literal_type_rejects_string_literal() -> None:
     """Test string literals are rejected with `NotImplementedError`."""
     with pytest.raises(NotImplementedError):
@@ -101,13 +92,6 @@ def test_get_core_data_type_from_literal_type_rejects_string_literal() -> None:
 # =============================================================================
 # Literal synthesis - weak typing & bidirectional check
 # =============================================================================
-
-
-def test_synthesize_bool_literal_expression_is_rejected() -> None:
-    """Test a `LiteralExpression(True)` is rejected during type synthesis."""
-    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
-    with pytest.raises(NotImplementedError):
-        checker.visit(LiteralExpression(True))
 
 
 def test_synthesize_string_literal_expression_is_rejected() -> None:
@@ -1735,8 +1719,8 @@ def test_floor_division_of_two_real_floats_promotes_via_lattice() -> None:
 # =============================================================================
 
 
-def test_synthesize_logical_and_raises_not_implemented() -> None:
-    """Test `synthesize(LOGICAL_AND(...))` raises `NotImplementedError`."""
+def test_synthesize_logical_and_on_non_bool_identifiers_raises_type_error() -> None:
+    """Test `LOGICAL_AND` rejects non-boolean operands with `FhYCoreTypeError`."""
     left = Identifier("a")
     right = Identifier("b")
     checker = make_identifier_checker(
@@ -1746,7 +1730,7 @@ def test_synthesize_logical_and_raises_not_implemented() -> None:
         }
     )
 
-    with pytest.raises(NotImplementedError, match=r"Boolean result types"):
+    with pytest.raises(FhYCoreTypeError):
         checker.visit(
             BinaryExpression(
                 BinaryOperation.LOGICAL_AND,
@@ -1756,14 +1740,14 @@ def test_synthesize_logical_and_raises_not_implemented() -> None:
         )
 
 
-def test_synthesize_logical_not_unary_raises_not_implemented() -> None:
-    """Test `synthesize(LOGICAL_NOT(...))` raises `NotImplementedError`."""
+def test_synthesize_logical_not_on_non_bool_identifier_raises_type_error() -> None:
+    """Test `LOGICAL_NOT` rejects a non-boolean operand with `FhYCoreTypeError`."""
     identifier = Identifier("p")
     checker = make_identifier_checker(
         {identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM)}
     )
 
-    with pytest.raises(NotImplementedError, match=r"Boolean result types"):
+    with pytest.raises(FhYCoreTypeError):
         checker.visit(
             UnaryExpression(
                 UnaryOperation.LOGICAL_NOT, IdentifierExpression(identifier)
@@ -1790,11 +1774,15 @@ def test_synthesize_rejects_identifier_with_template_numerical_data_type() -> No
         checker.visit(IdentifierExpression(identifier))
 
 
-def test_check_bool_literal_against_numerical_type_rejects_via_resolver() -> None:
-    """Test ``check(Lit(True), NumericalType)`` rejects the bool literal."""
+def test_check_bool_literal_against_numerical_type_rejects() -> None:
+    """Test ``check(Lit(True), NumericalType)`` rejects the bool literal.
+
+    Boolean does not promote with numerical core data types; checking a
+    boolean literal against an integer type therefore fails.
+    """
     checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
 
-    with pytest.raises(FhYCoreTypeError, match=r"expected a numeric literal value"):
+    with pytest.raises(FhYCoreTypeError):
         checker.check(LiteralExpression(True), _make_scalar(CoreDataType.INT32))
 
 

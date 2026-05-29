@@ -1,6 +1,9 @@
 """Tests compiler IR traits."""
 
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+
+import pytest
 
 from fhy_core.trait import (
     Canonicalizable,
@@ -11,6 +14,8 @@ from fhy_core.trait import (
     HasOperandsMixin,
     HasResults,
     HasResultsMixin,
+    Rewritable,
+    RewritableMixin,
     StructuralEquivalence,
     StructuralEquivalenceMixin,
 )
@@ -62,6 +67,33 @@ class _StructEqNode(StructuralEquivalenceMixin):
             and self.opcode == other.opcode
             and self.operands == other.operands
         )
+
+
+@dataclass
+class _LeafNode(RewritableMixin[int]):
+    """Rewritable leaf with no children; uses the default ``rebuild`` behavior."""
+
+
+@dataclass
+class _PairNode(RewritableMixin[int]):
+    """Rewritable node with two integer children that destructures on rebuild."""
+
+    left: int
+    right: int
+
+    def rebuild_with_visit_children(self, new_children: Sequence[int]) -> "_PairNode":
+        left, right = new_children
+        return _PairNode(left, right)
+
+
+@dataclass
+class _ListNode(RewritableMixin[int]):
+    """Rewritable node with a variable-length child sequence."""
+
+    children: tuple[int, ...] = field(default_factory=tuple)
+
+    def rebuild_with_visit_children(self, new_children: Sequence[int]) -> "_ListNode":
+        return _ListNode(tuple(new_children))
 
 
 def test_has_operands_runtime_protocol() -> None:
@@ -162,3 +194,73 @@ def test_structural_equivalence_false_for_different_type() -> None:
     """Test structural equivalence is false for different Python types."""
     node = _StructEqNode("add", (1, 2))
     assert not node.is_structurally_equivalent((1, 2))
+
+
+def test_rewritable_runtime_protocol() -> None:
+    """Test `Rewritable` runtime protocol."""
+    node = _PairNode(1, 2)
+    assert isinstance(node, Rewritable)
+
+
+def test_rewritable_mixin_default_returns_self_for_empty_children() -> None:
+    """Test the default `rebuild_with_visit_children` returns ``self`` on ``()``."""
+    node = _LeafNode()
+
+    rebuilt = node.rebuild_with_visit_children(())
+
+    assert rebuilt is node
+
+
+def test_rewritable_mixin_default_raises_for_non_empty_children() -> None:
+    """Test the default `rebuild_with_visit_children` raises when children are passed.
+
+    A leaf subclass that inherits the default but is handed children
+    (which means the caller is treating it as a child-bearing node)
+    fails loudly so the bug surfaces at the offending node, not later.
+    """
+    node = _LeafNode()
+
+    with pytest.raises(NotImplementedError, match="_LeafNode"):
+        node.rebuild_with_visit_children((1,))
+
+
+def test_rewritable_mixin_override_returns_new_instance_with_new_children() -> None:
+    """Test a subclass override constructs a fresh instance from ``new_children``."""
+    original = _PairNode(1, 2)
+
+    rebuilt = original.rebuild_with_visit_children((10, 20))
+
+    assert isinstance(rebuilt, _PairNode)
+    assert rebuilt is not original
+    assert rebuilt.left == 10
+    assert rebuilt.right == 20
+
+
+def test_rewritable_mixin_override_preserves_original_node() -> None:
+    """Test rebuild does not mutate the original node."""
+    original = _PairNode(1, 2)
+
+    original.rebuild_with_visit_children((10, 20))
+
+    assert original.left == 1
+    assert original.right == 2
+
+
+def test_rewritable_mixin_override_handles_variable_length_children() -> None:
+    """Test a subclass override accepts an arbitrary-length child sequence."""
+    original = _ListNode((1, 2, 3))
+
+    rebuilt = original.rebuild_with_visit_children((10, 20, 30, 40))
+
+    assert isinstance(rebuilt, _ListNode)
+    assert rebuilt.children == (10, 20, 30, 40)
+
+
+def test_rewritable_mixin_override_handles_empty_children() -> None:
+    """Test a variable-length override accepts the empty child sequence."""
+    original = _ListNode((1, 2, 3))
+
+    rebuilt = original.rebuild_with_visit_children(())
+
+    assert isinstance(rebuilt, _ListNode)
+    assert rebuilt.children == ()

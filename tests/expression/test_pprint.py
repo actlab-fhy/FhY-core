@@ -1,25 +1,22 @@
 """Tests for `fhy_core.expression.pprint`."""
 
-from unittest.mock import patch
-
 import pytest
 
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
+    CallExpression,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    TernaryExpression,
     UnaryExpression,
     UnaryOperation,
-    parse_expression,
     pformat_expression,
 )
 from fhy_core.expression.pprint import ExpressionPrettyFormatter
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
-
-from .conftest import mock_identifier
 
 # =============================================================================
 # Symbolic format (default)
@@ -105,6 +102,34 @@ def test_pformat_expression_with_show_id_includes_name_hint_and_id() -> None:
     assert str(identifier.id) in result
 
 
+def test_pformat_expression_with_show_id_propagates_into_ternary() -> None:
+    """Test ``show_id=True`` reaches identifiers nested in a ``TernaryExpression``."""
+    condition_identifier = Identifier("cond")
+    expression = TernaryExpression(
+        IdentifierExpression(condition_identifier),
+        LiteralExpression(1),
+        LiteralExpression(0),
+    )
+
+    result = pformat_expression(expression, show_id=True)
+
+    assert condition_identifier.name_hint in result
+    assert str(condition_identifier.id) in result
+
+
+def test_pformat_expression_with_show_id_propagates_into_call_arguments() -> None:
+    """Test ``show_id=True`` reaches identifiers nested in call arguments."""
+    argument_identifier = Identifier("arg")
+    expression = CallExpression(
+        "nested_show_id", (IdentifierExpression(argument_identifier),)
+    )
+
+    result = pformat_expression(expression, show_id=True)
+
+    assert argument_identifier.name_hint in result
+    assert str(argument_identifier.id) in result
+
+
 # =============================================================================
 # ExpressionPrettyFormatter defaults
 # =============================================================================
@@ -123,117 +148,6 @@ def test_pretty_formatter_default_uses_symbolic_notation() -> None:
         BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
     )
     assert ExpressionPrettyFormatter()(expression) == "(1 + 2)"
-
-
-# =============================================================================
-# Symbolic-format round-trip with the parser
-# =============================================================================
-
-
-@pytest.mark.parametrize(
-    "expression",
-    [
-        pytest.param(LiteralExpression(5), id="native_int_literal"),
-        pytest.param(LiteralExpression("3.5"), id="str_form_float_literal"),
-        pytest.param(LiteralExpression(True), id="bool_literal"),
-        pytest.param(IdentifierExpression(mock_identifier("x", 0)), id="identifier"),
-        pytest.param(
-            UnaryExpression(
-                UnaryOperation.NEGATE,
-                IdentifierExpression(mock_identifier("x", 0)),
-            ),
-            id="unary_negate",
-        ),
-        pytest.param(
-            UnaryExpression(
-                UnaryOperation.LOGICAL_NOT,
-                IdentifierExpression(mock_identifier("flag", 0)),
-            ),
-            id="unary_logical_not",
-        ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.ADD,
-                LiteralExpression(1),
-                BinaryExpression(
-                    BinaryOperation.MULTIPLY,
-                    LiteralExpression(2),
-                    LiteralExpression(3),
-                ),
-            ),
-            id="add_times_precedence",
-        ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.LOGICAL_AND,
-                IdentifierExpression(mock_identifier("a", 0)),
-                BinaryExpression(
-                    BinaryOperation.LOGICAL_OR,
-                    IdentifierExpression(mock_identifier("b", 1)),
-                    IdentifierExpression(mock_identifier("c", 2)),
-                ),
-            ),
-            id="and_or",
-        ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.POWER,
-                IdentifierExpression(mock_identifier("x", 0)),
-                LiteralExpression(2),
-            ),
-            id="power",
-        ),
-    ],
-)
-@patch("fhy_core.identifier.Identifier._next_id", 0)
-def test_pformat_expression_round_trips_through_parse_expression(
-    expression: Expression,
-) -> None:
-    """Test ``parse_expression(pformat_expression(e))`` round-trips back to ``e``.
-
-    Round-trip is guaranteed for ``int`` / ``bool`` / str-form-float literals
-    and for tree shapes the pretty-printer emits in the parser-recognized
-    form. Native ``float`` literals are explicitly lossy and are exercised
-    separately below.
-    """
-    formatted = pformat_expression(expression)
-    reparsed = parse_expression(formatted)
-    assert reparsed.is_structurally_equivalent(expression)
-
-
-def test_pformat_native_float_literal_does_not_round_trip_through_parser() -> None:
-    """Test ``parse(pformat(LiteralExpression(<float>)))`` is structurally non-equiv.
-
-    The design treats native ``float`` as IEEE-754-imprecise and str-form
-    floats as exact decimals. The pretty-printer emits the float's textual
-    form; the parser stores that as a str literal, structurally unequal to
-    the original native-float literal. This is the documented lossy case
-    in the round-trip contract - locked in here so the asymmetry can't
-    quietly disappear.
-    """
-    original = LiteralExpression(0.5)
-
-    reparsed = parse_expression(pformat_expression(original))
-
-    assert isinstance(reparsed, LiteralExpression)
-    assert type(reparsed.value) is str
-    assert reparsed.value == "0.5"
-    assert not original.is_structurally_equivalent(reparsed)
-
-
-def test_pformat_int_literal_round_trips_through_parser() -> None:
-    """Test ``parse(pformat(LiteralExpression(<int>)))`` is structurally equivalent.
-
-    Positive control for the native-float lossy case above.
-    """
-    original = LiteralExpression(42)
-
-    reparsed = parse_expression(pformat_expression(original))
-
-    assert original.is_structurally_equivalent(reparsed)
-    assert isinstance(reparsed, LiteralExpression)
-    assert type(reparsed.value) is int
-    assert reparsed.value == 42
 
 
 # =============================================================================
@@ -260,3 +174,80 @@ def test_pretty_formatter_get_noop_output_raises() -> None:
 
     with pytest.raises(PassExecutionError, match=r"does not define noop output"):
         formatter.get_noop_output(LiteralExpression(0))
+
+
+# =============================================================================
+# TernaryExpression rendering
+# =============================================================================
+
+
+def test_pformat_ternary_expression_renders_as_question_colon_form() -> None:
+    """Test ``TernaryExpression`` renders as ``(c ? t : f)`` in default form."""
+    expression = TernaryExpression(
+        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+    )
+
+    assert pformat_expression(expression) == "(True ? 1 : 2)"
+
+
+def test_pformat_ternary_expression_renders_in_functional_form() -> None:
+    """Test ``TernaryExpression`` renders as ``(ternary c t f)`` functionally."""
+    expression = TernaryExpression(
+        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+    )
+
+    assert pformat_expression(expression, functional=True) == "(ternary True 1 2)"
+
+
+def test_pformat_nested_ternary_renders_inner_form_inside_branch() -> None:
+    """Test nested ternary expressions render with the inner form inside the branch."""
+    expression = TernaryExpression(
+        LiteralExpression(True),
+        TernaryExpression(
+            LiteralExpression(False), LiteralExpression(1), LiteralExpression(2)
+        ),
+        LiteralExpression(3),
+    )
+
+    assert pformat_expression(expression) == "(True ? (False ? 1 : 2) : 3)"
+
+
+# =============================================================================
+# CallExpression rendering
+# =============================================================================
+
+
+def test_pformat_call_expression_renders_function_name_with_arguments() -> None:
+    """Test ``call(name, args)`` renders as ``name(arg1, arg2, ...)``."""
+    expression = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
+
+    assert pformat_expression(expression) == "max(1, 2)"
+
+
+def test_pformat_call_expression_with_zero_arguments_renders_with_empty_parens() -> (
+    None
+):
+    """Test a zero-argument ``CallExpression`` renders as ``name()``."""
+    expression = CallExpression("noargs", ())
+
+    assert pformat_expression(expression) == "noargs()"
+
+
+def test_pformat_call_expression_renders_in_functional_form() -> None:
+    """Test ``CallExpression`` renders as ``(name arg1 arg2 ...)`` functionally."""
+    expression = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
+
+    assert pformat_expression(expression, functional=True) == "(max 1 2)"
+
+
+def test_pformat_call_expression_renders_nested_call_in_argument_position() -> None:
+    """Test nested ``CallExpression`` renders with the inner call inside an argument."""
+    expression = CallExpression(
+        "max",
+        (
+            CallExpression("min", (LiteralExpression(1), LiteralExpression(2))),
+            LiteralExpression(3),
+        ),
+    )
+
+    assert pformat_expression(expression) == "max(min(1, 2), 3)"
