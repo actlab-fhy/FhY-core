@@ -32,6 +32,7 @@ import re
 from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import Enum, auto
 from functools import singledispatch
 from typing import Any, TypeAlias, TypedDict, TypeGuard
@@ -499,7 +500,7 @@ class Expression(
             return other
         elif isinstance(other, Identifier):
             return IdentifierExpression(other)
-        elif type(other) is bool or type(other) in (int, float):
+        elif type(other) is bool or type(other) in (int, float, str):
             return LiteralExpression(other)
         else:
             raise ValueError(
@@ -763,6 +764,22 @@ _INTEGER_LITERAL_PATTERN = re.compile(r"\d+")
 _FLOAT_LITERAL_PATTERN = re.compile(r"\d+\.\d*|\.\d+")
 
 
+_LiteralBucket: TypeAlias = tuple[str, "bool | int | float | Decimal"]
+
+
+def _classify_literal_value(value: LiteralType) -> _LiteralBucket:
+    """Return the (bucket, canonical-form) pair used for literal equivalence."""
+    if type(value) is bool:
+        return ("bool", value)
+    if type(value) is int:
+        return ("int", value)
+    if type(value) is float:
+        return ("float-binary", value)
+    if _INTEGER_LITERAL_PATTERN.fullmatch(value):
+        return ("int", int(value))
+    return ("float-decimal", Decimal(value))
+
+
 class _LiteralExpressionData(TypedDict):
     value: LiteralType
 
@@ -778,18 +795,33 @@ def _is_valid_literal_expression_data(
 class LiteralExpression(Expression):
     r"""Literal expression.
 
-    Stored value follows these canonicalization rules:
+    Stored value follows these rules:
 
     - ``bool`` / ``int`` / ``float`` values are stored unchanged. ``bool`` is
       checked before ``int`` to keep the two distinct.
-    - ``str`` values matching the integer grammar (``\d+``) are canonicalized
-      to ``int`` via ``int(value)`` so ``LiteralExpression("5")`` and
-      ``LiteralExpression(5)`` are indistinguishable.
-    - ``str`` values matching the float grammar (``\d+\.\d*`` or
-      ``\.\d+``) are kept as ``str`` to preserve exact decimal text. Native
-      ``float`` would impose IEEE-754 rounding, which the design avoids.
+    - ``str`` values matching the integer grammar (``\d+``) or the float
+      grammar (``\d+\.\d*`` or ``\.\d+``) are stored as ``str`` to preserve
+      the caller's exact text. Native ``float`` would impose IEEE-754
+      rounding; native ``int`` would erase the string representation
+      choice. The design preserves both so downstream passes can perform
+      exact-decimal arithmetic before any conversion to ``float``.
     - Any other ``str`` raises ``ValueError``; any other Python type raises
       ``TypeError``.
+
+    Structural and alpha equivalence compare literals by *bucket* and
+    *canonical form*, not by stored Python type:
+
+    - ``bool``: by value.
+    - integer (Python ``int`` or integer-grammar ``str``): canonicalized
+      to the underlying integer, so ``LiteralExpression("5")``,
+      ``LiteralExpression("05")``, and ``LiteralExpression(5)`` are all
+      equivalent.
+    - float-binary (Python ``float``): by value.
+    - float-decimal (float-grammar ``str``): canonicalized to a
+      ``decimal.Decimal`` so ``"1.5"`` and ``"1.50"`` are equivalent;
+      ``str`` form and ``float`` form are *not* cross-equivalent, since
+      the exact-decimal text and the IEEE-754 binary value carry
+      different precision contracts.
     """
 
     value: LiteralType
@@ -808,7 +840,6 @@ class LiteralExpression(Expression):
                 f"{type(value).__name__}; expected str, float, int, or bool."
             )
         if _INTEGER_LITERAL_PATTERN.fullmatch(value):
-            object.__setattr__(self, "value", int(value))
             return
         if _FLOAT_LITERAL_PATTERN.fullmatch(value):
             return
@@ -1008,11 +1039,9 @@ def _(expression: IdentifierExpression, other: object) -> bool:
 
 @_is_expression_structurally_equivalent.register
 def _(expression: LiteralExpression, other: object) -> bool:
-    return (
-        isinstance(other, LiteralExpression)
-        and type(expression.value) is type(other.value)
-        and expression.value == other.value
-    )
+    return isinstance(other, LiteralExpression) and _classify_literal_value(
+        expression.value
+    ) == _classify_literal_value(other.value)
 
 
 @_is_expression_structurally_equivalent.register
@@ -1079,11 +1108,9 @@ def _(expression: IdentifierExpression, other: object, renaming: AlphaRenaming) 
 @_is_expression_alpha_equivalent_under.register
 def _(expression: LiteralExpression, other: object, renaming: AlphaRenaming) -> bool:
     del renaming
-    return (
-        isinstance(other, LiteralExpression)
-        and type(expression.value) is type(other.value)
-        and expression.value == other.value
-    )
+    return isinstance(other, LiteralExpression) and _classify_literal_value(
+        expression.value
+    ) == _classify_literal_value(other.value)
 
 
 @_is_expression_alpha_equivalent_under.register

@@ -11,15 +11,18 @@ final bits may differ across operating systems and CPU families.
 Callers requiring cross-platform exact reproducibility must not rely
 on the low-order bits of these results.
 
-Expression-construction convention: ``Identifier`` does not overload
-arithmetic, comparison, or logical operators. Operands that feed an
-operator (``>``, ``*``, ``-``, ``/``, unary ``-``) must be wrapped in
-``IdentifierExpression(...)`` first; operands passed directly to
-``call(...)`` or ``ternary(...)`` are auto-lifted by those helpers and
-need no wrapping. Removing the asymmetry by also wrapping the
-``call``/``ternary`` arguments is harmless but adds noise; introducing
-the asymmetry by passing a bare ``Identifier`` to an operator is a
-``TypeError`` at construction time.
+Expression-construction convention: ``Identifier`` itself does not
+overload arithmetic, comparison, or logical operators, so wrapping in
+``IdentifierExpression(...)`` is required when the bare ``Identifier``
+is the operand dispatching the Python operator (for example
+``x * y``, ``x > y``, ``-x``). By contrast, expression-side operators
+and helpers still auto-lift bare ``Identifier`` operands in
+non-dispatching positions, so forms like ``LiteralExpression(0.5) * x``
+and arguments passed directly to ``call(...)`` or ``ternary(...)``
+need no wrapping. Removing the asymmetry by also wrapping those
+operands is harmless but adds noise; introducing it by using a bare
+``Identifier`` as the dispatching operand is a ``TypeError`` at
+construction time.
 """
 
 __all__ = [

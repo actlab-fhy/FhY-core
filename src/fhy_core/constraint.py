@@ -232,11 +232,8 @@ def _lift_member_to_literal_expression(value: ConstraintMember) -> LiteralExpres
     """Lifts a constraint member to a ``LiteralExpression``.
 
     Raises:
-        ConstraintError: If the member is not a ``LiteralType``, if
-            ``LiteralExpression`` refuses the value, or if
-            ``LiteralExpression``'s canonicalization would change the
-            value's type and break the constraint's type-strict
-            equality with the converted expression.
+        ConstraintError: If the member is not a ``LiteralType`` or if
+            ``LiteralExpression`` refuses the value.
 
     """
     if not isinstance(value, LiteralType):
@@ -245,20 +242,11 @@ def _lift_member_to_literal_expression(value: ConstraintMember) -> LiteralExpres
             "not supported."
         )
     try:
-        literal = LiteralExpression(value)
+        return LiteralExpression(value)
     except ValueError as exc:
         raise ConstraintError(
             f"Member {value!r} cannot be represented as a literal expression: {exc}"
         ) from exc
-    if type(literal.value) is not type(value):
-        raise ConstraintError(
-            f"Member {value!r} of type {type(value).__name__} would be "
-            f"canonicalized to type {type(literal.value).__name__} in the "
-            "converted expression, which would break type-strict equality "
-            "between the constraint and its expression. Convert the member "
-            "to the canonical type before constructing the constraint."
-        )
-    return literal
 
 
 def _serialize_constraint_member(value: ConstraintMember) -> SerializedDict:

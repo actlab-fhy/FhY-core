@@ -81,15 +81,19 @@ def _coerce_literal_value_for_native(
 ) -> bool | int | float:
     """Coerce a ``LiteralExpression`` value to a native-callable Python value.
 
-    ``LiteralExpression.__post_init__`` canonicalizes integer-grammar
-    strings to ``int`` and rejects anything outside the integer or float
-    grammar, so any ``str`` arriving here is guaranteed to match the
-    float grammar and ``float`` will accept it without loss.
+    ``LiteralExpression`` preserves caller-supplied string-form literals
+    so downstream passes can perform exact-decimal arithmetic. The
+    native boundary is the point where that representation is collapsed
+    to a Python numeric: integer-grammar strings convert exactly via
+    ``int``; float-grammar strings round to the nearest IEEE-754 binary
+    ``float`` (so ``"0.1"`` becomes the binary approximation).
     """
-    if isinstance(value, str):
-        return float(value)
-    else:
+    if not isinstance(value, str):
         return value
+    try:
+        return int(value)
+    except ValueError:
+        return float(value)
 
 
 def _build_literal_expression(
