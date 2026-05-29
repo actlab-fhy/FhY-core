@@ -254,26 +254,29 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
     def visit_literal_expression(
         self, literal_expression: LiteralExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
-        if isinstance(literal_expression.value, bool):
-            if literal_expression.value:
+        value = literal_expression.value
+        if isinstance(value, bool):
+            return sympy.true if value else sympy.false
+        if isinstance(value, int):
+            return sympy.Integer(value)
+        if isinstance(value, float):
+            return sympy.Float(value)
+        if isinstance(value, str):
+            if value == "True":
                 return sympy.true
-            else:
+            if value == "False":
                 return sympy.false
-        elif isinstance(literal_expression.value, int):
-            return sympy.Integer(literal_expression.value)
-        elif isinstance(literal_expression.value, float):
-            return sympy.Float(literal_expression.value)
-        elif isinstance(literal_expression.value, str):
-            if literal_expression.value == "True":
-                return sympy.true
-            elif literal_expression.value == "False":
-                return sympy.false
-            else:
-                return sympy.Float(literal_expression.value)
-        else:
-            raise TypeError(
-                f"Unsupported literal type: {type(literal_expression.value)}"
-            )
+            try:
+                return sympy.Integer(int(value))
+            except ValueError:
+                # Float-grammar strings: SymPy operates on binary floats,
+                # so the exact-decimal text preserved by
+                # ``LiteralExpression`` is lost here. Round-tripping
+                # ``LiteralExpression("1.5")`` through the SymPy bridge
+                # yields ``LiteralExpression(1.5)`` (float-binary), not
+                # the original float-decimal bucket.
+                return sympy.Float(value)
+        raise TypeError(f"Unsupported literal type: {type(value)}")
 
     @staticmethod
     def format_identifier(identifier: Identifier) -> str:

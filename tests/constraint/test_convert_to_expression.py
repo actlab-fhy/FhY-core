@@ -124,6 +124,36 @@ def test_non_grammar_string_member_rejected_by_conversion_as_constraint_error(
 @pytest.mark.parametrize(
     "factory", [InSetConstraint, NotInSetConstraint], ids=["in_set", "not_in_set"]
 )
+@pytest.mark.parametrize(
+    "string_member",
+    [
+        pytest.param("1", id="integer_grammar"),
+        pytest.param("01", id="integer_grammar_leading_zero"),
+        pytest.param("1.5", id="float_grammar"),
+        pytest.param(".5", id="float_grammar_no_integer_part"),
+    ],
+)
+def test_numeric_string_member_rejected_by_conversion(
+    factory: SetConstraintFactory, string_member: str
+) -> None:
+    """Test numeric-string members raise ``ConstraintError`` from conversion.
+
+    Constraint membership is type-strict (``1`` and ``"1"`` are
+    distinct), but ``LiteralExpression`` equivalence canonicalizes
+    string-form literals against the matching numeric bucket. Lifting a
+    string member to ``LiteralExpression`` would silently widen the
+    constraint's membership semantics, so conversion rejects ``str``
+    members.
+    """
+    constraint = factory(mock_identifier("x", 0), [string_member])
+
+    with pytest.raises(ConstraintError, match="type-strict"):
+        constraint.convert_to_expression()
+
+
+@pytest.mark.parametrize(
+    "factory", [InSetConstraint, NotInSetConstraint], ids=["in_set", "not_in_set"]
+)
 def test_multi_value_convert_to_expression_is_deterministic_across_construction_orders(
     factory: SetConstraintFactory,
 ) -> None:
