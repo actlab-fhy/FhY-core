@@ -769,11 +769,11 @@ _LiteralBucket: TypeAlias = tuple[str, "bool | int | float | Decimal"]
 
 def _classify_literal_value(value: LiteralType) -> _LiteralBucket:
     """Return the (bucket, canonical-form) pair used for literal equivalence."""
-    if type(value) is bool:
+    if isinstance(value, bool):
         return ("bool", value)
-    if type(value) is int:
+    if isinstance(value, int):
         return ("int", value)
-    if type(value) is float:
+    if isinstance(value, float):
         return ("float-binary", value)
     if _INTEGER_LITERAL_PATTERN.fullmatch(value):
         return ("int", int(value))

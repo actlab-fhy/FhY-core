@@ -234,7 +234,7 @@ def test_identifier_does_not_overload_ordering_operators() -> None:
     with pytest.raises(TypeError):
         a < b  # type: ignore[operator]  # test: invalid input
     with pytest.raises(TypeError):
-        sorted([a, b])
+        sorted([a, b])  # type: ignore[type-var]  # test: invalid input
 
 
 # =============================================================================
