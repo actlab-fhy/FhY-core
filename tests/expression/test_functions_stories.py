@@ -1,8 +1,8 @@
 """End-to-end user-story and integration tests for the expression-functions feature.
 
-These exercise the public surface (parser, registry, inliner,
-type-checker, pretty-printer) in shapes that mirror real callers. They
-are coarser-grained than the per-module unit tests in this directory.
+These exercise the public surface (registry, inliner, type-checker,
+pretty-printer) in shapes that mirror real callers. They are
+coarser-grained than the per-module unit tests in this directory.
 """
 
 import pytest
@@ -43,7 +43,7 @@ def _no_identifiers(identifier: Identifier) -> tuple[Type, TypeQualifier]:
 
 
 # =============================================================================
-# Integration: parse -> inline -> type-check
+# Integration: build -> inline -> type-check
 # =============================================================================
 
 

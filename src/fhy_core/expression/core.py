@@ -21,6 +21,7 @@ __all__ = [
     "TernaryExpression",
     "call",
     "logical_and",
+    "logical_not",
     "logical_or",
     "make_binary_expression",
     "make_unary_expression",
@@ -139,6 +140,29 @@ def _build_right_folded_binary_tree(
             result,
         )
     return result
+
+
+def logical_not(
+    expression: "Expression | Identifier | LiteralType",
+) -> "UnaryExpression":
+    """Wrap ``expression`` in a ``LOGICAL_NOT`` unary expression.
+
+    The operand may be an ``Expression`` (used as-is), an ``Identifier``
+    (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
+    (wrapped in ``LiteralExpression``); the same coercion rules as the
+    operator dunders apply.
+
+    Args:
+        expression: Operand to negate.
+
+    Returns:
+        ``LOGICAL_NOT`` unary expression over the coerced operand.
+
+    Raises:
+        ValueError: If the operand has an unsupported type.
+
+    """
+    return make_unary_expression(UnaryOperation.LOGICAL_NOT, expression)
 
 
 def logical_and(
@@ -294,15 +318,6 @@ class Expression(
 
     def __pos__(self) -> "UnaryExpression":
         return make_unary_expression(UnaryOperation.POSITIVE, self)
-
-    def logical_not(self) -> "UnaryExpression":
-        """Create a logical NOT expression.
-
-        Returns:
-            Logical NOT expression.
-
-        """
-        return make_unary_expression(UnaryOperation.LOGICAL_NOT, self)
 
     def __add__(self, other: Any) -> "BinaryExpression":
         return make_binary_expression(BinaryOperation.ADD, self, other)

@@ -10,6 +10,16 @@ module. Their results are reproducible within a single run but the
 final bits may differ across operating systems and CPU families.
 Callers requiring cross-platform exact reproducibility must not rely
 on the low-order bits of these results.
+
+Expression-construction convention: ``Identifier`` does not overload
+arithmetic, comparison, or logical operators. Operands that feed an
+operator (``>``, ``*``, ``-``, ``/``, unary ``-``) must be wrapped in
+``IdentifierExpression(...)`` first; operands passed directly to
+``call(...)`` or ``ternary(...)`` are auto-lifted by those helpers and
+need no wrapping. Removing the asymmetry by also wrapping the
+``call``/``ternary`` arguments is harmless but adds noise; introducing
+the asymmetry by passing a bare ``Identifier`` to an operator is a
+``TypeError`` at construction time.
 """
 
 __all__ = [

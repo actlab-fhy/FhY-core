@@ -203,6 +203,41 @@ def test_identifier_class_is_final() -> None:
 
 
 # =============================================================================
+# No arithmetic / ordering overloads
+# =============================================================================
+
+
+def test_identifier_does_not_overload_arithmetic_operators() -> None:
+    """Test `Identifier` rejects arithmetic operators.
+
+    Expression-tree construction must go through `IdentifierExpression`
+    rather than `Identifier`-side dunders; this test pins that policy so
+    a future reintroduction of `__add__` / `__sub__` / `__neg__` etc. is
+    caught at test time rather than silently re-coupling the symbol type
+    to the expression DSL.
+    """
+    a, b = Identifier("a"), Identifier("b")
+    with pytest.raises(TypeError):
+        a + b  # type: ignore[operator]  # test: invalid input
+    with pytest.raises(TypeError):
+        -a  # type: ignore[operator]  # test: invalid input
+
+
+def test_identifier_does_not_overload_ordering_operators() -> None:
+    """Test `Identifier` rejects ordering operators.
+
+    `Identifier` defines value equality via `EqualMixin` but no ordering;
+    callers that need a stable order must supply an explicit `key=` (for
+    example, `key=lambda i: i.id`).
+    """
+    a, b = Identifier("a"), Identifier("b")
+    with pytest.raises(TypeError):
+        a < b  # type: ignore[operator]  # test: invalid input
+    with pytest.raises(TypeError):
+        sorted([a, b])
+
+
+# =============================================================================
 # String representations
 # =============================================================================
 

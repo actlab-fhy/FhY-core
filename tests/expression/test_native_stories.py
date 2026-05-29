@@ -1,10 +1,10 @@
 """End-to-end user-story and integration tests for the native-functions feature.
 
 Each test mirrors a real caller path through the public surface
-(parser, registry, inliner, evaluator, type-checker, sympy bridge) for
-the native-function / native-constant / sort additions. The cases
-above unit-test boundaries individually; the cases here exercise them
-in combination.
+(registry, inliner, evaluator, type-checker, sympy bridge) for the
+native-function / native-constant / sort additions. The cases above
+unit-test boundaries individually; the cases here exercise them in
+combination.
 """
 
 import math
@@ -50,7 +50,7 @@ def _no_identifiers(identifier: Identifier) -> tuple[Type, TypeQualifier]:
 
 
 # =============================================================================
-# User story: parse a native function call and evaluate it under literals
+# User story: native function call evaluates to a literal
 # =============================================================================
 
 
@@ -144,7 +144,7 @@ def test_user_story_sin_of_pi_round_trips_through_sympy_to_zero() -> None:
 
 
 # =============================================================================
-# User story: pipeline parse -> inline -> evaluate -> simplify for sigmoid(0)
+# User story: pipeline inline -> evaluate -> simplify for sigmoid(0)
 # =============================================================================
 
 

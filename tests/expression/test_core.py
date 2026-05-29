@@ -17,6 +17,7 @@ from fhy_core.expression import (
     UnaryOperation,
     collect_identifiers,
     logical_and,
+    logical_not,
     logical_or,
     make_binary_expression,
     make_unary_expression,
@@ -137,13 +138,14 @@ def test_literal_expression_keeps_float_shaped_string_as_str(string_value: str) 
         "5 ",
     ],
 )
-def test_literal_expression_rejects_string_outside_parser_grammar(
+def test_literal_expression_rejects_string_outside_numeric_grammar(
     string_value: str,
 ) -> None:
-    """Test ``str`` values not matching the parser's int or float grammar raise.
+    """Test ``str`` values not matching the integer or float grammar raise.
 
-    The validator pins to the parser's numeric grammar so any string that the
-    parser couldn't have produced is rejected at construction time.
+    ``LiteralExpression`` accepts string-form numeric literals to preserve
+    exact decimal text without IEEE-754 rounding; any string outside the
+    integer or float grammar is rejected at construction time.
     """
     with pytest.raises(ValueError, match="(?i)literal"):
         LiteralExpression(string_value)
@@ -456,7 +458,6 @@ def test_equivalence_is_false_across_distinct_expression_subclasses(
     [
         (operator.neg, UnaryOperation.NEGATE),
         (operator.pos, UnaryOperation.POSITIVE),
-        (lambda x: x.logical_not(), UnaryOperation.LOGICAL_NOT),
     ],
 )
 def test_unary_operator_dunders_produce_matching_expression(
@@ -676,6 +677,36 @@ def test_module_level_logical_builder_requires_at_least_two_expressions(
     """Test module-level `logical_and`/`logical_or` raise on fewer than two args."""
     with pytest.raises(ValueError, match="(?i)at least two"):
         builder(*args)
+
+
+def test_module_level_logical_not_wraps_operand_in_unary_expression() -> None:
+    """Test `logical_not(expr)` builds a ``LOGICAL_NOT`` unary node."""
+    operand = LiteralExpression(True)
+
+    result = logical_not(operand)
+
+    expected = UnaryExpression(UnaryOperation.LOGICAL_NOT, operand)
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_module_level_logical_not_coerces_bare_identifier() -> None:
+    """Test `logical_not` lifts a bare `Identifier` via `IdentifierExpression`."""
+    identifier = Identifier("a")
+
+    result = logical_not(identifier)
+
+    expected = UnaryExpression(
+        UnaryOperation.LOGICAL_NOT, IdentifierExpression(identifier)
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_module_level_logical_not_coerces_bare_python_literal() -> None:
+    """Test `logical_not` lifts a bare Python ``bool`` via `LiteralExpression`."""
+    result = logical_not(True)
+
+    expected = UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(True))
+    assert result.is_structurally_equivalent(expected)
 
 
 _INSTANCE_LOGICAL_METHODS = (

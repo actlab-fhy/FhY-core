@@ -109,8 +109,6 @@ def pformat_expression(
 ) -> str:
     """Pretty-format an expression.
 
-    The output is not guaranteed to be parseable back into an expression.
-
     Args:
         expression: Expression to pretty-format.
         show_id: Whether to show the identifier ID.

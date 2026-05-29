@@ -47,6 +47,7 @@ from fhy_core.error import register_error
 from fhy_core.expression import (
     Expression,
     IdentifierExpression,
+    LiteralExpression,
     does_expression_imply,
     replace_identifiers,
 )
@@ -430,17 +431,18 @@ def _create_bound_constraint(
     is_inclusive: bool,
 ) -> EquationConstraint:
     variable_expression = IdentifierExpression(param_variable)
+    bound_expression = LiteralExpression(bound) if isinstance(bound, str) else bound
     if is_lower:
         constraint_equation = (
-            variable_expression >= bound
+            variable_expression >= bound_expression
             if is_inclusive
-            else variable_expression > bound
+            else variable_expression > bound_expression
         )
     else:
         constraint_equation = (
-            variable_expression <= bound
+            variable_expression <= bound_expression
             if is_inclusive
-            else variable_expression < bound
+            else variable_expression < bound_expression
         )
     return EquationConstraint(param_variable, constraint_equation)
 

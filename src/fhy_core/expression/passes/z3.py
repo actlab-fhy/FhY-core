@@ -24,6 +24,8 @@ from fhy_core.expression.core import (
     TernaryExpression,
     UnaryExpression,
     UnaryOperation,
+    logical_and,
+    logical_not,
 )
 from fhy_core.expression.errors import UndecidableError
 from fhy_core.expression.passes.basic import collect_identifiers
@@ -336,7 +338,7 @@ def does_expression_imply(
 
     """
     _LOGGER.debug("antecedent=%r, consequent=%r", antecedent, consequent)
-    combined = antecedent.logical_and(consequent.logical_not())
+    combined = logical_and(antecedent, logical_not(consequent))
     all_identifiers = collect_identifiers(combined)
     has_counterexample = holds_for_all_free_assignments(
         all_identifiers, combined, symbol_types
