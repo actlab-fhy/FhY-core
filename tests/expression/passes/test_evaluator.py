@@ -349,7 +349,7 @@ def test_evaluate_recurses_into_ternary_branches(
     x = Identifier("x")
 
     expression = TernaryExpression(
-        x > 0,
+        IdentifierExpression(x) > 0,
         call("test_eval_into_ternary", LiteralExpression(0.0)),
         LiteralExpression(0),
     )
@@ -452,7 +452,7 @@ def test_evaluate_does_not_mutate_input_expression(
 
 
 # =============================================================================
-# String-form numeric literal coercion (parser output)
+# String-form numeric literal coercion
 # =============================================================================
 
 
@@ -461,9 +461,9 @@ def test_evaluate_coerces_string_form_float_literal_to_float(
 ) -> None:
     """Test ``LiteralExpression("3.14")`` is coerced to a float for native calls.
 
-    Numeric tokens from ``parse_expression`` are stored as ``str`` on
-    ``LiteralExpression``. The evaluator's coercion helper converts the
-    string to a numeric value before invoking the native implementation.
+    Numeric ``LiteralExpression`` values may be stored as ``str`` to
+    preserve exact decimal form. The evaluator's coercion helper converts
+    the string to a numeric value before invoking the native implementation.
     """
     register_real_unary_native("test_eval_str_coerce", math.sqrt)
 

@@ -182,6 +182,16 @@ def test_real_param_add_constraint_combines_with_existing_constraints(
             [1.0, 2.0, 0.5, 2.5],
             id="between-constructor-exclusive",
         ),
+        pytest.param(
+            partial(RealParam),
+            [
+                ("add_lower_bound_constraint", ("1.0",), {"is_inclusive": True}),
+                ("add_upper_bound_constraint", ("2.0",), {"is_inclusive": True}),
+            ],
+            [1.0, 1.5, 2.0],
+            [0.5, 2.5],
+            id="between-mutating-string-bounds",
+        ),
     ],
 )
 def test_real_param_bounded_construction_admits_expected_values(

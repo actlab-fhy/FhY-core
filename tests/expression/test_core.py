@@ -17,6 +17,7 @@ from fhy_core.expression import (
     UnaryOperation,
     collect_identifiers,
     logical_and,
+    logical_not,
     logical_or,
     make_binary_expression,
     make_unary_expression,
@@ -88,22 +89,23 @@ def test_literal_expression_stores_native_bool_as_bool(value: bool) -> None:
     assert type(literal.value) is bool
 
 
-@pytest.mark.parametrize(
-    "string_value, expected_int",
-    [("0", 0), ("5", 5), ("42", 42), ("00", 0), ("01", 1)],
-)
-def test_literal_expression_canonicalizes_integer_shaped_string_to_int(
-    string_value: str, expected_int: int
+@pytest.mark.parametrize("string_value", ["0", "5", "42", "00", "01"])
+def test_literal_expression_keeps_integer_shaped_string_as_str(
+    string_value: str,
 ) -> None:
-    """Test an integer-shaped ``str`` value is canonicalized to ``int``.
+    """Test an integer-shaped ``str`` is preserved as the caller's exact text.
 
-    The constructor accepts ``"5"`` and the resulting expression is
-    indistinguishable from ``LiteralExpression(5)``.
+    String-form literals retain the caller's textual representation so
+    downstream passes can do exact-decimal arithmetic before any
+    conversion to ``int`` or ``float`` at a native boundary; equivalence
+    against the matching ``int`` form is handled by the structural- and
+    alpha-equivalence dispatches, not by canonicalization at
+    construction time.
     """
     literal = LiteralExpression(string_value)
 
-    assert literal.value == expected_int
-    assert type(literal.value) is int
+    assert literal.value == string_value
+    assert type(literal.value) is str
 
 
 @pytest.mark.parametrize("string_value", ["3.14", "0.0", "1.", ".5", "0.1", "100.001"])
@@ -137,13 +139,14 @@ def test_literal_expression_keeps_float_shaped_string_as_str(string_value: str) 
         "5 ",
     ],
 )
-def test_literal_expression_rejects_string_outside_parser_grammar(
+def test_literal_expression_rejects_string_outside_numeric_grammar(
     string_value: str,
 ) -> None:
-    """Test ``str`` values not matching the parser's int or float grammar raise.
+    """Test ``str`` values not matching the integer or float grammar raise.
 
-    The validator pins to the parser's numeric grammar so any string that the
-    parser couldn't have produced is rejected at construction time.
+    ``LiteralExpression`` accepts string-form numeric literals to preserve
+    exact decimal text without IEEE-754 rounding; any string outside the
+    integer or float grammar is rejected at construction time.
     """
     with pytest.raises(ValueError, match="(?i)literal"):
         LiteralExpression(string_value)
@@ -391,21 +394,100 @@ def test_literal_equivalence_is_false_when_value_types_differ(
 
 @pytest.mark.parametrize(
     "int_value, equivalent_string",
-    [(0, "0"), (1, "1"), (42, "42"), (0, "00")],
+    [(0, "0"), (1, "1"), (42, "42"), (0, "00"), (1, "01")],
 )
 def test_int_literal_and_integer_shaped_string_compare_structurally_equivalent(
     int_value: int, equivalent_string: str
 ) -> None:
     """Test int and integer-shaped-string literals compare structurally equivalent.
 
-    Integer-shaped strings canonicalize to ``int`` at construction time, so
-    the two forms produce structurally-equivalent trees.
+    String-form integer literals are preserved as ``str`` at
+    construction time; structural equivalence canonicalizes to the
+    underlying ``int`` so the two forms are interchangeable for
+    comparison.
     """
     left = LiteralExpression(int_value)
     right = LiteralExpression(equivalent_string)
 
     assert left.is_structurally_equivalent(right)
     assert right.is_structurally_equivalent(left)
+
+
+@pytest.mark.parametrize(
+    "left_text, right_text",
+    [
+        pytest.param("5", "05", id="leading_zero"),
+        pytest.param("00", "0", id="multiple_zero_forms"),
+        pytest.param("42", "042", id="larger_value_with_leading_zero"),
+    ],
+)
+def test_integer_shaped_strings_with_distinct_text_compare_structurally_equivalent(
+    left_text: str, right_text: str
+) -> None:
+    """Test integer-shaped strings with the same int value are equivalent."""
+    left = LiteralExpression(left_text)
+    right = LiteralExpression(right_text)
+
+    assert left.is_structurally_equivalent(right)
+    assert right.is_structurally_equivalent(left)
+
+
+@pytest.mark.parametrize(
+    "left_text, right_text",
+    [
+        pytest.param("1.5", "1.50", id="trailing_zero"),
+        pytest.param("0.1", "0.10", id="trailing_zero_after_leading_zero"),
+        pytest.param(".5", "0.5", id="missing_leading_zero"),
+        pytest.param("1.", "1.0", id="trailing_dot_vs_dot_zero"),
+        pytest.param("1.5", "01.5", id="leading_zero_before_decimal"),
+    ],
+)
+def test_float_shaped_strings_with_distinct_text_compare_structurally_equivalent(
+    left_text: str, right_text: str
+) -> None:
+    """Test float-shaped strings with the same decimal value are equivalent.
+
+    Decimal canonicalization handles trailing zeros, leading zeros, and
+    elided integer or fractional parts so ``"1.5"``, ``"1.50"``,
+    ``"01.5"``, and ``"1."`` all compare equal to their normalized
+    siblings.
+    """
+    left = LiteralExpression(left_text)
+    right = LiteralExpression(right_text)
+
+    assert left.is_structurally_equivalent(right)
+    assert right.is_structurally_equivalent(left)
+
+
+@pytest.mark.parametrize(
+    "left_value, right_value",
+    [
+        pytest.param("1.5", 1.5, id="float_decimal_vs_float_binary"),
+        pytest.param("0.1", 0.1, id="exact_decimal_vs_ieee_approximation"),
+        pytest.param("5", "5.0", id="int_form_vs_float_decimal"),
+        pytest.param(5, "5.0", id="int_vs_float_decimal"),
+        pytest.param("5", 5.0, id="int_form_vs_float_binary"),
+    ],
+)
+def test_literal_equivalence_distinguishes_buckets(
+    left_value: bool | int | float | str,
+    right_value: bool | int | float | str,
+) -> None:
+    """Test cross-bucket literals are not structurally equivalent.
+
+    ``LiteralExpression`` distinguishes four equivalence buckets:
+    ``bool``, integer (``int`` and integer-grammar ``str``),
+    float-binary (Python ``float``), and float-decimal (float-grammar
+    ``str``). Values that fall in different buckets are not equivalent
+    even when their numeric values agree, because the buckets carry
+    different precision contracts (exact-decimal text vs IEEE-754
+    binary, integer vs float).
+    """
+    left = LiteralExpression(left_value)
+    right = LiteralExpression(right_value)
+
+    assert not left.is_structurally_equivalent(right)
+    assert not right.is_structurally_equivalent(left)
 
 
 def _make_pair_by_subclass(
@@ -456,7 +538,6 @@ def test_equivalence_is_false_across_distinct_expression_subclasses(
     [
         (operator.neg, UnaryOperation.NEGATE),
         (operator.pos, UnaryOperation.POSITIVE),
-        (lambda x: x.logical_not(), UnaryOperation.LOGICAL_NOT),
     ],
 )
 def test_unary_operator_dunders_produce_matching_expression(
@@ -589,20 +670,27 @@ def test_binary_dunder_rejects_unsupported_type_on_right() -> None:
         LiteralExpression(5) + []
 
 
-def test_binary_dunder_rejects_str_operand_on_right() -> None:
-    """Test a binary dunder rejects a ``str`` right operand.
+@pytest.mark.parametrize(
+    "right_value, expected_value",
+    [
+        pytest.param("5", "5", id="integer_form_string"),
+        pytest.param("1.5", "1.5", id="float_form_string"),
+    ],
+)
+def test_binary_dunder_lifts_str_operand_on_right(
+    right_value: str, expected_value: str
+) -> None:
+    """Test a binary dunder lifts a ``str`` right operand into a ``LiteralExpression``.
 
-    Implicit ``str`` coercion was removed because ``LiteralExpression``
-    happily round-trips ``"5"`` into the integer literal ``5``,
-    producing a surprising result when a caller meant to pass a
-    string. The explicit form ``LiteralExpression("5")`` is still
-    accepted.
+    ``LiteralExpression`` preserves string-form numeric literals so they
+    can flow through implicit coercion without losing their textual
+    representation.
     """
-    with pytest.raises(
-        ValueError,
-        match=r"Unable to cast '5' with type <class 'str'> to an expression.",
-    ):
-        LiteralExpression(5) + "5"
+    expression = LiteralExpression(1) + right_value
+
+    assert isinstance(expression.right, LiteralExpression)
+    assert expression.right.value == expected_value
+    assert type(expression.right.value) is str
 
 
 def test_binary_dunder_rejects_unsupported_type_on_left() -> None:
@@ -676,6 +764,36 @@ def test_module_level_logical_builder_requires_at_least_two_expressions(
     """Test module-level `logical_and`/`logical_or` raise on fewer than two args."""
     with pytest.raises(ValueError, match="(?i)at least two"):
         builder(*args)
+
+
+def test_module_level_logical_not_wraps_operand_in_unary_expression() -> None:
+    """Test `logical_not(expr)` builds a ``LOGICAL_NOT`` unary node."""
+    operand = LiteralExpression(True)
+
+    result = logical_not(operand)
+
+    expected = UnaryExpression(UnaryOperation.LOGICAL_NOT, operand)
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_module_level_logical_not_coerces_bare_identifier() -> None:
+    """Test `logical_not` lifts a bare `Identifier` via `IdentifierExpression`."""
+    identifier = Identifier("a")
+
+    result = logical_not(identifier)
+
+    expected = UnaryExpression(
+        UnaryOperation.LOGICAL_NOT, IdentifierExpression(identifier)
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_module_level_logical_not_coerces_bare_python_literal() -> None:
+    """Test `logical_not` lifts a bare Python ``bool`` via `LiteralExpression`."""
+    result = logical_not(True)
+
+    expected = UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(True))
+    assert result.is_structurally_equivalent(expected)
 
 
 _INSTANCE_LOGICAL_METHODS = (

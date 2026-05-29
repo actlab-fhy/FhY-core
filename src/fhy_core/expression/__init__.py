@@ -26,7 +26,6 @@ __all__ = [
     "NativeConstant",
     "NativeFunction",
     "NativeResultSortError",
-    "ParseError",
     "Pattern",
     "PredicatePattern",
     "RegisteredEntry",
@@ -63,11 +62,11 @@ __all__ = [
     "is_entry_registered",
     "is_python_value_compatible_with_sort",
     "logical_and",
+    "logical_not",
     "logical_or",
     "make_binary_expression",
     "make_unary_expression",
     "match_pattern",
-    "parse_expression",
     "pformat_expression",
     "register_function",
     "register_native_constant",
@@ -78,7 +77,6 @@ __all__ = [
     "substitute_sympy_expression_variables",
     "synthesize_expression_type",
     "ternary",
-    "tokenize_expression",
 ]
 
 from .builtins import (
@@ -100,13 +98,13 @@ from .core import (
     UnaryOperation,
     call,
     logical_and,
+    logical_not,
     logical_or,
     make_binary_expression,
     make_unary_expression,
     ternary,
 )
 from .errors import NativeResultSortError, UndecidableError
-from .parser import ParseError, parse_expression, tokenize_expression
 from .passes.basic import (
     collect_identifiers,
     replace_identifiers,

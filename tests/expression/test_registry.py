@@ -110,7 +110,7 @@ def test_register_function_with_multiple_parameters_records_order(
         parameters=[a, b, c],
         parameter_sorts=[FunctionSort.REAL, FunctionSort.REAL, FunctionSort.REAL],
         result_sort=FunctionSort.REAL,
-        body=a + b + c,
+        body=IdentifierExpression(a) + b + c,
     )
 
     assert registered.parameters == (a, b, c)
@@ -174,7 +174,7 @@ def test_register_function_rejects_captured_free_identifier(
             parameters=[parameter],
             parameter_sorts=[FunctionSort.REAL],
             result_sort=FunctionSort.REAL,
-            body=parameter + captured,
+            body=IdentifierExpression(parameter) + captured,
         )
 
 
@@ -197,7 +197,7 @@ def test_register_function_lists_multiple_captured_identifiers_in_sorted_order(
             parameters=[parameter],
             parameter_sorts=[FunctionSort.REAL],
             result_sort=FunctionSort.REAL,
-            body=parameter + captured_z + captured_y + captured_x,
+            body=IdentifierExpression(parameter) + captured_z + captured_y + captured_x,
         )
 
 
@@ -251,7 +251,7 @@ def test_register_function_rejects_sort_arity_mismatch(
             parameters=[a, b],
             parameter_sorts=[FunctionSort.REAL],
             result_sort=FunctionSort.REAL,
-            body=a + b,
+            body=IdentifierExpression(a) + b,
         )
 
 
@@ -273,7 +273,7 @@ def test_register_function_rejects_body_result_sort_mismatch(
             parameters=[a, b],
             parameter_sorts=[FunctionSort.REAL, FunctionSort.REAL],
             result_sort=FunctionSort.REAL,
-            body=a < b,
+            body=IdentifierExpression(a) < b,
         )
 
 
@@ -298,7 +298,7 @@ def test_register_function_rolls_back_placeholder_on_body_check_failure(
             parameters=[a, b],
             parameter_sorts=[FunctionSort.REAL, FunctionSort.REAL],
             result_sort=FunctionSort.REAL,
-            body=a < b,
+            body=IdentifierExpression(a) < b,
         )
 
     assert not is_entry_registered("test_rollback")
@@ -324,7 +324,7 @@ def test_register_function_accepts_body_referencing_registered_constant(
         parameters=[x],
         parameter_sorts=[FunctionSort.REAL],
         result_sort=FunctionSort.REAL,
-        body=x * pi,
+        body=IdentifierExpression(x) * pi,
     )
 
     assert registered.name == "test_body_uses_pi"

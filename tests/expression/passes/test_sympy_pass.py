@@ -43,6 +43,8 @@ from ..conftest import mock_identifier
         (LiteralExpression(True), sympy.true),
         (LiteralExpression(False), sympy.false),
         (LiteralExpression("10.6"), sympy.Float(10.6)),
+        (LiteralExpression("5"), sympy.Integer(5)),
+        (LiteralExpression("05"), sympy.Integer(5)),
         (
             UnaryExpression(
                 UnaryOperation.POSITIVE,
@@ -561,6 +563,31 @@ def test_simplify_constant_expression(
     result = simplify_expression(expression)
     assert isinstance(result, LiteralExpression)
     assert result.value == expected_value
+
+
+@pytest.mark.parametrize(
+    "string_value",
+    [
+        pytest.param("5", id="single_digit"),
+        pytest.param("05", id="leading_zero"),
+        pytest.param("42", id="multi_digit"),
+    ],
+)
+def test_simplify_preserves_integer_bucket_for_int_grammar_string(
+    string_value: str,
+) -> None:
+    """Test ``simplify_expression`` preserves the integer bucket for str-int input.
+
+    Integer-grammar string literals lower to ``sympy.Integer`` (not
+    ``sympy.Float``) and lift back as Python ``int`` on the way out, so
+    ``LiteralExpression("5")`` and ``LiteralExpression(5)`` remain
+    bucket-equivalent across the SymPy round trip.
+    """
+    result = simplify_expression(LiteralExpression(string_value))
+
+    assert isinstance(result, LiteralExpression)
+    assert type(result.value) is int
+    assert result.is_structurally_equivalent(LiteralExpression(string_value))
 
 
 def test_simplify_variable_expression_with_environment_folds_to_scalar() -> None:

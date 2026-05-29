@@ -10,6 +10,19 @@ module. Their results are reproducible within a single run but the
 final bits may differ across operating systems and CPU families.
 Callers requiring cross-platform exact reproducibility must not rely
 on the low-order bits of these results.
+
+Expression-construction convention: ``Identifier`` itself does not
+overload arithmetic, comparison, or logical operators, so wrapping in
+``IdentifierExpression(...)`` is required when the bare ``Identifier``
+is the operand dispatching the Python operator (for example
+``x * y``, ``x > y``, ``-x``). By contrast, expression-side operators
+and helpers still auto-lift bare ``Identifier`` operands in
+non-dispatching positions, so forms like ``LiteralExpression(0.5) * x``
+and arguments passed directly to ``call(...)`` or ``ternary(...)``
+need no wrapping. Removing the asymmetry by also wrapping those
+operands is harmless but adds noise; introducing it by using a bare
+``Identifier`` as the dispatching operand is a ``TypeError`` at
+construction time.
 """
 
 __all__ = [
@@ -26,6 +39,7 @@ from fhy_core.identifier import Identifier
 
 from .core import (
     BinaryOperation,
+    IdentifierExpression,
     LiteralExpression,
     UnaryOperation,
     call,
@@ -160,7 +174,7 @@ def _register_max() -> RegisteredFunction:
         parameters=[a, b],
         parameter_sorts=_REAL_PARAMS_2,
         result_sort=FunctionSort.REAL,
-        body=ternary(a > b, a, b),
+        body=ternary(IdentifierExpression(a) > b, a, b),
     )
 
 
@@ -172,29 +186,31 @@ def _register_min() -> RegisteredFunction:
         parameters=[a, b],
         parameter_sorts=_REAL_PARAMS_2,
         result_sort=FunctionSort.REAL,
-        body=ternary(a < b, a, b),
+        body=ternary(IdentifierExpression(a) < b, a, b),
     )
 
 
 def _register_abs() -> RegisteredFunction:
     x = Identifier("x")
+    x_expression = IdentifierExpression(x)
     return register_function(
         "abs",
         parameters=[x],
         parameter_sorts=_REAL_PARAMS_1,
         result_sort=FunctionSort.REAL,
-        body=ternary(x >= 0.0, x, -x),
+        body=ternary(x_expression >= 0.0, x, -x_expression),
     )
 
 
 def _register_sign() -> RegisteredFunction:
     x = Identifier("x")
+    x_expression = IdentifierExpression(x)
     return register_function(
         "sign",
         parameters=[x],
         parameter_sorts=_REAL_PARAMS_1,
         result_sort=FunctionSort.INT,
-        body=ternary(x > 0.0, 1, ternary(x < 0.0, -1, 0)),
+        body=ternary(x_expression > 0.0, 1, ternary(x_expression < 0.0, -1, 0)),
     )
 
 
@@ -219,7 +235,7 @@ def _register_clamp_symmetric() -> RegisteredFunction:
         parameters=[x, bound],
         parameter_sorts=_REAL_PARAMS_2,
         result_sort=FunctionSort.REAL,
-        body=call("clamp", x, -bound, bound),
+        body=call("clamp", x, -IdentifierExpression(bound), bound),
     )
 
 
@@ -237,12 +253,13 @@ def _register_relu() -> RegisteredFunction:
 def _register_leaky_relu() -> RegisteredFunction:
     x = Identifier("x")
     slope = Identifier("slope")
+    x_expression = IdentifierExpression(x)
     return register_function(
         "leaky_relu",
         parameters=[x, slope],
         parameter_sorts=_REAL_PARAMS_2,
         result_sort=FunctionSort.REAL,
-        body=ternary(x > 0.0, x, x * slope),
+        body=ternary(x_expression > 0.0, x, x_expression * slope),
     )
 
 
@@ -319,7 +336,8 @@ def _register_sigmoid() -> RegisteredFunction:
         parameters=[x],
         parameter_sorts=_REAL_PARAMS_1,
         result_sort=FunctionSort.REAL,
-        body=LiteralExpression(1.0) / (LiteralExpression(1.0) + call("exp", -x)),
+        body=LiteralExpression(1.0)
+        / (LiteralExpression(1.0) + call("exp", -IdentifierExpression(x))),
     )
 
 
@@ -330,7 +348,7 @@ def _register_silu() -> RegisteredFunction:
         parameters=[x],
         parameter_sorts=_REAL_PARAMS_1,
         result_sort=FunctionSort.REAL,
-        body=x * call("sigmoid", x),
+        body=IdentifierExpression(x) * call("sigmoid", x),
     )
 
 
@@ -346,7 +364,9 @@ def _register_gelu() -> RegisteredFunction:
         * x
         * (
             LiteralExpression(1.0)
-            + call("erf", x / call("sqrt", LiteralExpression(2.0)))
+            + call(
+                "erf", IdentifierExpression(x) / call("sqrt", LiteralExpression(2.0))
+            )
         ),
     )
 

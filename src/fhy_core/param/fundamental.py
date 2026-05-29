@@ -118,10 +118,15 @@ class NatParam(IntParam):
     ) -> None:
         super().__init__(name=name)
         object.__setattr__(self, "_is_zero_included", is_zero_included)
+        variable_expression = IdentifierExpression(self.variable)
         if self._is_zero_included:
-            basic_constraint = EquationConstraint(self.variable, self.variable >= 0)
+            basic_constraint = EquationConstraint(
+                self.variable, variable_expression >= 0
+            )
         else:
-            basic_constraint = EquationConstraint(self.variable, self.variable > 0)
+            basic_constraint = EquationConstraint(
+                self.variable, variable_expression > 0
+            )
         object.__setattr__(
             self, "_constraints", self._constraints + (basic_constraint,)
         )

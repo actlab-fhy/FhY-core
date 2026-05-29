@@ -1,10 +1,10 @@
 """End-to-end user-story and integration tests for the native-functions feature.
 
 Each test mirrors a real caller path through the public surface
-(parser, registry, inliner, evaluator, type-checker, sympy bridge) for
-the native-function / native-constant / sort additions. The cases
-above unit-test boundaries individually; the cases here exercise them
-in combination.
+(registry, inliner, evaluator, type-checker, sympy bridge) for the
+native-function / native-constant / sort additions. The cases above
+unit-test boundaries individually; the cases here exercise them in
+combination.
 """
 
 import math
@@ -24,7 +24,6 @@ from fhy_core.expression import (
     convert_sympy_expression_to_expression,
     evaluate_expression,
     inline_functions,
-    parse_expression,
     register_native_function,
     simplify_expression,
 )
@@ -51,25 +50,25 @@ def _no_identifiers(identifier: Identifier) -> tuple[Type, TypeQualifier]:
 
 
 # =============================================================================
-# User story: parse a native function call and evaluate it under literals
+# User story: native function call evaluates to a literal
 # =============================================================================
 
 
-def test_user_story_parse_native_call_and_evaluate_to_literal_result() -> None:
-    """Test parsing ``exp(0.0)`` and evaluating folds it to ``1.0``."""
-    parsed = parse_expression("exp(0.0)")
+def test_user_story_native_call_evaluates_to_literal_result() -> None:
+    """Test ``exp(0.0)`` evaluates to a literal ``1.0``."""
+    expression = call("exp", LiteralExpression(0.0))
 
-    evaluated = evaluate_expression(parsed)
+    evaluated = evaluate_expression(expression)
 
     assert isinstance(evaluated, LiteralExpression)
     assert evaluated.value == math.exp(0.0)
 
 
-def test_user_story_parse_then_evaluate_ceil_of_float_yields_int() -> None:
-    """Test ``ceil(2.5)`` parses and evaluates to an ``int``-valued literal ``3``."""
-    parsed = parse_expression("ceil(2.5)")
+def test_user_story_evaluate_ceil_of_float_yields_int() -> None:
+    """Test ``ceil(2.5)`` evaluates to an ``int``-valued literal ``3``."""
+    expression = call("ceil", LiteralExpression(2.5))
 
-    evaluated = evaluate_expression(parsed)
+    evaluated = evaluate_expression(expression)
 
     assert isinstance(evaluated, LiteralExpression)
     assert evaluated.value == 3
@@ -145,15 +144,15 @@ def test_user_story_sin_of_pi_round_trips_through_sympy_to_zero() -> None:
 
 
 # =============================================================================
-# User story: pipeline parse -> inline -> evaluate -> simplify for sigmoid(0)
+# User story: pipeline inline -> evaluate -> simplify for sigmoid(0)
 # =============================================================================
 
 
 def test_user_story_pipeline_sigmoid_zero_simplifies_to_half() -> None:
-    """Test the parse / inline / evaluate / simplify pipeline yields ``0.5``."""
-    parsed = parse_expression("sigmoid(0.0)")
+    """Test the inline / evaluate / simplify pipeline yields ``0.5``."""
+    expression = call("sigmoid", LiteralExpression(0.0))
 
-    inlined = inline_functions(parsed)
+    inlined = inline_functions(expression)
     evaluated = evaluate_expression(inlined)
     simplified = simplify_expression(evaluated)
 

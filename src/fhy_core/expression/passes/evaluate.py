@@ -81,9 +81,12 @@ def _coerce_literal_value_for_native(
 ) -> bool | int | float:
     """Coerce a ``LiteralExpression`` value to a native-callable Python value.
 
-    Numeric tokens from :func:`parse_expression` are stored as ``str``
-    on ``LiteralExpression``; this helper converts them to the narrowest
-    matching numeric type before they reach a native math callable.
+    ``LiteralExpression`` preserves caller-supplied string-form literals
+    so downstream passes can perform exact-decimal arithmetic. The
+    native boundary is the point where that representation is collapsed
+    to a Python numeric: integer-grammar strings convert exactly via
+    ``int``; float-grammar strings round to the nearest IEEE-754 binary
+    ``float`` (so ``"0.1"`` becomes the binary approximation).
     """
     if not isinstance(value, str):
         return value

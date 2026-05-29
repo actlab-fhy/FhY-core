@@ -1,6 +1,6 @@
 """FhY compiler core utilities."""
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 __all__ = [
     "Constraint",
@@ -74,7 +74,6 @@ __all__ = [
     "BuiltinFunctions",
     "NativeConstant",
     "NativeFunction",
-    "ParseError",
     "RegisteredEntry",
     "RegisteredFunction",
     "TernaryExpression",
@@ -96,9 +95,9 @@ __all__ = [
     "inline_functions",
     "is_entry_registered",
     "logical_and",
+    "logical_not",
     "logical_or",
     "match_pattern",
-    "parse_expression",
     "pformat_expression",
     "register_function",
     "register_native_constant",
@@ -294,7 +293,6 @@ from .expression import (
     NativeConstant,
     NativeFunction,
     NativeResultSortError,
-    ParseError,
     Pattern,
     PredicatePattern,
     RegisteredEntry,
@@ -324,9 +322,9 @@ from .expression import (
     inline_functions,
     is_entry_registered,
     logical_and,
+    logical_not,
     logical_or,
     match_pattern,
-    parse_expression,
     pformat_expression,
     register_function,
     register_native_constant,
