@@ -647,6 +647,36 @@ def test_freeze_is_idempotent_on_already_frozen_instance() -> None:
     assert instance.is_frozen is True
 
 
+def test_frozen_instance_cannot_be_unfrozen_by_setting_internal_flag() -> None:
+    """Test writing the internal frozen flag on a frozen instance raises."""
+
+    class _SimpleFrozen(FrozenMixin):
+        def __init__(self, value: int) -> None:
+            self.value = value
+
+    instance = _SimpleFrozen(1)
+
+    with pytest.raises(FrozenMutationError):
+        setattr(instance, "_fhy_core_is_frozen", False)
+
+    assert instance.is_frozen is True
+
+
+def test_frozen_instance_cannot_be_unfrozen_by_deleting_internal_flag() -> None:
+    """Test deleting the internal frozen flag on a frozen instance raises."""
+
+    class _SimpleFrozen(FrozenMixin):
+        def __init__(self, value: int) -> None:
+            self.value = value
+
+    instance = _SimpleFrozen(1)
+
+    with pytest.raises(FrozenMutationError):
+        delattr(instance, "_fhy_core_is_frozen")
+
+    assert instance.is_frozen is True
+
+
 # =============================================================================
 # Field-type immutability check
 # =============================================================================

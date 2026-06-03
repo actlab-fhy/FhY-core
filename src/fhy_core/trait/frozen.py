@@ -271,6 +271,21 @@ def _iter_frozen_field_names(target_cls: type) -> list[str]:
     return list(seen.keys())
 
 
+def _resolve_single_annotation(
+    name: str, annotation: Any, globalns: dict[str, Any], localns: dict[str, Any]
+) -> Any:
+    """Resolve one annotation via the public :func:`typing.get_type_hints`.
+
+    Wraps the annotation in a throwaway class so a single field can be
+    resolved in isolation (without one unresolvable sibling annotation
+    failing the whole class) using only public typing API.
+    """
+    probe = type("_FrozenFieldHintProbe", (), {"__annotations__": {name: annotation}})
+    return get_type_hints(
+        probe, globalns=globalns, localns=localns, include_extras=True
+    )[name]
+
+
 def _resolve_frozen_field_hints(target_cls: type) -> tuple[dict[str, Any], bool]:
     """Resolve frozen-field annotations to types, degrading per field.
 
@@ -306,10 +321,9 @@ def _resolve_frozen_field_hints(target_cls: type) -> tuple[dict[str, Any], bool]
         globalns = getattr(module, "__dict__", {})
         localns = dict(vars(target_cls))
         for name, raw in inspect.get_annotations(klass).items():
-            annotation: Any = ForwardRef(raw) if isinstance(raw, str) else raw
             try:
-                resolved[name] = typing._eval_type(  # type: ignore[attr-defined]  # noqa: SLF001
-                    annotation, globalns, localns
+                resolved[name] = _resolve_single_annotation(
+                    name, raw, globalns, localns
                 )
             except Exception as exc:  # noqa: BLE001 - per-field failure modes vary
                 all_resolved = False
@@ -571,13 +585,13 @@ class FrozenMixin(ABC):
             )
 
     def __setattr__(self, name: str, value: Any) -> None:
-        if name in {_FROZEN_FLAG, _CONSTRUCTION_DEPTH_FLAG}:
-            object.__setattr__(self, name, value)
-            return
         if name == "__orig_class__":
             # ``typing.Generic.__class_getitem__`` writes ``__orig_class__``
-            # on the instance after ``Foo[int]()`` returns. Allow the write
-            # so frozen generic subclasses don't crash on subscript binding.
+            # on the instance after ``Foo[int]()`` returns, when it is already
+            # frozen. Allow the write so frozen generic subclasses don't crash
+            # on subscript binding. Internal bookkeeping flags get no such
+            # carve-out: they are written only via ``object.__setattr__``, so
+            # routing them here would just let callers unfreeze the instance.
             object.__setattr__(self, name, value)
             return
         if self.is_frozen:
@@ -587,9 +601,6 @@ class FrozenMixin(ABC):
         object.__setattr__(self, name, value)
 
     def __delattr__(self, name: str) -> None:
-        if name in {_FROZEN_FLAG, _CONSTRUCTION_DEPTH_FLAG}:
-            object.__delattr__(self, name)
-            return
         if self.is_frozen:
             raise FrozenMutationError(
                 f'Cannot delete "{name}" on frozen {type(self).__name__}.'
