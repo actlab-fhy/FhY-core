@@ -130,7 +130,7 @@ def _validate_constraint_member(value: Any) -> None:
         )
 
 
-class _TypedMember:
+class _TypedMember(FrozenMixin):
     """Internal wrapper providing type-strict equality and hashing.
 
     Wraps a constraint member so that ``__eq__`` and ``__hash__`` use
@@ -283,8 +283,6 @@ class Constraint(
     FrozenMixin,
     StructuralEquivalenceMixin,
     ABC,
-    freeze_on_init=True,
-    freeze_on_init_deep=True,
 ):
     """A named-variable predicate.
 

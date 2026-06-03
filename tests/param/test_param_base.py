@@ -21,7 +21,7 @@ from fhy_core.param import (
 )
 from fhy_core.serialization import SerializedDict
 from fhy_core.symbol_type import SymbolType
-from fhy_core.trait import StructuralEquivalence
+from fhy_core.trait import FrozenMutationError, StructuralEquivalence
 
 from .conftest import assert_all_satisfied, assert_none_satisfied
 
@@ -287,6 +287,157 @@ def test_add_constraints_deduplicates_within_input_and_against_existing() -> Non
     again = bulk.add_constraints([constraint])
     assert len(again._constraints) == 1
     assert again is bulk
+
+
+def test_constructor_constraints_kwarg_stores_validated_constraints() -> None:
+    """Test `Param.__init__` accepts and stores a ``constraints`` sequence."""
+    variable = Identifier("x")
+    lower = EquationConstraint(
+        variable, IntParam(name=variable).variable_expression >= 0
+    )
+    upper = EquationConstraint(
+        variable, IntParam(name=variable).variable_expression <= 9
+    )
+
+    param = IntParam(name=variable, constraints=(lower, upper))
+
+    assert len(param.constraints) == 2
+
+
+def test_constructor_constraints_kwarg_rejects_mismatched_variable() -> None:
+    """Test `Param.__init__` validates each constraint against its variable."""
+    variable = Identifier("x")
+    other = Identifier("y")
+    bad = EquationConstraint(other, IntParam(name=variable).variable_expression >= 0)
+
+    with pytest.raises(ParamError):
+        IntParam(name=variable, constraints=(bad,))
+
+
+def test_constructor_constraints_kwarg_deduplicates_structurally_equivalent() -> None:
+    """Test `Param.__init__` dedups structurally-equivalent incoming constraints."""
+    variable = Identifier("x")
+    constraint = EquationConstraint(
+        variable, IntParam(name=variable).variable_expression >= 0
+    )
+
+    param = IntParam(name=variable, constraints=(constraint, constraint))
+
+    assert len(param.constraints) == 1
+
+
+def test_add_constraint_returns_frozen_immutable_param() -> None:
+    """Test `add_constraint` returns a frozen parameter that rejects mutation."""
+    param = IntParam(name=Identifier("x"))
+    constraint = EquationConstraint(param.variable, param.variable_expression >= 0)
+
+    updated = param.add_constraint(constraint)
+
+    assert updated.is_frozen is True
+    with pytest.raises(FrozenMutationError):
+        updated._variable = Identifier("hacked")
+
+
+def test_constraint_builder_methods_return_frozen_params() -> None:
+    """Test the public constraint-builder methods return frozen parameters."""
+    assert IntParam.with_lower_bound(0).is_frozen is True
+    assert IntParam.between(0, 10).is_frozen is True
+
+
+def test_constraints_property_returns_constraint_tuple() -> None:
+    """Test the public ``constraints`` property exposes the constraint tuple."""
+    variable = Identifier("x")
+    constraint = EquationConstraint(
+        variable, IntParam(name=variable).variable_expression >= 0
+    )
+
+    param = IntParam(name=variable, constraints=(constraint,))
+
+    assert param.constraints == (constraint,)
+    assert isinstance(param.constraints, tuple)
+
+
+def test_with_new_constraints_replaces_constraints_keeping_definition() -> None:
+    """Test ``with_new_constraints`` replaces constraints without changing shape."""
+    param = OrdinalParam([3, 1, 2])
+    first = InSetConstraint(param.variable, {1, 2})
+    second = InSetConstraint(param.variable, {2, 3})
+    with_first = param.add_constraint(first)
+
+    replaced = with_first.with_new_constraints((second,))
+
+    assert replaced.constraints == (second,)
+    assert replaced.possible_values == (1, 2, 3)
+    assert replaced.is_frozen is True
+    assert with_first.constraints == (first,)
+
+
+def test_with_new_constraints_deduplicates_structurally_equivalent_constraints() -> (
+    None
+):
+    """Test ``with_new_constraints`` drops structurally-equivalent duplicates."""
+    param = IntParam(name=Identifier("x"))
+    constraint = EquationConstraint(param.variable, param.variable_expression >= 0)
+
+    deduped = param.with_new_constraints((constraint, constraint))
+
+    assert len(deduped.constraints) == 1
+
+
+def test_with_new_constraints_rejects_constraint_with_mismatched_variable() -> None:
+    """Test ``with_new_constraints`` validates each constraint against the variable."""
+    param = IntParam(name=Identifier("x"))
+    mismatched = EquationConstraint(Identifier("y"), param.variable_expression >= 0)
+
+    with pytest.raises(ParamError):
+        param.with_new_constraints((mismatched,))
+
+
+def test_add_constraint_preserves_ordinal_values() -> None:
+    """Test ``add_constraint`` preserves an ``OrdinalParam``'s possible values."""
+    param = OrdinalParam([3, 1, 2])
+
+    updated = param.add_constraint(InSetConstraint(param.variable, {1, 2}))
+
+    assert updated.possible_values == (1, 2, 3)
+    assert updated.is_frozen is True
+    assert len(updated.constraints) == 1
+    assert param.constraints == ()
+
+
+def test_add_constraint_preserves_categorical_categories() -> None:
+    """Test ``add_constraint`` preserves a ``CategoricalParam``'s categories."""
+    param = CategoricalParam({"a", "b"})
+
+    updated = param.add_constraint(InSetConstraint(param.variable, {"a"}))
+
+    assert updated.categories == frozenset({"a", "b"})
+    assert updated.is_frozen is True
+
+
+def test_add_constraint_preserves_perm_members() -> None:
+    """Test ``add_constraint`` preserves a ``PermParam``'s ordered members."""
+    param = PermParam(["x", "y", "z"])
+
+    updated = param.add_constraint(InSetConstraint(param.variable, {("x", "y", "z")}))
+
+    assert updated.members == ("x", "y", "z")
+    assert updated.is_frozen is True
+
+
+def test_nat_param_reconstructed_via_constraints_kwarg_does_not_double_basic() -> None:
+    """Test constructing a `NatParam` with its own constraints keeps one basic.
+
+    The auto-added ``var >= 0`` basic constraint dedups against an incoming
+    copy of itself, so passing a ``NatParam``'s own constraints back through
+    the ``constraints`` argument does not accumulate duplicates.
+    """
+    base = NatParam()
+    assert len(base.constraints) == 1
+
+    rebuilt = NatParam(name=base.variable, constraints=base.constraints)
+
+    assert len(rebuilt.constraints) == 1
 
 
 def test_nat_param_explicit_lower_bound_zero_does_not_duplicate_basic_constraint() -> (

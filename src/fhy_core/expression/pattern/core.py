@@ -182,7 +182,7 @@ class MatchBindings(FrozenMixin):
         return hash(frozenset(self.bindings.keys()))
 
 
-class Pattern(ABC):
+class Pattern(FrozenMixin, ABC):
     """Abstract base class for expression-tree patterns.
 
     Subclasses describe a shape that an `Expression` may or may not

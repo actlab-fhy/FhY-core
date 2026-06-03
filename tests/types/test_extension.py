@@ -34,7 +34,6 @@ class SyntheticTaggedType(Type):
         super().__init__()
         self._tag = tag
         self._inner = inner
-        self.freeze(deep=True)
 
     @property
     def tag(self) -> str:

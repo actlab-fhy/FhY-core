@@ -53,8 +53,6 @@ class _DispatchedStructuralEquivalence(
     FrozenMixin,
     StructuralEquivalenceMixin,
     ABC,
-    freeze_on_init=True,
-    freeze_on_init_deep=True,
 ):
     """Shared base for ``Type`` and ``DataType``.
 

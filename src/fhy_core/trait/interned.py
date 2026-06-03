@@ -35,7 +35,7 @@ class InternedMixin(ABC, Generic[_K]):
     its concrete subclasses.
 
     If an instance also implements `Verifiable` and/or `Frozen`, the mixin
-    verifies and deep-freezes it before registration.
+    verifies and freezes it before registration.
 
     Thread safety:
         The registry is not guarded by a lock. Concurrent construction of
@@ -114,7 +114,7 @@ class InternedMixin(ABC, Generic[_K]):
         if isinstance(self, Verifiable):
             self.verify().raise_if_failed()
         if isinstance(self, Frozen) and not self.is_frozen:
-            self.freeze(deep=True)
+            self.freeze()
 
     def register_interned_instance(self) -> None:
         """Finalize and register this instance as the canonical value for its key."""
@@ -127,7 +127,8 @@ class InternedMixin(ABC, Generic[_K]):
         instance = cls._get_interned_registry().get(key)
         if instance is None or not isinstance(instance, cls):
             return None
-        return instance
+        else:
+            return instance
 
     @classmethod
     def require_interned(cls: type[_I], key: _K) -> _I:
@@ -135,7 +136,8 @@ class InternedMixin(ABC, Generic[_K]):
         instance = cls.get_interned(key)
         if instance is None:
             raise KeyError(f'No registered "{cls.__name__}" instance for key {key!r}.')
-        return instance
+        else:
+            return instance
 
     @classmethod
     def clear_interned_registry(cls) -> None:

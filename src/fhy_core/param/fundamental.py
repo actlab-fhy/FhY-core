@@ -116,8 +116,8 @@ class NatParam(IntParam):
         is_zero_included: bool = True,
         **kwargs: Any,
     ) -> None:
-        super().__init__(name=name)
-        object.__setattr__(self, "_is_zero_included", is_zero_included)
+        super().__init__(name=name, **kwargs)
+        self._is_zero_included = is_zero_included
         variable_expression = IdentifierExpression(self.variable)
         if self._is_zero_included:
             basic_constraint = EquationConstraint(
@@ -127,9 +127,15 @@ class NatParam(IntParam):
             basic_constraint = EquationConstraint(
                 self.variable, variable_expression > 0
             )
-        object.__setattr__(
-            self, "_constraints", self._constraints + (basic_constraint,)
-        )
+        # Dedup the auto-added basic constraint so constructing a NatParam from
+        # a constraint set that already contains it (e.g. round-tripping its
+        # own constraints through the ``constraints`` argument) does not
+        # accumulate duplicates.
+        if not any(
+            existing.is_structurally_equivalent(basic_constraint)
+            for existing in self._constraints
+        ):
+            self._constraints = self._constraints + (basic_constraint,)
 
     def add_lower_bound_constraint(
         self, lower_bound: int, *, is_inclusive: bool = True

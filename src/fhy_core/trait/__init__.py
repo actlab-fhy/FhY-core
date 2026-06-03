@@ -9,6 +9,7 @@ __all__ = [
     "Equal",
     "EqualMixin",
     "Frozen",
+    "FrozenFieldTypeError",
     "FrozenMixin",
     "FrozenMutationError",
     "FrozenValidationError",
@@ -55,6 +56,7 @@ from .equality import Equal, EqualMixin, PartialEqual, PartialEqualMixin
 from .foldable import Foldable, FoldableMixin
 from .frozen import (
     Frozen,
+    FrozenFieldTypeError,
     FrozenMixin,
     FrozenMutationError,
     FrozenValidationError,
