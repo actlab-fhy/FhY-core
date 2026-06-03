@@ -939,7 +939,6 @@ class _UnregisteredType(Type):
     def __init__(self, tag: str) -> None:
         super().__init__()
         self._tag = tag
-        self.freeze(deep=True)
 
     @property
     def tag(self) -> str:
@@ -963,7 +962,6 @@ class _UnregisteredDataType(DataType):
 
     def __init__(self) -> None:
         super().__init__()
-        self.freeze(deep=True)
 
     def serialize_data_to_dict(self) -> SerializedDict:  # pragma: no cover
         raise NotImplementedError

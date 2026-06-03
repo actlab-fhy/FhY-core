@@ -112,8 +112,6 @@ class ParamAssignment(
     Serializable,
     FrozenMixin,
     Generic[_T],
-    freeze_on_init=True,
-    freeze_on_init_deep=True,
 ):
     """Immutable binding of a parameter definition to a concrete value."""
 
@@ -136,8 +134,8 @@ class ParamAssignment(
                 f"for parameter {param!r}."
             )
 
-        object.__setattr__(self, "_param", param)
-        object.__setattr__(self, "_value", value)
+        self._param = param
+        self._value = value
 
     @property
     def param(self) -> "Param[_T]":
@@ -189,17 +187,29 @@ class Param(
     StructuralEquivalenceMixin,
     ABC,
     Generic[_T],
-    freeze_on_init=True,
-    freeze_on_init_deep=True,
 ):
     """Abstract base class for constrained parameters."""
 
     _variable: Identifier
     _constraints: tuple[Constraint, ...]
 
-    def __init__(self, *, name: Identifier | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        name: Identifier | None = None,
+        constraints: Sequence[Constraint] = (),
+    ) -> None:
         self._variable = name or Identifier("param")
-        self._constraints = ()
+        accumulated: list[Constraint] = []
+        for constraint in constraints:
+            self.validate_constraint(constraint)
+            if any(
+                existing.is_structurally_equivalent(constraint)
+                for existing in accumulated
+            ):
+                continue
+            accumulated.append(constraint)
+        self._constraints = tuple(accumulated)
 
     @property
     def variable(self) -> Identifier:
@@ -1143,7 +1153,7 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
             ) from exc
         if not _is_values_unique_in_sorted_sequence(sorted_values):
             raise ParamError("Values must be unique.")
-        object.__setattr__(self, "_sorted_values", sorted_values)
+        self._sorted_values = sorted_values
 
     @property
     def possible_values(self) -> tuple[_OrdinalValueT, ...]:
@@ -1262,7 +1272,7 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
                 )
         if not _is_values_unique_in_sequence_with_set(category_values):
             raise ParamError("Values must be unique.")
-        object.__setattr__(self, "_categories", frozenset(category_values))
+        self._categories = frozenset(category_values)
 
     @property
     def categories(self) -> frozenset[_CategoricalValueT]:
@@ -1387,7 +1397,7 @@ class PermParam(
                 )
         if not _is_values_unique_in_sequence_without_set(all_values):
             raise ParamError("Values must be unique.")
-        object.__setattr__(self, "_ordered_members", all_member_values)
+        self._ordered_members = all_member_values
 
     @property
     def members(self) -> tuple[_PermutationMemberValueT, ...]:
