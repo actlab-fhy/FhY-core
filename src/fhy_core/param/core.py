@@ -21,7 +21,6 @@ __all__ = [
     "create_single_valid_value_param",
 ]
 
-import copy
 import itertools
 import json
 from abc import ABC, abstractmethod
@@ -200,6 +199,12 @@ class Param(
         constraints: Sequence[Constraint] = (),
     ) -> None:
         self._variable = name or Identifier("param")
+        self._constraints = self._validate_and_deduplicate_constraints(constraints)
+
+    def _validate_and_deduplicate_constraints(
+        self, constraints: Sequence[Constraint]
+    ) -> tuple[Constraint, ...]:
+        """Validate each constraint and drop structural duplicates, preserving order."""
         accumulated: list[Constraint] = []
         for constraint in constraints:
             self.validate_constraint(constraint)
@@ -209,7 +214,7 @@ class Param(
             ):
                 continue
             accumulated.append(constraint)
-        self._constraints = tuple(accumulated)
+        return tuple(accumulated)
 
     @property
     def variable(self) -> Identifier:
@@ -218,6 +223,35 @@ class Param(
     @property
     def variable_expression(self) -> IdentifierExpression:
         return IdentifierExpression(self._variable)
+
+    @property
+    def constraints(self) -> tuple[Constraint, ...]:
+        """Return the constraints attached to this parameter."""
+        return self._constraints
+
+    def with_new_constraints(self, constraints: Sequence[Constraint]) -> Self:
+        """Return a frozen copy of this parameter with its constraints replaced.
+
+        The parameter's definition state (variable and value domain) is
+        preserved unchanged; only the constraint set is replaced. Each
+        constraint is validated against this parameter's variable and
+        structural duplicates are dropped, matching constructor semantics.
+
+        Args:
+            constraints: Constraints for the returned parameter.
+
+        Returns:
+            A new frozen parameter of the same concrete type.
+
+        """
+        clone = type(self).__new__(type(self))
+        # The frozen flag lives in ``FrozenMixin.__slots__``, not ``__dict__``,
+        # so copying ``__dict__`` yields a still-mutable clone that ``freeze``
+        # seals once its constraints are set.
+        clone.__dict__.update(self.__dict__)
+        clone._constraints = self._validate_and_deduplicate_constraints(constraints)
+        clone.freeze()
+        return clone
 
     @classmethod
     def with_value(
@@ -346,8 +380,7 @@ class Param(
                 self._variable,
             )
             return self
-        new_param = self._clone()
-        object.__setattr__(new_param, "_constraints", self._constraints + (constraint,))
+        new_param = self.with_new_constraints(self._constraints + (constraint,))
         _LOGGER.debug(
             "added constraint on %r (total=%d)",
             self._variable,
@@ -389,16 +422,6 @@ class Param(
                 constraint.serialize_to_dict() for constraint in self._constraints
             ],
         }
-
-    def _clone(self) -> Self:
-        """Create a new parameter with identical definition state."""
-        return copy.copy(self)
-
-    def __copy__(self) -> Self:
-        new_param = self.__class__.__new__(self.__class__)
-        for attribute_name, attribute_value in self.__dict__.items():
-            object.__setattr__(new_param, attribute_name, attribute_value)
-        return new_param
 
     def __repr__(self) -> str:
         param_set_repr = self._get_param_set_repr()

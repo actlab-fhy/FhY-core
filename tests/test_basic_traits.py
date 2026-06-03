@@ -1,14 +1,19 @@
 # mypy: disable-error-code="misc"
 """Tests the basic compiler traits."""
 
+import datetime
+import decimal
 import enum
+import fractions
 import pathlib
+import re
 from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Annotated, ClassVar, Final, Optional
 
 import pytest
+from frozendict import frozendict
 
 from fhy_core import DATA_DOMAIN
 from fhy_core.diagnostic import (
@@ -42,6 +47,7 @@ from fhy_core.trait import (
     PartialOrderableMixin,
     VerifiableMixin,
 )
+from fhy_core.utils import Self
 
 from .conftest import mock_identifier
 
@@ -651,7 +657,7 @@ def test_field_type_check_rejects_list_field() -> None:
 
     @dataclass(frozen=True)
     class _BadList(FrozenMixin):
-        values: list[int]  # noqa: ignore  # intentional violation
+        values: list[int]  # intentional violation
 
     with pytest.raises(FrozenFieldTypeError, match="values"):
         _BadList([1, 2, 3])
@@ -797,8 +803,13 @@ def test_field_type_check_skipped_for_abstract_class() -> None:
         @abstractmethod
         def do_thing(self) -> None: ...
 
-    # Class itself can exist without instantiation.
-    assert _AbstractWithMutable is not None
+    # Instantiating the abstract class fails because it is abstract, not
+    # because of the mutable field: the field-type check is skipped for
+    # abstract classes, so ``TypeError`` is raised rather than
+    # ``FrozenFieldTypeError``.
+    with pytest.raises(TypeError) as exc_info:
+        _AbstractWithMutable([1, 2])  # type: ignore[abstract]
+    assert not isinstance(exc_info.value, FrozenFieldTypeError)
 
     @dataclass(frozen=True)
     class _ConcreteFix(_AbstractWithMutable):
@@ -829,6 +840,212 @@ def test_field_type_check_accepts_type_field() -> None:
         cls: type[int]
 
     _GoodType(int)
+
+
+def test_field_type_check_accepts_self_field() -> None:
+    """Test a ``Self``-typed field passes the check across Python versions.
+
+    ``Self`` is sourced from the ``fhy_core.utils`` compatibility shim so the
+    module imports on Python 3.10, where ``typing.Self`` does not exist.
+    """
+
+    @dataclass(frozen=True)
+    class _GoodSelf(FrozenMixin):
+        peer: "Self | None" = None
+
+    _GoodSelf()
+
+
+def test_field_type_check_accepts_decimal_field() -> None:
+    """Test a `decimal.Decimal` field passes the check."""
+
+    @dataclass(frozen=True)
+    class _GoodDecimal(FrozenMixin):
+        value: decimal.Decimal
+
+    _GoodDecimal(decimal.Decimal("1.5"))
+
+
+def test_field_type_check_accepts_fraction_field() -> None:
+    """Test a `fractions.Fraction` field passes the check."""
+
+    @dataclass(frozen=True)
+    class _GoodFraction(FrozenMixin):
+        value: fractions.Fraction
+
+    _GoodFraction(fractions.Fraction(1, 3))
+
+
+def test_field_type_check_accepts_datetime_field() -> None:
+    """Test a `datetime.datetime` field passes the check."""
+
+    @dataclass(frozen=True)
+    class _GoodDatetime(FrozenMixin):
+        moment: datetime.datetime
+
+    _GoodDatetime(datetime.datetime(2026, 1, 1))
+
+
+def test_field_type_check_accepts_pattern_field() -> None:
+    """Test a `re.Pattern` field passes the check."""
+
+    @dataclass(frozen=True)
+    class _GoodPattern(FrozenMixin):
+        matcher: re.Pattern[str]
+
+    _GoodPattern(re.compile("x"))
+
+
+def test_field_type_check_accepts_frozendict_field() -> None:
+    """Test a parameterized ``frozendict[str, int]`` field passes the check."""
+
+    @dataclass(frozen=True)
+    class _GoodFrozendict(FrozenMixin):
+        mapping: frozendict[str, int]
+
+    _GoodFrozendict(frozendict({"x": 1}))
+
+
+def test_field_type_check_rejects_frozendict_with_mutable_value() -> None:
+    """Test ``frozendict[str, list[int]]`` fails on its mutable value type."""
+
+    @dataclass(frozen=True)
+    class _BadFrozendict(FrozenMixin):
+        mapping: frozendict[str, list[int]]
+
+    with pytest.raises(FrozenFieldTypeError, match="mapping"):
+        _BadFrozendict(frozendict())
+
+
+def test_field_type_check_accepts_annotated_field() -> None:
+    """Test ``Annotated[tuple[int, ...], ...]`` defers to the wrapped type."""
+
+    @dataclass(frozen=True)
+    class _GoodAnnotated(FrozenMixin):
+        values: Annotated[tuple[int, ...], "metadata"]
+
+    _GoodAnnotated((1, 2))
+
+
+def test_field_type_check_rejects_annotated_mutable_field() -> None:
+    """Test ``Annotated[list[int], ...]`` is rejected through the wrapped type."""
+
+    @dataclass(frozen=True)
+    class _BadAnnotated(FrozenMixin):
+        values: Annotated[list[int], "metadata"]
+
+    with pytest.raises(FrozenFieldTypeError, match="values"):
+        _BadAnnotated([])
+
+
+def test_field_type_check_accepts_final_field() -> None:
+    """Test ``Final[int]`` defers to the wrapped immutable type."""
+
+    @dataclass(frozen=True)
+    class _GoodFinal(FrozenMixin):
+        value: Final[int]
+
+    _GoodFinal(1)
+
+
+def test_field_type_check_accepts_optional_frozenset_field() -> None:
+    """Test ``Optional[frozenset[int]]`` passes the check."""
+
+    @dataclass(frozen=True)
+    class _GoodOptional(FrozenMixin):
+        values: Optional[frozenset[int]]
+
+    _GoodOptional(None)
+    _GoodOptional(frozenset([1]))
+
+
+def test_field_type_check_accepts_nested_frozen_mixin_field() -> None:
+    """Test a field typed as another `FrozenMixin` subclass passes the check."""
+
+    @dataclass(frozen=True)
+    class _Inner(FrozenMixin):
+        value: int
+
+    @dataclass(frozen=True)
+    class _Outer(FrozenMixin):
+        inner: _Inner
+
+    _Outer(_Inner(1))
+
+
+def test_field_type_check_rejects_plain_user_class_field() -> None:
+    """Test a field typed as a non-`FrozenMixin` user class is rejected.
+
+    An arbitrary user class is mutable for all the check can tell, so it is
+    refused unless it inherits `FrozenMixin`.
+    """
+
+    class _PlainUserClass:
+        pass
+
+    @dataclass(frozen=True)
+    class _BadUserClass(FrozenMixin):
+        payload: _PlainUserClass
+
+    with pytest.raises(FrozenFieldTypeError, match="payload"):
+        _BadUserClass(_PlainUserClass())
+
+
+def test_field_type_check_reports_resolvable_violation_despite_unresolvable_field() -> (
+    None
+):
+    """Test a resolvable mutable field is still caught when another won't resolve.
+
+    A single unresolvable forward reference must not suppress the check for
+    the rest of the class: the resolvable ``list[int]`` field is still
+    reported.
+    """
+
+    @dataclass(frozen=True)
+    class _MixedResolution(FrozenMixin):
+        bad: list[int]
+        ref: "_DefinitelyNotDefinedForwardRef"  # type: ignore[name-defined]  # noqa: F821
+
+    with pytest.raises(FrozenFieldTypeError, match="bad"):
+        _MixedResolution([1, 2], None)
+
+
+def test_assert_frozen_raises_when_dispatch_not_wired() -> None:
+    """Test ``assert_frozen`` fails when the class ``__setattr__`` is not wired.
+
+    If something replaces the freeze-enforcing ``__setattr__`` on the class,
+    the freeze invariant is no longer enforceable and ``assert_frozen``
+    raises ``FrozenValidationError`` even though the frozen flag is set.
+    """
+
+    class _Tampered(FrozenMixin):
+        def __init__(self, value: int) -> None:
+            self.value = value
+
+    instance = _Tampered(1)
+    type.__setattr__(_Tampered, "__setattr__", object.__setattr__)
+
+    with pytest.raises(FrozenValidationError):
+        instance.assert_frozen()
+
+
+def test_dataclass_frozen_post_init_self_assignment_raises() -> None:
+    """Test plain ``self.x = ...`` in a frozen dataclass ``__post_init__`` raises.
+
+    The instance is already frozen when ``__post_init__`` runs, so a plain
+    assignment raises ``FrozenMutationError``.
+    """
+
+    @dataclass(frozen=True)
+    class _SelfAssignPostInit(FrozenMixin):
+        x: int
+        derived: int = 0
+
+        def __post_init__(self) -> None:
+            self.derived = self.x * 2
+
+    with pytest.raises(FrozenMutationError):
+        _SelfAssignPostInit(3)
 
 
 # =============================================================================

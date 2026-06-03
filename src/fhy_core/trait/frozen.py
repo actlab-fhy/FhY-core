@@ -17,6 +17,7 @@ import functools
 import inspect
 import pathlib
 import re
+import sys
 import types
 import typing
 from abc import ABC
@@ -40,6 +41,7 @@ from frozendict import frozendict
 
 from fhy_core.error import register_error
 from fhy_core.logger import get_logger
+from fhy_core.utils import Self
 
 _LOGGER = get_logger(__name__)
 
@@ -131,7 +133,6 @@ _IMMUTABLE_WHITELIST: tuple[type, ...] = (
     tuple,
     frozenset,
     frozendict,
-    types.MappingProxyType,
 )
 """Concrete classes considered immutable for field-type validation.
 
@@ -139,6 +140,10 @@ Parameterized generics (``tuple[T, ...]``, ``frozenset[T]`` etc.) are
 inspected recursively in :func:`_is_immutable_annotation`; the
 container origin is checked against this whitelist and the type
 parameters are checked against the same predicate.
+
+``types.MappingProxyType`` is deliberately excluded: it is a read-only
+*view* over a backing mapping that can still mutate underneath it, so it
+is not a sound immutable field type. Use ``frozendict`` instead.
 """
 
 _MUTABLE_OUTRIGHT: tuple[type, ...] = (
@@ -162,7 +167,7 @@ def _is_immutable_class(cls: type) -> bool:
 
 
 _IMMUTABLE_LEAF_SINGLETONS: frozenset[Any] = frozenset(
-    {None, type(None), Ellipsis, Any, typing.Self}
+    {None, type(None), Ellipsis, Any, Self}
 )
 
 
@@ -187,7 +192,6 @@ def _is_immutable_parameterized_origin(
     elif origin is tuple or origin in {
         frozenset,
         frozendict,
-        types.MappingProxyType,
     }:
         return all(_is_immutable_annotation(arg, depth - 1) for arg in args)
     else:
@@ -242,12 +246,203 @@ def _is_immutable_annotation(
         return False
 
 
+def _iter_frozen_field_names(target_cls: type) -> list[str]:
+    """Return field names declared on the subclass or its ``FrozenMixin`` ancestors.
+
+    Annotations from non-``FrozenMixin`` mixins (such as ``EqualMixin``)
+    are excluded since they're not the subclass's freezing contract.
+    Annotations from ``FrozenMixin`` itself (the ``ClassVar`` machinery
+    flags) are excluded.
+
+    Uses :func:`inspect.get_annotations` so the lookup works under
+    PEP 749 (Python 3.14+) deferred annotations, where the raw
+    ``__annotations__`` slot in ``cls.__dict__`` may be absent and
+    the dict is materialized lazily via the ``__annotate__`` callable.
+
+    """
+    seen: dict[str, None] = {}
+    for klass in reversed(target_cls.__mro__):
+        if klass is FrozenMixin or klass is object:
+            continue
+        if not issubclass(klass, FrozenMixin):
+            continue
+        for name in inspect.get_annotations(klass):
+            seen.setdefault(name, None)
+    return list(seen.keys())
+
+
+def _resolve_frozen_field_hints(target_cls: type) -> tuple[dict[str, Any], bool]:
+    """Resolve frozen-field annotations to types, degrading per field.
+
+    Tries a single whole-class resolution first. On failure (typically
+    an unresolved forward reference), falls back to resolving each frozen
+    field individually so one unresolvable annotation does not suppress
+    the immutability check for the rest of the class.
+
+    Returns the resolved ``{field_name: type}`` mapping and a flag that
+    is ``True`` only when every frozen field resolved. Unresolvable
+    fields are logged and omitted from the mapping.
+
+    """
+    try:
+        return get_type_hints(target_cls, include_extras=True), True
+    except Exception as exc:  # noqa: BLE001 - resolution failure modes vary
+        _LOGGER.warning(
+            "field-type check for %s: whole-class annotation resolution failed "
+            "(%s: %s); falling back to per-field resolution",
+            target_cls.__name__,
+            type(exc).__name__,
+            exc,
+        )
+
+    resolved: dict[str, Any] = {}
+    all_resolved = True
+    for klass in reversed(target_cls.__mro__):
+        if klass is FrozenMixin or klass is object:
+            continue
+        if not issubclass(klass, FrozenMixin):
+            continue
+        module = sys.modules.get(klass.__module__)
+        globalns = getattr(module, "__dict__", {})
+        localns = dict(vars(target_cls))
+        for name, raw in inspect.get_annotations(klass).items():
+            annotation: Any = ForwardRef(raw) if isinstance(raw, str) else raw
+            try:
+                resolved[name] = typing._eval_type(  # type: ignore[attr-defined]  # noqa: SLF001
+                    annotation, globalns, localns
+                )
+            except Exception as exc:  # noqa: BLE001 - per-field failure modes vary
+                all_resolved = False
+                _LOGGER.warning(
+                    "field-type check for %s: could not resolve field %r "
+                    "(%s: %s); skipping that field",
+                    target_cls.__name__,
+                    name,
+                    type(exc).__name__,
+                    exc,
+                )
+    return resolved, all_resolved
+
+
+def _check_field_types(target_cls: type) -> None:
+    """Raise :class:`FrozenFieldTypeError` if a concrete subclass has mutable fields.
+
+    No-op for abstract classes and for classes already checked. Latches the
+    check as done only when every field resolved, so an unresolved forward
+    reference is re-attempted on a later instantiation rather than skipped
+    permanently.
+    """
+    if target_cls.__dict__.get(_FIELD_TYPE_CHECK_DONE_FLAG, False):
+        return
+    if getattr(target_cls, "__abstractmethods__", frozenset()):
+        return
+
+    resolved_hints, all_resolved = _resolve_frozen_field_hints(target_cls)
+
+    offenders: list[tuple[str, Any]] = []
+    for field_name in _iter_frozen_field_names(target_cls):
+        field_type = resolved_hints.get(field_name)
+        if field_type is None:
+            continue
+        if get_origin(field_type) is ClassVar:
+            continue
+        if not _is_immutable_annotation(field_type):
+            offenders.append((field_name, field_type))
+
+    if offenders:
+        details = ", ".join(f"{name}: {annotation!r}" for name, annotation in offenders)
+        raise FrozenFieldTypeError(
+            f"{target_cls.__name__} declares mutable field type(s): {details}. "
+            f"Replace each with an immutable equivalent (e.g. tuple, "
+            f"frozenset, frozendict) or have the nested type inherit "
+            f"FrozenMixin."
+        )
+
+    if all_resolved:
+        type.__setattr__(target_cls, _FIELD_TYPE_CHECK_DONE_FLAG, True)
+
+
+def _compute_is_native_frozen_dataclass(target_cls: type) -> bool:
+    """Return ``True`` if the class is a ``@dataclass(frozen=True)``."""
+    params = getattr(target_cls, "__dataclass_params__", None)
+    return bool(
+        is_dataclass(target_cls)
+        and params is not None
+        and getattr(params, "frozen", False)
+    )
+
+
+def _swap_dataclass_frozen_dispatch(target_cls: type) -> None:
+    """Replace a dataclass-frozen ``__setattr__``/``__delattr__`` with the mixin's.
+
+    Normalizes the raised error type to :class:`FrozenMutationError` and lets
+    the mixin's bookkeeping-flag carve-outs work.
+    """
+    if "__setattr__" in target_cls.__dict__:
+        type.__setattr__(target_cls, "__setattr__", FrozenMixin.__setattr__)
+    if "__delattr__" in target_cls.__dict__:
+        type.__setattr__(target_cls, "__delattr__", FrozenMixin.__delattr__)
+
+
+def _install_init_wrap(target_cls: type) -> None:
+    """Wrap the class's ``__init__`` to auto-freeze after the outermost call."""
+    original_init = target_cls.__init__  # type: ignore[misc]
+
+    @functools.wraps(original_init)
+    def wrapped(self: "FrozenMixin", *args: Any, **kwargs: Any) -> None:
+        try:
+            depth = object.__getattribute__(self, _CONSTRUCTION_DEPTH_FLAG)
+        except AttributeError:
+            depth = 0
+        object.__setattr__(self, _CONSTRUCTION_DEPTH_FLAG, depth + 1)
+        try:
+            original_init(self, *args, **kwargs)
+        except BaseException:
+            object.__setattr__(self, _CONSTRUCTION_DEPTH_FLAG, depth)
+            raise
+        object.__setattr__(self, _CONSTRUCTION_DEPTH_FLAG, depth)
+        # Use the *runtime* class's policy so a most-derived class with
+        # ``freeze_on_init=False`` overrides a parent wrap that would
+        # otherwise freeze. The depth check ensures only the outermost wrap
+        # evaluates the policy.
+        if depth == 0 and type(self)._FREEZE_ON_INIT:
+            self.freeze()
+
+    setattr(wrapped, _INIT_WRAPPER_MARKER, True)
+    type.__setattr__(target_cls, "__init__", wrapped)
+
+
+def _setup_class(target_cls: type) -> None:
+    """Run the one-time per-subclass setup: cache state, swap dispatch, check fields.
+
+    Caches the native-frozen-dataclass flag, swaps in the mixin's
+    ``__setattr__``/``__delattr__`` for dataclass-frozen subclasses, and
+    runs the field-type immutability check. The auto-freeze ``__init__`` wrap
+    is installed separately in :meth:`FrozenMixin.__init_subclass__`, not here.
+
+    Called from :meth:`FrozenMixin.__new__` on the first instantiation of any
+    concrete ``FrozenMixin`` subclass. Idempotent across repeated
+    instantiations (guarded by ``_CLASS_SETUP_DONE_FLAG``) and across subclass
+    chains (each subclass runs its own setup).
+
+    """
+    is_native = _compute_is_native_frozen_dataclass(target_cls)
+    type.__setattr__(target_cls, _IS_NATIVE_FROZEN_DATACLASS_CACHE, is_native)
+
+    if is_native:
+        _swap_dataclass_frozen_dispatch(target_cls)
+
+    _check_field_types(target_cls)
+
+    type.__setattr__(target_cls, _CLASS_SETUP_DONE_FLAG, True)
+
+
 class FrozenMixin(ABC):
     """Mixin that enforces runtime immutability after construction.
 
     Auto-freeze:
         Subclasses are auto-frozen at the end of the outermost
-        ``__init__``. The default policy is opt-in implicitly; pass
+        ``__init__``. Auto-freeze is on by default (opt-out); pass
         ``freeze_on_init=False`` as a class-creation kwarg to keep the
         instance mutable after ``__init__`` (the escape hatch is
         provided for downstream extensibility and is not used by any
@@ -321,7 +516,7 @@ class FrozenMixin(ABC):
         # ``FrozenMixin`` ancestor (no need to double-wrap; the inherited
         # wrap fires through MRO).
         if cls._FREEZE_ON_INIT and "__init__" in cls.__dict__:
-            FrozenMixin._install_init_wrap(cls)
+            _install_init_wrap(cls)
 
     if not TYPE_CHECKING:
         # Defined only at runtime so it does not advertise a permissive
@@ -335,7 +530,7 @@ class FrozenMixin(ABC):
         ) -> _FrozenMixinT:
             del args, kwargs
             if not cls.__dict__.get(_CLASS_SETUP_DONE_FLAG, False):
-                FrozenMixin._setup_class(cls)
+                _setup_class(cls)
             return super().__new__(cls)
 
     @property
@@ -400,133 +595,3 @@ class FrozenMixin(ABC):
                 f'Cannot delete "{name}" on frozen {type(self).__name__}.'
             )
         object.__delattr__(self, name)
-
-    @staticmethod
-    def _setup_class(target_cls: type) -> None:
-        """One-time per-subclass setup: cache state, swap dispatch, install wrap.
-
-        Called from :meth:`__new__` on the first instantiation of any
-        concrete ``FrozenMixin`` subclass. The setup is idempotent across
-        repeated instantiations (guarded by ``_CLASS_SETUP_DONE_FLAG``)
-        and across subclass chains (each subclass runs its own setup).
-
-        """
-        is_native = FrozenMixin._compute_is_native_frozen_dataclass(target_cls)
-        type.__setattr__(target_cls, _IS_NATIVE_FROZEN_DATACLASS_CACHE, is_native)
-
-        if is_native:
-            FrozenMixin._swap_dataclass_frozen_dispatch(target_cls)
-
-        FrozenMixin._check_field_types(target_cls)
-
-        type.__setattr__(target_cls, _CLASS_SETUP_DONE_FLAG, True)
-
-    @staticmethod
-    def _compute_is_native_frozen_dataclass(target_cls: type) -> bool:
-        params = getattr(target_cls, "__dataclass_params__", None)
-        return bool(
-            is_dataclass(target_cls)
-            and params is not None
-            and getattr(params, "frozen", False)
-        )
-
-    @staticmethod
-    def _swap_dataclass_frozen_dispatch(target_cls: type) -> None:
-        if "__setattr__" in target_cls.__dict__:
-            type.__setattr__(target_cls, "__setattr__", FrozenMixin.__setattr__)
-        if "__delattr__" in target_cls.__dict__:
-            type.__setattr__(target_cls, "__delattr__", FrozenMixin.__delattr__)
-
-    @staticmethod
-    def _install_init_wrap(target_cls: type) -> None:
-        original_init = target_cls.__init__  # type: ignore[misc]
-
-        @functools.wraps(original_init)
-        def wrapped(self: "FrozenMixin", *args: Any, **kwargs: Any) -> None:
-            try:
-                depth = object.__getattribute__(self, _CONSTRUCTION_DEPTH_FLAG)
-            except AttributeError:
-                depth = 0
-            object.__setattr__(self, _CONSTRUCTION_DEPTH_FLAG, depth + 1)
-            try:
-                original_init(self, *args, **kwargs)
-            except BaseException:
-                object.__setattr__(self, _CONSTRUCTION_DEPTH_FLAG, depth)
-                raise
-            object.__setattr__(self, _CONSTRUCTION_DEPTH_FLAG, depth)
-            # Use the *runtime* class's policy so a most-derived class
-            # with ``freeze_on_init=False`` overrides a parent wrap that
-            # would otherwise freeze. The depth check ensures only the
-            # outermost wrap evaluates the policy.
-            if depth == 0 and type(self)._FREEZE_ON_INIT:
-                self.freeze()
-
-        setattr(wrapped, _INIT_WRAPPER_MARKER, True)
-        type.__setattr__(target_cls, "__init__", wrapped)
-
-    @staticmethod
-    def _check_field_types(target_cls: type) -> None:
-        if target_cls.__dict__.get(_FIELD_TYPE_CHECK_DONE_FLAG, False):
-            return
-        if getattr(target_cls, "__abstractmethods__", frozenset()):
-            return
-
-        try:
-            resolved_hints = get_type_hints(target_cls, include_extras=True)
-        except (NameError, AttributeError) as exc:
-            _LOGGER.warning(
-                "skipped field-type check for %s: could not resolve annotations (%s)",
-                target_cls.__name__,
-                exc,
-            )
-            type.__setattr__(target_cls, _FIELD_TYPE_CHECK_DONE_FLAG, True)
-            return
-
-        offenders: list[tuple[str, Any]] = []
-        for field_name in FrozenMixin._iter_frozen_field_names(target_cls):
-            field_type = resolved_hints.get(field_name)
-            if field_type is None:
-                continue
-            if get_origin(field_type) is ClassVar:
-                continue
-            if not _is_immutable_annotation(field_type):
-                offenders.append((field_name, field_type))
-
-        if offenders:
-            details = ", ".join(
-                f"{name}: {annotation!r}" for name, annotation in offenders
-            )
-            raise FrozenFieldTypeError(
-                f"{target_cls.__name__} declares mutable field type(s): {details}. "
-                f"Replace each with an immutable equivalent (e.g. tuple, "
-                f"frozenset, frozendict) or have the nested type inherit "
-                f"FrozenMixin."
-            )
-
-        type.__setattr__(target_cls, _FIELD_TYPE_CHECK_DONE_FLAG, True)
-
-    @staticmethod
-    def _iter_frozen_field_names(target_cls: type) -> list[str]:
-        """Return field names declared on the subclass or its ``FrozenMixin`` ancestors.
-
-        Annotations from non-``FrozenMixin`` mixins (such as ``EqualMixin``)
-        are excluded since they're not the subclass's freezing contract.
-        Annotations from ``FrozenMixin`` itself (the ``ClassVar`` machinery
-        flags) are excluded.
-
-        Uses :func:`inspect.get_annotations` so the lookup works under
-        PEP 749 (Python 3.14+) deferred annotations, where the raw
-        ``__annotations__`` slot in ``cls.__dict__`` may be absent and
-        the dict is materialized lazily via the ``__annotate__``
-        callable.
-
-        """
-        seen: dict[str, None] = {}
-        for klass in reversed(target_cls.__mro__):
-            if klass is FrozenMixin or klass is object:
-                continue
-            if not issubclass(klass, FrozenMixin):
-                continue
-            for name in inspect.get_annotations(klass):
-                seen.setdefault(name, None)
-        return list(seen.keys())
