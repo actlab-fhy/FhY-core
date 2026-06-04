@@ -111,6 +111,47 @@ class _AutoOrderableValue(OrderableMixin):  # type: ignore[override]
     value: int
 
 
+@dataclass(eq=True)
+class _EqualButUnhashableValue(EqualMixin):  # noqa: PLW1641
+    """Declares total equality and defines ``__eq__`` but is not hashable.
+
+    ``@dataclass(eq=True)`` without ``frozen=True`` sets ``__hash__`` to
+    ``None``, modelling a class that supports partial equality yet cannot
+    support total equality.
+    """
+
+    value: int
+
+
+class _NoLtOrderableValue(OrderableMixin):
+    """Declares total ordering via the mixin but never implements ``__lt__``."""
+
+
+class _ManualEqualValue(EqualMixin):
+    """Hand-rolled total-equality value with real ``__eq__`` and ``__hash__``."""
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _ManualEqualValue) and self.value == other.value
+
+    def __hash__(self) -> int:
+        return hash(self.value)
+
+
+class _ManualOrderableValue(OrderableMixin):
+    """Hand-rolled total-ordering value with a real ``__lt__``."""
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, _ManualOrderableValue):
+            return NotImplemented
+        return self.value < other.value
+
+
 class _OptOutAutoFreeze(FrozenMixin, freeze_on_init=False):
     """Escape-hatch fixture: opt-out of auto-freeze for tests that need to
     observe a non-frozen FrozenMixin instance.
@@ -286,6 +327,88 @@ def test_orderable_mixin_defaults_to_total_order() -> None:
     value = _AutoOrderableValue(3)
     assert value.supports_partial_ordering is True
     assert value.supports_ordering is True
+
+
+def test_equal_without_eq_or_hash_does_not_support_equality() -> None:
+    """Test `EqualMixin` reports no equality support without `__eq__`/`__hash__`.
+
+    A class that opts into total equality but supplies neither a real
+    ``__eq__`` nor a real ``__hash__`` cannot honor the contract, so
+    ``supports_equality`` must be ``False`` rather than advertising a
+    capability that ``hash()`` then fails to provide.
+    """
+    value = _NoHashEqualValue()
+    assert value.supports_partial_equality is False
+    assert value.supports_equality is False
+
+
+def test_equal_with_eq_but_no_hash_does_not_support_equality() -> None:
+    """Test `EqualMixin` reports no equality support when not hashable.
+
+    ``_EqualButUnhashableValue`` supports partial equality (it has a real
+    ``__eq__``) but is unhashable (``__hash__`` is ``None``), so total
+    equality is not supported.
+    """
+    value = _EqualButUnhashableValue(3)
+    assert value.supports_partial_equality is True
+    assert value.supports_equality is False
+
+
+def test_orderable_without_lt_does_not_support_ordering() -> None:
+    """Test `OrderableMixin` reports no ordering support without `__lt__`."""
+    value = _NoLtOrderableValue()
+    assert value.supports_partial_ordering is False
+    assert value.supports_ordering is False
+
+
+def test_manual_equal_with_eq_and_hash_supports_equality() -> None:
+    """Test a hand-rolled `__eq__`/`__hash__` reports total equality support."""
+    value = _ManualEqualValue(3)
+    assert value.supports_partial_equality is True
+    assert value.supports_equality is True
+    assert hash(value) == hash(_ManualEqualValue(3))
+
+
+def test_manual_orderable_with_lt_supports_ordering() -> None:
+    """Test a hand-rolled `__lt__` reports total ordering support."""
+    value = _ManualOrderableValue(3)
+    assert value.supports_partial_ordering is True
+    assert value.supports_ordering is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        _AutoEqualValue(3),
+        _NoHashEqualValue(),
+        _EqualButUnhashableValue(3),
+        _ManualEqualValue(3),
+    ],
+)
+def test_total_equality_implies_partial_equality(value: Equal) -> None:
+    """Test the subtype invariant: total equality entails partial equality.
+
+    ``Equal`` is a subtype of ``PartialEqual``, so no object may report
+    ``supports_equality`` while denying ``supports_partial_equality``.
+    """
+    assert not value.supports_equality or value.supports_partial_equality
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        _AutoOrderableValue(3),
+        _NoLtOrderableValue(),
+        _ManualOrderableValue(3),
+    ],
+)
+def test_total_ordering_implies_partial_ordering(value: Orderable) -> None:
+    """Test the subtype invariant: total ordering entails partial ordering.
+
+    ``Orderable`` is a subtype of ``PartialOrderable``, so no object may
+    report ``supports_ordering`` while denying ``supports_partial_ordering``.
+    """
+    assert not value.supports_ordering or value.supports_partial_ordering
 
 
 def test_identifier_returns_identifier() -> None:

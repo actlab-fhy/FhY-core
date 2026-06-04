@@ -16,7 +16,6 @@ __all__ = [
     "FrozenMixin",
     "FrozenMutationError",
     "FrozenValidationError",
-    "Foldable",
     "compared_as_binder",
     "compared_as_reference",
     "compared_as_value",
@@ -65,7 +64,6 @@ from .derived_equivalence import (
     excluded_from_equivalence,
 )
 from .equality import Equal, EqualMixin, PartialEqual, PartialEqualMixin
-from .foldable import Foldable
 from .frozen import (
     Frozen,
     FrozenFieldTypeError,

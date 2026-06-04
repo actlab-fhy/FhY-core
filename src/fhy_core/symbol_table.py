@@ -317,39 +317,31 @@ class SymbolTable(
         """Return the number of namespaces in the symbol table."""
         return len(self._table)
 
-    def canonicalize(self) -> bool:
-        """Canonicalize namespace and symbol ordering in place."""
-        changed = False
+    def canonicalize(self) -> None:
+        """Canonicalize namespace and symbol ordering in place.
 
-        namespace_order = list(self._table.keys())
-        sorted_namespaces = sorted(namespace_order, key=_identifier_sort_key)
-        if namespace_order != sorted_namespaces:
-            changed = True
-
+        ``SymbolTable`` is a mutable container, so it takes the mutable
+        branch of the :class:`~fhy_core.traits.Canonicalizable` contract:
+        it reorders its namespaces and symbols by sort key on the receiver
+        and returns ``None``.
+        """
         canonical_table: dict[Identifier, dict[Identifier, SymbolTableFrame]] = {}
-        for namespace_name in sorted_namespaces:
+        for namespace_name in sorted(self._table.keys(), key=_identifier_sort_key):
             namespace_table = self._table[namespace_name]
-            symbol_order = list(namespace_table.keys())
-            sorted_symbols = sorted(symbol_order, key=_identifier_sort_key)
-            if symbol_order != sorted_symbols:
-                changed = True
             canonical_table[namespace_name] = {
                 symbol_name: namespace_table[symbol_name]
-                for symbol_name in sorted_symbols
+                for symbol_name in sorted(
+                    namespace_table.keys(), key=_identifier_sort_key
+                )
             }
-
-        parent_order = list(self._parent_namespace.keys())
-        sorted_parents = sorted(parent_order, key=_identifier_sort_key)
-        if parent_order != sorted_parents:
-            changed = True
 
         self._table = canonical_table
         self._parent_namespace = {
             child_namespace: self._parent_namespace[child_namespace]
-            for child_namespace in sorted_parents
+            for child_namespace in sorted(
+                self._parent_namespace.keys(), key=_identifier_sort_key
+            )
         }
-        _LOGGER.debug("changed=%s", changed)
-        return changed
 
     def verify(self) -> ValidationReport[Any]:
         """Verify structural invariants of the symbol table.
