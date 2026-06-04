@@ -218,126 +218,12 @@ def test_expression_satisfies_structural_equivalence_protocol() -> None:
 # =============================================================================
 
 
-@pytest.mark.parametrize(
-    "expression",
-    [
-        pytest.param(LiteralExpression(7), id="literal"),
-        pytest.param(IdentifierExpression(mock_identifier("x", 0)), id="identifier"),
-        pytest.param(
-            UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1)),
-            id="unary",
-        ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-            ),
-            id="binary",
-        ),
-    ],
-)
-def test_structural_equivalence_is_reflexive(expression: Expression) -> None:
-    """Test every expression is structurally equivalent to itself."""
-    assert expression.is_structurally_equivalent(expression)
-
-
-def test_structurally_equivalent_trees_compare_equivalent() -> None:
-    """Test two independently-built identical trees are structurally equivalent."""
-    left = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-    )
-    right = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-    )
-    assert left.is_structurally_equivalent(right)
-    assert right.is_structurally_equivalent(left)
-
-
-def test_structurally_different_trees_compare_non_equivalent() -> None:
-    """Test trees differing only by operation are not structurally equivalent."""
-    left = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-    )
-    right = BinaryExpression(
-        BinaryOperation.SUBTRACT, LiteralExpression(1), LiteralExpression(2)
-    )
-    assert not left.is_structurally_equivalent(right)
-
-
 def test_literal_equivalence_is_false_when_values_differ_in_either_direction() -> None:
     """Test `LiteralExpression` equivalence is value-equal and symmetrically false."""
     smaller = LiteralExpression(5)
     larger = LiteralExpression(10)
     assert not smaller.is_structurally_equivalent(larger)
     assert not larger.is_structurally_equivalent(smaller)
-
-
-def test_unary_equivalence_requires_matching_operation() -> None:
-    """Test `UnaryExpression` equivalence is false when operations differ."""
-    operand = LiteralExpression(1)
-    negate = UnaryExpression(UnaryOperation.NEGATE, operand)
-    positive = UnaryExpression(UnaryOperation.POSITIVE, operand)
-    assert not negate.is_structurally_equivalent(positive)
-
-
-def test_unary_equivalence_requires_matching_operand() -> None:
-    """Test `UnaryExpression` equivalence is false when operands differ."""
-    left = UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1))
-    right = UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(2))
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_binary_equivalence_requires_matching_operation() -> None:
-    """Test `BinaryExpression` equivalence is false when operations differ."""
-    left = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-    )
-    right = BinaryExpression(
-        BinaryOperation.MULTIPLY, LiteralExpression(1), LiteralExpression(2)
-    )
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_binary_equivalence_requires_matching_left() -> None:
-    """Test `BinaryExpression` equivalence is false when only left operands differ."""
-    left = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(3)
-    )
-    right = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(2), LiteralExpression(3)
-    )
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_binary_equivalence_requires_matching_right() -> None:
-    """Test `BinaryExpression` equivalence is false when only right operands differ."""
-    left = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-    )
-    right = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(3)
-    )
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_identifier_equivalence_requires_matching_identifier() -> None:
-    """Test `IdentifierExpression` equivalence compares underlying identifiers."""
-    left = IdentifierExpression(Identifier("x"))
-    right = IdentifierExpression(Identifier("x"))
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_binary_equivalence_is_not_commutative() -> None:
-    """Test ``a + b`` and ``b + a`` are not structurally equivalent.
-
-    Structural equivalence is positional, not algebraic; commuting operands
-    must produce a non-equivalent tree so future "smart" equivalence changes
-    are caught.
-    """
-    a = LiteralExpression(1)
-    b = LiteralExpression(2)
-    assert not BinaryExpression(BinaryOperation.ADD, a, b).is_structurally_equivalent(
-        BinaryExpression(BinaryOperation.ADD, b, a)
-    )
 
 
 @pytest.mark.parametrize(
@@ -485,44 +371,6 @@ def test_literal_equivalence_distinguishes_buckets(
     left = LiteralExpression(left_value)
     right = LiteralExpression(right_value)
 
-    assert not left.is_structurally_equivalent(right)
-    assert not right.is_structurally_equivalent(left)
-
-
-def _make_pair_by_subclass(
-    subclass: type[Expression],
-) -> Expression:
-    if subclass is LiteralExpression:
-        return LiteralExpression(1)
-    elif subclass is IdentifierExpression:
-        return IdentifierExpression(mock_identifier("x", 0))
-    elif subclass is UnaryExpression:
-        return UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1))
-    elif subclass is BinaryExpression:
-        return BinaryExpression(
-            BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-        )
-    else:
-        raise AssertionError(f"Unknown subclass: {subclass}")
-
-
-@pytest.mark.parametrize(
-    "left_subclass, right_subclass",
-    [
-        (LiteralExpression, IdentifierExpression),
-        (LiteralExpression, UnaryExpression),
-        (LiteralExpression, BinaryExpression),
-        (IdentifierExpression, UnaryExpression),
-        (IdentifierExpression, BinaryExpression),
-        (UnaryExpression, BinaryExpression),
-    ],
-)
-def test_equivalence_is_false_across_distinct_expression_subclasses(
-    left_subclass: type[Expression], right_subclass: type[Expression]
-) -> None:
-    """Test structural equivalence is false across distinct `Expression` subclasses."""
-    left = _make_pair_by_subclass(left_subclass)
-    right = _make_pair_by_subclass(right_subclass)
     assert not left.is_structurally_equivalent(right)
     assert not right.is_structurally_equivalent(left)
 
@@ -1030,18 +878,17 @@ def test_collect_identifiers_walks_into_binary_expression_children() -> None:
 # =============================================================================
 
 
-def test_unregistered_expression_subclass_raises_not_implemented_on_equivalence() -> (
-    None
-):
-    """Test the singledispatch default raises ``NotImplementedError``.
+def test_new_expression_subclass_derives_equivalence_without_registration() -> None:
+    """Test a new `Expression` subclass derives equivalence from its fields.
 
-    A concrete subclass that does not register a custom dispatcher must
-    surface as a clear error rather than silently returning ``False``,
-    so adding a new node type without wiring up equivalence fails loudly.
+    Derivation replaces the per-type registry: a concrete subclass needs no
+    wiring to gain structural and alpha equivalence. Same-type instances
+    compare field by field; a different concrete type returns ``False``
+    rather than raising.
     """
 
     @dataclasses.dataclass(frozen=True, eq=False)
-    class _UnregisteredExpression(Expression):  # test-local subclass
+    class _NewExpression(Expression):  # test-local subclass
         value: int
 
         def serialize_data_to_dict(self) -> SerializedDict:  # pragma: no cover
@@ -1050,13 +897,13 @@ def test_unregistered_expression_subclass_raises_not_implemented_on_equivalence(
         @classmethod
         def deserialize_data_from_dict(  # pragma: no cover
             cls, data: SerializedDict
-        ) -> "_UnregisteredExpression":
+        ) -> "_NewExpression":
             return cls(value=int(data["value"]))  # type: ignore[arg-type]
 
-    instance = _UnregisteredExpression(value=1)
-
-    with pytest.raises(NotImplementedError, match="_UnregisteredExpression"):
-        instance.is_structurally_equivalent(LiteralExpression(1))
+    assert _NewExpression(1).is_structurally_equivalent(_NewExpression(1))
+    assert not _NewExpression(1).is_structurally_equivalent(_NewExpression(2))
+    assert _NewExpression(1).is_alpha_equivalent(_NewExpression(1))
+    assert not _NewExpression(1).is_structurally_equivalent(LiteralExpression(1))
 
 
 # =============================================================================

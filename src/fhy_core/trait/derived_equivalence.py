@@ -164,7 +164,7 @@ def compared_as_reference() -> Mapping[str, Any]:
 def compared_as_binder(*, scopes_over: tuple[str, ...] = ()) -> Mapping[str, Any]:
     """Build field metadata marking an ``Identifier`` field as a binder.
 
-    The field holds the bound names introduced by this node -- a single
+    The field holds the bound names introduced by this node: a single
     ``Identifier`` or a sequence of them. Structurally the names compare
     nominally (``==``). In alpha mode the engine arity-checks the two
     sides, ``extend``s the renaming with their pairwise binding, and

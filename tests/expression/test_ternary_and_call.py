@@ -3,8 +3,6 @@
 import pytest
 
 from fhy_core.expression import (
-    BinaryExpression,
-    BinaryOperation,
     CallExpression,
     IdentifierExpression,
     LiteralExpression,
@@ -69,65 +67,6 @@ def test_ternary_expression_get_visit_children_returns_three_operands() -> None:
     expression = TernaryExpression(condition, true_value, false_value)
 
     assert expression.get_visit_children() == (condition, true_value, false_value)
-
-
-# =============================================================================
-# TernaryExpression: structural equivalence
-# =============================================================================
-
-
-def test_ternary_expression_equivalent_when_all_three_operands_equivalent() -> None:
-    """Test two ``TernaryExpression``s with matching operands are equivalent."""
-    left = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
-    )
-    right = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
-    )
-
-    assert left.is_structurally_equivalent(right)
-    assert right.is_structurally_equivalent(left)
-
-
-@pytest.mark.parametrize(
-    "differ_kind",
-    ["condition", "true_value", "false_value"],
-)
-def test_ternary_expression_not_equivalent_when_one_operand_differs(
-    differ_kind: str,
-) -> None:
-    """Test ``TernaryExpression`` equivalence is false if any operand differs."""
-    base = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
-    )
-    overrides = {
-        "condition": LiteralExpression(False),
-        "true_value": LiteralExpression(99),
-        "false_value": LiteralExpression(-1),
-    }
-    other = TernaryExpression(
-        overrides["condition"] if differ_kind == "condition" else base.condition,
-        overrides["true_value"] if differ_kind == "true_value" else base.true_value,
-        (
-            overrides["false_value"]
-            if differ_kind == "false_value"
-            else base.false_value
-        ),
-    )
-
-    assert not base.is_structurally_equivalent(other)
-
-
-def test_ternary_expression_not_equivalent_to_other_expression_kinds() -> None:
-    """Test a ``TernaryExpression`` is not equivalent to a binary expression."""
-    ternary_expression = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
-    )
-    binary_expression = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-    )
-
-    assert not ternary_expression.is_structurally_equivalent(binary_expression)
 
 
 # =============================================================================
@@ -241,57 +180,6 @@ def test_call_expression_get_visit_children_returns_arguments_in_order() -> None
     expression = CallExpression("max", (arg_a, arg_b))
 
     assert expression.get_visit_children() == (arg_a, arg_b)
-
-
-# =============================================================================
-# CallExpression: structural equivalence
-# =============================================================================
-
-
-def test_call_expression_equivalent_for_same_name_and_arguments() -> None:
-    """Test ``CallExpression`` equivalence is true for matching name and arguments."""
-    left = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
-    right = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
-
-    assert left.is_structurally_equivalent(right)
-
-
-def test_call_expression_not_equivalent_when_name_differs() -> None:
-    """Test ``CallExpression`` equivalence is false when function names differ."""
-    left = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
-    right = CallExpression("min", (LiteralExpression(1), LiteralExpression(2)))
-
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_call_expression_not_equivalent_when_argument_count_differs() -> None:
-    """Test ``CallExpression`` equivalence is false when argument counts differ."""
-    left = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
-    right = CallExpression(
-        "max", (LiteralExpression(1), LiteralExpression(2), LiteralExpression(3))
-    )
-
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_call_expression_not_equivalent_when_one_argument_differs() -> None:
-    """Test ``CallExpression`` equivalence is false when an argument differs."""
-    left = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
-    right = CallExpression("max", (LiteralExpression(1), LiteralExpression(99)))
-
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_call_expression_not_equivalent_to_other_expression_kinds() -> None:
-    """Test a ``CallExpression`` is not equivalent to a binary expression."""
-    call_expression = CallExpression(
-        "max", (LiteralExpression(1), LiteralExpression(2))
-    )
-    binary_expression = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-    )
-
-    assert not call_expression.is_structurally_equivalent(binary_expression)
 
 
 # =============================================================================

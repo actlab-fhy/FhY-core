@@ -27,9 +27,8 @@ __all__ = [
 import re
 from abc import ABC
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
-from functools import singledispatch
 from typing import Any, TypeAlias, TypedDict, TypeGuard
 
 from frozendict import frozendict
@@ -42,13 +41,13 @@ from fhy_core.serialization import (
     register_serializable,
 )
 from fhy_core.trait import (
-    AlphaEquivalenceMixin,
-    AlphaRenaming,
+    DerivedEquivalenceMixin,
     FrozenMixin,
     HasOperandsMixin,
     RewritableMixin,
-    StructuralEquivalenceMixin,
     VisitableMixin,
+    compared_as_reference,
+    compared_as_value,
 )
 from fhy_core.utils import StrEnum, invert_frozen_dict
 
@@ -269,8 +268,7 @@ def call(
 class Expression(
     WrappedFamilySerializable,
     FrozenMixin,
-    StructuralEquivalenceMixin,
-    AlphaEquivalenceMixin,
+    DerivedEquivalenceMixin,
     VisitableMixin,
     RewritableMixin["Expression"],
     ABC,
@@ -287,12 +285,6 @@ class Expression(
     and avoid using :class:`Expression` instances as dict keys when you
     expect value-based lookups.
     """
-
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return _is_expression_structurally_equivalent(self, other)
-
-    def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
-        return _is_expression_alpha_equivalent_under(self, other, renaming)
 
     def get_visit_children(self) -> tuple["Expression", ...]:
         return ()
@@ -621,7 +613,7 @@ class BinaryExpression(Expression, HasOperandsMixin[Expression]):
 class IdentifierExpression(Expression):
     """Identifier expression."""
 
-    identifier: Identifier
+    identifier: Identifier = field(metadata=compared_as_reference())
 
 
 _INTEGER_LITERAL_PATTERN = re.compile(r"\d+")
@@ -635,13 +627,14 @@ def _classify_literal_value(value: LiteralType) -> _LiteralBucket:
     """Return the (bucket, canonical-form) pair used for literal equivalence."""
     if isinstance(value, bool):
         return ("bool", value)
-    if isinstance(value, int):
+    elif isinstance(value, int):
         return ("int", value)
-    if isinstance(value, float):
+    elif isinstance(value, float):
         return ("float-binary", value)
-    if _INTEGER_LITERAL_PATTERN.fullmatch(value):
+    elif _INTEGER_LITERAL_PATTERN.fullmatch(value):
         return ("int", int(value))
-    return ("float-decimal", Decimal(value))
+    else:
+        return ("float-decimal", Decimal(value))
 
 
 class _LiteralExpressionData(TypedDict):
@@ -688,7 +681,7 @@ class LiteralExpression(Expression):
       different precision contracts.
     """
 
-    value: LiteralType
+    value: LiteralType = field(metadata=compared_as_value(key=_classify_literal_value))
 
     def __post_init__(self) -> None:
         value = self.value
@@ -791,140 +784,3 @@ class CallExpression(Expression, HasOperandsMixin[Expression]):
         self, new_children: Sequence["Expression"]
     ) -> "CallExpression":
         return CallExpression(self.function_name, tuple(new_children))
-
-
-@singledispatch
-def _is_expression_structurally_equivalent(
-    expression: Expression, other: object
-) -> bool:
-    raise NotImplementedError(
-        f"is_structurally_equivalent is not registered for {type(expression).__name__}."
-    )
-
-
-@_is_expression_structurally_equivalent.register
-def _(expression: UnaryExpression, other: object) -> bool:
-    return (
-        isinstance(other, UnaryExpression)
-        and expression.operation == other.operation
-        and expression.operand.is_structurally_equivalent(other.operand)
-    )
-
-
-@_is_expression_structurally_equivalent.register
-def _(expression: BinaryExpression, other: object) -> bool:
-    return (
-        isinstance(other, BinaryExpression)
-        and expression.operation == other.operation
-        and expression.left.is_structurally_equivalent(other.left)
-        and expression.right.is_structurally_equivalent(other.right)
-    )
-
-
-@_is_expression_structurally_equivalent.register
-def _(expression: IdentifierExpression, other: object) -> bool:
-    return (
-        isinstance(other, IdentifierExpression)
-        and expression.identifier == other.identifier
-    )
-
-
-@_is_expression_structurally_equivalent.register
-def _(expression: LiteralExpression, other: object) -> bool:
-    return isinstance(other, LiteralExpression) and _classify_literal_value(
-        expression.value
-    ) == _classify_literal_value(other.value)
-
-
-@_is_expression_structurally_equivalent.register
-def _(expression: TernaryExpression, other: object) -> bool:
-    return (
-        isinstance(other, TernaryExpression)
-        and expression.condition.is_structurally_equivalent(other.condition)
-        and expression.true_value.is_structurally_equivalent(other.true_value)
-        and expression.false_value.is_structurally_equivalent(other.false_value)
-    )
-
-
-@_is_expression_structurally_equivalent.register
-def _(expression: CallExpression, other: object) -> bool:
-    return (
-        isinstance(other, CallExpression)
-        and expression.function_name == other.function_name
-        and len(expression.arguments) == len(other.arguments)
-        and all(
-            left.is_structurally_equivalent(right)
-            for left, right in zip(expression.arguments, other.arguments)
-        )
-    )
-
-
-@singledispatch
-def _is_expression_alpha_equivalent_under(
-    expression: Expression, other: object, renaming: AlphaRenaming
-) -> bool:
-    del other, renaming
-    raise NotImplementedError(
-        f"is_alpha_equivalent_under is not registered for {type(expression).__name__}."
-    )
-
-
-@_is_expression_alpha_equivalent_under.register
-def _(expression: UnaryExpression, other: object, renaming: AlphaRenaming) -> bool:
-    return (
-        isinstance(other, UnaryExpression)
-        and expression.operation == other.operation
-        and expression.operand.is_alpha_equivalent_under(other.operand, renaming)
-    )
-
-
-@_is_expression_alpha_equivalent_under.register
-def _(expression: BinaryExpression, other: object, renaming: AlphaRenaming) -> bool:
-    return (
-        isinstance(other, BinaryExpression)
-        and expression.operation == other.operation
-        and expression.left.is_alpha_equivalent_under(other.left, renaming)
-        and expression.right.is_alpha_equivalent_under(other.right, renaming)
-    )
-
-
-@_is_expression_alpha_equivalent_under.register
-def _(expression: IdentifierExpression, other: object, renaming: AlphaRenaming) -> bool:
-    return isinstance(
-        other, IdentifierExpression
-    ) and renaming.are_identifiers_alpha_equivalent(
-        expression.identifier, other.identifier
-    )
-
-
-@_is_expression_alpha_equivalent_under.register
-def _(expression: LiteralExpression, other: object, renaming: AlphaRenaming) -> bool:
-    del renaming
-    return isinstance(other, LiteralExpression) and _classify_literal_value(
-        expression.value
-    ) == _classify_literal_value(other.value)
-
-
-@_is_expression_alpha_equivalent_under.register
-def _(expression: TernaryExpression, other: object, renaming: AlphaRenaming) -> bool:
-    return (
-        isinstance(other, TernaryExpression)
-        and expression.condition.is_alpha_equivalent_under(other.condition, renaming)
-        and expression.true_value.is_alpha_equivalent_under(other.true_value, renaming)
-        and expression.false_value.is_alpha_equivalent_under(
-            other.false_value, renaming
-        )
-    )
-
-
-@_is_expression_alpha_equivalent_under.register
-def _(expression: CallExpression, other: object, renaming: AlphaRenaming) -> bool:
-    return (
-        isinstance(other, CallExpression)
-        and expression.function_name == other.function_name
-        and len(expression.arguments) == len(other.arguments)
-        and all(
-            left.is_alpha_equivalent_under(right, renaming)
-            for left, right in zip(expression.arguments, other.arguments)
-        )
-    )
