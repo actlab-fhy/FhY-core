@@ -1,13 +1,17 @@
 """Compiler object traits package."""
 
 __all__ = [
+    "EQUIVALENCE_METADATA_KEY",
     "AlphaEquivalence",
     "AlphaEquivalenceMixin",
     "AlphaRenaming",
     "Canonicalizable",
     "CanonicalizableMixin",
+    "DerivedEquivalenceMixin",
     "Equal",
     "EqualMixin",
+    "EquivalenceDerivationError",
+    "FieldComparator",
     "Frozen",
     "FrozenFieldTypeError",
     "FrozenMixin",
@@ -15,6 +19,11 @@ __all__ = [
     "FrozenValidationError",
     "Foldable",
     "FoldableMixin",
+    "compared_as_binder",
+    "compared_as_reference",
+    "compared_as_value",
+    "compared_with",
+    "excluded_from_equivalence",
     "HasIdentifier",
     "HasIdentifierMixin",
     "Interned",
@@ -52,6 +61,17 @@ from .alpha_equivalence import (
     is_identifier_mapping_alpha_equivalent_under,
 )
 from .canonicalizable import Canonicalizable, CanonicalizableMixin
+from .derived_equivalence import (
+    EQUIVALENCE_METADATA_KEY,
+    DerivedEquivalenceMixin,
+    EquivalenceDerivationError,
+    FieldComparator,
+    compared_as_binder,
+    compared_as_reference,
+    compared_as_value,
+    compared_with,
+    excluded_from_equivalence,
+)
 from .equality import Equal, EqualMixin, PartialEqual, PartialEqualMixin
 from .foldable import Foldable, FoldableMixin
 from .frozen import (
