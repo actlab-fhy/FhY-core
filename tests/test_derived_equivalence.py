@@ -527,8 +527,8 @@ def test_nested_binders_shadow_outer_bindings() -> None:
     assert not left.is_alpha_equivalent(other)
 
 
-def test_binder_with_non_injective_binding_raises() -> None:
-    """Test a binder pairing that is not injective surfaces a ``ValueError``."""
+def test_binder_with_non_injective_binding_returns_false() -> None:
+    """Test a binder pairing that is not injective returns ``False``."""
 
     @dataclass(frozen=True, eq=False)
     class _Var(DerivedEquivalenceMixin):
@@ -546,8 +546,26 @@ def test_binder_with_non_injective_binding_raises() -> None:
     z = Identifier("z")
 
     # Two distinct self-side names binding to a single other-side name.
-    with pytest.raises(ValueError):
-        _Lam((x, y), _Var(x)).is_alpha_equivalent(_Lam((z, z), _Var(z)))
+    assert not _Lam((x, y), _Var(x)).is_alpha_equivalent(_Lam((z, z), _Var(z)))
+
+
+def test_binder_with_unknown_scopes_over_name_raises_on_first_comparison() -> None:
+    """Test a typo in ``scopes_over`` raises ``EquivalenceDerivationError``."""
+
+    @dataclass(frozen=True, eq=False)
+    class _Var(DerivedEquivalenceMixin):
+        identifier: Identifier = field(metadata=compared_as_reference())
+
+    @dataclass(frozen=True, eq=False)
+    class _Lam(DerivedEquivalenceMixin):
+        param: Identifier = field(
+            metadata=compared_as_binder(scopes_over=("bdy",))  # typo: "bdy" not "body"
+        )
+        body: _Var
+
+    x = Identifier("x")
+    with pytest.raises(EquivalenceDerivationError, match='"bdy" is not a field'):
+        _Lam(x, _Var(x)).is_alpha_equivalent(_Lam(x, _Var(x)))
 
 
 # ===========================================================================
