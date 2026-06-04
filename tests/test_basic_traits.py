@@ -9,7 +9,7 @@ import pathlib
 import re
 from abc import abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, ClassVar, Final, Optional
 
 import pytest
@@ -189,6 +189,18 @@ class _RaisingInternedValue(InternedMixin[str]):
 class _DataclassInternedValue(InternedMixin[str]):
     key: str
     value: int
+
+    def __post_init__(self) -> None:
+        self.register_interned_instance()
+
+    def get_intern_key(self) -> str:
+        return self.key
+
+
+@dataclass
+class _NotedInternedValue(InternedMixin[str]):
+    key: str
+    note: str = field(compare=False)
 
     def __post_init__(self) -> None:
         self.register_interned_instance()
@@ -466,6 +478,74 @@ def test_interned_does_not_register_when_init_raises() -> None:
         _RaisingInternedValue("boom")
 
     assert _RaisingInternedValue.get_interned("boom") is None
+
+
+def test_interned_construct_from_fields_returns_freshly_built_for_new_key() -> None:
+    """Test the reconstruction hook registers and returns a brand-new instance."""
+    _DataclassInternedValue.clear_interned_registry()
+
+    restored = _DataclassInternedValue.construct_from_fields({"key": "new", "value": 1})
+
+    assert restored == _DataclassInternedValue("new", 1)
+    assert _DataclassInternedValue.get_interned("new") is restored
+
+
+def test_interned_construct_from_fields_returns_canonical_for_existing_key() -> None:
+    """Test the hook returns the canonical instance, not the rebuilt duplicate."""
+    _DataclassInternedValue.clear_interned_registry()
+    canonical = _DataclassInternedValue("dup", 1)
+
+    restored = _DataclassInternedValue.construct_from_fields({"key": "dup", "value": 2})
+
+    assert restored is canonical
+
+
+def test_interned_construct_from_fields_warns_on_ignored_metadata(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test an equality-excluded field diverging from the canonical is logged."""
+    _NotedInternedValue.clear_interned_registry()
+    canonical = _NotedInternedValue("noted", "original")
+
+    with caplog.at_level("WARNING", logger="fhy_core.trait.interned"):
+        restored = _NotedInternedValue.construct_from_fields(
+            {"key": "noted", "note": "divergent"}
+        )
+
+    assert restored is canonical
+    assert restored.note == "original"
+    assert "already canonical" in caplog.text
+    assert "divergent" in caplog.text
+
+
+def test_interned_construct_from_fields_does_not_warn_when_metadata_matches(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test no warning fires when the ignored field matches the canonical's."""
+    _NotedInternedValue.clear_interned_registry()
+    _NotedInternedValue("noted", "same")
+
+    with caplog.at_level("WARNING", logger="fhy_core.trait.interned"):
+        _NotedInternedValue.construct_from_fields({"key": "noted", "note": "same"})
+
+    assert "already canonical" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        pytest.param({"key": "x"}, id="missing_field"),
+        pytest.param({"key": "x", "value": 1, "extra": 2}, id="extra_field"),
+    ],
+)
+def test_interned_construct_from_fields_rejects_malformed_field_map(
+    malformed: dict[str, object],
+) -> None:
+    """Test the interned hook fails loudly on a field map that is not one-per-field."""
+    _DataclassInternedValue.clear_interned_registry()
+
+    with pytest.raises(TypeError):
+        _DataclassInternedValue.construct_from_fields(malformed)
 
 
 # =============================================================================

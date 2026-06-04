@@ -64,16 +64,6 @@ class SymbolTableFrame(
         return isinstance(other, SymbolTableFrame) and self.name == other.name
 
 
-class _ImportSymbolTableFrameData(TypedDict):
-    name: SerializedDict
-
-
-def _is_valid_import_symbol_table_frame_data(
-    data: SerializedDict,
-) -> TypeGuard[_ImportSymbolTableFrameData]:
-    return "name" in data and is_serialized_dict(data["name"])
-
-
 @register_serializable(type_id="import_symbol_table_frame")
 class ImportSymbolTableFrame(SymbolTableFrame):
     """Imported symbol frame."""
@@ -82,38 +72,6 @@ class ImportSymbolTableFrame(SymbolTableFrame):
         return isinstance(
             other, ImportSymbolTableFrame
         ) and super().is_structurally_equivalent(other)
-
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {"name": self.name.serialize_to_dict()}
-
-    @classmethod
-    def deserialize_data_from_dict(
-        cls, data: SerializedDict
-    ) -> "ImportSymbolTableFrame":
-        if not _is_valid_import_symbol_table_frame_data(data):
-            raise DeserializationDictStructureError(
-                cls, _ImportSymbolTableFrameData.__annotations__, data
-            )
-        return cls(Identifier.deserialize_from_dict(data["name"]))
-
-
-class _VariableSymbolTableFrameData(TypedDict):
-    name: SerializedDict
-    type: SerializedDict
-    type_qualifier: str
-
-
-def _is_valid_variable_symbol_table_frame_data(
-    data: SerializedDict,
-) -> TypeGuard[_VariableSymbolTableFrameData]:
-    return (
-        "name" in data
-        and is_serialized_dict(data["name"])
-        and "type" in data
-        and is_serialized_dict(data["type"])
-        and "type_qualifier" in data
-        and isinstance(data["type_qualifier"], str)
-    )
 
 
 @dataclass(frozen=True)
@@ -131,32 +89,6 @@ class VariableSymbolTableFrame(SymbolTableFrame):
             and self.type.is_structurally_equivalent(other.type)
             and self.type_qualifier == other.type_qualifier
         )
-
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {
-            "name": self.name.serialize_to_dict(),
-            "type": self.type.serialize_to_dict(),
-            "type_qualifier": self.type_qualifier.value,
-        }
-
-    @classmethod
-    def deserialize_data_from_dict(
-        cls, data: SerializedDict
-    ) -> "VariableSymbolTableFrame":
-        if not _is_valid_variable_symbol_table_frame_data(data):
-            raise DeserializationDictStructureError(
-                cls, _VariableSymbolTableFrameData.__annotations__, data
-            )
-        try:
-            return cls(
-                Identifier.deserialize_from_dict(data["name"]),
-                Type.deserialize_from_dict(data["type"]),
-                type_qualifier=TypeQualifier(data["type_qualifier"]),
-            )
-        except ValueError as exc:
-            raise DeserializationValueError(
-                f"Invalid variable frame values: {exc}"
-            ) from exc
 
 
 class FunctionKeyword(StrEnum):

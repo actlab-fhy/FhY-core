@@ -36,9 +36,9 @@ from fhy_core.error import register_error
 from fhy_core.logger import get_logger
 from fhy_core.utils import Self
 from fhy_core.utils.type_hint_utils import (
-    get_origin_and_args,
+    get_field_names,
+    get_origin_and_arguments,
     get_union_members,
-    iter_field_names,
     resolve_field_annotations,
     unwrap_annotation,
 )
@@ -233,10 +233,10 @@ def _is_immutable_annotation(
     if union_members is not None:
         return all(_is_immutable_annotation(arg, depth - 1) for arg in union_members)
 
-    origin_and_args = get_origin_and_args(annotation)
-    if origin_and_args is not None:
-        origin, args = origin_and_args
-        parameterized = _is_immutable_parameterized_origin(origin, args, depth)
+    origin_and_arguments = get_origin_and_arguments(annotation)
+    if origin_and_arguments is not None:
+        origin, arguments = origin_and_arguments
+        parameterized = _is_immutable_parameterized_origin(origin, arguments, depth)
         if parameterized is not None:
             return parameterized
         if isinstance(origin, type):
@@ -257,7 +257,7 @@ def _iter_frozen_field_names(target_cls: type) -> list[str]:
     flags) are excluded.
 
     """
-    return iter_field_names(
+    return get_field_names(
         target_cls,
         predicate=lambda klass: (
             klass is not FrozenMixin and issubclass(klass, FrozenMixin)

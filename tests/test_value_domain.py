@@ -15,9 +15,6 @@ import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
-    DeserializationDictStructureError,
-    Serializable,
-    SerializationFormat,
     SerializedDict,
 )
 from fhy_core.trait import (
@@ -266,54 +263,6 @@ def test_value_domain_root_not_subdomain_of_child() -> None:
 # =============================================================================
 
 
-def test_value_domain_serialize_to_dict_includes_required_fields() -> None:
-    """Test `serialize_to_dict` emits `name`, `description`, and `parent` keys."""
-    domain = ValueDomain(Identifier("x"), "desc")
-    data = domain.serialize_to_dict()
-    assert set(data.keys()) == {"name", "description", "parent"}
-    assert data["description"] == "desc"
-    assert data["parent"] is None
-
-
-def test_value_domain_serialize_to_dict_inlines_parent() -> None:
-    """Test the parent field is serialized as a nested dict when present."""
-    child = ValueDomain(Identifier("c"), "child", parent=DATA_DOMAIN)
-    data = child.serialize_to_dict()
-    parent_data = data["parent"]
-    assert isinstance(parent_data, dict)
-    assert "name" in parent_data and "description" in parent_data
-
-
-def test_value_domain_dict_round_trip_with_no_parent_is_structurally_equivalent() -> (
-    None
-):
-    """Test parent-less dict round-trips reconstruct a structurally-equivalent
-    domain."""
-    original = ValueDomain(Identifier("fresh-no-parent"), "round trip")
-    data = original.serialize_to_dict()
-    restored = ValueDomain.deserialize_from_dict(data)
-    assert restored.is_structurally_equivalent(original)
-    assert restored.description == "round trip"
-
-
-def test_value_domain_dict_round_trip_with_parent_is_structurally_equivalent() -> None:
-    """Test parented dict round-trips preserve the parent chain."""
-    original = ValueDomain(
-        Identifier("fresh-with-parent"), "round trip", parent=DATA_DOMAIN
-    )
-    data = original.serialize_to_dict()
-    restored = ValueDomain.deserialize_from_dict(data)
-    assert restored.is_structurally_equivalent(original)
-    assert restored.parent is not None
-    assert restored.parent.is_structurally_equivalent(DATA_DOMAIN)
-
-
-def test_value_domain_deserialize_rejects_malformed_dict() -> None:
-    """Test deserializing a dict missing required fields raises a structure error."""
-    with pytest.raises(DeserializationDictStructureError):
-        ValueDomain.deserialize_from_dict({"name": {"id": 0, "name_hint": "x"}})
-
-
 def test_value_domain_deserialize_returns_canonical_for_registered_name() -> None:
     """Test deserialization returns the canonical interned instance when one
     is registered for the deserialized name."""
@@ -341,24 +290,6 @@ def test_value_domain_deserialize_constructs_fresh_for_unregistered_name() -> No
     assert ValueDomain.get_interned(restored.name) is restored
 
 
-def test_value_domain_binary_round_trip_via_from_bytes() -> None:
-    """Test the binary envelope round-trips a fresh domain to a
-    structurally-equivalent instance through the registered type id."""
-    original = ValueDomain(Identifier("fresh-binary"), "binary round trip")
-    blob = original.to_bytes()
-    restored = Serializable.from_bytes(blob)
-    assert isinstance(restored, ValueDomain)
-    assert restored.is_structurally_equivalent(original)
-
-
-def test_value_domain_json_round_trip_via_deserialize() -> None:
-    """Test the JSON form is round-trippable through the public `deserialize` API."""
-    original = ValueDomain(Identifier("fresh-json"), "json round trip")
-    payload = original.serialize(SerializationFormat.JSON)
-    restored = ValueDomain.deserialize(payload, SerializationFormat.JSON)
-    assert restored.is_structurally_equivalent(original)
-
-
 # =============================================================================
 # Description-mismatch deserialization warning
 # =============================================================================
@@ -376,7 +307,7 @@ def test_value_domain_deserialize_warns_on_description_mismatch(
         "description": "divergent description",
         "parent": None,
     }
-    with caplog.at_level("WARNING", logger="fhy_core.value_domain"):
+    with caplog.at_level("WARNING", logger="fhy_core.trait.interned"):
         restored = ValueDomain.deserialize_from_dict(payload)
 
     assert restored is canonical
@@ -396,7 +327,7 @@ def test_value_domain_deserialize_does_not_warn_when_descriptions_match(
         Identifier("matching-description-domain"), "matching description"
     )
     payload = canonical.serialize_to_dict()
-    with caplog.at_level("WARNING", logger="fhy_core.value_domain"):
+    with caplog.at_level("WARNING", logger="fhy_core.trait.interned"):
         restored = ValueDomain.deserialize_from_dict(payload)
 
     assert restored is canonical

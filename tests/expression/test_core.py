@@ -25,7 +25,6 @@ from fhy_core.expression import (
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
     DeserializationDictStructureError,
-    DeserializationValueError,
     SerializedDict,
 )
 from fhy_core.trait import FrozenMutationError, HasOperands, StructuralEquivalence
@@ -953,285 +952,28 @@ def test_set_of_distinct_field_equal_expressions_keeps_both_members(
 # =============================================================================
 
 
-@pytest.mark.parametrize(
-    "expression, expected_dict",
-    [
-        (
-            LiteralExpression(True),
-            {
-                "__type__": "literal_expression",
-                "__data__": {"value": True},
-            },
-        ),
-        (
-            IdentifierExpression(mock_identifier("x", 1)),
-            {
-                "__type__": "identifier_expression",
-                "__data__": {"identifier": {"id": 1, "name_hint": "x"}},
-            },
-        ),
-        (
-            UnaryExpression(
-                UnaryOperation.NEGATE,
-                IdentifierExpression(mock_identifier("y", 2)),
-            ),
-            {
-                "__type__": "unary_expression",
-                "__data__": {
-                    "operation": "negate",
-                    "operand": {
-                        "__type__": "identifier_expression",
-                        "__data__": {
-                            "identifier": {"id": 2, "name_hint": "y"},
-                        },
-                    },
-                },
-            },
-        ),
-        (
-            BinaryExpression(
-                BinaryOperation.ADD,
-                IdentifierExpression(mock_identifier("x", 0)),
-                LiteralExpression(5),
-            ),
-            {
-                "__type__": "binary_expression",
-                "__data__": {
-                    "operation": "add",
-                    "left": {
-                        "__type__": "identifier_expression",
-                        "__data__": {
-                            "identifier": {"id": 0, "name_hint": "x"},
-                        },
-                    },
-                    "right": {
-                        "__type__": "literal_expression",
-                        "__data__": {"value": 5},
-                    },
-                },
-            },
-        ),
-    ],
-)
-def test_expression_round_trips_through_serialize_to_dict(
-    expression: Expression, expected_dict: SerializedDict
-) -> None:
-    """Test `serialize_to_dict` yields the expected payload and round-trips."""
+def test_literal_expression_round_trips_through_serialize_to_dict() -> None:
+    """Test `LiteralExpression` (hand-written codec) round-trips with its dict shape.
+
+    ``LiteralExpression`` keeps a bespoke ``serialize_data_to_dict`` /
+    ``deserialize_data_from_dict`` because its ``value`` is a scalar union the
+    derivation engine cannot infer, so it retains a dedicated serialization
+    test. The derived expression classes are covered centrally by the
+    serialization-engine tests instead.
+    """
+    expression = LiteralExpression(True)
+    expected_dict: SerializedDict = {
+        "__type__": "literal_expression",
+        "__data__": {"value": True},
+    }
     assert expression.serialize_to_dict() == expected_dict
     restored = Expression.deserialize_from_dict(expected_dict)
     assert restored.is_structurally_equivalent(expression)
 
 
-@pytest.mark.parametrize("operation", list(UnaryOperation))
-def test_unary_expression_round_trips_for_every_operation(
-    operation: UnaryOperation,
-) -> None:
-    """Test serialize/deserialize round-trips every `UnaryOperation` enum value."""
-    expression = UnaryExpression(operation, LiteralExpression(1))
-    restored = Expression.deserialize_from_dict(expression.serialize_to_dict())
-    assert restored.is_structurally_equivalent(expression)
-
-
-@pytest.mark.parametrize("operation", list(BinaryOperation))
-def test_binary_expression_round_trips_for_every_operation(
-    operation: BinaryOperation,
-) -> None:
-    """Test serialize/deserialize round-trips every `BinaryOperation` enum value."""
-    expression = BinaryExpression(operation, LiteralExpression(1), LiteralExpression(2))
-    restored = Expression.deserialize_from_dict(expression.serialize_to_dict())
-    assert restored.is_structurally_equivalent(expression)
-
-
-def test_expression_round_trips_through_a_deeply_nested_tree() -> None:
-    """Test serialize/deserialize round-trips a 50-level left-leaning binary chain."""
-    depth = 50
-    expression: Expression = LiteralExpression(0)
-    for term in range(1, depth + 1):
-        expression = BinaryExpression(
-            BinaryOperation.ADD, expression, LiteralExpression(term)
-        )
-    restored = Expression.deserialize_from_dict(expression.serialize_to_dict())
-    assert restored.is_structurally_equivalent(expression)
-
-
-def test_deserialize_unary_rejects_invalid_operation_name() -> None:
-    """Test unary deserialization raises `DeserializationValueError` on bad op name."""
-    data: SerializedDict = {
-        "__type__": "unary_expression",
-        "__data__": {
-            "operation": "not_an_operation",
-            "operand": {
-                "__type__": "literal_expression",
-                "__data__": {"value": 1},
-            },
-        },
-    }
-    with pytest.raises(DeserializationValueError):
-        Expression.deserialize_from_dict(data)
-
-
-def test_deserialize_binary_rejects_invalid_operation_name() -> None:
-    """Test binary deserialization raises `DeserializationValueError` on bad op name."""
-    data: SerializedDict = {
-        "__type__": "binary_expression",
-        "__data__": {
-            "operation": "not_an_operation",
-            "left": {
-                "__type__": "literal_expression",
-                "__data__": {"value": 1},
-            },
-            "right": {
-                "__type__": "literal_expression",
-                "__data__": {"value": 2},
-            },
-        },
-    }
-    with pytest.raises(DeserializationValueError):
-        Expression.deserialize_from_dict(data)
-
-
 # =============================================================================
 # Serialization: structural validation errors
 # =============================================================================
-
-_VALID_LITERAL_DICT: SerializedDict = {
-    "__type__": "literal_expression",
-    "__data__": {"value": 1},
-}
-
-
-@pytest.mark.parametrize(
-    "data",
-    [
-        pytest.param(
-            {
-                "__type__": "unary_expression",
-                "__data__": {"operand": _VALID_LITERAL_DICT},
-            },
-            id="missing_operation",
-        ),
-        pytest.param(
-            {
-                "__type__": "unary_expression",
-                "__data__": {"operation": 42, "operand": _VALID_LITERAL_DICT},
-            },
-            id="operation_not_str",
-        ),
-        pytest.param(
-            {"__type__": "unary_expression", "__data__": {"operation": "negate"}},
-            id="missing_operand",
-        ),
-        pytest.param(
-            {
-                "__type__": "unary_expression",
-                "__data__": {"operation": "negate", "operand": "not-a-dict"},
-            },
-            id="operand_not_serialized_dict",
-        ),
-    ],
-)
-def test_deserialize_unary_rejects_invalid_data_shape(data: SerializedDict) -> None:
-    """Test unary deserialization raises on missing or wrong-typed fields."""
-    with pytest.raises(DeserializationDictStructureError):
-        Expression.deserialize_from_dict(data)
-
-
-@pytest.mark.parametrize(
-    "data",
-    [
-        pytest.param(
-            {
-                "__type__": "binary_expression",
-                "__data__": {
-                    "left": _VALID_LITERAL_DICT,
-                    "right": _VALID_LITERAL_DICT,
-                },
-            },
-            id="missing_operation",
-        ),
-        pytest.param(
-            {
-                "__type__": "binary_expression",
-                "__data__": {
-                    "operation": 7,
-                    "left": _VALID_LITERAL_DICT,
-                    "right": _VALID_LITERAL_DICT,
-                },
-            },
-            id="operation_not_str",
-        ),
-        pytest.param(
-            {
-                "__type__": "binary_expression",
-                "__data__": {
-                    "operation": "add",
-                    "right": _VALID_LITERAL_DICT,
-                },
-            },
-            id="missing_left",
-        ),
-        pytest.param(
-            {
-                "__type__": "binary_expression",
-                "__data__": {
-                    "operation": "add",
-                    "left": "not-a-dict",
-                    "right": _VALID_LITERAL_DICT,
-                },
-            },
-            id="left_not_serialized_dict",
-        ),
-        pytest.param(
-            {
-                "__type__": "binary_expression",
-                "__data__": {
-                    "operation": "add",
-                    "left": _VALID_LITERAL_DICT,
-                },
-            },
-            id="missing_right",
-        ),
-        pytest.param(
-            {
-                "__type__": "binary_expression",
-                "__data__": {
-                    "operation": "add",
-                    "left": _VALID_LITERAL_DICT,
-                    "right": "not-a-dict",
-                },
-            },
-            id="right_not_serialized_dict",
-        ),
-    ],
-)
-def test_deserialize_binary_rejects_invalid_data_shape(data: SerializedDict) -> None:
-    """Test binary deserialization raises on missing or wrong-typed fields."""
-    with pytest.raises(DeserializationDictStructureError):
-        Expression.deserialize_from_dict(data)
-
-
-@pytest.mark.parametrize(
-    "data",
-    [
-        pytest.param(
-            {"__type__": "identifier_expression", "__data__": {}},
-            id="missing_identifier",
-        ),
-        pytest.param(
-            {
-                "__type__": "identifier_expression",
-                "__data__": {"identifier": "not-a-dict"},
-            },
-            id="identifier_not_serialized_dict",
-        ),
-    ],
-)
-def test_deserialize_identifier_rejects_invalid_data_shape(
-    data: SerializedDict,
-) -> None:
-    """Test identifier deserialization raises on missing or wrong-typed fields."""
-    with pytest.raises(DeserializationDictStructureError):
-        Expression.deserialize_from_dict(data)
 
 
 @pytest.mark.parametrize(

@@ -21,11 +21,11 @@ Three concerns are covered:
 __all__ = [
     "resolve_annotation",
     "resolve_field_annotations",
-    "iter_field_names",
+    "get_field_names",
     "unwrap_annotation",
     "get_union_members",
     "split_optional",
-    "get_origin_and_args",
+    "get_origin_and_arguments",
 ]
 
 import inspect
@@ -96,7 +96,7 @@ def resolve_field_annotations(cls: type) -> dict[str, Any]:
         A mapping of field name to resolved type, including inherited fields and
         ``Annotated`` extras. Fields that cannot be resolved are omitted (and
         logged), so the caller can detect partial resolution by comparing the
-        returned keys against :func:`iter_field_names`.
+        returned keys against :func:`get_field_names`.
     """
     try:
         return get_type_hints(cls, include_extras=True)
@@ -133,7 +133,7 @@ def resolve_field_annotations(cls: type) -> dict[str, Any]:
     return resolved
 
 
-def iter_field_names(
+def get_field_names(
     cls: type,
     *,
     predicate: Callable[[type], bool] | None = None,
@@ -227,7 +227,7 @@ def split_optional(annotation: Any) -> tuple[Any, bool]:
     return Union[remaining], True
 
 
-def get_origin_and_args(annotation: Any) -> tuple[Any, tuple[Any, ...]] | None:
+def get_origin_and_arguments(annotation: Any) -> tuple[Any, tuple[Any, ...]] | None:
     """Return the origin and arguments of a parameterized container generic.
 
     Recognizes parameterized generics such as ``tuple[int, ...]``,

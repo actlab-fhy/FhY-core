@@ -2,7 +2,7 @@
 
 Covers the ``derive=`` class keyword, the field-codec inference engine, the
 ``field(metadata={"serialize_codec": ...})`` override channel, the
-``_construct_from_fields`` reconstruction hook, and the instantiation-time
+``construct_from_fields`` reconstruction hook, and the instantiation-time
 ``SerializationDerivationError`` (ABC-style) for classes that opt in but cannot
 be derived.
 """
@@ -23,12 +23,14 @@ from fhy_core.serialization import (
     SerializationFormat,
     SerializedDict,
     WrappedFamilySerializable,
-    enum_field_codec,
+    make_enum_field_codec,
     make_field_codec,
+    make_labeled_enum_field_codec,
     register_field_codec,
     register_serializable,
 )
 from fhy_core.trait.frozen import FrozenMixin
+from fhy_core.utils import IntEnum, StrEnum
 
 # ============================================================================
 # Representative derived classes (derive=True is the default)
@@ -266,12 +268,12 @@ def test_one_manual_one_derived_method_mix() -> None:
 
 
 # ============================================================================
-# _construct_from_fields hook
+# construct_from_fields hook
 # ============================================================================
 
 
 def test_construct_from_fields_override_is_honored() -> None:
-    """Test a custom ``_construct_from_fields`` drives derived reconstruction."""
+    """Test a custom ``construct_from_fields`` drives derived reconstruction."""
 
     @register_serializable(type_id="_test_derive_constructed")
     @dataclass(frozen=True)
@@ -279,10 +281,47 @@ def test_construct_from_fields_override_is_honored() -> None:
         x: int
 
         @classmethod
-        def _construct_from_fields(cls, fields: dict[str, Any]) -> "_Constructed":
+        def construct_from_fields(cls, fields: dict[str, Any]) -> "_Constructed":
             return cls(fields["x"] + 100)
 
     assert _Constructed.deserialize_from_dict({"x": 5}).x == 105
+
+
+def test_construct_from_fields_builds_from_decoded_fields() -> None:
+    """Test the default hook reconstructs directly from a well-formed field map."""
+    assert _Point.construct_from_fields({"x": 2, "y": 8}) == _Point(2, 8)
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        pytest.param({"x": 1}, id="missing_field"),
+        pytest.param({"x": 1, "y": 2, "z": 3}, id="extra_field"),
+    ],
+)
+def test_construct_from_fields_rejects_malformed_field_map(
+    malformed: dict[str, Any],
+) -> None:
+    """Test the hook surfaces a ``TypeError`` when ``fields`` is not one-per-field.
+
+    The hook's precondition is one decoded entry per dataclass field; the
+    validated ``deserialize_from_dict`` path guarantees this, so a malformed
+    map only reaches the hook on direct misuse and fails loudly rather than
+    silently constructing a wrong instance.
+    """
+    with pytest.raises(TypeError):
+        _Point.construct_from_fields(malformed)
+
+
+def test_construct_from_fields_propagates_constructor_value_error() -> None:
+    """Test constructor validation errors propagate raw from a direct hook call.
+
+    Wrapping into ``DeserializationValueError`` is the deserialize path's job
+    (see ``test_derived_deserialize_surfaces_post_init_value_error``); the hook
+    itself does not catch, so misuse is not disguised as a serialization fault.
+    """
+    with pytest.raises(ValueError, match="non-negative"):
+        _Point.construct_from_fields({"x": -1, "y": 2})
 
 
 # ============================================================================
@@ -304,7 +343,7 @@ def test_path_field_via_make_field_codec_round_trips() -> None:
     assert _Pathy.deserialize_from_dict(obj.serialize_to_dict()) == obj
 
 
-def test_enum_field_codec_round_trips_by_name() -> None:
+def test_make_enum_field_codec_round_trips_by_name() -> None:
     """Test an enum field encoded by name through field metadata round-trips."""
 
     class _Color(enum.Enum):
@@ -315,7 +354,7 @@ def test_enum_field_codec_round_trips_by_name() -> None:
     @dataclass(frozen=True)
     class _Colored(Serializable, FrozenMixin):
         color: _Color = field(
-            metadata={"serialize_codec": enum_field_codec(_Color, by="name")}
+            metadata={"serialize_codec": make_enum_field_codec(_Color, by="name")}
         )
 
     obj = _Colored(_Color.BLUE)
@@ -458,7 +497,7 @@ def test_heterogeneous_tuple_is_not_derivable() -> None:
         _Pair((1, "a"))
 
 
-def test_enum_field_codec_round_trips_by_value() -> None:
+def test_make_enum_field_codec_round_trips_by_value() -> None:
     """Test an enum field encoded by value round-trips."""
 
     class _Level(enum.Enum):
@@ -468,7 +507,7 @@ def test_enum_field_codec_round_trips_by_value() -> None:
     @dataclass
     class _Setting(Serializable):
         level: _Level = field(
-            metadata={"serialize_codec": enum_field_codec(_Level, by="value")}
+            metadata={"serialize_codec": make_enum_field_codec(_Level, by="value")}
         )
 
     obj = _Setting(_Level.HIGH)
@@ -476,17 +515,17 @@ def test_enum_field_codec_round_trips_by_value() -> None:
     assert _Setting.deserialize_from_dict({"level": 2}) == obj
 
 
-def test_enum_field_codec_rejects_invalid_by_argument() -> None:
-    """Test ``enum_field_codec`` rejects an unsupported ``by`` argument."""
+def test_make_enum_field_codec_rejects_invalid_by_argument() -> None:
+    """Test ``make_enum_field_codec`` rejects an unsupported ``by`` argument."""
 
     class _Level(enum.Enum):
         LOW = 1
 
     with pytest.raises(ValueError, match='"name" or "value"'):
-        enum_field_codec(_Level, by="ordinal")
+        make_enum_field_codec(_Level, by="ordinal")
 
 
-def test_enum_field_codec_rejects_unknown_name() -> None:
+def test_make_enum_field_codec_rejects_unknown_name() -> None:
     """Test deserializing an unknown enum name raises a value error."""
 
     class _Color(enum.Enum):
@@ -494,10 +533,126 @@ def test_enum_field_codec_rejects_unknown_name() -> None:
 
     @dataclass
     class _Painted(Serializable):
-        color: _Color = field(metadata={"serialize_codec": enum_field_codec(_Color)})
+        color: _Color = field(
+            metadata={"serialize_codec": make_enum_field_codec(_Color)}
+        )
 
     with pytest.raises(DeserializationValueError, match="color"):
         _Painted.deserialize_from_dict({"color": "MAGENTA"})
+
+
+def test_str_enum_field_derives_by_value_without_metadata() -> None:
+    """Test a ``StrEnum`` field auto-serializes by value -- no metadata override."""
+
+    class _Color(StrEnum):
+        RED = "red"
+        BLUE = "blue"
+
+    @register_serializable(type_id="_test_derive_strenum")
+    @dataclass(frozen=True)
+    class _Painted(Serializable, FrozenMixin):
+        color: _Color
+
+    obj = _Painted(_Color.BLUE)
+    assert obj.serialize_to_dict() == {"color": "blue"}
+    assert _Painted.deserialize_from_dict({"color": "blue"}) == obj
+
+
+def test_int_enum_field_derives_by_value_without_metadata() -> None:
+    """Test an ``IntEnum`` field auto-serializes by value -- no metadata override."""
+
+    class _Status(IntEnum):
+        OK = 200
+        TEAPOT = 418
+
+    @register_serializable(type_id="_test_derive_intenum")
+    @dataclass(frozen=True)
+    class _Response(Serializable, FrozenMixin):
+        status: _Status
+
+    obj = _Response(_Status.TEAPOT)
+    assert obj.serialize_to_dict() == {"status": 418}
+    assert _Response.deserialize_from_dict({"status": 418}) == obj
+
+
+def test_plain_enum_field_derives_by_name_without_metadata() -> None:
+    """Test a plain ``Enum`` field auto-serializes by name (the always-safe form)."""
+
+    class _Direction(enum.Enum):
+        NORTH = enum.auto()
+        SOUTH = enum.auto()
+
+    @register_serializable(type_id="_test_derive_plainenum")
+    @dataclass(frozen=True)
+    class _Heading(Serializable, FrozenMixin):
+        direction: _Direction
+
+    obj = _Heading(_Direction.NORTH)
+    assert obj.serialize_to_dict() == {"direction": "NORTH"}
+    assert _Heading.deserialize_from_dict({"direction": "NORTH"}) == obj
+
+
+class _Op(enum.Enum):
+    ADD = enum.auto()
+    SUBTRACT = enum.auto()
+
+
+_OP_LABELS = {_Op.ADD: "add", _Op.SUBTRACT: "subtract"}
+
+
+def test_make_labeled_enum_field_codec_round_trips_through_labels() -> None:
+    """Test an enum field encoded through bespoke string labels round-trips."""
+
+    @register_serializable(type_id="_test_derive_labeled")
+    @dataclass(frozen=True)
+    class _Labeled(Serializable, FrozenMixin):
+        op: _Op = field(
+            metadata={"serialize_codec": make_labeled_enum_field_codec(_Op, _OP_LABELS)}
+        )
+
+    obj = _Labeled(_Op.SUBTRACT)
+    assert obj.serialize_to_dict() == {"op": "subtract"}
+    assert _Labeled.deserialize_from_dict({"op": "subtract"}) == obj
+
+
+def test_make_labeled_enum_field_codec_rejects_unknown_label() -> None:
+    """Test deserializing an unknown label raises a value error."""
+
+    @register_serializable(type_id="_test_derive_labeled_unknown")
+    @dataclass(frozen=True)
+    class _Labeled(Serializable, FrozenMixin):
+        op: _Op = field(
+            metadata={"serialize_codec": make_labeled_enum_field_codec(_Op, _OP_LABELS)}
+        )
+
+    with pytest.raises(DeserializationValueError, match="op"):
+        _Labeled.deserialize_from_dict({"op": "multiply"})
+
+
+def test_make_labeled_enum_field_codec_rejects_non_string_label() -> None:
+    """Test a non-string payload is rejected as a structure error, not a value error."""
+
+    @register_serializable(type_id="_test_derive_labeled_nonstr")
+    @dataclass(frozen=True)
+    class _Labeled(Serializable, FrozenMixin):
+        op: _Op = field(
+            metadata={"serialize_codec": make_labeled_enum_field_codec(_Op, _OP_LABELS)}
+        )
+
+    with pytest.raises(DeserializationDictStructureError):
+        _Labeled.deserialize_from_dict({"op": 7})
+
+
+def test_make_labeled_enum_field_codec_rejects_incomplete_labels() -> None:
+    """Test labels that omit a member are rejected when the codec is built."""
+    with pytest.raises(ValueError, match="every .* member"):
+        make_labeled_enum_field_codec(_Op, {_Op.ADD: "add"})
+
+
+def test_make_labeled_enum_field_codec_rejects_duplicate_labels() -> None:
+    """Test labels that collide on the same string are rejected when built."""
+    with pytest.raises(ValueError, match="distinct"):
+        make_labeled_enum_field_codec(_Op, {_Op.ADD: "same", _Op.SUBTRACT: "same"})
 
 
 def test_register_field_codec_rejects_conflicting_codec() -> None:

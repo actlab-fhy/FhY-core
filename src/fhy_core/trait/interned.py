@@ -2,6 +2,7 @@
 
 __all__ = ["Interned", "InternedMixin"]
 
+import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Hashable
 from functools import wraps
@@ -25,6 +26,26 @@ class Interned(Protocol[_K_co]):
 
     def get_intern_key(self) -> _K_co:
         """Return the stable key used to look up the canonical instance."""
+
+
+def _warn_interned_metadata_ignored(
+    payload: "InternedMixin[Any]", canonical: "InternedMixin[Any]"
+) -> None:
+    """Log equality-excluded fields whose payload value the canonical ignores."""
+    for field_definition in dataclasses.fields(cast(Any, payload)):
+        if field_definition.compare:
+            continue
+        payload_value = getattr(payload, field_definition.name)
+        canonical_value = getattr(canonical, field_definition.name)
+        if payload_value != canonical_value:
+            _LOGGER.warning(
+                "%s %r already canonical; keeping %s=%r and ignoring payload %r.",
+                type(payload).__name__,
+                payload.get_intern_key(),
+                field_definition.name,
+                canonical_value,
+                payload_value,
+            )
 
 
 class InternedMixin(ABC, Generic[_K]):
@@ -161,6 +182,32 @@ class InternedMixin(ABC, Generic[_K]):
         callers can restore them after :meth:`clear_interned_registry`.
         The base implementation is a no-op for classes without defaults.
         """
+
+    @classmethod
+    def construct_from_fields(cls: type[_I], fields: dict[str, Any]) -> _I:
+        """Reconstruct an interned instance, returning the canonical entry.
+
+        Serves as the serialization reconstruction hook (see
+        ``fhy_core.serialization``) for interned dataclasses: builds the
+        instance from ``fields``, then returns the canonical instance for its
+        intern key -- the freshly built one when the key is new, otherwise the
+        pre-existing canonical. Equality-excluded fields
+        (``field(compare=False)``) whose payload value differs from the
+        canonical's are logged as ignored.
+
+        Args:
+            fields: Decoded field values, one entry per dataclass field.
+
+        Returns:
+            The canonical instance for the reconstructed object's intern key.
+        """
+        instance = cls(**fields)
+        canonical = cls.get_interned(instance.get_intern_key())
+        if canonical is None:
+            return instance
+        if canonical is not instance:
+            _warn_interned_metadata_ignored(instance, canonical)
+        return canonical
 
     @abstractmethod
     def get_intern_key(self) -> _K:

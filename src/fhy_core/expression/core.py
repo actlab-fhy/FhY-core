@@ -4,14 +4,10 @@ __all__ = [
     "Expression",
     "LiteralType",
     "UnaryOperation",
-    "UNARY_OPERATION_FUNCTION_NAMES",
-    "UNARY_FUNCTION_NAME_OPERATIONS",
     "UNARY_OPERATION_SYMBOLS",
     "UNARY_SYMBOL_OPERATIONS",
     "UnaryExpression",
     "BinaryOperation",
-    "BINARY_OPERATION_FUNCTION_NAMES",
-    "BINARY_FUNCTION_NAME_OPERATIONS",
     "BINARY_OPERATION_SYMBOLS",
     "BINARY_SYMBOL_OPERATIONS",
     "BinaryExpression",
@@ -33,7 +29,6 @@ from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from enum import Enum, auto
 from functools import singledispatch
 from typing import Any, TypeAlias, TypedDict, TypeGuard
 
@@ -42,10 +37,8 @@ from frozendict import frozendict
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
     DeserializationDictStructureError,
-    DeserializationValueError,
     SerializedDict,
     WrappedFamilySerializable,
-    is_serialized_dict,
     register_serializable,
 )
 from fhy_core.trait import (
@@ -57,7 +50,7 @@ from fhy_core.trait import (
     StructuralEquivalenceMixin,
     VisitableMixin,
 )
-from fhy_core.utils import invert_frozen_dict
+from fhy_core.utils import StrEnum, invert_frozen_dict
 
 LiteralType: TypeAlias = str | float | int | bool
 
@@ -123,7 +116,7 @@ def _build_right_folded_binary_tree(
     *expressions: "Expression | Identifier | LiteralType",
 ) -> "BinaryExpression":
     if len(expressions) < 2:  # noqa: PLR2004
-        operation_name = BINARY_OPERATION_FUNCTION_NAMES[operation]
+        operation_name = operation.value
         raise ValueError(
             f"{operation_name} requires at least two expressions, but got "
             f"{len(expressions)}."
@@ -508,24 +501,18 @@ class Expression(
             )
 
 
-class UnaryOperation(Enum):
-    """Unary operation."""
+class UnaryOperation(StrEnum):
+    """Unary operation.
 
-    NEGATE = auto()
-    POSITIVE = auto()
-    LOGICAL_NOT = auto()
+    Each member's value is its canonical function name (``NEGATE`` ->
+    ``"negate"``), which is also its serialized form.
+    """
+
+    NEGATE = "negate"
+    POSITIVE = "positive"
+    LOGICAL_NOT = "logical_not"
 
 
-UNARY_OPERATION_FUNCTION_NAMES: frozendict[UnaryOperation, str] = frozendict(
-    {
-        UnaryOperation.NEGATE: "negate",
-        UnaryOperation.POSITIVE: "positive",
-        UnaryOperation.LOGICAL_NOT: "logical_not",
-    }
-)
-UNARY_FUNCTION_NAME_OPERATIONS: frozendict[str, UnaryOperation] = invert_frozen_dict(
-    UNARY_OPERATION_FUNCTION_NAMES
-)
 UNARY_OPERATION_SYMBOLS: frozendict[UnaryOperation, str] = frozendict(
     {
         UnaryOperation.NEGATE: "-",
@@ -536,22 +523,6 @@ UNARY_OPERATION_SYMBOLS: frozendict[UnaryOperation, str] = frozendict(
 UNARY_SYMBOL_OPERATIONS: frozendict[str, UnaryOperation] = invert_frozen_dict(
     UNARY_OPERATION_SYMBOLS
 )
-
-
-class _UnaryExpressionData(TypedDict):
-    operation: str
-    operand: SerializedDict
-
-
-def _is_valid_unary_expression_data(
-    data: SerializedDict,
-) -> TypeGuard[_UnaryExpressionData]:
-    return (
-        "operation" in data
-        and isinstance(data["operation"], str)
-        and "operand" in data
-        and is_serialized_dict(data["operand"])
-    )
 
 
 @register_serializable(type_id="unary_expression")
@@ -574,72 +545,31 @@ class UnaryExpression(Expression, HasOperandsMixin[Expression]):
         (operand,) = new_children
         return UnaryExpression(self.operation, operand)
 
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {
-            "operation": UNARY_OPERATION_FUNCTION_NAMES[self.operation],
-            "operand": self.operand.serialize_to_dict(),
-        }
 
-    @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> "UnaryExpression":
-        if not _is_valid_unary_expression_data(data):
-            raise DeserializationDictStructureError(
-                cls, _UnaryExpressionData.__annotations__, data
-            )
-        operation_name = data["operation"]
-        if operation_name not in UNARY_FUNCTION_NAME_OPERATIONS:
-            raise DeserializationValueError(
-                cls, "operation", "a valid unary operation name", operation_name
-            )
-        operand = Expression.deserialize_from_dict(data["operand"])
-        return cls(
-            UNARY_FUNCTION_NAME_OPERATIONS[operation_name],
-            operand,
-        )
+class BinaryOperation(StrEnum):
+    """Binary operation.
 
+    Each member's value is its canonical function name (``ADD`` -> ``"add"``),
+    which is also its serialized form.
+    """
 
-class BinaryOperation(Enum):
-    """Binary operation."""
-
-    ADD = auto()
-    SUBTRACT = auto()
-    MULTIPLY = auto()
-    DIVIDE = auto()
-    FLOOR_DIVIDE = auto()
-    MODULO = auto()
-    POWER = auto()
-    LOGICAL_AND = auto()
-    LOGICAL_OR = auto()
-    EQUAL = auto()
-    NOT_EQUAL = auto()
-    LESS = auto()
-    LESS_EQUAL = auto()
-    GREATER = auto()
-    GREATER_EQUAL = auto()
+    ADD = "add"
+    SUBTRACT = "subtract"
+    MULTIPLY = "multiply"
+    DIVIDE = "divide"
+    FLOOR_DIVIDE = "floor_divide"
+    MODULO = "modulo"
+    POWER = "power"
+    LOGICAL_AND = "logical_and"
+    LOGICAL_OR = "logical_or"
+    EQUAL = "equal"
+    NOT_EQUAL = "not_equal"
+    LESS = "less"
+    LESS_EQUAL = "less_equal"
+    GREATER = "greater"
+    GREATER_EQUAL = "greater_equal"
 
 
-BINARY_OPERATION_FUNCTION_NAMES: frozendict[BinaryOperation, str] = frozendict(
-    {
-        BinaryOperation.ADD: "add",
-        BinaryOperation.SUBTRACT: "subtract",
-        BinaryOperation.MULTIPLY: "multiply",
-        BinaryOperation.DIVIDE: "divide",
-        BinaryOperation.FLOOR_DIVIDE: "floor_divide",
-        BinaryOperation.MODULO: "modulo",
-        BinaryOperation.POWER: "power",
-        BinaryOperation.LOGICAL_AND: "logical_and",
-        BinaryOperation.LOGICAL_OR: "logical_or",
-        BinaryOperation.EQUAL: "equal",
-        BinaryOperation.NOT_EQUAL: "not_equal",
-        BinaryOperation.LESS: "less",
-        BinaryOperation.LESS_EQUAL: "less_equal",
-        BinaryOperation.GREATER: "greater",
-        BinaryOperation.GREATER_EQUAL: "greater_equal",
-    }
-)
-BINARY_FUNCTION_NAME_OPERATIONS: frozendict[str, BinaryOperation] = invert_frozen_dict(
-    BINARY_OPERATION_FUNCTION_NAMES
-)
 BINARY_OPERATION_SYMBOLS: frozendict[BinaryOperation, str] = frozendict(
     {
         BinaryOperation.ADD: "+",
@@ -664,25 +594,6 @@ BINARY_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = invert_frozen_dict(
 )
 
 
-class _BinaryExpressionData(TypedDict):
-    operation: str
-    left: SerializedDict
-    right: SerializedDict
-
-
-def _is_valid_binary_expression_data(
-    data: SerializedDict,
-) -> TypeGuard[_BinaryExpressionData]:
-    return (
-        "operation" in data
-        and isinstance(data["operation"], str)
-        and "left" in data
-        and is_serialized_dict(data["left"])
-        and "right" in data
-        and is_serialized_dict(data["right"])
-    )
-
-
 @register_serializable(type_id="binary_expression")
 @dataclass(frozen=True, eq=False)
 class BinaryExpression(Expression, HasOperandsMixin[Expression]):
@@ -704,42 +615,6 @@ class BinaryExpression(Expression, HasOperandsMixin[Expression]):
         left, right = new_children
         return BinaryExpression(self.operation, left, right)
 
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {
-            "operation": BINARY_OPERATION_FUNCTION_NAMES[self.operation],
-            "left": self.left.serialize_to_dict(),
-            "right": self.right.serialize_to_dict(),
-        }
-
-    @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> "BinaryExpression":
-        if not _is_valid_binary_expression_data(data):
-            raise DeserializationDictStructureError(
-                cls, _BinaryExpressionData.__annotations__, data
-            )
-        operation_name = data["operation"]
-        if operation_name not in BINARY_FUNCTION_NAME_OPERATIONS:
-            raise DeserializationValueError(
-                cls, "operation", "a valid binary operation name", operation_name
-            )
-        left = Expression.deserialize_from_dict(data["left"])
-        right = Expression.deserialize_from_dict(data["right"])
-        return cls(
-            BINARY_FUNCTION_NAME_OPERATIONS[operation_name],
-            left,
-            right,
-        )
-
-
-class _IdentifierExpressionData(TypedDict):
-    identifier: SerializedDict
-
-
-def _is_valid_identifier_expression_data(
-    data: SerializedDict,
-) -> TypeGuard[_IdentifierExpressionData]:
-    return "identifier" in data and is_serialized_dict(data["identifier"])
-
 
 @register_serializable(type_id="identifier_expression")
 @dataclass(frozen=True, eq=False)
@@ -747,17 +622,6 @@ class IdentifierExpression(Expression):
     """Identifier expression."""
 
     identifier: Identifier
-
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {"identifier": self.identifier.serialize_to_dict()}
-
-    @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> "IdentifierExpression":
-        if not _is_valid_identifier_expression_data(data):
-            raise DeserializationDictStructureError(
-                cls, _IdentifierExpressionData.__annotations__, data
-            )
-        return cls(Identifier.deserialize_from_dict(data["identifier"]))
 
 
 _INTEGER_LITERAL_PATTERN = re.compile(r"\d+")
@@ -860,25 +724,6 @@ class LiteralExpression(Expression):
         return cls(data["value"])
 
 
-class _TernaryExpressionData(TypedDict):
-    condition: SerializedDict
-    true_value: SerializedDict
-    false_value: SerializedDict
-
-
-def _is_valid_ternary_expression_data(
-    data: SerializedDict,
-) -> TypeGuard[_TernaryExpressionData]:
-    return (
-        "condition" in data
-        and is_serialized_dict(data["condition"])
-        and "true_value" in data
-        and is_serialized_dict(data["true_value"])
-        and "false_value" in data
-        and is_serialized_dict(data["false_value"])
-    )
-
-
 @register_serializable(type_id="ternary_expression")
 @dataclass(frozen=True, eq=False)
 class TernaryExpression(Expression, HasOperandsMixin[Expression]):
@@ -911,42 +756,6 @@ class TernaryExpression(Expression, HasOperandsMixin[Expression]):
     ) -> "TernaryExpression":
         condition, true_value, false_value = new_children
         return TernaryExpression(condition, true_value, false_value)
-
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {
-            "condition": self.condition.serialize_to_dict(),
-            "true_value": self.true_value.serialize_to_dict(),
-            "false_value": self.false_value.serialize_to_dict(),
-        }
-
-    @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> "TernaryExpression":
-        if not _is_valid_ternary_expression_data(data):
-            raise DeserializationDictStructureError(
-                cls, _TernaryExpressionData.__annotations__, data
-            )
-        return cls(
-            Expression.deserialize_from_dict(data["condition"]),
-            Expression.deserialize_from_dict(data["true_value"]),
-            Expression.deserialize_from_dict(data["false_value"]),
-        )
-
-
-class _CallExpressionData(TypedDict):
-    function_name: str
-    arguments: list[SerializedDict]
-
-
-def _is_valid_call_expression_data(
-    data: SerializedDict,
-) -> TypeGuard[_CallExpressionData]:
-    return (
-        "function_name" in data
-        and isinstance(data["function_name"], str)
-        and "arguments" in data
-        and isinstance(data["arguments"], list)
-        and all(is_serialized_dict(argument) for argument in data["arguments"])
-    )
 
 
 @register_serializable(type_id="call_expression")
@@ -982,23 +791,6 @@ class CallExpression(Expression, HasOperandsMixin[Expression]):
         self, new_children: Sequence["Expression"]
     ) -> "CallExpression":
         return CallExpression(self.function_name, tuple(new_children))
-
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {
-            "function_name": self.function_name,
-            "arguments": [argument.serialize_to_dict() for argument in self.arguments],
-        }
-
-    @classmethod
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> "CallExpression":
-        if not _is_valid_call_expression_data(data):
-            raise DeserializationDictStructureError(
-                cls, _CallExpressionData.__annotations__, data
-            )
-        arguments = tuple(
-            Expression.deserialize_from_dict(argument) for argument in data["arguments"]
-        )
-        return cls(data["function_name"], arguments)
 
 
 @singledispatch

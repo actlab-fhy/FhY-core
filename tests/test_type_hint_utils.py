@@ -10,9 +10,9 @@ from typing import Annotated, Final, Optional, Union
 import pytest
 
 from fhy_core.utils.type_hint_utils import (
-    get_origin_and_args,
+    get_field_names,
+    get_origin_and_arguments,
     get_union_members,
-    iter_field_names,
     resolve_annotation,
     resolve_field_annotations,
     split_optional,
@@ -119,31 +119,31 @@ def test_resolve_field_annotations_returns_empty_for_no_annotations() -> None:
 
 
 # ============================================================================
-# iter_field_names
+# get_field_names
 # ============================================================================
 
 
-def test_iter_field_names_orders_base_before_derived_and_dedupes() -> None:
+def test_get_field_names_orders_base_before_derived_and_dedupes() -> None:
     """Test names come base-first in declaration order, de-duplicated."""
-    assert iter_field_names(_Derived) == ["a", "b", "c"]
+    assert get_field_names(_Derived) == ["a", "b", "c"]
 
 
-def test_iter_field_names_excludes_object() -> None:
+def test_get_field_names_excludes_object() -> None:
     """Test ``object`` contributes no names."""
-    assert iter_field_names(_Base) == ["a", "b"]
+    assert get_field_names(_Base) == ["a", "b"]
 
 
-def test_iter_field_names_applies_predicate_filter() -> None:
+def test_get_field_names_applies_predicate_filter() -> None:
     """Test only MRO classes passing the predicate contribute their fields."""
-    assert iter_field_names(_Derived, predicate=lambda klass: klass is _Base) == [
+    assert get_field_names(_Derived, predicate=lambda klass: klass is _Base) == [
         "a",
         "b",
     ]
 
 
-def test_iter_field_names_empty_for_no_annotations() -> None:
+def test_get_field_names_empty_for_no_annotations() -> None:
     """Test a class with no annotations yields no names."""
-    assert iter_field_names(_NoAnnotations) == []
+    assert get_field_names(_NoAnnotations) == []
 
 
 # ============================================================================
@@ -243,43 +243,43 @@ def test_split_optional_non_optional_union_returns_false() -> None:
 
 
 # ============================================================================
-# get_origin_and_args
+# get_origin_and_arguments
 # ============================================================================
 
 
-def test_get_origin_and_args_for_homogeneous_tuple() -> None:
+def test_get_origin_and_arguments_for_homogeneous_tuple() -> None:
     """Test a variadic tuple yields its origin and element args."""
-    assert get_origin_and_args(tuple[int, ...]) == (tuple, (int, ...))
+    assert get_origin_and_arguments(tuple[int, ...]) == (tuple, (int, ...))
 
 
-def test_get_origin_and_args_for_frozenset() -> None:
+def test_get_origin_and_arguments_for_frozenset() -> None:
     """Test a parameterized frozenset yields its origin and element arg."""
-    assert get_origin_and_args(frozenset[str]) == (frozenset, (str,))
+    assert get_origin_and_arguments(frozenset[str]) == (frozenset, (str,))
 
 
-def test_get_origin_and_args_for_list() -> None:
+def test_get_origin_and_arguments_for_list() -> None:
     """Test a parameterized list yields its origin and element arg."""
-    assert get_origin_and_args(list[int]) == (list, (int,))
+    assert get_origin_and_arguments(list[int]) == (list, (int,))
 
 
-def test_get_origin_and_args_returns_none_for_plain_type() -> None:
+def test_get_origin_and_arguments_returns_none_for_plain_type() -> None:
     """Test a non-parameterized type yields ``None``."""
-    assert get_origin_and_args(int) is None
+    assert get_origin_and_arguments(int) is None
 
 
-def test_get_origin_and_args_excludes_union() -> None:
+def test_get_origin_and_arguments_excludes_union() -> None:
     """Test a union is not reported as a container generic."""
-    assert get_origin_and_args(int | str) is None
+    assert get_origin_and_arguments(int | str) is None
 
 
-def test_get_origin_and_args_excludes_optional() -> None:
+def test_get_origin_and_arguments_excludes_optional() -> None:
     """Test an optional is not reported as a container generic."""
-    assert get_origin_and_args(Optional[int]) is None
+    assert get_origin_and_arguments(Optional[int]) is None
 
 
-def test_get_origin_and_args_excludes_annotated() -> None:
+def test_get_origin_and_arguments_excludes_annotated() -> None:
     """Test an ``Annotated`` form is not reported as a container generic."""
-    assert get_origin_and_args(Annotated[int, "meta"]) is None
+    assert get_origin_and_arguments(Annotated[int, "meta"]) is None
 
 
 # ============================================================================
@@ -306,7 +306,7 @@ def test_consumer_can_resolve_and_classify_every_field() -> None:
 
     # Plain scalar.
     assert split_optional(resolved["name"]) == (int, False)
-    assert get_origin_and_args(resolved["name"]) is None
+    assert get_origin_and_arguments(resolved["name"]) is None
 
     # Optional scalar.
     inner, is_optional = split_optional(resolved["tag"])
@@ -315,8 +315,8 @@ def test_consumer_can_resolve_and_classify_every_field() -> None:
     # Homogeneous container.
     container_inner, container_optional = split_optional(resolved["items"])
     assert container_optional is False
-    assert get_origin_and_args(container_inner) == (tuple, (int, ...))
+    assert get_origin_and_arguments(container_inner) == (tuple, (int, ...))
 
     # Nested object reference.
     assert resolved["child"] is _Leaf
-    assert get_origin_and_args(resolved["child"]) is None
+    assert get_origin_and_arguments(resolved["child"]) is None

@@ -100,7 +100,8 @@ __all__ = [
     "FieldCodec",
     "register_field_codec",
     "make_field_codec",
-    "enum_field_codec",
+    "make_enum_field_codec",
+    "make_labeled_enum_field_codec",
     "SerializationDerivationError",
     "SerializedDict",
     "SerializedValue",
@@ -152,7 +153,7 @@ from .error import register_error
 from .logger import get_logger
 from .utils.enum import StrEnum
 from .utils.type_hint_utils import (
-    get_origin_and_args,
+    get_origin_and_arguments,
     resolve_field_annotations,
     split_optional,
     unwrap_annotation,
@@ -764,7 +765,7 @@ class FieldCodec(Protocol):
 
     Every codec the engine infers, and every codec a caller supplies through
     ``field(metadata={"serialize_codec": ...})``, satisfies this contract. Use
-    ``make_field_codec`` or ``enum_field_codec`` to build one from plain
+    ``make_field_codec`` or ``make_enum_field_codec`` to build one from plain
     functions rather than implementing it by hand.
 
     Implementations must round-trip, and ``decode`` must raise
@@ -979,6 +980,32 @@ class _EnumByValueFieldCodec(FieldCodec):
             ) from exc
 
 
+class _LabeledEnumFieldCodec(FieldCodec):
+    expected: type | UnionType = str
+    _enum_type: type[enum.Enum]
+    _value_to_label: Mapping[Any, str]
+    _label_to_value: dict[str, Any]
+
+    def __init__(self, enum_type: type[enum.Enum], labels: Mapping[Any, str]) -> None:
+        self._enum_type = enum_type
+        self._value_to_label = labels
+        self._label_to_value = {label: member for member, label in labels.items()}
+
+    def encode(self, value: Any) -> SerializedValue:
+        return cast(SerializedValue, self._value_to_label[value])
+
+    def accepts(self, data: Any) -> bool:
+        return isinstance(data, str)
+
+    def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
+        try:
+            return self._label_to_value[data]
+        except KeyError as exc:
+            raise DeserializationValueError(
+                owner, field_name, f"a valid {self._enum_type.__name__} label", data
+            ) from exc
+
+
 class _FunctionFieldCodec(FieldCodec):
     expected: type | UnionType = object
     _encode_fn: Callable[[Any], SerializedValue]
@@ -1020,15 +1047,15 @@ _SEQUENCE_FACTORIES: dict[type, Callable[[Any], Any]] = {
 }
 
 
-def _sequence_element_type(origin: type, args: tuple[Any, ...]) -> Any:
+def _sequence_element_type(origin: type, arguments: tuple[Any, ...]) -> Any:
     if origin is tuple:
-        if len(args) == 2 and args[1] is Ellipsis:  # noqa: PLR2004
-            return args[0]
-        if len(args) == 1:
-            return args[0]
+        if len(arguments) == 2 and arguments[1] is Ellipsis:  # noqa: PLR2004
+            return arguments[0]
+        if len(arguments) == 1:
+            return arguments[0]
         raise _CodecInferenceError(origin)
-    if len(args) == 1:
-        return args[0]
+    if len(arguments) == 1:
+        return arguments[0]
     raise _CodecInferenceError(origin)
 
 
@@ -1038,13 +1065,13 @@ def _infer_field_codec(resolved: Any) -> FieldCodec:
     if is_optional:
         return _OptionalFieldCodec(_infer_field_codec(inner))
 
-    container = get_origin_and_args(inner)
+    container = get_origin_and_arguments(inner)
     if container is not None:
-        origin, args = container
+        origin, arguments = container
         factory = _SEQUENCE_FACTORIES.get(origin)
         if factory is None:
             raise _CodecInferenceError(inner)
-        element = _sequence_element_type(origin, args)
+        element = _sequence_element_type(origin, arguments)
         return _SequenceFieldCodec(factory, _infer_field_codec(element))
 
     if isinstance(inner, type):
@@ -1053,6 +1080,15 @@ def _infer_field_codec(resolved: Any) -> FieldCodec:
         if issubclass(inner, Serializable):
             return _SerializableFieldCodec(inner)
         if issubclass(inner, enum.Enum):
+            # A ``StrEnum`` / ``IntEnum`` member is its own serializable scalar
+            # value (``str`` / ``int``), so serialize by value -- that is the
+            # canonical, stable wire form and never needs a metadata override.
+            # A plain ``Enum`` value may be an arbitrary or positional
+            # (``auto()``) object that is neither serializable nor stable, so
+            # fall back to the always-safe member name. Override per field with
+            # ``make_enum_field_codec`` / ``make_labeled_enum_field_codec``.
+            if issubclass(inner, (str, int)):
+                return _EnumByValueFieldCodec(inner)
             return _EnumByNameFieldCodec(inner)
         if issubclass(inner, PurePath):
             return _PathFieldCodec(inner)
@@ -1119,7 +1155,7 @@ def _derived_deserialize_from_dict(
         name: plan[name].decode(data[name], field_name=name, owner=cls) for name in plan
     }
     try:
-        return cls._construct_from_fields(decoded)
+        return cls.construct_from_fields(decoded)
     except ValueError as exc:
         raise DeserializationValueError(str(exc)) from exc
 
@@ -1213,7 +1249,7 @@ class Serializable(ABC):
         return local or _get_default_type_id(cls)
 
     @classmethod
-    def _construct_from_fields(cls: type[_T], fields: dict[str, Any]) -> _T:
+    def construct_from_fields(cls: type[_T], fields: dict[str, Any]) -> _T:
         """Build an instance from already-decoded fields.
 
         Default reconstruction for derived ``deserialize_from_dict``. Override
@@ -1243,7 +1279,7 @@ class Serializable(ABC):
 
         By default the fields are derived from this class's dataclass fields and
         their type hints, validated, decoded, and passed to
-        ``_construct_from_fields``. Override to customize, or pass
+        ``construct_from_fields``. Override to customize, or pass
         ``derive=False`` to require a hand-written implementation.
         """
         return cast(_T, _derived_deserialize_from_dict(cls, data))
@@ -1620,7 +1656,9 @@ def make_field_codec(
     return _FunctionFieldCodec(encode, decode)
 
 
-def enum_field_codec(enum_type: type[enum.Enum], *, by: str = "name") -> FieldCodec:
+def make_enum_field_codec(
+    enum_type: type[enum.Enum], *, by: str = "name"
+) -> FieldCodec:
     """Return a codec that serializes an ``Enum`` member by name or value.
 
     Args:
@@ -1638,4 +1676,43 @@ def enum_field_codec(enum_type: type[enum.Enum], *, by: str = "name") -> FieldCo
         return _EnumByNameFieldCodec(enum_type)
     if by == "value":
         return _EnumByValueFieldCodec(enum_type)
-    raise ValueError(f'enum_field_codec "by" must be "name" or "value", got {by!r}.')
+    raise ValueError(
+        f'make_enum_field_codec "by" must be "name" or "value", got {by!r}.'
+    )
+
+
+def make_labeled_enum_field_codec(
+    enum_type: type[enum.Enum], labels: Mapping[Any, str]
+) -> FieldCodec:
+    """Return a codec that serializes an ``Enum`` member via explicit string labels.
+
+    Use this when the on-the-wire form is a bespoke label that is neither the
+    member's ``name`` nor its ``value`` -- for example a human-readable
+    function name. ``labels`` must assign a distinct label to every member so
+    encoding is total and decoding is unambiguous.
+
+    Args:
+        enum_type: The ``enum.Enum`` subclass to encode.
+        labels: A bijective mapping from each member to its serialized label.
+
+    Returns:
+        A ``FieldCodec`` that encodes ``member -> label`` and decodes the
+        inverse, raising ``DeserializationValueError`` for an unknown label and
+        rejecting non-string payloads as a structure error.
+
+    Raises:
+        ValueError: If ``labels`` does not cover every member, or assigns the
+            same label to two members.
+    """
+    members = set(enum_type)
+    if set(labels) != members:
+        raise ValueError(
+            f"make_labeled_enum_field_codec labels must cover every "
+            f"{enum_type.__name__} member exactly once."
+        )
+    if len(set(labels.values())) != len(labels):
+        raise ValueError(
+            f"make_labeled_enum_field_codec labels for {enum_type.__name__} "
+            f"must be distinct."
+        )
+    return _LabeledEnumFieldCodec(enum_type, labels)

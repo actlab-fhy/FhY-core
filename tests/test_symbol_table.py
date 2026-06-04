@@ -77,16 +77,6 @@ def test_import_frame_structural_equivalence_false_for_other_frame_type(
     assert not import_frame.is_structurally_equivalent(variable_frame)
 
 
-def test_import_frame_dict_serialization_round_trip() -> None:
-    """Test `ImportSymbolTableFrame` round-trips through dict serialization."""
-    frame = ImportSymbolTableFrame(mock_identifier("imported", 0))
-
-    restored = SymbolTableFrame.deserialize_from_dict(frame.serialize_to_dict())
-
-    assert isinstance(restored, ImportSymbolTableFrame)
-    assert frame.is_structurally_equivalent(restored)
-
-
 def test_variable_frame_is_frozen_runtime_protocol(int32: NumericalType) -> None:
     """Test `VariableSymbolTableFrame` satisfies `Frozen` runtime protocol."""
     frame = VariableSymbolTableFrame(
