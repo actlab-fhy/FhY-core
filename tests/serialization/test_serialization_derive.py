@@ -9,7 +9,7 @@ be derived.
 
 import enum
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, cast
 
 import pytest
@@ -21,6 +21,7 @@ from fhy_core.serialization import (
     SerializationDerivationError,
     SerializationError,
     SerializationFormat,
+    SerializationValueError,
     SerializedDict,
     WrappedFamilySerializable,
     make_enum_field_codec,
@@ -227,6 +228,24 @@ def test_underivable_error_names_the_offending_field() -> None:
         _BadNamed(1j)
 
 
+def test_unresolvable_annotation_raises_clear_derivation_error() -> None:
+    """Test an unresolvable field annotation reports the true cause.
+
+    A forward reference that cannot be resolved is dropped by annotation
+    resolution; the derivation error must name the field and say the annotation
+    could not be resolved, rather than misreporting it as an unsupported type.
+    """
+
+    @dataclass
+    class _BadRef(Serializable):
+        value: "DefinitelyNotARealType"  # type: ignore[name-defined]  # noqa: F821
+
+    with pytest.raises(
+        SerializationDerivationError, match="value.*could not be resolved"
+    ):
+        _BadRef(1)
+
+
 # ============================================================================
 # Hand-written methods win over derivation
 # ============================================================================
@@ -339,7 +358,10 @@ def test_path_field_via_make_field_codec_round_trips() -> None:
         location: Path = field(metadata={"serialize_codec": path_codec})
 
     obj = _Pathy(Path("/tmp/example.fhy"))
-    assert obj.serialize_to_dict() == {"location": "/tmp/example.fhy"}
+    # The bespoke codec encodes with ``str``, whose separator is OS-dependent;
+    # compare against the platform-native form rather than a hard-coded one.
+    expected = str(Path("/tmp/example.fhy"))
+    assert obj.serialize_to_dict() == {"location": expected}
     assert _Pathy.deserialize_from_dict(obj.serialize_to_dict()) == obj
 
 
@@ -442,6 +464,23 @@ def test_inferred_path_field_round_trips() -> None:
     assert _Located.deserialize_from_dict({"path": "/tmp/example.fhy"}) == obj
 
 
+def test_inferred_path_field_encodes_in_posix_form() -> None:
+    """Test an inferred path field encodes with forward slashes on every OS.
+
+    Uses ``PureWindowsPath`` so the input's separator semantics are fixed
+    regardless of the host OS; the encoded form must still be POSIX so blobs are
+    portable across platforms.
+    """
+
+    @dataclass(frozen=True)
+    class _WinLocated(Serializable, FrozenMixin):
+        path: PureWindowsPath
+
+    obj = _WinLocated(PureWindowsPath("dir/sub/file.fhy"))
+    assert obj.serialize_to_dict() == {"path": "dir/sub/file.fhy"}
+    assert _WinLocated.deserialize_from_dict({"path": "dir/sub/file.fhy"}) == obj
+
+
 def test_float_field_round_trips() -> None:
     """Test a float field round-trips through the dict form."""
 
@@ -475,6 +514,20 @@ def test_frozenset_field_round_trips() -> None:
     assert _Tags.deserialize_from_dict(obj.serialize_to_dict()) == obj
 
 
+def test_frozenset_field_serializes_deterministically() -> None:
+    """Test a frozenset field emits its elements in a stable, sorted order."""
+
+    @dataclass(frozen=True)
+    class _Names(Serializable, FrozenMixin):
+        names: frozenset[str]
+
+    # str hashing is randomized per process, so a frozenset's iteration order is
+    # not stable; the encoded form must be sorted so the wire output is fixed.
+    obj = _Names(frozenset({"gamma", "alpha", "delta", "beta"}))
+
+    assert obj.serialize_to_dict() == {"names": ["alpha", "beta", "delta", "gamma"]}
+
+
 def test_list_field_round_trips() -> None:
     """Test a homogeneous list field round-trips."""
 
@@ -495,6 +548,22 @@ def test_heterogeneous_tuple_is_not_derivable() -> None:
 
     with pytest.raises(SerializationDerivationError, match="pair"):
         _Pair((1, "a"))
+
+
+def test_fixed_length_single_tuple_is_not_derivable() -> None:
+    """Test a fixed-length ``tuple[T]`` field cannot be derived.
+
+    Only the variable-length ``tuple[T, ...]`` form is derivable; the sequence
+    codec does not enforce length, so a fixed-length tuple must be rejected
+    rather than silently accepting payloads of any arity.
+    """
+
+    @dataclass
+    class _Single(Serializable):
+        only: tuple[int]
+
+    with pytest.raises(SerializationDerivationError, match="only"):
+        _Single((1,))
 
 
 def test_make_enum_field_codec_round_trips_by_value() -> None:
@@ -539,6 +608,61 @@ def test_make_enum_field_codec_rejects_unknown_name() -> None:
 
     with pytest.raises(DeserializationValueError, match="color"):
         _Painted.deserialize_from_dict({"color": "MAGENTA"})
+
+
+class _ByValueLevel(enum.Enum):
+    LOW = 1
+    HIGH = 2
+
+
+def test_make_enum_field_codec_rejects_out_of_range_value() -> None:
+    """Test deserializing an out-of-range by-value enum payload raises."""
+
+    @dataclass
+    class _Setting(Serializable):
+        level: int = field(
+            metadata={
+                "serialize_codec": make_enum_field_codec(_ByValueLevel, by="value")
+            }
+        )
+
+    with pytest.raises(DeserializationValueError, match="level"):
+        _Setting.deserialize_from_dict({"level": 999})
+
+
+def test_make_enum_field_codec_rejects_unhashable_by_value_payload() -> None:
+    """Test an unhashable by-value enum payload surfaces as a value error.
+
+    ``Enum(value)`` raises ``TypeError`` (not ``ValueError``) for an unhashable
+    payload such as a dict; the codec must still wrap it in the serialization
+    error hierarchy rather than letting the raw ``TypeError`` escape.
+    """
+
+    @dataclass
+    class _Setting(Serializable):
+        level: int = field(
+            metadata={
+                "serialize_codec": make_enum_field_codec(_ByValueLevel, by="value")
+            }
+        )
+
+    with pytest.raises(DeserializationValueError, match="level"):
+        _Setting.deserialize_from_dict({"level": {"unhashable": True}})
+
+
+def test_int_enum_field_rejects_out_of_range_value_without_metadata() -> None:
+    """Test the auto-derived ``IntEnum`` by-value path rejects an out-of-range value."""
+
+    class _Code(IntEnum):
+        OK = 0
+        FAIL = 1
+
+    @dataclass
+    class _Result(Serializable):
+        code: _Code
+
+    with pytest.raises(DeserializationValueError, match="code"):
+        _Result.deserialize_from_dict({"code": 999})
 
 
 def test_str_enum_field_derives_by_value_without_metadata() -> None:
@@ -641,6 +765,23 @@ def test_make_labeled_enum_field_codec_rejects_non_string_label() -> None:
 
     with pytest.raises(DeserializationDictStructureError):
         _Labeled.deserialize_from_dict({"op": 7})
+
+
+def test_make_labeled_enum_field_codec_encode_rejects_out_of_domain_member() -> None:
+    """Test encoding a member outside the label domain raises a value error.
+
+    The labels are verified to cover every member at build time, so this only
+    fires for a value not in the codec's enum (e.g. a member of a different
+    enum). It must surface as a ``SerializationValueError`` rather than a bare
+    ``KeyError``.
+    """
+    codec = make_labeled_enum_field_codec(_Op, _OP_LABELS)
+
+    class _OtherOp(enum.Enum):
+        MULTIPLY = enum.auto()
+
+    with pytest.raises(SerializationValueError):
+        codec.encode(_OtherOp.MULTIPLY)
 
 
 def test_make_labeled_enum_field_codec_rejects_incomplete_labels() -> None:

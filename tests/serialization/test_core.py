@@ -326,6 +326,8 @@ def unknown_type_id_blob() -> bytes:
         pytest.param(False, True, id="bool_false"),
         # Accepted nested structure.
         pytest.param([1, "a", {"k": [True, None, 1.25]}], True, id="nested"),
+        # Rejected: a tuple is not the wire form JSON arrays decode to (list).
+        pytest.param((1, 2), False, id="tuple"),
         # Rejected bytes-like values.
         pytest.param(b"", False, id="empty_bytes"),
         pytest.param(b"abc", False, id="bytes"),
@@ -1305,35 +1307,54 @@ def test_wrapped_family_accepts_alias_type_id() -> None:
 
 
 @pytest.mark.parametrize(
-    "payload, match",
+    "payload, error, match",
     [
         pytest.param(
             {"__type__": 123, "__data__": {}},
-            "Not a wrapped dict",
+            DeserializationValueError,
+            "__type__",
             id="non_string_type",
         ),
         pytest.param(
             {"__type__": "tests.X", "__data__": "not a dict"},
-            "Not a wrapped dict",
+            DeserializationValueError,
+            "__data__",
             id="non_dict_data",
         ),
-        pytest.param({"__data__": {}}, "Not a wrapped dict", id="missing_type"),
-        pytest.param({"__type__": "tests.X"}, "Not a wrapped dict", id="missing_data"),
+        pytest.param(
+            {"__data__": {}},
+            DeserializationDictStructureError,
+            "Invalid dictionary structure",
+            id="missing_type",
+        ),
+        pytest.param(
+            {"__type__": "tests.X"},
+            DeserializationDictStructureError,
+            "Invalid dictionary structure",
+            id="missing_data",
+        ),
+        pytest.param(
+            {"__type__": "tests.X", "__data__": {}, "extra": 1},
+            DeserializationDictStructureError,
+            "Invalid dictionary structure",
+            id="unexpected_extra_key",
+        ),
         pytest.param(
             {
                 "__type__": _DummySpan.get_serialization_class_type_id(),
                 "__data__": {"lo": 1, "hi": 2},
             },
+            SerializationError,
             "not a subclass",
             id="resolved_class_outside_family",
         ),
     ],
 )
 def test_wrapped_family_rejects_invalid_envelope(
-    payload: dict[str, Any], match: str
+    payload: dict[str, Any], error: type[SerializationError], match: str
 ) -> None:
     """Test the base class rejects payloads that aren't a valid family envelope."""
-    with pytest.raises(SerializationError, match=match):
+    with pytest.raises(error, match=match):
         _CustomNodeBase.deserialize_from_dict(payload)
 
 

@@ -195,6 +195,11 @@ class InternedMixin(ABC, Generic[_K]):
         (``field(compare=False)``) whose payload value differs from the
         canonical's are logged as ignored.
 
+        Note that reconstruction always fully constructs (and verifies) a new
+        instance: when the intern key already exists the freshly built instance
+        is a throwaway that loses the registration race and is discarded, so its
+        ``verify()`` still runs and may raise on otherwise-discardable data.
+
         Args:
             fields: Decoded field values, one entry per dataclass field.
 
