@@ -34,7 +34,7 @@ __all__ = [
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict, TypeGuard
+from typing import TypedDict
 
 from fhy_core.logger import get_logger
 from fhy_core.serialization import (
@@ -51,20 +51,6 @@ from fhy_core.trait.frozen import FrozenMixin
 from fhy_core.utils.numeric_utils import is_strict_int
 
 _LOGGER = get_logger(__name__)
-
-
-class _PositionData(TypedDict):
-    line: int
-    column: int
-
-
-def _is_valid_position_data(data: SerializedDict) -> TypeGuard[_PositionData]:
-    return (
-        "line" in data
-        and is_strict_int(data["line"])
-        and "column" in data
-        and is_strict_int(data["column"])
-    )
 
 
 @register_serializable(type_id="position")
@@ -97,55 +83,8 @@ class Position(Serializable, FrozenMixin, EqualMixin):
         if self.column < 1:
             raise ValueError(f'"column" must be >= 1, got {self.column}')
 
-    def serialize_to_dict(self) -> SerializedDict:
-        return {"line": self.line, "column": self.column}
-
-    @classmethod
-    def deserialize_from_dict(cls, data: SerializedDict) -> "Position":
-        if not _is_valid_position_data(data):
-            raise DeserializationDictStructureError(
-                cls, _PositionData.__annotations__, data
-            )
-        try:
-            return cls(data["line"], data["column"])
-        except ValueError as exc:
-            raise DeserializationValueError(f"Invalid position values: {exc}") from exc
-
     def __str__(self) -> str:
         return f"{self.line}:{self.column}"
-
-
-class _SpanData(TypedDict):
-    start_offset: int | None
-    end_offset: int | None
-    start_position: _PositionData | None
-    end_position: _PositionData | None
-
-
-def _is_valid_optional_int(value: object) -> bool:
-    return value is None or is_strict_int(value)
-
-
-def _is_valid_optional_position_data(
-    value: object,
-) -> TypeGuard[_PositionData | None]:
-    if value is None:
-        return True
-    return is_serialized_dict(value) and _is_valid_position_data(value)
-
-
-def _is_valid_span_data(data: SerializedDict) -> TypeGuard[_SpanData]:
-    if not is_serialized_dict(data):
-        return False
-    for offset_key in ("start_offset", "end_offset"):
-        if offset_key not in data or not _is_valid_optional_int(data[offset_key]):
-            return False
-    for position_key in ("start_position", "end_position"):
-        if position_key not in data or not _is_valid_optional_position_data(
-            data[position_key]
-        ):
-            return False
-    return True
 
 
 @register_serializable(type_id="span")
@@ -201,48 +140,6 @@ class Span(Serializable, FrozenMixin, EqualMixin):
             and self.start_position is None
             and self.end_position is None
         )
-
-    def serialize_to_dict(self) -> SerializedDict:
-        return {
-            "start_offset": self.start_offset,
-            "end_offset": self.end_offset,
-            "start_position": (
-                self.start_position.serialize_to_dict()
-                if self.start_position is not None
-                else None
-            ),
-            "end_position": (
-                self.end_position.serialize_to_dict()
-                if self.end_position is not None
-                else None
-            ),
-        }
-
-    @classmethod
-    def deserialize_from_dict(cls, data: SerializedDict) -> "Span":
-        if not _is_valid_span_data(data):
-            raise DeserializationDictStructureError(
-                cls, _SpanData.__annotations__, data
-            )
-        start_position_data = data["start_position"]
-        end_position_data = data["end_position"]
-        try:
-            return cls(
-                start_offset=data["start_offset"],
-                end_offset=data["end_offset"],
-                start_position=(
-                    Position.deserialize_from_dict(start_position_data)
-                    if is_serialized_dict(start_position_data)
-                    else None
-                ),
-                end_position=(
-                    Position.deserialize_from_dict(end_position_data)
-                    if is_serialized_dict(end_position_data)
-                    else None
-                ),
-            )
-        except ValueError as exc:
-            raise DeserializationValueError(f"Invalid span values: {exc}") from exc
 
     def __str__(self) -> str:
         if self.is_unknown():
