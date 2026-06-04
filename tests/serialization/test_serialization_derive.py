@@ -30,7 +30,7 @@ from fhy_core.serialization import (
     register_field_codec,
     register_serializable,
 )
-from fhy_core.trait.frozen import FrozenMixin
+from fhy_core.traits.frozen import FrozenMixin
 from fhy_core.utils import IntEnum, StrEnum
 
 # ============================================================================

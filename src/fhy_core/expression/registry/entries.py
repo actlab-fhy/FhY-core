@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import TypeAlias
 
 from fhy_core.identifier import Identifier
-from fhy_core.trait import (
+from fhy_core.traits import (
     DerivedEquivalenceMixin,
     compared_as_binder,
     excluded_from_equivalence,

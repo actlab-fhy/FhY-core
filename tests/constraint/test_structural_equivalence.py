@@ -12,7 +12,7 @@ from fhy_core.constraint import (
 from fhy_core.expression import Expression, LiteralExpression
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import SerializedDict
-from fhy_core.trait import StructuralEquivalence
+from fhy_core.traits import StructuralEquivalence
 
 from .conftest import (
     ALL_KINDS,

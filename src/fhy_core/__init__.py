@@ -449,7 +449,7 @@ from .symbol_table import (
     VariableSymbolTableFrame,
 )
 from .symbol_type import SymbolType  # noqa: F401  # re-exported in __all__
-from .trait import (
+from .traits import (
     EQUIVALENCE_METADATA_KEY,
     AlphaEquivalence,
     AlphaEquivalenceMixin,

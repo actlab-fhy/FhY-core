@@ -61,7 +61,7 @@ from ..expression.core import (
 )
 from ..identifier import Identifier
 from ..logger import get_logger
-from ..trait import FrozenMixin, StructuralEquivalenceMixin, VerificationError
+from ..traits import FrozenMixin, StructuralEquivalenceMixin, VerificationError
 from .core import (
     DataType,
     IndexType,

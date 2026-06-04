@@ -25,7 +25,7 @@ from fhy_core.diagnostic import (
 )
 from fhy_core.identifier import Identifier
 from fhy_core.provenance import Provenance
-from fhy_core.trait import (
+from fhy_core.traits import (
     Equal,
     EqualMixin,
     Frozen,
@@ -507,7 +507,7 @@ def test_interned_construct_from_fields_warns_on_ignored_metadata(
     _NotedInternedValue.clear_interned_registry()
     canonical = _NotedInternedValue("noted", "original")
 
-    with caplog.at_level("WARNING", logger="fhy_core.trait.interned"):
+    with caplog.at_level("WARNING", logger="fhy_core.traits.interned"):
         restored = _NotedInternedValue.construct_from_fields(
             {"key": "noted", "note": "divergent"}
         )
@@ -525,7 +525,7 @@ def test_interned_construct_from_fields_does_not_warn_when_metadata_matches(
     _NotedInternedValue.clear_interned_registry()
     _NotedInternedValue("noted", "same")
 
-    with caplog.at_level("WARNING", logger="fhy_core.trait.interned"):
+    with caplog.at_level("WARNING", logger="fhy_core.traits.interned"):
         _NotedInternedValue.construct_from_fields({"key": "noted", "note": "same"})
 
     assert "already canonical" not in caplog.text

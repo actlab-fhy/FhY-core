@@ -13,7 +13,7 @@ from fhy_core.param import (
     RealParam,
 )
 from fhy_core.serialization import Serializable, register_serializable
-from fhy_core.trait import OrderableMixin
+from fhy_core.traits import OrderableMixin
 
 from ..conftest import SerializableEqualHashable  # noqa: F401  # re-exported below
 

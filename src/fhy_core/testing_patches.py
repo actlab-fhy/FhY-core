@@ -12,7 +12,7 @@ from contextlib import ContextDecorator
 from typing import Any, Generator
 
 from fhy_core.identifier import Identifier
-from fhy_core.trait import StructuralEquivalence
+from fhy_core.traits import StructuralEquivalence
 
 
 @contextlib.contextmanager

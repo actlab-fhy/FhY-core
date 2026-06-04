@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from fhy_core.trait import (
+from fhy_core.traits import (
     Canonicalizable,
     CanonicalizableMixin,
     Foldable,

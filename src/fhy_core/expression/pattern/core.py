@@ -34,7 +34,7 @@ from typing import final
 from frozendict import frozendict
 
 from fhy_core.identifier import Identifier
-from fhy_core.trait import FrozenMixin
+from fhy_core.traits import FrozenMixin
 
 from ..core import (
     BinaryExpression,

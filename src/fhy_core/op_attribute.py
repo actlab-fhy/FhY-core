@@ -31,7 +31,7 @@ from .serialization import (
     Serializable,
     register_serializable,
 )
-from .trait import (
+from .traits import (
     DerivedEquivalenceMixin,
     FrozenMixin,
     HasIdentifierMixin,

@@ -11,7 +11,7 @@ from fhy_core.diagnostic import (
     ValidationFailedError,
     ValidationReport,
 )
-from fhy_core.trait import (
+from fhy_core.traits import (
     HasType,
     HasTypeMixin,
     Verifiable,

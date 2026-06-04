@@ -41,8 +41,8 @@ from fhy_core.serialization import (
     WrappedFamilySerializable,
     register_serializable,
 )
-from fhy_core.trait.equality import EqualMixin
-from fhy_core.trait.frozen import FrozenMixin
+from fhy_core.traits.equality import EqualMixin
+from fhy_core.traits.frozen import FrozenMixin
 from fhy_core.utils.numeric_utils import is_strict_int
 
 _LOGGER = get_logger(__name__)

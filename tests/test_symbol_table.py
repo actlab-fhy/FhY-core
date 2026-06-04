@@ -13,7 +13,7 @@ from fhy_core.symbol_table import (
     SymbolTableFrame,
     VariableSymbolTableFrame,
 )
-from fhy_core.trait import (
+from fhy_core.traits import (
     Canonicalizable,
     Frozen,
     StructuralEquivalence,

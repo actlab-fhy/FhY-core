@@ -27,7 +27,7 @@ from fhy_core.serialization import (
     DeserializationDictStructureError,
     SerializedDict,
 )
-from fhy_core.trait import FrozenMutationError, HasOperands, StructuralEquivalence
+from fhy_core.traits import FrozenMutationError, HasOperands, StructuralEquivalence
 
 from .conftest import mock_identifier
 

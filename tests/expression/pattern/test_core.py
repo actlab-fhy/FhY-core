@@ -32,7 +32,7 @@ from fhy_core.expression.pattern import (
     does_pattern_match,
     match_pattern,
 )
-from fhy_core.trait import FrozenMutationError
+from fhy_core.traits import FrozenMutationError
 
 from ..conftest import mock_identifier
 

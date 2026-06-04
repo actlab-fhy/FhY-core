@@ -8,7 +8,7 @@ from fhy_core.testing_patches import (
     deterministic_identifiers_by_name_hint,
     fail_fast_structural_equivalence,
 )
-from fhy_core.trait import StructuralEquivalenceMixin
+from fhy_core.traits import StructuralEquivalenceMixin
 
 
 class _TestClass1(StructuralEquivalenceMixin):

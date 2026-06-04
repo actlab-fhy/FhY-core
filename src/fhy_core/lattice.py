@@ -10,7 +10,7 @@ from fhy_core.diagnostic import (
     Note,
     ValidationReport,
 )
-from fhy_core.trait.verifiable import VerifiableMixin
+from fhy_core.traits.verifiable import VerifiableMixin
 from fhy_core.utils.poset import PartiallyOrderedSet
 
 T = TypeVar("T")

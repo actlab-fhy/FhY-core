@@ -17,7 +17,7 @@ from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
     SerializedDict,
 )
-from fhy_core.trait import (
+from fhy_core.traits import (
     Frozen,
     FrozenMutationError,
     HasIdentifier,
@@ -273,7 +273,7 @@ def test_value_domain_deserialize_warns_on_description_mismatch(
         "description": "divergent description",
         "parent": None,
     }
-    with caplog.at_level("WARNING", logger="fhy_core.trait.interned"):
+    with caplog.at_level("WARNING", logger="fhy_core.traits.interned"):
         restored = ValueDomain.deserialize_from_dict(payload)
 
     assert restored is canonical
@@ -293,7 +293,7 @@ def test_value_domain_deserialize_does_not_warn_when_descriptions_match(
         Identifier("matching-description-domain"), "matching description"
     )
     payload = canonical.serialize_to_dict()
-    with caplog.at_level("WARNING", logger="fhy_core.trait.interned"):
+    with caplog.at_level("WARNING", logger="fhy_core.traits.interned"):
         restored = ValueDomain.deserialize_from_dict(payload)
 
     assert restored is canonical

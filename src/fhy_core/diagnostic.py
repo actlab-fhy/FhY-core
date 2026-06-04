@@ -30,8 +30,8 @@ from fhy_core.serialization import (
     Serializable,
     register_serializable,
 )
-from fhy_core.trait.equality import EqualMixin, PartialEqualMixin
-from fhy_core.trait.frozen import FrozenMixin
+from fhy_core.traits.equality import EqualMixin, PartialEqualMixin
+from fhy_core.traits.frozen import FrozenMixin
 from fhy_core.utils import StrEnum
 
 

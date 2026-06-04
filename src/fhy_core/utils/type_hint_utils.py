@@ -1,7 +1,7 @@
 """Type-hint and annotation introspection utilities.
 
 Generic helpers for resolving and inspecting type annotations, extracted from
-the internals of :class:`fhy_core.trait.frozen.FrozenMixin` so they can be
+the internals of :class:`fhy_core.traits.frozen.FrozenMixin` so they can be
 shared by any consumer that reasons about a class's field types. Two consumers
 use them today: the frozen-field immutability check and the schema-derived
 serialization engine.

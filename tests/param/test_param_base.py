@@ -21,7 +21,7 @@ from fhy_core.param import (
 )
 from fhy_core.serialization import SerializedDict
 from fhy_core.symbol_type import SymbolType
-from fhy_core.trait import FrozenMutationError, StructuralEquivalence
+from fhy_core.traits import FrozenMutationError, StructuralEquivalence
 
 from .conftest import assert_all_satisfied, assert_none_satisfied
 

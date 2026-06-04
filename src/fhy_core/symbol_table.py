@@ -32,7 +32,7 @@ from fhy_core.serialization import (
     is_serialized_dict,
     register_serializable,
 )
-from fhy_core.trait import (
+from fhy_core.traits import (
     CanonicalizableMixin,
     DerivedEquivalenceMixin,
     FrozenMixin,

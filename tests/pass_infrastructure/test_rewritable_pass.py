@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from fhy_core.pass_infrastructure import RewritablePass
-from fhy_core.trait import RewritableMixin, VisitableMixin
+from fhy_core.traits import RewritableMixin, VisitableMixin
 
 # =============================================================================
 # Toy IR: a small `Visitable + Rewritable` node hierarchy

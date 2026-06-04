@@ -24,7 +24,7 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 from fhy_core.diagnostic import Diagnostic
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
-from fhy_core.trait import Frozen, FrozenMixin, HasIdentifierMixin, PartialEqualMixin
+from fhy_core.traits import Frozen, FrozenMixin, HasIdentifierMixin, PartialEqualMixin
 
 from .core import (
     CompilerPass,

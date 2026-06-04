@@ -11,7 +11,7 @@ from fhy_core.expression import (
     ternary,
 )
 from fhy_core.identifier import Identifier
-from fhy_core.trait import FrozenMutationError, HasOperands
+from fhy_core.traits import FrozenMutationError, HasOperands
 
 # =============================================================================
 # TernaryExpression: construction and accessors

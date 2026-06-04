@@ -20,8 +20,8 @@ from typing import Any
 import pytest
 
 from fhy_core.identifier import Identifier
-from fhy_core.trait import AlphaEquivalence, AlphaRenaming, StructuralEquivalence
-from fhy_core.trait.derived_equivalence import (
+from fhy_core.traits import AlphaEquivalence, AlphaRenaming, StructuralEquivalence
+from fhy_core.traits.derived_equivalence import (
     EQUIVALENCE_METADATA_KEY,
     DerivedEquivalenceMixin,
     EquivalenceDerivationError,

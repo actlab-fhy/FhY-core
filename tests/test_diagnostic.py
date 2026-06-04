@@ -1,7 +1,7 @@
 """Tests diagnostic message types."""
 
 from fhy_core.diagnostic import Note, NoteKind
-from fhy_core.trait import Equal, PartialEqual
+from fhy_core.traits import Equal, PartialEqual
 
 
 def test_note_constructs_with_default_kind() -> None:

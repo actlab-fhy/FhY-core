@@ -17,7 +17,7 @@ from fhy_core.provenance import (
 from fhy_core.serialization import (
     SerializationError,
 )
-from fhy_core.trait import (
+from fhy_core.traits import (
     Equal,
     HasProvenance,
     Orderable,

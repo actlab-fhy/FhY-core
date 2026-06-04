@@ -58,7 +58,7 @@ from fhy_core.serialization import (
     register_serializable,
     serialize_registry_wrapped_value,
 )
-from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
+from fhy_core.traits import FrozenMixin, StructuralEquivalenceMixin
 from fhy_core.utils import format_comma_separated_list
 
 from .expression import (
