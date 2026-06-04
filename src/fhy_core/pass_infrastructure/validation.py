@@ -29,7 +29,7 @@ from fhy_core.diagnostic import (
 )
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
-from fhy_core.traits import HasIdentifierMixin
+from fhy_core.traits import HasIdentifier
 
 from .core import (
     CompilerPass,
@@ -44,7 +44,7 @@ _LOGGER = get_logger(__name__)
 _IRType = TypeVar("_IRType")
 
 
-class ValidationManager(HasIdentifierMixin, Generic[_IRType]):
+class ValidationManager(HasIdentifier, Generic[_IRType]):
     """Sequences validation passes and aggregates their diagnostics.
 
     Every registered validator runs against the input IR once, regardless of

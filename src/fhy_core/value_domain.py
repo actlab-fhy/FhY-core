@@ -26,7 +26,7 @@ from .serialization import (
 from .traits import (
     DerivedEquivalenceMixin,
     FrozenMixin,
-    HasIdentifierMixin,
+    HasIdentifier,
     InternedMixin,
 )
 
@@ -34,7 +34,7 @@ from .traits import (
 @register_serializable(type_id="value_domain")
 @dataclass(frozen=True)
 class ValueDomain(
-    HasIdentifierMixin,
+    HasIdentifier,
     FrozenMixin,
     DerivedEquivalenceMixin,
     InternedMixin[Identifier],

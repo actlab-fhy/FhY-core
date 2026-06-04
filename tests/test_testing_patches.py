@@ -8,10 +8,10 @@ from fhy_core.testing_patches import (
     deterministic_identifiers_by_name_hint,
     fail_fast_structural_equivalence,
 )
-from fhy_core.traits import StructuralEquivalenceMixin
+from fhy_core.traits import StructuralEquivalence
 
 
-class _TestClass1(StructuralEquivalenceMixin):
+class _TestClass1(StructuralEquivalence):
     num: int
 
     def __init__(self, num: int) -> None:
@@ -22,7 +22,7 @@ class _TestClass1(StructuralEquivalenceMixin):
         return self.num == other.num
 
 
-class _TestClass2(StructuralEquivalenceMixin):
+class _TestClass2(StructuralEquivalence):
     test: _TestClass1
 
     def __init__(self, test: _TestClass1) -> None:

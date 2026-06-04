@@ -6,7 +6,6 @@ __all__ = [
     "AlphaEquivalenceMixin",
     "AlphaRenaming",
     "Canonicalizable",
-    "CanonicalizableMixin",
     "DerivedEquivalenceMixin",
     "Equal",
     "EqualMixin",
@@ -18,24 +17,18 @@ __all__ = [
     "FrozenMutationError",
     "FrozenValidationError",
     "Foldable",
-    "FoldableMixin",
     "compared_as_binder",
     "compared_as_reference",
     "compared_as_value",
     "compared_with",
     "excluded_from_equivalence",
     "HasIdentifier",
-    "HasIdentifierMixin",
     "Interned",
     "InternedMixin",
     "HasOperands",
-    "HasOperandsMixin",
     "HasProvenance",
-    "HasProvenanceMixin",
     "HasResults",
-    "HasResultsMixin",
     "HasType",
-    "HasTypeMixin",
     "PartialEqual",
     "PartialEqualMixin",
     "Orderable",
@@ -45,7 +38,6 @@ __all__ = [
     "Rewritable",
     "RewritableMixin",
     "StructuralEquivalence",
-    "StructuralEquivalenceMixin",
     "Verifiable",
     "VerifiableMixin",
     "Visitable",
@@ -60,7 +52,7 @@ from .alpha_equivalence import (
     AlphaRenaming,
     is_identifier_mapping_alpha_equivalent_under,
 )
-from .canonicalizable import Canonicalizable, CanonicalizableMixin
+from .canonicalizable import Canonicalizable
 from .derived_equivalence import (
     EQUIVALENCE_METADATA_KEY,
     DerivedEquivalenceMixin,
@@ -73,7 +65,7 @@ from .derived_equivalence import (
     excluded_from_equivalence,
 )
 from .equality import Equal, EqualMixin, PartialEqual, PartialEqualMixin
-from .foldable import Foldable, FoldableMixin
+from .foldable import Foldable
 from .frozen import (
     Frozen,
     FrozenFieldTypeError,
@@ -81,11 +73,11 @@ from .frozen import (
     FrozenMutationError,
     FrozenValidationError,
 )
-from .has_identifier import HasIdentifier, HasIdentifierMixin
-from .has_operands import HasOperands, HasOperandsMixin
-from .has_provenance import HasProvenance, HasProvenanceMixin
-from .has_results import HasResults, HasResultsMixin
-from .has_type import HasType, HasTypeMixin
+from .has_identifier import HasIdentifier
+from .has_operands import HasOperands
+from .has_provenance import HasProvenance
+from .has_results import HasResults
+from .has_type import HasType
 from .interned import Interned, InternedMixin
 from .orderable import (
     Orderable,
@@ -94,9 +86,6 @@ from .orderable import (
     PartialOrderableMixin,
 )
 from .rewritable import Rewritable, RewritableMixin
-from .structural_equivalence import (
-    StructuralEquivalence,
-    StructuralEquivalenceMixin,
-)
+from .structural_equivalence import StructuralEquivalence
 from .verifiable import Verifiable, VerifiableMixin, VerificationError
 from .visitable import Visitable, VisitableMixin

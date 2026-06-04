@@ -63,7 +63,7 @@ from fhy_core.serialization import (
     serialize_registry_wrapped_value,
 )
 from fhy_core.symbol_type import SymbolType
-from fhy_core.traits import Equal, FrozenMixin, Orderable, StructuralEquivalenceMixin
+from fhy_core.traits import Equal, FrozenMixin, Orderable, StructuralEquivalence
 from fhy_core.utils import Self, format_comma_separated_list, is_strict_int
 
 _LOGGER = get_logger(__name__)
@@ -183,7 +183,7 @@ class ParamAssignment(
 class Param(
     WrappedFamilySerializable,
     FrozenMixin,
-    StructuralEquivalenceMixin,
+    StructuralEquivalence,
     ABC,
     Generic[_T],
 ):

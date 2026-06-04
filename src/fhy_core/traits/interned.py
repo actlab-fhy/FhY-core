@@ -48,7 +48,7 @@ def _warn_interned_metadata_ignored(
             )
 
 
-class InternedMixin(ABC, Generic[_K]):
+class InternedMixin(Generic[_K], ABC):
     """Mixin that registers initialized instances into a family-local registry.
 
     Each direct subclass family gets its own registry. Descendants share that

@@ -43,7 +43,7 @@ from fhy_core.serialization import (
 from fhy_core.traits import (
     DerivedEquivalenceMixin,
     FrozenMixin,
-    HasOperandsMixin,
+    HasOperands,
     RewritableMixin,
     VisitableMixin,
     compared_as_reference,
@@ -519,7 +519,7 @@ UNARY_SYMBOL_OPERATIONS: frozendict[str, UnaryOperation] = invert_frozen_dict(
 
 @register_serializable(type_id="unary_expression")
 @dataclass(frozen=True, eq=False)
-class UnaryExpression(Expression, HasOperandsMixin[Expression]):
+class UnaryExpression(Expression, HasOperands[Expression]):
     """Unary expression."""
 
     operation: UnaryOperation
@@ -588,7 +588,7 @@ BINARY_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = invert_frozen_dict(
 
 @register_serializable(type_id="binary_expression")
 @dataclass(frozen=True, eq=False)
-class BinaryExpression(Expression, HasOperandsMixin[Expression]):
+class BinaryExpression(Expression, HasOperands[Expression]):
     """Binary expression."""
 
     operation: BinaryOperation
@@ -719,7 +719,7 @@ class LiteralExpression(Expression):
 
 @register_serializable(type_id="ternary_expression")
 @dataclass(frozen=True, eq=False)
-class TernaryExpression(Expression, HasOperandsMixin[Expression]):
+class TernaryExpression(Expression, HasOperands[Expression]):
     """Ternary conditional expression: ``condition ? true_value : false_value``.
 
     A pure 3-arg form: when ``condition`` evaluates to true the
@@ -753,7 +753,7 @@ class TernaryExpression(Expression, HasOperandsMixin[Expression]):
 
 @register_serializable(type_id="call_expression")
 @dataclass(frozen=True, eq=False)
-class CallExpression(Expression, HasOperandsMixin[Expression]):
+class CallExpression(Expression, HasOperands[Expression]):
     """Reference to a registered function applied to argument expressions.
 
     The node stores the function's registry key and the argument

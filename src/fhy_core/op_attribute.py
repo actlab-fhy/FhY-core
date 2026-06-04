@@ -34,7 +34,7 @@ from .serialization import (
 from .traits import (
     DerivedEquivalenceMixin,
     FrozenMixin,
-    HasIdentifierMixin,
+    HasIdentifier,
     InternedMixin,
 )
 
@@ -42,7 +42,7 @@ from .traits import (
 @register_serializable(type_id="op_attribute")
 @dataclass(frozen=True)
 class OpAttribute(
-    HasIdentifierMixin,
+    HasIdentifier,
     FrozenMixin,
     DerivedEquivalenceMixin,
     InternedMixin[Identifier],

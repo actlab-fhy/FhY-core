@@ -34,9 +34,7 @@ from fhy_core.traits import (
     FrozenMutationError,
     FrozenValidationError,
     HasIdentifier,
-    HasIdentifierMixin,
     HasProvenance,
-    HasProvenanceMixin,
     Interned,
     InternedMixin,
     Orderable,
@@ -53,7 +51,7 @@ from .conftest import mock_identifier
 
 
 @dataclass
-class _IdentifierCarrier(HasIdentifierMixin):
+class _IdentifierCarrier(HasIdentifier):
     _identifier: Identifier
 
     def get_identifier(self) -> Identifier:
@@ -61,7 +59,7 @@ class _IdentifierCarrier(HasIdentifierMixin):
 
 
 @dataclass
-class _ProvenanceCarrier(HasProvenanceMixin):
+class _ProvenanceCarrier(HasProvenance):
     _provenance: Provenance
 
     def get_provenance(self) -> Provenance:
@@ -290,15 +288,15 @@ def test_orderable_mixin_defaults_to_total_order() -> None:
     assert value.supports_ordering is True
 
 
-def test_identifier_mixin_contract() -> None:
-    """Test `HasIdentifierMixin` contract."""
+def test_identifier_returns_identifier() -> None:
+    """Test `HasIdentifier.get_identifier` returns the carried identifier."""
     carrier = _IdentifierCarrier(mock_identifier("field", 2))
     assert carrier.get_identifier().name_hint == "field"
     assert carrier.get_identifier().id == 2
 
 
-def test_provenance_mixin_contract() -> None:
-    """Test `HasProvenanceMixin` contract."""
+def test_provenance_returns_provenance() -> None:
+    """Test `HasProvenance.get_provenance` returns the carried provenance."""
     carrier = _ProvenanceCarrier(Provenance.unknown())
     assert carrier.get_provenance() == Provenance.unknown()
 

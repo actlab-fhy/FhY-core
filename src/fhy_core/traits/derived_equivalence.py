@@ -46,7 +46,7 @@ from fhy_core.error import register_error
 
 from .alpha_equivalence import AlphaEquivalence, AlphaEquivalenceMixin, AlphaRenaming
 from .equality import PartialEqual
-from .structural_equivalence import StructuralEquivalence, StructuralEquivalenceMixin
+from .structural_equivalence import StructuralEquivalence
 
 EQUIVALENCE_METADATA_KEY: Final[str] = "fhy_equivalence"
 """``dataclasses.field(metadata=...)`` key holding an equivalence role override."""
@@ -411,7 +411,7 @@ def _inference_error(
 # ===========================================================================
 
 
-class DerivedEquivalenceMixin(StructuralEquivalenceMixin, AlphaEquivalenceMixin):
+class DerivedEquivalenceMixin(StructuralEquivalence, AlphaEquivalenceMixin):
     """Derive structural and alpha equivalence from a dataclass schema.
 
     Subclass this on a ``@dataclass``; both ``is_structurally_equivalent``

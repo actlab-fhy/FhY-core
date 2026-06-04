@@ -1,8 +1,7 @@
-"""`HasIdentifier` trait and mixin."""
+"""`HasIdentifier` trait."""
 
-__all__ = ["HasIdentifier", "HasIdentifierMixin"]
+__all__ = ["HasIdentifier"]
 
-from abc import ABC, abstractmethod
 from typing import Protocol, runtime_checkable
 
 from fhy_core.identifier import Identifier
@@ -12,11 +11,4 @@ from fhy_core.identifier import Identifier
 class HasIdentifier(Protocol):
     """Protocol for objects that have a stable identifier."""
 
-    def get_identifier(self) -> Identifier: ...
-
-
-class HasIdentifierMixin(ABC):
-    """Mixin for objects that have a stable identifier."""
-
-    @abstractmethod
     def get_identifier(self) -> Identifier: ...

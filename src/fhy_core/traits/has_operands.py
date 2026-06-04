@@ -1,10 +1,9 @@
-"""`HasOperands` trait and mixin."""
+"""`HasOperands` trait."""
 
-__all__ = ["HasOperands", "HasOperandsMixin"]
+__all__ = ["HasOperands"]
 
-from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Generic, Protocol, TypeVar, runtime_checkable
+from typing import Protocol, TypeVar, runtime_checkable
 
 _OperandT_co = TypeVar("_OperandT_co", covariant=True)
 
@@ -13,11 +12,4 @@ _OperandT_co = TypeVar("_OperandT_co", covariant=True)
 class HasOperands(Protocol[_OperandT_co]):
     """Protocol for operation-like objects with ordered operands."""
 
-    def get_operands(self) -> Sequence[_OperandT_co]: ...
-
-
-class HasOperandsMixin(ABC, Generic[_OperandT_co]):
-    """Mixin for operation-like objects with ordered operands."""
-
-    @abstractmethod
     def get_operands(self) -> Sequence[_OperandT_co]: ...

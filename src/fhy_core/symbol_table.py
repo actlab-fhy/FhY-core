@@ -33,10 +33,10 @@ from fhy_core.serialization import (
     register_serializable,
 )
 from fhy_core.traits import (
-    CanonicalizableMixin,
+    Canonicalizable,
     DerivedEquivalenceMixin,
     FrozenMixin,
-    StructuralEquivalenceMixin,
+    StructuralEquivalence,
     VerifiableMixin,
 )
 
@@ -246,7 +246,7 @@ def _is_valid_symbol_table_data(data: SerializedDict) -> TypeGuard[_SymbolTableD
 
 @register_serializable(type_id="symbol_table")
 class SymbolTable(
-    Serializable, CanonicalizableMixin, StructuralEquivalenceMixin, VerifiableMixin
+    Serializable, Canonicalizable, StructuralEquivalence, VerifiableMixin
 ):
     """Core nested symbol table comprised of various frames."""
 

@@ -61,7 +61,7 @@ from ..expression.core import (
 )
 from ..identifier import Identifier
 from ..logger import get_logger
-from ..traits import FrozenMixin, StructuralEquivalenceMixin, VerificationError
+from ..traits import FrozenMixin, StructuralEquivalence, VerificationError
 from .core import (
     DataType,
     IndexType,
@@ -306,7 +306,7 @@ def _unify_data_types(
 
 
 @dataclass(frozen=True)
-class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalenceMixin):
+class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalence):
     """Carrier for binding state used during type-system operations.
 
     Three independent binding tables hold placeholder resolutions accumulated

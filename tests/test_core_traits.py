@@ -13,14 +13,13 @@ from fhy_core.diagnostic import (
 )
 from fhy_core.traits import (
     HasType,
-    HasTypeMixin,
     Verifiable,
     VerifiableMixin,
 )
 
 
 @dataclass
-class _TypedValue(HasTypeMixin[str]):
+class _TypedValue(HasType[str]):
     _type: str
 
     def get_type(self) -> str:
@@ -51,8 +50,8 @@ def test_has_type_runtime_protocol() -> None:
     assert isinstance(value, HasType)
 
 
-def test_has_type_mixin_contract() -> None:
-    """Test `HasTypeMixin` contract."""
+def test_has_type_returns_type() -> None:
+    """Test `HasType.get_type` returns the carried type."""
     value = _TypedValue("index")
     assert value.get_type() == "index"
 

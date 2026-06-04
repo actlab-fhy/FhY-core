@@ -24,7 +24,7 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 from fhy_core.diagnostic import Diagnostic
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
-from fhy_core.traits import Frozen, FrozenMixin, HasIdentifierMixin, PartialEqualMixin
+from fhy_core.traits import Frozen, FrozenMixin, HasIdentifier, PartialEqualMixin
 
 from .core import (
     CompilerPass,
@@ -352,7 +352,7 @@ class PassManagerResult(FrozenMixin, PartialEqualMixin, Generic[_IRType]):
     records: tuple[PassRunRecord | FixpointGroupRecord, ...]
 
 
-class FixpointPassGroup(HasIdentifierMixin, Generic[_IRType]):
+class FixpointPassGroup(HasIdentifier, Generic[_IRType]):
     """A repeatedly executed pass sequence until fixpoint or iteration budget."""
 
     _passes: list[CompilerPass[_IRType, _IRType]]
@@ -403,7 +403,7 @@ class FixpointPassGroup(HasIdentifierMixin, Generic[_IRType]):
         self._passes.append(compiler_pass)
 
 
-class PassManager(HasIdentifierMixin, Generic[_IRType]):
+class PassManager(HasIdentifier, Generic[_IRType]):
     """Ordered pass pipeline manager with analysis preservation/invalidation."""
 
     _items: list[CompilerPass[_IRType, _IRType] | FixpointPassGroup[_IRType]]

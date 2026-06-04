@@ -1,9 +1,8 @@
-"""`Foldable` trait and mixin."""
+"""`Foldable` trait."""
 
-__all__ = ["Foldable", "FoldableMixin"]
+__all__ = ["Foldable"]
 
-from abc import ABC, abstractmethod
-from typing import Generic, Protocol, TypeVar, runtime_checkable
+from typing import Protocol, TypeVar, runtime_checkable
 
 _FoldResultT_co = TypeVar("_FoldResultT_co", covariant=True)
 
@@ -12,13 +11,5 @@ _FoldResultT_co = TypeVar("_FoldResultT_co", covariant=True)
 class Foldable(Protocol[_FoldResultT_co]):
     """Protocol for objects that can constant-fold to a result."""
 
-    def fold(self) -> _FoldResultT_co | None:
-        """Return the folded result, or `None` if folding is not possible."""
-
-
-class FoldableMixin(ABC, Generic[_FoldResultT_co]):
-    """Mixin for objects that can constant-fold to a result."""
-
-    @abstractmethod
     def fold(self) -> _FoldResultT_co | None:
         """Return the folded result, or `None` if folding is not possible."""

@@ -58,7 +58,7 @@ from fhy_core.serialization import (
     register_serializable,
     serialize_registry_wrapped_value,
 )
-from fhy_core.traits import FrozenMixin, StructuralEquivalenceMixin
+from fhy_core.traits import FrozenMixin, StructuralEquivalence
 from fhy_core.utils import format_comma_separated_list
 
 from .expression import (
@@ -281,7 +281,7 @@ def _deserialize_constraint_member(
 class Constraint(
     WrappedFamilySerializable,
     FrozenMixin,
-    StructuralEquivalenceMixin,
+    StructuralEquivalence,
     ABC,
 ):
     """A named-variable predicate.
