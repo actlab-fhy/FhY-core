@@ -14,26 +14,19 @@ import decimal
 import enum
 import fractions
 import functools
-import inspect
 import pathlib
 import re
-import sys
 import types
-import typing
 from abc import ABC
 from dataclasses import is_dataclass
 from typing import (
     TYPE_CHECKING,
-    Annotated,
     Any,
     ClassVar,
     ForwardRef,
     Protocol,
     TypeVar,
-    Union,
-    get_args,
     get_origin,
-    get_type_hints,
     runtime_checkable,
 )
 
@@ -42,6 +35,13 @@ from frozendict import frozendict
 from fhy_core.error import register_error
 from fhy_core.logger import get_logger
 from fhy_core.utils import Self
+from fhy_core.utils.type_hint_utils import (
+    get_field_names,
+    get_origin_and_arguments,
+    get_union_members,
+    resolve_field_annotations,
+    unwrap_annotation,
+)
 
 _LOGGER = get_logger(__name__)
 
@@ -225,25 +225,27 @@ def _is_immutable_annotation(
     if _is_immutable_leaf_annotation(annotation):
         return True
 
-    origin = get_origin(annotation)
-    if origin is Annotated or origin is typing.Final:
-        return _is_immutable_annotation(get_args(annotation)[0], depth - 1)
-    if origin is Union or origin is types.UnionType:
-        return all(
-            _is_immutable_annotation(arg, depth - 1) for arg in get_args(annotation)
-        )
+    unwrapped = unwrap_annotation(annotation)
+    if unwrapped is not annotation:
+        return _is_immutable_annotation(unwrapped, depth - 1)
 
-    parameterized = _is_immutable_parameterized_origin(
-        origin, get_args(annotation), depth
-    )
-    if parameterized is not None:
-        return parameterized
-    elif isinstance(origin, type):
-        return _is_immutable_class(origin)
-    elif isinstance(annotation, type):
-        return _is_immutable_class(annotation)
-    else:
+    union_members = get_union_members(annotation)
+    if union_members is not None:
+        return all(_is_immutable_annotation(arg, depth - 1) for arg in union_members)
+
+    origin_and_arguments = get_origin_and_arguments(annotation)
+    if origin_and_arguments is not None:
+        origin, arguments = origin_and_arguments
+        parameterized = _is_immutable_parameterized_origin(origin, arguments, depth)
+        if parameterized is not None:
+            return parameterized
+        if isinstance(origin, type):
+            return _is_immutable_class(origin)
         return False
+
+    if isinstance(annotation, type):
+        return _is_immutable_class(annotation)
+    return False
 
 
 def _iter_frozen_field_names(target_cls: type) -> list[str]:
@@ -254,87 +256,30 @@ def _iter_frozen_field_names(target_cls: type) -> list[str]:
     Annotations from ``FrozenMixin`` itself (the ``ClassVar`` machinery
     flags) are excluded.
 
-    Uses :func:`inspect.get_annotations` so the lookup works under
-    PEP 749 (Python 3.14+) deferred annotations, where the raw
-    ``__annotations__`` slot in ``cls.__dict__`` may be absent and
-    the dict is materialized lazily via the ``__annotate__`` callable.
-
     """
-    seen: dict[str, None] = {}
-    for klass in reversed(target_cls.__mro__):
-        if klass is FrozenMixin or klass is object:
-            continue
-        if not issubclass(klass, FrozenMixin):
-            continue
-        for name in inspect.get_annotations(klass):
-            seen.setdefault(name, None)
-    return list(seen.keys())
-
-
-def _resolve_single_annotation(
-    name: str, annotation: Any, globalns: dict[str, Any], localns: dict[str, Any]
-) -> Any:
-    """Resolve one annotation via the public :func:`typing.get_type_hints`.
-
-    Wraps the annotation in a throwaway class so a single field can be
-    resolved in isolation (without one unresolvable sibling annotation
-    failing the whole class) using only public typing API.
-    """
-    probe = type("_FrozenFieldHintProbe", (), {"__annotations__": {name: annotation}})
-    return get_type_hints(
-        probe, globalns=globalns, localns=localns, include_extras=True
-    )[name]
+    return get_field_names(
+        target_cls,
+        predicate=lambda klass: (
+            klass is not FrozenMixin and issubclass(klass, FrozenMixin)
+        ),
+    )
 
 
 def _resolve_frozen_field_hints(target_cls: type) -> tuple[dict[str, Any], bool]:
     """Resolve frozen-field annotations to types, degrading per field.
 
-    Tries a single whole-class resolution first. On failure (typically
-    an unresolved forward reference), falls back to resolving each frozen
-    field individually so one unresolvable annotation does not suppress
-    the immutability check for the rest of the class.
-
-    Returns the resolved ``{field_name: type}`` mapping and a flag that
-    is ``True`` only when every frozen field resolved. Unresolvable
-    fields are logged and omitted from the mapping.
-
+    Delegates to
+    :func:`fhy_core.utils.type_hint_utils.resolve_field_annotations`, which
+    tries a single whole-class resolution first and falls back to per-field
+    resolution (omitting unresolvable forward references) on failure. The
+    returned flag is ``True`` only when every frozen field resolved, so the
+    caller re-attempts the check on a later instantiation rather than latching
+    it permanently while a forward reference is still undefined.
     """
-    try:
-        return get_type_hints(target_cls, include_extras=True), True
-    except Exception as exc:  # noqa: BLE001 - resolution failure modes vary
-        _LOGGER.warning(
-            "field-type check for %s: whole-class annotation resolution failed "
-            "(%s: %s); falling back to per-field resolution",
-            target_cls.__name__,
-            type(exc).__name__,
-            exc,
-        )
-
-    resolved: dict[str, Any] = {}
-    all_resolved = True
-    for klass in reversed(target_cls.__mro__):
-        if klass is FrozenMixin or klass is object:
-            continue
-        if not issubclass(klass, FrozenMixin):
-            continue
-        module = sys.modules.get(klass.__module__)
-        globalns = getattr(module, "__dict__", {})
-        localns = dict(vars(target_cls))
-        for name, raw in inspect.get_annotations(klass).items():
-            try:
-                resolved[name] = _resolve_single_annotation(
-                    name, raw, globalns, localns
-                )
-            except Exception as exc:  # noqa: BLE001 - per-field failure modes vary
-                all_resolved = False
-                _LOGGER.warning(
-                    "field-type check for %s: could not resolve field %r "
-                    "(%s: %s); skipping that field",
-                    target_cls.__name__,
-                    name,
-                    type(exc).__name__,
-                    exc,
-                )
+    resolved = resolve_field_annotations(target_cls)
+    all_resolved = all(
+        name in resolved for name in _iter_frozen_field_names(target_cls)
+    )
     return resolved, all_resolved
 
 

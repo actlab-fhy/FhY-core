@@ -23,14 +23,11 @@ __all__ = [
 ]
 
 from dataclasses import dataclass, field
-from typing import Any, Generic, TypedDict, TypeGuard, TypeVar
+from typing import Any, Generic, TypeVar
 
 from fhy_core.error import register_error
 from fhy_core.serialization import (
-    DeserializationDictStructureError,
-    DeserializationValueError,
     Serializable,
-    SerializedDict,
     register_serializable,
 )
 from fhy_core.trait.equality import EqualMixin, PartialEqualMixin
@@ -44,20 +41,6 @@ class NoteKind(StrEnum):
     OTHER = "other"
 
 
-class _NoteData(TypedDict):
-    message: str
-    kind: str
-
-
-def _is_valid_note_data(data: SerializedDict) -> TypeGuard[_NoteData]:
-    return (
-        "message" in data
-        and isinstance(data["message"], str)
-        and "kind" in data
-        and isinstance(data["kind"], str)
-    )
-
-
 @register_serializable(type_id="diagnostic_note")
 @dataclass(frozen=True, slots=True)
 class Note(Serializable, FrozenMixin, EqualMixin):
@@ -65,20 +48,6 @@ class Note(Serializable, FrozenMixin, EqualMixin):
 
     message: str
     kind: NoteKind = NoteKind.OTHER
-
-    def serialize_to_dict(self) -> SerializedDict:
-        return {"message": self.message, "kind": self.kind.value}
-
-    @classmethod
-    def deserialize_from_dict(cls, data: SerializedDict) -> "Note":
-        if not _is_valid_note_data(data):
-            raise DeserializationDictStructureError(
-                cls, _NoteData.__annotations__, data
-            )
-        try:
-            return cls(data["message"], kind=NoteKind(data["kind"]))
-        except ValueError as exc:
-            raise DeserializationValueError(f"Invalid note values: {exc}") from exc
 
     def __str__(self) -> str:
         return f"{self.kind}: {self.message}"

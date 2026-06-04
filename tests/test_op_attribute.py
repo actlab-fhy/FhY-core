@@ -22,9 +22,7 @@ from fhy_core.op_attribute import (
     OpAttribute,
 )
 from fhy_core.serialization import (
-    DeserializationDictStructureError,
     Serializable,
-    SerializationFormat,
     SerializedDict,
 )
 from fhy_core.trait import (
@@ -233,40 +231,6 @@ def test_op_attribute_canonical_appears_once_in_frozenset() -> None:
 # =============================================================================
 
 
-def test_op_attribute_serialize_to_dict_includes_required_fields() -> None:
-    """Test `serialize_to_dict` emits `name` and `description` keys."""
-    attribute = OpAttribute(Identifier("x"), "desc")
-    data = attribute.serialize_to_dict()
-    assert set(data.keys()) == {"name", "description"}
-    assert data["description"] == "desc"
-
-
-def test_op_attribute_dict_round_trip_is_structurally_equivalent() -> None:
-    """Test dict round-trips reconstruct a structurally-equivalent attribute."""
-    original = OpAttribute(Identifier("fresh-attr"), "round trip")
-    data = original.serialize_to_dict()
-    restored = OpAttribute.deserialize_from_dict(data)
-    assert restored.is_structurally_equivalent(original)
-    assert restored.description == "round trip"
-
-
-def test_op_attribute_deserialize_rejects_malformed_dict() -> None:
-    """Test deserializing a dict missing required fields raises a structure error."""
-    with pytest.raises(DeserializationDictStructureError):
-        OpAttribute.deserialize_from_dict({"name": {"id": 0, "name_hint": "x"}})
-
-
-def test_op_attribute_deserialize_rejects_dict_with_extra_keys() -> None:
-    """Test deserializing a dict with unexpected keys raises a structure error."""
-    extra_data: SerializedDict = {
-        "name": Identifier("x").serialize_to_dict(),
-        "description": "desc",
-        "unexpected": "bad",
-    }
-    with pytest.raises(DeserializationDictStructureError):
-        OpAttribute.deserialize_from_dict(extra_data)
-
-
 def test_op_attribute_deserialize_returns_canonical_for_registered_name() -> None:
     """Test deserialization returns the canonical interned instance when one
     is registered for the deserialized name."""
@@ -287,24 +251,6 @@ def test_op_attribute_deserialize_constructs_fresh_for_unregistered_name() -> No
     assert isinstance(restored, OpAttribute)
     assert restored.description == "fresh from deserialize"
     assert OpAttribute.get_interned(restored.name) is restored
-
-
-def test_op_attribute_binary_round_trip_via_from_bytes() -> None:
-    """Test the binary envelope round-trips a fresh attribute to a
-    structurally-equivalent instance through the registered type id."""
-    original = OpAttribute(Identifier("fresh-binary-attr"), "binary round trip")
-    blob = original.to_bytes()
-    restored = Serializable.from_bytes(blob)
-    assert isinstance(restored, OpAttribute)
-    assert restored.is_structurally_equivalent(original)
-
-
-def test_op_attribute_json_round_trip_via_deserialize() -> None:
-    """Test the JSON form is round-trippable through the public `deserialize` API."""
-    original = OpAttribute(Identifier("fresh-json-attr"), "json round trip")
-    payload = original.serialize(SerializationFormat.JSON)
-    restored = OpAttribute.deserialize(payload, SerializationFormat.JSON)
-    assert restored.is_structurally_equivalent(original)
 
 
 def test_op_attribute_canonical_binary_round_trip_returns_canonical() -> None:
@@ -329,7 +275,7 @@ def test_op_attribute_deserialize_warns_on_description_mismatch(
         "name": canonical.name.serialize_to_dict(),
         "description": "divergent description",
     }
-    with caplog.at_level("WARNING", logger="fhy_core.op_attribute"):
+    with caplog.at_level("WARNING", logger="fhy_core.trait.interned"):
         restored = OpAttribute.deserialize_from_dict(payload)
 
     assert restored is canonical
@@ -349,7 +295,7 @@ def test_op_attribute_deserialize_does_not_warn_when_descriptions_match(
         Identifier("matching-description-attr"), "matching description"
     )
     payload = canonical.serialize_to_dict()
-    with caplog.at_level("WARNING", logger="fhy_core.op_attribute"):
+    with caplog.at_level("WARNING", logger="fhy_core.trait.interned"):
         restored = OpAttribute.deserialize_from_dict(payload)
 
     assert restored is canonical

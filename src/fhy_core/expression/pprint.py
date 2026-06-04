@@ -5,9 +5,7 @@ __all__ = ["pformat_expression"]
 from fhy_core.pass_infrastructure import PassExecutionError, VisitablePass
 
 from .core import (
-    BINARY_OPERATION_FUNCTION_NAMES,
     BINARY_OPERATION_SYMBOLS,
-    UNARY_OPERATION_FUNCTION_NAMES,
     UNARY_OPERATION_SYMBOLS,
     BinaryExpression,
     CallExpression,
@@ -43,7 +41,7 @@ class ExpressionPrettyFormatter(VisitablePass[Expression, str]):
     def visit_unary_expression(self, unary_expression: UnaryExpression) -> str:
         if self._is_printed_functional:
             return (
-                f"({UNARY_OPERATION_FUNCTION_NAMES[unary_expression.operation]} "
+                f"({unary_expression.operation.value} "
                 f"{self.visit(unary_expression.operand)})"
             )
         else:
@@ -56,10 +54,7 @@ class ExpressionPrettyFormatter(VisitablePass[Expression, str]):
         left = self.visit(binary_expression.left)
         right = self.visit(binary_expression.right)
         if self._is_printed_functional:
-            return (
-                f"({BINARY_OPERATION_FUNCTION_NAMES[binary_expression.operation]} "
-                f"{left} {right})"
-            )
+            return f"({binary_expression.operation.value} {left} {right})"
         else:
             return (
                 f"({left} "

@@ -97,6 +97,12 @@ __all__ = [
     "BinaryPayloadCodec",
     "register_serializable",
     "WrappedFamilySerializable",
+    "FieldCodec",
+    "register_field_codec",
+    "make_field_codec",
+    "make_enum_field_codec",
+    "make_labeled_enum_field_codec",
+    "SerializationDerivationError",
     "SerializedDict",
     "SerializedValue",
     "SerializedObject",
@@ -115,23 +121,30 @@ __all__ = [
     "serialize_registry_wrapped_value",
 ]
 
+import dataclasses
+import enum
 import importlib
 import json
 import struct
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import PurePath
 from pprint import pformat
 from types import UnionType
 from typing import (
+    TYPE_CHECKING,
     Any,
     ClassVar,
     Final,
+    Protocol,
     TypeAlias,
     TypedDict,
     TypeGuard,
     TypeVar,
     Union,
+    cast,
     overload,
+    runtime_checkable,
 )
 
 from frozendict import frozendict
@@ -139,6 +152,12 @@ from frozendict import frozendict
 from .error import register_error
 from .logger import get_logger
 from .utils.enum import StrEnum
+from .utils.type_hint_utils import (
+    get_origin_and_arguments,
+    resolve_field_annotations,
+    split_optional,
+    unwrap_annotation,
+)
 
 _LOGGER = get_logger(__name__)
 
@@ -156,14 +175,22 @@ RegistryWrappedValue: TypeAlias = Union[
 
 
 def is_serialized_value(v: Any) -> TypeGuard[SerializedValue]:
-    """Return if `v` is a valid `SerializedValue`."""
+    """Return if `v` is a valid `SerializedValue`.
+
+    The sequence arm accepts only `list`, matching what `json.loads` produces
+    (JSON arrays always decode to lists). A `tuple` is therefore rejected even
+    though it satisfies the `Sequence` arm of the type alias; this keeps the
+    guard aligned with the actual wire form the engine round-trips. Note that
+    `NaN`/`Infinity` floats pass this structural check but are rejected at
+    JSON serialization time (see the module-level float contract).
+    """
     if v is None or isinstance(v, (str, int, float, bool)):
         return True
     if isinstance(v, (bytes, bytearray, memoryview)):
         return False
     if isinstance(v, Mapping):
         return is_serialized_dict(v)
-    if isinstance(v, Sequence) and not isinstance(v, (str, bytes, bytearray)):
+    if isinstance(v, list):
         return all(is_serialized_value(x) for x in v)
     return False
 
@@ -331,6 +358,19 @@ class DeserializationValueError(SerializationError, ValueError):
             raise ValueError('Invalid arguments for "DeserializationValueError".')
 
 
+@register_error
+class SerializationDerivationError(SerializationError, TypeError):
+    """Raised when a class relying on schema derivation cannot be set up.
+
+    Fires on first instantiation of a concrete subclass when the class is not
+    a dataclass, a field type cannot be inferred, or it sets ``derive=False``
+    without hand-writing the target serialization method(s). The message names
+    the specific cause and, for an uninferable field, the available fixes:
+    supply a per-field codec via ``field(metadata={"serialize_codec": ...})``,
+    implement the serialization method(s) by hand, or pass ``derive=False``.
+    """
+
+
 _TYPE_REGISTRY: dict[str, type["Serializable"]] = {}
 
 
@@ -400,6 +440,14 @@ def _resolve_type_id(
         raise UnknownTypeIdError(f'Could not resolve type_id "{type_id}": {e}') from e
 
 
+# Wire keys shared by the registry-wrapped-value encoding and the
+# ``WrappedFamilySerializable`` family encoding. The ``_RegistryWrappedValueData``
+# TypedDict below must repeat them as literal field names (a language
+# requirement); everywhere else, reference these constants to prevent drift.
+_WRAPPED_TYPE_KEY: Final[str] = "__type__"
+_WRAPPED_DATA_KEY: Final[str] = "__data__"
+
+
 class _RegistryWrappedValueData(TypedDict):
     __type__: str
     __data__: SerializedValue
@@ -409,10 +457,10 @@ def _is_valid_registry_wrapped_value_data(
     data: SerializedDict,
 ) -> TypeGuard[_RegistryWrappedValueData]:
     return (
-        "__type__" in data
-        and isinstance(data["__type__"], str)
-        and "__data__" in data
-        and is_serialized_value(data["__data__"])
+        _WRAPPED_TYPE_KEY in data
+        and isinstance(data[_WRAPPED_TYPE_KEY], str)
+        and _WRAPPED_DATA_KEY in data
+        and is_serialized_value(data[_WRAPPED_DATA_KEY])
     )
 
 
@@ -441,31 +489,51 @@ _REGISTRY_WRAPPED_FROZENSET_TYPE_ID: Final[str] = "builtins.frozenset"
 
 
 def serialize_registry_wrapped_value(value: RegistryWrappedValue) -> SerializedDict:
-    """Serialize a scalar/serializable value into a wrapped registry dict."""
+    """Serialize a scalar/serializable value into a wrapped registry dict.
+
+    Frozenset elements are sorted by ``repr`` so the wrapped form is
+    deterministic across processes.
+
+    Raises:
+        SerializationTypeError: If ``value`` is not a supported leaf,
+            ``tuple``, ``frozenset``, or ``Serializable``.
+    """
     if isinstance(value, bool):
-        return {"__type__": _REGISTRY_WRAPPED_BOOL_TYPE_ID, "__data__": value}
+        return {
+            _WRAPPED_TYPE_KEY: _REGISTRY_WRAPPED_BOOL_TYPE_ID,
+            _WRAPPED_DATA_KEY: value,
+        }
     elif isinstance(value, int):
-        return {"__type__": _REGISTRY_WRAPPED_INT_TYPE_ID, "__data__": value}
+        return {
+            _WRAPPED_TYPE_KEY: _REGISTRY_WRAPPED_INT_TYPE_ID,
+            _WRAPPED_DATA_KEY: value,
+        }
     elif isinstance(value, str):
-        return {"__type__": _REGISTRY_WRAPPED_STR_TYPE_ID, "__data__": value}
+        return {
+            _WRAPPED_TYPE_KEY: _REGISTRY_WRAPPED_STR_TYPE_ID,
+            _WRAPPED_DATA_KEY: value,
+        }
     elif isinstance(value, float):
-        return {"__type__": _REGISTRY_WRAPPED_FLOAT_TYPE_ID, "__data__": value}
+        return {
+            _WRAPPED_TYPE_KEY: _REGISTRY_WRAPPED_FLOAT_TYPE_ID,
+            _WRAPPED_DATA_KEY: value,
+        }
     elif isinstance(value, tuple):
         return {
-            "__type__": _REGISTRY_WRAPPED_TUPLE_TYPE_ID,
-            "__data__": [serialize_registry_wrapped_value(v) for v in value],
+            _WRAPPED_TYPE_KEY: _REGISTRY_WRAPPED_TUPLE_TYPE_ID,
+            _WRAPPED_DATA_KEY: [serialize_registry_wrapped_value(v) for v in value],
         }
     elif isinstance(value, frozenset):
         return {
-            "__type__": _REGISTRY_WRAPPED_FROZENSET_TYPE_ID,
-            "__data__": sorted(
+            _WRAPPED_TYPE_KEY: _REGISTRY_WRAPPED_FROZENSET_TYPE_ID,
+            _WRAPPED_DATA_KEY: sorted(
                 [serialize_registry_wrapped_value(v) for v in value], key=repr
             ),
         }
     elif isinstance(value, Serializable):
         return {
-            "__type__": value.get_serialization_class_type_id(),
-            "__data__": value.serialize_to_dict(),
+            _WRAPPED_TYPE_KEY: value.get_serialization_class_type_id(),
+            _WRAPPED_DATA_KEY: value.serialize_to_dict(),
         }
     else:
         raise SerializationTypeError(type(value))
@@ -535,12 +603,22 @@ def _deserialize_registry_wrapped_container_value(
 
 
 def deserialize_registry_wrapped_value(data: SerializedDict) -> RegistryWrappedValue:
-    """Deserialize a wrapped registry dict to scalar/serializable value."""
+    """Deserialize a wrapped registry dict to scalar/serializable value.
+
+    Raises:
+        DeserializationDictStructureError: If ``data`` is not a valid wrapped
+            registry dict.
+        DeserializationValueError: If the payload does not match its declared
+            wrapped type.
+        UnknownTypeIdError: If a wrapped object's ``type_id`` is not registered.
+    """
     if not _is_valid_registry_wrapped_value_data(data):
         raise DeserializationDictStructureError(
             Serializable, _RegistryWrappedValueData.__annotations__, data
         )
 
+    # ``data`` is narrowed to the ``_RegistryWrappedValueData`` TypedDict here,
+    # whose access requires literal keys (the keys equal the constants above).
     type_id = data["__type__"]
     value_data = data["__data__"]
 
@@ -716,12 +794,521 @@ def _loads_from_binary(
     return cls.deserialize_from_binary(payload_bytes, codec=codec)
 
 
+# ===========================================================================
+# Schema-derived serialization engine
+# ===========================================================================
+#
+# When a Serializable / WrappedFamilySerializable subclass opts in (the default,
+# ``derive=True``) and does not hand-write the relevant method(s), the trait
+# derives them from the subclass's dataclass fields and resolved type hints.
+# Each field maps to one FieldCodec (from ``field.metadata["serialize_codec"]``
+# if present, else inferred from the resolved annotation). The plan is built and
+# validated at first instantiation, matching the ABC metaclass's "cannot
+# instantiate" timing.
+
+
+@runtime_checkable
+class FieldCodec(Protocol):
+    """Encode, validate, and decode one field value for schema derivation.
+
+    Every codec the engine infers, and every codec a caller supplies through
+    ``field(metadata={"serialize_codec": ...})``, satisfies this contract. Use
+    ``make_field_codec``, ``make_enum_field_codec``, or
+    ``make_labeled_enum_field_codec`` to build one from plain functions rather
+    than implementing it by hand.
+
+    Implementations must round-trip, and ``decode`` must raise
+    ``DeserializationDictStructureError`` / ``DeserializationValueError`` on
+    malformed input so the trait surfaces uniform errors. ``decode`` is only
+    called after ``accepts`` returns ``True``, so it may assume the coarse
+    structure already holds; a codec whose ``accepts`` returns ``True``
+    unconditionally (such as one built by ``make_field_codec``) must therefore
+    do all of its validation in ``decode``.
+
+    Attributes:
+        expected: The Python type (or union) of the serialized value, used in
+            structure-error messages.
+    """
+
+    expected: type | UnionType
+
+    def encode(self, value: Any) -> SerializedValue:
+        """Return the JSON-friendly serialized form of ``value``."""
+
+    def accepts(self, data: SerializedValue) -> bool:
+        """Return whether ``data`` is structurally valid for this field."""
+
+    def decode(self, data: SerializedValue, *, field_name: str, owner: type) -> Any:
+        """Reconstruct the field value from ``data``."""
+
+
+_SERIALIZE_SETUP_FLAG: Final[str] = "_fhy_serialize_setup_done"
+_SERIALIZE_PLAN_CACHE: dict[type, dict[str, FieldCodec]] = {}
+_FIELD_CODEC_REGISTRY: dict[type, FieldCodec] = {}
+
+
+class _CodecInferenceError(Exception):
+    """Internal: no codec could be inferred for a resolved field type."""
+
+    type_repr: str
+
+    def __init__(self, type_obj: Any) -> None:
+        self.type_repr = (
+            _format_type(type_obj)
+            if isinstance(type_obj, (type, UnionType))
+            else repr(type_obj)
+        )
+        super().__init__(self.type_repr)
+
+
+class _ScalarFieldCodec(FieldCodec):
+    """Abstract base for JSON-scalar codecs that store the value unchanged.
+
+    Subclasses provide ``expected`` and ``accepts``. ``_FloatFieldCodec``
+    overrides ``decode`` to coerce an integer payload to ``float``.
+    """
+
+    expected: type | UnionType
+
+    def encode(self, value: Any) -> SerializedValue:
+        return cast(SerializedValue, value)
+
+    def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
+        return data
+
+    @abstractmethod
+    def accepts(self, data: Any) -> bool: ...
+
+
+class _IntFieldCodec(_ScalarFieldCodec):
+    expected: type | UnionType = int
+
+    def accepts(self, data: Any) -> bool:
+        return isinstance(data, int) and not isinstance(data, bool)
+
+
+class _FloatFieldCodec(_ScalarFieldCodec):
+    expected: type | UnionType = float
+
+    def accepts(self, data: Any) -> bool:
+        return isinstance(data, (int, float)) and not isinstance(data, bool)
+
+    def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
+        return float(data)
+
+
+class _StrFieldCodec(_ScalarFieldCodec):
+    expected: type | UnionType = str
+
+    def accepts(self, data: Any) -> bool:
+        return isinstance(data, str)
+
+
+class _BoolFieldCodec(_ScalarFieldCodec):
+    expected: type | UnionType = bool
+
+    def accepts(self, data: Any) -> bool:
+        return isinstance(data, bool)
+
+
+class _OptionalFieldCodec(FieldCodec):
+    expected: type | UnionType
+    _inner: FieldCodec
+
+    def __init__(self, inner: FieldCodec) -> None:
+        self._inner = inner
+        self.expected = inner.expected | None
+
+    def encode(self, value: Any) -> SerializedValue:
+        return None if value is None else self._inner.encode(value)
+
+    def accepts(self, data: Any) -> bool:
+        return data is None or self._inner.accepts(data)
+
+    def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
+        if data is None:
+            return None
+        return self._inner.decode(data, field_name=field_name, owner=owner)
+
+
+class _SequenceFieldCodec(FieldCodec):
+    expected: type | UnionType = list
+    _factory: Callable[[Any], Any]
+    _inner: FieldCodec
+
+    def __init__(self, factory: Callable[[Any], Any], inner: FieldCodec) -> None:
+        self._factory = factory
+        self._inner = inner
+
+    def encode(self, value: Any) -> SerializedValue:
+        encoded = [self._inner.encode(item) for item in value]
+        if self._factory is frozenset:
+            # A frozenset iterates in hash order, which varies across processes
+            # for str/bytes elements (hash randomization). Sort the encoded
+            # items so the wire form is deterministic, matching the registry-
+            # wrapped frozenset path.
+            encoded.sort(key=repr)
+        return encoded
+
+    def accepts(self, data: Any) -> bool:
+        return isinstance(data, list) and all(
+            self._inner.accepts(item) for item in data
+        )
+
+    def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
+        return self._factory(
+            self._inner.decode(item, field_name=field_name, owner=owner)
+            for item in data
+        )
+
+
+class _SerializableFieldCodec(FieldCodec):
+    expected: type | UnionType = dict
+    _serializable_cls: type["Serializable"]
+
+    def __init__(self, serializable_cls: type["Serializable"]) -> None:
+        self._serializable_cls = serializable_cls
+
+    def encode(self, value: Any) -> SerializedValue:
+        return cast(SerializedValue, value.serialize_to_dict())
+
+    def accepts(self, data: Any) -> bool:
+        return is_serialized_dict(data)
+
+    def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
+        return self._serializable_cls.deserialize_from_dict(data)
+
+
+class _PathFieldCodec(FieldCodec):
+    expected: type | UnionType = str
+    _path_type: type
+
+    def __init__(self, path_type: type) -> None:
+        self._path_type = path_type
+
+    def encode(self, value: Any) -> SerializedValue:
+        # Emit the POSIX form (forward slashes) rather than ``str(value)``: the
+        # latter is OS-dependent (backslashes on Windows), which would make the
+        # wire form non-portable across platforms. ``PurePath`` accepts forward
+        # slashes on every platform, so decoding round-trips everywhere.
+        return cast(str, value.as_posix())
+
+    def accepts(self, data: Any) -> bool:
+        return isinstance(data, str)
+
+    def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
+        return self._path_type(data)
+
+
+class _EnumByNameFieldCodec(FieldCodec):
+    expected: type | UnionType = str
+    _enum_type: type[enum.Enum]
+
+    def __init__(self, enum_type: type[enum.Enum]) -> None:
+        self._enum_type = enum_type
+
+    def encode(self, value: Any) -> SerializedValue:
+        return cast(SerializedValue, value.name)
+
+    def accepts(self, data: Any) -> bool:
+        return isinstance(data, str)
+
+    def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
+        try:
+            return self._enum_type[data]
+        except KeyError as exc:
+            raise DeserializationValueError(
+                owner, field_name, f"a valid {self._enum_type.__name__} name", data
+            ) from exc
+
+
+class _EnumByValueFieldCodec(FieldCodec):
+    expected: type | UnionType = object
+    _enum_type: type[enum.Enum]
+
+    def __init__(self, enum_type: type[enum.Enum]) -> None:
+        self._enum_type = enum_type
+
+    def encode(self, value: Any) -> SerializedValue:
+        return cast(SerializedValue, value.value)
+
+    def accepts(self, data: Any) -> bool:
+        if issubclass(self._enum_type, str):
+            return isinstance(data, str)
+        if issubclass(self._enum_type, int):
+            return isinstance(data, int) and not isinstance(data, bool)
+        return True
+
+    def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
+        try:
+            return self._enum_type(data)
+        except (ValueError, TypeError) as exc:
+            # ValueError: in-range type but not a member value. TypeError:
+            # unhashable payload (e.g. a dict/list) reaching ``Enum(value)``.
+            # Both must surface through the serialization error hierarchy.
+            raise DeserializationValueError(
+                owner, field_name, f"a valid {self._enum_type.__name__} value", data
+            ) from exc
+
+
+class _LabeledEnumFieldCodec(FieldCodec):
+    expected: type | UnionType = str
+    _enum_type: type[enum.Enum]
+    _value_to_label: Mapping[Any, str]
+    _label_to_value: dict[str, Any]
+
+    def __init__(self, enum_type: type[enum.Enum], labels: Mapping[Any, str]) -> None:
+        self._enum_type = enum_type
+        self._value_to_label = labels
+        self._label_to_value = {label: member for member, label in labels.items()}
+
+    def encode(self, value: Any) -> SerializedValue:
+        try:
+            return cast(SerializedValue, self._value_to_label[value])
+        except KeyError as exc:
+            # The labels were verified to cover every member at build time, so
+            # this only fires for an out-of-domain value (e.g. a member of a
+            # different enum). Surface it through the serialization hierarchy
+            # rather than leaking a bare KeyError.
+            raise SerializationValueError(
+                f"a labeled {self._enum_type.__name__} member", value
+            ) from exc
+
+    def accepts(self, data: Any) -> bool:
+        return isinstance(data, str)
+
+    def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
+        try:
+            return self._label_to_value[data]
+        except KeyError as exc:
+            raise DeserializationValueError(
+                owner, field_name, f"a valid {self._enum_type.__name__} label", data
+            ) from exc
+
+
+class _FunctionFieldCodec(FieldCodec):
+    expected: type | UnionType = object
+    _encode_fn: Callable[[Any], SerializedValue]
+    _decode_fn: Callable[[Any], Any]
+
+    def __init__(
+        self,
+        encode_fn: Callable[[Any], SerializedValue],
+        decode_fn: Callable[[Any], Any],
+    ) -> None:
+        self._encode_fn = encode_fn
+        self._decode_fn = decode_fn
+
+    def encode(self, value: Any) -> SerializedValue:
+        return self._encode_fn(value)
+
+    def accepts(self, data: Any) -> bool:
+        return True
+
+    def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
+        try:
+            return self._decode_fn(data)
+        except (ValueError, TypeError) as exc:
+            raise DeserializationValueError(
+                owner, field_name, "a decodable value", data
+            ) from exc
+
+
+_BUILTIN_SCALAR_CODECS: dict[type, FieldCodec] = {
+    bool: _BoolFieldCodec(),
+    int: _IntFieldCodec(),
+    float: _FloatFieldCodec(),
+    str: _StrFieldCodec(),
+}
+_SEQUENCE_FACTORIES: dict[type, Callable[[Any], Any]] = {
+    tuple: tuple,
+    list: list,
+    frozenset: frozenset,
+}
+
+
+def _sequence_element_type(origin: type, arguments: tuple[Any, ...]) -> Any:
+    if origin is tuple:
+        # Only the homogeneous, variable-length form ``tuple[T, ...]`` is
+        # derivable. A fixed-length form such as ``tuple[T]`` or
+        # ``tuple[T, U]`` is rejected: the sequence codec does not validate
+        # length, so deriving it would silently accept payloads of any arity.
+        if len(arguments) == 2 and arguments[1] is Ellipsis:  # noqa: PLR2004
+            return arguments[0]
+        raise _CodecInferenceError(origin)
+    if len(arguments) == 1:
+        return arguments[0]
+    raise _CodecInferenceError(origin)
+
+
+def _infer_field_codec(resolved: Any) -> FieldCodec:
+    annotation = unwrap_annotation(resolved)
+    inner, is_optional = split_optional(annotation)
+    if is_optional:
+        return _OptionalFieldCodec(_infer_field_codec(inner))
+
+    container = get_origin_and_arguments(inner)
+    if container is not None:
+        origin, arguments = container
+        factory = _SEQUENCE_FACTORIES.get(origin)
+        if factory is None:
+            raise _CodecInferenceError(inner)
+        element = _sequence_element_type(origin, arguments)
+        return _SequenceFieldCodec(factory, _infer_field_codec(element))
+
+    if isinstance(inner, type):
+        if inner in _FIELD_CODEC_REGISTRY:
+            return _FIELD_CODEC_REGISTRY[inner]
+        if issubclass(inner, Serializable):
+            return _SerializableFieldCodec(inner)
+        if issubclass(inner, enum.Enum):
+            # A ``StrEnum`` / ``IntEnum`` member is its own serializable scalar
+            # value (``str`` / ``int``), so serialize by value -- that is the
+            # canonical, stable wire form and never needs a metadata override.
+            # A plain ``Enum`` value may be an arbitrary or positional
+            # (``auto()``) object that is neither serializable nor stable, so
+            # fall back to the always-safe member name. Override per field with
+            # ``make_enum_field_codec`` / ``make_labeled_enum_field_codec``.
+            if issubclass(inner, (str, int)):
+                return _EnumByValueFieldCodec(inner)
+            return _EnumByNameFieldCodec(inner)
+        if issubclass(inner, PurePath):
+            return _PathFieldCodec(inner)
+        builtin = _BUILTIN_SCALAR_CODECS.get(inner)
+        if builtin is not None:
+            return builtin
+
+    raise _CodecInferenceError(inner)
+
+
+def _build_serialization_plan(cls: type) -> dict[str, FieldCodec]:
+    try:
+        field_defs = dataclasses.fields(cls)
+    except TypeError as exc:
+        raise SerializationDerivationError(
+            f'Cannot derive serialization for "{cls.__name__}": it is not a '
+            f"dataclass. Implement serialize_to_dict / deserialize_from_dict by "
+            f"hand, or pass derive=False."
+        ) from exc
+
+    resolved_hints = resolve_field_annotations(cls)
+    plan: dict[str, FieldCodec] = {}
+    for field_def in field_defs:
+        codec = field_def.metadata.get("serialize_codec")
+        if codec is None:
+            if field_def.name not in resolved_hints:
+                # ``resolve_field_annotations`` omits fields whose annotation
+                # could not be resolved (the underlying cause is logged as a
+                # warning from that helper). Surface that as the true cause
+                # rather than feeding the raw, unresolved annotation -- often a
+                # bare string under ``from __future__ import annotations`` --
+                # into inference, which would mislabel it an "unsupported type".
+                raise SerializationDerivationError(
+                    f"Cannot derive a serialization codec for field "
+                    f'"{cls.__name__}.{field_def.name}": its type annotation '
+                    f"could not be resolved (e.g. a forward reference to a name "
+                    f"that is not importable at the class's module scope; see "
+                    f"the preceding annotation-resolution warning for the cause)."
+                    f" Fix the annotation, supply field(metadata="
+                    f'{{"serialize_codec": ...}}), implement serialize_to_dict / '
+                    f"deserialize_from_dict by hand, or pass derive=False."
+                )
+            resolved = resolved_hints[field_def.name]
+            try:
+                codec = _infer_field_codec(resolved)
+            except _CodecInferenceError as exc:
+                raise SerializationDerivationError(
+                    f"Cannot derive a serialization codec for field "
+                    f'"{cls.__name__}.{field_def.name}" of type {exc.type_repr}. '
+                    f'Supply field(metadata={{"serialize_codec": ...}}), implement '
+                    f"serialize_to_dict / deserialize_from_dict by hand, or pass "
+                    f"derive=False."
+                ) from exc
+        plan[field_def.name] = codec
+    return plan
+
+
+def _get_or_build_serialization_plan(cls: type) -> dict[str, FieldCodec]:
+    plan = _SERIALIZE_PLAN_CACHE.get(cls)
+    if plan is None:
+        plan = _build_serialization_plan(cls)
+        _SERIALIZE_PLAN_CACHE[cls] = plan
+    return plan
+
+
+def _derived_serialize_to_dict(self: "Serializable") -> SerializedDict:
+    plan = _get_or_build_serialization_plan(type(self))
+    return {name: codec.encode(getattr(self, name)) for name, codec in plan.items()}
+
+
+def _derived_deserialize_from_dict(
+    cls: type["Serializable"], data: SerializedDict
+) -> "Serializable":
+    plan = _get_or_build_serialization_plan(cls)
+    expected_structure = {name: codec.expected for name, codec in plan.items()}
+    if set(data) != set(plan) or not all(
+        plan[name].accepts(data[name]) for name in plan
+    ):
+        raise DeserializationDictStructureError(cls, expected_structure, data)
+    decoded = {
+        name: plan[name].decode(data[name], field_name=name, owner=cls) for name in plan
+    }
+    try:
+        return cls.construct_from_fields(decoded)
+    except ValueError as exc:
+        raise DeserializationValueError(str(exc)) from exc
+
+
+def _is_trait_default_method(cls: type["Serializable"], name: str) -> bool:
+    """Return whether ``cls`` resolves ``name`` to the trait's deriving default.
+
+    Walks the MRO and returns ``True`` when the first class defining ``name`` is
+    ``Serializable`` or ``WrappedFamilySerializable`` -- i.e. the subclass did
+    not hand-write the method and therefore relies on schema derivation.
+    """
+    for klass in cls.__mro__:
+        if name in klass.__dict__:
+            return klass in (Serializable, WrappedFamilySerializable)
+    return False
+
+
+def _validate_serialization_derivation(cls: type["Serializable"]) -> None:
+    """Validate, at first instantiation, that a deriving class can be derived.
+
+    A no-op for abstract classes and for classes that hand-write both target
+    methods. For a deriving class, builds (and caches) the codec plan, raising
+    ``SerializationDerivationError`` if it cannot be built. For a
+    ``derive=False`` class that left a target method to the deriving default,
+    raises rather than silently deriving.
+    """
+    if getattr(cls, "__abstractmethods__", frozenset()):
+        return
+    serialize_name, deserialize_name = cls._SERIALIZE_DERIVE_TARGET
+    uses_derivation = _is_trait_default_method(
+        cls, serialize_name
+    ) or _is_trait_default_method(cls, deserialize_name)
+    if not uses_derivation:
+        return
+    if cls._SERIALIZE_DERIVE:
+        _get_or_build_serialization_plan(cls)
+    else:
+        raise SerializationDerivationError(
+            f'"{cls.__name__}" sets derive=False but does not implement '
+            f'"{serialize_name}" / "{deserialize_name}". Implement them by hand, '
+            f"or remove derive=False to use schema derivation."
+        )
+
+
 class Serializable(ABC):
     """Serialization trait for compiler objects.
 
-    Required:
+    Dict form (derived by default):
       - serialize_to_dict()
       - deserialize_from_dict()
+      A ``@dataclass`` subclass derives both from its field schema. Override
+      them to hand-write the dict form, or pass ``derive=False`` to require a
+      hand-written implementation (a missing one then raises
+      ``SerializationDerivationError`` at first instantiation).
 
     Optional:
       - get_binary_codec()
@@ -735,6 +1322,28 @@ class Serializable(ABC):
     """
 
     _SERIALIZATION_CLASS_TYPE_ID: ClassVar[str | None] = None
+    _SERIALIZE_DERIVE: ClassVar[bool] = True
+    _SERIALIZE_DERIVE_TARGET: ClassVar[tuple[str, str]] = (
+        "serialize_to_dict",
+        "deserialize_from_dict",
+    )
+
+    def __init_subclass__(cls, *, derive: bool = True, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        cls._SERIALIZE_DERIVE = derive
+
+    if not TYPE_CHECKING:
+        # Defined only at runtime so the permissive ``*args, **kwargs`` signature
+        # does not disable constructor-call type checking for subclasses (the
+        # same reason FrozenMixin guards its ``__new__``). The derivation plan is
+        # built and validated here, on first instantiation, because ``@dataclass``
+        # finalizes the field list only after ``__init_subclass__`` runs.
+        def __new__(cls, *args: Any, **kwargs: Any) -> "Serializable":
+            del args, kwargs
+            if not cls.__dict__.get(_SERIALIZE_SETUP_FLAG, False):
+                _validate_serialization_derivation(cls)
+                type.__setattr__(cls, _SERIALIZE_SETUP_FLAG, True)
+            return super().__new__(cls)
 
     @classmethod
     def get_serialization_class_type_id(cls) -> str:
@@ -742,14 +1351,41 @@ class Serializable(ABC):
         local = cls.__dict__.get("_SERIALIZATION_CLASS_TYPE_ID", None)
         return local or _get_default_type_id(cls)
 
-    @abstractmethod
+    @classmethod
+    def construct_from_fields(cls: type[_T], fields: dict[str, Any]) -> _T:
+        """Build an instance from already-decoded fields.
+
+        Default reconstruction for derived ``deserialize_from_dict``. Override
+        for classes whose reconstruction is not a plain constructor call (e.g.
+        interning or ``__new__``-based construction).
+
+        Args:
+            fields: Mapping of field name to decoded value, in declaration order.
+
+        Returns:
+            A reconstructed instance of ``cls``.
+        """
+        return cls(**fields)
+
     def serialize_to_dict(self) -> SerializedDict:
-        """Return a dictionary representation of this object for serialization."""
+        """Return a dictionary representation of this object for serialization.
+
+        By default the dict is derived from this object's dataclass fields and
+        their type hints. Override to customize, or pass ``derive=False`` to
+        require a hand-written implementation.
+        """
+        return _derived_serialize_to_dict(self)
 
     @classmethod
-    @abstractmethod
     def deserialize_from_dict(cls: type[_T], data: SerializedDict) -> _T:
-        """Create an instance of this class from a dictionary representation."""
+        """Create an instance of this class from a dictionary representation.
+
+        By default the fields are derived from this class's dataclass fields and
+        their type hints, validated, decoded, and passed to
+        ``construct_from_fields``. Override to customize, or pass
+        ``derive=False`` to require a hand-written implementation.
+        """
+        return cast(_T, _derived_deserialize_from_dict(cls, data))
 
     @classmethod
     def get_binary_codec(cls) -> BinaryPayloadCodec:
@@ -857,6 +1493,10 @@ class Serializable(ABC):
         cls: type[_T], payload: SerializedObject, fmt: SerializationFormat
     ) -> _T:
         """Deserialize an object of this class from the given payload and format.
+
+        For ``BINARY``, deserialization is always registry-only (no import
+        fallback). Use ``Serializable.from_bytes`` directly when you need to opt
+        into ``allow_import_fallback`` for a trusted blob.
 
         Args:
             payload: The serialized representation of the object.
@@ -991,12 +1631,12 @@ class WrappedFamilySerializable(Serializable, ABC):
     """Serializable base for class families (e.g., AST nodes).
 
     Pattern:
-      - Base class implements serialize_to_dict() to emit a wrapped dict:
-        ```
-          {"__type__": <type_id>, "__data__": <data_dict>}
-        ```
+      - Base class implements serialize_to_dict() to emit a wrapped dict::
 
-      - Subclasses implement only the data portion:
+          {"__type__": <type_id>, "__data__": <data_dict>}
+
+      - Subclasses provide only the data portion, by overriding (or, for a
+        ``@dataclass`` subclass, letting the engine derive):
           - `serialize_data_to_dict()`
           - `deserialize_data_from_dict()`
 
@@ -1005,36 +1645,60 @@ class WrappedFamilySerializable(Serializable, ABC):
           - resolves the concrete subclass from `__type__`
           - calls `subclass.deserialize_data_from_dict(__data__)`
 
-    Example usage:
-    ```
-    class BaseNode(WrappedFamilySerializable):
-        pass
+    Example usage (explicit-override form; a ``@dataclass`` subclass could omit
+    both methods and let derivation supply them)::
 
-    @register_serializable
-    class NodeA(BaseNode):
-        value: int
+        class BaseNode(WrappedFamilySerializable):
+            pass
 
-        def serialize_data_to_dict(self):
-            return {"value": self.value}
+        @register_serializable
+        class NodeA(BaseNode):
+            value: int
 
-        @classmethod
-        def deserialize_data_from_dict(cls, data):
-            return cls(value=data["value"])
+            def serialize_data_to_dict(self):
+                return {"value": self.value}
+
+            @classmethod
+            def deserialize_data_from_dict(cls, data):
+                return cls(value=data["value"])
 
     """
 
+    _SERIALIZE_DERIVE_TARGET: ClassVar[tuple[str, str]] = (
+        "serialize_data_to_dict",
+        "deserialize_data_from_dict",
+    )
+
     def serialize_to_dict(self) -> SerializedDict:
         return {
-            "__type__": self.get_serialization_class_type_id(),
-            "__data__": self.serialize_data_to_dict(),
+            _WRAPPED_TYPE_KEY: self.get_serialization_class_type_id(),
+            _WRAPPED_DATA_KEY: self.serialize_data_to_dict(),
         }
 
     @classmethod
     def deserialize_from_dict(cls: type[_F], data: SerializedDict) -> _F:
-        class_type_id = data.get("__type__")
-        object_data = data.get("__data__")
-        if not isinstance(class_type_id, str) or not is_serialized_dict(object_data):
-            raise SerializationError("Not a wrapped dict with __type__ and __data__.")
+        expected_keys = {_WRAPPED_TYPE_KEY, _WRAPPED_DATA_KEY}
+        if not isinstance(data, dict) or set(data) != expected_keys:
+            # Reject missing required keys *and* any unexpected extra keys, so
+            # producer/consumer schema drift is loud rather than silently
+            # ignored (mirrors the exact-key-set check the derived path uses).
+            raise DeserializationDictStructureError(
+                cls,
+                _RegistryWrappedValueData.__annotations__,
+                data if isinstance(data, dict) else {},
+            )
+
+        class_type_id = data[_WRAPPED_TYPE_KEY]
+        if not isinstance(class_type_id, str):
+            raise DeserializationValueError(
+                cls, _WRAPPED_TYPE_KEY, "a string type id", class_type_id
+            )
+
+        object_data = data[_WRAPPED_DATA_KEY]
+        if not is_serialized_dict(object_data):
+            raise DeserializationValueError(
+                cls, _WRAPPED_DATA_KEY, "a serialized dict payload", object_data
+            )
 
         concrete_class = _resolve_type_id(class_type_id)
 
@@ -1046,19 +1710,26 @@ class WrappedFamilySerializable(Serializable, ABC):
 
         return concrete_class.deserialize_data_from_dict(object_data)
 
-    @abstractmethod
     def serialize_data_to_dict(self) -> SerializedDict:
         """Serialize only this class's data.
+
+        By default the data dict is derived from this object's dataclass fields
+        and their type hints. Override to customize, or pass ``derive=False`` to
+        require a hand-written implementation.
 
         Returns:
             A dict representing only this class's data (no type wrapper).
 
         """
+        return _derived_serialize_to_dict(self)
 
     @classmethod
-    @abstractmethod
     def deserialize_data_from_dict(cls: type[_F], data: SerializedDict) -> _F:
         """Deserialize only this class's data.
+
+        By default the fields are derived from this class's dataclass fields and
+        their type hints. Override to customize, or pass ``derive=False`` to
+        require a hand-written implementation.
 
         Args:
             data: A dict representing only this class's data (no type wrapper).
@@ -1067,3 +1738,114 @@ class WrappedFamilySerializable(Serializable, ABC):
             An instance of this class reconstructed from the data dict.
 
         """
+        return cast(_F, _derived_deserialize_from_dict(cls, data))
+
+
+def register_field_codec(tp: type, codec: FieldCodec) -> None:
+    """Register ``codec`` as the inference default for leaf type ``tp``.
+
+    Args:
+        tp: The leaf type to match during inference.
+        codec: The codec to use for fields resolving to ``tp``.
+
+    Returns:
+        None. (Register-style APIs in this package do not return ``self``.)
+
+    Raises:
+        SerializationError: If ``tp`` already has a different registered codec.
+    """
+    existing = _FIELD_CODEC_REGISTRY.get(tp)
+    if existing is not None and existing is not codec:
+        raise SerializationError(
+            f'A field codec is already registered for type "{_format_type(tp)}"; '
+            f"refusing to override."
+        )
+    _FIELD_CODEC_REGISTRY[tp] = codec
+
+
+def make_field_codec(
+    encode: Callable[[Any], SerializedValue],
+    decode: Callable[[Any], Any],
+) -> FieldCodec:
+    """Build a ``FieldCodec`` from an encode/decode function pair.
+
+    Convenience for bespoke per-field overrides supplied through
+    ``field(metadata={"serialize_codec": ...})``.
+
+    The resulting codec's ``accepts`` returns ``True`` unconditionally, so all
+    validation happens in ``decode``. ``decode`` must therefore raise
+    ``ValueError`` or ``TypeError`` on malformed input (the engine wraps those
+    as ``DeserializationValueError``); any other exception propagates unwrapped
+    and escapes the serialization error hierarchy.
+
+    Args:
+        encode: Callable mapping a field value to a ``SerializedValue``.
+        decode: Callable mapping a ``SerializedValue`` back to a field value.
+            Must raise ``ValueError``/``TypeError`` on malformed input.
+
+    Returns:
+        A ``FieldCodec`` wrapping the two callables.
+    """
+    return _FunctionFieldCodec(encode, decode)
+
+
+def make_enum_field_codec(
+    enum_type: type[enum.Enum], *, by: str = "name"
+) -> FieldCodec:
+    """Return a codec that serializes an ``Enum`` member by name or value.
+
+    Args:
+        enum_type: The ``enum.Enum`` subclass to encode.
+        by: ``"name"`` (default) encodes ``member.name``; ``"value"`` encodes
+            ``member.value``.
+
+    Returns:
+        A ``FieldCodec`` for fields annotated with ``enum_type``.
+
+    Raises:
+        ValueError: If ``by`` is not ``"name"`` or ``"value"``.
+    """
+    if by == "name":
+        return _EnumByNameFieldCodec(enum_type)
+    if by == "value":
+        return _EnumByValueFieldCodec(enum_type)
+    raise ValueError(
+        f'make_enum_field_codec "by" must be "name" or "value", got {by!r}.'
+    )
+
+
+def make_labeled_enum_field_codec(
+    enum_type: type[enum.Enum], labels: Mapping[Any, str]
+) -> FieldCodec:
+    """Return a codec that serializes an ``Enum`` member via explicit string labels.
+
+    Use this when the on-the-wire form is a bespoke label that is neither the
+    member's ``name`` nor its ``value`` -- for example a human-readable
+    function name. ``labels`` must assign a distinct label to every member so
+    encoding is total and decoding is unambiguous.
+
+    Args:
+        enum_type: The ``enum.Enum`` subclass to encode.
+        labels: A bijective mapping from each member to its serialized label.
+
+    Returns:
+        A ``FieldCodec`` that encodes ``member -> label`` and decodes the
+        inverse, raising ``DeserializationValueError`` for an unknown label and
+        rejecting non-string payloads as a structure error.
+
+    Raises:
+        ValueError: If ``labels`` does not cover every member, or assigns the
+            same label to two members.
+    """
+    members = set(enum_type)
+    if set(labels) != members:
+        raise ValueError(
+            f"make_labeled_enum_field_codec labels must cover every "
+            f"{enum_type.__name__} member exactly once."
+        )
+    if len(set(labels.values())) != len(labels):
+        raise ValueError(
+            f"make_labeled_enum_field_codec labels for {enum_type.__name__} "
+            f"must be distinct."
+        )
+    return _LabeledEnumFieldCodec(enum_type, labels)

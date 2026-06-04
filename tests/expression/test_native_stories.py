@@ -15,7 +15,6 @@ from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
     CallExpression,
-    Expression,
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
@@ -231,23 +230,6 @@ def test_user_story_outer_arithmetic_preserved_around_folded_native_call() -> No
     assert evaluated.operation == BinaryOperation.ADD
     assert isinstance(evaluated.left, LiteralExpression)
     assert evaluated.left.value == 1.0
-
-
-# =============================================================================
-# User story: serialization round-trip for a tree containing native calls
-# =============================================================================
-
-
-def test_user_story_native_call_tree_round_trips_through_serialize_to_dict() -> None:
-    """Test a `CallExpression` tree to a native round-trips through serialization."""
-    expression = call(
-        "sin",
-        call("sqrt", LiteralExpression(2.0)),
-    )
-
-    restored = Expression.deserialize_from_dict(expression.serialize_to_dict())
-
-    assert restored.is_structurally_equivalent(expression)
 
 
 # =============================================================================

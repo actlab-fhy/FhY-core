@@ -17,15 +17,10 @@ fresh ``ValueDomain`` instances with the same ``name_hint``, because
 __all__ = ["ADDRESS_DOMAIN", "DATA_DOMAIN", "ValueDomain"]
 
 from dataclasses import dataclass, field
-from typing import TypedDict, TypeGuard
 
 from .identifier import Identifier
-from .logger import get_logger
 from .serialization import (
-    DeserializationDictStructureError,
     Serializable,
-    SerializedDict,
-    is_serialized_dict,
     register_serializable,
 )
 from .trait import (
@@ -34,30 +29,6 @@ from .trait import (
     InternedMixin,
     StructuralEquivalenceMixin,
 )
-
-_LOGGER = get_logger(__name__)
-
-
-class _ValueDomainData(TypedDict):
-    name: SerializedDict
-    description: str
-    parent: SerializedDict | None
-
-
-_VALUE_DOMAIN_DATA_KEYS: frozenset[str] = frozenset({"name", "description", "parent"})
-
-
-def _is_valid_value_domain_data(data: SerializedDict) -> TypeGuard[_ValueDomainData]:
-    if data.keys() != _VALUE_DOMAIN_DATA_KEYS:
-        return False
-    if not is_serialized_dict(data["name"]):
-        return False
-    if not isinstance(data["description"], str):
-        return False
-    parent = data["parent"]
-    if parent is None:
-        return True
-    return is_serialized_dict(parent)
 
 
 @register_serializable(type_id="value_domain")
@@ -139,43 +110,6 @@ class ValueDomain(
                 return True
             current = current.parent
         return False
-
-    def serialize_to_dict(self) -> SerializedDict:
-        parent_payload: SerializedDict | None = (
-            self.parent.serialize_to_dict() if self.parent is not None else None
-        )
-        return {
-            "name": self.name.serialize_to_dict(),
-            "description": self.description,
-            "parent": parent_payload,
-        }
-
-    @classmethod
-    def deserialize_from_dict(cls, data: SerializedDict) -> "ValueDomain":
-        if not _is_valid_value_domain_data(data):
-            raise DeserializationDictStructureError(
-                cls, _ValueDomainData.__annotations__, data
-            )
-        name = Identifier.deserialize_from_dict(data["name"])
-        payload_description = data["description"]
-        canonical = cls.get_interned(name)
-        if canonical is not None:
-            if canonical.description != payload_description:
-                _LOGGER.warning(
-                    "ValueDomain %r already canonical with description %r; "
-                    "ignoring payload description %r.",
-                    name,
-                    canonical.description,
-                    payload_description,
-                )
-            return canonical
-        parent_payload = data["parent"]
-        parent = (
-            cls.deserialize_from_dict(parent_payload)
-            if parent_payload is not None
-            else None
-        )
-        return cls(name=name, description=payload_description, parent=parent)
 
     @classmethod
     def register_default_instances(cls) -> None:

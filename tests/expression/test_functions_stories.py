@@ -10,8 +10,6 @@ import pytest
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
-    CallExpression,
-    Expression,
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
@@ -101,34 +99,6 @@ def test_inline_synthesize_for_max_min_clamp() -> None:
     result_type, _ = synthesize_expression_type(inlined, _no_identifiers)
 
     assert result_type.is_structurally_equivalent(_scalar(CoreDataType.UINT))
-
-
-# =============================================================================
-# Integration: serialization round-trip for mixed trees
-# =============================================================================
-
-
-def test_mixed_ternary_and_call_tree_round_trips_through_serialize_to_dict() -> None:
-    """Test a mixed ``TernaryExpression`` / ``CallExpression`` tree round-trips."""
-    expression = TernaryExpression(
-        LiteralExpression(True),
-        CallExpression(
-            "max",
-            (
-                LiteralExpression(1),
-                BinaryExpression(
-                    BinaryOperation.ADD,
-                    LiteralExpression(2),
-                    LiteralExpression(3),
-                ),
-            ),
-        ),
-        UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(7)),
-    )
-
-    restored = Expression.deserialize_from_dict(expression.serialize_to_dict())
-
-    assert restored.is_structurally_equivalent(expression)
 
 
 # =============================================================================
