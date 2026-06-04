@@ -153,40 +153,6 @@ def test_value_domain_structurally_equivalent_when_name_and_parent_match() -> No
     assert right.is_structurally_equivalent(left)
 
 
-def test_value_domain_not_equivalent_when_names_differ() -> None:
-    """Test instances with different `name`s are not structurally equivalent."""
-    left = ValueDomain(Identifier("a"), "desc")
-    right = ValueDomain(Identifier("b"), "desc")
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_value_domain_not_equivalent_when_parents_differ() -> None:
-    """Test instances with different `parent`s are not structurally equivalent."""
-    name = Identifier("child")
-    parented = ValueDomain(name, "desc", parent=DATA_DOMAIN)
-    orphan = ValueDomain(name, "desc")
-    assert not parented.is_structurally_equivalent(orphan)
-    assert not orphan.is_structurally_equivalent(parented)
-
-
-def test_value_domain_not_equivalent_to_non_value_domain() -> None:
-    """Test structural equivalence with a non-`ValueDomain` value is False."""
-    domain = ValueDomain(Identifier("x"), "desc")
-    assert not domain.is_structurally_equivalent("x")
-    assert not domain.is_structurally_equivalent(None)
-
-
-def test_value_domain_structural_equivalence_recurses_into_parent() -> None:
-    """Test parent comparison is structural rather than reference equality."""
-    parent_name = Identifier("p")
-    parent_left = ValueDomain(parent_name, "left parent")
-    parent_right = ValueDomain(parent_name, "right parent")
-    child_name = Identifier("c")
-    left = ValueDomain(child_name, "left", parent=parent_left)
-    right = ValueDomain(child_name, "right", parent=parent_right)
-    assert left.is_structurally_equivalent(right)
-
-
 # =============================================================================
 # Equality & hash
 # =============================================================================

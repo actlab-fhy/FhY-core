@@ -34,6 +34,7 @@ from fhy_core.serialization import (
 )
 from fhy_core.trait import (
     CanonicalizableMixin,
+    DerivedEquivalenceMixin,
     FrozenMixin,
     StructuralEquivalenceMixin,
     VerifiableMixin,
@@ -54,24 +55,16 @@ def _identifier_sort_key(identifier: Identifier) -> tuple[int, str]:
 
 @dataclass(frozen=True)
 class SymbolTableFrame(
-    WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC
+    WrappedFamilySerializable, FrozenMixin, DerivedEquivalenceMixin, ABC
 ):
     """Base symbol table frame."""
 
     name: Identifier
 
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return isinstance(other, SymbolTableFrame) and self.name == other.name
-
 
 @register_serializable(type_id="import_symbol_table_frame")
 class ImportSymbolTableFrame(SymbolTableFrame):
     """Imported symbol frame."""
-
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return isinstance(
-            other, ImportSymbolTableFrame
-        ) and super().is_structurally_equivalent(other)
 
 
 @dataclass(frozen=True)
@@ -81,14 +74,6 @@ class VariableSymbolTableFrame(SymbolTableFrame):
 
     type: Type
     type_qualifier: TypeQualifier
-
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return (
-            isinstance(other, VariableSymbolTableFrame)
-            and super().is_structurally_equivalent(other)
-            and self.type.is_structurally_equivalent(other.type)
-            and self.type_qualifier == other.type_qualifier
-        )
 
 
 class FunctionKeyword(StrEnum):
@@ -147,21 +132,6 @@ class FunctionSymbolTableFrame(SymbolTableFrame):
 
     keyword: FunctionKeyword
     signature: tuple[tuple[TypeQualifier, Type], ...] = field(default_factory=tuple)
-
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return (
-            isinstance(other, FunctionSymbolTableFrame)
-            and super().is_structurally_equivalent(other)
-            and self.keyword == other.keyword
-            and len(self.signature) == len(other.signature)
-            and all(
-                type_qualifier_1 == type_qualifier_2
-                and type_1.is_structurally_equivalent(type_2)
-                for (type_qualifier_1, type_1), (type_qualifier_2, type_2) in zip(
-                    self.signature, other.signature, strict=True
-                )
-            )
-        )
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {

@@ -32,10 +32,10 @@ from .serialization import (
     register_serializable,
 )
 from .trait import (
+    DerivedEquivalenceMixin,
     FrozenMixin,
     HasIdentifierMixin,
     InternedMixin,
-    StructuralEquivalenceMixin,
 )
 
 
@@ -44,7 +44,7 @@ from .trait import (
 class OpAttribute(
     HasIdentifierMixin,
     FrozenMixin,
-    StructuralEquivalenceMixin,
+    DerivedEquivalenceMixin,
     InternedMixin[Identifier],
     Serializable,
 ):
@@ -83,11 +83,6 @@ class OpAttribute(
 
     def get_intern_key(self) -> Identifier:
         return self.name
-
-    def is_structurally_equivalent(self, other: object) -> bool:
-        if not isinstance(other, OpAttribute):
-            return False
-        return self.name == other.name
 
     @classmethod
     def register_default_instances(cls) -> None:

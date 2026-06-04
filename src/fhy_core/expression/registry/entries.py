@@ -19,19 +19,29 @@ __all__ = [
 ]
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TypeAlias
 
 from fhy_core.identifier import Identifier
-from fhy_core.trait import AlphaEquivalenceMixin, AlphaRenaming
+from fhy_core.trait import (
+    DerivedEquivalenceMixin,
+    compared_as_binder,
+    excluded_from_equivalence,
+)
 
 from ..core import Expression
 from ..sort import FunctionSort, is_python_value_compatible_with_sort
 
 
 @dataclass(frozen=True)
-class RegisteredFunction(AlphaEquivalenceMixin):
+class RegisteredFunction(DerivedEquivalenceMixin):
     """A named pure function over the expression IR.
+
+    Structural and alpha equivalence are derived from the fields: ``name``
+    is registry identity and is excluded; ``parameters`` is a binder whose
+    bound identifiers scope over ``body`` (so two functions identical up to
+    a consistent parameter rename are alpha-equivalent); ``parameter_sorts``
+    and ``result_sort`` compare by value; ``body`` recurses.
 
     Attributes:
         name: Registry key. Used at call sites and in error messages.
@@ -48,8 +58,10 @@ class RegisteredFunction(AlphaEquivalenceMixin):
 
     """
 
-    name: str
-    parameters: tuple[Identifier, ...]
+    name: str = field(metadata=excluded_from_equivalence())
+    parameters: tuple[Identifier, ...] = field(
+        metadata=compared_as_binder(scopes_over=("body",))
+    )
     parameter_sorts: tuple[FunctionSort, ...]
     result_sort: FunctionSort
     body: Expression
@@ -63,19 +75,6 @@ class RegisteredFunction(AlphaEquivalenceMixin):
                 f"({len(self.parameter_sorts)}) does not match parameters "
                 f"length ({len(self.parameters)})."
             )
-
-    def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
-        if not isinstance(other, RegisteredFunction):
-            return False
-        elif self.parameter_sorts != other.parameter_sorts:
-            return False
-        elif self.result_sort != other.result_sort:
-            return False
-        elif len(self.parameters) != len(other.parameters):
-            return False
-        else:
-            extended = renaming.extend(dict(zip(self.parameters, other.parameters)))
-            return self.body.is_alpha_equivalent_under(other.body, extended)
 
 
 @dataclass(frozen=True)

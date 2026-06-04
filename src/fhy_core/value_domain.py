@@ -24,10 +24,10 @@ from .serialization import (
     register_serializable,
 )
 from .trait import (
+    DerivedEquivalenceMixin,
     FrozenMixin,
     HasIdentifierMixin,
     InternedMixin,
-    StructuralEquivalenceMixin,
 )
 
 
@@ -36,7 +36,7 @@ from .trait import (
 class ValueDomain(
     HasIdentifierMixin,
     FrozenMixin,
-    StructuralEquivalenceMixin,
+    DerivedEquivalenceMixin,
     InternedMixin[Identifier],
     Serializable,
 ):
@@ -81,17 +81,6 @@ class ValueDomain(
 
     def get_intern_key(self) -> Identifier:
         return self.name
-
-    def is_structurally_equivalent(self, other: object) -> bool:
-        if not isinstance(other, ValueDomain):
-            return False
-        if self.name != other.name:
-            return False
-        if self.parent is None:
-            return other.parent is None
-        if other.parent is None:
-            return False
-        return self.parent.is_structurally_equivalent(other.parent)
 
     def is_subdomain_of(self, other: "ValueDomain") -> bool:
         """Return whether ``other`` is ``self`` or any ancestor via ``parent``.
