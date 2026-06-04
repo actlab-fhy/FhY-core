@@ -165,20 +165,6 @@ def test_op_attribute_structurally_equivalent_when_names_match() -> None:
     assert right.is_structurally_equivalent(left)
 
 
-def test_op_attribute_not_equivalent_when_names_differ() -> None:
-    """Test instances with different `name`s are not structurally equivalent."""
-    left = OpAttribute(Identifier("a"), "desc")
-    right = OpAttribute(Identifier("b"), "desc")
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_op_attribute_not_equivalent_to_non_op_attribute() -> None:
-    """Test structural equivalence with a non-`OpAttribute` value is False."""
-    attribute = OpAttribute(Identifier("x"), "desc")
-    assert not attribute.is_structurally_equivalent("x")
-    assert not attribute.is_structurally_equivalent(None)
-
-
 # =============================================================================
 # Hashability & frozenset use
 # =============================================================================

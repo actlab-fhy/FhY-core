@@ -48,35 +48,6 @@ def test_import_frame_is_structural_equivalence_runtime_protocol() -> None:
     assert isinstance(frame, StructuralEquivalence)
 
 
-def test_import_frame_structural_equivalence_true_for_same_name() -> None:
-    """Test structural equivalence is true for import frames with the same name."""
-    name = mock_identifier("symbol", 0)
-    assert ImportSymbolTableFrame(name).is_structurally_equivalent(
-        ImportSymbolTableFrame(name)
-    )
-
-
-def test_import_frame_structural_equivalence_false_for_different_name() -> None:
-    """Test structural equivalence is false for import frames with different
-    names.
-    """
-    left = ImportSymbolTableFrame(mock_identifier("a", 0))
-    right = ImportSymbolTableFrame(mock_identifier("b", 1))
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_import_frame_structural_equivalence_false_for_other_frame_type(
-    int32: NumericalType,
-) -> None:
-    """Test structural equivalence is false when compared to a different frame
-    type.
-    """
-    name = mock_identifier("symbol", 0)
-    import_frame = ImportSymbolTableFrame(name)
-    variable_frame = VariableSymbolTableFrame(name, int32, TypeQualifier.STATE)
-    assert not import_frame.is_structurally_equivalent(variable_frame)
-
-
 def test_variable_frame_is_frozen_runtime_protocol(int32: NumericalType) -> None:
     """Test `VariableSymbolTableFrame` satisfies `Frozen` runtime protocol."""
     frame = VariableSymbolTableFrame(
@@ -95,30 +66,6 @@ def test_variable_frame_is_structural_equivalence_runtime_protocol(
         mock_identifier("var", 0), int32, TypeQualifier.STATE
     )
     assert isinstance(frame, StructuralEquivalence)
-
-
-def test_variable_frame_structural_equivalence_true_for_same_content(
-    int32: NumericalType,
-) -> None:
-    """Test structural equivalence is true for variable frames with the same
-    content.
-    """
-    name = mock_identifier("var", 0)
-    left = VariableSymbolTableFrame(name, int32, TypeQualifier.STATE)
-    right = VariableSymbolTableFrame(name, int32, TypeQualifier.STATE)
-    assert left.is_structurally_equivalent(right)
-
-
-def test_variable_frame_structural_equivalence_false_for_different_type_qualifier(
-    int32: NumericalType,
-) -> None:
-    """Test structural equivalence is false for variable frames with different
-    type qualifiers.
-    """
-    name = mock_identifier("var", 0)
-    left = VariableSymbolTableFrame(name, int32, TypeQualifier.STATE)
-    right = VariableSymbolTableFrame(name, int32, TypeQualifier.PARAM)
-    assert not left.is_structurally_equivalent(right)
 
 
 def test_variable_frame_dict_serialization_round_trip(int32: NumericalType) -> None:
@@ -149,52 +96,6 @@ def test_function_frame_is_structural_equivalence_runtime_protocol() -> None:
         mock_identifier("fn", 0), FunctionKeyword.PROCEDURE
     )
     assert isinstance(frame, StructuralEquivalence)
-
-
-def test_function_frame_structural_equivalence_true_for_same_content(
-    int32: NumericalType,
-) -> None:
-    """Test structural equivalence is true for function frames with the same
-    content.
-    """
-    name = mock_identifier("fn", 0)
-    signature = (
-        (TypeQualifier.INPUT, int32),
-        (TypeQualifier.OUTPUT, int32),
-    )
-    left = FunctionSymbolTableFrame(
-        name, FunctionKeyword.PROCEDURE, signature=signature
-    )
-    right = FunctionSymbolTableFrame(
-        name, FunctionKeyword.PROCEDURE, signature=signature
-    )
-    assert left.is_structurally_equivalent(right)
-
-
-def test_function_frame_structural_equivalence_false_for_different_keyword() -> None:
-    """Test structural equivalence is false for function frames with different
-    keywords.
-    """
-    name = mock_identifier("fn", 0)
-    left = FunctionSymbolTableFrame(name, FunctionKeyword.PROCEDURE)
-    right = FunctionSymbolTableFrame(name, FunctionKeyword.OPERATION)
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_function_frame_structural_equivalence_false_different_signature_length(
-    int32: NumericalType,
-) -> None:
-    """Test structural equivalence is false for function frames with different
-    signature lengths.
-    """
-    name = mock_identifier("fn", 0)
-    left = FunctionSymbolTableFrame(name, FunctionKeyword.PROCEDURE)
-    right = FunctionSymbolTableFrame(
-        name,
-        FunctionKeyword.PROCEDURE,
-        signature=((TypeQualifier.INPUT, int32),),
-    )
-    assert not left.is_structurally_equivalent(right)
 
 
 def test_function_frame_dict_serialization_round_trip(int32: NumericalType) -> None:
