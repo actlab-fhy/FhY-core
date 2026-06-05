@@ -5,6 +5,7 @@ __all__ = [
     "AlphaEquivalence",
     "AlphaEquivalenceMixin",
     "AlphaRenaming",
+    "BinderMixin",
     "Canonicalizable",
     "DerivedEquivalenceMixin",
     "Equal",
@@ -21,6 +22,7 @@ __all__ = [
     "compared_as_value",
     "compared_with",
     "excluded_from_equivalence",
+    "HasFreeIdentifiers",
     "HasIdentifier",
     "Interned",
     "InternedMixin",
@@ -37,6 +39,7 @@ __all__ = [
     "Rewritable",
     "RewritableMixin",
     "StructuralEquivalence",
+    "Term",
     "Verifiable",
     "VerifiableMixin",
     "Visitable",
@@ -51,6 +54,7 @@ from .alpha_equivalence import (
     AlphaRenaming,
     is_identifier_mapping_alpha_equivalent_under,
 )
+from .binder import BinderMixin, HasFreeIdentifiers, Term
 from .canonicalizable import Canonicalizable
 from .derived_equivalence import (
     EQUIVALENCE_METADATA_KEY,
