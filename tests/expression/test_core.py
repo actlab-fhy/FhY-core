@@ -15,7 +15,6 @@ from fhy_core.expression import (
     LiteralExpression,
     UnaryExpression,
     UnaryOperation,
-    collect_identifiers,
     logical_and,
     logical_not,
     logical_or,
@@ -847,30 +846,6 @@ def test_deserialize_literal_rejects_invalid_data_shape(
     """Test literal deserialization raises on missing or unsupported-value fields."""
     with pytest.raises(DeserializationDictStructureError):
         Expression.deserialize_from_dict(data)
-
-
-# =============================================================================
-# Walker-driven traversal via `get_visit_children`
-# =============================================================================
-
-
-def test_collect_identifiers_walks_into_unary_expression_operand() -> None:
-    """Test the walker visits a `UnaryExpression` operand via `get_visit_children`."""
-    x = Identifier("x")
-    expression = UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(x))
-
-    assert collect_identifiers(expression) == {x}
-
-
-def test_collect_identifiers_walks_into_binary_expression_children() -> None:
-    """Test the walker visits both `BinaryExpression` children via child dispatch."""
-    left = Identifier("a")
-    right = Identifier("b")
-    expression = BinaryExpression(
-        BinaryOperation.ADD, IdentifierExpression(left), IdentifierExpression(right)
-    )
-
-    assert collect_identifiers(expression) == {left, right}
 
 
 # =============================================================================

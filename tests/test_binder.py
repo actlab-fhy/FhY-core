@@ -18,6 +18,8 @@ from fhy_core.traits import (
     Term,
 )
 
+from .conftest import mock_identifier
+
 
 @dataclass(frozen=True)
 class _Var(AlphaEquivalenceMixin):
@@ -115,40 +117,40 @@ class _Block(BinderMixin):
 
 def test_binder_is_a_term() -> None:
     """Test a binder satisfies the `Term` and `HasFreeIdentifiers` protocols."""
-    lam = _Lam((Identifier("x"),), _Var(Identifier("x")))
+    lam = _Lam((mock_identifier("x", 1),), _Var(mock_identifier("x", 1)))
     assert isinstance(lam, Term)
     assert isinstance(lam, HasFreeIdentifiers)
 
 
 def test_identity_lambdas_are_alpha_equivalent() -> None:
     """Test two identity lambdas with different parameter names are equivalent."""
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
     assert _Lam((x,), _Var(x)).is_alpha_equivalent(_Lam((y,), _Var(y)))
 
 
 def test_lambdas_with_distinct_free_bodies_are_not_alpha_equivalent() -> None:
     """Test lambdas whose bodies reference distinct free identifiers differ."""
-    x = Identifier("x")
-    y = Identifier("y")
-    free_a = Identifier("a")
-    free_b = Identifier("b")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    free_a = mock_identifier("a", 4)
+    free_b = mock_identifier("b", 5)
     assert not _Lam((x,), _Var(free_a)).is_alpha_equivalent(_Lam((y,), _Var(free_b)))
 
 
 def test_lambdas_sharing_a_free_identifier_are_alpha_equivalent() -> None:
     """Test lambdas that bind differently but share a free identifier are equivalent."""
-    x = Identifier("x")
-    y = Identifier("y")
-    shared = Identifier("shared")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    shared = mock_identifier("shared", 7)
     assert _Lam((x,), _Var(shared)).is_alpha_equivalent(_Lam((y,), _Var(shared)))
 
 
 def test_lambdas_with_different_arity_are_not_alpha_equivalent() -> None:
     """Test binders with different numbers of bound identifiers are not equivalent."""
-    x = Identifier("x")
-    y = Identifier("y")
-    z = Identifier("z")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    z = mock_identifier("z", 3)
     one_parameter = _Lam((x,), _Var(x))
     two_parameters = _Lam((y, z), _Var(y))
     assert not one_parameter.is_alpha_equivalent(two_parameters)
@@ -156,30 +158,30 @@ def test_lambdas_with_different_arity_are_not_alpha_equivalent() -> None:
 
 def test_free_identifiers_excludes_bound_parameter() -> None:
     """Test a parameter bound by the lambda is not free in it."""
-    x = Identifier("x")
+    x = mock_identifier("x", 1)
     assert _Lam((x,), _Var(x)).get_free_identifiers() == frozenset()
 
 
 def test_free_identifiers_includes_unbound_body_reference() -> None:
     """Test an identifier referenced but not bound is free."""
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
     assert _Lam((x,), _Var(y)).get_free_identifiers() == frozenset({y})
 
 
 def test_free_identifiers_of_application_unions_children() -> None:
     """Test free identifiers of a body application union over its sub-terms."""
-    x = Identifier("x")
-    y = Identifier("y")
-    z = Identifier("z")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    z = mock_identifier("z", 3)
     lam = _Lam((x,), _App(_Var(x), _App(_Var(y), _Var(z))))
     assert lam.get_free_identifiers() == frozenset({y, z})
 
 
 def test_substitute_skips_shadowed_bound_identifier() -> None:
     """Test a replacement keyed by a bound identifier does not apply inside."""
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
     identity = _Lam((x,), _Var(x))
 
     result = identity.substitute({x: _Var(y)})
@@ -189,9 +191,9 @@ def test_substitute_skips_shadowed_bound_identifier() -> None:
 
 def test_substitute_into_body_without_capture() -> None:
     """Test substitution of a free identifier rewrites the body in place."""
-    x = Identifier("x")
-    y = Identifier("y")
-    z = Identifier("z")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    z = mock_identifier("z", 3)
     lam = _Lam((x,), _App(_Var(x), _Var(y)))
 
     result = lam.substitute({y: _Var(z)})
@@ -207,8 +209,8 @@ def test_substitute_avoids_capture_by_renaming_binder() -> None:
     parameter, leaving ``x`` free in the result and the body equal to the
     substituted reference.
     """
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
     lam = _Lam((x,), _Var(y))
 
     result = lam.substitute({y: _Var(x)})
@@ -221,14 +223,14 @@ def test_substitute_avoids_capture_by_renaming_binder() -> None:
 
 def test_substitute_with_no_replacements_returns_self() -> None:
     """Test substituting an empty replacement map returns the same object."""
-    x = Identifier("x")
+    x = mock_identifier("x", 1)
     lam = _Lam((x,), _Var(x))
     assert lam.substitute({}) is lam
 
 
 def test_binder_is_not_alpha_equivalent_to_non_binder() -> None:
     """Test a binder is not alpha-equivalent to a term of a different kind."""
-    x = Identifier("x")
+    x = mock_identifier("x", 1)
     assert not _Lam((x,), _Var(x)).is_alpha_equivalent(_Var(x))
 
 
@@ -238,9 +240,9 @@ def test_non_injective_binding_is_not_alpha_equivalent() -> None:
     Pairing the bound identifiers yields a non-injective renaming, which
     cannot be a valid bijection, so the comparison is ``False``.
     """
-    x = Identifier("x")
-    y = Identifier("y")
-    a = Identifier("a")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    a = mock_identifier("a", 4)
     well_formed = _Lam((x, y), _Var(x))
     binds_one_identifier_twice = _Lam((a, a), _Var(a))
     assert not well_formed.is_alpha_equivalent(binds_one_identifier_twice)
@@ -248,8 +250,8 @@ def test_non_injective_binding_is_not_alpha_equivalent() -> None:
 
 def test_blocks_with_different_statement_counts_are_not_alpha_equivalent() -> None:
     """Test binders with different numbers of scoped children are not equivalent."""
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
     one_statement = _Block((x,), (_Var(x),))
     two_statements = _Block((y,), (_Var(y), _Var(y)))
     assert not one_statement.is_alpha_equivalent(two_statements)
@@ -257,19 +259,19 @@ def test_blocks_with_different_statement_counts_are_not_alpha_equivalent() -> No
 
 def test_block_free_identifiers_union_over_all_statements() -> None:
     """Test a multi-child binder unions free identifiers across its children."""
-    x = Identifier("x")
-    y = Identifier("y")
-    z = Identifier("z")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    z = mock_identifier("z", 3)
     block = _Block((x,), (_Var(x), _Var(y), _Var(z)))
     assert block.get_free_identifiers() == frozenset({y, z})
 
 
 def test_block_alpha_equivalence_recurses_over_all_statements() -> None:
     """Test a multi-child binder compares every scoped child under the renaming."""
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
     left = _Block((x,), (_Var(x), _Var(x)))
     right = _Block((y,), (_Var(y), _Var(y)))
-    mismatch = _Block((y,), (_Var(y), _Var(Identifier("free"))))
+    mismatch = _Block((y,), (_Var(y), _Var(mock_identifier("free", 6))))
     assert left.is_alpha_equivalent(right)
     assert not left.is_alpha_equivalent(mismatch)

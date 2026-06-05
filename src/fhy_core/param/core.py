@@ -47,7 +47,6 @@ from fhy_core.expression import (
     Expression,
     IdentifierExpression,
     does_expression_imply,
-    replace_identifiers,
 )
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
@@ -590,8 +589,8 @@ class NumericParam(Param[_T], ABC, Generic[_T]):
             constraint_expressions_: list[Expression] = []
             for constraint_ in param_._constraints:
                 constraint_expression_ = constraint_.convert_to_expression()
-                constraint_expression_ = replace_identifiers(
-                    constraint_expression_, {constraint_.variable: constrained_variable}
+                constraint_expression_ = constraint_expression_.substitute(
+                    {constraint_.variable: IdentifierExpression(constrained_variable)}
                 )
                 constraint_expressions_.append(constraint_expression_)
             if len(constraint_expressions_) == 0:

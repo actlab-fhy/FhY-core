@@ -9,6 +9,7 @@ __all__ = [
 ]
 
 import operator
+from collections.abc import Set as AbstractSet
 from typing import Any, Callable
 
 import z3  # type: ignore
@@ -28,7 +29,6 @@ from fhy_core.expression.core import (
     logical_not,
 )
 from fhy_core.expression.errors import UndecidableError
-from fhy_core.expression.passes.basic import collect_identifiers
 from fhy_core.expression.registry import (
     EntryLookupError,
     NativeConstant,
@@ -219,7 +219,7 @@ def convert_expression_to_z3_expression(
 
     """
     resolved_symbol_types = symbol_types or {}
-    referenced_identifiers = collect_identifiers(expression)
+    referenced_identifiers = expression.get_free_identifiers()
     missing_identifiers = referenced_identifiers - resolved_symbol_types.keys()
     if missing_identifiers:
         sorted_missing = sorted(missing_identifiers, key=lambda i: i.id)
@@ -232,7 +232,7 @@ def convert_expression_to_z3_expression(
 
 
 def holds_for_all_free_assignments(
-    considered_identifiers: set[Identifier],
+    considered_identifiers: AbstractSet[Identifier],
     expression: Expression,
     symbol_types: dict[Identifier, SymbolType],
 ) -> bool | None:
@@ -339,7 +339,7 @@ def does_expression_imply(
     """
     _LOGGER.debug("antecedent=%r, consequent=%r", antecedent, consequent)
     combined = logical_and(antecedent, logical_not(consequent))
-    all_identifiers = collect_identifiers(combined)
+    all_identifiers = combined.get_free_identifiers()
     has_counterexample = holds_for_all_free_assignments(
         all_identifiers, combined, symbol_types
     )

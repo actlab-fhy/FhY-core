@@ -29,7 +29,6 @@ __all__ = [
 ]
 
 from fhy_core.error import register_error
-from fhy_core.expression.passes.basic import substitute_identifiers
 from fhy_core.pass_infrastructure import RewritablePass, register_pass
 
 from ..core import CallExpression, Expression
@@ -120,7 +119,7 @@ class FunctionInliner(RewritablePass[Expression]):
     ) -> Expression:
         _check_call_arity(name, len(registered.parameters), expression.arguments)
         substitutions = dict(zip(registered.parameters, expression.arguments))
-        substituted_body = substitute_identifiers(registered.body, substitutions)
+        substituted_body = registered.body.substitute(substitutions)
         self._in_progress.add(name)
         try:
             return self.transform(substituted_body)

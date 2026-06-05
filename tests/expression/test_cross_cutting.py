@@ -2,7 +2,6 @@
 
 import pytest
 
-from fhy_core.expression.passes.basic import IdentifierCollector, IdentifierSubstituter
 from fhy_core.expression.passes.sympy import (
     ExpressionToSympyConverter,
     SymPyToExpressionConverter,
@@ -16,8 +15,6 @@ from fhy_core.pass_infrastructure import CompilerPass, PassInfo
 # =============================================================================
 
 _EXPECTED_REGISTRATIONS: list[tuple[str, type]] = [
-    ("fhy_core.expression.collect_identifiers", IdentifierCollector),
-    ("fhy_core.expression.substitute_identifiers", IdentifierSubstituter),
     ("fhy_core.expression.type_checker", ExpressionTypeChecker),
     ("fhy_core.expression.from_sympy", SymPyToExpressionConverter),
     ("fhy_core.expression.to_sympy", ExpressionToSympyConverter),

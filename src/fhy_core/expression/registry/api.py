@@ -21,7 +21,6 @@ from fhy_core.pass_infrastructure import PassExecutionError
 
 from ..core import Expression
 from ..errors import EntryRegistrationError
-from ..passes.basic import collect_identifiers
 from ..passes.body_type_checker import check_registered_function_body
 from ..sort import FunctionSort
 from .entries import NativeConstant, NativeFunction, RegisteredFunction
@@ -115,7 +114,7 @@ def _reject_captured_free_identifiers(
     body: Expression,
 ) -> None:
     declared = set(parameters)
-    captured = collect_identifiers(body) - declared
+    captured = body.get_free_identifiers() - declared
     if not captured:
         return
     # Any captured identifier whose name matches a registered constant
