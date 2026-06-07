@@ -332,6 +332,10 @@ class _Plan:
     binders: tuple[tuple[str, tuple[str, ...]], ...]
 
 
+# Comparison plans are built once per class on first comparison and cached
+# forever. This assumes a class's dataclass field schema is frozen after first
+# use; redefining a class (or mutating its fields) under the same identity after
+# it has been compared leaves the stale plan in place.
 _PLAN_CACHE: dict[type, _Plan] = {}
 
 

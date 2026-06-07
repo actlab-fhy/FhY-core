@@ -1019,6 +1019,29 @@ def test_field_type_check_accepts_classvar_field() -> None:
     _GoodClassVar(1)
 
 
+def test_field_type_check_warns_once_for_unresolvable_annotation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test an unresolvable field annotation warns once instead of failing silently.
+
+    The immutability of a field whose annotation cannot be resolved is left
+    unverified; a one-time per-class warning makes that gap visible.
+    """
+
+    @dataclass(frozen=True)
+    class _UnresolvableField(FrozenMixin):
+        value: "_NameThatDoesNotExistAnywhere"  # type: ignore[name-defined]  # noqa: F821
+
+    with caplog.at_level("WARNING", logger="fhy_core.traits.frozen"):
+        _UnresolvableField(1)
+        _UnresolvableField(2)
+
+    matching = [r for r in caplog.records if "not enforced" in r.getMessage()]
+    assert len(matching) == 1
+    assert "value" in matching[0].getMessage()
+    assert "_UnresolvableField" in matching[0].getMessage()
+
+
 def test_field_type_check_skipped_for_abstract_class() -> None:
     """Test an abstract `FrozenMixin` subclass with mutable fields is allowed.
 

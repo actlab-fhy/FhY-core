@@ -33,6 +33,8 @@ from fhy_core.traits.derived_equivalence import (
     excluded_from_equivalence,
 )
 
+from .conftest import mock_identifier
+
 # ===========================================================================
 # Module-level synthetic types (pure inference, no metadata helpers)
 # ===========================================================================
@@ -103,6 +105,41 @@ class _Add(_Term):
 
     left: _Term
     right: _Term
+
+
+class _StructuralOnly:
+    """Implements ``StructuralEquivalence`` but deliberately not ``AlphaEquivalence``.
+
+    Exercises the ``_auto_alpha`` branch that falls back to structural recursion
+    for a sub-object that has no alpha-equivalence capability.
+    """
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def is_structurally_equivalent(self, other: Any) -> bool:
+        return isinstance(other, _StructuralOnly) and self.value == other.value
+
+
+@dataclass(frozen=True, eq=False)
+class _HoldsStructuralOnly(DerivedEquivalenceMixin):
+    """A node whose sub-object only supports structural equivalence."""
+
+    payload: _StructuralOnly
+
+
+@dataclass(frozen=True, eq=False)
+class _SeqOptional(DerivedEquivalenceMixin):
+    """A node with a tuple that may contain ``None`` elements."""
+
+    items: tuple[_Leaf | None, ...]
+
+
+@dataclass(frozen=True, eq=False)
+class _SeqOfComplex(DerivedEquivalenceMixin):
+    """A node with a tuple of un-inferable ``complex`` elements."""
+
+    items: tuple[complex, ...]
 
 
 # ===========================================================================
@@ -247,6 +284,45 @@ def test_empty_sequences_are_equivalent() -> None:
     assert _Seq(()).is_alpha_equivalent(_Seq(()))
 
 
+def test_structural_only_sub_object_recurses_in_alpha_mode() -> None:
+    """Test an alpha comparison falls back to structural recursion for a
+    sub-object that only implements ``StructuralEquivalence``."""
+    assert _HoldsStructuralOnly(_StructuralOnly(1)).is_alpha_equivalent(
+        _HoldsStructuralOnly(_StructuralOnly(1))
+    )
+
+
+def test_structural_only_sub_object_distinguishes_in_alpha_mode() -> None:
+    """Test the structural fallback still distinguishes differing sub-objects."""
+    assert not _HoldsStructuralOnly(_StructuralOnly(1)).is_alpha_equivalent(
+        _HoldsStructuralOnly(_StructuralOnly(2))
+    )
+
+
+def test_sequence_field_distinguishes_length_in_alpha_mode() -> None:
+    """Test sequences of different length are not alpha equivalent."""
+    left = _Seq((_Leaf("a", 1), _Leaf("b", 2)))
+    right = _Seq((_Leaf("a", 1),))
+
+    assert not left.is_alpha_equivalent(right)
+
+
+def test_sequence_with_none_elements_matches_in_alpha_mode() -> None:
+    """Test ``None`` elements in a sequence match positionally in alpha mode."""
+    left = _SeqOptional((None, _Leaf("a", 1)))
+    right = _SeqOptional((None, _Leaf("a", 1)))
+
+    assert left.is_alpha_equivalent(right)
+
+
+def test_sequence_distinguishes_none_from_present_in_alpha_mode() -> None:
+    """Test a ``None`` element does not match a present element in alpha mode."""
+    left = _SeqOptional((None,))
+    right = _SeqOptional((_Leaf("a", 1),))
+
+    assert not left.is_alpha_equivalent(right)
+
+
 # ===========================================================================
 # Optional inference
 # ===========================================================================
@@ -346,8 +422,8 @@ def test_reference_field_compares_by_equality_structurally() -> None:
     class _Ref(DerivedEquivalenceMixin):
         identifier: Identifier = field(metadata=compared_as_reference())
 
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
 
     assert _Ref(x).is_structurally_equivalent(_Ref(x))
     assert not _Ref(x).is_structurally_equivalent(_Ref(y))
@@ -360,8 +436,8 @@ def test_reference_field_consults_the_renaming_in_alpha_mode() -> None:
     class _Ref(DerivedEquivalenceMixin):
         identifier: Identifier = field(metadata=compared_as_reference())
 
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
     renaming = AlphaRenaming.empty().extend({x: y})
 
     assert _Ref(x).is_alpha_equivalent_under(_Ref(y), renaming)
@@ -375,8 +451,8 @@ def test_reference_field_requires_identifier_equality_without_renaming() -> None
     class _Ref(DerivedEquivalenceMixin):
         identifier: Identifier = field(metadata=compared_as_reference())
 
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
 
     assert _Ref(x).is_alpha_equivalent(_Ref(x))
     assert not _Ref(x).is_alpha_equivalent(_Ref(y))
@@ -393,8 +469,8 @@ def test_undeclared_identifier_defaults_to_conservative_equality() -> None:
     class _Plain(DerivedEquivalenceMixin):
         identifier: Identifier
 
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
     renaming = AlphaRenaming.empty().extend({x: y})
 
     assert _Plain(x).is_structurally_equivalent(_Plain(x))
@@ -418,8 +494,8 @@ def test_binder_renames_bound_identifiers_in_the_scoped_body() -> None:
         param: Identifier = field(metadata=compared_as_binder(scopes_over=("body",)))
         body: _Var
 
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
 
     assert _Lam(x, _Var(x)).is_alpha_equivalent(_Lam(y, _Var(y)))
 
@@ -436,7 +512,7 @@ def test_binder_is_alpha_equivalent_to_itself() -> None:
         param: Identifier = field(metadata=compared_as_binder(scopes_over=("body",)))
         body: _Var
 
-    x = Identifier("x")
+    x = mock_identifier("x", 1)
     lam = _Lam(x, _Var(x))
 
     assert lam.is_alpha_equivalent(lam)
@@ -454,8 +530,8 @@ def test_binder_is_not_structurally_equivalent_under_a_rename() -> None:
         param: Identifier = field(metadata=compared_as_binder(scopes_over=("body",)))
         body: _Var
 
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
 
     assert not _Lam(x, _Var(x)).is_structurally_equivalent(_Lam(y, _Var(y)))
 
@@ -472,10 +548,10 @@ def test_binder_distinguishes_free_identifiers_in_the_body() -> None:
         param: Identifier = field(metadata=compared_as_binder(scopes_over=("body",)))
         body: _Var
 
-    x = Identifier("x")
-    y = Identifier("y")
-    free_a = Identifier("a")
-    free_b = Identifier("b")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    free_a = mock_identifier("a", 4)
+    free_b = mock_identifier("b", 5)
 
     assert _Lam(x, _Var(free_a)).is_alpha_equivalent(_Lam(y, _Var(free_a)))
     assert not _Lam(x, _Var(free_a)).is_alpha_equivalent(_Lam(y, _Var(free_b)))
@@ -495,8 +571,8 @@ def test_binder_distinguishes_bound_arity() -> None:
         )
         body: _Var
 
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
 
     assert not _Lam((x,), _Var(x)).is_alpha_equivalent(_Lam((x, y), _Var(x)))
 
@@ -513,9 +589,9 @@ def test_nested_binders_shadow_outer_bindings() -> None:
         param: Identifier = field(metadata=compared_as_binder(scopes_over=("body",)))
         body: "_Var | _Lam"
 
-    x = Identifier("x")
-    a = Identifier("a")
-    b = Identifier("b")
+    x = mock_identifier("x", 1)
+    a = mock_identifier("a", 4)
+    b = mock_identifier("b", 5)
 
     # \x. \x. x  is alpha-equivalent to  \a. \b. b  (inner binder shadows outer)
     left = _Lam(x, _Lam(x, _Var(x)))
@@ -541,9 +617,9 @@ def test_binder_with_non_injective_binding_returns_false() -> None:
         )
         body: _Var
 
-    x = Identifier("x")
-    y = Identifier("y")
-    z = Identifier("z")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    z = mock_identifier("z", 3)
 
     # Two distinct self-side names binding to a single other-side name.
     assert not _Lam((x, y), _Var(x)).is_alpha_equivalent(_Lam((z, z), _Var(z)))
@@ -563,7 +639,7 @@ def test_binder_with_unknown_scopes_over_name_raises_on_first_comparison() -> No
         )
         body: _Var
 
-    x = Identifier("x")
+    x = mock_identifier("x", 1)
     with pytest.raises(EquivalenceDerivationError, match='"bdy" is not a field'):
         _Lam(x, _Var(x)).is_alpha_equivalent(_Lam(x, _Var(x)))
 
@@ -678,6 +754,18 @@ def test_derivation_error_names_the_offending_field() -> None:
         _BadNamed(1j).is_structurally_equivalent(_BadNamed(1j))
 
 
+def test_uninferable_sequence_element_raises_with_sequence_message() -> None:
+    """Test an un-inferable element inside a sequence reports the sequence cause."""
+    with pytest.raises(EquivalenceDerivationError, match="sequence element"):
+        _SeqOfComplex((1 + 2j,)).is_structurally_equivalent(_SeqOfComplex((1 + 2j,)))
+
+
+def test_uninferable_sequence_element_raises_in_alpha_mode() -> None:
+    """Test the in-sequence derivation error also fires through the alpha path."""
+    with pytest.raises(EquivalenceDerivationError, match="sequence element"):
+        _SeqOfComplex((1 + 2j,)).is_alpha_equivalent(_SeqOfComplex((1 + 2j,)))
+
+
 def test_non_dataclass_cannot_be_derived() -> None:
     """Test a non-dataclass deriving class fails with a derivation error."""
 
@@ -746,8 +834,8 @@ def test_alpha_equivalence_does_not_imply_structural_equivalence() -> None:
         param: Identifier = field(metadata=compared_as_binder(scopes_over=("body",)))
         body: _Var
 
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
     left = _Lam(x, _Var(x))
     right = _Lam(y, _Var(y))
 
