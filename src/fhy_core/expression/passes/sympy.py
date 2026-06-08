@@ -16,7 +16,7 @@ from typing import Any, ClassVar
 import sympy  # type: ignore
 import sympy.logic  # type: ignore
 import sympy.logic.boolalg  # type: ignore
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.expression.core import (
     BinaryExpression,
@@ -156,18 +156,18 @@ _LOGGER = get_logger(__name__)
 class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
     """Transforms an expression to SymPy expression."""
 
-    _UNARY_OPERATION_SYMPY_OPERATORS: frozendict[
+    _UNARY_OPERATION_SYMPY_OPERATORS: immutabledict[
         UnaryOperation, Callable[[Any], Any]
-    ] = frozendict(
+    ] = immutabledict(
         {
             UnaryOperation.NEGATE: operator.neg,
             UnaryOperation.POSITIVE: operator.pos,
             UnaryOperation.LOGICAL_NOT: operator.not_,
         }
     )
-    _BINARY_OPERATION_SYMPY_OPERATORS: frozendict[
+    _BINARY_OPERATION_SYMPY_OPERATORS: immutabledict[
         BinaryOperation, Callable[[Any, Any], Any]
-    ] = frozendict(
+    ] = immutabledict(
         {
             BinaryOperation.ADD: operator.add,
             BinaryOperation.SUBTRACT: operator.sub,

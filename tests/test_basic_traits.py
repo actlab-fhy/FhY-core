@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Annotated, ClassVar, Final
 
 import pytest
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core import DATA_DOMAIN
 from fhy_core.diagnostic import (
@@ -1165,25 +1165,25 @@ def test_field_type_check_accepts_pattern_field() -> None:
     _GoodPattern(re.compile("x"))
 
 
-def test_field_type_check_accepts_frozendict_field() -> None:
-    """Test a parameterized ``frozendict[str, int]`` field passes the check."""
+def test_field_type_check_accepts_immutabledict_field() -> None:
+    """Test a parameterized ``immutabledict[str, int]`` field passes the check."""
 
     @dataclass(frozen=True)
     class _GoodFrozendict(FrozenMixin):
-        mapping: frozendict[str, int]
+        mapping: immutabledict[str, int]
 
-    _GoodFrozendict(frozendict({"x": 1}))
+    _GoodFrozendict(immutabledict({"x": 1}))
 
 
-def test_field_type_check_rejects_frozendict_with_mutable_value() -> None:
-    """Test ``frozendict[str, list[int]]`` fails on its mutable value type."""
+def test_field_type_check_rejects_immutabledict_with_mutable_value() -> None:
+    """Test ``immutabledict[str, list[int]]`` fails on its mutable value type."""
 
     @dataclass(frozen=True)
     class _BadFrozendict(FrozenMixin):
-        mapping: frozendict[str, list[int]]
+        mapping: immutabledict[str, list[int]]
 
     with pytest.raises(FrozenFieldTypeError, match="mapping"):
-        _BadFrozendict(frozendict())
+        _BadFrozendict(immutabledict())
 
 
 def test_field_type_check_accepts_annotated_field() -> None:

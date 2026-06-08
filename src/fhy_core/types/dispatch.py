@@ -53,7 +53,7 @@ from functools import singledispatch
 from types import EllipsisType
 from typing import Any
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from ..expression.core import (
     BinaryExpression,
@@ -78,8 +78,8 @@ _LOGGER = get_logger(__name__)
 
 
 def _is_bindings_equivalent(
-    left_bindings: frozendict[Identifier, Any],
-    right_bindings: frozendict[Identifier, Any],
+    left_bindings: immutabledict[Identifier, Any],
+    right_bindings: immutabledict[Identifier, Any],
 ) -> bool:
     if set(left_bindings.keys()) != set(right_bindings.keys()):
         return False
@@ -343,12 +343,14 @@ class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalence):
         expression_bindings: Bindings for shape-variable placeholders.
     """
 
-    data_type_bindings: frozendict[Identifier, DataType] = field(
-        default_factory=frozendict
+    data_type_bindings: immutabledict[Identifier, DataType] = field(
+        default_factory=immutabledict
     )
-    type_bindings: frozendict[Identifier, Type] = field(default_factory=frozendict)
-    expression_bindings: frozendict[Identifier, Expression] = field(
-        default_factory=frozendict
+    type_bindings: immutabledict[Identifier, Type] = field(
+        default_factory=immutabledict
+    )
+    expression_bindings: immutabledict[Identifier, Expression] = field(
+        default_factory=immutabledict
     )
 
     @classmethod

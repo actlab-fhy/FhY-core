@@ -17,7 +17,7 @@ __all__ = [
 from collections.abc import Mapping
 from threading import Lock
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from ..errors import EntryLookupError, EntryRegistrationError
 from .entries import NativeConstant, RegisteredEntry
@@ -54,7 +54,7 @@ def get_registered_entry(name: str) -> RegisteredEntry:
 def get_registered_entries() -> Mapping[str, RegisteredEntry]:
     """Return an immutable snapshot of the current registry."""
     with _REGISTRY_LOCK:
-        return frozendict(_REGISTRY)
+        return immutabledict(_REGISTRY)
 
 
 def is_entry_registered(name: str) -> bool:

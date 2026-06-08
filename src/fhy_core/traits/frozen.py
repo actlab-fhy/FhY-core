@@ -32,7 +32,7 @@ from typing import (
     runtime_checkable,
 )
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.error import register_error
 from fhy_core.logger import get_logger
@@ -138,7 +138,7 @@ _IMMUTABLE_WHITELIST: tuple[type, ...] = (
     pathlib.PurePath,
     tuple,
     frozenset,
-    frozendict,
+    immutabledict,
 )
 """Concrete classes considered immutable for field-type validation.
 
@@ -149,7 +149,7 @@ parameters are checked against the same predicate.
 
 ``types.MappingProxyType`` is deliberately excluded: it is a read-only
 *view* over a backing mapping that can still mutate underneath it, so it
-is not a sound immutable field type. Use ``frozendict`` instead.
+is not a sound immutable field type. Use ``immutabledict`` instead.
 """
 
 _MUTABLE_OUTRIGHT: tuple[type, ...] = (
@@ -197,7 +197,7 @@ def _is_immutable_parameterized_origin(
         return True
     elif origin is tuple or origin in {
         frozenset,
-        frozendict,
+        immutabledict,
     }:
         return all(_is_immutable_annotation(arg, depth - 1) for arg in args)
     else:
@@ -322,7 +322,7 @@ def _check_field_types(target_cls: type) -> None:
         raise FrozenFieldTypeError(
             f"{target_cls.__name__} declares mutable field type(s): {details}. "
             f"Replace each with an immutable equivalent (e.g. tuple, "
-            f"frozenset, frozendict) or have the nested type inherit "
+            f"frozenset, immutabledict) or have the nested type inherit "
             f"FrozenMixin."
         )
 
