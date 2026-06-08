@@ -91,33 +91,35 @@ equivalent. That is the standard IEEE-754 consequence, not an
 ``fhy_core`` quirk.
 """
 
+from fhy_core.utils.override import override
+
 __all__ = [
-    "Serializable",
-    "SerializationFormat",
     "BinaryPayloadCodec",
-    "register_serializable",
-    "WrappedFamilySerializable",
-    "FieldCodec",
-    "register_field_codec",
-    "make_field_codec",
-    "make_enum_field_codec",
-    "make_labeled_enum_field_codec",
-    "SerializationDerivationError",
-    "SerializedDict",
-    "SerializedValue",
-    "SerializedObject",
-    "is_serialized_value",
-    "is_serialized_dict",
     "DeserializationDictStructureError",
     "DeserializationValueError",
+    "FieldCodec",
+    "RegistryWrappedValue",
+    "RegistryWrappedValueLeaf",
+    "Serializable",
+    "SerializationDerivationError",
+    "SerializationFormat",
+    "SerializationPayloadTypeError",
     "SerializationTypeError",
     "SerializationValueError",
-    "SerializationPayloadTypeError",
-    "RegistryWrappedValueLeaf",
-    "RegistryWrappedValue",
-    "is_registry_wrapped_value_leaf",
-    "is_registry_wrapped_value",
+    "SerializedDict",
+    "SerializedObject",
+    "SerializedValue",
+    "WrappedFamilySerializable",
     "deserialize_registry_wrapped_value",
+    "is_registry_wrapped_value",
+    "is_registry_wrapped_value_leaf",
+    "is_serialized_dict",
+    "is_serialized_value",
+    "make_enum_field_codec",
+    "make_field_codec",
+    "make_labeled_enum_field_codec",
+    "register_field_codec",
+    "register_serializable",
     "serialize_registry_wrapped_value",
 ]
 
@@ -167,11 +169,11 @@ SerializedValue: TypeAlias = Union[
 SerializedDict: TypeAlias = dict[str, SerializedValue]
 SerializedObject: TypeAlias = SerializedDict | str | bytes
 RegistryWrappedValueLeaf: TypeAlias = Union[int, bool, str, float, "Serializable"]
-RegistryWrappedValue: TypeAlias = Union[
-    RegistryWrappedValueLeaf,
-    tuple["RegistryWrappedValue", ...],
-    frozenset["RegistryWrappedValue"],
-]
+RegistryWrappedValue: TypeAlias = (
+    RegistryWrappedValueLeaf
+    | tuple["RegistryWrappedValue", ...]
+    | frozenset["RegistryWrappedValue"]
+)
 
 
 def is_serialized_value(v: Any) -> TypeGuard[SerializedValue]:
@@ -312,7 +314,7 @@ class SerializationValueError(SerializationError, ValueError):
     def __init__(self, expected_description_phrase: str, actual_value: Any) -> None:
         super().__init__(
             f"While serializing, expected {expected_description_phrase}, got "
-            f"{repr(actual_value)}"
+            f"{actual_value!r}"
         )
 
 
@@ -363,7 +365,7 @@ class DeserializationValueError(SerializationError, ValueError):
             super().__init__(
                 f'Invalid value for field "{field_name}" while deserializing to '
                 f'"{class_type.__name__}". Expected {expected_description_phrase}, '
-                f"got {repr(actual_value)}"
+                f"got {actual_value!r}"
             )
         else:
             raise ValueError('Invalid arguments for "DeserializationValueError".')
@@ -501,7 +503,8 @@ _REGISTRY_WRAPPED_TUPLE_TYPE_ID: Final[str] = "builtins.tuple"
 _REGISTRY_WRAPPED_FROZENSET_TYPE_ID: Final[str] = "builtins.frozenset"
 
 
-def serialize_registry_wrapped_value(value: RegistryWrappedValue) -> SerializedDict:
+# Dispatch over wrapped value kinds; one return per case reads clearest.
+def serialize_registry_wrapped_value(value: RegistryWrappedValue) -> SerializedDict:  # noqa: PLR0911
     """Serialize a scalar/serializable value into a wrapped registry dict.
 
     Frozenset elements are sorted by ``repr`` so the wrapped form is
@@ -902,19 +905,23 @@ class _ScalarFieldCodec(FieldCodec):
 
     expected: type | UnionType
 
+    @override
     def encode(self, value: Any) -> SerializedValue:
         return cast(SerializedValue, value)
 
+    @override
     def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
         return data
 
     @abstractmethod
+    @override
     def accepts(self, data: Any) -> bool: ...
 
 
 class _IntFieldCodec(_ScalarFieldCodec):
     expected: type | UnionType = int
 
+    @override
     def accepts(self, data: Any) -> bool:
         return isinstance(data, int) and not isinstance(data, bool)
 
@@ -922,9 +929,11 @@ class _IntFieldCodec(_ScalarFieldCodec):
 class _FloatFieldCodec(_ScalarFieldCodec):
     expected: type | UnionType = float
 
+    @override
     def accepts(self, data: Any) -> bool:
         return isinstance(data, (int, float)) and not isinstance(data, bool)
 
+    @override
     def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
         return float(data)
 
@@ -932,6 +941,7 @@ class _FloatFieldCodec(_ScalarFieldCodec):
 class _StrFieldCodec(_ScalarFieldCodec):
     expected: type | UnionType = str
 
+    @override
     def accepts(self, data: Any) -> bool:
         return isinstance(data, str)
 
@@ -939,6 +949,7 @@ class _StrFieldCodec(_ScalarFieldCodec):
 class _BoolFieldCodec(_ScalarFieldCodec):
     expected: type | UnionType = bool
 
+    @override
     def accepts(self, data: Any) -> bool:
         return isinstance(data, bool)
 
@@ -951,12 +962,15 @@ class _OptionalFieldCodec(FieldCodec):
         self._inner = inner
         self.expected = inner.expected | None
 
+    @override
     def encode(self, value: Any) -> SerializedValue:
         return None if value is None else self._inner.encode(value)
 
+    @override
     def accepts(self, data: Any) -> bool:
         return data is None or self._inner.accepts(data)
 
+    @override
     def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
         if data is None:
             return None
@@ -972,6 +986,7 @@ class _SequenceFieldCodec(FieldCodec):
         self._factory = factory
         self._inner = inner
 
+    @override
     def encode(self, value: Any) -> SerializedValue:
         encoded = [self._inner.encode(item) for item in value]
         if self._factory is frozenset:
@@ -982,11 +997,13 @@ class _SequenceFieldCodec(FieldCodec):
             encoded.sort(key=repr)
         return encoded
 
+    @override
     def accepts(self, data: Any) -> bool:
         return isinstance(data, list) and all(
             self._inner.accepts(item) for item in data
         )
 
+    @override
     def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
         return self._factory(
             self._inner.decode(item, field_name=field_name, owner=owner)
@@ -1001,12 +1018,15 @@ class _SerializableFieldCodec(FieldCodec):
     def __init__(self, serializable_cls: type["Serializable"]) -> None:
         self._serializable_cls = serializable_cls
 
+    @override
     def encode(self, value: Any) -> SerializedValue:
         return cast(SerializedValue, value.serialize_to_dict())
 
+    @override
     def accepts(self, data: Any) -> bool:
         return is_serialized_dict(data)
 
+    @override
     def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
         return self._serializable_cls.deserialize_from_dict(data)
 
@@ -1018,6 +1038,7 @@ class _PathFieldCodec(FieldCodec):
     def __init__(self, path_type: type) -> None:
         self._path_type = path_type
 
+    @override
     def encode(self, value: Any) -> SerializedValue:
         # Emit the POSIX form (forward slashes) rather than ``str(value)``: the
         # latter is OS-dependent (backslashes on Windows), which would make the
@@ -1025,9 +1046,11 @@ class _PathFieldCodec(FieldCodec):
         # slashes on every platform, so decoding round-trips everywhere.
         return cast(str, value.as_posix())
 
+    @override
     def accepts(self, data: Any) -> bool:
         return isinstance(data, str)
 
+    @override
     def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
         return self._path_type(data)
 
@@ -1039,12 +1062,15 @@ class _EnumByNameFieldCodec(FieldCodec):
     def __init__(self, enum_type: type[enum.Enum]) -> None:
         self._enum_type = enum_type
 
+    @override
     def encode(self, value: Any) -> SerializedValue:
         return cast(SerializedValue, value.name)
 
+    @override
     def accepts(self, data: Any) -> bool:
         return isinstance(data, str)
 
+    @override
     def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
         try:
             return self._enum_type[data]
@@ -1061,9 +1087,11 @@ class _EnumByValueFieldCodec(FieldCodec):
     def __init__(self, enum_type: type[enum.Enum]) -> None:
         self._enum_type = enum_type
 
+    @override
     def encode(self, value: Any) -> SerializedValue:
         return cast(SerializedValue, value.value)
 
+    @override
     def accepts(self, data: Any) -> bool:
         if issubclass(self._enum_type, str):
             return isinstance(data, str)
@@ -1071,6 +1099,7 @@ class _EnumByValueFieldCodec(FieldCodec):
             return isinstance(data, int) and not isinstance(data, bool)
         return True
 
+    @override
     def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
         try:
             return self._enum_type(data)
@@ -1094,6 +1123,7 @@ class _LabeledEnumFieldCodec(FieldCodec):
         self._value_to_label = labels
         self._label_to_value = {label: member for member, label in labels.items()}
 
+    @override
     def encode(self, value: Any) -> SerializedValue:
         try:
             return cast(SerializedValue, self._value_to_label[value])
@@ -1106,9 +1136,11 @@ class _LabeledEnumFieldCodec(FieldCodec):
                 f"a labeled {self._enum_type.__name__} member", value
             ) from exc
 
+    @override
     def accepts(self, data: Any) -> bool:
         return isinstance(data, str)
 
+    @override
     def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
         try:
             return self._label_to_value[data]
@@ -1131,12 +1163,15 @@ class _FunctionFieldCodec(FieldCodec):
         self._encode_fn = encode_fn
         self._decode_fn = decode_fn
 
+    @override
     def encode(self, value: Any) -> SerializedValue:
         return self._encode_fn(value)
 
+    @override
     def accepts(self, data: Any) -> bool:
         return True
 
+    @override
     def decode(self, data: Any, *, field_name: str, owner: type) -> Any:
         try:
             return self._decode_fn(data)
@@ -1173,7 +1208,8 @@ def _sequence_element_type(origin: type, arguments: tuple[Any, ...]) -> Any:
     raise _CodecInferenceError(origin)
 
 
-def _infer_field_codec(resolved: Any) -> FieldCodec:
+# Type-guard dispatch over annotation kinds; early returns are the clear form.
+def _infer_field_codec(resolved: Any) -> FieldCodec:  # noqa: PLR0911
     annotation = unwrap_annotation(resolved)
     inner, is_optional = split_optional(annotation)
     if is_optional:
@@ -1364,6 +1400,7 @@ class Serializable(ABC):
         "deserialize_from_dict",
     )
 
+    @override
     def __init_subclass__(cls, *, derive: bool = True, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         cls._SERIALIZE_DERIVE = derive
@@ -1375,6 +1412,7 @@ class Serializable(ABC):
         # built and validated here, on first instantiation, because ``@dataclass``
         # finalizes the field list only after ``__init_subclass__`` runs.
         def __new__(cls, *args: Any, **kwargs: Any) -> "Serializable":
+            """Validate the serialization derivation on first instantiation."""
             del args, kwargs
             if not cls.__dict__.get(_SERIALIZE_SETUP_FLAG, False):
                 _validate_serialization_derivation(cls)
@@ -1706,6 +1744,7 @@ class WrappedFamilySerializable(Serializable, ABC):
         "deserialize_data_from_dict",
     )
 
+    @override
     def serialize_to_dict(self) -> SerializedDict:
         return {
             _WRAPPED_TYPE_KEY: self.get_serialization_class_type_id(),
@@ -1713,6 +1752,7 @@ class WrappedFamilySerializable(Serializable, ABC):
         }
 
     @classmethod
+    @override
     def deserialize_from_dict(cls: type[_F], data: SerializedDict) -> _F:
         expected_keys = {_WRAPPED_TYPE_KEY, _WRAPPED_DATA_KEY}
         if not isinstance(data, dict) or set(data) != expected_keys:

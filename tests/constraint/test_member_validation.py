@@ -5,7 +5,8 @@ Validation is exercised through the public `InSetConstraint` and
 kinds.
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 
@@ -75,7 +76,7 @@ def test_set_constraint_rejects_unhashable_outer_container_before_nested(
     # failure, not the None.
     outer = UnhashableTuple((None,))
 
-    with pytest.raises(ConstraintError, match="(?i)hashable"):
+    with pytest.raises(ConstraintError, match=r"(?i)hashable"):
         factory(mock_identifier("x", 0), [outer])
 
 

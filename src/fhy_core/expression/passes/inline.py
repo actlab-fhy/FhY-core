@@ -96,6 +96,7 @@ class FunctionInliner(RewritablePass[Expression]):
         self._in_progress = set()
 
     def visit_call_expression(self, expression: CallExpression) -> Expression | None:
+        """Inline an expression-bodied call by substituting its arguments."""
         name = expression.function_name
         self._reject_if_recursive(name)
         registered = get_registered_entry(name)
@@ -118,7 +119,9 @@ class FunctionInliner(RewritablePass[Expression]):
         expression: CallExpression,
     ) -> Expression:
         _check_call_arity(name, len(registered.parameters), expression.arguments)
-        substitutions = dict(zip(registered.parameters, expression.arguments))
+        substitutions = dict(
+            zip(registered.parameters, expression.arguments, strict=True)
+        )
         substituted_body = registered.body.substitute(substitutions)
         self._in_progress.add(name)
         try:

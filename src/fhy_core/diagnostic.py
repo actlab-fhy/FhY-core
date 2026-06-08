@@ -13,15 +13,17 @@ Provides the layer-agnostic vocabulary for structured diagnostics:
   diagnostics is escalated via :meth:`ValidationReport.raise_if_failed`.
 """
 
+from fhy_core.utils.override import override
+
 __all__ = [
-    "Diagnostic",
-    "DiagnosticLevel",
-    "Note",
-    "NoteKind",
     "OTHER_NOTE_KIND",
     "RATIONALE_NOTE_KIND",
     "REMARK_NOTE_KIND",
     "SUGGESTION_NOTE_KIND",
+    "Diagnostic",
+    "DiagnosticLevel",
+    "Note",
+    "NoteKind",
     "ValidationFailedError",
     "ValidationReport",
 ]
@@ -95,16 +97,20 @@ class NoteKind(
     def __post_init__(self) -> None:
         self.register_interned_instance()
 
+    @override
     def __str__(self) -> str:
         return str(self.name)
 
+    @override
     def get_identifier(self) -> Identifier:
         return self.name
 
+    @override
     def get_intern_key(self) -> Identifier:
         return self.name
 
     @classmethod
+    @override
     def register_default_instances(cls) -> None:
         """Re-register the canonical default note kinds shipped here.
 
@@ -148,6 +154,7 @@ class Note(Serializable, FrozenMixin, EqualMixin):
     message: str
     kind: NoteKind = OTHER_NOTE_KIND
 
+    @override
     def __str__(self) -> str:
         return f"{self.kind}: {self.message}"
 

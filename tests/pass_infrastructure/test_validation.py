@@ -26,6 +26,7 @@ from fhy_core.pass_infrastructure import (
     register_pass,
 )
 from fhy_core.traits import FrozenMixin, PartialEqual, Visitable
+from fhy_core.utils.override import override
 
 
 @dataclass
@@ -301,6 +302,7 @@ def test_validation_manager_synthesizes_error_when_pass_raises_without_reporting
 
     @register_pass("tests.vm.rejects_input", "Rejects None via validate_input.")
     class _RejectsInput(AnalysisVisitablePass[Any]):
+        @override
         def visit_unknown(self, node: Any) -> None:
             _ = node
 
@@ -516,9 +518,11 @@ def test_validator_crash_logs_error_with_exc_info(
         "tests.validation.logging.crash", "Validator that crashes for logging."
     )
     class CrashingValidator(CompilerPass[ValueBox, None]):
+        @override
         def get_noop_output(self, ir: ValueBox) -> None:
             return None
 
+        @override
         def run_pass(self, ir: ValueBox) -> None:
             raise RuntimeError("validator went sideways")
 

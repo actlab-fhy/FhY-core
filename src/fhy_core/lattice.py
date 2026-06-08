@@ -1,5 +1,7 @@
 """Lattice (order theory) utility."""
 
+from fhy_core.utils.override import override
+
 __all__ = ["Lattice"]
 
 from typing import Any, Generic, TypeVar
@@ -64,6 +66,7 @@ class Lattice(Generic[T], VerifiableMixin):
                     return False
         return True
 
+    @override
     def verify(self) -> ValidationReport[Any]:
         """Verify that this structure is a valid lattice.
 

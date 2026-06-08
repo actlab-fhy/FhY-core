@@ -12,6 +12,7 @@ from fhy_core.traits import (
     AlphaRenaming,
     is_identifier_mapping_alpha_equivalent_under,
 )
+from fhy_core.utils.override import override
 
 from .conftest import mock_identifier
 
@@ -28,6 +29,7 @@ class _AlphaLeaf(AlphaEquivalenceMixin):
 
     payload: int
 
+    @override
     def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
         del renaming
         return isinstance(other, _AlphaLeaf) and self.payload == other.payload
@@ -39,6 +41,7 @@ class _IdRef(AlphaEquivalenceMixin):
 
     identifier: Identifier
 
+    @override
     def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
         return isinstance(other, _IdRef) and renaming.are_identifiers_alpha_equivalent(
             self.identifier, other.identifier
@@ -52,6 +55,7 @@ class _Pair(AlphaEquivalenceMixin):
     left: AlphaEquivalenceMixin
     right: AlphaEquivalenceMixin
 
+    @override
     def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
         return (
             isinstance(other, _Pair)
@@ -67,6 +71,7 @@ class _Binder(AlphaEquivalenceMixin):
     parameter: Identifier
     body: AlphaEquivalenceMixin
 
+    @override
     def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
         if not isinstance(other, _Binder):
             return False
@@ -80,6 +85,7 @@ class _MapBag(AlphaEquivalenceMixin):
 
     entries: dict[Identifier, _AlphaLeaf]
 
+    @override
     def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
         return isinstance(
             other, _MapBag
@@ -96,6 +102,7 @@ class _RecordingMixinUser(AlphaEquivalenceMixin):
     received_renamings: list[AlphaRenaming] = field(default_factory=list)
     return_value: bool = True
 
+    @override
     def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
         self.received_others.append(other)
         self.received_renamings.append(renaming)

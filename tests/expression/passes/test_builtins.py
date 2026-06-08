@@ -63,7 +63,8 @@ _BINARY_SYMBOLS: dict[BinaryOperation, str] = {
 }
 
 
-def _structure_summary(expression: Expression) -> str:
+# Test helper: dispatch over expression kinds; one return per kind reads clearest.
+def _structure_summary(expression: Expression) -> str:  # noqa: PLR0911
     """Compact structural summary of an expression tree.
 
     Returns a string capturing the node kinds and operations, useful for

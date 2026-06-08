@@ -143,12 +143,14 @@ class ExpressionEvaluator(RewritablePass[Expression]):
     def visit_identifier_expression(
         self, expression: IdentifierExpression
     ) -> Expression | None:
+        """Resolve a native-constant reference to its literal value."""
         constant_value = _try_get_native_constant_value(expression.identifier.name_hint)
         if constant_value is None:
             return None
         return _build_literal_expression(constant_value)
 
     def visit_call_expression(self, expression: CallExpression) -> Expression | None:
+        """Fold a native-function call with all-literal arguments to a literal."""
         entry = get_registered_entry(expression.function_name)
         if isinstance(entry, NativeConstant):
             raise FunctionArityError(

@@ -90,7 +90,7 @@ def test_stack_clear(text_stack: Stack[str]) -> None:
 
 def test_stack_iter(text_stack: Stack[str]) -> None:
     """Test that we can iterate over the stack and retrieve elements."""
-    for element, expected_element in zip(text_stack, ("fhy", "test")):
+    for element, expected_element in zip(text_stack, ("fhy", "test"), strict=True):
         assert element == expected_element
 
     assert len(list(text_stack)) == 2, (

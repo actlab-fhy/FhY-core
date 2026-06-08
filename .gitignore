@@ -51,6 +51,8 @@ coverage.xml
 .pytest_cache/
 cover/
 *.sqlite
+*.sqlite-journal
+*.sqlite-wal
 mutation-report.html
 
 # Translations

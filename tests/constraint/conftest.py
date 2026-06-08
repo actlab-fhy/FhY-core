@@ -13,16 +13,17 @@ from fhy_core.constraint import (
 from fhy_core.expression import LiteralExpression
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import Serializable, SerializedDict, register_serializable
+from fhy_core.utils.override import override
 
-from ..conftest import (  # noqa: F401  # re-exported below
+from ..conftest import (  # re-exported below
     SerializableEqualHashable,
     mock_identifier,
 )
 
 __all__ = [
     "ALL_KINDS",
-    "HashableNotSerializable",
     "SET_KINDS",
+    "HashableNotSerializable",
     "SerializableEqualHashable",
     "SerializableHashRaises",
     "UnhashableTuple",
@@ -91,16 +92,20 @@ class SerializableHashRaises(Serializable):
     that gets re-wrapped as a ``ConstraintError``.
     """
 
+    @override
     def __hash__(self) -> int:
         raise TypeError("intentionally unhashable at runtime")
 
+    @override
     def __eq__(self, other: object) -> bool:
         return self is other
 
+    @override
     def serialize_to_dict(self) -> dict[str, Any]:
         return {}
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: dict[str, Any]) -> "SerializableHashRaises":
         return cls()
 
@@ -117,9 +122,11 @@ class HashableNotSerializable:
     def __init__(self, value: int) -> None:
         self._value = value
 
+    @override
     def __hash__(self) -> int:
         return hash(self._value)
 
+    @override
     def __eq__(self, other: object) -> bool:
         return (
             isinstance(other, HashableNotSerializable) and self._value == other._value

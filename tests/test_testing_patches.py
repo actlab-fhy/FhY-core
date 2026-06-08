@@ -9,6 +9,7 @@ from fhy_core.testing_patches import (
     fail_fast_structural_equivalence,
 )
 from fhy_core.traits import StructuralEquivalence
+from fhy_core.utils.override import override
 
 
 class _TestClass1(StructuralEquivalence):
@@ -17,6 +18,7 @@ class _TestClass1(StructuralEquivalence):
     def __init__(self, num: int) -> None:
         self.num = num
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         assert isinstance(other, _TestClass1)
         return self.num == other.num
@@ -28,6 +30,7 @@ class _TestClass2(StructuralEquivalence):
     def __init__(self, test: _TestClass1) -> None:
         self.test = test
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         assert isinstance(other, _TestClass2)
         return self.test.is_structurally_equivalent(other.test)

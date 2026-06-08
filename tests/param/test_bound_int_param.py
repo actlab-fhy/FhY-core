@@ -645,7 +645,7 @@ def test_bound_int_param_iter_bounds_accepts_literal_on_left_constraint() -> Non
     p = BoundIntParam(name=var).add_constraint(
         _build_literal_left_constraint(var, BinaryOperation.LESS_EQUAL, 1)
     )
-    p + 0  # noqa: B015  # test: must not raise
+    p + 0  # test: must not raise
 
 
 # =============================================================================

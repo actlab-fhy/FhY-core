@@ -1,6 +1,6 @@
 """Frozen contract for the constraint family."""
 
-from typing import Callable
+from collections.abc import Callable
 
 import pytest
 

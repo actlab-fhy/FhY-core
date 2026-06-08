@@ -11,4 +11,5 @@ _TypeT_co = TypeVar("_TypeT_co", covariant=True)
 class HasType(Protocol[_TypeT_co]):
     """Protocol for values and operations that carry a type."""
 
-    def get_type(self) -> _TypeT_co: ...
+    def get_type(self) -> _TypeT_co:
+        """Return the object's type."""

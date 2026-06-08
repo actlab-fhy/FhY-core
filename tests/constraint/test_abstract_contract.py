@@ -6,6 +6,7 @@ import pytest
 
 from fhy_core.constraint import Constraint
 from fhy_core.expression import Expression, LiteralExpression
+from fhy_core.utils.override import override
 
 from .conftest import mock_identifier
 
@@ -50,22 +51,28 @@ def test_constraint_subclass_with_full_overrides_instantiates() -> None:
     """Test a subclass overriding every abstract method can be instantiated."""
 
     class _ConcreteConstraint(Constraint):
+        @override
         def is_satisfied(self, value: object) -> bool:
             return True
 
+        @override
         def convert_to_expression(self) -> Expression:
             return LiteralExpression(True)
 
+        @override
         def __repr__(self) -> str:
             return "ConcreteConstraint"
 
+        @override
         def __str__(self) -> str:
             return "ConcreteConstraint"
 
+        @override
         def serialize_data_to_dict(self) -> dict[str, Any]:
             return {}
 
         @classmethod
+        @override
         def deserialize_data_from_dict(
             cls, data: dict[str, Any]
         ) -> "_ConcreteConstraint":

@@ -12,6 +12,7 @@ from fhy_core.pass_infrastructure import (
 )
 from fhy_core.traits import VisitableMixin
 from fhy_core.traits.visitable import _camel_to_snake
+from fhy_core.utils.override import override
 
 
 class ToyNode(VisitableMixin):
@@ -21,6 +22,7 @@ class ToyNode(VisitableMixin):
 class ToyNodeConsumer(VisitablePass[ToyNode, int]):
     """Test pass that handles only ToyNode."""
 
+    @override
     def get_noop_output(self, ir: ToyNode) -> int:
         _ = ir
         return 0
@@ -34,13 +36,14 @@ class ToyTreeNode(VisitableMixin):
     """Toy tree node that can optionally expose visit children."""
 
     name: str
-    children: tuple["ToyTreeNode", ...]
+    children: tuple[ToyTreeNode, ...]
 
-    def __init__(self, name: str, children: tuple["ToyTreeNode", ...] = ()) -> None:
+    def __init__(self, name: str, children: tuple[ToyTreeNode, ...] = ()) -> None:
         self.name = name
         self.children = children
 
-    def get_visit_children(self) -> tuple["ToyTreeNode", ...]:
+    @override
+    def get_visit_children(self) -> tuple[ToyTreeNode, ...]:
         return self.children
 
 
@@ -48,9 +51,9 @@ class ToyOpaqueNode(VisitableMixin):
     """Toy node with a child reference but no child enumeration override."""
 
     name: str
-    child: "ToyOpaqueNode | None"
+    child: ToyOpaqueNode | None
 
-    def __init__(self, name: str, child: "ToyOpaqueNode | None" = None) -> None:
+    def __init__(self, name: str, child: ToyOpaqueNode | None = None) -> None:
         self.name = name
         self.child = child
 
@@ -276,9 +279,11 @@ class UnknownHookFallbackConsumer(AnalysisVisitablePass[ToyTreeNode]):
         super().__init__(TraversalOrder.PRE)
         self.events = []
 
+    @override
     def before_visit_unknown(self, node: ToyTreeNode) -> None:
         self.events.append(f"before-unknown:{node.name}")
 
+    @override
     def after_visit_unknown(self, node: ToyTreeNode) -> None:
         self.events.append(f"after-unknown:{node.name}")
 
@@ -311,6 +316,7 @@ class UnhandledNode(VisitableMixin):
 class HandlesNothingVisitablePass(VisitablePass[UnhandledNode, int]):
     """VisitablePass with no `visit_<suffix>` for `UnhandledNode`."""
 
+    @override
     def get_noop_output(self, ir: UnhandledNode) -> int:
         return 0
 

@@ -19,13 +19,13 @@ Three concerns are covered:
 """
 
 __all__ = [
+    "get_field_names",
+    "get_origin_and_arguments",
+    "get_union_members",
     "resolve_annotation",
     "resolve_field_annotations",
-    "get_field_names",
-    "unwrap_annotation",
-    "get_union_members",
     "split_optional",
-    "get_origin_and_arguments",
+    "unwrap_annotation",
 ]
 
 import inspect
@@ -100,7 +100,7 @@ def resolve_field_annotations(cls: type) -> dict[str, Any]:
     """
     try:
         return get_type_hints(cls, include_extras=True)
-    except Exception as exc:  # noqa: BLE001 - resolution failure modes vary
+    except Exception as exc:
         _LOGGER.warning(
             "annotation resolution for %s: whole-class resolution failed "
             "(%s: %s); falling back to per-field resolution",
@@ -121,7 +121,7 @@ def resolve_field_annotations(cls: type) -> dict[str, Any]:
                 resolved[name] = resolve_annotation(
                     raw, globalns=globalns, localns=localns
                 )
-            except Exception as exc:  # noqa: BLE001 - per-field failure modes vary
+            except Exception as exc:
                 _LOGGER.warning(
                     "annotation resolution for %s: could not resolve field %r "
                     "(%s: %s); skipping that field",
@@ -224,7 +224,9 @@ def split_optional(annotation: Any) -> tuple[Any, bool]:
     remaining = tuple(member for member in members if member is not NoneType)
     if len(remaining) == 1:
         return remaining[0], True
-    return Union[remaining], True
+    # Runtime Union construction from a variable-length tuple of types, not a
+    # static annotation; the PEP 604 `|` form cannot build this dynamically.
+    return Union[remaining], True  # noqa: UP007
 
 
 def get_origin_and_arguments(annotation: Any) -> tuple[Any, tuple[Any, ...]] | None:

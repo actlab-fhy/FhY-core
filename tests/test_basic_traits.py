@@ -10,7 +10,7 @@ import re
 from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Annotated, ClassVar, Final, Optional
+from typing import Annotated, ClassVar, Final
 
 import pytest
 from frozendict import frozendict
@@ -46,6 +46,7 @@ from fhy_core.traits import (
     VerifiableMixin,
 )
 from fhy_core.utils import Self
+from fhy_core.utils.override import override
 
 from .conftest import mock_identifier
 
@@ -54,6 +55,7 @@ from .conftest import mock_identifier
 class _IdentifierCarrier(HasIdentifier):
     _identifier: Identifier
 
+    @override
     def get_identifier(self) -> Identifier:
         return self._identifier
 
@@ -62,6 +64,7 @@ class _IdentifierCarrier(HasIdentifier):
 class _ProvenanceCarrier(HasProvenance):
     _provenance: Provenance
 
+    @override
     def get_provenance(self) -> Provenance:
         return self._provenance
 
@@ -76,6 +79,7 @@ class _FrozenNode(FrozenMixin):
 class _PartialOrderableValue(PartialOrderableMixin):
     value: int
 
+    @override
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, _PartialOrderableValue):
             return NotImplemented
@@ -97,7 +101,7 @@ class _AutoEqualValue(EqualMixin):
     value: int
 
 
-class _NoHashEqualValue(EqualMixin):  # noqa: PLW1641
+class _NoHashEqualValue(EqualMixin):
     pass
 
 
@@ -112,7 +116,7 @@ class _AutoOrderableValue(OrderableMixin):  # type: ignore[override]
 
 
 @dataclass(eq=True)
-class _EqualButUnhashableValue(EqualMixin):  # noqa: PLW1641
+class _EqualButUnhashableValue(EqualMixin):
     """Declares total equality and defines ``__eq__`` but is not hashable.
 
     ``@dataclass(eq=True)`` without ``frozen=True`` sets ``__hash__`` to
@@ -133,9 +137,11 @@ class _ManualEqualValue(EqualMixin):
     def __init__(self, value: int) -> None:
         self.value = value
 
+    @override
     def __eq__(self, other: object) -> bool:
         return isinstance(other, _ManualEqualValue) and self.value == other.value
 
+    @override
     def __hash__(self) -> int:
         return hash(self.value)
 
@@ -146,6 +152,7 @@ class _ManualOrderableValue(OrderableMixin):
     def __init__(self, value: int) -> None:
         self.value = value
 
+    @override
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, _ManualOrderableValue):
             return NotImplemented
@@ -172,6 +179,7 @@ class _InternedValue(InternedMixin[str]):
         self.key = key
         self.value = value
 
+    @override
     def get_intern_key(self) -> str:
         return self.key
 
@@ -180,6 +188,7 @@ class _BaseInternedValue(InternedMixin[str]):
     def __init__(self, key: str) -> None:
         self.key = key
 
+    @override
     def get_intern_key(self) -> str:
         return self.key
 
@@ -197,9 +206,11 @@ class _VerifiedFrozenInternedValue(InternedMixin[str], FrozenMixin, VerifiableMi
         self.key = key
         self.payload = payload
 
+    @override
     def get_intern_key(self) -> str:
         return self.key
 
+    @override
     def verify(self) -> ValidationReport[object]:
         type(self).verify_calls += 1
         if not self.key:
@@ -220,6 +231,7 @@ class _RaisingInternedValue(InternedMixin[str]):
         self.key = key
         raise RuntimeError("init failed")
 
+    @override
     def get_intern_key(self) -> str:
         return self.key
 
@@ -232,6 +244,7 @@ class _DataclassInternedValue(InternedMixin[str]):
     def __post_init__(self) -> None:
         self.register_interned_instance()
 
+    @override
     def get_intern_key(self) -> str:
         return self.key
 
@@ -244,6 +257,7 @@ class _NotedInternedValue(InternedMixin[str]):
     def __post_init__(self) -> None:
         self.register_interned_instance()
 
+    @override
     def get_intern_key(self) -> str:
         return self.key
 
@@ -485,7 +499,7 @@ def test_native_frozen_dataclass_with_frozen_mixin() -> None:
     assert point.is_frozen is True
     point.assert_frozen()
     with pytest.raises(FrozenMutationError):
-        setattr(point, "x", 4)
+        point.x = 4
 
 
 def test_native_frozen_dataclass_post_init_can_use_object_setattr() -> None:
@@ -858,7 +872,7 @@ def test_frozen_instance_cannot_be_unfrozen_by_setting_internal_flag() -> None:
     instance = _SimpleFrozen(1)
 
     with pytest.raises(FrozenMutationError):
-        setattr(instance, "_fhy_core_is_frozen", False)
+        instance._fhy_core_is_frozen = False
 
     assert instance.is_frozen is True
 
@@ -1069,6 +1083,7 @@ def test_field_type_check_skipped_for_abstract_class() -> None:
     class _ConcreteFix(_AbstractWithMutable):
         values: tuple[int, ...]  # type: ignore[assignment]
 
+        @override
         def do_thing(self) -> None:
             pass
 
@@ -1207,7 +1222,7 @@ def test_field_type_check_accepts_optional_frozenset_field() -> None:
 
     @dataclass(frozen=True)
     class _GoodOptional(FrozenMixin):
-        values: Optional[frozenset[int]]
+        values: frozenset[int] | None
 
     _GoodOptional(None)
     _GoodOptional(frozenset([1]))
@@ -1316,9 +1331,11 @@ class _InternedFrozenObservesFreeze(InternedMixin[str], FrozenMixin, VerifiableM
         self.key = key
         self.value = value
 
+    @override
     def get_intern_key(self) -> str:
         return self.key
 
+    @override
     def verify(self) -> ValidationReport[object]:
         type(self).observed_is_frozen_during_verify = self.is_frozen
         return ValidationReport()

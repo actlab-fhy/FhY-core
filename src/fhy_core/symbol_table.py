@@ -1,5 +1,7 @@
 """Core symbol table."""
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "FunctionSymbolTableFrame",
     "ImportSymbolTableFrame",
@@ -133,6 +135,7 @@ class FunctionSymbolTableFrame(SymbolTableFrame):
     keyword: FunctionKeyword
     signature: tuple[tuple[TypeQualifier, Type], ...] = field(default_factory=tuple)
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "name": self.name.serialize_to_dict(),
@@ -147,6 +150,7 @@ class FunctionSymbolTableFrame(SymbolTableFrame):
         }
 
     @classmethod
+    @override
     def deserialize_data_from_dict(
         cls, data: SerializedDict
     ) -> "FunctionSymbolTableFrame":
@@ -258,6 +262,7 @@ class SymbolTable(
         self._table = {}
         self._parent_namespace = {}
 
+    @override
     def serialize_to_dict(self) -> SerializedDict:
         return {
             "namespaces": [
@@ -281,6 +286,7 @@ class SymbolTable(
         }
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: SerializedDict) -> "SymbolTable":
         if not _is_valid_symbol_table_data(data):
             raise DeserializationDictStructureError(
@@ -317,6 +323,7 @@ class SymbolTable(
         """Return the number of namespaces in the symbol table."""
         return len(self._table)
 
+    @override
     def canonicalize(self) -> None:
         """Canonicalize namespace and symbol ordering in place.
 
@@ -343,6 +350,7 @@ class SymbolTable(
             )
         }
 
+    @override
     def verify(self) -> ValidationReport[Any]:
         """Verify structural invariants of the symbol table.
 
@@ -403,7 +411,9 @@ class SymbolTable(
 
         return ValidationReport(diagnostics=tuple(diagnostics))
 
-    def is_structurally_equivalent(self, other: object) -> bool:
+    # Structural comparison with guard-clause early returns over field mismatches.
+    @override
+    def is_structurally_equivalent(self, other: object) -> bool:  # noqa: PLR0911
         if not isinstance(other, SymbolTable):
             return False
 

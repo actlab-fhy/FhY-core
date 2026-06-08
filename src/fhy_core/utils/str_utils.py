@@ -2,8 +2,8 @@
 
 __all__ = ["format_comma_separated_list"]
 
-from collections.abc import Iterable
-from typing import Callable, TypeVar
+from collections.abc import Callable, Iterable
+from typing import TypeVar
 
 _T = TypeVar("_T")
 

@@ -22,6 +22,7 @@ from fhy_core.types import (
     substitute_template,
     unify,
 )
+from fhy_core.utils.override import override
 
 
 class SyntheticTaggedType(Type):
@@ -43,10 +44,12 @@ class SyntheticTaggedType(Type):
     def inner(self) -> Type:
         return self._inner
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:  # pragma: no cover
         raise NotImplementedError
 
     @classmethod
+    @override
     def deserialize_data_from_dict(  # pragma: no cover
         cls, data: SerializedDict
     ) -> "SyntheticTaggedType":

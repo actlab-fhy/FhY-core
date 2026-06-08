@@ -220,7 +220,7 @@ def test_identifier_does_not_overload_arithmetic_operators() -> None:
     with pytest.raises(TypeError):
         a + b  # type: ignore[operator]  # test: invalid input
     with pytest.raises(TypeError):
-        -a  # type: ignore[operator]  # test: invalid input
+        -a  # type: ignore[operator]  # noqa: B018  # test: invalid input
 
 
 def test_identifier_does_not_overload_ordering_operators() -> None:
@@ -232,7 +232,7 @@ def test_identifier_does_not_overload_ordering_operators() -> None:
     """
     a, b = Identifier("a"), Identifier("b")
     with pytest.raises(TypeError):
-        a < b  # type: ignore[operator]  # test: invalid input
+        a < b  # type: ignore[operator]  # noqa: B015  # test: invalid input
     with pytest.raises(TypeError):
         sorted([a, b])  # type: ignore[type-var]  # test: invalid input
 

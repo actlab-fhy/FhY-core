@@ -1,5 +1,7 @@
 """Pretty-printer for expressions."""
 
+from fhy_core.utils.override import override
+
 __all__ = ["pformat_expression"]
 
 from fhy_core.pass_infrastructure import PassExecutionError, VisitablePass
@@ -30,6 +32,7 @@ class ExpressionPrettyFormatter(VisitablePass[Expression, str]):
         self._is_id_shown = is_id_shown
         self._is_printed_functional = is_printed_functional
 
+    @override
     def __call__(self, expression: Expression) -> str:
         formatted_expression = super().__call__(expression)
         if not isinstance(formatted_expression, str):
@@ -93,6 +96,7 @@ class ExpressionPrettyFormatter(VisitablePass[Expression, str]):
             return f"({name})"
         return f"{name}({', '.join(rendered_arguments)})"
 
+    @override
     def get_noop_output(self, ir: Expression) -> str:
         raise PassExecutionError(
             f'Pass "{self.get_pass_name()}" does not define noop output.'

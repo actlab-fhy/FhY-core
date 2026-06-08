@@ -1,6 +1,6 @@
 """Tests for `convert_to_expression` cardinality branches."""
 
-from typing import Callable
+from collections.abc import Callable
 
 import pytest
 

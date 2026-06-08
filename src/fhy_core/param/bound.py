@@ -1,8 +1,11 @@
 """Bound numerical parameters."""
 
+from fhy_core.utils.override import override
+
 __all__ = ["BoundIntParam", "BoundNatParam"]
 
-from typing import Any, Iterable, Optional, Tuple, TypeGuard, cast
+from collections.abc import Iterable
+from typing import Any, TypeGuard, cast
 
 from fhy_core.constraint import Constraint, EquationConstraint
 from fhy_core.expression import (
@@ -84,7 +87,7 @@ def _invert_binary_comparison_operation(op: BinaryOperation) -> BinaryOperation:
 
 def _get_bound_from_expression(
     literal_expression: LiteralExpression, op: BinaryOperation
-) -> Tuple[bool, int, bool]:
+) -> tuple[bool, int, bool]:
     value = literal_expression.value
     if not isinstance(value, int):
         raise RuntimeError(
@@ -132,6 +135,7 @@ class BoundIntParam(IntParam):
         super().__init__(name=name, **kwargs)
         self._prefer_inclusive = prefer_inclusive
 
+    @override
     def validate_constraint(self, constraint: Constraint) -> None:
         super().validate_constraint(constraint)
         if not isinstance(constraint, EquationConstraint):
@@ -144,7 +148,7 @@ class BoundIntParam(IntParam):
                 '"x >= k", "x > k", "x <= k", or "x < k" where k is an integer.'
             )
 
-    def _iter_bounds(self) -> Iterable[Tuple[bool, int, bool]]:
+    def _iter_bounds(self) -> Iterable[tuple[bool, int, bool]]:
         """Yield (is_lower, bound_value, inclusive) for constraints.
 
         Fail if any constraint is not a valid bound expression on the same
@@ -159,7 +163,7 @@ class BoundIntParam(IntParam):
             if not _is_valid_bound_expression(constraint.convert_to_expression()):
                 raise RuntimeError(
                     "BoundIntParam somehow has non-bound expression constraint: "
-                    f"{repr(constraint)}"
+                    f"{constraint!r}"
                 )
 
             expression = constraint.convert_to_expression()
@@ -205,7 +209,7 @@ class BoundIntParam(IntParam):
                     "Somehow bound expression is not in the expected form."
                 )
 
-    def _get_effective_min_max(self) -> Tuple[int | None, int | None]:
+    def _get_effective_min_max(self) -> tuple[int | None, int | None]:
         """Return (min_int, max_int) represented by constraints.
 
         Semantics:
@@ -237,8 +241,8 @@ class BoundIntParam(IntParam):
     @staticmethod
     def _create_widened_bound_int_param_from_min_max(
         template: "BoundIntParam",
-        min_int: Optional[int],
-        max_int: Optional[int],
+        min_int: int | None,
+        max_int: int | None,
     ) -> "BoundIntParam":
         """Create a new BoundIntParam from min/max (widens past any subclass).
 
@@ -257,8 +261,8 @@ class BoundIntParam(IntParam):
     def _create_class_preserved_param_from_min_max(
         template: "BoundIntParam",
         other: "BoundIntParam",
-        min_int: Optional[int],
-        max_int: Optional[int],
+        min_int: int | None,
+        max_int: int | None,
     ) -> "BoundIntParam":
         """Create a new param preserving the runtime class when operands match.
 
@@ -281,8 +285,8 @@ class BoundIntParam(IntParam):
     @staticmethod
     def _apply_min_max_to_param(
         out: "BoundIntParam",
-        min_int: Optional[int],
-        max_int: Optional[int],
+        min_int: int | None,
+        max_int: int | None,
     ) -> "BoundIntParam":
         """Apply min/max bound constraints honoring ``out``'s prefer_inclusive."""
         if min_int is not None:
@@ -299,6 +303,7 @@ class BoundIntParam(IntParam):
         return out
 
     @classmethod
+    @override
     def between(
         cls: type[Self],
         lower_bound: int,
@@ -316,6 +321,7 @@ class BoundIntParam(IntParam):
         return p
 
     @classmethod
+    @override
     def with_lower_bound(
         cls: type[Self],
         lower_bound: int,
@@ -329,6 +335,7 @@ class BoundIntParam(IntParam):
         return p
 
     @classmethod
+    @override
     def with_upper_bound(
         cls: type[Self],
         upper_bound: int,
@@ -349,16 +356,19 @@ class BoundIntParam(IntParam):
         name: Identifier | None = None,
         prefer_inclusive: bool = True,
     ) -> "BoundIntParam":
+        """Create a parameter bounded to exactly the given integer value."""
         p = cls(name=name, prefer_inclusive=prefer_inclusive)
         p = p.add_lower_bound_constraint(value, is_inclusive=True)
         p = p.add_upper_bound_constraint(value, is_inclusive=True)
         return p
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
         super_dict["prefer_inclusive"] = self._prefer_inclusive
         return super_dict
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, BoundIntParam)
@@ -367,6 +377,7 @@ class BoundIntParam(IntParam):
         )
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "BoundIntParam":
         if not _is_valid_bound_param_data(data):
             raise DeserializationDictStructureError(
@@ -462,6 +473,7 @@ class BoundNatParam(BoundIntParam, NatParam):
         )
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "BoundNatParam":
         if not _is_valid_bound_param_data(data):
             raise DeserializationDictStructureError(

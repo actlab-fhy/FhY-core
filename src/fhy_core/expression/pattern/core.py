@@ -9,6 +9,8 @@ rewriting on top of these primitives lives in the sibling
 ``rewrite.py`` module.
 """
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "AlternativesPattern",
     "BinaryExpressionPattern",
@@ -167,6 +169,7 @@ class MatchBindings(FrozenMixin):
             return self
         return None
 
+    @override
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, MatchBindings):
             return NotImplemented
@@ -178,6 +181,7 @@ class MatchBindings(FrozenMixin):
                 for name in self.bindings
             )
 
+    @override
     def __hash__(self) -> int:
         return hash(frozenset(self.bindings.keys()))
 
@@ -236,6 +240,7 @@ class WildcardPattern(Pattern):
     always succeeds; the input bindings are returned unchanged.
     """
 
+    @override
     def match_under(
         self, expression: Expression, bindings: MatchBindings
     ) -> MatchBindings | None:
@@ -264,6 +269,7 @@ class CapturePattern(Pattern):
     name: str
     sub_pattern: Pattern
 
+    @override
     def match_under(
         self, expression: Expression, bindings: MatchBindings
     ) -> MatchBindings | None:
@@ -289,6 +295,7 @@ class LiteralPattern(Pattern):
 
     value: LiteralType | None = None
 
+    @override
     def match_under(
         self, expression: Expression, bindings: MatchBindings
     ) -> MatchBindings | None:
@@ -323,6 +330,7 @@ class IdentifierPattern(Pattern):
 
     identifier: Identifier | None = None
 
+    @override
     def match_under(
         self, expression: Expression, bindings: MatchBindings
     ) -> MatchBindings | None:
@@ -351,6 +359,7 @@ class UnaryExpressionPattern(Pattern):
     operation: UnaryOperation | None
     operand: Pattern
 
+    @override
     def match_under(
         self, expression: Expression, bindings: MatchBindings
     ) -> MatchBindings | None:
@@ -379,6 +388,7 @@ class BinaryExpressionPattern(Pattern):
     left: Pattern
     right: Pattern
 
+    @override
     def match_under(
         self, expression: Expression, bindings: MatchBindings
     ) -> MatchBindings | None:
@@ -409,6 +419,7 @@ class TernaryExpressionPattern(Pattern):
     true_value: Pattern
     false_value: Pattern
 
+    @override
     def match_under(
         self, expression: Expression, bindings: MatchBindings
     ) -> MatchBindings | None:
@@ -444,6 +455,7 @@ class CallExpressionPattern(Pattern):
     function_name: str | None
     arguments: tuple[Pattern, ...] | None
 
+    @override
     def match_under(
         self, expression: Expression, bindings: MatchBindings
     ) -> MatchBindings | None:
@@ -459,7 +471,9 @@ class CallExpressionPattern(Pattern):
         elif len(self.arguments) != len(expression.arguments):
             return None
         accumulator = bindings
-        for argument_pattern, argument in zip(self.arguments, expression.arguments):
+        for argument_pattern, argument in zip(
+            self.arguments, expression.arguments, strict=True
+        ):
             next_bindings = argument_pattern.match_under(argument, accumulator)
             if next_bindings is None:
                 return None
@@ -483,6 +497,7 @@ class PredicatePattern(Pattern):
 
     predicate: Callable[[Expression], bool]
 
+    @override
     def match_under(
         self, expression: Expression, bindings: MatchBindings
     ) -> MatchBindings | None:
@@ -516,6 +531,7 @@ class AlternativesPattern(Pattern):
         if not self.alternatives:
             raise ValueError("AlternativesPattern.alternatives must be non-empty.")
 
+    @override
     def match_under(
         self, expression: Expression, bindings: MatchBindings
     ) -> MatchBindings | None:

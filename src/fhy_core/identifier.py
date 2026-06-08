@@ -1,5 +1,7 @@
 """Unique identifier for named compiler objects."""
 
+from fhy_core.utils.override import override
+
 __all__ = ["Identifier"]
 
 from threading import Lock
@@ -77,16 +79,20 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
 
     @property
     def name_hint(self) -> str:
+        """Return the identifier's name hint."""
         return self._name_hint
 
     @property
     def id(self) -> int:
+        """Return the identifier's unique id."""
         return self._id
 
+    @override
     def serialize_to_dict(self) -> SerializedDict:
         return {"id": self._id, "name_hint": self._name_hint}
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: SerializedDict) -> "Identifier":
         if not _is_valid_identifier_data(data):
             raise DeserializationDictStructureError(
@@ -113,14 +119,18 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
         identifier.freeze()
         return identifier
 
+    @override
     def __eq__(self, other: Any) -> bool:
         return isinstance(other, Identifier) and self._id == other._id
 
+    @override
     def __hash__(self) -> int:
         return hash(self._id)
 
+    @override
     def __str__(self) -> str:
         return self._name_hint
 
+    @override
     def __repr__(self) -> str:
         return f"{self._name_hint}::{self._id}"

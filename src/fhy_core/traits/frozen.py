@@ -1,5 +1,7 @@
 """`Frozen` trait and mixin."""
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "Frozen",
     "FrozenFieldTypeError",
@@ -102,11 +104,14 @@ class Frozen(Protocol):
     """
 
     @property
-    def is_frozen(self) -> bool: ...
+    def is_frozen(self) -> bool:
+        """Whether the object is frozen."""
 
-    def freeze(self) -> None: ...
+    def freeze(self) -> None:
+        """Freeze the object, preventing further mutation."""
 
-    def assert_frozen(self) -> None: ...
+    def assert_frozen(self) -> None:
+        """Raise if the object is not frozen."""
 
 
 _IMMUTABLE_WHITELIST: tuple[type, ...] = (
@@ -199,7 +204,8 @@ def _is_immutable_parameterized_origin(
         return None
 
 
-def _is_immutable_annotation(
+# Recursive type-structure dispatch over annotation kinds; early returns read clearest.
+def _is_immutable_annotation(  # noqa: PLR0911
     annotation: Any, depth: int = _MAX_FIELD_TYPE_DEPTH
 ) -> bool:
     """Return ``True`` iff ``annotation`` statically describes an immutable type.
@@ -470,6 +476,7 @@ class FrozenMixin(ABC):
 
     _FREEZE_ON_INIT: ClassVar[bool] = True
 
+    @override
     def __init_subclass__(
         cls,
         *,
@@ -507,6 +514,7 @@ class FrozenMixin(ABC):
         def __new__(
             cls: type[_FrozenMixinT], *args: Any, **kwargs: Any
         ) -> _FrozenMixinT:
+            """Run one-time class setup on first instantiation."""
             del args, kwargs
             if not cls.__dict__.get(_CLASS_SETUP_DONE_FLAG, False):
                 _setup_class(cls)
@@ -514,6 +522,7 @@ class FrozenMixin(ABC):
 
     @property
     def is_frozen(self) -> bool:
+        """Whether the object is frozen."""
         if type(self).__dict__.get(_IS_NATIVE_FROZEN_DATACLASS_CACHE, False):
             return True
         try:
@@ -549,6 +558,7 @@ class FrozenMixin(ABC):
                 f"to FrozenMixin; the freeze invariant is unenforceable."
             )
 
+    @override
     def __setattr__(self, name: str, value: Any) -> None:
         if name == "__orig_class__":
             # ``typing.Generic.__class_getitem__`` writes ``__orig_class__``
@@ -565,6 +575,7 @@ class FrozenMixin(ABC):
             )
         object.__setattr__(self, name, value)
 
+    @override
     def __delattr__(self, name: str) -> None:
         if self.is_frozen:
             raise FrozenMutationError(
