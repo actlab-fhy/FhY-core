@@ -1,5 +1,7 @@
 """`Interned` trait and mixin."""
 
+from fhy_core.utils.override import override
+
 __all__ = ["Interned", "InternedMixin"]
 
 import dataclasses
@@ -70,6 +72,7 @@ class InternedMixin(Generic[_K], ABC):
     _interned_instances: ClassVar[dict[Hashable, "InternedMixin[Any]"] | None] = None
     _intern_init_depth: int
 
+    @override
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
 

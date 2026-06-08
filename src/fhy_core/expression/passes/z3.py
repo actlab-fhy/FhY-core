@@ -1,5 +1,7 @@
 """Expression passes that interface with Z3."""
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "assert_expression_implies",
     "assert_holds_for_all_free_assignments",
@@ -195,6 +197,7 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
     def format_identifier(identifier: Identifier) -> str:
         return f"{identifier.name_hint}_{identifier.id}"
 
+    @override
     def get_noop_output(self, ir: Expression) -> z3.ExprRef:
         raise PassExecutionError(
             f'Pass "{self.get_pass_name()}" does not define noop output.'

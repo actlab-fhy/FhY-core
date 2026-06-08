@@ -1,5 +1,7 @@
 """Bound numerical parameters."""
 
+from fhy_core.utils.override import override
+
 __all__ = ["BoundIntParam", "BoundNatParam"]
 
 from typing import Any, Iterable, Optional, Tuple, TypeGuard, cast
@@ -132,6 +134,7 @@ class BoundIntParam(IntParam):
         super().__init__(name=name, **kwargs)
         self._prefer_inclusive = prefer_inclusive
 
+    @override
     def validate_constraint(self, constraint: Constraint) -> None:
         super().validate_constraint(constraint)
         if not isinstance(constraint, EquationConstraint):
@@ -299,6 +302,7 @@ class BoundIntParam(IntParam):
         return out
 
     @classmethod
+    @override
     def between(
         cls: type[Self],
         lower_bound: int,
@@ -316,6 +320,7 @@ class BoundIntParam(IntParam):
         return p
 
     @classmethod
+    @override
     def with_lower_bound(
         cls: type[Self],
         lower_bound: int,
@@ -329,6 +334,7 @@ class BoundIntParam(IntParam):
         return p
 
     @classmethod
+    @override
     def with_upper_bound(
         cls: type[Self],
         upper_bound: int,
@@ -349,16 +355,19 @@ class BoundIntParam(IntParam):
         name: Identifier | None = None,
         prefer_inclusive: bool = True,
     ) -> "BoundIntParam":
+        """Create a parameter bounded to exactly the given integer value."""
         p = cls(name=name, prefer_inclusive=prefer_inclusive)
         p = p.add_lower_bound_constraint(value, is_inclusive=True)
         p = p.add_upper_bound_constraint(value, is_inclusive=True)
         return p
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
         super_dict["prefer_inclusive"] = self._prefer_inclusive
         return super_dict
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, BoundIntParam)
@@ -367,6 +376,7 @@ class BoundIntParam(IntParam):
         )
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "BoundIntParam":
         if not _is_valid_bound_param_data(data):
             raise DeserializationDictStructureError(
@@ -462,6 +472,7 @@ class BoundNatParam(BoundIntParam, NatParam):
         )
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "BoundNatParam":
         if not _is_valid_bound_param_data(data):
             raise DeserializationDictStructureError(

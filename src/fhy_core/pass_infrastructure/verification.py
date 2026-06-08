@@ -24,6 +24,8 @@ lives in ``ClassVar`` attributes, there are no instances, and every
 method is a classmethod.
 """
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "VerificationAnalysis",
     "VerificationRegistry",
@@ -154,6 +156,7 @@ class VerificationAnalysis(Analysis[Any, ValidationReport[Any]]):
     preserved.
     """
 
+    @override
     def run(self, ir: Any) -> ValidationReport[Any]:
         """Run every registered verification pass for ``type(ir)``.
 

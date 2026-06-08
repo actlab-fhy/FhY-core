@@ -1,5 +1,7 @@
 """`PartialEqual`/`Equal` traits and mixins."""
 
+from fhy_core.utils.override import override
+
 __all__ = ["Equal", "EqualMixin", "PartialEqual", "PartialEqualMixin"]
 
 from dataclasses import is_dataclass
@@ -12,8 +14,10 @@ class PartialEqual(Protocol):  # noqa: PLW1641
     """Protocol for objects that define `==` semantics."""
 
     @property
-    def supports_partial_equality(self) -> bool: ...
+    def supports_partial_equality(self) -> bool:
+        """Whether ``==`` is reliable (possibly partial) for this object."""
 
+    @override
     def __eq__(self, other: object) -> bool | NotImplementedType: ...
 
 
@@ -34,6 +38,7 @@ class Equal(PartialEqual, Protocol):
         When ``True``, ``supports_partial_equality`` is also ``True``.
         """
 
+    @override
     def __hash__(self) -> int: ...
 
 
@@ -42,14 +47,17 @@ class PartialEqualMixin:
 
     @property
     def supports_partial_equality(self) -> bool:
+        """Whether ``==`` is reliable (possibly partial) for this object."""
         if self._is_native_equatable_dataclass():
             return True
         type_eq = getattr(type(self), "__eq__")
         return type_eq is not object.__eq__ and type_eq is not PartialEqualMixin.__eq__
 
+    @override
     def __eq__(self, other: object) -> bool | NotImplementedType:
         return NotImplemented
 
+    @override
     def __hash__(self) -> int:
         raise TypeError(f'Unhashable type: "{type(self).__name__}"')
 
@@ -65,6 +73,7 @@ class EqualMixin(PartialEqualMixin):
 
     @property
     def supports_equality(self) -> bool:
+        """Whether ``==`` and ``hash()`` are both reliable for this object."""
         if not self.supports_partial_equality:
             return False
         type_hash = getattr(type(self), "__hash__", None)
@@ -75,6 +84,7 @@ class EqualMixin(PartialEqualMixin):
             and type_hash is not PartialEqualMixin.__hash__
         )
 
+    @override
     def __hash__(self) -> int:
         raise NotImplementedError(
             f'"{type(self).__name__}" declares total equality via '

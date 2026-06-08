@@ -1,5 +1,7 @@
 """Expression passes that interface with SymPy."""
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "convert_expression_to_sympy_expression",
     "convert_sympy_expression_to_expression",
@@ -251,7 +253,8 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             )
         return TypeError(f"native function {name!r} has no SymPy lowering registered")
 
-    def visit_literal_expression(
+    # One return per literal kind lowered to SymPy; flattening would not help.
+    def visit_literal_expression(  # noqa: PLR0911
         self, literal_expression: LiteralExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
         value = literal_expression.value
@@ -282,6 +285,7 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
     def format_identifier(identifier: Identifier) -> str:
         return f"{identifier.name_hint}_{identifier.id}"
 
+    @override
     def get_noop_output(self, ir: Expression) -> Any:
         raise PassExecutionError(
             f'Pass "{self.get_pass_name()}" does not define noop output.'
@@ -374,9 +378,11 @@ class SymPyToExpressionConverter(
         (sympy.GreaterThan, "_convert_greater_than"),
     )
 
+    @override
     def run_pass(self, ir: sympy.Expr | sympy.logic.boolalg.Boolean) -> Expression:
         return self.convert(ir)
 
+    @override
     def get_noop_output(
         self, ir: sympy.Expr | sympy.logic.boolalg.Boolean
     ) -> Expression:

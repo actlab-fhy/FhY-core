@@ -16,12 +16,14 @@ from fhy_core.traits import (
     Verifiable,
     VerifiableMixin,
 )
+from fhy_core.utils.override import override
 
 
 @dataclass
 class _TypedValue(HasType[str]):
     _type: str
 
+    @override
     def get_type(self) -> str:
         return self._type
 
@@ -30,6 +32,7 @@ class _TypedValue(HasType[str]):
 class _VerifiableNode(VerifiableMixin):
     is_valid: bool
 
+    @override
     def verify(self) -> ValidationReport[object]:
         if self.is_valid:
             return ValidationReport()

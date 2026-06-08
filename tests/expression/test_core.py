@@ -27,6 +27,7 @@ from fhy_core.serialization import (
     SerializedDict,
 )
 from fhy_core.traits import FrozenMutationError, HasOperands, StructuralEquivalence
+from fhy_core.utils.override import override
 
 from .conftest import mock_identifier
 
@@ -866,10 +867,12 @@ def test_new_expression_subclass_derives_equivalence_without_registration() -> N
     class _NewExpression(Expression):  # test-local subclass
         value: int
 
+        @override
         def serialize_data_to_dict(self) -> SerializedDict:  # pragma: no cover
             return {"value": self.value}
 
         @classmethod
+        @override
         def deserialize_data_from_dict(  # pragma: no cover
             cls, data: SerializedDict
         ) -> "_NewExpression":

@@ -17,6 +17,8 @@ raw lookup error and returns ``None``: "trust the declared target sort;
 the call-site check enforces the actual signature at use time."
 """
 
+from fhy_core.utils.override import override
+
 __all__ = ["check_registered_function_body", "RegisteredFunctionBodyTypeChecker"]
 
 from collections.abc import Sequence
@@ -129,12 +131,15 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
             return
         self._check_body_core_data_type_against_sort(body_type)
 
+    @override
     def run_pass(self, ir: Expression) -> None:
         self.check(ir)
 
+    @override
     def get_noop_output(self, ir: Expression) -> None:
         _ = ir
 
+    @override
     def did_change(self, input_ir: Expression, output: None) -> bool:
         _ = (input_ir, output)
         return False

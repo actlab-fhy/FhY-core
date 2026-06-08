@@ -11,4 +11,5 @@ from fhy_core.identifier import Identifier
 class HasIdentifier(Protocol):
     """Protocol for objects that have a stable identifier."""
 
-    def get_identifier(self) -> Identifier: ...
+    def get_identifier(self) -> Identifier:
+        """Return the object's stable identifier."""

@@ -17,6 +17,7 @@ from fhy_core.traits import (
     HasFreeIdentifiers,
     Term,
 )
+from fhy_core.utils.override import override
 
 from .conftest import mock_identifier
 
@@ -30,6 +31,7 @@ class _Var(AlphaEquivalenceMixin):
     def get_free_identifiers(self) -> frozenset[Identifier]:
         return frozenset({self.identifier})
 
+    @override
     def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
         return isinstance(other, _Var) and renaming.are_identifiers_alpha_equivalent(
             self.identifier, other.identifier
@@ -51,6 +53,7 @@ class _App(AlphaEquivalenceMixin):
             self.function.get_free_identifiers() | self.argument.get_free_identifiers()
         )
 
+    @override
     def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
         return (
             isinstance(other, _App)
@@ -72,18 +75,22 @@ class _Lam(BinderMixin):
     parameters: tuple[Identifier, ...]
     body: Term
 
+    @override
     def get_bound_identifiers(self) -> Sequence[Identifier]:
         return self.parameters
 
+    @override
     def get_scoped_children(self) -> Sequence[Term]:
         return (self.body,)
 
+    @override
     def rename_bound_identifier(self, old: Identifier, new: Identifier) -> "_Lam":
         renamed_parameters = tuple(
             new if parameter == old else parameter for parameter in self.parameters
         )
         return _Lam(renamed_parameters, self.body.substitute({old: _Var(new)}))
 
+    @override
     def rebuild_with_scoped_children(self, new_children: Sequence[Term]) -> "_Lam":
         (new_body,) = new_children
         return _Lam(self.parameters, new_body)
@@ -96,12 +103,15 @@ class _Block(BinderMixin):
     parameters: tuple[Identifier, ...]
     statements: tuple[Term, ...]
 
+    @override
     def get_bound_identifiers(self) -> Sequence[Identifier]:
         return self.parameters
 
+    @override
     def get_scoped_children(self) -> Sequence[Term]:
         return self.statements
 
+    @override
     def rename_bound_identifier(self, old: Identifier, new: Identifier) -> "_Block":
         renamed_parameters = tuple(
             new if parameter == old else parameter for parameter in self.parameters
@@ -111,6 +121,7 @@ class _Block(BinderMixin):
         )
         return _Block(renamed_parameters, renamed_statements)
 
+    @override
     def rebuild_with_scoped_children(self, new_children: Sequence[Term]) -> "_Block":
         return _Block(self.parameters, tuple(new_children))
 

@@ -25,6 +25,8 @@ field; supply :func:`compared_with` or :func:`compared_as_value` to
 resolve it.
 """
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "EQUIVALENCE_METADATA_KEY",
     "DerivedEquivalenceMixin",
@@ -258,7 +260,8 @@ def _auto_structural(left: Any, right: Any) -> bool:
     raise _ComparatorInferenceError(type(left))
 
 
-def _auto_alpha(left: Any, right: Any, renaming: AlphaRenaming) -> bool:
+# Type-guard dispatch over comparable value kinds; early returns read clearest.
+def _auto_alpha(left: Any, right: Any, renaming: AlphaRenaming) -> bool:  # noqa: PLR0911
     if left is None or right is None:
         return left is right
     if isinstance(left, AlphaEquivalence):
@@ -440,6 +443,7 @@ class DerivedEquivalenceMixin(StructuralEquivalence, AlphaEquivalenceMixin):
             no role metadata.
     """
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         """Return whether ``self`` and ``other`` are structurally equivalent.
 
@@ -487,6 +491,7 @@ class DerivedEquivalenceMixin(StructuralEquivalence, AlphaEquivalenceMixin):
                 return False
         return True
 
+    @override
     def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
         """Return whether self and other are alpha-equivalent under the renaming.
 

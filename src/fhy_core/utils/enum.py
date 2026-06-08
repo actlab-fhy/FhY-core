@@ -1,10 +1,20 @@
 """String and integer enumeration fix for Python 3.10.
 
+``enum.StrEnum`` was added in Python 3.11; this module backports it (and a
+matching ``IntEnum``) for Python 3.10.
+
+Note:
+    Remove this module when Python 3.10 support is dropped (i.e. when the
+    minimum supported version becomes 3.11). At that point, import ``IntEnum``
+    and ``StrEnum`` directly from :mod:`enum` instead.
+
 Note:
     The following code is adapted from the CPython source code. The original
     code can be found at: https://github.com/python/cpython/blob/main/Lib/enum.py
 
 """
+
+from fhy_core.utils.override import override
 
 __all__ = ["IntEnum", "StrEnum"]
 
@@ -32,6 +42,7 @@ except ImportError:
         __str__ = str.__str__
 
         @staticmethod
+        @override
         def _generate_next_value_(
             name: str, start: int, count: int, last_values: list[Any]
         ) -> str:

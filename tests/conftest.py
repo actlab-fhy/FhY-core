@@ -8,6 +8,7 @@ import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import Serializable, register_serializable
+from fhy_core.utils.override import override
 
 __all__ = [
     "SerializableEqualHashable",
@@ -79,17 +80,21 @@ class SerializableEqualHashable(Serializable):
     def value(self) -> int:
         return self._value
 
+    @override
     def __eq__(self, other: object) -> bool:
         return isinstance(other, SerializableEqualHashable) and (
             self._value == other._value
         )
 
+    @override
     def __hash__(self) -> int:
         return hash(self._value)
 
+    @override
     def serialize_to_dict(self) -> dict[str, Any]:
         return {"value": self._value}
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: dict[str, Any]) -> "SerializableEqualHashable":
         return cls(value=int(data["value"]))

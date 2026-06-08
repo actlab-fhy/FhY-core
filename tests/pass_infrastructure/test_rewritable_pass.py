@@ -22,6 +22,7 @@ import pytest
 
 from fhy_core.pass_infrastructure import RewritablePass
 from fhy_core.traits import RewritableMixin, VisitableMixin
+from fhy_core.utils.override import override
 
 # =============================================================================
 # Toy IR: a small `Visitable + Rewritable` node hierarchy
@@ -38,9 +39,11 @@ class ToyNode(VisitableMixin, RewritableMixin["ToyNode"]):
     is satisfied for the whole hierarchy.
     """
 
+    @override
     def get_visit_children(self) -> tuple["ToyNode", ...]:
         return ()
 
+    @override
     def rebuild_with_visit_children(
         self, new_children: Sequence["ToyNode"]
     ) -> "ToyNode":
@@ -65,9 +68,11 @@ class ToyUnary(ToyNode):
 
     operand: ToyNode
 
+    @override
     def get_visit_children(self) -> tuple[ToyNode, ...]:
         return (self.operand,)
 
+    @override
     def rebuild_with_visit_children(self, new_children: Sequence[ToyNode]) -> ToyUnary:
         (operand,) = new_children
         return ToyUnary(operand)
@@ -80,9 +85,11 @@ class ToyPair(ToyNode):
     left: ToyNode
     right: ToyNode
 
+    @override
     def get_visit_children(self) -> tuple[ToyNode, ...]:
         return (self.left, self.right)
 
+    @override
     def rebuild_with_visit_children(self, new_children: Sequence[ToyNode]) -> ToyPair:
         left, right = new_children
         return ToyPair(left, right)
@@ -94,9 +101,11 @@ class ToyList(ToyNode):
 
     children: tuple[ToyNode, ...] = field(default_factory=tuple)
 
+    @override
     def get_visit_children(self) -> tuple[ToyNode, ...]:
         return self.children
 
+    @override
     def rebuild_with_visit_children(self, new_children: Sequence[ToyNode]) -> ToyList:
         return ToyList(tuple(new_children))
 
@@ -233,6 +242,7 @@ class _BrokenContainer(ToyNode):
 
     operand: ToyNode
 
+    @override
     def get_visit_children(self) -> tuple[ToyNode, ...]:
         return (self.operand,)
 

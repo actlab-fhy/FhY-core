@@ -36,6 +36,7 @@ from fhy_core.pass_infrastructure import (
     run_verification,
 )
 from fhy_core.traits import FrozenMixin, VerifiableMixin, Visitable
+from fhy_core.utils.override import override
 
 # ---------------------------------------------------------------------------
 # Shared test scaffolding.
@@ -90,6 +91,7 @@ def build_clean_pass(
 
     @register_verification(ir_type, pass_name, f"Clean verification pass: {pass_name}")
     class _CleanPass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -105,6 +107,7 @@ def build_error_pass(
         ir_type, pass_name, f"Error-emitting verification pass: {pass_name}"
     )
     class _ErrorPass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, message)
@@ -121,6 +124,7 @@ def build_warning_pass(
         ir_type, pass_name, f"Warning-emitting verification pass: {pass_name}"
     )
     class _WarningPass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.WARNING, message)
@@ -137,6 +141,7 @@ def build_crashing_pass(
         ir_type, pass_name, f"Crashing verification pass: {pass_name}"
     )
     class _CrashingPass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
             raise RuntimeError(exception_message)
@@ -156,6 +161,7 @@ def test_registry_register_stores_pass_class_for_type(
 
     @register_pass("tests.vr.register_basic", "Pass for register_basic test.")
     class _Pass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -171,6 +177,7 @@ def test_registry_register_returns_none(fresh_box_ir: type[_BoxIR]) -> None:
         "tests.vr.register_returns_none", "Pass for register_returns_none test."
     )
     class _Pass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -193,6 +200,7 @@ def test_registry_register_is_idempotent_for_same_pair(
 
     @register_pass("tests.vr.idempotent", "Pass for idempotent registration test.")
     class _Pass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -209,11 +217,13 @@ def test_registry_register_preserves_order_of_multiple_passes(
 
     @register_pass("tests.vr.order_a", "First pass for ordering test.")
     class _PassA(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     @register_pass("tests.vr.order_b", "Second pass for ordering test.")
     class _PassB(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -230,11 +240,13 @@ def test_registry_get_passes_for_walks_mro_base_first(
 
     @register_pass("tests.vr.mro_base", "Base-class pass for MRO test.")
     class _BasePass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
     @register_pass("tests.vr.mro_sub", "Subclass pass for MRO test.")
     class _SubPass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -255,6 +267,7 @@ def test_registry_get_passes_for_deduplicates_across_mro(
 
     @register_pass("tests.vr.dedup_shared", "Shared pass registered twice.")
     class _SharedPass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -285,6 +298,7 @@ def test_registry_isolates_types_in_separate_keys(
 
     @register_pass("tests.vr.isolate_a", "Pass for isolation test.")
     class _BoxPass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -397,6 +411,7 @@ def test_register_verification_adds_class_to_pass_registry(
         "Pass registered via register_verification.",
     )
     class _Pass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -418,6 +433,7 @@ def test_register_verification_adds_class_to_verification_registry(
         "Pass for registry-add test.",
     )
     class _Pass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -435,6 +451,7 @@ def test_register_verification_disables_auto_verify_on_decorated_class(
         "Pass for _auto_verify flag test.",
     )
     class _Pass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -460,6 +477,7 @@ def test_register_verification_rejects_empty_name(fresh_box_ir: type[_BoxIR]) ->
 
         @register_verification(fresh_box_ir, "", "non-empty description")
         class _Pass(AnalysisVisitablePass[Visitable]):
+            @override
             def visit_unknown(self, node: Visitable) -> None:
                 _ = node
 
@@ -472,6 +490,7 @@ def test_register_verification_rejects_empty_description(
 
         @register_verification(fresh_box_ir, "tests.rv.empty_desc", "")
         class _Pass(AnalysisVisitablePass[Visitable]):
+            @override
             def visit_unknown(self, node: Visitable) -> None:
                 _ = node
 
@@ -485,6 +504,7 @@ def test_register_verification_rejects_duplicate_name(
         fresh_box_ir, "tests.rv.dup_name", "Original holder of the duplicate name."
     )
     class _Original(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -496,6 +516,7 @@ def test_register_verification_rejects_duplicate_name(
             fresh_box_ir, "tests.rv.dup_name", "Different class, same name."
         )
         class _Duplicate(AnalysisVisitablePass[Visitable]):
+            @override
             def visit_unknown(self, node: Visitable) -> None:
                 _ = node
 
@@ -555,6 +576,7 @@ def test_verifiable_subclass_with_override_can_be_instantiated_without_passes() 
         def __init__(self, value: int) -> None:
             self.value = value
 
+        @override
         def verify(self) -> ValidationReport[object]:
             return ValidationReport()
 
@@ -576,6 +598,7 @@ def test_verifiable_subclass_with_registered_passes_can_be_instantiated() -> Non
         "Pass that makes _NeedsRegisteredPass instantiable.",
     )
     class _CheckPass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -601,6 +624,7 @@ def test_verifiable_subclass_becomes_instantiable_after_late_registration() -> N
         "Pass registered after first failure.",
     )
     class _LateCheck(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -624,6 +648,7 @@ def test_verifiable_subclass_caches_positive_instantiation_result(
         _Cached, "tests.vm_new.positive_cache", "Pass for positive-cache test."
     )
     class _CachedCheck(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -666,6 +691,7 @@ def test_verify_default_returns_report_from_registered_passes() -> None:
 
     @register_verification(_IR, "tests.vm_verify.error", "Pass that reports an error.")
     class _ErrorCheck(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, "verify-failure")
@@ -688,12 +714,14 @@ def test_verify_default_aggregates_multiple_registered_passes() -> None:
 
     @register_verification(_IR, "tests.vm_verify.first", "First check.")
     class _First(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.INFO, "info-one")
 
     @register_verification(_IR, "tests.vm_verify.second", "Second check.")
     class _Second(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.WARNING, "warn-two")
@@ -716,6 +744,7 @@ def test_verify_override_takes_precedence_over_registry() -> None:
         def __init__(self, value: int) -> None:
             self.value = value
 
+        @override
         def verify(self) -> ValidationReport[object]:
             return sentinel_report
 
@@ -725,6 +754,7 @@ def test_verify_override_takes_precedence_over_registry() -> None:
     class _UnusedCheck(AnalysisVisitablePass[Visitable]):
         invoked = False
 
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             type(self).invoked = True
             self.report(DiagnosticLevel.ERROR, "would-fail-if-invoked")
@@ -745,6 +775,7 @@ def test_verify_default_report_can_be_raised_as_validation_failed_error() -> Non
 
     @register_verification(_IR, "tests.vm_verify.raise", "Verify that raise works.")
     class _RaiseCheck(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, "structurally-broken")
@@ -776,9 +807,11 @@ def test_auto_verify_pre_raises_pass_validation_error_when_input_is_malformed(
 
     @register_pass("tests.av.pre.identity", "Identity pass for pre-verify test.")
     class _IdentityPass(CompilerPass[object, object]):
+        @override
         def get_noop_output(self, ir: object) -> object:
             return ir
 
+        @override
         def run_pass(self, ir: object) -> object:
             return ir
 
@@ -804,9 +837,11 @@ def test_auto_verify_post_raises_when_pass_produces_malformed_output(
         "Output is well-formed for input verification but fails output verification.",
     )
     class _CorruptingPass(CompilerPass[object, object]):
+        @override
         def get_noop_output(self, ir: object) -> object:
             return other_box_ir(0)
 
+        @override
         def run_pass(self, ir: object) -> object:
             assert isinstance(ir, fresh_box_ir)
             return other_box_ir(ir.value)
@@ -831,9 +866,11 @@ def test_auto_verify_false_on_pass_class_disables_pre_and_post(
     class _NoAutoVerifyPass(CompilerPass[object, object]):
         _auto_verify = False
 
+        @override
         def get_noop_output(self, ir: object) -> object:
             return ir
 
+        @override
         def run_pass(self, ir: object) -> object:
             return ir
 
@@ -856,6 +893,7 @@ def test_verification_pass_does_not_recurse_into_auto_verify(
     class _Check(AnalysisVisitablePass[Visitable]):
         invocations = 0
 
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
             type(self).invocations += 1
@@ -866,9 +904,11 @@ def test_verification_pass_does_not_recurse_into_auto_verify(
         "tests.av.recurse.trigger", "Pass that triggers auto-verify on the IR."
     )
     class _TriggerPass(CompilerPass[object, object]):
+        @override
         def get_noop_output(self, ir: object) -> object:
             return ir
 
+        @override
         def run_pass(self, ir: object) -> object:
             return ir
 
@@ -896,23 +936,28 @@ def test_auto_verify_uses_analysis_manager_cache_across_passes(
     class _CountingCheck(AnalysisVisitablePass[Visitable]):
         invocations = 0
 
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
             type(self).invocations += 1
 
     @register_pass("tests.cache.identity_a", "Identity pass A.")
     class _IdentityA(CompilerPass[object, object]):
+        @override
         def get_noop_output(self, ir: object) -> object:
             return ir
 
+        @override
         def run_pass(self, ir: object) -> object:
             return ir
 
     @register_pass("tests.cache.identity_b", "Identity pass B.")
     class _IdentityB(CompilerPass[object, object]):
+        @override
         def get_noop_output(self, ir: object) -> object:
             return ir
 
+        @override
         def run_pass(self, ir: object) -> object:
             return ir
 
@@ -939,15 +984,18 @@ def test_auto_verify_recomputes_when_pass_changes_ir(
     class _CountingCheck(AnalysisVisitablePass[Visitable]):
         invocations = 0
 
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
             type(self).invocations += 1
 
     @register_pass("tests.cache.mutate.inc", "Increment the IR value.")
     class _IncrementPass(CompilerPass[object, object]):
+        @override
         def get_noop_output(self, ir: object) -> object:
             return ir
 
+        @override
         def run_pass(self, ir: object) -> object:
             assert isinstance(ir, fresh_box_ir)
             return fresh_box_ir(ir.value + 1)
@@ -977,6 +1025,7 @@ def test_user_story_pipeline_blames_pass_that_produced_invalid_ir(
         "IR values must be non-negative.",
     )
     class _PositiveOnly(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             if isinstance(node, fresh_box_ir) and node.value < 0:
                 self.report(DiagnosticLevel.ERROR, f"negative value: {node.value}")
@@ -985,27 +1034,33 @@ def test_user_story_pipeline_blames_pass_that_produced_invalid_ir(
 
     @register_pass("tests.story.first_clean", "First pass: clean.")
     class _FirstClean(CompilerPass[object, object]):
+        @override
         def get_noop_output(self, ir: object) -> object:
             return ir
 
+        @override
         def run_pass(self, ir: object) -> object:
             assert isinstance(ir, fresh_box_ir)
             return fresh_box_ir(ir.value + 1)
 
     @register_pass("tests.story.corrupt", "Middle pass: produces negative output.")
     class _CorruptingPass(CompilerPass[object, object]):
+        @override
         def get_noop_output(self, ir: object) -> object:
             return ir
 
+        @override
         def run_pass(self, ir: object) -> object:
             _ = ir
             return fresh_box_ir(-100)
 
     @register_pass("tests.story.last_clean", "Last pass: clean.")
     class _LastClean(CompilerPass[object, object]):
+        @override
         def get_noop_output(self, ir: object) -> object:
             return ir
 
+        @override
         def run_pass(self, ir: object) -> object:
             assert isinstance(ir, fresh_box_ir)
             return fresh_box_ir(ir.value + 1)
@@ -1037,9 +1092,11 @@ def test_registering_verification_pass_with_global_pass_name_collision(
 
     @register_pass("tests.adv.name_collision", "General pass that owns the name first.")
     class _Original(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir
 
@@ -1053,6 +1110,7 @@ def test_registering_verification_pass_with_global_pass_name_collision(
             "Verification reusing the name.",
         )
         class _Verifier(AnalysisVisitablePass[Visitable]):
+            @override
             def visit_unknown(self, node: Visitable) -> None:
                 _ = node
 
@@ -1086,6 +1144,7 @@ def test_registry_mutation_between_passes_does_not_invalidate_cached_results(
         fresh_box_ir, "tests.adv.registry_mutation.initial", "Initial pass."
     )
     class _Initial(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -1104,6 +1163,7 @@ def test_registry_mutation_between_passes_does_not_invalidate_cached_results(
         "Late-added failing pass.",
     )
     class _Late(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, "late-failure")
@@ -1143,6 +1203,7 @@ def test_verify_report_supports_partial_equal_like_other_reports() -> None:
         _IR, "tests.adv.partial_equal_report", "Verify report PartialEqual contract."
     )
     class _Check(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -1165,6 +1226,7 @@ def test_verify_override_inherited_through_intermediate_class_satisfies_check() 
         def __init__(self, value: int) -> None:
             self.value = value
 
+        @override
         def verify(self) -> ValidationReport[object]:
             return sentinel
 
@@ -1188,6 +1250,7 @@ def test_verifiable_subclass_with_passes_from_base_satisfies_check() -> None:
         _BaseIR, "tests.vm_new.base_passes_inherited", "Pass on the base class."
     )
     class _BaseCheck(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
 
@@ -1215,9 +1278,11 @@ def test_auto_verify_is_silent_when_no_passes_registered_for_ir_type(
         "tests.av.empty_registry", "Identity pass with no registered verifiers."
     )
     class _IdentityPass(CompilerPass[object, object]):
+        @override
         def get_noop_output(self, ir: object) -> object:
             return ir
 
+        @override
         def run_pass(self, ir: object) -> object:
             return ir
 
@@ -1285,9 +1350,11 @@ def test_pass_manager_surfaces_auto_verify_failure_to_caller(
 
     @register_pass("tests.pm_av.identity", "Identity pass under auto-verify.")
     class _IdentityPass(CompilerPass[object, object]):
+        @override
         def get_noop_output(self, ir: object) -> object:
             return ir
 
+        @override
         def run_pass(self, ir: object) -> object:
             return ir
 
@@ -1318,9 +1385,11 @@ def test_pass_manager_continues_when_pass_disables_auto_verify(
     class _IdentityPass(CompilerPass[object, object]):
         _auto_verify = False
 
+        @override
         def get_noop_output(self, ir: object) -> object:
             return ir
 
+        @override
         def run_pass(self, ir: object) -> object:
             return ir
 
@@ -1356,6 +1425,7 @@ def test_diagnostic_note_construction_round_trips_through_report(
         "Emit a structured Note diagnostic.",
     )
     class _NotePass(AnalysisVisitablePass[Visitable]):
+        @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
             self.report(DiagnosticLevel.ERROR, Note("structured-message"))

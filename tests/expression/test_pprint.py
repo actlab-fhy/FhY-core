@@ -17,6 +17,7 @@ from fhy_core.expression import (
 from fhy_core.expression.pprint import ExpressionPrettyFormatter
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
+from fhy_core.utils.override import override
 
 # =============================================================================
 # Symbolic format (default)
@@ -159,6 +160,7 @@ def test_pretty_formatter_call_rejects_non_string_formatted_result() -> None:
     """Test `__call__` raises `TypeError` when the visit result is not a `str`."""
 
     class _NonStringFormatter(ExpressionPrettyFormatter):
+        @override
         def visit_literal_expression(
             self, literal_expression: LiteralExpression
         ) -> str:

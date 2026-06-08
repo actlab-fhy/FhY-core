@@ -32,6 +32,7 @@ from fhy_core.serialization import (
 )
 from fhy_core.traits.frozen import FrozenMixin
 from fhy_core.utils import IntEnum, StrEnum
+from fhy_core.utils.override import override
 
 # ============================================================================
 # Representative derived classes (derive=True is the default)
@@ -180,10 +181,12 @@ def test_derive_false_with_manual_methods_works() -> None:
     class _OptOutManual(Serializable, FrozenMixin, derive=False):
         x: int
 
+        @override
         def serialize_to_dict(self) -> SerializedDict:
             return {"x": self.x}
 
         @classmethod
+        @override
         def deserialize_from_dict(cls, data: SerializedDict) -> "_OptOutManual":
             return cls(cast(int, data["x"]))
 
@@ -259,10 +262,12 @@ def test_hand_written_methods_take_precedence_over_derivation() -> None:
     class _Manual(Serializable, FrozenMixin):
         x: int
 
+        @override
         def serialize_to_dict(self) -> SerializedDict:
             return {"x": self.x, "extra": "manual"}
 
         @classmethod
+        @override
         def deserialize_from_dict(cls, data: SerializedDict) -> "_Manual":
             return cls(cast(int, data["x"]))
 
@@ -277,6 +282,7 @@ def test_one_manual_one_derived_method_mix() -> None:
     class _HalfManual(Serializable, FrozenMixin):
         x: int
 
+        @override
         def serialize_to_dict(self) -> SerializedDict:
             return {"x": self.x * 10}
 
@@ -300,6 +306,7 @@ def test_construct_from_fields_override_is_honored() -> None:
         x: int
 
         @classmethod
+        @override
         def construct_from_fields(cls, fields: dict[str, Any]) -> "_Constructed":
             return cls(fields["x"] + 100)
 
@@ -391,9 +398,11 @@ def test_register_field_codec_teaches_inference_a_new_leaf() -> None:
         def __init__(self, degrees: int) -> None:
             self.degrees = degrees
 
+        @override
         def __eq__(self, other: object) -> bool:
             return isinstance(other, _Celsius) and other.degrees == self.degrees
 
+        @override
         def __hash__(self) -> int:
             return hash(self.degrees)
 

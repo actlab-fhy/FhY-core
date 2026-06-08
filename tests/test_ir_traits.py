@@ -14,12 +14,14 @@ from fhy_core.traits import (
     RewritableMixin,
     StructuralEquivalence,
 )
+from fhy_core.utils.override import override
 
 
 @dataclass
 class _OperandNode(HasOperands[int]):
     _operands: tuple[int, ...]
 
+    @override
     def get_operands(self) -> tuple[int, ...]:
         return self._operands
 
@@ -28,6 +30,7 @@ class _OperandNode(HasOperands[int]):
 class _ResultNode(HasResults[int]):
     _results: tuple[int, ...]
 
+    @override
     def get_results(self) -> tuple[int, ...]:
         return self._results
 
@@ -38,6 +41,7 @@ class _MutableCanonicalNode(Canonicalizable):
 
     value: int
 
+    @override
     def canonicalize(self) -> "_MutableCanonicalNode | None":
         if self.value < 0:
             self.value = -self.value
@@ -50,6 +54,7 @@ class _FrozenCanonicalNode(Canonicalizable):
 
     value: int
 
+    @override
     def canonicalize(self) -> "_FrozenCanonicalNode":
         return _FrozenCanonicalNode(abs(self.value))
 
@@ -59,6 +64,7 @@ class _StructEqNode(StructuralEquivalence):
     opcode: str
     operands: tuple[int, ...]
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, _StructEqNode)
@@ -79,6 +85,7 @@ class _PairNode(RewritableMixin[int]):
     left: int
     right: int
 
+    @override
     def rebuild_with_visit_children(self, new_children: Sequence[int]) -> "_PairNode":
         left, right = new_children
         return _PairNode(left, right)
@@ -90,6 +97,7 @@ class _ListNode(RewritableMixin[int]):
 
     children: tuple[int, ...] = field(default_factory=tuple)
 
+    @override
     def rebuild_with_visit_children(self, new_children: Sequence[int]) -> "_ListNode":
         return _ListNode(tuple(new_children))
 

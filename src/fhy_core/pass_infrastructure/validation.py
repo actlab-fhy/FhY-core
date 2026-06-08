@@ -15,6 +15,8 @@ transformations, `ValidationManager`:
 
 """
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "ValidationManager",
 ]
@@ -71,11 +73,13 @@ class ValidationManager(HasIdentifier, Generic[_IRType]):
         self._name = name if name is not None else Identifier("validation-pipeline")
         self._validators = []
 
+    @override
     def get_identifier(self) -> Identifier:
         return self._name
 
     @property
     def name(self) -> Identifier:
+        """Return the name of the validation manager."""
         return self._name
 
     @property

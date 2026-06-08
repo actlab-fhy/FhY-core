@@ -34,6 +34,8 @@ between them raises rather than silently merging them.
 
 from __future__ import annotations
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "TypeUnificationEnvironment",
     "bind_data_template",
@@ -126,7 +128,8 @@ def _resolve_expression(
     return current_expression
 
 
-def _substitute_expression(
+# Recursive isinstance dispatch over expression kinds; early returns read clearest.
+def _substitute_expression(  # noqa: PLR0911
     expression: Expression,
     environment: TypeUnificationEnvironment,
     visited_identifiers: frozenset[Identifier] = frozenset(),
@@ -439,6 +442,7 @@ class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalence):
         """
         return self.expression_bindings.get(name)
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         if not isinstance(other, TypeUnificationEnvironment):
             return False

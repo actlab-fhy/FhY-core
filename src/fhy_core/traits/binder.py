@@ -12,6 +12,8 @@ The children a binder scopes over (and the values substituted into them) are
 and substitute. ``BinderMixin`` is itself a ``Term``, so binders nest.
 """
 
+from fhy_core.utils.override import override
+
 __all__ = ["BinderMixin", "HasFreeIdentifiers", "Term"]
 
 from abc import abstractmethod
@@ -87,6 +89,7 @@ class BinderMixin(AlphaEquivalenceMixin):
         with respect to :meth:`get_scoped_children`.
         """
 
+    @override
     def is_alpha_equivalent_under(self, other: object, renaming: AlphaRenaming) -> bool:
         """Return whether self and other are alpha-equivalent under the renaming.
 

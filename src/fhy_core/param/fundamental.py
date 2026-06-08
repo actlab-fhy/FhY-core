@@ -1,5 +1,7 @@
 """Fundamental parameter classes."""
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "NatParam",
     "is_the_basic_nat_param_constraint",
@@ -137,6 +139,7 @@ class NatParam(IntParam):
         ):
             self._constraints = self._constraints + (basic_constraint,)
 
+    @override
     def add_lower_bound_constraint(
         self, lower_bound: int, *, is_inclusive: bool = True
     ) -> "NatParam":
@@ -163,6 +166,7 @@ class NatParam(IntParam):
             lower_bound, is_inclusive=is_inclusive
         )
 
+    @override
     def add_upper_bound_constraint(
         self, upper_bound: int, *, is_inclusive: bool = True
     ) -> "NatParam":
@@ -192,6 +196,7 @@ class NatParam(IntParam):
             upper_bound, is_inclusive=is_inclusive
         )
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, NatParam)
@@ -200,6 +205,7 @@ class NatParam(IntParam):
         )
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "NatParam":
         if not is_valid_param_data(data):
             raise DeserializationDictStructureError(

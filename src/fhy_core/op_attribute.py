@@ -16,6 +16,8 @@ Callers should import the canonical names rather than constructing fresh
 ``Identifier("commutative")`` would not match the canonical one.
 """
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "ASSOCIATIVE",
     "COMMUTATIVE",
@@ -78,13 +80,16 @@ class OpAttribute(
     def __post_init__(self) -> None:
         self.register_interned_instance()
 
+    @override
     def get_identifier(self) -> Identifier:
         return self.name
 
+    @override
     def get_intern_key(self) -> Identifier:
         return self.name
 
     @classmethod
+    @override
     def register_default_instances(cls) -> None:
         """Re-register the canonical default ``OpAttribute``s shipped here.
 

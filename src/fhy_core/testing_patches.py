@@ -1,5 +1,7 @@
 """Testing patches for FhY core."""
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "fail_fast_structural_equivalence",
     "deterministic_identifiers_by_name_hint",
@@ -101,6 +103,7 @@ class _DeterministicIdentifiersByNameHint(ContextDecorator):
         self._original_init = None
         self._patched_init_func = None
 
+    @override
     def __call__(self, func: Any = None) -> Any:
         if func is None:
             return self

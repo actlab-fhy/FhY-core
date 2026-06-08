@@ -50,6 +50,7 @@ from fhy_core.serialization import (
     register_serializable,
     serialize_registry_wrapped_value,
 )
+from fhy_core.utils.override import override
 
 # =============================================================================
 # Registered serializable classes used by the test suite
@@ -64,10 +65,12 @@ class _DummySpan(Serializable):
     lo: int
     hi: int
 
+    @override
     def serialize_to_dict(self) -> dict[str, Any]:
         return {"lo": self.lo, "hi": self.hi}
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_DummySpan":
         return cls(int(data["lo"]), int(data["hi"]))
 
@@ -80,23 +83,28 @@ class _CompactSpan(Serializable):
     lo: int
     hi: int
 
+    @override
     def serialize_to_dict(self) -> dict[str, Any]:
         return {"lo": self.lo, "hi": self.hi}
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_CompactSpan":
         return cls(int(data["lo"]), int(data["hi"]))
 
     @classmethod
+    @override
     def get_binary_codec(cls) -> BinaryPayloadCodec:
         return BinaryPayloadCodec.CUSTOM
 
+    @override
     def serialize_to_binary(self, *, codec: BinaryPayloadCodec) -> bytes:
         if codec is not BinaryPayloadCodec.CUSTOM:
             raise CodecMismatchError("Expected CUSTOM codec.")
         return struct.pack("!ii", self.lo, self.hi)
 
     @classmethod
+    @override
     def deserialize_from_binary(
         cls, payload: bytes, *, codec: BinaryPayloadCodec
     ) -> "_CompactSpan":
@@ -113,10 +121,12 @@ class _CustomIdNode(Serializable):
 
     x: int
 
+    @override
     def serialize_to_dict(self) -> dict[str, Any]:
         return {"x": self.x}
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_CustomIdNode":
         return cls(int(data["x"]))
 
@@ -131,10 +141,12 @@ class _UnregisteredSpan(Serializable):
     lo: int
     hi: int
 
+    @override
     def serialize_to_dict(self) -> dict[str, Any]:
         return {"lo": self.lo, "hi": self.hi}
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_UnregisteredSpan":
         return cls(int(data["lo"]), int(data["hi"]))
 
@@ -150,10 +162,12 @@ class _CustomNode(_CustomNodeBase):
 
     value: int
 
+    @override
     def serialize_data_to_dict(self) -> dict[str, Any]:
         return {"value": self.value}
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: Mapping[str, Any]) -> "_CustomNode":
         return cls(int(data["value"]))
 
@@ -563,16 +577,20 @@ def test_deserialize_registry_wrapped_value_rejects_unhashable_frozenset_item() 
 
     @register_serializable(type_id="tests.UnhashableLeaf")
     class _UnhashableLeaf(Serializable):
+        @override
         def serialize_to_dict(self) -> dict[str, Any]:
             return {}
 
         @classmethod
+        @override
         def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_UnhashableLeaf":
             return cls()
 
+        @override
         def __hash__(self) -> int:  # pragma: no cover - explicitly unhashable
             raise TypeError("unhashable")
 
+        @override
         def __eq__(self, other: object) -> bool:
             return isinstance(other, _UnhashableLeaf)
 
@@ -667,10 +685,12 @@ def test_register_serializable_assigns_default_type_id_when_not_specified() -> N
 
     @register_serializable
     class _DefaultIdClass(Serializable):
+        @override
         def serialize_to_dict(self) -> dict[str, Any]:
             return {}
 
         @classmethod
+        @override
         def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_DefaultIdClass":
             return cls()
 
@@ -683,10 +703,12 @@ def test_register_serializable_assigns_provided_type_id_as_canonical() -> None:
 
     @register_serializable(type_id="tests.CanonicalA")
     class _Canon(Serializable):
+        @override
         def serialize_to_dict(self) -> dict[str, Any]:
             return {}
 
         @classmethod
+        @override
         def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_Canon":
             return cls()
 
@@ -698,10 +720,12 @@ def test_register_serializable_alias_does_not_override_canonical_id() -> None:
 
     @register_serializable(type_id="tests.CanonicalMain")
     class _Aliased(Serializable):
+        @override
         def serialize_to_dict(self) -> dict[str, Any]:
             return {}
 
         @classmethod
+        @override
         def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_Aliased":
             return cls()
 
@@ -725,10 +749,12 @@ def test_register_serializable_rejects_two_classes_under_same_type_id() -> None:
 
     @register_serializable(type_id="tests.DuplicateId")
     class _First(Serializable):
+        @override
         def serialize_to_dict(self) -> dict[str, Any]:
             return {}
 
         @classmethod
+        @override
         def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_First":
             return cls()
 
@@ -736,10 +762,12 @@ def test_register_serializable_rejects_two_classes_under_same_type_id() -> None:
 
         @register_serializable(type_id="tests.DuplicateId")
         class _Second(Serializable):
+            @override
             def serialize_to_dict(self) -> dict[str, Any]:
                 return {}
 
             @classmethod
+            @override
             def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_Second":
                 return cls()
 
@@ -754,10 +782,12 @@ def test_register_serializable_rejects_canonical_id_conflict() -> None:
 
     @register_serializable(type_id=existing_id)
     class _Conflicted(Serializable):
+        @override
         def serialize_to_dict(self) -> dict[str, Any]:
             return {}
 
         @classmethod
+        @override
         def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_Conflicted":
             return cls()
 
@@ -772,10 +802,12 @@ def test_register_serializable_accepts_matching_id_built_from_fragments() -> Non
 
     @register_serializable(type_id=canonical)
     class _Match(Serializable):
+        @override
         def serialize_to_dict(self) -> dict[str, Any]:
             return {}
 
         @classmethod
+        @override
         def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_Match":
             return cls()
 
@@ -911,10 +943,12 @@ def test_to_json_respects_sort_keys_false() -> None:
 
     @dataclass(frozen=True)
     class _Ordered(Serializable):
+        @override
         def serialize_to_dict(self) -> dict[str, Any]:
             return {"z_field": 1, "a_field": 2}
 
         @classmethod
+        @override
         def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_Ordered":
             return cls()
 
@@ -1184,13 +1218,16 @@ def test_default_deserialize_from_binary_rejects_non_json_codec_match() -> None:
     @register_serializable(type_id="tests.NoBinaryOverride")
     class _NoBinaryOverride(Serializable):
         @classmethod
+        @override
         def get_binary_codec(cls) -> BinaryPayloadCodec:
             return BinaryPayloadCodec.CUSTOM
 
+        @override
         def serialize_to_dict(self) -> dict[str, Any]:
             return {}
 
         @classmethod
+        @override
         def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_NoBinaryOverride":
             return cls()
 
@@ -1208,13 +1245,16 @@ def test_dump_to_binary_rejects_unmappable_codec() -> None:
     @register_serializable(type_id="tests.UnmappedCodecSpan")
     class _UnmappedCodecSpan(Serializable):
         @classmethod
+        @override
         def get_binary_codec(cls) -> BinaryPayloadCodec:
             return "not-a-real-codec"  # type: ignore[return-value]
 
+        @override
         def serialize_to_dict(self) -> dict[str, Any]:
             return {}
 
         @classmethod
+        @override
         def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_UnmappedCodecSpan":
             return cls()
 
@@ -1227,15 +1267,18 @@ def test_dump_to_binary_rejects_non_bytes_payload() -> None:
 
     @register_serializable(type_id="tests.NonBytesPayloadSpan")
     class _NonBytesPayloadSpan(Serializable):
+        @override
         def serialize_to_dict(self) -> dict[str, Any]:
             return {}
 
         @classmethod
+        @override
         def deserialize_from_dict(
             cls, data: Mapping[str, Any]
         ) -> "_NonBytesPayloadSpan":
             return cls()
 
+        @override
         def serialize_to_binary(self, *, codec: BinaryPayloadCodec) -> bytes:
             return 12345  # type: ignore[return-value]
 
@@ -1249,10 +1292,12 @@ def test_dump_to_binary_rejects_overlong_type_id() -> None:
 
     @register_serializable(type_id=huge_type_id)
     class _HugeIdSpan(Serializable):
+        @override
         def serialize_to_dict(self) -> dict[str, Any]:
             return {}
 
         @classmethod
+        @override
         def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_HugeIdSpan":
             return cls()
 
@@ -1370,10 +1415,12 @@ class _FloatBox(Serializable):
 
     value: float
 
+    @override
     def serialize_to_dict(self) -> dict[str, Any]:
         return {"value": self.value}
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: Mapping[str, Any]) -> "_FloatBox":
         return cls(value=float(data["value"]))
 

@@ -17,7 +17,8 @@ class PartialOrderable(Protocol):
     """Protocol for objects that define partial ordering semantics."""
 
     @property
-    def supports_partial_ordering(self) -> bool: ...
+    def supports_partial_ordering(self) -> bool:
+        """Whether ``<`` defines a partial order over this object's type."""
 
     def __lt__(self, other: object) -> bool | NotImplementedType: ...
 
@@ -43,6 +44,7 @@ class PartialOrderableMixin:
 
     @property
     def supports_partial_ordering(self) -> bool:
+        """Whether ``<`` defines a partial order over this object's type."""
         if self._is_native_ordered_dataclass():
             return True
         type_lt = getattr(type(self), "__lt__")
@@ -65,4 +67,5 @@ class OrderableMixin(PartialOrderableMixin):
 
     @property
     def supports_ordering(self) -> bool:
+        """Whether ``<`` defines a total order over this object's type."""
         return self.supports_partial_ordering

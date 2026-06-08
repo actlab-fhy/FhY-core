@@ -1,5 +1,7 @@
 """Pass manager and analysis manager infrastructure."""
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "Analysis",
     "AnalysisManager",
@@ -51,6 +53,7 @@ class Analysis(ABC, Generic[_IRType, _AnalysisResultT]):
     _analysis_name: ClassVar[Identifier | None] = None
     _analysis_name_lock: ClassVar[Lock] = Lock()
 
+    @override
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         signature = inspect.signature(cls.__init__)
@@ -219,7 +222,8 @@ class AnalysisManager(Generic[_IRType]):
             if not bucket:
                 self._drop_cached_ir(ir_id)
 
-    def transfer(
+    # Sequential guard clauses over preservation cases; early returns read clearest.
+    def transfer(  # noqa: PLR0911
         self,
         from_ir: _IRType,
         to_ir: _IRType,
@@ -374,23 +378,28 @@ class FixpointPassGroup(HasIdentifier, Generic[_IRType]):
         self._fail_on_non_convergence = fail_on_non_convergence
         self._passes = []
 
+    @override
     def get_identifier(self) -> Identifier:
         return self._name
 
     @property
     def name(self) -> Identifier:
+        """Return the name of the fixpoint group."""
         return self._name
 
     @property
     def max_iterations(self) -> int:
+        """Return the maximum number of fixpoint iterations."""
         return self._max_iterations
 
     @property
     def fail_on_non_convergence(self) -> bool:
+        """Whether to fail if the group does not converge."""
         return self._fail_on_non_convergence
 
     @property
     def passes(self) -> tuple[CompilerPass[_IRType, _IRType], ...]:
+        """Return the passes in the fixpoint group."""
         return tuple(self._passes)
 
     def add_pass(self, compiler_pass: CompilerPass[_IRType, _IRType]) -> None:
@@ -415,15 +424,18 @@ class PassManager(HasIdentifier, Generic[_IRType]):
         self._items = []
         self._analysis_manager = AnalysisManager()
 
+    @override
     def get_identifier(self) -> Identifier:
         return self._identifier
 
     @property
     def name(self) -> Identifier:
+        """Return the name of the pass manager."""
         return self._identifier
 
     @property
     def analysis_manager(self) -> AnalysisManager[_IRType]:
+        """Return the analysis manager backing the pipeline."""
         return self._analysis_manager
 
     def add_pass(self, compiler_pass: CompilerPass[_IRType, _IRType]) -> None:
