@@ -107,6 +107,10 @@ __all__ = [
     "Position",
     "Span",
     "NoteKind",
+    "RATIONALE_NOTE_KIND",
+    "SUGGESTION_NOTE_KIND",
+    "REMARK_NOTE_KIND",
+    "OTHER_NOTE_KIND",
     "Note",
     "Provenance",
     "UnknownProvenance",
@@ -260,6 +264,10 @@ from .constraint import (
     NotInSetConstraint,
 )
 from .diagnostic import (
+    OTHER_NOTE_KIND,
+    RATIONALE_NOTE_KIND,
+    REMARK_NOTE_KIND,
+    SUGGESTION_NOTE_KIND,
     Diagnostic,
     DiagnosticLevel,
     Note,

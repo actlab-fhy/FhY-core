@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from fhy_core.diagnostic import Note, NoteKind
+from fhy_core.diagnostic import OTHER_NOTE_KIND, Note
 from fhy_core.identifier import Identifier
 from fhy_core.op_attribute import OpAttribute
 from fhy_core.provenance import (
@@ -62,7 +62,7 @@ _OTHER = FileProvenance(Path("b.fhy"))
             FusedProvenance(sources=(_SOURCE, _OTHER), metadata="fuse"),
             id="provenance_fused",
         ),
-        pytest.param(Note("hello", NoteKind.OTHER), id="note"),
+        pytest.param(Note("hello", OTHER_NOTE_KIND), id="note"),
         pytest.param(
             OpAttribute(Identifier("contract_attr"), "desc"), id="op_attribute"
         ),
