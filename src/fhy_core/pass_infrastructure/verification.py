@@ -10,7 +10,7 @@ Exposes:
 - :func:`register_verification`: decorator that registers a
   ``CompilerPass`` subclass as a verification pass.
 - :func:`run_verification`: helper used by
-  :meth:`fhy_core.trait.VerifiableMixin.verify` and by
+  :meth:`fhy_core.traits.VerifiableMixin.verify` and by
   :class:`CompilerPass` auto-verification when no analysis manager is
   bound.
 

@@ -7,7 +7,6 @@ import pytest
 
 from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.error import _COMPILER_ERRORS
-from fhy_core.identifier import Identifier
 from fhy_core.param import (
     CategoricalParam,
     IntParam,
@@ -21,9 +20,9 @@ from fhy_core.param import (
 )
 from fhy_core.serialization import SerializedDict
 from fhy_core.symbol_type import SymbolType
-from fhy_core.trait import StructuralEquivalence
+from fhy_core.traits import FrozenMutationError, StructuralEquivalence
 
-from .conftest import assert_all_satisfied, assert_none_satisfied
+from .conftest import assert_all_satisfied, assert_none_satisfied, mock_identifier
 
 # =============================================================================
 # Error registration
@@ -52,8 +51,10 @@ def test_param_implementation_satisfies_structural_equivalence_protocol() -> Non
 
 def test_structural_equivalence_is_true_for_constraint_reordering() -> None:
     """Test params compare structurally when equivalent constraints are reordered."""
-    shared_name = Identifier("x")
-    shared_name_copy = Identifier.deserialize_from_dict(shared_name.serialize_to_dict())
+    shared_name = mock_identifier("x", 1)
+    # A separately-constructed identifier with the same id is equal but distinct,
+    # standing in for a serialize/deserialize round-tripped copy.
+    shared_name_copy = mock_identifier("x", 1)
 
     left_base = IntParam(name=shared_name)
     right_base = IntParam(name=shared_name_copy)
@@ -80,8 +81,10 @@ def test_structural_equivalence_is_true_for_constraint_reordering() -> None:
 
 def test_structural_equivalence_is_false_when_constraints_differ() -> None:
     """Test params are not structurally equivalent when constraints differ."""
-    shared_name = Identifier("x")
-    shared_name_copy = Identifier.deserialize_from_dict(shared_name.serialize_to_dict())
+    shared_name = mock_identifier("x", 1)
+    # A separately-constructed identifier with the same id is equal but distinct,
+    # standing in for a serialize/deserialize round-tripped copy.
+    shared_name_copy = mock_identifier("x", 1)
 
     left_base = IntParam(name=shared_name)
     right_base = IntParam(name=shared_name_copy)
@@ -118,8 +121,8 @@ def test_structural_equivalence_is_false_when_variable_identifiers_differ() -> N
     Both params have no constraints, so the only discriminator is the variable.
     Pins down the early-return when ``self.variable != other.variable``.
     """
-    left = IntParam(name=Identifier("x"))
-    right = IntParam(name=Identifier("y"))
+    left = IntParam(name=mock_identifier("x", 1))
+    right = IntParam(name=mock_identifier("y", 2))
     assert not left.is_structurally_equivalent(right)
 
 
@@ -134,8 +137,10 @@ def test_structural_equivalence_is_false_when_constraint_counts_differ(
     self_count: int, other_count: int
 ) -> None:
     """Test params with different constraint counts are not structurally equivalent."""
-    shared_name = Identifier("x")
-    shared_name_copy = Identifier.deserialize_from_dict(shared_name.serialize_to_dict())
+    shared_name = mock_identifier("x", 1)
+    # A separately-constructed identifier with the same id is equal but distinct,
+    # standing in for a serialize/deserialize round-tripped copy.
+    shared_name_copy = mock_identifier("x", 1)
     bound_builders: list[Callable[[IntParam], EquationConstraint]] = [
         lambda p: EquationConstraint(p.variable, p.variable_expression >= 0),
         lambda p: EquationConstraint(p.variable, p.variable_expression <= 10),
@@ -248,8 +253,8 @@ def test_add_constraints_validates_each_subclass_constraint_rule() -> None:
 
 def test_add_constraint_rejects_constraint_with_mismatched_variable() -> None:
     """Test `add_constraint` rejects a constraint built on a different variable."""
-    param = IntParam(name=Identifier("x"))
-    other = Identifier("y")
+    param = IntParam(name=mock_identifier("x", 1))
+    other = mock_identifier("y", 2)
     with pytest.raises(ParamError):
         param.add_constraint(EquationConstraint(other, param.variable_expression >= 0))
 
@@ -260,7 +265,7 @@ def test_add_constraint_deduplicates_structurally_equivalent_constraints() -> No
     Adding the same logical constraint twice should not pollute the internal
     constraint tuple. Returning ``self`` is the explicit "no-op" signal.
     """
-    param = IntParam(name=Identifier("x"))
+    param = IntParam(name=mock_identifier("x", 1))
     constraint = EquationConstraint(param.variable, param.variable_expression >= 0)
 
     once = param.add_constraint(constraint)
@@ -278,7 +283,7 @@ def test_add_constraints_deduplicates_within_input_and_against_existing() -> Non
     a single added constraint. If the same logical constraint is already
     present, no new entry is added.
     """
-    param = IntParam(name=Identifier("x"))
+    param = IntParam(name=mock_identifier("x", 1))
     constraint = EquationConstraint(param.variable, param.variable_expression >= 0)
 
     bulk = param.add_constraints([constraint, constraint, constraint])
@@ -287,6 +292,159 @@ def test_add_constraints_deduplicates_within_input_and_against_existing() -> Non
     again = bulk.add_constraints([constraint])
     assert len(again._constraints) == 1
     assert again is bulk
+
+
+def test_constructor_constraints_kwarg_stores_validated_constraints() -> None:
+    """Test `Param.__init__` accepts and stores a ``constraints`` sequence."""
+    variable = mock_identifier("x", 1)
+    lower = EquationConstraint(
+        variable, IntParam(name=variable).variable_expression >= 0
+    )
+    upper = EquationConstraint(
+        variable, IntParam(name=variable).variable_expression <= 9
+    )
+
+    param = IntParam(name=variable, constraints=(lower, upper))
+
+    assert len(param.constraints) == 2
+
+
+def test_constructor_constraints_kwarg_rejects_mismatched_variable() -> None:
+    """Test `Param.__init__` validates each constraint against its variable."""
+    variable = mock_identifier("x", 1)
+    other = mock_identifier("y", 2)
+    bad = EquationConstraint(other, IntParam(name=variable).variable_expression >= 0)
+
+    with pytest.raises(ParamError):
+        IntParam(name=variable, constraints=(bad,))
+
+
+def test_constructor_constraints_kwarg_deduplicates_structurally_equivalent() -> None:
+    """Test `Param.__init__` dedups structurally-equivalent incoming constraints."""
+    variable = mock_identifier("x", 1)
+    constraint = EquationConstraint(
+        variable, IntParam(name=variable).variable_expression >= 0
+    )
+
+    param = IntParam(name=variable, constraints=(constraint, constraint))
+
+    assert len(param.constraints) == 1
+
+
+def test_add_constraint_returns_frozen_immutable_param() -> None:
+    """Test `add_constraint` returns a frozen parameter that rejects mutation."""
+    param = IntParam(name=mock_identifier("x", 1))
+    constraint = EquationConstraint(param.variable, param.variable_expression >= 0)
+
+    updated = param.add_constraint(constraint)
+
+    assert updated.is_frozen is True
+    with pytest.raises(FrozenMutationError):
+        updated._variable = mock_identifier("hacked", 99)
+
+
+def test_constraint_builder_methods_return_frozen_params() -> None:
+    """Test the public constraint-builder methods return frozen parameters."""
+    assert IntParam.with_lower_bound(0).is_frozen is True
+    assert IntParam.between(0, 10).is_frozen is True
+
+
+def test_constraints_property_returns_constraint_tuple() -> None:
+    """Test the public ``constraints`` property exposes the constraint tuple."""
+    variable = mock_identifier("x", 1)
+    constraint = EquationConstraint(
+        variable, IntParam(name=variable).variable_expression >= 0
+    )
+
+    param = IntParam(name=variable, constraints=(constraint,))
+
+    assert param.constraints == (constraint,)
+    assert isinstance(param.constraints, tuple)
+
+
+def test_with_new_constraints_replaces_constraints_keeping_definition() -> None:
+    """Test ``with_new_constraints`` replaces constraints without changing shape."""
+    param = OrdinalParam([3, 1, 2])
+    first = InSetConstraint(param.variable, {1, 2})
+    second = InSetConstraint(param.variable, {2, 3})
+    with_first = param.add_constraint(first)
+
+    replaced = with_first.with_new_constraints((second,))
+
+    assert replaced.constraints == (second,)
+    assert replaced.possible_values == (1, 2, 3)
+    assert replaced.is_frozen is True
+    assert with_first.constraints == (first,)
+
+
+def test_with_new_constraints_deduplicates_structurally_equivalent_constraints() -> (
+    None
+):
+    """Test ``with_new_constraints`` drops structurally-equivalent duplicates."""
+    param = IntParam(name=mock_identifier("x", 1))
+    constraint = EquationConstraint(param.variable, param.variable_expression >= 0)
+
+    deduped = param.with_new_constraints((constraint, constraint))
+
+    assert len(deduped.constraints) == 1
+
+
+def test_with_new_constraints_rejects_constraint_with_mismatched_variable() -> None:
+    """Test ``with_new_constraints`` validates each constraint against the variable."""
+    param = IntParam(name=mock_identifier("x", 1))
+    mismatched = EquationConstraint(
+        mock_identifier("y", 2), param.variable_expression >= 0
+    )
+
+    with pytest.raises(ParamError):
+        param.with_new_constraints((mismatched,))
+
+
+def test_add_constraint_preserves_ordinal_values() -> None:
+    """Test ``add_constraint`` preserves an ``OrdinalParam``'s possible values."""
+    param = OrdinalParam([3, 1, 2])
+
+    updated = param.add_constraint(InSetConstraint(param.variable, {1, 2}))
+
+    assert updated.possible_values == (1, 2, 3)
+    assert updated.is_frozen is True
+    assert len(updated.constraints) == 1
+    assert param.constraints == ()
+
+
+def test_add_constraint_preserves_categorical_categories() -> None:
+    """Test ``add_constraint`` preserves a ``CategoricalParam``'s categories."""
+    param = CategoricalParam({"a", "b"})
+
+    updated = param.add_constraint(InSetConstraint(param.variable, {"a"}))
+
+    assert updated.categories == frozenset({"a", "b"})
+    assert updated.is_frozen is True
+
+
+def test_add_constraint_preserves_perm_members() -> None:
+    """Test ``add_constraint`` preserves a ``PermParam``'s ordered members."""
+    param = PermParam(["x", "y", "z"])
+
+    updated = param.add_constraint(InSetConstraint(param.variable, {("x", "y", "z")}))
+
+    assert updated.members == ("x", "y", "z")
+    assert updated.is_frozen is True
+
+
+def test_nat_param_reconstructed_via_constraints_kwarg_does_not_double_basic() -> None:
+    """Test constructing a `NatParam` with its own constraints keeps one basic.
+
+    The auto-added ``var >= 0`` basic constraint dedups against an incoming
+    copy of itself, so passing a ``NatParam``'s own constraints back through
+    the ``constraints`` argument does not accumulate duplicates.
+    """
+    base = NatParam()
+    assert len(base.constraints) == 1
+
+    rebuilt = NatParam(name=base.variable, constraints=base.constraints)
+
+    assert len(rebuilt.constraints) == 1
 
 
 def test_nat_param_explicit_lower_bound_zero_does_not_duplicate_basic_constraint() -> (
@@ -535,14 +693,14 @@ def test_param_subclass_must_implement_is_subset() -> None:
 
 def test_repr_omits_param_set_separator_when_param_set_repr_is_empty() -> None:
     """Test `__repr__` does not insert a stray ``", "`` for an empty param-set repr."""
-    text = repr(IntParam(name=Identifier("x")))
+    text = repr(IntParam(name=mock_identifier("x", 1)))
     assert ", , " not in text
     assert "constraints=" in text
 
 
 def test_repr_inserts_param_set_separator_when_param_set_repr_is_non_empty() -> None:
     """Test `__repr__` inserts ``", "`` after a non-empty param-set repr."""
-    text = repr(OrdinalParam([1, 2, 3], name=Identifier("x")))
+    text = repr(OrdinalParam([1, 2, 3], name=mock_identifier("x", 1)))
     assert "}, constraints=" in text
 
 

@@ -10,8 +10,8 @@ from fhy_core.pass_infrastructure import (
     TraversalOrder,
     VisitablePass,
 )
-from fhy_core.trait import VisitableMixin
-from fhy_core.trait.visitable import _camel_to_snake
+from fhy_core.traits import VisitableMixin
+from fhy_core.traits.visitable import _camel_to_snake
 
 
 class ToyNode(VisitableMixin):

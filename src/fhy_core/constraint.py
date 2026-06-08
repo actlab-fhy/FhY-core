@@ -58,7 +58,7 @@ from fhy_core.serialization import (
     register_serializable,
     serialize_registry_wrapped_value,
 )
-from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
+from fhy_core.traits import FrozenMixin, StructuralEquivalence
 from fhy_core.utils import format_comma_separated_list
 
 from .expression import (
@@ -130,7 +130,7 @@ def _validate_constraint_member(value: Any) -> None:
         )
 
 
-class _TypedMember:
+class _TypedMember(FrozenMixin):
     """Internal wrapper providing type-strict equality and hashing.
 
     Wraps a constraint member so that ``__eq__`` and ``__hash__`` use
@@ -281,10 +281,8 @@ def _deserialize_constraint_member(
 class Constraint(
     WrappedFamilySerializable,
     FrozenMixin,
-    StructuralEquivalenceMixin,
+    StructuralEquivalence,
     ABC,
-    freeze_on_init=True,
-    freeze_on_init_deep=True,
 ):
     """A named-variable predicate.
 

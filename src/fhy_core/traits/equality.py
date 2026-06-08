@@ -19,10 +19,20 @@ class PartialEqual(Protocol):  # noqa: PLW1641
 
 @runtime_checkable
 class Equal(PartialEqual, Protocol):
-    """Protocol for objects with total equality semantics."""
+    """Protocol for objects with total equality semantics.
+
+    Total equality is a strengthening of partial equality:
+    ``supports_equality`` implies ``supports_partial_equality`` and that
+    the object is hashable. Generic callers may rely on both ``==`` and
+    ``hash()`` when ``supports_equality`` is ``True``.
+    """
 
     @property
-    def supports_equality(self) -> bool: ...
+    def supports_equality(self) -> bool:
+        """Whether ``==`` and ``hash()`` are both reliable for this object.
+
+        When ``True``, ``supports_partial_equality`` is also ``True``.
+        """
 
     def __hash__(self) -> int: ...
 
@@ -55,7 +65,15 @@ class EqualMixin(PartialEqualMixin):
 
     @property
     def supports_equality(self) -> bool:
-        return True
+        if not self.supports_partial_equality:
+            return False
+        type_hash = getattr(type(self), "__hash__", None)
+        if type_hash is None:
+            return False
+        return (
+            type_hash is not EqualMixin.__hash__
+            and type_hash is not PartialEqualMixin.__hash__
+        )
 
     def __hash__(self) -> int:
         raise NotImplementedError(

@@ -32,10 +32,11 @@ from fhy_core.serialization import (
     is_serialized_dict,
     register_serializable,
 )
-from fhy_core.trait import (
-    CanonicalizableMixin,
+from fhy_core.traits import (
+    Canonicalizable,
+    DerivedEquivalenceMixin,
     FrozenMixin,
-    StructuralEquivalenceMixin,
+    StructuralEquivalence,
     VerifiableMixin,
 )
 
@@ -54,66 +55,16 @@ def _identifier_sort_key(identifier: Identifier) -> tuple[int, str]:
 
 @dataclass(frozen=True)
 class SymbolTableFrame(
-    WrappedFamilySerializable, FrozenMixin, StructuralEquivalenceMixin, ABC
+    WrappedFamilySerializable, FrozenMixin, DerivedEquivalenceMixin, ABC
 ):
     """Base symbol table frame."""
 
     name: Identifier
 
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return isinstance(other, SymbolTableFrame) and self.name == other.name
-
-
-class _ImportSymbolTableFrameData(TypedDict):
-    name: SerializedDict
-
-
-def _is_valid_import_symbol_table_frame_data(
-    data: SerializedDict,
-) -> TypeGuard[_ImportSymbolTableFrameData]:
-    return "name" in data and is_serialized_dict(data["name"])
-
 
 @register_serializable(type_id="import_symbol_table_frame")
 class ImportSymbolTableFrame(SymbolTableFrame):
     """Imported symbol frame."""
-
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return isinstance(
-            other, ImportSymbolTableFrame
-        ) and super().is_structurally_equivalent(other)
-
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {"name": self.name.serialize_to_dict()}
-
-    @classmethod
-    def deserialize_data_from_dict(
-        cls, data: SerializedDict
-    ) -> "ImportSymbolTableFrame":
-        if not _is_valid_import_symbol_table_frame_data(data):
-            raise DeserializationDictStructureError(
-                cls, _ImportSymbolTableFrameData.__annotations__, data
-            )
-        return cls(Identifier.deserialize_from_dict(data["name"]))
-
-
-class _VariableSymbolTableFrameData(TypedDict):
-    name: SerializedDict
-    type: SerializedDict
-    type_qualifier: str
-
-
-def _is_valid_variable_symbol_table_frame_data(
-    data: SerializedDict,
-) -> TypeGuard[_VariableSymbolTableFrameData]:
-    return (
-        "name" in data
-        and is_serialized_dict(data["name"])
-        and "type" in data
-        and is_serialized_dict(data["type"])
-        and "type_qualifier" in data
-        and isinstance(data["type_qualifier"], str)
-    )
 
 
 @dataclass(frozen=True)
@@ -123,40 +74,6 @@ class VariableSymbolTableFrame(SymbolTableFrame):
 
     type: Type
     type_qualifier: TypeQualifier
-
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return (
-            isinstance(other, VariableSymbolTableFrame)
-            and super().is_structurally_equivalent(other)
-            and self.type.is_structurally_equivalent(other.type)
-            and self.type_qualifier == other.type_qualifier
-        )
-
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {
-            "name": self.name.serialize_to_dict(),
-            "type": self.type.serialize_to_dict(),
-            "type_qualifier": self.type_qualifier.value,
-        }
-
-    @classmethod
-    def deserialize_data_from_dict(
-        cls, data: SerializedDict
-    ) -> "VariableSymbolTableFrame":
-        if not _is_valid_variable_symbol_table_frame_data(data):
-            raise DeserializationDictStructureError(
-                cls, _VariableSymbolTableFrameData.__annotations__, data
-            )
-        try:
-            return cls(
-                Identifier.deserialize_from_dict(data["name"]),
-                Type.deserialize_from_dict(data["type"]),
-                type_qualifier=TypeQualifier(data["type_qualifier"]),
-            )
-        except ValueError as exc:
-            raise DeserializationValueError(
-                f"Invalid variable frame values: {exc}"
-            ) from exc
 
 
 class FunctionKeyword(StrEnum):
@@ -215,21 +132,6 @@ class FunctionSymbolTableFrame(SymbolTableFrame):
 
     keyword: FunctionKeyword
     signature: tuple[tuple[TypeQualifier, Type], ...] = field(default_factory=tuple)
-
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return (
-            isinstance(other, FunctionSymbolTableFrame)
-            and super().is_structurally_equivalent(other)
-            and self.keyword == other.keyword
-            and len(self.signature) == len(other.signature)
-            and all(
-                type_qualifier_1 == type_qualifier_2
-                and type_1.is_structurally_equivalent(type_2)
-                for (type_qualifier_1, type_1), (type_qualifier_2, type_2) in zip(
-                    self.signature, other.signature, strict=True
-                )
-            )
-        )
 
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
@@ -344,7 +246,7 @@ def _is_valid_symbol_table_data(data: SerializedDict) -> TypeGuard[_SymbolTableD
 
 @register_serializable(type_id="symbol_table")
 class SymbolTable(
-    Serializable, CanonicalizableMixin, StructuralEquivalenceMixin, VerifiableMixin
+    Serializable, Canonicalizable, StructuralEquivalence, VerifiableMixin
 ):
     """Core nested symbol table comprised of various frames."""
 
@@ -415,39 +317,31 @@ class SymbolTable(
         """Return the number of namespaces in the symbol table."""
         return len(self._table)
 
-    def canonicalize(self) -> bool:
-        """Canonicalize namespace and symbol ordering in place."""
-        changed = False
+    def canonicalize(self) -> None:
+        """Canonicalize namespace and symbol ordering in place.
 
-        namespace_order = list(self._table.keys())
-        sorted_namespaces = sorted(namespace_order, key=_identifier_sort_key)
-        if namespace_order != sorted_namespaces:
-            changed = True
-
+        ``SymbolTable`` is a mutable container, so it takes the mutable
+        branch of the :class:`~fhy_core.traits.Canonicalizable` contract:
+        it reorders its namespaces and symbols by sort key on the receiver
+        and returns ``None``.
+        """
         canonical_table: dict[Identifier, dict[Identifier, SymbolTableFrame]] = {}
-        for namespace_name in sorted_namespaces:
+        for namespace_name in sorted(self._table.keys(), key=_identifier_sort_key):
             namespace_table = self._table[namespace_name]
-            symbol_order = list(namespace_table.keys())
-            sorted_symbols = sorted(symbol_order, key=_identifier_sort_key)
-            if symbol_order != sorted_symbols:
-                changed = True
             canonical_table[namespace_name] = {
                 symbol_name: namespace_table[symbol_name]
-                for symbol_name in sorted_symbols
+                for symbol_name in sorted(
+                    namespace_table.keys(), key=_identifier_sort_key
+                )
             }
-
-        parent_order = list(self._parent_namespace.keys())
-        sorted_parents = sorted(parent_order, key=_identifier_sort_key)
-        if parent_order != sorted_parents:
-            changed = True
 
         self._table = canonical_table
         self._parent_namespace = {
             child_namespace: self._parent_namespace[child_namespace]
-            for child_namespace in sorted_parents
+            for child_namespace in sorted(
+                self._parent_namespace.keys(), key=_identifier_sort_key
+            )
         }
-        _LOGGER.debug("changed=%s", changed)
-        return changed
 
     def verify(self) -> ValidationReport[Any]:
         """Verify structural invariants of the symbol table.

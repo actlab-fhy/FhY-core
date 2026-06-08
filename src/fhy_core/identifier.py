@@ -15,8 +15,8 @@ from .serialization import (
     SerializedDict,
     register_serializable,
 )
-from .trait.equality import EqualMixin
-from .trait.frozen import FrozenMixin
+from .traits.equality import EqualMixin
+from .traits.frozen import FrozenMixin
 
 _LOGGER = get_logger(__name__)
 

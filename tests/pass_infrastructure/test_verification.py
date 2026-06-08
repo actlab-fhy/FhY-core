@@ -35,7 +35,7 @@ from fhy_core.pass_infrastructure import (
     register_verification,
     run_verification,
 )
-from fhy_core.trait import FrozenMixin, VerifiableMixin, Visitable
+from fhy_core.traits import FrozenMixin, VerifiableMixin, Visitable
 
 # ---------------------------------------------------------------------------
 # Shared test scaffolding.

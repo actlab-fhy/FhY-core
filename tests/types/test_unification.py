@@ -10,7 +10,7 @@ from fhy_core.expression import (
 )
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import SerializedDict
-from fhy_core.trait import VerificationError
+from fhy_core.traits import VerificationError
 from fhy_core.types import (
     CoreDataType,
     DataType,
@@ -939,7 +939,6 @@ class _UnregisteredType(Type):
     def __init__(self, tag: str) -> None:
         super().__init__()
         self._tag = tag
-        self.freeze(deep=True)
 
     @property
     def tag(self) -> str:
@@ -963,7 +962,6 @@ class _UnregisteredDataType(DataType):
 
     def __init__(self) -> None:
         super().__init__()
-        self.freeze(deep=True)
 
     def serialize_data_to_dict(self) -> SerializedDict:  # pragma: no cover
         raise NotImplementedError

@@ -130,7 +130,7 @@ class BoundIntParam(IntParam):
         **kwargs: Any,
     ) -> None:
         super().__init__(name=name, **kwargs)
-        object.__setattr__(self, "_prefer_inclusive", prefer_inclusive)
+        self._prefer_inclusive = prefer_inclusive
 
     def validate_constraint(self, constraint: Constraint) -> None:
         super().validate_constraint(constraint)
@@ -396,9 +396,10 @@ class BoundIntParam(IntParam):
                         "to BoundIntParam."
                     )
             wrapper_param = BoundIntParam(
-                name=other.variable, prefer_inclusive=self._prefer_inclusive
+                name=other.variable,
+                prefer_inclusive=self._prefer_inclusive,
+                constraints=other._constraints,
             )
-            object.__setattr__(wrapper_param, "_constraints", other._constraints)
             return wrapper_param
         raise TypeError(f"Unsupported operand type: {type(other)}")
 

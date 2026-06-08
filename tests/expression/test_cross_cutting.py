@@ -2,16 +2,6 @@
 
 import pytest
 
-from fhy_core.expression import (
-    BinaryExpression,
-    BinaryOperation,
-    Expression,
-    IdentifierExpression,
-    LiteralExpression,
-    UnaryExpression,
-    UnaryOperation,
-)
-from fhy_core.expression.passes.basic import IdentifierCollector, IdentifierSubstituter
 from fhy_core.expression.passes.sympy import (
     ExpressionToSympyConverter,
     SymPyToExpressionConverter,
@@ -20,15 +10,11 @@ from fhy_core.expression.passes.type_checker import ExpressionTypeChecker
 from fhy_core.expression.passes.z3 import ExpressionToZ3Converter
 from fhy_core.pass_infrastructure import CompilerPass, PassInfo
 
-from .conftest import mock_identifier
-
 # =============================================================================
 # Pass registry - every expression pass must self-register
 # =============================================================================
 
 _EXPECTED_REGISTRATIONS: list[tuple[str, type]] = [
-    ("fhy_core.expression.collect_identifiers", IdentifierCollector),
-    ("fhy_core.expression.substitute_identifiers", IdentifierSubstituter),
     ("fhy_core.expression.type_checker", ExpressionTypeChecker),
     ("fhy_core.expression.from_sympy", SymPyToExpressionConverter),
     ("fhy_core.expression.to_sympy", ExpressionToSympyConverter),
@@ -47,29 +33,3 @@ def test_expression_pass_is_registered_under_expected_name(
     assert isinstance(info, PassInfo)
     assert info.pass_type is pass_class
     assert info.description.strip() != ""
-
-
-# =============================================================================
-# Serialize -> deserialize round-trip integrity
-# =============================================================================
-
-
-@pytest.mark.parametrize(
-    "expression",
-    [
-        LiteralExpression(42),
-        IdentifierExpression(mock_identifier("x", 7)),
-        UnaryExpression(
-            UnaryOperation.NEGATE, IdentifierExpression(mock_identifier("y", 8))
-        ),
-        BinaryExpression(
-            BinaryOperation.ADD,
-            IdentifierExpression(mock_identifier("a", 9)),
-            LiteralExpression(5),
-        ),
-    ],
-)
-def test_serialize_round_trip_preserves_structure(expression: Expression) -> None:
-    """Test `serialize_to_dict` -> `deserialize_from_dict` preserves structure."""
-    restored = Expression.deserialize_from_dict(expression.serialize_to_dict())
-    assert restored.is_structurally_equivalent(expression)

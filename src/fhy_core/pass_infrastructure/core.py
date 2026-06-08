@@ -39,7 +39,7 @@ from fhy_core.diagnostic import Diagnostic, DiagnosticLevel, Note
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
-from fhy_core.trait import FrozenMixin, PartialEqualMixin, Visitable
+from fhy_core.traits import FrozenMixin, PartialEqualMixin, Visitable
 from fhy_core.utils.enum import StrEnum
 from fhy_core.utils.self import Self
 
@@ -790,10 +790,10 @@ class _VisitableRewritable(Protocol):
     The bound on :class:`RewritablePass`'s node type. A node satisfies
     this protocol when it provides both:
 
-    - the :class:`~fhy_core.trait.Visitable` API
+    - the :class:`~fhy_core.traits.Visitable` API
       (``get_visit_method_suffix``, ``get_visit_children``), and
     - a ``rebuild_with_visit_children(new_children: Sequence[Self]) -> Self``
-      method (the :class:`~fhy_core.trait.Rewritable` API specialized
+      method (the :class:`~fhy_core.traits.Rewritable` API specialized
       to the node's own type).
     """
 
@@ -822,7 +822,7 @@ class RewritablePass(
     The framework handles the recursive walk. For each node, it first
     transforms every child via :meth:`transform`. If any child changed,
     it rebuilds the node (via
-    :meth:`~fhy_core.trait.RewritableMixin.rebuild_with_visit_children`)
+    :meth:`~fhy_core.traits.RewritableMixin.rebuild_with_visit_children`)
     with the new children before calling ``visit_<kind>`` on the result.
     Each visitor therefore sees a node whose children are already in
     their post-transform form.
@@ -834,12 +834,12 @@ class RewritablePass(
 
     Node-type requirement:
         The node type must satisfy both the
-        :class:`~fhy_core.trait.Visitable` and
-        :class:`~fhy_core.trait.Rewritable` protocols. The type bound
+        :class:`~fhy_core.traits.Visitable` and
+        :class:`~fhy_core.traits.Rewritable` protocols. The type bound
         enforces this at ``RewritablePass[_NodeT]`` specialization
         time; nodes mixing in
-        :class:`~fhy_core.trait.VisitableMixin` and
-        :class:`~fhy_core.trait.RewritableMixin` (parameterized at
+        :class:`~fhy_core.traits.VisitableMixin` and
+        :class:`~fhy_core.traits.RewritableMixin` (parameterized at
         their own type) qualify naturally.
     """
 

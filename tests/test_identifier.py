@@ -13,7 +13,7 @@ from fhy_core.serialization import (
     SerializationFormat,
     SerializedDict,
 )
-from fhy_core.trait import Equal, Frozen, FrozenMutationError, PartialEqual
+from fhy_core.traits import Equal, Frozen, FrozenMutationError, PartialEqual
 
 # =============================================================================
 # Construction & ID generation

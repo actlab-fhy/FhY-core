@@ -34,7 +34,7 @@ from typing import final
 from frozendict import frozendict
 
 from fhy_core.identifier import Identifier
-from fhy_core.trait import FrozenMixin
+from fhy_core.traits import FrozenMixin
 
 from ..core import (
     BinaryExpression,
@@ -182,7 +182,7 @@ class MatchBindings(FrozenMixin):
         return hash(frozenset(self.bindings.keys()))
 
 
-class Pattern(ABC):
+class Pattern(FrozenMixin, ABC):
     """Abstract base class for expression-tree patterns.
 
     Subclasses describe a shape that an `Expression` may or may not

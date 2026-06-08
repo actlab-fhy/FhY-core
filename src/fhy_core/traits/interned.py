@@ -2,6 +2,7 @@
 
 __all__ = ["Interned", "InternedMixin"]
 
+import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Hashable
 from functools import wraps
@@ -27,7 +28,27 @@ class Interned(Protocol[_K_co]):
         """Return the stable key used to look up the canonical instance."""
 
 
-class InternedMixin(ABC, Generic[_K]):
+def _warn_interned_metadata_ignored(
+    payload: "InternedMixin[Any]", canonical: "InternedMixin[Any]"
+) -> None:
+    """Log equality-excluded fields whose payload value the canonical ignores."""
+    for field_definition in dataclasses.fields(cast(Any, payload)):
+        if field_definition.compare:
+            continue
+        payload_value = getattr(payload, field_definition.name)
+        canonical_value = getattr(canonical, field_definition.name)
+        if payload_value != canonical_value:
+            _LOGGER.warning(
+                "%s %r already canonical; keeping %s=%r and ignoring payload %r.",
+                type(payload).__name__,
+                payload.get_intern_key(),
+                field_definition.name,
+                canonical_value,
+                payload_value,
+            )
+
+
+class InternedMixin(Generic[_K], ABC):
     """Mixin that registers initialized instances into a family-local registry.
 
     Each direct subclass family gets its own registry. Descendants share that
@@ -35,7 +56,7 @@ class InternedMixin(ABC, Generic[_K]):
     its concrete subclasses.
 
     If an instance also implements `Verifiable` and/or `Frozen`, the mixin
-    verifies and deep-freezes it before registration.
+    verifies and freezes it before registration.
 
     Thread safety:
         The registry is not guarded by a lock. Concurrent construction of
@@ -114,7 +135,7 @@ class InternedMixin(ABC, Generic[_K]):
         if isinstance(self, Verifiable):
             self.verify().raise_if_failed()
         if isinstance(self, Frozen) and not self.is_frozen:
-            self.freeze(deep=True)
+            self.freeze()
 
     def register_interned_instance(self) -> None:
         """Finalize and register this instance as the canonical value for its key."""
@@ -127,7 +148,8 @@ class InternedMixin(ABC, Generic[_K]):
         instance = cls._get_interned_registry().get(key)
         if instance is None or not isinstance(instance, cls):
             return None
-        return instance
+        else:
+            return instance
 
     @classmethod
     def require_interned(cls: type[_I], key: _K) -> _I:
@@ -135,7 +157,8 @@ class InternedMixin(ABC, Generic[_K]):
         instance = cls.get_interned(key)
         if instance is None:
             raise KeyError(f'No registered "{cls.__name__}" instance for key {key!r}.')
-        return instance
+        else:
+            return instance
 
     @classmethod
     def clear_interned_registry(cls) -> None:
@@ -159,6 +182,37 @@ class InternedMixin(ABC, Generic[_K]):
         callers can restore them after :meth:`clear_interned_registry`.
         The base implementation is a no-op for classes without defaults.
         """
+
+    @classmethod
+    def construct_from_fields(cls: type[_I], fields: dict[str, Any]) -> _I:
+        """Reconstruct an interned instance, returning the canonical entry.
+
+        Serves as the serialization reconstruction hook (see
+        ``fhy_core.serialization``) for interned dataclasses: builds the
+        instance from ``fields``, then returns the canonical instance for its
+        intern key -- the freshly built one when the key is new, otherwise the
+        pre-existing canonical. Equality-excluded fields
+        (``field(compare=False)``) whose payload value differs from the
+        canonical's are logged as ignored.
+
+        Note that reconstruction always fully constructs (and verifies) a new
+        instance: when the intern key already exists the freshly built instance
+        is a throwaway that loses the registration race and is discarded, so its
+        ``verify()`` still runs and may raise on otherwise-discardable data.
+
+        Args:
+            fields: Decoded field values, one entry per dataclass field.
+
+        Returns:
+            The canonical instance for the reconstructed object's intern key.
+        """
+        instance = cls(**fields)
+        canonical = cls.get_interned(instance.get_intern_key())
+        if canonical is None:
+            return instance
+        if canonical is not instance:
+            _warn_interned_metadata_ignored(instance, canonical)
+        return canonical
 
     @abstractmethod
     def get_intern_key(self) -> _K:

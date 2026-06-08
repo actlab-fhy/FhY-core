@@ -25,49 +25,26 @@ __all__ = [
 ]
 
 from dataclasses import dataclass, field
-from typing import TypedDict, TypeGuard
 
 from .identifier import Identifier
-from .logger import get_logger
 from .serialization import (
-    DeserializationDictStructureError,
     Serializable,
-    SerializedDict,
-    is_serialized_dict,
     register_serializable,
 )
-from .trait import (
+from .traits import (
+    DerivedEquivalenceMixin,
     FrozenMixin,
-    HasIdentifierMixin,
+    HasIdentifier,
     InternedMixin,
-    StructuralEquivalenceMixin,
 )
-
-_LOGGER = get_logger(__name__)
-
-
-class _OpAttributeData(TypedDict):
-    name: SerializedDict
-    description: str
-
-
-_OP_ATTRIBUTE_DATA_KEYS: frozenset[str] = frozenset({"name", "description"})
-
-
-def _is_valid_op_attribute_data(data: SerializedDict) -> TypeGuard[_OpAttributeData]:
-    if data.keys() != _OP_ATTRIBUTE_DATA_KEYS:
-        return False
-    if not is_serialized_dict(data["name"]):
-        return False
-    return isinstance(data["description"], str)
 
 
 @register_serializable(type_id="op_attribute")
 @dataclass(frozen=True)
 class OpAttribute(
-    HasIdentifierMixin,
+    HasIdentifier,
     FrozenMixin,
-    StructuralEquivalenceMixin,
+    DerivedEquivalenceMixin,
     InternedMixin[Identifier],
     Serializable,
 ):
@@ -84,8 +61,8 @@ class OpAttribute(
     interning. The first instance registered for a given ``Identifier``
     becomes canonical; subsequent constructions and deserializations
     with a different description are not rejected but do not update the
-    canonical description. ``deserialize_from_dict`` emits a warning
-    when the payload description differs from the canonical's.
+    canonical description. Deserializing a payload whose description
+    differs from the canonical's emits a warning.
 
     Attributes:
         name: Stable, process-global identifier for this attribute.
@@ -106,38 +83,6 @@ class OpAttribute(
 
     def get_intern_key(self) -> Identifier:
         return self.name
-
-    def is_structurally_equivalent(self, other: object) -> bool:
-        if not isinstance(other, OpAttribute):
-            return False
-        return self.name == other.name
-
-    def serialize_to_dict(self) -> SerializedDict:
-        return {
-            "name": self.name.serialize_to_dict(),
-            "description": self.description,
-        }
-
-    @classmethod
-    def deserialize_from_dict(cls, data: SerializedDict) -> "OpAttribute":
-        if not _is_valid_op_attribute_data(data):
-            raise DeserializationDictStructureError(
-                cls, _OpAttributeData.__annotations__, data
-            )
-        name = Identifier.deserialize_from_dict(data["name"])
-        payload_description = data["description"]
-        canonical = cls.get_interned(name)
-        if canonical is not None:
-            if canonical.description != payload_description:
-                _LOGGER.warning(
-                    "OpAttribute %r already canonical with description %r; "
-                    "ignoring payload description %r.",
-                    name,
-                    canonical.description,
-                    payload_description,
-                )
-            return canonical
-        return cls(name=name, description=payload_description)
 
     @classmethod
     def register_default_instances(cls) -> None:

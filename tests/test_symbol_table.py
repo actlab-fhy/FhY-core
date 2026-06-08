@@ -13,7 +13,7 @@ from fhy_core.symbol_table import (
     SymbolTableFrame,
     VariableSymbolTableFrame,
 )
-from fhy_core.trait import (
+from fhy_core.traits import (
     Canonicalizable,
     Frozen,
     StructuralEquivalence,
@@ -48,45 +48,6 @@ def test_import_frame_is_structural_equivalence_runtime_protocol() -> None:
     assert isinstance(frame, StructuralEquivalence)
 
 
-def test_import_frame_structural_equivalence_true_for_same_name() -> None:
-    """Test structural equivalence is true for import frames with the same name."""
-    name = mock_identifier("symbol", 0)
-    assert ImportSymbolTableFrame(name).is_structurally_equivalent(
-        ImportSymbolTableFrame(name)
-    )
-
-
-def test_import_frame_structural_equivalence_false_for_different_name() -> None:
-    """Test structural equivalence is false for import frames with different
-    names.
-    """
-    left = ImportSymbolTableFrame(mock_identifier("a", 0))
-    right = ImportSymbolTableFrame(mock_identifier("b", 1))
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_import_frame_structural_equivalence_false_for_other_frame_type(
-    int32: NumericalType,
-) -> None:
-    """Test structural equivalence is false when compared to a different frame
-    type.
-    """
-    name = mock_identifier("symbol", 0)
-    import_frame = ImportSymbolTableFrame(name)
-    variable_frame = VariableSymbolTableFrame(name, int32, TypeQualifier.STATE)
-    assert not import_frame.is_structurally_equivalent(variable_frame)
-
-
-def test_import_frame_dict_serialization_round_trip() -> None:
-    """Test `ImportSymbolTableFrame` round-trips through dict serialization."""
-    frame = ImportSymbolTableFrame(mock_identifier("imported", 0))
-
-    restored = SymbolTableFrame.deserialize_from_dict(frame.serialize_to_dict())
-
-    assert isinstance(restored, ImportSymbolTableFrame)
-    assert frame.is_structurally_equivalent(restored)
-
-
 def test_variable_frame_is_frozen_runtime_protocol(int32: NumericalType) -> None:
     """Test `VariableSymbolTableFrame` satisfies `Frozen` runtime protocol."""
     frame = VariableSymbolTableFrame(
@@ -105,30 +66,6 @@ def test_variable_frame_is_structural_equivalence_runtime_protocol(
         mock_identifier("var", 0), int32, TypeQualifier.STATE
     )
     assert isinstance(frame, StructuralEquivalence)
-
-
-def test_variable_frame_structural_equivalence_true_for_same_content(
-    int32: NumericalType,
-) -> None:
-    """Test structural equivalence is true for variable frames with the same
-    content.
-    """
-    name = mock_identifier("var", 0)
-    left = VariableSymbolTableFrame(name, int32, TypeQualifier.STATE)
-    right = VariableSymbolTableFrame(name, int32, TypeQualifier.STATE)
-    assert left.is_structurally_equivalent(right)
-
-
-def test_variable_frame_structural_equivalence_false_for_different_type_qualifier(
-    int32: NumericalType,
-) -> None:
-    """Test structural equivalence is false for variable frames with different
-    type qualifiers.
-    """
-    name = mock_identifier("var", 0)
-    left = VariableSymbolTableFrame(name, int32, TypeQualifier.STATE)
-    right = VariableSymbolTableFrame(name, int32, TypeQualifier.PARAM)
-    assert not left.is_structurally_equivalent(right)
 
 
 def test_variable_frame_dict_serialization_round_trip(int32: NumericalType) -> None:
@@ -159,52 +96,6 @@ def test_function_frame_is_structural_equivalence_runtime_protocol() -> None:
         mock_identifier("fn", 0), FunctionKeyword.PROCEDURE
     )
     assert isinstance(frame, StructuralEquivalence)
-
-
-def test_function_frame_structural_equivalence_true_for_same_content(
-    int32: NumericalType,
-) -> None:
-    """Test structural equivalence is true for function frames with the same
-    content.
-    """
-    name = mock_identifier("fn", 0)
-    signature = (
-        (TypeQualifier.INPUT, int32),
-        (TypeQualifier.OUTPUT, int32),
-    )
-    left = FunctionSymbolTableFrame(
-        name, FunctionKeyword.PROCEDURE, signature=signature
-    )
-    right = FunctionSymbolTableFrame(
-        name, FunctionKeyword.PROCEDURE, signature=signature
-    )
-    assert left.is_structurally_equivalent(right)
-
-
-def test_function_frame_structural_equivalence_false_for_different_keyword() -> None:
-    """Test structural equivalence is false for function frames with different
-    keywords.
-    """
-    name = mock_identifier("fn", 0)
-    left = FunctionSymbolTableFrame(name, FunctionKeyword.PROCEDURE)
-    right = FunctionSymbolTableFrame(name, FunctionKeyword.OPERATION)
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_function_frame_structural_equivalence_false_different_signature_length(
-    int32: NumericalType,
-) -> None:
-    """Test structural equivalence is false for function frames with different
-    signature lengths.
-    """
-    name = mock_identifier("fn", 0)
-    left = FunctionSymbolTableFrame(name, FunctionKeyword.PROCEDURE)
-    right = FunctionSymbolTableFrame(
-        name,
-        FunctionKeyword.PROCEDURE,
-        signature=((TypeQualifier.INPUT, int32),),
-    )
-    assert not left.is_structurally_equivalent(right)
 
 
 def test_function_frame_dict_serialization_round_trip(int32: NumericalType) -> None:
@@ -485,26 +376,39 @@ def test_symbol_table_verify_reports_error_for_mismatched_frame_identifier() -> 
         report.raise_if_failed()
 
 
-def test_symbol_table_canonicalize_reports_change_when_order_unsorted() -> None:
-    """Test canonicalization reports change when namespace order is unsorted."""
+def test_symbol_table_canonicalize_sorts_namespaces_in_place() -> None:
+    """Test canonicalization reorders namespaces in place by sort key.
+
+    ``SymbolTable`` is a mutable container, so ``canonicalize`` mutates the
+    receiver. Sort key is ``(id, name_hint)``, so ``low`` (id 1) precedes
+    ``high`` (id 2); a table built in reverse order canonicalizes to the
+    same serialization as one built in sorted order.
+    """
+    unsorted = SymbolTable()
+    unsorted.add_namespace(mock_identifier("high", 2))
+    unsorted.add_namespace(mock_identifier("low", 1))
+
+    sorted_reference = SymbolTable()
+    sorted_reference.add_namespace(mock_identifier("low", 1))
+    sorted_reference.add_namespace(mock_identifier("high", 2))
+
+    assert unsorted.serialize_to_dict() != sorted_reference.serialize_to_dict()
+
+    unsorted.canonicalize()
+
+    assert unsorted.serialize_to_dict() == sorted_reference.serialize_to_dict()
+
+
+def test_symbol_table_canonicalize_is_idempotent_when_already_sorted() -> None:
+    """Test canonicalizing an already-sorted table leaves serialization unchanged."""
     symbol_table = SymbolTable()
-    namespace_high = mock_identifier("high", 2)
-    namespace_low = mock_identifier("low", 1)
-    symbol_table.add_namespace(namespace_high)
-    symbol_table.add_namespace(namespace_low)
+    symbol_table.add_namespace(mock_identifier("low", 1))
+    symbol_table.add_namespace(mock_identifier("high", 2))
+    before = symbol_table.serialize_to_dict()
 
-    assert symbol_table.canonicalize()
+    symbol_table.canonicalize()
 
-
-def test_symbol_table_canonicalize_reports_no_change_when_already_sorted() -> None:
-    """Test canonicalization reports no change when table is already sorted."""
-    symbol_table = SymbolTable()
-    namespace_low = mock_identifier("low", 1)
-    namespace_high = mock_identifier("high", 2)
-    symbol_table.add_namespace(namespace_low)
-    symbol_table.add_namespace(namespace_high)
-
-    assert not symbol_table.canonicalize()
+    assert symbol_table.serialize_to_dict() == before
 
 
 def test_add_and_check_namespace(empty_symbol_table: SymbolTable) -> None:

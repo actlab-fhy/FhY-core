@@ -35,7 +35,7 @@ from fhy_core.serialization import (
     is_serialized_dict,
     register_serializable,
 )
-from fhy_core.trait import FrozenMixin, StructuralEquivalenceMixin
+from fhy_core.traits import FrozenMixin, StructuralEquivalence
 
 from ..error import register_error
 from ..expression.core import Expression, LiteralExpression
@@ -51,10 +51,8 @@ _LOGGER = get_logger(__name__)
 class _DispatchedStructuralEquivalence(
     WrappedFamilySerializable,
     FrozenMixin,
-    StructuralEquivalenceMixin,
+    StructuralEquivalence,
     ABC,
-    freeze_on_init=True,
-    freeze_on_init_deep=True,
 ):
     """Shared base for ``Type`` and ``DataType``.
 

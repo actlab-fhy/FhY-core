@@ -5,24 +5,19 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from fhy_core.trait import (
+import fhy_core.traits as traits_package
+from fhy_core.traits import (
     Canonicalizable,
-    CanonicalizableMixin,
-    Foldable,
-    FoldableMixin,
     HasOperands,
-    HasOperandsMixin,
     HasResults,
-    HasResultsMixin,
     Rewritable,
     RewritableMixin,
     StructuralEquivalence,
-    StructuralEquivalenceMixin,
 )
 
 
 @dataclass
-class _OperandNode(HasOperandsMixin[int]):
+class _OperandNode(HasOperands[int]):
     _operands: tuple[int, ...]
 
     def get_operands(self) -> tuple[int, ...]:
@@ -30,7 +25,7 @@ class _OperandNode(HasOperandsMixin[int]):
 
 
 @dataclass
-class _ResultNode(HasResultsMixin[int]):
+class _ResultNode(HasResults[int]):
     _results: tuple[int, ...]
 
     def get_results(self) -> tuple[int, ...]:
@@ -38,26 +33,29 @@ class _ResultNode(HasResultsMixin[int]):
 
 
 @dataclass
-class _FoldableNode(FoldableMixin[int]):
-    folded_value: int | None
+class _MutableCanonicalNode(Canonicalizable):
+    """Mutable node: canonicalizes in place and returns ``None``."""
 
-    def fold(self) -> int | None:
-        return self.folded_value
-
-
-@dataclass
-class _CanonicalNode(CanonicalizableMixin):
     value: int
 
-    def canonicalize(self) -> bool:
+    def canonicalize(self) -> "_MutableCanonicalNode | None":
         if self.value < 0:
             self.value = -self.value
-            return True
-        return False
+        return None
+
+
+@dataclass(frozen=True)
+class _FrozenCanonicalNode(Canonicalizable):
+    """Frozen node: returns a canonicalized copy, never mutating ``self``."""
+
+    value: int
+
+    def canonicalize(self) -> "_FrozenCanonicalNode":
+        return _FrozenCanonicalNode(abs(self.value))
 
 
 @dataclass
-class _StructEqNode(StructuralEquivalenceMixin):
+class _StructEqNode(StructuralEquivalence):
     opcode: str
     operands: tuple[int, ...]
 
@@ -102,8 +100,8 @@ def test_has_operands_runtime_protocol() -> None:
     assert isinstance(node, HasOperands)
 
 
-def test_has_operands_mixin_contract() -> None:
-    """Test `HasOperandsMixin` contract."""
+def test_has_operands_returns_operands() -> None:
+    """Test `HasOperands` protocol method."""
     node = _OperandNode((1, 2, 3))
     assert node.get_operands() == (1, 2, 3)
 
@@ -114,53 +112,64 @@ def test_has_results_runtime_protocol() -> None:
     assert isinstance(node, HasResults)
 
 
-def test_has_results_mixin_contract() -> None:
-    """Test `HasResultsMixin` contract."""
+def test_has_results_returns_results() -> None:
+    """Test `HasResults` protocol method."""
     node = _ResultNode((7, 8))
     assert node.get_results() == (7, 8)
 
 
-def test_foldable_runtime_protocol() -> None:
-    """Test `Foldable` runtime protocol."""
-    node = _FoldableNode(42)
-    assert isinstance(node, Foldable)
-
-
-def test_foldable_fold_returns_value() -> None:
-    """Test `FoldableMixin.fold` returns a value when available."""
-    node = _FoldableNode(42)
-    assert node.fold() == 42
-
-
-def test_foldable_fold_returns_none() -> None:
-    """Test `FoldableMixin.fold` returns `None` when not foldable."""
-    node = _FoldableNode(None)
-    assert node.fold() is None
+def test_foldable_is_removed_from_public_api() -> None:
+    """Test `Foldable` is no longer exported by the traits package."""
+    assert not hasattr(traits_package, "Foldable")
+    assert "Foldable" not in traits_package.__all__
 
 
 def test_canonicalizable_runtime_protocol() -> None:
-    """Test `Canonicalizable` runtime protocol."""
-    node = _CanonicalNode(-3)
-    assert isinstance(node, Canonicalizable)
+    """Test `Canonicalizable` runtime protocol for mutable and frozen nodes."""
+    assert isinstance(_MutableCanonicalNode(-3), Canonicalizable)
+    assert isinstance(_FrozenCanonicalNode(-3), Canonicalizable)
 
 
-def test_canonicalizable_applies_change() -> None:
-    """Test `CanonicalizableMixin.canonicalize` reports applied change."""
-    node = _CanonicalNode(-3)
-    assert node.canonicalize()
+def test_mutable_canonicalize_mutates_in_place_and_returns_none() -> None:
+    """Test a mutable node canonicalizes in place and returns `None`."""
+    node = _MutableCanonicalNode(-3)
 
+    result = node.canonicalize()
 
-def test_canonicalizable_updates_value() -> None:
-    """Test `CanonicalizableMixin.canonicalize` updates node state."""
-    node = _CanonicalNode(-3)
-    node.canonicalize()
+    assert result is None
     assert node.value == 3
 
 
-def test_canonicalizable_reports_no_change() -> None:
-    """Test `CanonicalizableMixin.canonicalize` reports no change."""
-    node = _CanonicalNode(5)
-    assert not node.canonicalize()
+def test_frozen_canonicalize_returns_copy_without_mutating_self() -> None:
+    """Test a frozen node returns a new canonicalized copy, leaving self intact."""
+    node = _FrozenCanonicalNode(-3)
+
+    result = node.canonicalize()
+
+    assert result is not node
+    assert result.value == 3
+    assert node.value == -3
+
+
+def test_frozen_canonicalize_of_canonical_node_returns_equal_object() -> None:
+    """Test canonicalizing an already-canonical frozen node yields an equal node."""
+    node = _FrozenCanonicalNode(5)
+
+    assert node.canonicalize() == _FrozenCanonicalNode(5)
+
+
+def test_canonicalize_caller_idiom_yields_canonical_form_for_both() -> None:
+    """Test the uniform `obj.canonicalize() or obj` idiom across mutability.
+
+    Mutable objects return ``None`` (so the idiom falls back to the mutated
+    receiver); frozen objects return the canonical copy. Either way the
+    expression evaluates to the canonical form.
+    """
+    mutable = _MutableCanonicalNode(-3)
+    frozen = _FrozenCanonicalNode(-3)
+
+    assert (mutable.canonicalize() or mutable).value == 3
+    assert (frozen.canonicalize() or frozen).value == 3
 
 
 def test_structural_equivalence_runtime_protocol() -> None:

@@ -3,26 +3,15 @@
 import pytest
 
 from fhy_core.expression import (
-    BinaryExpression,
-    BinaryOperation,
     CallExpression,
-    Expression,
     IdentifierExpression,
     LiteralExpression,
     TernaryExpression,
-    UnaryExpression,
-    UnaryOperation,
     call,
     ternary,
 )
 from fhy_core.identifier import Identifier
-from fhy_core.serialization import (
-    DeserializationDictStructureError,
-    SerializedDict,
-)
-from fhy_core.trait import FrozenMutationError, HasOperands
-
-from .conftest import mock_identifier
+from fhy_core.traits import FrozenMutationError, HasOperands
 
 # =============================================================================
 # TernaryExpression: construction and accessors
@@ -78,155 +67,6 @@ def test_ternary_expression_get_visit_children_returns_three_operands() -> None:
     expression = TernaryExpression(condition, true_value, false_value)
 
     assert expression.get_visit_children() == (condition, true_value, false_value)
-
-
-# =============================================================================
-# TernaryExpression: structural equivalence
-# =============================================================================
-
-
-def test_ternary_expression_equivalent_when_all_three_operands_equivalent() -> None:
-    """Test two ``TernaryExpression``s with matching operands are equivalent."""
-    left = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
-    )
-    right = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
-    )
-
-    assert left.is_structurally_equivalent(right)
-    assert right.is_structurally_equivalent(left)
-
-
-@pytest.mark.parametrize(
-    "differ_kind",
-    ["condition", "true_value", "false_value"],
-)
-def test_ternary_expression_not_equivalent_when_one_operand_differs(
-    differ_kind: str,
-) -> None:
-    """Test ``TernaryExpression`` equivalence is false if any operand differs."""
-    base = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
-    )
-    overrides = {
-        "condition": LiteralExpression(False),
-        "true_value": LiteralExpression(99),
-        "false_value": LiteralExpression(-1),
-    }
-    other = TernaryExpression(
-        overrides["condition"] if differ_kind == "condition" else base.condition,
-        overrides["true_value"] if differ_kind == "true_value" else base.true_value,
-        (
-            overrides["false_value"]
-            if differ_kind == "false_value"
-            else base.false_value
-        ),
-    )
-
-    assert not base.is_structurally_equivalent(other)
-
-
-def test_ternary_expression_not_equivalent_to_other_expression_kinds() -> None:
-    """Test a ``TernaryExpression`` is not equivalent to a binary expression."""
-    ternary_expression = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
-    )
-    binary_expression = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-    )
-
-    assert not ternary_expression.is_structurally_equivalent(binary_expression)
-
-
-# =============================================================================
-# TernaryExpression: serialization round-trip
-# =============================================================================
-
-
-def test_ternary_expression_serializes_to_expected_dict_shape() -> None:
-    """Test ``TernaryExpression`` serialization payload contains all three operands."""
-    expression = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
-    )
-    expected: SerializedDict = {
-        "__type__": "ternary_expression",
-        "__data__": {
-            "condition": {
-                "__type__": "literal_expression",
-                "__data__": {"value": True},
-            },
-            "true_value": {
-                "__type__": "literal_expression",
-                "__data__": {"value": 1},
-            },
-            "false_value": {
-                "__type__": "literal_expression",
-                "__data__": {"value": 2},
-            },
-        },
-    }
-
-    assert expression.serialize_to_dict() == expected
-
-
-def test_ternary_expression_round_trips_through_serialize_to_dict() -> None:
-    """Test ``TernaryExpression`` round-trips structurally through serialization."""
-    original = TernaryExpression(
-        LiteralExpression(True),
-        BinaryExpression(
-            BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-        ),
-        UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(3)),
-    )
-
-    restored = Expression.deserialize_from_dict(original.serialize_to_dict())
-
-    assert restored.is_structurally_equivalent(original)
-
-
-@pytest.mark.parametrize(
-    "data",
-    [
-        pytest.param(
-            {"__type__": "ternary_expression", "__data__": {}},
-            id="empty_data",
-        ),
-        pytest.param(
-            {
-                "__type__": "ternary_expression",
-                "__data__": {
-                    "condition": {
-                        "__type__": "literal_expression",
-                        "__data__": {"value": True},
-                    }
-                },
-            },
-            id="missing_branches",
-        ),
-        pytest.param(
-            {
-                "__type__": "ternary_expression",
-                "__data__": {
-                    "condition": "not-a-dict",
-                    "true_value": {
-                        "__type__": "literal_expression",
-                        "__data__": {"value": 1},
-                    },
-                    "false_value": {
-                        "__type__": "literal_expression",
-                        "__data__": {"value": 2},
-                    },
-                },
-            },
-            id="condition_not_serialized_dict",
-        ),
-    ],
-)
-def test_deserialize_ternary_rejects_invalid_data_shape(data: SerializedDict) -> None:
-    """Test ternary deserialization raises on missing or wrong-typed fields."""
-    with pytest.raises(DeserializationDictStructureError):
-        Expression.deserialize_from_dict(data)
 
 
 # =============================================================================
@@ -298,6 +138,17 @@ def test_call_expression_supports_zero_arguments() -> None:
     assert expression.arguments == ()
 
 
+def test_call_expression_rejects_empty_function_name() -> None:
+    """Test ``CallExpression`` rejects an empty ``function_name`` at construction.
+
+    This is a value constraint enforced by ``__post_init__``, independent of
+    serialization; deserializing such a payload surfaces it through the generic
+    engine as a value error.
+    """
+    with pytest.raises(ValueError, match="non-empty"):
+        CallExpression("", (LiteralExpression(1),))
+
+
 def test_call_expression_is_frozen_after_construction() -> None:
     """Test ``CallExpression`` instances reject attribute mutation."""
     expression = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
@@ -329,145 +180,6 @@ def test_call_expression_get_visit_children_returns_arguments_in_order() -> None
     expression = CallExpression("max", (arg_a, arg_b))
 
     assert expression.get_visit_children() == (arg_a, arg_b)
-
-
-# =============================================================================
-# CallExpression: structural equivalence
-# =============================================================================
-
-
-def test_call_expression_equivalent_for_same_name_and_arguments() -> None:
-    """Test ``CallExpression`` equivalence is true for matching name and arguments."""
-    left = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
-    right = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
-
-    assert left.is_structurally_equivalent(right)
-
-
-def test_call_expression_not_equivalent_when_name_differs() -> None:
-    """Test ``CallExpression`` equivalence is false when function names differ."""
-    left = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
-    right = CallExpression("min", (LiteralExpression(1), LiteralExpression(2)))
-
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_call_expression_not_equivalent_when_argument_count_differs() -> None:
-    """Test ``CallExpression`` equivalence is false when argument counts differ."""
-    left = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
-    right = CallExpression(
-        "max", (LiteralExpression(1), LiteralExpression(2), LiteralExpression(3))
-    )
-
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_call_expression_not_equivalent_when_one_argument_differs() -> None:
-    """Test ``CallExpression`` equivalence is false when an argument differs."""
-    left = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
-    right = CallExpression("max", (LiteralExpression(1), LiteralExpression(99)))
-
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_call_expression_not_equivalent_to_other_expression_kinds() -> None:
-    """Test a ``CallExpression`` is not equivalent to a binary expression."""
-    call_expression = CallExpression(
-        "max", (LiteralExpression(1), LiteralExpression(2))
-    )
-    binary_expression = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-    )
-
-    assert not call_expression.is_structurally_equivalent(binary_expression)
-
-
-# =============================================================================
-# CallExpression: serialization round-trip
-# =============================================================================
-
-
-def test_call_expression_serializes_to_expected_dict_shape() -> None:
-    """Test ``CallExpression`` serialization payload contains name and arguments."""
-    expression = CallExpression("max", (LiteralExpression(1), LiteralExpression(2)))
-    expected: SerializedDict = {
-        "__type__": "call_expression",
-        "__data__": {
-            "function_name": "max",
-            "arguments": [
-                {"__type__": "literal_expression", "__data__": {"value": 1}},
-                {"__type__": "literal_expression", "__data__": {"value": 2}},
-            ],
-        },
-    }
-
-    assert expression.serialize_to_dict() == expected
-
-
-def test_call_expression_round_trips_through_serialize_to_dict() -> None:
-    """Test ``CallExpression`` round-trips structurally through serialization."""
-    original = CallExpression(
-        "abs",
-        (
-            BinaryExpression(
-                BinaryOperation.SUBTRACT,
-                IdentifierExpression(mock_identifier("a", 1)),
-                IdentifierExpression(mock_identifier("b", 2)),
-            ),
-        ),
-    )
-
-    restored = Expression.deserialize_from_dict(original.serialize_to_dict())
-
-    assert restored.is_structurally_equivalent(original)
-
-
-def test_call_expression_round_trips_with_empty_arguments() -> None:
-    """Test ``CallExpression`` round-trips when constructed with no arguments."""
-    original = CallExpression("nullary", ())
-
-    restored = Expression.deserialize_from_dict(original.serialize_to_dict())
-
-    assert restored.is_structurally_equivalent(original)
-
-
-@pytest.mark.parametrize(
-    "data",
-    [
-        pytest.param(
-            {"__type__": "call_expression", "__data__": {}},
-            id="empty_data",
-        ),
-        pytest.param(
-            {
-                "__type__": "call_expression",
-                "__data__": {"function_name": "max"},
-            },
-            id="missing_arguments",
-        ),
-        pytest.param(
-            {
-                "__type__": "call_expression",
-                "__data__": {"function_name": "max", "arguments": "not-a-list"},
-            },
-            id="arguments_not_list",
-        ),
-        pytest.param(
-            {
-                "__type__": "call_expression",
-                "__data__": {
-                    "function_name": 5,
-                    "arguments": [],
-                },
-            },
-            id="function_name_not_string",
-        ),
-    ],
-)
-def test_deserialize_call_rejects_invalid_data_shape(data: SerializedDict) -> None:
-    """Test call deserialization raises on missing or wrong-typed fields."""
-    with pytest.raises(DeserializationDictStructureError):
-        Expression.deserialize_from_dict(data)
 
 
 # =============================================================================

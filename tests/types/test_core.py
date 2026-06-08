@@ -5,7 +5,7 @@ from frozendict import frozendict
 
 from fhy_core.expression import IdentifierExpression, LiteralExpression
 from fhy_core.identifier import Identifier
-from fhy_core.trait import (
+from fhy_core.traits import (
     Frozen,
     FrozenMutationError,
     StructuralEquivalence,

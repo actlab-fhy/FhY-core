@@ -15,11 +15,9 @@ from fhy_core.provenance import (
     UnknownProvenance,
 )
 from fhy_core.serialization import (
-    DeserializationDictStructureError,
-    DeserializationValueError,
     SerializationError,
 )
-from fhy_core.trait import (
+from fhy_core.traits import (
     Equal,
     HasProvenance,
     Orderable,
@@ -64,27 +62,6 @@ def test_position_orders_lexicographically_by_line_then_column() -> None:
     assert Position(1, 99) < Position(2, 1)
 
 
-def test_position_dict_round_trip() -> None:
-    """Test `Position` survives dict serialize/deserialize."""
-    position = Position(2, 8)
-
-    restored = Position.deserialize_from_dict(position.serialize_to_dict())
-
-    assert restored == position
-
-
-def test_position_dict_deserialization_invalid_value_rejected() -> None:
-    """Test invalid `Position` values are rejected during deserialization."""
-    with pytest.raises(DeserializationValueError):
-        Position.deserialize_from_dict({"line": 1, "column": 0})
-
-
-def test_position_dict_deserialization_structure_rejected() -> None:
-    """Test malformed `Position` dicts are rejected during deserialization."""
-    with pytest.raises(DeserializationDictStructureError):
-        Position.deserialize_from_dict({"line": 1})
-
-
 def test_position_satisfies_equal_and_orderable_traits() -> None:
     """Test `Position` implements equality and ordering trait protocols."""
     position = Position(2, 8)
@@ -113,12 +90,6 @@ def test_position_rejects_bool_values(line: object, column: object) -> None:
     """Test `Position` rejects `bool` values for line and column."""
     with pytest.raises(TypeError):
         Position(line, column)  # type: ignore[arg-type]
-
-
-def test_position_dict_deserialization_rejects_bool_values() -> None:
-    """Test `Position.deserialize_from_dict` rejects `bool` values."""
-    with pytest.raises(DeserializationDictStructureError):
-        Position.deserialize_from_dict({"line": True, "column": 1})
 
 
 # ============================================================================
@@ -185,30 +156,6 @@ def test_span_allows_equal_start_and_end_position() -> None:
     assert span.end_position == Position(1, 1)
 
 
-def test_span_dict_round_trip_with_all_fields() -> None:
-    """Test `Span` survives dict round-trip with offsets and positions."""
-    span = Span(0, 3, Position(1, 1), Position(1, 4))
-
-    restored = Span.deserialize_from_dict(span.serialize_to_dict())
-
-    assert restored == span
-
-
-def test_span_dict_round_trip_unknown() -> None:
-    """Test unknown `Span` survives dict round-trip."""
-    span = Span()
-
-    restored = Span.deserialize_from_dict(span.serialize_to_dict())
-
-    assert restored == span
-
-
-def test_span_dict_deserialization_structure_rejected() -> None:
-    """Test malformed `Span` dicts are rejected during deserialization."""
-    with pytest.raises(DeserializationDictStructureError):
-        Span.deserialize_from_dict({"start_offset": 0})
-
-
 @pytest.mark.parametrize(
     "start_offset,end_offset",
     [(True, None), (None, False), (True, True)],
@@ -218,19 +165,6 @@ def test_span_rejects_bool_offsets(start_offset: object, end_offset: object) -> 
     """Test `Span` rejects `bool` values for offsets."""
     with pytest.raises(TypeError):
         Span(start_offset=start_offset, end_offset=end_offset)  # type: ignore[arg-type]
-
-
-def test_span_dict_deserialization_rejects_bool_offsets() -> None:
-    """Test `Span.deserialize_from_dict` rejects `bool` offset values."""
-    with pytest.raises(DeserializationDictStructureError):
-        Span.deserialize_from_dict(
-            {
-                "start_offset": True,
-                "end_offset": None,
-                "start_position": None,
-                "end_position": None,
-            }
-        )
 
 
 def test_span_string_representation_for_unknown() -> None:
@@ -286,12 +220,6 @@ def test_provenance_unknown_instances_compare_equal() -> None:
     """Test all `UnknownProvenance` instances compare equal."""
     assert Provenance.unknown() == Provenance.unknown()
     assert UnknownProvenance() == UnknownProvenance()
-
-
-def test_unknown_provenance_deserialization_rejects_non_empty_data() -> None:
-    """Test `UnknownProvenance` rejects payloads with unexpected keys."""
-    with pytest.raises(DeserializationDictStructureError):
-        UnknownProvenance.deserialize_data_from_dict({"unexpected": 1})
 
 
 # ============================================================================
@@ -549,30 +477,6 @@ def _build_one_of_each_variant() -> list[Provenance]:
         FusedProvenance(sources=(src, other)),
         FusedProvenance(sources=(src,), metadata="loop-fusion"),
     ]
-
-
-@pytest.mark.parametrize(
-    "provenance",
-    _build_one_of_each_variant(),
-    ids=lambda p: type(p).__name__,
-)
-def test_provenance_dict_round_trip_via_base(provenance: Provenance) -> None:
-    """Test each variant round-trips via `Provenance.deserialize_from_dict`."""
-    restored = Provenance.deserialize_from_dict(provenance.serialize_to_dict())
-
-    assert restored == provenance
-
-
-@pytest.mark.parametrize(
-    "provenance",
-    _build_one_of_each_variant(),
-    ids=lambda p: type(p).__name__,
-)
-def test_provenance_binary_round_trip(provenance: Provenance) -> None:
-    """Test each variant round-trips through the binary envelope."""
-    restored = Provenance.from_bytes(provenance.to_bytes())
-
-    assert restored == provenance
 
 
 @pytest.mark.parametrize(

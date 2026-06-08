@@ -15,7 +15,6 @@ from fhy_core.expression import (
     LiteralExpression,
     UnaryExpression,
     UnaryOperation,
-    collect_identifiers,
     logical_and,
     logical_not,
     logical_or,
@@ -25,10 +24,9 @@ from fhy_core.expression import (
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
     DeserializationDictStructureError,
-    DeserializationValueError,
     SerializedDict,
 )
-from fhy_core.trait import FrozenMutationError, HasOperands, StructuralEquivalence
+from fhy_core.traits import FrozenMutationError, HasOperands, StructuralEquivalence
 
 from .conftest import mock_identifier
 
@@ -219,126 +217,12 @@ def test_expression_satisfies_structural_equivalence_protocol() -> None:
 # =============================================================================
 
 
-@pytest.mark.parametrize(
-    "expression",
-    [
-        pytest.param(LiteralExpression(7), id="literal"),
-        pytest.param(IdentifierExpression(mock_identifier("x", 0)), id="identifier"),
-        pytest.param(
-            UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1)),
-            id="unary",
-        ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-            ),
-            id="binary",
-        ),
-    ],
-)
-def test_structural_equivalence_is_reflexive(expression: Expression) -> None:
-    """Test every expression is structurally equivalent to itself."""
-    assert expression.is_structurally_equivalent(expression)
-
-
-def test_structurally_equivalent_trees_compare_equivalent() -> None:
-    """Test two independently-built identical trees are structurally equivalent."""
-    left = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-    )
-    right = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-    )
-    assert left.is_structurally_equivalent(right)
-    assert right.is_structurally_equivalent(left)
-
-
-def test_structurally_different_trees_compare_non_equivalent() -> None:
-    """Test trees differing only by operation are not structurally equivalent."""
-    left = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-    )
-    right = BinaryExpression(
-        BinaryOperation.SUBTRACT, LiteralExpression(1), LiteralExpression(2)
-    )
-    assert not left.is_structurally_equivalent(right)
-
-
 def test_literal_equivalence_is_false_when_values_differ_in_either_direction() -> None:
     """Test `LiteralExpression` equivalence is value-equal and symmetrically false."""
     smaller = LiteralExpression(5)
     larger = LiteralExpression(10)
     assert not smaller.is_structurally_equivalent(larger)
     assert not larger.is_structurally_equivalent(smaller)
-
-
-def test_unary_equivalence_requires_matching_operation() -> None:
-    """Test `UnaryExpression` equivalence is false when operations differ."""
-    operand = LiteralExpression(1)
-    negate = UnaryExpression(UnaryOperation.NEGATE, operand)
-    positive = UnaryExpression(UnaryOperation.POSITIVE, operand)
-    assert not negate.is_structurally_equivalent(positive)
-
-
-def test_unary_equivalence_requires_matching_operand() -> None:
-    """Test `UnaryExpression` equivalence is false when operands differ."""
-    left = UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1))
-    right = UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(2))
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_binary_equivalence_requires_matching_operation() -> None:
-    """Test `BinaryExpression` equivalence is false when operations differ."""
-    left = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-    )
-    right = BinaryExpression(
-        BinaryOperation.MULTIPLY, LiteralExpression(1), LiteralExpression(2)
-    )
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_binary_equivalence_requires_matching_left() -> None:
-    """Test `BinaryExpression` equivalence is false when only left operands differ."""
-    left = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(3)
-    )
-    right = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(2), LiteralExpression(3)
-    )
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_binary_equivalence_requires_matching_right() -> None:
-    """Test `BinaryExpression` equivalence is false when only right operands differ."""
-    left = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-    )
-    right = BinaryExpression(
-        BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(3)
-    )
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_identifier_equivalence_requires_matching_identifier() -> None:
-    """Test `IdentifierExpression` equivalence compares underlying identifiers."""
-    left = IdentifierExpression(Identifier("x"))
-    right = IdentifierExpression(Identifier("x"))
-    assert not left.is_structurally_equivalent(right)
-
-
-def test_binary_equivalence_is_not_commutative() -> None:
-    """Test ``a + b`` and ``b + a`` are not structurally equivalent.
-
-    Structural equivalence is positional, not algebraic; commuting operands
-    must produce a non-equivalent tree so future "smart" equivalence changes
-    are caught.
-    """
-    a = LiteralExpression(1)
-    b = LiteralExpression(2)
-    assert not BinaryExpression(BinaryOperation.ADD, a, b).is_structurally_equivalent(
-        BinaryExpression(BinaryOperation.ADD, b, a)
-    )
 
 
 @pytest.mark.parametrize(
@@ -486,44 +370,6 @@ def test_literal_equivalence_distinguishes_buckets(
     left = LiteralExpression(left_value)
     right = LiteralExpression(right_value)
 
-    assert not left.is_structurally_equivalent(right)
-    assert not right.is_structurally_equivalent(left)
-
-
-def _make_pair_by_subclass(
-    subclass: type[Expression],
-) -> Expression:
-    if subclass is LiteralExpression:
-        return LiteralExpression(1)
-    elif subclass is IdentifierExpression:
-        return IdentifierExpression(mock_identifier("x", 0))
-    elif subclass is UnaryExpression:
-        return UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1))
-    elif subclass is BinaryExpression:
-        return BinaryExpression(
-            BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
-        )
-    else:
-        raise AssertionError(f"Unknown subclass: {subclass}")
-
-
-@pytest.mark.parametrize(
-    "left_subclass, right_subclass",
-    [
-        (LiteralExpression, IdentifierExpression),
-        (LiteralExpression, UnaryExpression),
-        (LiteralExpression, BinaryExpression),
-        (IdentifierExpression, UnaryExpression),
-        (IdentifierExpression, BinaryExpression),
-        (UnaryExpression, BinaryExpression),
-    ],
-)
-def test_equivalence_is_false_across_distinct_expression_subclasses(
-    left_subclass: type[Expression], right_subclass: type[Expression]
-) -> None:
-    """Test structural equivalence is false across distinct `Expression` subclasses."""
-    left = _make_pair_by_subclass(left_subclass)
-    right = _make_pair_by_subclass(right_subclass)
     assert not left.is_structurally_equivalent(right)
     assert not right.is_structurally_equivalent(left)
 
@@ -953,285 +799,28 @@ def test_set_of_distinct_field_equal_expressions_keeps_both_members(
 # =============================================================================
 
 
-@pytest.mark.parametrize(
-    "expression, expected_dict",
-    [
-        (
-            LiteralExpression(True),
-            {
-                "__type__": "literal_expression",
-                "__data__": {"value": True},
-            },
-        ),
-        (
-            IdentifierExpression(mock_identifier("x", 1)),
-            {
-                "__type__": "identifier_expression",
-                "__data__": {"identifier": {"id": 1, "name_hint": "x"}},
-            },
-        ),
-        (
-            UnaryExpression(
-                UnaryOperation.NEGATE,
-                IdentifierExpression(mock_identifier("y", 2)),
-            ),
-            {
-                "__type__": "unary_expression",
-                "__data__": {
-                    "operation": "negate",
-                    "operand": {
-                        "__type__": "identifier_expression",
-                        "__data__": {
-                            "identifier": {"id": 2, "name_hint": "y"},
-                        },
-                    },
-                },
-            },
-        ),
-        (
-            BinaryExpression(
-                BinaryOperation.ADD,
-                IdentifierExpression(mock_identifier("x", 0)),
-                LiteralExpression(5),
-            ),
-            {
-                "__type__": "binary_expression",
-                "__data__": {
-                    "operation": "add",
-                    "left": {
-                        "__type__": "identifier_expression",
-                        "__data__": {
-                            "identifier": {"id": 0, "name_hint": "x"},
-                        },
-                    },
-                    "right": {
-                        "__type__": "literal_expression",
-                        "__data__": {"value": 5},
-                    },
-                },
-            },
-        ),
-    ],
-)
-def test_expression_round_trips_through_serialize_to_dict(
-    expression: Expression, expected_dict: SerializedDict
-) -> None:
-    """Test `serialize_to_dict` yields the expected payload and round-trips."""
+def test_literal_expression_round_trips_through_serialize_to_dict() -> None:
+    """Test `LiteralExpression` (hand-written codec) round-trips with its dict shape.
+
+    ``LiteralExpression`` keeps a bespoke ``serialize_data_to_dict`` /
+    ``deserialize_data_from_dict`` because its ``value`` is a scalar union the
+    derivation engine cannot infer, so it retains a dedicated serialization
+    test. The derived expression classes are covered centrally by the
+    serialization-engine tests instead.
+    """
+    expression = LiteralExpression(True)
+    expected_dict: SerializedDict = {
+        "__type__": "literal_expression",
+        "__data__": {"value": True},
+    }
     assert expression.serialize_to_dict() == expected_dict
     restored = Expression.deserialize_from_dict(expected_dict)
     assert restored.is_structurally_equivalent(expression)
 
 
-@pytest.mark.parametrize("operation", list(UnaryOperation))
-def test_unary_expression_round_trips_for_every_operation(
-    operation: UnaryOperation,
-) -> None:
-    """Test serialize/deserialize round-trips every `UnaryOperation` enum value."""
-    expression = UnaryExpression(operation, LiteralExpression(1))
-    restored = Expression.deserialize_from_dict(expression.serialize_to_dict())
-    assert restored.is_structurally_equivalent(expression)
-
-
-@pytest.mark.parametrize("operation", list(BinaryOperation))
-def test_binary_expression_round_trips_for_every_operation(
-    operation: BinaryOperation,
-) -> None:
-    """Test serialize/deserialize round-trips every `BinaryOperation` enum value."""
-    expression = BinaryExpression(operation, LiteralExpression(1), LiteralExpression(2))
-    restored = Expression.deserialize_from_dict(expression.serialize_to_dict())
-    assert restored.is_structurally_equivalent(expression)
-
-
-def test_expression_round_trips_through_a_deeply_nested_tree() -> None:
-    """Test serialize/deserialize round-trips a 50-level left-leaning binary chain."""
-    depth = 50
-    expression: Expression = LiteralExpression(0)
-    for term in range(1, depth + 1):
-        expression = BinaryExpression(
-            BinaryOperation.ADD, expression, LiteralExpression(term)
-        )
-    restored = Expression.deserialize_from_dict(expression.serialize_to_dict())
-    assert restored.is_structurally_equivalent(expression)
-
-
-def test_deserialize_unary_rejects_invalid_operation_name() -> None:
-    """Test unary deserialization raises `DeserializationValueError` on bad op name."""
-    data: SerializedDict = {
-        "__type__": "unary_expression",
-        "__data__": {
-            "operation": "not_an_operation",
-            "operand": {
-                "__type__": "literal_expression",
-                "__data__": {"value": 1},
-            },
-        },
-    }
-    with pytest.raises(DeserializationValueError):
-        Expression.deserialize_from_dict(data)
-
-
-def test_deserialize_binary_rejects_invalid_operation_name() -> None:
-    """Test binary deserialization raises `DeserializationValueError` on bad op name."""
-    data: SerializedDict = {
-        "__type__": "binary_expression",
-        "__data__": {
-            "operation": "not_an_operation",
-            "left": {
-                "__type__": "literal_expression",
-                "__data__": {"value": 1},
-            },
-            "right": {
-                "__type__": "literal_expression",
-                "__data__": {"value": 2},
-            },
-        },
-    }
-    with pytest.raises(DeserializationValueError):
-        Expression.deserialize_from_dict(data)
-
-
 # =============================================================================
 # Serialization: structural validation errors
 # =============================================================================
-
-_VALID_LITERAL_DICT: SerializedDict = {
-    "__type__": "literal_expression",
-    "__data__": {"value": 1},
-}
-
-
-@pytest.mark.parametrize(
-    "data",
-    [
-        pytest.param(
-            {
-                "__type__": "unary_expression",
-                "__data__": {"operand": _VALID_LITERAL_DICT},
-            },
-            id="missing_operation",
-        ),
-        pytest.param(
-            {
-                "__type__": "unary_expression",
-                "__data__": {"operation": 42, "operand": _VALID_LITERAL_DICT},
-            },
-            id="operation_not_str",
-        ),
-        pytest.param(
-            {"__type__": "unary_expression", "__data__": {"operation": "negate"}},
-            id="missing_operand",
-        ),
-        pytest.param(
-            {
-                "__type__": "unary_expression",
-                "__data__": {"operation": "negate", "operand": "not-a-dict"},
-            },
-            id="operand_not_serialized_dict",
-        ),
-    ],
-)
-def test_deserialize_unary_rejects_invalid_data_shape(data: SerializedDict) -> None:
-    """Test unary deserialization raises on missing or wrong-typed fields."""
-    with pytest.raises(DeserializationDictStructureError):
-        Expression.deserialize_from_dict(data)
-
-
-@pytest.mark.parametrize(
-    "data",
-    [
-        pytest.param(
-            {
-                "__type__": "binary_expression",
-                "__data__": {
-                    "left": _VALID_LITERAL_DICT,
-                    "right": _VALID_LITERAL_DICT,
-                },
-            },
-            id="missing_operation",
-        ),
-        pytest.param(
-            {
-                "__type__": "binary_expression",
-                "__data__": {
-                    "operation": 7,
-                    "left": _VALID_LITERAL_DICT,
-                    "right": _VALID_LITERAL_DICT,
-                },
-            },
-            id="operation_not_str",
-        ),
-        pytest.param(
-            {
-                "__type__": "binary_expression",
-                "__data__": {
-                    "operation": "add",
-                    "right": _VALID_LITERAL_DICT,
-                },
-            },
-            id="missing_left",
-        ),
-        pytest.param(
-            {
-                "__type__": "binary_expression",
-                "__data__": {
-                    "operation": "add",
-                    "left": "not-a-dict",
-                    "right": _VALID_LITERAL_DICT,
-                },
-            },
-            id="left_not_serialized_dict",
-        ),
-        pytest.param(
-            {
-                "__type__": "binary_expression",
-                "__data__": {
-                    "operation": "add",
-                    "left": _VALID_LITERAL_DICT,
-                },
-            },
-            id="missing_right",
-        ),
-        pytest.param(
-            {
-                "__type__": "binary_expression",
-                "__data__": {
-                    "operation": "add",
-                    "left": _VALID_LITERAL_DICT,
-                    "right": "not-a-dict",
-                },
-            },
-            id="right_not_serialized_dict",
-        ),
-    ],
-)
-def test_deserialize_binary_rejects_invalid_data_shape(data: SerializedDict) -> None:
-    """Test binary deserialization raises on missing or wrong-typed fields."""
-    with pytest.raises(DeserializationDictStructureError):
-        Expression.deserialize_from_dict(data)
-
-
-@pytest.mark.parametrize(
-    "data",
-    [
-        pytest.param(
-            {"__type__": "identifier_expression", "__data__": {}},
-            id="missing_identifier",
-        ),
-        pytest.param(
-            {
-                "__type__": "identifier_expression",
-                "__data__": {"identifier": "not-a-dict"},
-            },
-            id="identifier_not_serialized_dict",
-        ),
-    ],
-)
-def test_deserialize_identifier_rejects_invalid_data_shape(
-    data: SerializedDict,
-) -> None:
-    """Test identifier deserialization raises on missing or wrong-typed fields."""
-    with pytest.raises(DeserializationDictStructureError):
-        Expression.deserialize_from_dict(data)
 
 
 @pytest.mark.parametrize(
@@ -1260,46 +849,21 @@ def test_deserialize_literal_rejects_invalid_data_shape(
 
 
 # =============================================================================
-# Walker-driven traversal via `get_visit_children`
-# =============================================================================
-
-
-def test_collect_identifiers_walks_into_unary_expression_operand() -> None:
-    """Test the walker visits a `UnaryExpression` operand via `get_visit_children`."""
-    x = Identifier("x")
-    expression = UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(x))
-
-    assert collect_identifiers(expression) == {x}
-
-
-def test_collect_identifiers_walks_into_binary_expression_children() -> None:
-    """Test the walker visits both `BinaryExpression` children via child dispatch."""
-    left = Identifier("a")
-    right = Identifier("b")
-    expression = BinaryExpression(
-        BinaryOperation.ADD, IdentifierExpression(left), IdentifierExpression(right)
-    )
-
-    assert collect_identifiers(expression) == {left, right}
-
-
-# =============================================================================
 # Structural equivalence fallback for unregistered `Expression` subclasses
 # =============================================================================
 
 
-def test_unregistered_expression_subclass_raises_not_implemented_on_equivalence() -> (
-    None
-):
-    """Test the singledispatch default raises ``NotImplementedError``.
+def test_new_expression_subclass_derives_equivalence_without_registration() -> None:
+    """Test a new `Expression` subclass derives equivalence from its fields.
 
-    A concrete subclass that does not register a custom dispatcher must
-    surface as a clear error rather than silently returning ``False``,
-    so adding a new node type without wiring up equivalence fails loudly.
+    Derivation replaces the per-type registry: a concrete subclass needs no
+    wiring to gain structural and alpha equivalence. Same-type instances
+    compare field by field; a different concrete type returns ``False``
+    rather than raising.
     """
 
     @dataclasses.dataclass(frozen=True, eq=False)
-    class _UnregisteredExpression(Expression):  # test-local subclass
+    class _NewExpression(Expression):  # test-local subclass
         value: int
 
         def serialize_data_to_dict(self) -> SerializedDict:  # pragma: no cover
@@ -1308,13 +872,13 @@ def test_unregistered_expression_subclass_raises_not_implemented_on_equivalence(
         @classmethod
         def deserialize_data_from_dict(  # pragma: no cover
             cls, data: SerializedDict
-        ) -> "_UnregisteredExpression":
+        ) -> "_NewExpression":
             return cls(value=int(data["value"]))  # type: ignore[arg-type]
 
-    instance = _UnregisteredExpression(value=1)
-
-    with pytest.raises(NotImplementedError, match="_UnregisteredExpression"):
-        instance.is_structurally_equivalent(LiteralExpression(1))
+    assert _NewExpression(1).is_structurally_equivalent(_NewExpression(1))
+    assert not _NewExpression(1).is_structurally_equivalent(_NewExpression(2))
+    assert _NewExpression(1).is_alpha_equivalent(_NewExpression(1))
+    assert not _NewExpression(1).is_structurally_equivalent(LiteralExpression(1))
 
 
 # =============================================================================

@@ -25,7 +25,7 @@ from fhy_core.pass_infrastructure import (
     ValidationManager,
     register_pass,
 )
-from fhy_core.trait import FrozenMixin, PartialEqual, Visitable
+from fhy_core.traits import FrozenMixin, PartialEqual, Visitable
 
 
 @dataclass
