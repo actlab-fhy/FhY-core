@@ -1,6 +1,8 @@
 """FhY compiler core utilities."""
 
-__version__ = "0.1.6"
+from importlib.metadata import version
+
+__version__ = version("fhy_core")
 
 __all__ = [
     "Constraint",

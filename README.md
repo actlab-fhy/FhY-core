@@ -64,33 +64,29 @@ pip install fhy_core
 
 ### Build from Source
 
+This project uses [uv](https://docs.astral.sh/uv/) for environment and dependency management.
+[Install uv](https://docs.astral.sh/uv/getting-started/installation/), then:
+
 1. Clone the repository.
 
     ```bash
     git clone https://github.com/actlab-fhy/FhY-core.git
-    ```
-
-2. Create and prepare a Python virtual environment.
-
-    ```bash
     cd FhY-core
-    python -m venv .venv
-    source .venv/bin/activate
-    python -m pip install -U pip
-    pip install setuptools wheel
     ```
 
-3. Install the package.
+2. Create the environment and install the package.
 
     ```bash
-    # Standard installation
-    pip install .
+    # Runtime dependencies only
+    uv sync --no-default-groups
 
-    # For contributors
-    pip install ".[dev]"
+    # For contributors (default dev group: test, lint, type, property, nox)
+    uv sync
     ```
+
+   `uv sync` creates `.venv` and installs `fhy_core` in editable mode.
+   Prefix commands with `uv run` (e.g. `uv run python`) or activate the environment with `source .venv/bin/activate`.
 
 ## Contributing
 
-Interested in contributing to *FhY* Core? See the
-[contribution guide](CONTRIBUTING.md).
+Interested in contributing to *FhY* Core? See the [contribution guide](CONTRIBUTING.md).

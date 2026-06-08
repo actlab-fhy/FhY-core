@@ -1,5 +1,5 @@
-# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
+# Install dependencies, lint, type-check, and test across Python versions/OSes.
+# Driven by uv (env/deps) and nox (sessions). See noxfile.py.
 
 name: FhY-core CI
 
@@ -10,32 +10,11 @@ on:
     branches: [ "main", "dev" ]
 
 env:
-  FORCE_COLOR: "1"  # Tox output is colorless by default
-  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  FORCE_COLOR: "1"
 
 jobs:
-  build:
-    runs-on: "ubuntu-latest"
-    strategy:
-      fail-fast: false
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version-file: .python-version-default
-
-      - name: Install Dependencies
-        run: |
-          python -m pip install -U pip
-          python -m pip install setuptools wheel
-
   style:
     runs-on: "ubuntu-latest"
-    needs: [build]
     strategy:
       fail-fast: false
 
@@ -43,28 +22,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version-file: .python-version-default
-
-      - name: Install tox
-        run: |
-          python -m pip install -U pip
-          python -m pip install setuptools wheel
-          pip install tox
+          enable-cache: true
 
       - name: Code Linting & Formatting
         if: always()
-        run: tox -e lint
+        run: uv run nox -s lint
 
       - name: Static Type Safety Check
         if: always()
-        run: tox -e type
+        run: uv run nox -s type_check
 
   tests:
     runs-on: ${{ matrix.os }}
-    needs: [build]
     strategy:
       fail-fast: false
       matrix:
@@ -75,31 +47,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
+          enable-cache: true
           python-version: ${{ matrix.python-version }}
 
-      - name: Install tox
-        run: |
-          python -m pip install -U pip
-          python -m pip install setuptools wheel
-          pip install tox
-
-      - name: Setup Tox Python Version (${{ matrix.os }})
-        if: matrix.os != 'windows-latest'
-        run: |
-            echo "TOX_VERSION=py$(echo ${{ matrix.python-version }} | tr -d .)-tests" >> $GITHUB_ENV
-
-      - name: Setup Tox Python Version (${{ matrix.os }})
-        if: matrix.os == 'windows-latest'
-        run: |
-          "TOX_VERSION=py$(echo ${{ matrix.python-version }} | tr -d .)-tests" >> $env:GITHUB_ENV
-
       - name: Unit & Integration Testing
-        run: |
-          echo ${{ env.TOX_VERSION }}
-          tox -e ${{ env.TOX_VERSION }}
+        run: uv run nox -s "tests-${{ matrix.python-version }}"
 
       - name: Save Coverage Data
         uses: actions/upload-artifact@v4
@@ -112,7 +67,7 @@ jobs:
 
   coverage:
     runs-on: "ubuntu-latest"
-    needs: [build, tests]
+    needs: [tests]
     strategy:
       fail-fast: false
 
@@ -126,20 +81,13 @@ jobs:
           pattern: coverage-data-*
           merge-multiple: true
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version-file: .python-version-default
-
-      - name: Install tox
-        run: |
-          python -m pip install -U pip
-          python -m pip install setuptools wheel
-          pip install tox
+          enable-cache: true
 
       - name: Report Testing Coverage
-        run: |
-          tox -e coverage | tee $GITHUB_STEP_SUMMARY
+        run: uv run nox -s coverage | tee $GITHUB_STEP_SUMMARY
 
       - name: Upload coverage to Codecov
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
