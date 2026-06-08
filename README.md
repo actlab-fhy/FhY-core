@@ -80,7 +80,7 @@ This project uses [uv](https://docs.astral.sh/uv/) for environment and dependenc
     # Runtime dependencies only
     uv sync --no-default-groups
 
-    # For contributors (default dev group: test, lint, type, property, nox)
+    # For contributors (default dev group: test, lint, type, property, nox, pre-commit)
     uv sync
     ```
 

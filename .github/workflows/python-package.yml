@@ -87,7 +87,9 @@ jobs:
           enable-cache: true
 
       - name: Report Testing Coverage
-        run: uv run nox -s coverage | tee $GITHUB_STEP_SUMMARY
+        run: |
+          set -o pipefail
+          uv run nox -s coverage | tee $GITHUB_STEP_SUMMARY
 
       - name: Upload coverage to Codecov
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
