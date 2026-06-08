@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, TypeAlias, TypedDict, TypeGuard
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
@@ -548,14 +548,14 @@ class UnaryOperation(StrEnum):
     LOGICAL_NOT = "logical_not"
 
 
-UNARY_OPERATION_SYMBOLS: frozendict[UnaryOperation, str] = frozendict(
+UNARY_OPERATION_SYMBOLS: immutabledict[UnaryOperation, str] = immutabledict(
     {
         UnaryOperation.NEGATE: "-",
         UnaryOperation.POSITIVE: "+",
         UnaryOperation.LOGICAL_NOT: "!",
     }
 )
-UNARY_SYMBOL_OPERATIONS: frozendict[str, UnaryOperation] = invert_frozen_dict(
+UNARY_SYMBOL_OPERATIONS: immutabledict[str, UnaryOperation] = invert_frozen_dict(
     UNARY_OPERATION_SYMBOLS
 )
 
@@ -608,7 +608,7 @@ class BinaryOperation(StrEnum):
     GREATER_EQUAL = "greater_equal"
 
 
-BINARY_OPERATION_SYMBOLS: frozendict[BinaryOperation, str] = frozendict(
+BINARY_OPERATION_SYMBOLS: immutabledict[BinaryOperation, str] = immutabledict(
     {
         BinaryOperation.ADD: "+",
         BinaryOperation.SUBTRACT: "-",
@@ -627,7 +627,7 @@ BINARY_OPERATION_SYMBOLS: frozendict[BinaryOperation, str] = frozendict(
         BinaryOperation.GREATER_EQUAL: ">=",
     }
 )
-BINARY_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = invert_frozen_dict(
+BINARY_SYMBOL_OPERATIONS: immutabledict[str, BinaryOperation] = invert_frozen_dict(
     BINARY_OPERATION_SYMBOLS
 )
 

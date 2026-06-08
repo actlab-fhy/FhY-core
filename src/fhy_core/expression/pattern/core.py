@@ -33,7 +33,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import final
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.identifier import Identifier
 from fhy_core.traits import FrozenMixin
@@ -74,7 +74,7 @@ class MatchBindings(FrozenMixin):
     distinguished by `__eq__`.
     """
 
-    bindings: frozendict[str, Expression] = field(default_factory=frozendict)
+    bindings: immutabledict[str, Expression] = field(default_factory=immutabledict)
 
     def __post_init__(self) -> None:
         for key, value in self.bindings.items():

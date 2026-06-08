@@ -1,7 +1,7 @@
 """Tests for `fhy_core.types.core`: concrete types, promotion, literals."""
 
 import pytest
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.expression import IdentifierExpression, LiteralExpression
 from fhy_core.identifier import Identifier
@@ -74,7 +74,7 @@ def test_environment_is_a_frozen_dataclass(
     assert isinstance(empty_environment, Frozen)
     assert empty_environment.is_frozen
     with pytest.raises(FrozenMutationError):
-        empty_environment.data_type_bindings = frozendict()  # type: ignore[misc]
+        empty_environment.data_type_bindings = immutabledict()  # type: ignore[misc]
 
 
 def test_numerical_type_structural_equivalence_true() -> None:

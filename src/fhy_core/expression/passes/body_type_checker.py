@@ -23,7 +23,7 @@ __all__ = ["RegisteredFunctionBodyTypeChecker", "check_registered_function_body"
 
 from collections.abc import Sequence
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import CompilerPass, register_pass
@@ -44,7 +44,7 @@ from .type_checker import CallTargetResolver, ExpressionTypeChecker
 # checking a registered function. Concrete (non-weak) types so
 # downstream arithmetic on the parameter value triggers the
 # type-checker's weak-literal rescue against this operand.
-_BODY_CHECK_CONCRETE_TYPES: frozendict[FunctionSort, CoreDataType] = frozendict(
+_BODY_CHECK_CONCRETE_TYPES: immutabledict[FunctionSort, CoreDataType] = immutabledict(
     {
         FunctionSort.BOOL: CoreDataType.BOOL,
         FunctionSort.NAT: CoreDataType.UINT32,
@@ -146,8 +146,8 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
 
     def _make_parameter_lookup_table(
         self,
-    ) -> frozendict[Identifier, tuple[NumericalType, TypeQualifier]]:
-        return frozendict(
+    ) -> immutabledict[Identifier, tuple[NumericalType, TypeQualifier]]:
+        return immutabledict(
             {
                 identifier: (
                     NumericalType(PrimitiveDataType(_BODY_CHECK_CONCRETE_TYPES[sort])),
@@ -161,7 +161,9 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
 
     def _make_body_type_checker(
         self,
-        parameter_to_type: frozendict[Identifier, tuple[NumericalType, TypeQualifier]],
+        parameter_to_type: immutabledict[
+            Identifier, tuple[NumericalType, TypeQualifier]
+        ],
     ) -> ExpressionTypeChecker:
         def lookup(identifier: Identifier) -> tuple[NumericalType, TypeQualifier]:
             if identifier in parameter_to_type:

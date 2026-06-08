@@ -149,7 +149,7 @@ from typing import (
     runtime_checkable,
 )
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from .error import register_error
 from .logger import get_logger
@@ -227,13 +227,13 @@ class BinaryPayloadCodec(StrEnum):
     CUSTOM = "custom"
 
 
-_CODEC_TO_U8: frozendict[BinaryPayloadCodec, int] = frozendict(
+_CODEC_TO_U8: immutabledict[BinaryPayloadCodec, int] = immutabledict(
     {
         BinaryPayloadCodec.JSON: 1,
         BinaryPayloadCodec.CUSTOM: 2,
     }
 )
-_U8_TO_CODEC: frozendict[int, BinaryPayloadCodec] = frozendict(
+_U8_TO_CODEC: immutabledict[int, BinaryPayloadCodec] = immutabledict(
     {v: k for k, v in _CODEC_TO_U8.items()}
 )
 

@@ -33,7 +33,7 @@ from typing import (
     runtime_checkable,
 )
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.diagnostic import Diagnostic, DiagnosticLevel, Note
 from fhy_core.error import register_error
@@ -56,7 +56,7 @@ _AnalysisIRT = TypeVar("_AnalysisIRT")
 _AnalysisResultT = TypeVar("_AnalysisResultT")
 
 
-_DIAGNOSTIC_TO_LOGGING_LEVEL: frozendict[DiagnosticLevel, int] = frozendict(
+_DIAGNOSTIC_TO_LOGGING_LEVEL: immutabledict[DiagnosticLevel, int] = immutabledict(
     {
         DiagnosticLevel.ERROR: logging.ERROR,
         DiagnosticLevel.WARNING: logging.WARNING,

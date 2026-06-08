@@ -16,7 +16,7 @@ from collections.abc import Set as AbstractSet
 from typing import Any
 
 import z3  # type: ignore
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.expression.core import (
     BinaryExpression,
@@ -67,18 +67,18 @@ def _z3_floor_divide(left: z3.ExprRef, right: z3.ExprRef) -> z3.ExprRef:
 class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
     """Transforms an expression into a Z3 expression."""
 
-    _UNARY_OPERATION_Z3_OPERATORS: frozendict[UnaryOperation, Callable[[Any], Any]] = (
-        frozendict(
-            {
-                UnaryOperation.NEGATE: operator.neg,
-                UnaryOperation.POSITIVE: operator.pos,
-                UnaryOperation.LOGICAL_NOT: z3.Not,
-            }
-        )
+    _UNARY_OPERATION_Z3_OPERATORS: immutabledict[
+        UnaryOperation, Callable[[Any], Any]
+    ] = immutabledict(
+        {
+            UnaryOperation.NEGATE: operator.neg,
+            UnaryOperation.POSITIVE: operator.pos,
+            UnaryOperation.LOGICAL_NOT: z3.Not,
+        }
     )
-    _BINARY_OPERATION_Z3_OPERATORS: frozendict[
+    _BINARY_OPERATION_Z3_OPERATORS: immutabledict[
         BinaryOperation, Callable[[Any, Any], Any]
-    ] = frozendict(
+    ] = immutabledict(
         {
             BinaryOperation.ADD: operator.add,
             BinaryOperation.SUBTRACT: operator.sub,
@@ -107,8 +107,8 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
         self._identifier_to_z3_expression = {}
 
     @property
-    def identifier_to_z3_expression(self) -> frozendict[Identifier, z3.ExprRef]:
-        return frozendict(self._identifier_to_z3_expression)
+    def identifier_to_z3_expression(self) -> immutabledict[Identifier, z3.ExprRef]:
+        return immutabledict(self._identifier_to_z3_expression)
 
     def visit_binary_expression(
         self, binary_expression: BinaryExpression
@@ -207,7 +207,7 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
 
 def convert_expression_to_z3_expression(
     expression: Expression, symbol_types: dict[Identifier, SymbolType] | None = None
-) -> tuple[z3.ExprRef, frozendict[Identifier, z3.ExprRef]]:
+) -> tuple[z3.ExprRef, immutabledict[Identifier, z3.ExprRef]]:
     """Convert an expression to a Z3 expression.
 
     Args:
