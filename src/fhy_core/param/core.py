@@ -1,24 +1,26 @@
 """Core parameter structures."""
 
+from fhy_core.utils.override import override
+
 __all__ = [
+    "CategoricalParam",
+    "CategoricalValue",
+    "IntParam",
+    "NumericParam",
+    "OrdinalParam",
+    "OrdinalValue",
     "Param",
     "ParamAssignment",
+    "ParamData",
     "ParamError",
-    "NumericParam",
+    "PermParam",
+    "PermutationMemberValue",
     "RealParam",
-    "IntParam",
     "SerializableEqualValue",
     "SerializableOrderableValue",
-    "CategoricalValue",
-    "OrdinalValue",
-    "PermutationMemberValue",
-    "OrdinalParam",
-    "CategoricalParam",
-    "PermParam",
-    "ParamData",
-    "is_valid_param_data",
-    "finalize_param_construction_from_data",
     "create_single_valid_value_param",
+    "finalize_param_construction_from_data",
+    "is_valid_param_data",
 ]
 
 import itertools
@@ -137,16 +139,19 @@ class ParamAssignment(
 
     @property
     def param(self) -> "Param[_T]":
+        """Return the assigned parameter definition."""
         return self._param
 
     @property
     def value(self) -> _T:
+        """Return the assigned value."""
         return self._value
 
     def is_value_set(self) -> bool:
         """Return whether this assignment has a value."""
         return True
 
+    @override
     def serialize_to_dict(self) -> SerializedDict:
         return {
             "param": self._param.serialize_to_dict(),
@@ -154,6 +159,7 @@ class ParamAssignment(
         }
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: SerializedDict) -> "ParamAssignment[Any]":
         if not _is_valid_param_assignment_data(data):
             raise DeserializationDictStructureError(
@@ -217,10 +223,12 @@ class Param(
 
     @property
     def variable(self) -> Identifier:
+        """Return the parameter's variable identifier."""
         return self._variable
 
     @property
     def variable_expression(self) -> IdentifierExpression:
+        """Return the parameter's variable as an identifier expression."""
         return IdentifierExpression(self._variable)
 
     @property
@@ -290,6 +298,7 @@ class Param(
         """
         return self._is_constraints_satisfied_with_failing_constraint(value)[0]
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         if not isinstance(other, Param):
             return False
@@ -379,7 +388,7 @@ class Param(
                 self._variable,
             )
             return self
-        new_param = self.with_new_constraints(self._constraints + (constraint,))
+        new_param = self.with_new_constraints((*self._constraints, constraint))
         _LOGGER.debug(
             "added constraint on %r (total=%d)",
             self._variable,
@@ -414,6 +423,7 @@ class Param(
         if constraint.variable != self.variable:
             raise ParamError("Constraint variable must match parameter variable.")
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "variable": self._variable.serialize_to_dict(),
@@ -422,13 +432,14 @@ class Param(
             ],
         }
 
+    @override
     def __repr__(self) -> str:
         param_set_repr = self._get_param_set_repr()
         if param_set_repr:
             param_set_repr = f"{param_set_repr}, "
         return (
-            f"{self.__class__.__name__}({repr(self._variable)}, {param_set_repr}"
-            f"constraints={repr(self._constraints)})"
+            f"{self.__class__.__name__}({self._variable!r}, {param_set_repr}"
+            f"constraints={self._constraints!r})"
         )
 
     def _get_param_set_repr(self) -> str:
@@ -441,6 +452,7 @@ class Param(
         """
         return ""
 
+    @override
     def __str__(self) -> str:
         land = " /\\ "
         return (
@@ -562,6 +574,7 @@ class NumericParam(Param[_T], ABC, Generic[_T]):
     def get_symbol_type(self) -> SymbolType:
         """Return the Z3 sort used to reason about this parameter's domain."""
 
+    @override
     def is_subset(self, other: "Param[_T]") -> bool:
         """Return whether this parameter's feasibility set is a subset of `other`'s.
 
@@ -640,9 +653,11 @@ class NumericParam(Param[_T], ABC, Generic[_T]):
 class RealParam(NumericParam[str | float]):
     """Real-valued parameter."""
 
+    @override
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.REAL
 
+    @override
     def is_value_admissible(self, value: Any) -> bool:
         if isinstance(value, bool):
             return False
@@ -656,12 +671,15 @@ class RealParam(NumericParam[str | float]):
             return True
         return False
 
+    @override
     def is_constraints_satisfied(self, value: str | float) -> bool:
         return super().is_constraints_satisfied(value)
 
+    @override
     def assign(self, value: str | float) -> ParamAssignment[str | float]:
         return super().assign(value)
 
+    @override
     def _get_param_set_str(self) -> str:
         return "R"
 
@@ -787,15 +805,18 @@ class RealParam(NumericParam[str | float]):
         )
         return self.add_constraint(lower_bound_constraint)
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return isinstance(other, RealParam) and super().is_structurally_equivalent(
             other
         )
 
+    @override
     def is_value_set_subset(self, other: "Param[str | float]") -> bool:
         return isinstance(other, RealParam)
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "RealParam":
         if not is_valid_param_data(data):
             raise DeserializationDictStructureError(
@@ -816,18 +837,23 @@ class RealParam(NumericParam[str | float]):
 class IntParam(NumericParam[int]):
     """Integer-valued parameter."""
 
+    @override
     def get_symbol_type(self) -> SymbolType:
         return SymbolType.INT
 
+    @override
     def is_value_admissible(self, value: Any) -> bool:
         return is_strict_int(value)
 
+    @override
     def is_constraints_satisfied(self, value: int) -> bool:
         return super().is_constraints_satisfied(value)
 
+    @override
     def assign(self, value: int) -> ParamAssignment[int]:
         return super().assign(value)
 
+    @override
     def _get_param_set_str(self) -> str:
         return "Z"
 
@@ -953,13 +979,16 @@ class IntParam(NumericParam[int]):
         )
         return self.add_constraint(lower_bound_constraint)
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return isinstance(other, IntParam) and super().is_structurally_equivalent(other)
 
+    @override
     def is_value_set_subset(self, other: "Param[int]") -> bool:
         return isinstance(other, IntParam)
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "IntParam":
         if not is_valid_param_data(data):
             raise DeserializationDictStructureError(
@@ -1179,16 +1208,20 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
 
     @property
     def possible_values(self) -> tuple[_OrdinalValueT, ...]:
+        """Return the sorted possible values for this parameter."""
         return self._sorted_values
 
+    @override
     def is_value_admissible(self, value: Any) -> bool:
         return _is_ordinal_value(value) and _contains_param_value(
             self._sorted_values, value
         )
 
+    @override
     def assign(self, value: _OrdinalValueT) -> ParamAssignment[_OrdinalValueT]:
         return super().assign(value)
 
+    @override
     def validate_constraint(self, constraint: Constraint) -> None:
         super().validate_constraint(constraint)
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
@@ -1197,6 +1230,7 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
                 "ordinal parameters."
             )
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, OrdinalParam)
@@ -1204,6 +1238,7 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
             and self._sorted_values == other._sorted_values
         )
 
+    @override
     def is_value_set_subset(self, other: "Param[_OrdinalValueT]") -> bool:
         if not isinstance(other, OrdinalParam):
             return False
@@ -1212,6 +1247,7 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
             for value in self._sorted_values
         )
 
+    @override
     def is_subset(self, other: "Param[_OrdinalValueT]") -> bool:
         """Return whether this parameter's feasibility set is a subset of `other`'s.
 
@@ -1228,6 +1264,7 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
                 return False
         return True
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
         super_dict["possible_values"] = [
@@ -1236,6 +1273,7 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
         return super_dict
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
         if not _is_valid_ordinal_categorical_perm_param_data(data):
             raise DeserializationDictStructureError(
@@ -1257,9 +1295,11 @@ class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
         final_param = cast(Self, finalize_param_construction_from_data(param, data))
         return final_param
 
+    @override
     def _get_param_set_repr(self) -> str:
         return f"{{{format_comma_separated_list(self._sorted_values)}}}"
 
+    @override
     def _get_param_set_str(self) -> str:
         return f"{{{format_comma_separated_list(self._sorted_values, str_func=str)}}}"
 
@@ -1298,16 +1338,20 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
 
     @property
     def categories(self) -> frozenset[_CategoricalValueT]:
+        """Return the set of categories for this parameter."""
         return self._categories
 
+    @override
     def is_value_admissible(self, value: Any) -> bool:
         return _is_categorical_value(value) and _contains_param_value(
             self._categories, value
         )
 
+    @override
     def assign(self, value: _CategoricalValueT) -> ParamAssignment[_CategoricalValueT]:
         return super().assign(value)
 
+    @override
     def validate_constraint(self, constraint: Constraint) -> None:
         super().validate_constraint(constraint)
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
@@ -1316,6 +1360,7 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
                 "categorical parameters."
             )
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, CategoricalParam)
@@ -1323,6 +1368,7 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
             and self._categories == other._categories
         )
 
+    @override
     def is_value_set_subset(self, other: "Param[_CategoricalValueT]") -> bool:
         if not isinstance(other, CategoricalParam):
             return False
@@ -1331,6 +1377,7 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
             for category in self._categories
         )
 
+    @override
     def is_subset(self, other: "Param[_CategoricalValueT]") -> bool:
         """Return whether this parameter's feasibility set is a subset of `other`'s.
 
@@ -1347,6 +1394,7 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
                 return False
         return True
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
         super_dict["possible_values"] = [
@@ -1356,6 +1404,7 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
         return super_dict
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
         if not _is_valid_ordinal_categorical_perm_param_data(data):
             raise DeserializationDictStructureError(
@@ -1374,9 +1423,11 @@ class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
         final_param = cast(Self, finalize_param_construction_from_data(param, data))
         return final_param
 
+    @override
     def _get_param_set_repr(self) -> str:
         return f"{{{format_comma_separated_list(self._categories)}}}"
 
+    @override
     def _get_param_set_str(self) -> str:
         return f"{{{format_comma_separated_list(self._categories, str_func=str)}}}"
 
@@ -1423,8 +1474,10 @@ class PermParam(
 
     @property
     def members(self) -> tuple[_PermutationMemberValueT, ...]:
+        """Return the ordered permutation members for this parameter."""
         return self._ordered_members
 
+    @override
     def is_value_admissible(self, value: Any) -> bool:
         return (
             isinstance(value, Sequence)
@@ -1443,17 +1496,20 @@ class PermParam(
             and _is_values_unique_in_sequence_without_set(value)
         )
 
+    @override
     def is_constraints_satisfied(
         self, value: Sequence[_PermutationMemberValueT]
     ) -> bool:
         value = tuple(value)
         return super().is_constraints_satisfied(value)
 
+    @override
     def assign(
         self, value: Sequence[_PermutationMemberValueT]
     ) -> ParamAssignment[tuple[_PermutationMemberValueT, ...]]:
         return super().assign(tuple(value))
 
+    @override
     def validate_constraint(self, constraint: Constraint) -> None:
         super().validate_constraint(constraint)
         if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
@@ -1462,6 +1518,7 @@ class PermParam(
                 "permutation parameters."
             )
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, PermParam)
@@ -1469,6 +1526,7 @@ class PermParam(
             and self._ordered_members == other._ordered_members
         )
 
+    @override
     def is_value_set_subset(
         self, other: "Param[tuple[_PermutationMemberValueT, ...]]"
     ) -> bool:
@@ -1481,6 +1539,7 @@ class PermParam(
             for member in self._ordered_members
         )
 
+    @override
     def is_subset(self, other: "Param[tuple[_PermutationMemberValueT, ...]]") -> bool:
         """Return whether this parameter's feasibility set is a subset of `other`'s.
 
@@ -1503,6 +1562,7 @@ class PermParam(
                 return False
         return True
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         super_dict = super().serialize_data_to_dict()
         super_dict["possible_values"] = [
@@ -1512,6 +1572,7 @@ class PermParam(
         return super_dict
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
         if not _is_valid_ordinal_categorical_perm_param_data(data):
             raise DeserializationDictStructureError(
@@ -1533,8 +1594,10 @@ class PermParam(
         final_param = cast(Self, finalize_param_construction_from_data(param, data))
         return final_param
 
+    @override
     def _get_param_set_repr(self) -> str:
         return f"{{{format_comma_separated_list(self._ordered_members)}}}"
 
+    @override
     def _get_param_set_str(self) -> str:
         return f"{{{format_comma_separated_list(self._ordered_members, str_func=str)}}}"

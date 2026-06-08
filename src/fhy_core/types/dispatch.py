@@ -34,6 +34,8 @@ between them raises rather than silently merging them.
 
 from __future__ import annotations
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "TypeUnificationEnvironment",
     "bind_data_template",
@@ -51,7 +53,7 @@ from functools import singledispatch
 from types import EllipsisType
 from typing import Any
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from ..expression.core import (
     BinaryExpression,
@@ -76,8 +78,8 @@ _LOGGER = get_logger(__name__)
 
 
 def _is_bindings_equivalent(
-    left_bindings: frozendict[Identifier, Any],
-    right_bindings: frozendict[Identifier, Any],
+    left_bindings: immutabledict[Identifier, Any],
+    right_bindings: immutabledict[Identifier, Any],
 ) -> bool:
     if set(left_bindings.keys()) != set(right_bindings.keys()):
         return False
@@ -126,7 +128,8 @@ def _resolve_expression(
     return current_expression
 
 
-def _substitute_expression(
+# Recursive isinstance dispatch over expression kinds; early returns read clearest.
+def _substitute_expression(  # noqa: PLR0911
     expression: Expression,
     environment: TypeUnificationEnvironment,
     visited_identifiers: frozenset[Identifier] = frozenset(),
@@ -340,12 +343,14 @@ class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalence):
         expression_bindings: Bindings for shape-variable placeholders.
     """
 
-    data_type_bindings: frozendict[Identifier, DataType] = field(
-        default_factory=frozendict
+    data_type_bindings: immutabledict[Identifier, DataType] = field(
+        default_factory=immutabledict
     )
-    type_bindings: frozendict[Identifier, Type] = field(default_factory=frozendict)
-    expression_bindings: frozendict[Identifier, Expression] = field(
-        default_factory=frozendict
+    type_bindings: immutabledict[Identifier, Type] = field(
+        default_factory=immutabledict
+    )
+    expression_bindings: immutabledict[Identifier, Expression] = field(
+        default_factory=immutabledict
     )
 
     @classmethod
@@ -439,6 +444,7 @@ class TypeUnificationEnvironment(FrozenMixin, StructuralEquivalence):
         """
         return self.expression_bindings.get(name)
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         if not isinstance(other, TypeUnificationEnvironment):
             return False

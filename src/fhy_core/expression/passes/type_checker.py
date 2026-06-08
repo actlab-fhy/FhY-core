@@ -32,6 +32,8 @@ have no access to a context, and the checker does not catch and reframe
 them, so callers can see either form on a failed type check.
 """
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "CallTargetResolver",
     "ExpressionTypeChecker",
@@ -40,8 +42,9 @@ __all__ = [
     "synthesize_expression_type",
 ]
 
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Callable, Iterator, TypeAlias
+from typing import TypeAlias
 
 from fhy_core.expression.core import (
     BinaryExpression,
@@ -445,16 +448,19 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
     def visit_unary_expression(
         self, unary_expression: UnaryExpression
     ) -> tuple[Type, TypeQualifier]:
+        """Infer and check the type of the unary expression."""
         return self._infer_unary_expression(unary_expression)
 
     def visit_binary_expression(
         self, binary_expression: BinaryExpression
     ) -> tuple[Type, TypeQualifier]:
+        """Infer and check the type of the binary expression."""
         return self._infer_binary_expression(binary_expression)
 
     def visit_identifier_expression(
         self, identifier_expression: IdentifierExpression
     ) -> tuple[Type, TypeQualifier]:
+        """Infer the type of the identifier expression."""
         with self._context.entering(identifier_expression):
             # The lookup contract: callers raise ``KeyError`` to signal
             # an unbound identifier. On ``KeyError`` we fall back to a
@@ -490,6 +496,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
     def visit_literal_expression(
         self, literal_expression: LiteralExpression
     ) -> tuple[Type, TypeQualifier]:
+        """Infer the type of the literal expression."""
         return (
             NumericalType(
                 PrimitiveDataType(
@@ -502,13 +509,16 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
     def visit_ternary_expression(
         self, ternary_expression: TernaryExpression
     ) -> tuple[Type, TypeQualifier]:
+        """Infer and check the type of the ternary expression."""
         return self._infer_ternary_expression(ternary_expression)
 
     def visit_call_expression(
         self, call_expression: CallExpression
     ) -> tuple[Type, TypeQualifier]:
+        """Infer and check the type of the call expression."""
         return self._infer_call_expression(call_expression)
 
+    @override
     def get_noop_output(self, ir: Expression) -> tuple[Type, TypeQualifier]:
         raise PassExecutionError(
             f'Pass "{self.get_pass_name()}" does not define noop output for {ir!r}.'
@@ -909,7 +919,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
     def _infer_call_expression(
         self,
         call_expression: CallExpression,
-        expected_type: Type | None = None,  # noqa: ARG002
+        expected_type: Type | None = None,
     ) -> tuple[Type, TypeQualifier]:
         with self._context.entering(call_expression):
             entry = self._resolve_call_function(call_expression)
@@ -964,7 +974,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         argument_types: tuple[tuple[Type, TypeQualifier], ...],
     ) -> None:
         for index, (parameter_sort, (argument_type, _)) in enumerate(
-            zip(parameter_sorts, argument_types)
+            zip(parameter_sorts, argument_types, strict=True)
         ):
             self._check_argument_sort(
                 function_name, index, parameter_sort, argument_type

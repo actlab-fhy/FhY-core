@@ -1,5 +1,7 @@
 """`Frozen` trait and mixin."""
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "Frozen",
     "FrozenFieldTypeError",
@@ -30,7 +32,7 @@ from typing import (
     runtime_checkable,
 )
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.error import register_error
 from fhy_core.logger import get_logger
@@ -102,11 +104,14 @@ class Frozen(Protocol):
     """
 
     @property
-    def is_frozen(self) -> bool: ...
+    def is_frozen(self) -> bool:
+        """Whether the object is frozen."""
 
-    def freeze(self) -> None: ...
+    def freeze(self) -> None:
+        """Freeze the object, preventing further mutation."""
 
-    def assert_frozen(self) -> None: ...
+    def assert_frozen(self) -> None:
+        """Raise if the object is not frozen."""
 
 
 _IMMUTABLE_WHITELIST: tuple[type, ...] = (
@@ -133,7 +138,7 @@ _IMMUTABLE_WHITELIST: tuple[type, ...] = (
     pathlib.PurePath,
     tuple,
     frozenset,
-    frozendict,
+    immutabledict,
 )
 """Concrete classes considered immutable for field-type validation.
 
@@ -144,7 +149,7 @@ parameters are checked against the same predicate.
 
 ``types.MappingProxyType`` is deliberately excluded: it is a read-only
 *view* over a backing mapping that can still mutate underneath it, so it
-is not a sound immutable field type. Use ``frozendict`` instead.
+is not a sound immutable field type. Use ``immutabledict`` instead.
 """
 
 _MUTABLE_OUTRIGHT: tuple[type, ...] = (
@@ -192,14 +197,15 @@ def _is_immutable_parameterized_origin(
         return True
     elif origin is tuple or origin in {
         frozenset,
-        frozendict,
+        immutabledict,
     }:
         return all(_is_immutable_annotation(arg, depth - 1) for arg in args)
     else:
         return None
 
 
-def _is_immutable_annotation(
+# Recursive type-structure dispatch over annotation kinds; early returns read clearest.
+def _is_immutable_annotation(  # noqa: PLR0911
     annotation: Any, depth: int = _MAX_FIELD_TYPE_DEPTH
 ) -> bool:
     """Return ``True`` iff ``annotation`` statically describes an immutable type.
@@ -316,7 +322,7 @@ def _check_field_types(target_cls: type) -> None:
         raise FrozenFieldTypeError(
             f"{target_cls.__name__} declares mutable field type(s): {details}. "
             f"Replace each with an immutable equivalent (e.g. tuple, "
-            f"frozenset, frozendict) or have the nested type inherit "
+            f"frozenset, immutabledict) or have the nested type inherit "
             f"FrozenMixin."
         )
 
@@ -470,6 +476,7 @@ class FrozenMixin(ABC):
 
     _FREEZE_ON_INIT: ClassVar[bool] = True
 
+    @override
     def __init_subclass__(
         cls,
         *,
@@ -507,6 +514,7 @@ class FrozenMixin(ABC):
         def __new__(
             cls: type[_FrozenMixinT], *args: Any, **kwargs: Any
         ) -> _FrozenMixinT:
+            """Run one-time class setup on first instantiation."""
             del args, kwargs
             if not cls.__dict__.get(_CLASS_SETUP_DONE_FLAG, False):
                 _setup_class(cls)
@@ -514,6 +522,7 @@ class FrozenMixin(ABC):
 
     @property
     def is_frozen(self) -> bool:
+        """Whether the object is frozen."""
         if type(self).__dict__.get(_IS_NATIVE_FROZEN_DATACLASS_CACHE, False):
             return True
         try:
@@ -549,6 +558,7 @@ class FrozenMixin(ABC):
                 f"to FrozenMixin; the freeze invariant is unenforceable."
             )
 
+    @override
     def __setattr__(self, name: str, value: Any) -> None:
         if name == "__orig_class__":
             # ``typing.Generic.__class_getitem__`` writes ``__orig_class__``
@@ -565,6 +575,7 @@ class FrozenMixin(ABC):
             )
         object.__setattr__(self, name, value)
 
+    @override
     def __delattr__(self, name: str) -> None:
         if self.is_frozen:
             raise FrozenMutationError(

@@ -32,6 +32,7 @@ from fhy_core.traits.derived_equivalence import (
     compared_with,
     excluded_from_equivalence,
 )
+from fhy_core.utils.override import override
 
 from .conftest import mock_identifier
 
@@ -681,6 +682,7 @@ def test_hand_written_structural_method_takes_precedence() -> None:
     class _Manual(DerivedEquivalenceMixin):
         tag: str
 
+        @override
         def is_structurally_equivalent(self, other: object) -> bool:
             return isinstance(other, _Manual)
 
@@ -695,6 +697,7 @@ def test_one_manual_one_derived_method_mix() -> None:
     class _HalfManual(DerivedEquivalenceMixin):
         tag: str
 
+        @override
         def is_alpha_equivalent_under(
             self, other: object, renaming: AlphaRenaming
         ) -> bool:

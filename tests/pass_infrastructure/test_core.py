@@ -17,6 +17,7 @@ from fhy_core.pass_infrastructure import (
     register_pass,
 )
 from fhy_core.traits import PartialEqual
+from fhy_core.utils.override import override
 
 _PASS_INFRA_LOGGER_PREFIX = "fhy_core.pass_infrastructure.core"
 
@@ -26,9 +27,11 @@ def test_compiler_pass_executes_and_tracks_stats() -> None:
 
     @register_pass("tests.append_pass", "Append sentinel value to a list.")
     class AppendPass(CompilerPass[list[int], list[int]]):
+        @override
         def get_noop_output(self, ir: list[int]) -> list[int]:
             return ir
 
+        @override
         def run_pass(self, ir: list[int]) -> list[int]:
             return [*ir, 9]
 
@@ -49,9 +52,11 @@ def test_compiler_pass_wraps_internal_exceptions() -> None:
 
     @register_pass("tests.exploding_pass", "Always raises during execution.")
     class ExplodingPass(CompilerPass[list[int], list[int]]):
+        @override
         def get_noop_output(self, ir: list[int]) -> list[int]:
             return ir
 
+        @override
         def run_pass(self, ir: list[int]) -> list[int]:
             raise ValueError("boom")
 
@@ -70,9 +75,11 @@ def test_compiler_pass_rejects_none_input() -> None:
 
     @register_pass("tests.identity_pass", "Identity pass for object IR.")
     class IdentityPass(CompilerPass[object, object]):
+        @override
         def get_noop_output(self, ir: object) -> object:
             return ir
 
+        @override
         def run_pass(self, ir: object) -> object:
             return ir
 
@@ -91,9 +98,11 @@ def test_compiler_pass_registry_create_and_collision() -> None:
 
     @register_pass("tests.creatable_pass", "Increment an integer by one.")
     class CreatablePass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir + 1
 
@@ -108,9 +117,11 @@ def test_compiler_pass_registry_create_and_collision() -> None:
 
         @register_pass("tests.creatable_pass", "Duplicate named pass.")
         class DuplicatePass(CompilerPass[int, int]):
+            @override
             def get_noop_output(self, ir: int) -> int:
                 return ir
 
+            @override
             def run_pass(self, ir: int) -> int:
                 return ir
 
@@ -121,14 +132,17 @@ def test_compiler_pass_skip_path_uses_noop_output() -> None:
 
     @register_pass("tests.skipped_pass", "Skip execution and return noop output.")
     class SkippedPass(CompilerPass[int, int]):
+        @override
         def should_run(self, ir: int) -> bool:
             _ = ir
             self.report(DiagnosticLevel.INFO, "skip requested")
             return False
 
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir + 100
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir + 1
 
@@ -211,12 +225,15 @@ def test_validate_input_unexpected_exception_wraps_to_pass_validation_error() ->
         "tests.wrap.validate_input_raises", "validate_input raises KeyError."
     )
     class WrappedValidateInputPass(CompilerPass[int, int]):
+        @override
         def validate_input(self, ir: int) -> None:
             raise KeyError("missing-key")
 
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir
 
@@ -236,12 +253,15 @@ def test_validate_output_unexpected_exception_wraps_to_pass_validation_error() -
         "tests.wrap.validate_output_raises", "validate_output raises KeyError."
     )
     class WrappedValidateOutputPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir + 1
 
+        @override
         def validate_output(self, input_ir: int, output: int) -> None:
             raise KeyError("output-issue")
 
@@ -260,12 +280,15 @@ def test_should_run_unexpected_exception_wraps_to_pass_execution_error() -> None
 
     @register_pass("tests.wrap.should_run_raises", "should_run raises RuntimeError.")
     class WrappedShouldRunPass(CompilerPass[int, int]):
+        @override
         def should_run(self, ir: int) -> bool:
             raise RuntimeError("predicate-broken")
 
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir
 
@@ -288,12 +311,15 @@ def test_get_noop_output_unexpected_exception_wraps_to_pass_execution_error() ->
         "should_run False, get_noop_output raises RuntimeError.",
     )
     class WrappedNoopPass(CompilerPass[int, int]):
+        @override
         def should_run(self, ir: int) -> bool:
             return False
 
+        @override
         def get_noop_output(self, ir: int) -> int:
             raise RuntimeError("noop-broken")
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir
 
@@ -306,12 +332,15 @@ def test_did_change_unexpected_exception_wraps_to_pass_execution_error() -> None
 
     @register_pass("tests.wrap.did_change_raises", "did_change raises RuntimeError.")
     class WrappedDidChangePass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir + 1
 
+        @override
         def did_change(self, input_ir: int, output: int) -> bool:
             raise RuntimeError("did-change-broken")
 
@@ -327,12 +356,15 @@ def test_get_preserved_analyses_wraps_unexpected_exception() -> None:
         "get_preserved_analyses raises RuntimeError.",
     )
     class WrappedPreservedPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir + 1
 
+        @override
         def get_preserved_analyses(
             self, input_ir: int, output: int, *, changed: bool
         ) -> PreservedAnalyses:
@@ -350,12 +382,15 @@ def test_explicit_pass_validation_error_passes_through_unchanged() -> None:
         "validate_input raises PassValidationError directly.",
     )
     class ExplicitValidationPass(CompilerPass[int, int]):
+        @override
         def validate_input(self, ir: int) -> None:
             raise PassValidationError("explicitly-invalid")
 
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir
 
@@ -371,9 +406,11 @@ def test_explicit_pass_execution_error_passes_through_unchanged() -> None:
         "run_pass raises PassExecutionError directly.",
     )
     class ExplicitExecutionPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             raise PassExecutionError("explicitly-broken")
 
@@ -393,12 +430,15 @@ def test_run_counter_counts_only_real_executions() -> None:
         "tests.counter.gated", "Pass that runs only when its input is positive."
     )
     class GatedPass(CompilerPass[int, int]):
+        @override
         def should_run(self, ir: int) -> bool:
             return ir > 0
 
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir + 1
 
@@ -427,9 +467,11 @@ def test_run_counter_counts_attempts_even_when_run_pass_raises() -> None:
         "Pass that always raises inside run_pass.",
     )
     class CrashingRunPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             raise RuntimeError("intentional crash in run_pass")
 
@@ -462,9 +504,11 @@ def test_register_pass_rejects_empty_name() -> None:
 
         @register_pass("", "non-empty description")
         class _EmptyNamePass(CompilerPass[int, int]):
+            @override
             def get_noop_output(self, ir: int) -> int:
                 return ir
 
+            @override
             def run_pass(self, ir: int) -> int:
                 return ir
 
@@ -475,9 +519,11 @@ def test_register_pass_rejects_empty_description() -> None:
 
         @register_pass("tests.register.empty_description", "")
         class _EmptyDescriptionPass(CompilerPass[int, int]):
+            @override
             def get_noop_output(self, ir: int) -> int:
                 return ir
 
+            @override
             def run_pass(self, ir: int) -> int:
                 return ir
 
@@ -496,9 +542,11 @@ def test_register_pass_rejects_same_class_with_different_description() -> None:
 
     @register_pass("tests.register.mismatch", "Original description.")
     class MismatchPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir
 
@@ -517,9 +565,11 @@ def test_register_pass_is_idempotent_for_same_class() -> None:
 
     @register_pass("tests.register.idempotent", "Idempotent registration.")
     class IdempotentPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir
 
@@ -589,9 +639,11 @@ def test_report_emits_log_record_at_matching_level(
         f"Emits one {diagnostic_level.value} report.",
     )
     class LoggingLevelPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             self.report(diagnostic_level, "level-test-message")
             return ir
@@ -615,9 +667,11 @@ def test_report_appends_detail_to_log_message(
 
     @register_pass("tests.log.detail", "Emits a report with a detail string.")
     class DetailPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             self.report(
                 DiagnosticLevel.WARNING, "primary-message", detail="extra-context"
@@ -641,18 +695,22 @@ def test_report_uses_per_pass_class_logger(
 
     @register_pass("tests.log.a", "First logging pass.")
     class LoggerA(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             self.report(DiagnosticLevel.INFO, "from-A")
             return ir
 
     @register_pass("tests.log.b", "Second logging pass.")
     class LoggerB(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             self.report(DiagnosticLevel.INFO, "from-B")
             return ir
@@ -678,9 +736,11 @@ def test_report_logging_does_not_disturb_diagnostics_list(
 
     @register_pass("tests.log.additive", "Verifies logging is additive.")
     class AdditivePass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             self.report(DiagnosticLevel.INFO, "additive-msg")
             return ir
@@ -700,9 +760,11 @@ def test_guarded_exception_attaches_exc_info(
         "tests.log.guarded_exc_info", "Verifies exc_info travels with guarded errors."
     )
     class CrashingPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             raise ValueError("boom")
 
@@ -728,9 +790,11 @@ def test_execute_emits_lifecycle_debug(
 
     @register_pass("tests.log.lifecycle", "Verifies execute lifecycle DEBUGs.")
     class LifecyclePass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir + 1
 

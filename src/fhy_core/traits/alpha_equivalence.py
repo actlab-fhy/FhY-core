@@ -32,7 +32,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, TypeVar, final, runtime_checkable
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.identifier import Identifier
 
@@ -177,8 +177,8 @@ class AlphaRenaming:
 
     """
 
-    _frames: tuple[frozendict[Identifier, Identifier], ...]
-    _free_renaming: frozendict[Identifier, Identifier]
+    _frames: tuple[immutabledict[Identifier, Identifier], ...]
+    _free_renaming: immutabledict[Identifier, Identifier]
 
     @classmethod
     def empty(cls) -> "AlphaRenaming":
@@ -191,7 +191,7 @@ class AlphaRenaming:
             A fresh empty ``AlphaRenaming`` instance.
 
         """
-        return cls(_frames=(), _free_renaming=frozendict())
+        return cls(_frames=(), _free_renaming=immutabledict())
 
     @classmethod
     def with_free_renaming(
@@ -217,7 +217,7 @@ class AlphaRenaming:
 
         """
         _check_injective(free_renaming, "free_renaming")
-        return cls(_frames=(), _free_renaming=frozendict(free_renaming))
+        return cls(_frames=(), _free_renaming=immutabledict(free_renaming))
 
     def extend(self, bindings: Mapping[Identifier, Identifier]) -> "AlphaRenaming":
         """Push a new innermost binder frame and return the extended renaming.
@@ -242,7 +242,7 @@ class AlphaRenaming:
         """
         _check_injective(bindings, "bindings")
         return AlphaRenaming(
-            _frames=self._frames + (frozendict(bindings),),
+            _frames=(*self._frames, immutabledict(bindings)),
             _free_renaming=self._free_renaming,
         )
 

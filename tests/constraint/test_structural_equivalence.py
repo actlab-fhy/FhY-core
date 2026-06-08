@@ -1,6 +1,7 @@
 """Tests for `Constraint.is_structurally_equivalent` across kinds."""
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 
@@ -13,6 +14,7 @@ from fhy_core.expression import Expression, LiteralExpression
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import SerializedDict
 from fhy_core.traits import StructuralEquivalence
+from fhy_core.utils.override import override
 
 from .conftest import (
     ALL_KINDS,
@@ -184,22 +186,28 @@ def test_dispatch_default_raises_for_unregistered_constraint_subclass() -> None:
     """Test the singledispatch default branch raises ``NotImplementedError``."""
 
     class _UnregisteredConstraint(Constraint):
+        @override
         def is_satisfied(self, value: object) -> bool:
             return True
 
+        @override
         def convert_to_expression(self) -> Expression:
             return LiteralExpression(True)
 
+        @override
         def __repr__(self) -> str:
             return "_UnregisteredConstraint"
 
+        @override
         def __str__(self) -> str:
             return "_UnregisteredConstraint"
 
+        @override
         def serialize_data_to_dict(self) -> SerializedDict:
             return {}
 
         @classmethod
+        @override
         def deserialize_data_from_dict(
             cls, data: SerializedDict
         ) -> "_UnregisteredConstraint":

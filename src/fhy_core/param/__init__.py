@@ -1,9 +1,12 @@
 """Constrained parameters."""
 
 __all__ = [
-    "CategoricalValue",
+    "BoundIntParam",
+    "BoundNatParam",
     "CategoricalParam",
+    "CategoricalValue",
     "IntParam",
+    "NatParam",
     "NumericParam",
     "OrdinalParam",
     "OrdinalValue",
@@ -13,9 +16,6 @@ __all__ = [
     "PermParam",
     "PermutationMemberValue",
     "RealParam",
-    "NatParam",
-    "BoundIntParam",
-    "BoundNatParam",
     "SerializableEqualValue",
     "SerializableOrderableValue",
     "create_single_valid_value_param",

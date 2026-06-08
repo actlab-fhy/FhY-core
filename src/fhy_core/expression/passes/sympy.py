@@ -1,5 +1,7 @@
 """Expression passes that interface with SymPy."""
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "convert_expression_to_sympy_expression",
     "convert_sympy_expression_to_expression",
@@ -8,12 +10,13 @@ __all__ = [
 ]
 
 import operator
-from typing import Any, Callable, ClassVar
+from collections.abc import Callable
+from typing import Any, ClassVar
 
 import sympy  # type: ignore
 import sympy.logic  # type: ignore
 import sympy.logic.boolalg  # type: ignore
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.expression.core import (
     BinaryExpression,
@@ -153,18 +156,18 @@ _LOGGER = get_logger(__name__)
 class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
     """Transforms an expression to SymPy expression."""
 
-    _UNARY_OPERATION_SYMPY_OPERATORS: frozendict[
+    _UNARY_OPERATION_SYMPY_OPERATORS: immutabledict[
         UnaryOperation, Callable[[Any], Any]
-    ] = frozendict(
+    ] = immutabledict(
         {
             UnaryOperation.NEGATE: operator.neg,
             UnaryOperation.POSITIVE: operator.pos,
             UnaryOperation.LOGICAL_NOT: operator.not_,
         }
     )
-    _BINARY_OPERATION_SYMPY_OPERATORS: frozendict[
+    _BINARY_OPERATION_SYMPY_OPERATORS: immutabledict[
         BinaryOperation, Callable[[Any, Any], Any]
-    ] = frozendict(
+    ] = immutabledict(
         {
             BinaryOperation.ADD: operator.add,
             BinaryOperation.SUBTRACT: operator.sub,
@@ -251,7 +254,8 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             )
         return TypeError(f"native function {name!r} has no SymPy lowering registered")
 
-    def visit_literal_expression(
+    # One return per literal kind lowered to SymPy; flattening would not help.
+    def visit_literal_expression(  # noqa: PLR0911
         self, literal_expression: LiteralExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
         value = literal_expression.value
@@ -282,6 +286,7 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
     def format_identifier(identifier: Identifier) -> str:
         return f"{identifier.name_hint}_{identifier.id}"
 
+    @override
     def get_noop_output(self, ir: Expression) -> Any:
         raise PassExecutionError(
             f'Pass "{self.get_pass_name()}" does not define noop output.'
@@ -374,9 +379,11 @@ class SymPyToExpressionConverter(
         (sympy.GreaterThan, "_convert_greater_than"),
     )
 
+    @override
     def run_pass(self, ir: sympy.Expr | sympy.logic.boolalg.Boolean) -> Expression:
         return self.convert(ir)
 
+    @override
     def get_noop_output(
         self, ir: sympy.Expr | sympy.logic.boolalg.Boolean
     ) -> Expression:

@@ -1,20 +1,22 @@
 """Core type system."""
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "CoreDataType",
     "DataType",
     "FhYCoreTypeError",
     "IndexType",
-    "is_weak_core_data_type",
     "NumericalType",
     "PrimitiveDataType",
+    "TemplateDataType",
+    "Type",
+    "TypeQualifier",
+    "is_weak_core_data_type",
     "promote_core_data_types",
     "promote_primitive_data_types",
     "promote_type_qualifiers",
     "resolve_literal_core_data_type",
-    "TemplateDataType",
-    "Type",
-    "TypeQualifier",
 ]
 
 from abc import ABC
@@ -62,6 +64,7 @@ class _DispatchedStructuralEquivalence(
     cycle).
     """
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         from .dispatch import is_structurally_equivalent  # noqa: PLC0415
 
@@ -108,7 +111,8 @@ class CoreDataType(StrEnum):
     BOOL = "bool"
 
 
-def get_core_data_type_bit_width(core_data_type: CoreDataType) -> int | None:
+# Exhaustive match over CoreDataType; one return per width is the clearest form.
+def get_core_data_type_bit_width(core_data_type: CoreDataType) -> int | None:  # noqa: PLR0911
     """Get the bit width of a core data type.
 
     Args:
@@ -443,12 +447,15 @@ class PrimitiveDataType(DataType):
 
     @property
     def core_data_type(self) -> CoreDataType:
+        """Return the core data type."""
         return self._core_data_type
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         return {"core_data_type": self._core_data_type.value}
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "PrimitiveDataType":
         if not _is_valid_primitive_data_type_data(data):
             raise DeserializationDictStructureError(
@@ -460,11 +467,13 @@ class PrimitiveDataType(DataType):
             )
         return cls(CoreDataType(data["core_data_type"]))
 
+    @override
     def __str__(self) -> str:
         return str(self._core_data_type)
 
+    @override
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({repr(self._core_data_type)})"
+        return f"{self.__class__.__name__}({self._core_data_type!r})"
 
 
 class _TemplateDataTypeData(TypedDict):
@@ -503,12 +512,15 @@ class TemplateDataType(DataType):
 
     @property
     def data_type(self) -> Identifier:
+        """Return the data type."""
         return self._data_type
 
     @property
     def widths(self) -> list[int] | None:
+        """Return the widths."""
         return list(self._widths) if self._widths is not None else None
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "data_type": self._data_type.serialize_to_dict(),
@@ -516,6 +528,7 @@ class TemplateDataType(DataType):
         }
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "TemplateDataType":
         if not _is_valid_template_data_type_data(data):
             raise DeserializationDictStructureError(
@@ -530,11 +543,13 @@ class TemplateDataType(DataType):
             data["widths"],
         )
 
+    @override
     def __str__(self) -> str:
         return str(self._data_type)
 
+    @override
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({repr(self._data_type)})"
+        return f"{self.__class__.__name__}({self._data_type!r})"
 
 
 def promote_primitive_data_types(
@@ -638,16 +653,19 @@ class NumericalType(Type):
 
     @property
     def data_type(self) -> DataType:
+        """Return the data type."""
         return self._data_type
 
     @property
     def shape(self) -> list[Expression | EllipsisType]:
+        """Return the shape."""
         return list(self._shape)
 
     def is_scalar(self) -> bool:
         """Return True when the numerical type is a scalar."""
         return not self._shape
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         serialized_shape: list[SerializedDict] = []
         for dimension in self._shape:
@@ -661,6 +679,7 @@ class NumericalType(Type):
         }
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "NumericalType":
         if not _is_valid_numerical_type_data(data):
             raise DeserializationDictStructureError(
@@ -679,16 +698,16 @@ class NumericalType(Type):
             deserialized_shape,
         )
 
+    @override
     def __str__(self) -> str:
         shape_string = format_comma_separated_list(
             self._shape, str_func=_format_numerical_shape_dimension
         )
         return f"{self._data_type}[{shape_string}]"
 
+    @override
     def __repr__(self) -> str:
-        return (
-            f"{self.__class__.__name__}({repr(self._data_type)}, {repr(self._shape)})"
-        )
+        return f"{self.__class__.__name__}({self._data_type!r}, {self._shape!r})"
 
 
 class _IndexTypeData(TypedDict):
@@ -734,16 +753,20 @@ class IndexType(Type):
 
     @property
     def lower_bound(self) -> Expression:
+        """Return the lower bound."""
         return self._lower_bound
 
     @property
     def upper_bound(self) -> Expression:
+        """Return the upper bound."""
         return self._upper_bound
 
     @property
     def stride(self) -> Expression:
+        """Return the stride."""
         return self._stride
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "lower_bound": self._lower_bound.serialize_to_dict(),
@@ -752,6 +775,7 @@ class IndexType(Type):
         }
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "IndexType":
         if not _is_valid_index_type_data(data):
             raise DeserializationDictStructureError(
@@ -763,16 +787,18 @@ class IndexType(Type):
             Expression.deserialize_from_dict(data["stride"]),
         )
 
+    @override
     def __str__(self) -> str:
         lower_bound_str = pformat_expression(self._lower_bound, show_id=True)
         upper_bound_str = pformat_expression(self._upper_bound, show_id=True)
         stride_str = pformat_expression(self._stride, show_id=True)
         return f"index({lower_bound_str}:{upper_bound_str}:{stride_str})"
 
+    @override
     def __repr__(self) -> str:
         return (
-            f"{self.__class__.__name__}({repr(self._lower_bound)}, "
-            f"{repr(self._upper_bound)}, {repr(self._stride)})"
+            f"{self.__class__.__name__}({self._lower_bound!r}, "
+            f"{self._upper_bound!r}, {self._stride!r})"
         )
 
 

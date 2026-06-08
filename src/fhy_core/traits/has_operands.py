@@ -12,4 +12,5 @@ _OperandT_co = TypeVar("_OperandT_co", covariant=True)
 class HasOperands(Protocol[_OperandT_co]):
     """Protocol for operation-like objects with ordered operands."""
 
-    def get_operands(self) -> Sequence[_OperandT_co]: ...
+    def get_operands(self) -> Sequence[_OperandT_co]:
+        """Return the object's operands in order."""

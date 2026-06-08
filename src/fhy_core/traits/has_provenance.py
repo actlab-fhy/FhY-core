@@ -15,4 +15,5 @@ class HasProvenance(Protocol):
     original node, etc.
     """
 
-    def get_provenance(self) -> Provenance: ...
+    def get_provenance(self) -> Provenance:
+        """Return the object's provenance information."""

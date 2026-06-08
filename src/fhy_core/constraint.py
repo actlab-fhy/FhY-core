@@ -31,6 +31,8 @@ Set-constraint serialization is deterministic: members are emitted in
 leaves are emitted in the same order.
 """
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "Constraint",
     "ConstraintError",
@@ -156,17 +158,21 @@ class _TypedMember(FrozenMixin):
     def value(self) -> Any:
         return self._value
 
+    @override
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, _TypedMember):
             return NotImplemented
         return type(self._value) is type(other._value) and self._value == other._value
 
+    @override
     def __hash__(self) -> int:
         return hash((type(self._value), self._value))
 
+    @override
     def __repr__(self) -> str:
         return repr(self._value)
 
+    @override
     def __str__(self) -> str:
         return str(self._value)
 
@@ -316,9 +322,11 @@ class Constraint(
 
     @property
     def variable(self) -> Identifier:
+        """Return the constraint's variable identifier."""
         return self._variable
 
     def __call__(self, value: Any) -> bool:
+        """Return whether the value satisfies the constraint."""
         return self.is_satisfied(value)
 
     @abstractmethod
@@ -349,13 +357,16 @@ class Constraint(
 
         """
 
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return _is_constraint_structurally_equivalent(self, other)
 
     @abstractmethod
+    @override
     def __repr__(self) -> str: ...
 
     @abstractmethod
+    @override
     def __str__(self) -> str: ...
 
 
@@ -411,6 +422,7 @@ class EquationConstraint(Constraint):
         super().__init__(constrained_variable)
         self._expression = expression
 
+    @override
     def is_satisfied(self, value: Expression | LiteralType) -> bool:
         if isinstance(value, (str, float, int, bool)):
             value = LiteralExpression(value)
@@ -426,9 +438,11 @@ class EquationConstraint(Constraint):
             )
         return False
 
+    @override
     def convert_to_expression(self) -> Expression:
         return self._expression
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "variable": self.variable.serialize_to_dict(),
@@ -436,6 +450,7 @@ class EquationConstraint(Constraint):
         }
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "EquationConstraint":
         if not _is_valid_equation_constraint_data(data):
             raise DeserializationDictStructureError(
@@ -446,9 +461,11 @@ class EquationConstraint(Constraint):
             Expression.deserialize_from_dict(data["expression"]),
         )
 
+    @override
     def __repr__(self) -> str:
         return f"EquationConstraint({self.variable!r}, expression={self._expression!r})"
 
+    @override
     def __str__(self) -> str:
         return pformat_expression(self._expression)
 
@@ -518,6 +535,7 @@ class InSetConstraint(Constraint):
         super().__init__(constrained_variable)
         self._valid_values = _normalize_constraint_member_collection(valid_values)
 
+    @override
     def is_satisfied(self, value: Any) -> bool:
         """Return whether ``value`` is in the permitted set.
 
@@ -527,6 +545,7 @@ class InSetConstraint(Constraint):
         """
         return _wrap_member(value) in self._valid_values
 
+    @override
     def convert_to_expression(self) -> Expression:
         if len(self._valid_values) == 0:
             return LiteralExpression(False)
@@ -541,6 +560,7 @@ class InSetConstraint(Constraint):
         literal = _lift_member_to_literal_expression(_unwrap_member(wrapped))
         return make_binary_expression(BinaryOperation.EQUAL, self.variable, literal)
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "variable": self.variable.serialize_to_dict(),
@@ -548,6 +568,7 @@ class InSetConstraint(Constraint):
         }
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "InSetConstraint":
         if not _is_valid_in_set_constraint_data(data):
             raise DeserializationDictStructureError(
@@ -559,12 +580,14 @@ class InSetConstraint(Constraint):
         ]
         return cls(Identifier.deserialize_from_dict(data["variable"]), members)
 
+    @override
     def __repr__(self) -> str:
         return (
             f"InSetConstraint({self.variable!r}, "
             f"values={_render_member_set(self._valid_values)})"
         )
 
+    @override
     def __str__(self) -> str:
         return f"{self.variable} in {_render_member_set_str(self._valid_values)}"
 
@@ -610,6 +633,7 @@ class NotInSetConstraint(Constraint):
         super().__init__(constrained_variable)
         self._invalid_values = _normalize_constraint_member_collection(invalid_values)
 
+    @override
     def is_satisfied(self, value: Any) -> bool:
         """Return whether ``value`` is NOT in the forbidden set.
 
@@ -619,6 +643,7 @@ class NotInSetConstraint(Constraint):
         """
         return _wrap_member(value) not in self._invalid_values
 
+    @override
     def convert_to_expression(self) -> Expression:
         if len(self._invalid_values) == 0:
             return LiteralExpression(True)
@@ -633,6 +658,7 @@ class NotInSetConstraint(Constraint):
         literal = _lift_member_to_literal_expression(_unwrap_member(wrapped))
         return make_binary_expression(BinaryOperation.NOT_EQUAL, self.variable, literal)
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         return {
             "variable": self.variable.serialize_to_dict(),
@@ -640,6 +666,7 @@ class NotInSetConstraint(Constraint):
         }
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "NotInSetConstraint":
         if not _is_valid_not_in_set_constraint_data(data):
             raise DeserializationDictStructureError(
@@ -651,12 +678,14 @@ class NotInSetConstraint(Constraint):
         ]
         return cls(Identifier.deserialize_from_dict(data["variable"]), members)
 
+    @override
     def __repr__(self) -> str:
         return (
             f"NotInSetConstraint({self.variable!r}, "
             f"values={_render_member_set(self._invalid_values)})"
         )
 
+    @override
     def __str__(self) -> str:
         return f"{self.variable} not in {_render_member_set_str(self._invalid_values)}"
 

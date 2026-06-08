@@ -3,7 +3,7 @@
 from collections.abc import Callable
 
 import pytest
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.expression import (
     BinaryExpression,
@@ -212,13 +212,13 @@ def test_match_bindings_with_different_key_sets_are_unequal() -> None:
 def test_match_bindings_post_init_rejects_non_string_keys() -> None:
     """Test the constructor rejects keys that are not strings."""
     with pytest.raises(TypeError, match="keys"):
-        MatchBindings(frozendict({0: LiteralExpression(1)}))  # type: ignore[dict-item]
+        MatchBindings(immutabledict({0: LiteralExpression(1)}))  # type: ignore[dict-item]
 
 
 def test_match_bindings_post_init_rejects_non_expression_values() -> None:
     """Test the constructor rejects values that are not `Expression`."""
     with pytest.raises(TypeError, match="Expression"):
-        MatchBindings(frozendict({"x": "not an expression"}))  # type: ignore[dict-item]
+        MatchBindings(immutabledict({"x": "not an expression"}))  # type: ignore[dict-item]
 
 
 # ===========================================================================

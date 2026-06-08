@@ -1,6 +1,6 @@
 """Tests the general dictionary utilities."""
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.utils.dict_utils import invert_dict, invert_frozen_dict
 
@@ -15,6 +15,6 @@ def test_invert_dict() -> None:
 def test_invert_frozen_dict() -> None:
     """Test that the frozen dictionary inversion works."""
     test_dict = {"a": 1, "b": 2, "c": 3}
-    frozen_dict = frozendict(test_dict)
+    frozen_dict = immutabledict(test_dict)
     inverted_dict = invert_frozen_dict(frozen_dict)
     assert inverted_dict == {1: "a", 2: "b", 3: "c"}

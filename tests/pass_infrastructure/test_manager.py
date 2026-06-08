@@ -6,7 +6,7 @@ import threading
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -25,6 +25,7 @@ from fhy_core.pass_infrastructure import (
     register_pass,
 )
 from fhy_core.traits import FrozenMixin, PartialEqual
+from fhy_core.utils.override import override
 
 _MANAGER_LOGGER = "fhy_core.pass_infrastructure.manager"
 
@@ -51,6 +52,7 @@ class BoxDoubleAnalysis(Analysis[Box, int]):
 
     runs = 0
 
+    @override
     def run(self, ir: Box) -> int:
         type(self).runs += 1
         return ir.value * 2
@@ -61,6 +63,7 @@ class BoxParityAnalysis(Analysis[Box, int]):
 
     runs = 0
 
+    @override
     def run(self, ir: Box) -> int:
         type(self).runs += 1
         return ir.value % 2
@@ -71,6 +74,7 @@ class MutableBoxDoubleAnalysis(Analysis[MutableBox, int]):
 
     runs = 0
 
+    @override
     def run(self, ir: MutableBox) -> int:
         type(self).runs += 1
         return ir.value * 2
@@ -81,17 +85,21 @@ def test_pass_manager_runs_passes_in_order() -> None:
 
     @register_pass("tests.pm.add_one", "Add one to the Box value.")
     class AddOnePass(CompilerPass[Box, Box]):
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             return Box(ir.value + 1)
 
     @register_pass("tests.pm.double", "Double the Box value.")
     class DoublePass(CompilerPass[Box, Box]):
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             return Box(ir.value * 2)
 
@@ -115,12 +123,15 @@ def test_pass_manager_applies_analysis_preservation_and_invalidation() -> None:
         "Change IR while preserving only the double analysis.",
     )
     class PreserveDoubleOnlyPass(CompilerPass[Box, Box]):
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             return Box(ir.value + 1)
 
+        @override
         def get_preserved_analyses(
             self, input_ir: Box, output: Box, *, changed: bool
         ) -> PreservedAnalyses:
@@ -191,9 +202,11 @@ def test_pass_manager_fixpoint_group_converges() -> None:
 
     @register_pass("tests.pm.decrement_to_zero", "Decrement value toward zero.")
     class DecrementToZeroPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return max(ir - 1, 0)
 
@@ -224,9 +237,11 @@ def test_pass_manager_fixpoint_group_raises_on_non_convergence() -> None:
 
     @register_pass("tests.pm.flip_bit", "Flip a bit forever.")
     class FlipBitPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return 1 - ir
 
@@ -258,9 +273,9 @@ def test_pass_manager_configuration_is_read_only() -> None:
     manager = PassManager[int](name=Identifier("pipeline"))
 
     with pytest.raises(AttributeError):
-        setattr(manager, "name", Identifier("other"))
+        setattr(manager, "name", Identifier("other"))  # noqa: B010
     with pytest.raises(AttributeError):
-        setattr(manager, "analysis_manager", manager.analysis_manager)
+        setattr(manager, "analysis_manager", manager.analysis_manager)  # noqa: B010
 
 
 def test_get_analysis_runs_uncached_when_pass_is_standalone() -> None:
@@ -269,11 +284,13 @@ def test_get_analysis_runs_uncached_when_pass_is_standalone() -> None:
 
     @register_pass("tests.pm.standalone_get_analysis", "Reads analysis standalone.")
     class ReadAnalysisPass(CompilerPass[Box, Box]):
-        observed: list[int] = []
+        observed: ClassVar[list[int]] = []
 
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             ReadAnalysisPass.observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
             ReadAnalysisPass.observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
@@ -295,11 +312,13 @@ def test_get_analysis_uses_cache_when_bound_by_pass_manager() -> None:
         "tests.pm.cached_get_analysis", "Reads analysis twice under a manager."
     )
     class TwiceReadPass(CompilerPass[Box, Box]):
-        observed: list[int] = []
+        observed: ClassVar[list[int]] = []
 
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             TwiceReadPass.observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
             TwiceReadPass.observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
@@ -321,20 +340,24 @@ def test_get_analysis_reuses_cache_across_preserving_passes() -> None:
         "tests.pm.compute_analysis", "Triggers the analysis in its first run."
     )
     class ComputeAnalysisPass(CompilerPass[Box, Box]):
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             self.get_analysis(BoxDoubleAnalysis, ir)
             return ir  # identity - preserves all by default (no change)
 
     @register_pass("tests.pm.read_analysis_again", "Reads the analysis a second time.")
     class ReadAgainPass(CompilerPass[Box, Box]):
-        observed: list[int] = []
+        observed: ClassVar[list[int]] = []
 
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             ReadAgainPass.observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
             return ir
@@ -357,9 +380,11 @@ def test_get_analysis_recomputes_after_non_preserving_pass() -> None:
         "tests.pm.seed_analysis", "Computes the analysis before the mutating pass."
     )
     class SeedAnalysisPass(CompilerPass[Box, Box]):
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             self.get_analysis(BoxDoubleAnalysis, ir)
             return ir
@@ -369,9 +394,11 @@ def test_get_analysis_recomputes_after_non_preserving_pass() -> None:
         "Changes the IR and preserves no analyses (default).",
     )
     class MutateNoPreservePass(CompilerPass[Box, Box]):
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             return Box(ir.value + 1)
 
@@ -379,11 +406,13 @@ def test_get_analysis_recomputes_after_non_preserving_pass() -> None:
         "tests.pm.reread_after_mutation", "Re-reads the analysis after mutation."
     )
     class RereadPass(CompilerPass[Box, Box]):
-        observed: list[int] = []
+        observed: ClassVar[list[int]] = []
 
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             RereadPass.observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
             return ir
@@ -408,9 +437,11 @@ def test_bind_and_get_analysis_manager_are_public_accessors() -> None:
         "tests.pm.public_bind_accessors", "Identity pass for accessor testing."
     )
     class AccessorPass(CompilerPass[Box, Box]):
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             return ir
 
@@ -441,11 +472,13 @@ def test_get_analysis_works_inside_fixpoint_group() -> None:
         "Reads analysis and decrements until fixed-point.",
     )
     class FixpointReaderPass(CompilerPass[Box, Box]):
-        observed: list[int] = []
+        observed: ClassVar[list[int]] = []
 
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             FixpointReaderPass.observed.append(self.get_analysis(BoxDoubleAnalysis, ir))
             return Box(max(ir.value - 1, 0))
@@ -472,9 +505,11 @@ def test_get_analysis_restores_pass_state_between_runs() -> None:
         "tests.pm.state_restoration", "Identity pass that reads an analysis."
     )
     class StateCheckPass(CompilerPass[Box, Box]):
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             self.get_analysis(BoxDoubleAnalysis, ir)
             return ir
@@ -499,9 +534,11 @@ def test_pass_manager_records_support_partial_equal_traits() -> None:
 
     @register_pass("tests.pm.partial_equal_record", "Identity pass for records.")
     class IdentityPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir
 
@@ -526,9 +563,11 @@ def test_pass_manager_add_pass_returns_none() -> None:
 
     @register_pass("tests.pm.no_chain_a", "Identity pass for chaining test A.")
     class _NoChainA(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir
 
@@ -551,9 +590,11 @@ def test_fixpoint_pass_group_add_pass_returns_none() -> None:
 
     @register_pass("tests.pm.no_chain_group_pass", "Identity pass for group chaining.")
     class _NoChainGroupPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir
 
@@ -574,6 +615,7 @@ def test_analysis_subclass_with_no_arg_init_is_accepted() -> None:
         def __init__(self) -> None:
             super().__init__()
 
+        @override
         def run(self, ir: int) -> int:
             return ir
 
@@ -584,6 +626,7 @@ def test_analysis_subclass_with_default_init_is_accepted() -> None:
     """Test that an Analysis subclass with no explicit `__init__` is accepted."""
 
     class _DefaultInitAnalysis(Analysis[int, int]):
+        @override
         def run(self, ir: int) -> int:
             return ir
 
@@ -600,6 +643,7 @@ def test_analysis_subclass_with_required_positional_arg_is_rejected() -> None:
                 super().__init__()
                 self.scale = scale
 
+            @override
             def run(self, ir: int) -> int:
                 return ir * self.scale
 
@@ -612,6 +656,7 @@ def test_analysis_subclass_with_optional_only_args_is_accepted() -> None:
             super().__init__()
             self.scale = scale
 
+        @override
         def run(self, ir: int) -> int:
             return ir * self.scale
 
@@ -631,9 +676,11 @@ def test_pass_run_record_stores_preserved_analyses_directly() -> None:
         "Identity pass; preserves all analyses by default for unchanged IR.",
     )
     class IdentityPreserveAllPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir
 
@@ -656,12 +703,15 @@ def test_pass_run_record_carries_specific_preservation_set() -> None:
         "Changes IR while preserving only the double analysis.",
     )
     class PreserveSpecificPass(CompilerPass[Box, Box]):
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             return Box(ir.value + 1)
 
+        @override
         def get_preserved_analyses(
             self, input_ir: Box, output: Box, *, changed: bool
         ) -> PreservedAnalyses:
@@ -865,9 +915,11 @@ def test_bind_analysis_manager_rejects_none() -> None:
 
     @register_pass("tests.pm.bind_rejects_none", "Identity pass for bind/unbind tests.")
     class _BindRejectsNonePass(CompilerPass[Box, Box]):
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             return ir
 
@@ -882,9 +934,11 @@ def test_unbind_analysis_manager_clears_binding() -> None:
 
     @register_pass("tests.pm.unbind", "Identity pass for unbind testing.")
     class _UnbindPass(CompilerPass[Box, Box]):
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             return ir
 
@@ -903,9 +957,11 @@ def test_unbind_analysis_manager_is_idempotent() -> None:
 
     @register_pass("tests.pm.unbind_idempotent", "Identity pass for idempotent unbind.")
     class _UnbindIdemPass(CompilerPass[Box, Box]):
+        @override
         def get_noop_output(self, ir: Box) -> Box:
             return ir
 
+        @override
         def run_pass(self, ir: Box) -> Box:
             return ir
 
@@ -932,7 +988,7 @@ def test_analysis_manager_get_is_safe_under_concurrent_callers() -> None:
             value = manager.get(BoxDoubleAnalysis, ir)
             assert value == ir.value * 2
             return value
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             with errors_lock:
                 errors.append(exc)
             raise
@@ -959,7 +1015,7 @@ def test_analysis_manager_survives_concurrent_get_and_gc_eviction() -> None:
                 # Drop the local reference; let the finalizer fire on GC.
                 del ir
             gc.collect()
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             with errors_lock:
                 errors.append(exc)
             raise
@@ -978,9 +1034,11 @@ def test_run_emits_pipeline_lifecycle_logs(
 
     @register_pass("tests.pm.logging.identity", "Identity pass for logging.")
     class IdentityPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return ir
 
@@ -1019,9 +1077,11 @@ def test_fixpoint_non_convergence_logs_error_before_raise(
 
     @register_pass("tests.pm.logging.flip", "Flip bit forever for logging.")
     class FlipBitLoggingPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return 1 - ir
 
@@ -1053,9 +1113,11 @@ def test_fixpoint_convergence_logs_info(
 
     @register_pass("tests.pm.logging.decrement", "Decrement-to-zero for logging.")
     class DecrementLoggingPass(CompilerPass[int, int]):
+        @override
         def get_noop_output(self, ir: int) -> int:
             return ir
 
+        @override
         def run_pass(self, ir: int) -> int:
             return max(ir - 1, 0)
 
@@ -1086,6 +1148,7 @@ def test_analysis_manager_logs_cache_hit_and_miss(
     """Test AnalysisManager.get emits DEBUG records on hit and miss."""
 
     class HitMissAnalysis(Analysis[Box, int]):
+        @override
         def run(self, ir: Box) -> int:
             return ir.value
 

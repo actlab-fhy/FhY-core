@@ -1,20 +1,22 @@
 """General expression tree."""
 
+from fhy_core.utils.override import override
+
 __all__ = [
-    "Expression",
-    "LiteralType",
-    "UnaryOperation",
-    "UNARY_OPERATION_SYMBOLS",
-    "UNARY_SYMBOL_OPERATIONS",
-    "UnaryExpression",
-    "BinaryOperation",
     "BINARY_OPERATION_SYMBOLS",
     "BINARY_SYMBOL_OPERATIONS",
+    "UNARY_OPERATION_SYMBOLS",
+    "UNARY_SYMBOL_OPERATIONS",
     "BinaryExpression",
+    "BinaryOperation",
     "CallExpression",
+    "Expression",
     "IdentifierExpression",
     "LiteralExpression",
+    "LiteralType",
     "TernaryExpression",
+    "UnaryExpression",
+    "UnaryOperation",
     "call",
     "logical_and",
     "logical_not",
@@ -31,7 +33,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, TypeAlias, TypedDict, TypeGuard
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
@@ -295,9 +297,11 @@ class Expression(
     :class:`IdentifierExpression` overrides them as the recursion base case.
     """
 
+    @override
     def get_visit_children(self) -> tuple["Expression", ...]:
         return ()
 
+    @override
     def rebuild_with_visit_children(
         self, new_children: Sequence["Expression"]
     ) -> "Expression":
@@ -544,14 +548,14 @@ class UnaryOperation(StrEnum):
     LOGICAL_NOT = "logical_not"
 
 
-UNARY_OPERATION_SYMBOLS: frozendict[UnaryOperation, str] = frozendict(
+UNARY_OPERATION_SYMBOLS: immutabledict[UnaryOperation, str] = immutabledict(
     {
         UnaryOperation.NEGATE: "-",
         UnaryOperation.POSITIVE: "+",
         UnaryOperation.LOGICAL_NOT: "!",
     }
 )
-UNARY_SYMBOL_OPERATIONS: frozendict[str, UnaryOperation] = invert_frozen_dict(
+UNARY_SYMBOL_OPERATIONS: immutabledict[str, UnaryOperation] = invert_frozen_dict(
     UNARY_OPERATION_SYMBOLS
 )
 
@@ -564,12 +568,15 @@ class UnaryExpression(Expression, HasOperands[Expression]):
     operation: UnaryOperation
     operand: Expression
 
+    @override
     def get_operands(self) -> tuple[Expression]:
         return (self.operand,)
 
+    @override
     def get_visit_children(self) -> tuple["Expression", ...]:
         return (self.operand,)
 
+    @override
     def rebuild_with_visit_children(
         self, new_children: Sequence["Expression"]
     ) -> "UnaryExpression":
@@ -601,7 +608,7 @@ class BinaryOperation(StrEnum):
     GREATER_EQUAL = "greater_equal"
 
 
-BINARY_OPERATION_SYMBOLS: frozendict[BinaryOperation, str] = frozendict(
+BINARY_OPERATION_SYMBOLS: immutabledict[BinaryOperation, str] = immutabledict(
     {
         BinaryOperation.ADD: "+",
         BinaryOperation.SUBTRACT: "-",
@@ -620,7 +627,7 @@ BINARY_OPERATION_SYMBOLS: frozendict[BinaryOperation, str] = frozendict(
         BinaryOperation.GREATER_EQUAL: ">=",
     }
 )
-BINARY_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = invert_frozen_dict(
+BINARY_SYMBOL_OPERATIONS: immutabledict[str, BinaryOperation] = invert_frozen_dict(
     BINARY_OPERATION_SYMBOLS
 )
 
@@ -634,12 +641,15 @@ class BinaryExpression(Expression, HasOperands[Expression]):
     left: Expression
     right: Expression
 
+    @override
     def get_operands(self) -> tuple[Expression, Expression]:
         return (self.left, self.right)
 
+    @override
     def get_visit_children(self) -> tuple["Expression", ...]:
         return (self.left, self.right)
 
+    @override
     def rebuild_with_visit_children(
         self, new_children: Sequence["Expression"]
     ) -> "BinaryExpression":
@@ -654,9 +664,11 @@ class IdentifierExpression(Expression):
 
     identifier: Identifier = field(metadata=compared_as_reference())
 
+    @override
     def get_free_identifiers(self) -> frozenset[Identifier]:
         return frozenset({self.identifier})
 
+    @override
     def substitute(self, replacements: Mapping[Identifier, Term]) -> "Expression":
         replacement = replacements.get(self.identifier)
         if isinstance(replacement, Expression):
@@ -758,10 +770,12 @@ class LiteralExpression(Expression):
             f"does not match the integer or float grammar."
         )
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:
         return {"value": self.value}
 
     @classmethod
+    @override
     def deserialize_data_from_dict(cls, data: SerializedDict) -> "LiteralExpression":
         if not _is_valid_literal_expression_data(data):
             raise DeserializationDictStructureError(
@@ -791,12 +805,15 @@ class TernaryExpression(Expression, HasOperands[Expression]):
     true_value: Expression
     false_value: Expression
 
+    @override
     def get_operands(self) -> tuple[Expression, Expression, Expression]:
         return (self.condition, self.true_value, self.false_value)
 
+    @override
     def get_visit_children(self) -> tuple["Expression", ...]:
         return (self.condition, self.true_value, self.false_value)
 
+    @override
     def rebuild_with_visit_children(
         self, new_children: Sequence["Expression"]
     ) -> "TernaryExpression":
@@ -827,12 +844,15 @@ class CallExpression(Expression, HasOperands[Expression]):
         if not self.function_name:
             raise ValueError("CallExpression.function_name must be non-empty.")
 
+    @override
     def get_operands(self) -> tuple[Expression, ...]:
         return self.arguments
 
+    @override
     def get_visit_children(self) -> tuple["Expression", ...]:
         return self.arguments
 
+    @override
     def rebuild_with_visit_children(
         self, new_children: Sequence["Expression"]
     ) -> "CallExpression":

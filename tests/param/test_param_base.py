@@ -21,6 +21,7 @@ from fhy_core.param import (
 from fhy_core.serialization import SerializedDict
 from fhy_core.symbol_type import SymbolType
 from fhy_core.traits import FrozenMutationError, StructuralEquivalence
+from fhy_core.utils.override import override
 
 from .conftest import assert_all_satisfied, assert_none_satisfied, mock_identifier
 
@@ -476,19 +477,24 @@ def test_param_default_is_structurally_equivalent_returns_false_for_non_param() 
     """
 
     class _NoEquivalenceOverride(Param[int]):
+        @override
         def is_value_admissible(self, value: Any) -> bool:
             return isinstance(value, int) and not isinstance(value, bool)
 
+        @override
         def is_value_set_subset(self, other: Param[int]) -> bool:
             return True
 
+        @override
         def is_subset(self, other: Param[int]) -> bool:
             return True
 
+        @override
         def _get_param_set_str(self) -> str:
             return "Z"
 
         @classmethod
+        @override
         def deserialize_data_from_dict(
             cls, data: SerializedDict
         ) -> "_NoEquivalenceOverride":
@@ -560,16 +566,20 @@ def test_numeric_param_subclass_must_implement_get_symbol_type() -> None:
     """
 
     class _MissingSymbolTypeNumeric(NumericParam[int]):
+        @override
         def is_value_admissible(self, value: Any) -> bool:
             return isinstance(value, int)
 
+        @override
         def is_value_set_subset(self, other: Param[int]) -> bool:
             return True
 
+        @override
         def _get_param_set_str(self) -> str:
             return "Z"
 
         @classmethod
+        @override
         def deserialize_data_from_dict(
             cls, data: SerializedDict
         ) -> "_MissingSymbolTypeNumeric":
@@ -587,16 +597,20 @@ def test_param_subclass_must_implement_is_value_admissible() -> None:
     """
 
     class _MissingIsValueAdmissible(Param[int]):
+        @override
         def is_value_set_subset(self, other: Param[int]) -> bool:
             return True
 
+        @override
         def is_subset(self, other: Param[int]) -> bool:
             return True
 
+        @override
         def _get_param_set_str(self) -> str:
             return "Z"
 
         @classmethod
+        @override
         def deserialize_data_from_dict(
             cls, data: SerializedDict
         ) -> "_MissingIsValueAdmissible":
@@ -614,16 +628,20 @@ def test_param_subclass_must_implement_get_param_set_str() -> None:
     """
 
     class _MissingGetParamSetStr(Param[int]):
+        @override
         def is_value_admissible(self, value: Any) -> bool:
             return isinstance(value, int)
 
+        @override
         def is_value_set_subset(self, other: Param[int]) -> bool:
             return True
 
+        @override
         def is_subset(self, other: Param[int]) -> bool:
             return True
 
         @classmethod
+        @override
         def deserialize_data_from_dict(
             cls, data: SerializedDict
         ) -> "_MissingGetParamSetStr":
@@ -641,16 +659,20 @@ def test_param_subclass_must_implement_is_value_set_subset() -> None:
     """
 
     class _MissingIsValueSetSubset(Param[int]):
+        @override
         def is_value_admissible(self, value: Any) -> bool:
             return isinstance(value, int)
 
+        @override
         def is_subset(self, other: Param[int]) -> bool:
             return True
 
+        @override
         def _get_param_set_str(self) -> str:
             return "Z"
 
         @classmethod
+        @override
         def deserialize_data_from_dict(
             cls, data: SerializedDict
         ) -> "_MissingIsValueSetSubset":
@@ -669,16 +691,20 @@ def test_param_subclass_must_implement_is_subset() -> None:
     """
 
     class _MissingIsSubset(Param[int]):
+        @override
         def is_value_admissible(self, value: Any) -> bool:
             return isinstance(value, int)
 
+        @override
         def is_value_set_subset(self, other: Param[int]) -> bool:
             return True
 
+        @override
         def _get_param_set_str(self) -> str:
             return "Z"
 
         @classmethod
+        @override
         def deserialize_data_from_dict(cls, data: SerializedDict) -> "_MissingIsSubset":
             return cls()
 

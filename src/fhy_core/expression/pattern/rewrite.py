@@ -7,6 +7,8 @@ local rewrites as ``(pattern, rewrite, optional guard, optional name)``
 tuples and apply rule sets bottom-up over an expression tree.
 """
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "RewriteRule",
     "RewriteRuleApplier",
@@ -154,6 +156,7 @@ class RewriteRuleApplier(RewritablePass[Expression]):
         """Return the rule sequence this applier was constructed with."""
         return self._rules
 
+    @override
     def visit_unknown(self, node: Expression) -> Expression | None:
         """Apply rules in order to ``node`` and return the first match.
 

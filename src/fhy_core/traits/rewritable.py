@@ -26,7 +26,8 @@ class Rewritable(Protocol[_ChildT_contra]):
 
     def rebuild_with_visit_children(
         self, new_children: Sequence[_ChildT_contra]
-    ) -> "Rewritable[_ChildT_contra]": ...
+    ) -> "Rewritable[_ChildT_contra]":
+        """Return a new node of the same kind rebuilt from new children."""
 
 
 class RewritableMixin(Generic[_ChildT]):

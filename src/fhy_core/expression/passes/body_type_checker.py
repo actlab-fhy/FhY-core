@@ -17,11 +17,13 @@ raw lookup error and returns ``None``: "trust the declared target sort;
 the call-site check enforces the actual signature at use time."
 """
 
-__all__ = ["check_registered_function_body", "RegisteredFunctionBodyTypeChecker"]
+from fhy_core.utils.override import override
+
+__all__ = ["RegisteredFunctionBodyTypeChecker", "check_registered_function_body"]
 
 from collections.abc import Sequence
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import CompilerPass, register_pass
@@ -42,7 +44,7 @@ from .type_checker import CallTargetResolver, ExpressionTypeChecker
 # checking a registered function. Concrete (non-weak) types so
 # downstream arithmetic on the parameter value triggers the
 # type-checker's weak-literal rescue against this operand.
-_BODY_CHECK_CONCRETE_TYPES: frozendict[FunctionSort, CoreDataType] = frozendict(
+_BODY_CHECK_CONCRETE_TYPES: immutabledict[FunctionSort, CoreDataType] = immutabledict(
     {
         FunctionSort.BOOL: CoreDataType.BOOL,
         FunctionSort.NAT: CoreDataType.UINT32,
@@ -129,32 +131,39 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
             return
         self._check_body_core_data_type_against_sort(body_type)
 
+    @override
     def run_pass(self, ir: Expression) -> None:
         self.check(ir)
 
+    @override
     def get_noop_output(self, ir: Expression) -> None:
         _ = ir
 
+    @override
     def did_change(self, input_ir: Expression, output: None) -> bool:
         _ = (input_ir, output)
         return False
 
     def _make_parameter_lookup_table(
         self,
-    ) -> frozendict[Identifier, tuple[NumericalType, TypeQualifier]]:
-        return frozendict(
+    ) -> immutabledict[Identifier, tuple[NumericalType, TypeQualifier]]:
+        return immutabledict(
             {
                 identifier: (
                     NumericalType(PrimitiveDataType(_BODY_CHECK_CONCRETE_TYPES[sort])),
                     TypeQualifier.PARAM,
                 )
-                for identifier, sort in zip(self._parameters, self._parameter_sorts)
+                for identifier, sort in zip(
+                    self._parameters, self._parameter_sorts, strict=True
+                )
             }
         )
 
     def _make_body_type_checker(
         self,
-        parameter_to_type: frozendict[Identifier, tuple[NumericalType, TypeQualifier]],
+        parameter_to_type: immutabledict[
+            Identifier, tuple[NumericalType, TypeQualifier]
+        ],
     ) -> ExpressionTypeChecker:
         def lookup(identifier: Identifier) -> tuple[NumericalType, TypeQualifier]:
             if identifier in parameter_to_type:

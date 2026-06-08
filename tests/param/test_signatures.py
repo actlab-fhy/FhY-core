@@ -7,7 +7,8 @@ by asserting that positional misuse raises ``TypeError`` while keyword use
 succeeds.
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 from _pytest.mark.structures import ParameterSet

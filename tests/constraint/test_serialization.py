@@ -1,6 +1,7 @@
 """Serialization round-trips and deserialization-error coverage."""
 
-from typing import Any, Callable, cast
+from collections.abc import Callable
+from typing import Any, cast
 
 import pytest
 

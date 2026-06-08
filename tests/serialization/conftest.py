@@ -11,8 +11,8 @@ from fhy_core.serialization import (
 
 __all__ = [
     "assert_dict_round_trip",
-    "assert_round_trips_in_all_formats",
     "assert_rejects_malformed_dict",
+    "assert_round_trips_in_all_formats",
 ]
 
 

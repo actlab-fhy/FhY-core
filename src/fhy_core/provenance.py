@@ -20,6 +20,8 @@ Combining provenances during transformations is done through
 fusion trees compact.
 """
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "CallSiteProvenance",
     "FileProvenance",
@@ -58,10 +60,12 @@ class Position(Serializable, FrozenMixin, EqualMixin):
 
     @property
     def supports_ordering(self) -> bool:
+        """Whether this position defines a total order."""
         return True
 
     @property
     def supports_partial_ordering(self) -> bool:
+        """Whether this position defines a partial order."""
         return True
 
     def __post_init__(self) -> None:
@@ -78,6 +82,7 @@ class Position(Serializable, FrozenMixin, EqualMixin):
         if self.column < 1:
             raise ValueError(f'"column" must be >= 1, got {self.column}')
 
+    @override
     def __str__(self) -> str:
         return f"{self.line}:{self.column}"
 
@@ -129,6 +134,7 @@ class Span(Serializable, FrozenMixin, EqualMixin):
             )
 
     def is_unknown(self) -> bool:
+        """Whether the span carries no offset or position information."""
         return (
             self.start_offset is None
             and self.end_offset is None
@@ -136,6 +142,7 @@ class Span(Serializable, FrozenMixin, EqualMixin):
             and self.end_position is None
         )
 
+    @override
     def __str__(self) -> str:
         if self.is_unknown():
             return "<unknown>"
@@ -152,14 +159,17 @@ class Provenance(WrappedFamilySerializable, FrozenMixin, EqualMixin, ABC):
     """Origin information for a compiler object. Abstract base."""
 
     @abstractmethod
+    @override
     def __str__(self) -> str: ...
 
     @staticmethod
     def unknown() -> "Provenance":
+        """Return the unknown provenance sentinel."""
         return UnknownProvenance()
 
     @staticmethod
     def fuse(*provenances: "Provenance", metadata: str | None = None) -> "Provenance":
+        """Return the provenance formed by fusing the given provenances."""
         flat: list[Provenance] = []
         pending: list[Provenance] = list(reversed(provenances))
         unknowns_dropped = 0
@@ -197,6 +207,7 @@ class Provenance(WrappedFamilySerializable, FrozenMixin, EqualMixin, ABC):
 class UnknownProvenance(Provenance):
     """Provenance with no source information."""
 
+    @override
     def __str__(self) -> str:
         return "<unknown>"
 
@@ -209,6 +220,7 @@ class FileProvenance(Provenance):
     file_path: Path
     span: Span | None = None
 
+    @override
     def __str__(self) -> str:
         if self.span is None or self.span.is_unknown():
             return str(self.file_path)
@@ -228,6 +240,7 @@ class NamedProvenance(Provenance):
         if not self.name:
             raise ValueError('"name" must be non-empty')
 
+    @override
     def __str__(self) -> str:
         if isinstance(self.child, UnknownProvenance):
             return self.name
@@ -243,6 +256,7 @@ class CallSiteProvenance(Provenance):
     callee: Provenance
     caller: Provenance
 
+    @override
     def __str__(self) -> str:
         return f"{self.callee} at {self.caller}"
 
@@ -255,6 +269,7 @@ class FusedProvenance(Provenance):
     sources: tuple[Provenance, ...]
     metadata: str | None = None
 
+    @override
     def __str__(self) -> str:
         label = self.metadata if self.metadata is not None else "fused"
         rendered_sources = ", ".join(str(source) for source in self.sources)

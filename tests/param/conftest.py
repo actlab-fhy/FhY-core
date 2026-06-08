@@ -14,27 +14,28 @@ from fhy_core.param import (
 )
 from fhy_core.serialization import Serializable, register_serializable
 from fhy_core.traits import OrderableMixin
+from fhy_core.utils.override import override
 
-from ..conftest import (  # noqa: F401  # re-exported below
+from ..conftest import (  # re-exported below
     SerializableEqualHashable,
     mock_identifier,
 )
 
 __all__ = [
-    "mock_identifier",
-    "SerializableHashOnly",
-    "SerializableEqualNoOrder",
     "SerializableEqualHashable",
+    "SerializableEqualNoOrder",
+    "SerializableHashOnly",
+    "SerializableNonComparable",
     "SerializableOrderableInherited",
     "SerializableOrderableSelf",
     "SerializableOrderableTrait",
-    "SerializableNonComparable",
     "assert_all_satisfied",
     "assert_none_satisfied",
-    "default_real_param",
-    "default_int_param",
-    "ordinal_param_123",
     "categorical_param_abc",
+    "default_int_param",
+    "default_real_param",
+    "mock_identifier",
+    "ordinal_param_123",
     "perm_param_nchw",
 ]
 
@@ -48,13 +49,16 @@ class SerializableHashOnly(Serializable):
     def __init__(self, value: int) -> None:
         self._value = value
 
+    @override
     def __hash__(self) -> int:
         return hash(self._value)
 
+    @override
     def serialize_to_dict(self) -> dict[str, Any]:
         return {"value": self._value}
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: dict[str, Any]) -> "SerializableHashOnly":
         return cls(value=int(data["value"]))
 
@@ -68,18 +72,22 @@ class SerializableEqualNoOrder(Serializable):
     def __init__(self, value: int) -> None:
         self._value = value
 
+    @override
     def __hash__(self) -> int:
         return hash(self._value)
 
+    @override
     def __eq__(self, other: object) -> bool:
         return isinstance(other, SerializableEqualNoOrder) and (
             self._value == other._value
         )
 
+    @override
     def serialize_to_dict(self) -> dict[str, Any]:
         return {"value": self._value}
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: dict[str, Any]) -> "SerializableEqualNoOrder":
         return cls(value=int(data["value"]))
 
@@ -95,16 +103,20 @@ class _OrderableBase(Serializable):
     def __lt__(self, other: object) -> bool:
         return isinstance(other, _OrderableBase) and self._value < other._value
 
+    @override
     def __eq__(self, other: object) -> bool:
         return isinstance(other, _OrderableBase) and self._value == other._value
 
+    @override
     def __hash__(self) -> int:
         return hash(self._value)
 
+    @override
     def serialize_to_dict(self) -> dict[str, Any]:
         return {"value": self._value}
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: dict[str, Any]) -> "_OrderableBase":
         return cls(value=int(data["value"]))
 
@@ -133,18 +145,22 @@ class SerializableOrderableSelf(Serializable):
             isinstance(other, SerializableOrderableSelf) and self._value < other._value
         )
 
+    @override
     def __eq__(self, other: object) -> bool:
         return (
             isinstance(other, SerializableOrderableSelf) and self._value == other._value
         )
 
+    @override
     def __hash__(self) -> int:
         return hash(self._value)
 
+    @override
     def serialize_to_dict(self) -> dict[str, Any]:
         return {"value": self._value}
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: dict[str, Any]) -> "SerializableOrderableSelf":
         return cls(value=int(data["value"]))
 
@@ -162,24 +178,29 @@ class SerializableOrderableTrait(OrderableMixin, Serializable):
     def __init__(self, value: int) -> None:
         self._value = value
 
+    @override
     def __lt__(self, other: object) -> bool:
         return (
             isinstance(other, SerializableOrderableTrait) and self._value < other._value
         )
 
+    @override
     def __eq__(self, other: object) -> bool:
         return (
             isinstance(other, SerializableOrderableTrait)
             and self._value == other._value
         )
 
+    @override
     def __hash__(self) -> int:
         return hash(self._value)
 
+    @override
     def serialize_to_dict(self) -> dict[str, Any]:
         return {"value": self._value}
 
     @classmethod
+    @override
     def deserialize_from_dict(
         cls, data: dict[str, Any]
     ) -> "SerializableOrderableTrait":
@@ -201,10 +222,12 @@ class SerializableNonComparable(Serializable):
     def __init__(self, value: int) -> None:
         self._value = value
 
+    @override
     def serialize_to_dict(self) -> dict[str, Any]:
         return {"value": self._value}
 
     @classmethod
+    @override
     def deserialize_from_dict(cls, data: dict[str, Any]) -> "SerializableNonComparable":
         return cls(value=int(data["value"]))
 

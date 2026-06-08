@@ -14,6 +14,8 @@ fresh ``ValueDomain`` instances with the same ``name_hint``, because
 ``Identifier("data")`` would not match the canonical one.
 """
 
+from fhy_core.utils.override import override
+
 __all__ = ["ADDRESS_DOMAIN", "DATA_DOMAIN", "ValueDomain"]
 
 from dataclasses import dataclass, field
@@ -76,9 +78,11 @@ class ValueDomain(
     def __post_init__(self) -> None:
         self.register_interned_instance()
 
+    @override
     def get_identifier(self) -> Identifier:
         return self.name
 
+    @override
     def get_intern_key(self) -> Identifier:
         return self.name
 
@@ -101,6 +105,7 @@ class ValueDomain(
         return False
 
     @classmethod
+    @override
     def register_default_instances(cls) -> None:
         """Re-register the canonical default ``ValueDomain``s shipped here.
 

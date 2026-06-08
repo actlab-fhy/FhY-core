@@ -28,6 +28,7 @@ from fhy_core.types import (
     unify,
     unify_expression,
 )
+from fhy_core.utils.override import override
 
 # =============================================================================
 # `TypeUnificationEnvironment` construction and helpers
@@ -944,10 +945,12 @@ class _UnregisteredType(Type):
     def tag(self) -> str:
         return self._tag
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:  # pragma: no cover
         raise NotImplementedError
 
     @classmethod
+    @override
     def deserialize_data_from_dict(  # pragma: no cover
         cls, data: SerializedDict
     ) -> "_UnregisteredType":
@@ -963,10 +966,12 @@ class _UnregisteredDataType(DataType):
     def __init__(self) -> None:
         super().__init__()
 
+    @override
     def serialize_data_to_dict(self) -> SerializedDict:  # pragma: no cover
         raise NotImplementedError
 
     @classmethod
+    @override
     def deserialize_data_from_dict(  # pragma: no cover
         cls, data: SerializedDict
     ) -> "_UnregisteredDataType":

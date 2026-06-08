@@ -1,24 +1,24 @@
 """General utilities."""
 
 __all__ = [
-    "get_array_size_in_bits",
     "IntEnum",
-    "invert_dict",
-    "invert_frozen_dict",
-    "is_strict_int",
     "PartiallyOrderedSet",
     "Scope",
     "Self",
     "Stack",
     "StrEnum",
     "format_comma_separated_list",
+    "get_array_size_in_bits",
+    "get_field_names",
+    "get_origin_and_arguments",
+    "get_union_members",
+    "invert_dict",
+    "invert_frozen_dict",
+    "is_strict_int",
     "resolve_annotation",
     "resolve_field_annotations",
-    "get_field_names",
-    "unwrap_annotation",
-    "get_union_members",
     "split_optional",
-    "get_origin_and_arguments",
+    "unwrap_annotation",
 ]
 
 from .array_utils import get_array_size_in_bits

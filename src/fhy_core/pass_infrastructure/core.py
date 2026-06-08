@@ -1,5 +1,7 @@
 """Core compiler pass abstractions and registration."""
 
+from fhy_core.utils.override import override
+
 __all__ = [
     "AnalysisVisitablePass",
     "CompilerPass",
@@ -17,23 +19,21 @@ __all__ = [
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     ClassVar,
     Generic,
-    Mapping,
     Protocol,
     TypeVar,
     cast,
     runtime_checkable,
 )
 
-from frozendict import frozendict
+from immutabledict import immutabledict
 
 from fhy_core.diagnostic import Diagnostic, DiagnosticLevel, Note
 from fhy_core.error import register_error
@@ -56,7 +56,7 @@ _AnalysisIRT = TypeVar("_AnalysisIRT")
 _AnalysisResultT = TypeVar("_AnalysisResultT")
 
 
-_DIAGNOSTIC_TO_LOGGING_LEVEL: frozendict[DiagnosticLevel, int] = frozendict(
+_DIAGNOSTIC_TO_LOGGING_LEVEL: immutabledict[DiagnosticLevel, int] = immutabledict(
     {
         DiagnosticLevel.ERROR: logging.ERROR,
         DiagnosticLevel.WARNING: logging.WARNING,
@@ -601,6 +601,7 @@ class VisitablePass(CompilerPass[_VisitableNodeT, _PassOutputT], ABC):
 
     _VISIT_METHOD_PREFIX: ClassVar[str] = "visit_"
 
+    @override
     def run_pass(self, ir: _VisitableNodeT) -> _PassOutputT:
         return self.visit(ir)
 
@@ -670,14 +671,18 @@ class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
 
     @property
     def traversal_order(self) -> TraversalOrder:
+        """Return the traversal order used to walk the IR."""
         return self._traversal_order
 
+    @override
     def run_pass(self, ir: _VisitableNodeT) -> None:
         self.walk(ir)
 
+    @override
     def get_noop_output(self, ir: _VisitableNodeT) -> None:
         _ = ir
 
+    @override
     def did_change(self, input_ir: _VisitableNodeT, output: None) -> bool:
         return False
 
@@ -780,6 +785,7 @@ class AnalysisVisitablePass(VisitablePass[_VisitableNodeT, None], ABC):
         """
         return cast(Sequence[_VisitableNodeT], node.get_visit_children())
 
+    @override
     def visit_unknown(self, node: _VisitableNodeT) -> None: ...
 
 
@@ -845,14 +851,17 @@ class RewritablePass(
 
     _VISIT_METHOD_PREFIX: ClassVar[str] = "visit_"
 
+    @override
     def run_pass(self, ir: _RewritableNodeT) -> _RewritableNodeT:
         """Pass-framework entry: forwards to :meth:`transform`."""
         return self.transform(ir)
 
+    @override
     def get_noop_output(self, ir: _RewritableNodeT) -> _RewritableNodeT:
         """Return the input unchanged when the pass is skipped."""
         return ir
 
+    @override
     def did_change(self, input_ir: _RewritableNodeT, output: _RewritableNodeT) -> bool:
         """Identity-based change detection (``output is not input_ir``).
 
@@ -931,7 +940,9 @@ class RewritablePass(
             return None
         merged_children = tuple(
             transformed if transformed is not None else original
-            for transformed, original in zip(transformed_children, original_children)
+            for transformed, original in zip(
+                transformed_children, original_children, strict=True
+            )
         )
         return node.rebuild_with_visit_children(merged_children)
 
