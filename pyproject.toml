@@ -109,18 +109,18 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = [
+   "D",  # PyDocstyle
    "E",  # pycodestyle
    "F",  # Pyflakes
    "I",  # Isort
-   "D",  # PyDocstyle
-   "W",  # Warning
    "PL",  # Pylint
+   "W",  # Warning
 ]
 ignore = [
-   "D203",  # one-blank-line-before-class (conflicts with D211)
-   "D213",  # multi-line-summary-second-line (conflicts with D212)
    "D105",  # undocumented-magic-method
    "D107",  # undocumented-public-init
+   "D203",  # one-blank-line-before-class (conflicts with D211)
+   "D213",  # multi-line-summary-second-line (conflicts with D212)
    "PLR0913",  # too-many-arguments
    "RET505",  # superfluous-else-return
    "RET506",  # superfluous-else-raise
