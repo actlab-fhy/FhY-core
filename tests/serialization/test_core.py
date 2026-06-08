@@ -19,9 +19,9 @@ import importlib
 import json
 import logging
 import struct
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 

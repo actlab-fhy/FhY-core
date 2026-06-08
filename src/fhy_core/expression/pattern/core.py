@@ -471,7 +471,9 @@ class CallExpressionPattern(Pattern):
         elif len(self.arguments) != len(expression.arguments):
             return None
         accumulator = bindings
-        for argument_pattern, argument in zip(self.arguments, expression.arguments):
+        for argument_pattern, argument in zip(
+            self.arguments, expression.arguments, strict=True
+        ):
             next_bindings = argument_pattern.match_under(argument, accumulator)
             if next_bindings is None:
                 return None

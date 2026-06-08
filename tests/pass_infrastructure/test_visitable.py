@@ -36,14 +36,14 @@ class ToyTreeNode(VisitableMixin):
     """Toy tree node that can optionally expose visit children."""
 
     name: str
-    children: tuple["ToyTreeNode", ...]
+    children: tuple[ToyTreeNode, ...]
 
-    def __init__(self, name: str, children: tuple["ToyTreeNode", ...] = ()) -> None:
+    def __init__(self, name: str, children: tuple[ToyTreeNode, ...] = ()) -> None:
         self.name = name
         self.children = children
 
     @override
-    def get_visit_children(self) -> tuple["ToyTreeNode", ...]:
+    def get_visit_children(self) -> tuple[ToyTreeNode, ...]:
         return self.children
 
 
@@ -51,9 +51,9 @@ class ToyOpaqueNode(VisitableMixin):
     """Toy node with a child reference but no child enumeration override."""
 
     name: str
-    child: "ToyOpaqueNode | None"
+    child: ToyOpaqueNode | None
 
-    def __init__(self, name: str, child: "ToyOpaqueNode | None" = None) -> None:
+    def __init__(self, name: str, child: ToyOpaqueNode | None = None) -> None:
         self.name = name
         self.child = child
 

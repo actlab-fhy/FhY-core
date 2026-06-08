@@ -40,13 +40,11 @@ class ToyNode(VisitableMixin, RewritableMixin["ToyNode"]):
     """
 
     @override
-    def get_visit_children(self) -> tuple["ToyNode", ...]:
+    def get_visit_children(self) -> tuple[ToyNode, ...]:
         return ()
 
     @override
-    def rebuild_with_visit_children(
-        self, new_children: Sequence["ToyNode"]
-    ) -> "ToyNode":
+    def rebuild_with_visit_children(self, new_children: Sequence[ToyNode]) -> ToyNode:
         if not new_children:
             return self
         raise NotImplementedError(

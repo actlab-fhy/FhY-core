@@ -94,32 +94,32 @@ equivalent. That is the standard IEEE-754 consequence, not an
 from fhy_core.utils.override import override
 
 __all__ = [
-    "Serializable",
-    "SerializationFormat",
     "BinaryPayloadCodec",
-    "register_serializable",
-    "WrappedFamilySerializable",
-    "FieldCodec",
-    "register_field_codec",
-    "make_field_codec",
-    "make_enum_field_codec",
-    "make_labeled_enum_field_codec",
-    "SerializationDerivationError",
-    "SerializedDict",
-    "SerializedValue",
-    "SerializedObject",
-    "is_serialized_value",
-    "is_serialized_dict",
     "DeserializationDictStructureError",
     "DeserializationValueError",
+    "FieldCodec",
+    "RegistryWrappedValue",
+    "RegistryWrappedValueLeaf",
+    "Serializable",
+    "SerializationDerivationError",
+    "SerializationFormat",
+    "SerializationPayloadTypeError",
     "SerializationTypeError",
     "SerializationValueError",
-    "SerializationPayloadTypeError",
-    "RegistryWrappedValueLeaf",
-    "RegistryWrappedValue",
-    "is_registry_wrapped_value_leaf",
-    "is_registry_wrapped_value",
+    "SerializedDict",
+    "SerializedObject",
+    "SerializedValue",
+    "WrappedFamilySerializable",
     "deserialize_registry_wrapped_value",
+    "is_registry_wrapped_value",
+    "is_registry_wrapped_value_leaf",
+    "is_serialized_dict",
+    "is_serialized_value",
+    "make_enum_field_codec",
+    "make_field_codec",
+    "make_labeled_enum_field_codec",
+    "register_field_codec",
+    "register_serializable",
     "serialize_registry_wrapped_value",
 ]
 
@@ -169,11 +169,11 @@ SerializedValue: TypeAlias = Union[
 SerializedDict: TypeAlias = dict[str, SerializedValue]
 SerializedObject: TypeAlias = SerializedDict | str | bytes
 RegistryWrappedValueLeaf: TypeAlias = Union[int, bool, str, float, "Serializable"]
-RegistryWrappedValue: TypeAlias = Union[
-    RegistryWrappedValueLeaf,
-    tuple["RegistryWrappedValue", ...],
-    frozenset["RegistryWrappedValue"],
-]
+RegistryWrappedValue: TypeAlias = (
+    RegistryWrappedValueLeaf
+    | tuple["RegistryWrappedValue", ...]
+    | frozenset["RegistryWrappedValue"]
+)
 
 
 def is_serialized_value(v: Any) -> TypeGuard[SerializedValue]:
@@ -314,7 +314,7 @@ class SerializationValueError(SerializationError, ValueError):
     def __init__(self, expected_description_phrase: str, actual_value: Any) -> None:
         super().__init__(
             f"While serializing, expected {expected_description_phrase}, got "
-            f"{repr(actual_value)}"
+            f"{actual_value!r}"
         )
 
 
@@ -365,7 +365,7 @@ class DeserializationValueError(SerializationError, ValueError):
             super().__init__(
                 f'Invalid value for field "{field_name}" while deserializing to '
                 f'"{class_type.__name__}". Expected {expected_description_phrase}, '
-                f"got {repr(actual_value)}"
+                f"got {actual_value!r}"
             )
         else:
             raise ValueError('Invalid arguments for "DeserializationValueError".')

@@ -109,12 +109,14 @@ class BinderMixin(AlphaEquivalenceMixin):
         if len(self_children) != len(other_children):
             return False
         try:
-            extended = renaming.extend(dict(zip(self_bound, other_bound)))
+            extended = renaming.extend(dict(zip(self_bound, other_bound, strict=True)))
         except ValueError:
             return False
         return all(
             self_child.is_alpha_equivalent_under(other_child, extended)
-            for self_child, other_child in zip(self_children, other_children)
+            for self_child, other_child in zip(
+                self_children, other_children, strict=True
+            )
         )
 
     def get_free_identifiers(self) -> frozenset[Identifier]:

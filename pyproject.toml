@@ -109,14 +109,23 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = [
-   "D",  # PyDocstyle
+   "B",  # flake8-bugbear
+   "C4",  # flake8-comprehensions
+   "D",  # pydocstyle
    "E",  # pycodestyle
    "F",  # Pyflakes
+   "G",  # flake8-logging-format
    "I",  # Isort
+   "LOG",  # flake8-logging
    "PL",  # Pylint
+   "RUF",  # Ruff-specific
+   "UP",  # pyupgrade
    "W",  # Warning
 ]
 ignore = [
+   # Abstract contracts live in Protocols; ABC base classes here intentionally
+   # provide shared concrete behavior without their own abstract methods.
+   "B024",  # abstract-base-class-without-abstract-method
    "D105",  # undocumented-magic-method
    "D107",  # undocumented-public-init
    "D203",  # one-blank-line-before-class (conflicts with D211)
@@ -150,6 +159,12 @@ known-first-party = ["fhy_core"]
    "D",  # PyDocstyle
    "F841",  # unused-variable (F841)
    "PLR2004",  # magic-value-comparison (PLR2004)
+]
+# These tests deliberately exercise the legacy typing.Optional/Union forms to
+# verify the annotation resolver handles them (PEP 604 forms tested separately).
+"tests/test_type_hint_utils.py" = [
+   "UP007",  # non-pep604-annotation-union
+   "UP045",  # non-pep604-annotation-optional
 ]
 
 [tool.ruff.format]

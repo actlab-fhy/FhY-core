@@ -19,16 +19,14 @@ __all__ = [
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     ClassVar,
     Generic,
-    Mapping,
     Protocol,
     TypeVar,
     cast,
@@ -942,7 +940,9 @@ class RewritablePass(
             return None
         merged_children = tuple(
             transformed if transformed is not None else original
-            for transformed, original in zip(transformed_children, original_children)
+            for transformed, original in zip(
+                transformed_children, original_children, strict=True
+            )
         )
         return node.rebuild_with_visit_children(merged_children)
 

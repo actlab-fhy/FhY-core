@@ -10,7 +10,8 @@ __all__ = [
 ]
 
 import operator
-from typing import Any, Callable, ClassVar
+from collections.abc import Callable
+from typing import Any, ClassVar
 
 import sympy  # type: ignore
 import sympy.logic  # type: ignore

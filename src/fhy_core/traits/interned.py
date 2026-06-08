@@ -101,8 +101,9 @@ class InternedMixin(Generic[_K], ABC):
                 if init_completed and new_depth == 0:
                     self.register_interned_instance()
 
-        setattr(_wrapped_init, "__interned_registry_wrapper__", True)
-        setattr(cls, "__init__", _wrapped_init)
+        # Dynamic attribute/method assignment on function and class objects.
+        setattr(_wrapped_init, "__interned_registry_wrapper__", True)  # noqa: B010
+        setattr(cls, "__init__", _wrapped_init)  # noqa: B010
 
     @classmethod
     def _should_allocate_intern_registry(cls) -> bool:

@@ -116,7 +116,7 @@ def test_bound_int_param_iter_bounds_rejects_non_equation_constraint_in_state() 
         (InSetConstraint(Identifier("x"), {1}),)
     )
     with pytest.raises(RuntimeError, match="non-EquationConstraint"):
-        param + 0  # noqa: B015  # test: must raise
+        param + 0  # test: must raise
 
 
 def test_bound_int_param_iter_bounds_rejects_non_bound_expression_in_state() -> None:
@@ -125,4 +125,4 @@ def test_bound_int_param_iter_bounds_rejects_non_bound_expression_in_state() -> 
     bad = EquationConstraint(var, LiteralExpression(0))
     param = _build_bound_int_param_with_injected_constraints((bad,))
     with pytest.raises(RuntimeError, match="non-bound"):
-        param + 0  # noqa: B015  # test: must raise
+        param + 0  # test: must raise

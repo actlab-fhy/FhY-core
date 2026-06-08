@@ -11,8 +11,9 @@ __all__ = [
 ]
 
 import operator
+from collections.abc import Callable
 from collections.abc import Set as AbstractSet
-from typing import Any, Callable
+from typing import Any
 
 import z3  # type: ignore
 from frozendict import frozendict

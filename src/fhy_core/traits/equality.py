@@ -50,7 +50,7 @@ class PartialEqualMixin:
         """Whether ``==`` is reliable (possibly partial) for this object."""
         if self._is_native_equatable_dataclass():
             return True
-        type_eq = getattr(type(self), "__eq__")
+        type_eq = type(self).__eq__
         return type_eq is not object.__eq__ and type_eq is not PartialEqualMixin.__eq__
 
     @override

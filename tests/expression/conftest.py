@@ -9,12 +9,12 @@ from fhy_core.expression.passes.type_checker import ExpressionTypeChecker
 from fhy_core.identifier import Identifier
 from fhy_core.types import Type, TypeQualifier
 
-from ..conftest import mock_identifier  # noqa: F401  # re-exported below
+from ..conftest import mock_identifier  # re-exported below
 
 __all__ = [
-    "mock_identifier",
     "make_identifier_checker",
     "make_single_type_checker",
+    "mock_identifier",
 ]
 
 

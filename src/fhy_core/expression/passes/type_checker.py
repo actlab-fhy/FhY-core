@@ -42,8 +42,9 @@ __all__ = [
     "synthesize_expression_type",
 ]
 
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Callable, Iterator, TypeAlias
+from typing import TypeAlias
 
 from fhy_core.expression.core import (
     BinaryExpression,
@@ -918,7 +919,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
     def _infer_call_expression(
         self,
         call_expression: CallExpression,
-        expected_type: Type | None = None,  # noqa: ARG002
+        expected_type: Type | None = None,
     ) -> tuple[Type, TypeQualifier]:
         with self._context.entering(call_expression):
             entry = self._resolve_call_function(call_expression)
@@ -973,7 +974,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         argument_types: tuple[tuple[Type, TypeQualifier], ...],
     ) -> None:
         for index, (parameter_sort, (argument_type, _)) in enumerate(
-            zip(parameter_sorts, argument_types)
+            zip(parameter_sorts, argument_types, strict=True)
         ):
             self._check_argument_sort(
                 function_name, index, parameter_sort, argument_type

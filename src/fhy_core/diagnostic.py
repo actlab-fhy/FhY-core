@@ -16,14 +16,14 @@ Provides the layer-agnostic vocabulary for structured diagnostics:
 from fhy_core.utils.override import override
 
 __all__ = [
-    "Diagnostic",
-    "DiagnosticLevel",
-    "Note",
-    "NoteKind",
     "OTHER_NOTE_KIND",
     "RATIONALE_NOTE_KIND",
     "REMARK_NOTE_KIND",
     "SUGGESTION_NOTE_KIND",
+    "Diagnostic",
+    "DiagnosticLevel",
+    "Note",
+    "NoteKind",
     "ValidationFailedError",
     "ValidationReport",
 ]

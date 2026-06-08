@@ -16,26 +16,26 @@ from fhy_core.serialization import Serializable, register_serializable
 from fhy_core.traits import OrderableMixin
 from fhy_core.utils.override import override
 
-from ..conftest import (  # noqa: F401  # re-exported below
+from ..conftest import (  # re-exported below
     SerializableEqualHashable,
     mock_identifier,
 )
 
 __all__ = [
-    "mock_identifier",
-    "SerializableHashOnly",
-    "SerializableEqualNoOrder",
     "SerializableEqualHashable",
+    "SerializableEqualNoOrder",
+    "SerializableHashOnly",
+    "SerializableNonComparable",
     "SerializableOrderableInherited",
     "SerializableOrderableSelf",
     "SerializableOrderableTrait",
-    "SerializableNonComparable",
     "assert_all_satisfied",
     "assert_none_satisfied",
-    "default_real_param",
-    "default_int_param",
-    "ordinal_param_123",
     "categorical_param_abc",
+    "default_int_param",
+    "default_real_param",
+    "mock_identifier",
+    "ordinal_param_123",
     "perm_param_nchw",
 ]
 

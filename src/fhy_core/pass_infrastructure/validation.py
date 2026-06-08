@@ -191,7 +191,7 @@ class ValidationManager(HasIdentifier, Generic[_IRType]):
                     source=validator.get_pass_name(),
                 ),
             )
-        except Exception as exc:  # noqa: BLE001 - defense-in-depth
+        except Exception as exc:
             captured = tuple(validator.diagnostics)
             type(validator)._get_pass_logger().error(
                 "validator crashed with %s: %s",

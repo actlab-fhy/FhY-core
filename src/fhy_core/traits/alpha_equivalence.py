@@ -242,7 +242,7 @@ class AlphaRenaming:
         """
         _check_injective(bindings, "bindings")
         return AlphaRenaming(
-            _frames=self._frames + (frozendict(bindings),),
+            _frames=(*self._frames, frozendict(bindings)),
             _free_renaming=self._free_renaming,
         )
 

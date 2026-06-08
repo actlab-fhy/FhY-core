@@ -90,7 +90,7 @@ def install_null_handler(namespace: str) -> None:
     _NULLHANDLER_ATTACHED.add(namespace)
 
 
-def configure_logging(  # noqa: C901
+def configure_logging(
     namespace: str,
     *,
     console_level: int = logging.INFO,

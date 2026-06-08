@@ -147,7 +147,7 @@ def test_literal_expression_rejects_string_outside_numeric_grammar(
     exact decimal text without IEEE-754 rounding; any string outside the
     integer or float grammar is rejected at construction time.
     """
-    with pytest.raises(ValueError, match="(?i)literal"):
+    with pytest.raises(ValueError, match=r"(?i)literal"):
         LiteralExpression(string_value)
 
 
@@ -170,7 +170,7 @@ def test_literal_expression_rejects_unsupported_python_types(value: object) -> N
     are rejected at construction time rather than slipping through to a
     downstream pass.
     """
-    with pytest.raises(TypeError, match="(?i)literal"):
+    with pytest.raises(TypeError, match=r"(?i)literal"):
         LiteralExpression(value)  # type: ignore[arg-type]
 
 
@@ -514,7 +514,7 @@ def test_binary_dunder_rejects_unsupported_type_on_right() -> None:
         ValueError,
         match=r"Unable to cast \[\] with type <class 'list'> to an expression.",
     ):
-        LiteralExpression(5) + []
+        LiteralExpression(5) + []  # noqa: RUF005  # test: operator must reject list
 
 
 @pytest.mark.parametrize(
@@ -546,7 +546,7 @@ def test_binary_dunder_rejects_unsupported_type_on_left() -> None:
         ValueError,
         match=r"Unable to cast \[\] with type <class 'list'> to an expression.",
     ):
-        [] + LiteralExpression(5)
+        [] + LiteralExpression(5)  # noqa: RUF005  # test: operator must reject list
 
 
 # =============================================================================
@@ -609,7 +609,7 @@ def test_module_level_logical_builder_requires_at_least_two_expressions(
     args: tuple[Expression, ...],
 ) -> None:
     """Test module-level `logical_and`/`logical_or` raise on fewer than two args."""
-    with pytest.raises(ValueError, match="(?i)at least two"):
+    with pytest.raises(ValueError, match=r"(?i)at least two"):
         builder(*args)
 
 
@@ -694,7 +694,7 @@ def test_instance_logical_builder_requires_at_least_one_other(
     """
     expression = LiteralExpression(True)
 
-    with pytest.raises(ValueError, match="(?i)at least two"):
+    with pytest.raises(ValueError, match=r"(?i)at least two"):
         getattr(expression, method_name)()
 
 

@@ -3,24 +3,24 @@
 from fhy_core.utils.override import override
 
 __all__ = [
+    "CategoricalParam",
+    "CategoricalValue",
+    "IntParam",
+    "NumericParam",
+    "OrdinalParam",
+    "OrdinalValue",
     "Param",
     "ParamAssignment",
+    "ParamData",
     "ParamError",
-    "NumericParam",
+    "PermParam",
+    "PermutationMemberValue",
     "RealParam",
-    "IntParam",
     "SerializableEqualValue",
     "SerializableOrderableValue",
-    "CategoricalValue",
-    "OrdinalValue",
-    "PermutationMemberValue",
-    "OrdinalParam",
-    "CategoricalParam",
-    "PermParam",
-    "ParamData",
-    "is_valid_param_data",
-    "finalize_param_construction_from_data",
     "create_single_valid_value_param",
+    "finalize_param_construction_from_data",
+    "is_valid_param_data",
 ]
 
 import itertools
@@ -388,7 +388,7 @@ class Param(
                 self._variable,
             )
             return self
-        new_param = self.with_new_constraints(self._constraints + (constraint,))
+        new_param = self.with_new_constraints((*self._constraints, constraint))
         _LOGGER.debug(
             "added constraint on %r (total=%d)",
             self._variable,
@@ -438,8 +438,8 @@ class Param(
         if param_set_repr:
             param_set_repr = f"{param_set_repr}, "
         return (
-            f"{self.__class__.__name__}({repr(self._variable)}, {param_set_repr}"
-            f"constraints={repr(self._constraints)})"
+            f"{self.__class__.__name__}({self._variable!r}, {param_set_repr}"
+            f"constraints={self._constraints!r})"
         )
 
     def _get_param_set_repr(self) -> str:

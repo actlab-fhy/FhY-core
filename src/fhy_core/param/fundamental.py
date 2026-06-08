@@ -42,10 +42,8 @@ def is_the_basic_nat_param_constraint(
     """Return if the constraint is the basic constraint bounding the `NatParam`."""
     expression = constraint.convert_to_expression()
     if isinstance(expression, BinaryExpression) and (
-        is_zero_included
-        and expression.operation == BinaryOperation.GREATER_EQUAL
-        or not is_zero_included
-        and expression.operation == BinaryOperation.GREATER
+        (is_zero_included and expression.operation == BinaryOperation.GREATER_EQUAL)
+        or (not is_zero_included and expression.operation == BinaryOperation.GREATER)
     ):
         left = expression.left
         right = expression.right
@@ -137,7 +135,7 @@ class NatParam(IntParam):
             existing.is_structurally_equivalent(basic_constraint)
             for existing in self._constraints
         ):
-            self._constraints = self._constraints + (basic_constraint,)
+            self._constraints = (*self._constraints, basic_constraint)
 
     @override
     def add_lower_bound_constraint(

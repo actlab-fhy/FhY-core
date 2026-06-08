@@ -2,7 +2,8 @@
 
 __all__ = ["PartiallyOrderedSet"]
 
-from typing import Any, Callable, Generic, Iterator, TypeVar
+from collections.abc import Callable, Iterator
+from typing import Any, Generic, TypeVar
 
 import networkx as nx  # type: ignore
 

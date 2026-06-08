@@ -19,7 +19,7 @@ the call-site check enforces the actual signature at use time."
 
 from fhy_core.utils.override import override
 
-__all__ = ["check_registered_function_body", "RegisteredFunctionBodyTypeChecker"]
+__all__ = ["RegisteredFunctionBodyTypeChecker", "check_registered_function_body"]
 
 from collections.abc import Sequence
 
@@ -153,7 +153,9 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
                     NumericalType(PrimitiveDataType(_BODY_CHECK_CONCRETE_TYPES[sort])),
                     TypeQualifier.PARAM,
                 )
-                for identifier, sort in zip(self._parameters, self._parameter_sorts)
+                for identifier, sort in zip(
+                    self._parameters, self._parameter_sorts, strict=True
+                )
             }
         )
 

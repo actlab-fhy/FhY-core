@@ -7,16 +7,16 @@ __all__ = [
     "DataType",
     "FhYCoreTypeError",
     "IndexType",
-    "is_weak_core_data_type",
     "NumericalType",
     "PrimitiveDataType",
+    "TemplateDataType",
+    "Type",
+    "TypeQualifier",
+    "is_weak_core_data_type",
     "promote_core_data_types",
     "promote_primitive_data_types",
     "promote_type_qualifiers",
     "resolve_literal_core_data_type",
-    "TemplateDataType",
-    "Type",
-    "TypeQualifier",
 ]
 
 from abc import ABC
@@ -473,7 +473,7 @@ class PrimitiveDataType(DataType):
 
     @override
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({repr(self._core_data_type)})"
+        return f"{self.__class__.__name__}({self._core_data_type!r})"
 
 
 class _TemplateDataTypeData(TypedDict):
@@ -549,7 +549,7 @@ class TemplateDataType(DataType):
 
     @override
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({repr(self._data_type)})"
+        return f"{self.__class__.__name__}({self._data_type!r})"
 
 
 def promote_primitive_data_types(
@@ -707,9 +707,7 @@ class NumericalType(Type):
 
     @override
     def __repr__(self) -> str:
-        return (
-            f"{self.__class__.__name__}({repr(self._data_type)}, {repr(self._shape)})"
-        )
+        return f"{self.__class__.__name__}({self._data_type!r}, {self._shape!r})"
 
 
 class _IndexTypeData(TypedDict):
@@ -799,8 +797,8 @@ class IndexType(Type):
     @override
     def __repr__(self) -> str:
         return (
-            f"{self.__class__.__name__}({repr(self._lower_bound)}, "
-            f"{repr(self._upper_bound)}, {repr(self._stride)})"
+            f"{self.__class__.__name__}({self._lower_bound!r}, "
+            f"{self._upper_bound!r}, {self._stride!r})"
         )
 
 

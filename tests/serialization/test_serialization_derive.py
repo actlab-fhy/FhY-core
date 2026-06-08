@@ -244,7 +244,7 @@ def test_unresolvable_annotation_raises_clear_derivation_error() -> None:
         value: "DefinitelyNotARealType"  # type: ignore[name-defined]  # noqa: F821
 
     with pytest.raises(
-        SerializationDerivationError, match="value.*could not be resolved"
+        SerializationDerivationError, match=r"value.*could not be resolved"
     ):
         _BadRef(1)
 
@@ -795,7 +795,7 @@ def test_make_labeled_enum_field_codec_encode_rejects_out_of_domain_member() -> 
 
 def test_make_labeled_enum_field_codec_rejects_incomplete_labels() -> None:
     """Test labels that omit a member are rejected when the codec is built."""
-    with pytest.raises(ValueError, match="every .* member"):
+    with pytest.raises(ValueError, match=r"every .* member"):
         make_labeled_enum_field_codec(_Op, {_Op.ADD: "add"})
 
 

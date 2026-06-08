@@ -4,7 +4,7 @@ import pytest
 
 from fhy_core.types import CoreDataType, PrimitiveDataType, TypeUnificationEnvironment
 
-from ..conftest import mock_identifier  # noqa: F401  # re-exported below
+from ..conftest import mock_identifier  # re-exported below
 
 __all__ = [
     "empty_environment",

@@ -10,7 +10,7 @@ import re
 from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Annotated, ClassVar, Final, Optional
+from typing import Annotated, ClassVar, Final
 
 import pytest
 from frozendict import frozendict
@@ -101,7 +101,7 @@ class _AutoEqualValue(EqualMixin):
     value: int
 
 
-class _NoHashEqualValue(EqualMixin):  # noqa: PLW1641
+class _NoHashEqualValue(EqualMixin):
     pass
 
 
@@ -116,7 +116,7 @@ class _AutoOrderableValue(OrderableMixin):  # type: ignore[override]
 
 
 @dataclass(eq=True)
-class _EqualButUnhashableValue(EqualMixin):  # noqa: PLW1641
+class _EqualButUnhashableValue(EqualMixin):
     """Declares total equality and defines ``__eq__`` but is not hashable.
 
     ``@dataclass(eq=True)`` without ``frozen=True`` sets ``__hash__`` to
@@ -499,7 +499,7 @@ def test_native_frozen_dataclass_with_frozen_mixin() -> None:
     assert point.is_frozen is True
     point.assert_frozen()
     with pytest.raises(FrozenMutationError):
-        setattr(point, "x", 4)
+        point.x = 4
 
 
 def test_native_frozen_dataclass_post_init_can_use_object_setattr() -> None:
@@ -872,7 +872,7 @@ def test_frozen_instance_cannot_be_unfrozen_by_setting_internal_flag() -> None:
     instance = _SimpleFrozen(1)
 
     with pytest.raises(FrozenMutationError):
-        setattr(instance, "_fhy_core_is_frozen", False)
+        instance._fhy_core_is_frozen = False
 
     assert instance.is_frozen is True
 
@@ -1222,7 +1222,7 @@ def test_field_type_check_accepts_optional_frozenset_field() -> None:
 
     @dataclass(frozen=True)
     class _GoodOptional(FrozenMixin):
-        values: Optional[frozenset[int]]
+        values: frozenset[int] | None
 
     _GoodOptional(None)
     _GoodOptional(frozenset([1]))

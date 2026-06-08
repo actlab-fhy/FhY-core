@@ -33,8 +33,9 @@ __all__ = [
     "run_verification",
 ]
 
+from collections.abc import Callable
 from threading import Lock
-from typing import Any, Callable, ClassVar, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 from fhy_core.diagnostic import ValidationReport
 from fhy_core.logger import get_logger

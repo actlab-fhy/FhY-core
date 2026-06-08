@@ -6,7 +6,7 @@ import threading
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -273,9 +273,9 @@ def test_pass_manager_configuration_is_read_only() -> None:
     manager = PassManager[int](name=Identifier("pipeline"))
 
     with pytest.raises(AttributeError):
-        setattr(manager, "name", Identifier("other"))
+        setattr(manager, "name", Identifier("other"))  # noqa: B010
     with pytest.raises(AttributeError):
-        setattr(manager, "analysis_manager", manager.analysis_manager)
+        setattr(manager, "analysis_manager", manager.analysis_manager)  # noqa: B010
 
 
 def test_get_analysis_runs_uncached_when_pass_is_standalone() -> None:
@@ -284,7 +284,7 @@ def test_get_analysis_runs_uncached_when_pass_is_standalone() -> None:
 
     @register_pass("tests.pm.standalone_get_analysis", "Reads analysis standalone.")
     class ReadAnalysisPass(CompilerPass[Box, Box]):
-        observed: list[int] = []
+        observed: ClassVar[list[int]] = []
 
         @override
         def get_noop_output(self, ir: Box) -> Box:
@@ -312,7 +312,7 @@ def test_get_analysis_uses_cache_when_bound_by_pass_manager() -> None:
         "tests.pm.cached_get_analysis", "Reads analysis twice under a manager."
     )
     class TwiceReadPass(CompilerPass[Box, Box]):
-        observed: list[int] = []
+        observed: ClassVar[list[int]] = []
 
         @override
         def get_noop_output(self, ir: Box) -> Box:
@@ -351,7 +351,7 @@ def test_get_analysis_reuses_cache_across_preserving_passes() -> None:
 
     @register_pass("tests.pm.read_analysis_again", "Reads the analysis a second time.")
     class ReadAgainPass(CompilerPass[Box, Box]):
-        observed: list[int] = []
+        observed: ClassVar[list[int]] = []
 
         @override
         def get_noop_output(self, ir: Box) -> Box:
@@ -406,7 +406,7 @@ def test_get_analysis_recomputes_after_non_preserving_pass() -> None:
         "tests.pm.reread_after_mutation", "Re-reads the analysis after mutation."
     )
     class RereadPass(CompilerPass[Box, Box]):
-        observed: list[int] = []
+        observed: ClassVar[list[int]] = []
 
         @override
         def get_noop_output(self, ir: Box) -> Box:
@@ -472,7 +472,7 @@ def test_get_analysis_works_inside_fixpoint_group() -> None:
         "Reads analysis and decrements until fixed-point.",
     )
     class FixpointReaderPass(CompilerPass[Box, Box]):
-        observed: list[int] = []
+        observed: ClassVar[list[int]] = []
 
         @override
         def get_noop_output(self, ir: Box) -> Box:
@@ -988,7 +988,7 @@ def test_analysis_manager_get_is_safe_under_concurrent_callers() -> None:
             value = manager.get(BoxDoubleAnalysis, ir)
             assert value == ir.value * 2
             return value
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             with errors_lock:
                 errors.append(exc)
             raise
@@ -1015,7 +1015,7 @@ def test_analysis_manager_survives_concurrent_get_and_gc_eviction() -> None:
                 # Drop the local reference; let the finalizer fire on GC.
                 del ir
             gc.collect()
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             with errors_lock:
                 errors.append(exc)
             raise

@@ -5,7 +5,8 @@ delegation, ``variable`` property, repr/str rendering, member shapes),
 so the tests are parametrized over the constraint factory.
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 

@@ -119,7 +119,9 @@ class FunctionInliner(RewritablePass[Expression]):
         expression: CallExpression,
     ) -> Expression:
         _check_call_arity(name, len(registered.parameters), expression.arguments)
-        substitutions = dict(zip(registered.parameters, expression.arguments))
+        substitutions = dict(
+            zip(registered.parameters, expression.arguments, strict=True)
+        )
         substituted_body = registered.body.substitute(substitutions)
         self._in_progress.add(name)
         try:

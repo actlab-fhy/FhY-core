@@ -3,15 +3,16 @@
 from fhy_core.utils.override import override
 
 __all__ = [
-    "fail_fast_structural_equivalence",
     "deterministic_identifiers_by_name_hint",
+    "fail_fast_structural_equivalence",
 ]
 
 import contextlib
 import functools
 import sys
+from collections.abc import Generator
 from contextlib import ContextDecorator
-from typing import Any, Generator
+from typing import Any
 
 from fhy_core.identifier import Identifier
 from fhy_core.traits import StructuralEquivalence

@@ -15,15 +15,15 @@ from fhy_core.identifier import Identifier
 from fhy_core.serialization import Serializable, SerializedDict, register_serializable
 from fhy_core.utils.override import override
 
-from ..conftest import (  # noqa: F401  # re-exported below
+from ..conftest import (  # re-exported below
     SerializableEqualHashable,
     mock_identifier,
 )
 
 __all__ = [
     "ALL_KINDS",
-    "HashableNotSerializable",
     "SET_KINDS",
+    "HashableNotSerializable",
     "SerializableEqualHashable",
     "SerializableHashRaises",
     "UnhashableTuple",

@@ -246,7 +246,7 @@ def _auto_structural(left: Any, right: Any) -> bool:
     if isinstance(left, (tuple, list)) and isinstance(right, (tuple, list)):
         if len(left) != len(right):
             return False
-        for item_left, item_right in zip(left, right):
+        for item_left, item_right in zip(left, right, strict=True):
             try:
                 if not _auto_structural(item_left, item_right):
                     return False
@@ -271,7 +271,7 @@ def _auto_alpha(left: Any, right: Any, renaming: AlphaRenaming) -> bool:  # noqa
     if isinstance(left, (tuple, list)) and isinstance(right, (tuple, list)):
         if len(left) != len(right):
             return False
-        for item_left, item_right in zip(left, right):
+        for item_left, item_right in zip(left, right, strict=True):
             try:
                 if not _auto_alpha(item_left, item_right, renaming):
                     return False
@@ -521,7 +521,7 @@ class DerivedEquivalenceMixin(StructuralEquivalence, AlphaEquivalenceMixin):
             other_ids = _as_identifier_tuple(getattr(other, name))
             if len(self_ids) != len(other_ids):
                 return False
-            binding = dict(zip(self_ids, other_ids))
+            binding = dict(zip(self_ids, other_ids, strict=True))
             try:
                 for scoped in scopes:
                     base = scoped_renamings.get(scoped, renaming)
