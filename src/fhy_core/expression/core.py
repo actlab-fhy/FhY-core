@@ -26,7 +26,7 @@ __all__ = [
 
 import re
 from abc import ABC
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, TypeAlias, TypedDict, TypeGuard
@@ -40,11 +40,12 @@ from fhy_core.serialization import (
     WrappedFamilySerializable,
     register_serializable,
 )
-from fhy_core.trait import (
+from fhy_core.traits import (
     DerivedEquivalenceMixin,
     FrozenMixin,
-    HasOperandsMixin,
+    HasOperands,
     RewritableMixin,
+    Term,
     VisitableMixin,
     compared_as_reference,
     compared_as_value,
@@ -284,6 +285,14 @@ class Expression(
     :meth:`is_structurally_equivalent` for value-equality semantics,
     and avoid using :class:`Expression` instances as dict keys when you
     expect value-based lookups.
+
+    Expressions are :class:`~fhy_core.traits.Term` instances: they compare
+    by alpha-equivalence (derived from the field schema), report their free
+    identifiers, and support substitution. The IR has no binders, so every
+    referenced identifier is free and substitution is always capture-free.
+    Both trait methods derive generically from
+    :meth:`get_visit_children` / :meth:`rebuild_with_visit_children`;
+    :class:`IdentifierExpression` overrides them as the recursion base case.
     """
 
     def get_visit_children(self) -> tuple["Expression", ...]:
@@ -297,6 +306,36 @@ class Expression(
         raise NotImplementedError(
             f"{type(self).__name__} has children but does not implement "
             "`rebuild_with_visit_children`."
+        )
+
+    def get_free_identifiers(self) -> frozenset[Identifier]:
+        """Return the identifiers referenced free in this expression.
+
+        Defaults to the union of the children's free identifiers;
+        :class:`IdentifierExpression` overrides this to report itself.
+        """
+        free: frozenset[Identifier] = frozenset()
+        for child in self.get_visit_children():
+            free |= child.get_free_identifiers()
+        return free
+
+    def substitute(self, replacements: Mapping[Identifier, Term]) -> "Expression":
+        """Return this expression with mapped identifiers replaced.
+
+        Substitution is capture-free (the IR has no binders). Defaults to
+        rebuilding from substituted children;
+        :class:`IdentifierExpression` overrides this to perform the
+        replacement.
+
+        Args:
+            replacements: Identifier-to-expression substitutions. Values
+                must be :class:`Expression` instances.
+
+        Returns:
+            The substituted expression.
+        """
+        return self.rebuild_with_visit_children(
+            tuple(child.substitute(replacements) for child in self.get_visit_children())
         )
 
     def __neg__(self) -> "UnaryExpression":
@@ -519,7 +558,7 @@ UNARY_SYMBOL_OPERATIONS: frozendict[str, UnaryOperation] = invert_frozen_dict(
 
 @register_serializable(type_id="unary_expression")
 @dataclass(frozen=True, eq=False)
-class UnaryExpression(Expression, HasOperandsMixin[Expression]):
+class UnaryExpression(Expression, HasOperands[Expression]):
     """Unary expression."""
 
     operation: UnaryOperation
@@ -588,7 +627,7 @@ BINARY_SYMBOL_OPERATIONS: frozendict[str, BinaryOperation] = invert_frozen_dict(
 
 @register_serializable(type_id="binary_expression")
 @dataclass(frozen=True, eq=False)
-class BinaryExpression(Expression, HasOperandsMixin[Expression]):
+class BinaryExpression(Expression, HasOperands[Expression]):
     """Binary expression."""
 
     operation: BinaryOperation
@@ -614,6 +653,20 @@ class IdentifierExpression(Expression):
     """Identifier expression."""
 
     identifier: Identifier = field(metadata=compared_as_reference())
+
+    def get_free_identifiers(self) -> frozenset[Identifier]:
+        return frozenset({self.identifier})
+
+    def substitute(self, replacements: Mapping[Identifier, Term]) -> "Expression":
+        replacement = replacements.get(self.identifier)
+        if isinstance(replacement, Expression):
+            return replacement
+        if replacement is not None:
+            raise TypeError(
+                f"Cannot substitute {self.identifier!r} with a non-Expression "
+                f"term of type {type(replacement).__name__}."
+            )
+        return self
 
 
 _INTEGER_LITERAL_PATTERN = re.compile(r"\d+")
@@ -719,7 +772,7 @@ class LiteralExpression(Expression):
 
 @register_serializable(type_id="ternary_expression")
 @dataclass(frozen=True, eq=False)
-class TernaryExpression(Expression, HasOperandsMixin[Expression]):
+class TernaryExpression(Expression, HasOperands[Expression]):
     """Ternary conditional expression: ``condition ? true_value : false_value``.
 
     A pure 3-arg form: when ``condition`` evaluates to true the
@@ -753,7 +806,7 @@ class TernaryExpression(Expression, HasOperandsMixin[Expression]):
 
 @register_serializable(type_id="call_expression")
 @dataclass(frozen=True, eq=False)
-class CallExpression(Expression, HasOperandsMixin[Expression]):
+class CallExpression(Expression, HasOperands[Expression]):
     """Reference to a registered function applied to argument expressions.
 
     The node stores the function's registry key and the argument

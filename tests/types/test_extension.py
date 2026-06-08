@@ -9,7 +9,7 @@ import pytest
 from fhy_core.expression import IdentifierExpression, LiteralExpression
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import SerializedDict
-from fhy_core.trait import VerificationError
+from fhy_core.traits import VerificationError
 from fhy_core.types import (
     CoreDataType,
     NumericalType,

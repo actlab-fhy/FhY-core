@@ -6,7 +6,7 @@ import pytest
 
 from fhy_core.diagnostic import ValidationFailedError
 from fhy_core.lattice import Lattice
-from fhy_core.trait.verifiable import Verifiable
+from fhy_core.traits.verifiable import Verifiable
 
 
 @pytest.fixture()

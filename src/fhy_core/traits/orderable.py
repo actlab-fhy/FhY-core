@@ -24,10 +24,18 @@ class PartialOrderable(Protocol):
 
 @runtime_checkable
 class Orderable(PartialOrderable, Protocol):
-    """Protocol for objects that define total ordering semantics."""
+    """Protocol for objects that define total ordering semantics.
+
+    Total ordering is a strengthening of partial ordering:
+    ``supports_ordering`` implies ``supports_partial_ordering``.
+    """
 
     @property
-    def supports_ordering(self) -> bool: ...
+    def supports_ordering(self) -> bool:
+        """Whether ``<`` defines a total order over this object's type.
+
+        When ``True``, ``supports_partial_ordering`` is also ``True``.
+        """
 
 
 class PartialOrderableMixin:
@@ -57,4 +65,4 @@ class OrderableMixin(PartialOrderableMixin):
 
     @property
     def supports_ordering(self) -> bool:
-        return True
+        return self.supports_partial_ordering

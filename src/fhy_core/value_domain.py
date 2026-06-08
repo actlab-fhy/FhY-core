@@ -23,10 +23,10 @@ from .serialization import (
     Serializable,
     register_serializable,
 )
-from .trait import (
+from .traits import (
     DerivedEquivalenceMixin,
     FrozenMixin,
-    HasIdentifierMixin,
+    HasIdentifier,
     InternedMixin,
 )
 
@@ -34,7 +34,7 @@ from .trait import (
 @register_serializable(type_id="value_domain")
 @dataclass(frozen=True)
 class ValueDomain(
-    HasIdentifierMixin,
+    HasIdentifier,
     FrozenMixin,
     DerivedEquivalenceMixin,
     InternedMixin[Identifier],
@@ -58,8 +58,8 @@ class ValueDomain(
     interning. The first instance registered for a given ``Identifier``
     becomes canonical; subsequent constructions and deserializations
     with a different description are not rejected but do not update the
-    canonical description. ``deserialize_from_dict`` emits a warning
-    when the payload description differs from the canonical's.
+    canonical description. Deserializing a payload whose description
+    differs from the canonical's emits a warning.
 
     Attributes:
         name: Stable, process-global identifier for this domain.

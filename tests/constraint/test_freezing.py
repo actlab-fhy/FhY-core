@@ -6,7 +6,7 @@ import pytest
 
 from fhy_core.constraint import Constraint
 from fhy_core.identifier import Identifier
-from fhy_core.trait import Frozen, FrozenMutationError
+from fhy_core.traits import Frozen, FrozenMutationError
 
 from .conftest import ALL_KINDS, mock_identifier
 

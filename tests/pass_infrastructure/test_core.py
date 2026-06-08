@@ -16,7 +16,7 @@ from fhy_core.pass_infrastructure import (
     PreservedAnalyses,
     register_pass,
 )
-from fhy_core.trait import PartialEqual
+from fhy_core.traits import PartialEqual
 
 _PASS_INFRA_LOGGER_PREFIX = "fhy_core.pass_infrastructure.core"
 

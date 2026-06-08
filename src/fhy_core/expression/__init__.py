@@ -45,7 +45,6 @@ __all__ = [
     "assert_holds_for_all_free_assignments",
     "call",
     "check_expression_type",
-    "collect_identifiers",
     "convert_expression_to_sympy_expression",
     "convert_expression_to_z3_expression",
     "convert_sympy_expression_to_expression",
@@ -71,9 +70,7 @@ __all__ = [
     "register_function",
     "register_native_constant",
     "register_native_function",
-    "replace_identifiers",
     "simplify_expression",
-    "substitute_identifiers",
     "substitute_sympy_expression_variables",
     "synthesize_expression_type",
     "ternary",
@@ -105,11 +102,6 @@ from .core import (
     ternary,
 )
 from .errors import NativeResultSortError, UndecidableError
-from .passes.basic import (
-    collect_identifiers,
-    replace_identifiers,
-    substitute_identifiers,
-)
 from .passes.evaluate import evaluate_expression
 from .passes.inline import FunctionArityError, inline_functions
 from .passes.sympy import (

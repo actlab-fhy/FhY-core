@@ -51,6 +51,7 @@ _CLASS_SETUP_DONE_FLAG = "_fhy_core_class_setup_done"
 _INIT_WRAPPER_MARKER = "_fhy_core_init_wrapper"
 _IS_NATIVE_FROZEN_DATACLASS_CACHE = "_fhy_core_is_native_frozen_dataclass"
 _FIELD_TYPE_CHECK_DONE_FLAG = "_fhy_core_field_type_check_done"
+_FIELD_TYPE_WARN_DONE_FLAG = "_fhy_core_field_type_warn_done"
 
 _MAX_FIELD_TYPE_DEPTH = 8
 
@@ -289,7 +290,9 @@ def _check_field_types(target_cls: type) -> None:
     No-op for abstract classes and for classes already checked. Latches the
     check as done only when every field resolved, so an unresolved forward
     reference is re-attempted on a later instantiation rather than skipped
-    permanently.
+    permanently. When a field annotation cannot be resolved, its immutability
+    is left unverified; this emits a one-time warning per class so the gap is
+    visible rather than silent.
     """
     if target_cls.__dict__.get(_FIELD_TYPE_CHECK_DONE_FLAG, False):
         return
@@ -316,6 +319,23 @@ def _check_field_types(target_cls: type) -> None:
             f"frozenset, frozendict) or have the nested type inherit "
             f"FrozenMixin."
         )
+
+    if not all_resolved and not target_cls.__dict__.get(
+        _FIELD_TYPE_WARN_DONE_FLAG, False
+    ):
+        unresolved = [
+            name
+            for name in _iter_frozen_field_names(target_cls)
+            if resolved_hints.get(name) is None
+        ]
+        _LOGGER.warning(
+            "Frozen immutability is not enforced for field(s) %s of %s: their type "
+            "annotations could not be resolved. The check is retried on later "
+            "instantiation if the annotations become resolvable.",
+            ", ".join(unresolved),
+            target_cls.__name__,
+        )
+        type.__setattr__(target_cls, _FIELD_TYPE_WARN_DONE_FLAG, True)
 
     if all_resolved:
         type.__setattr__(target_cls, _FIELD_TYPE_CHECK_DONE_FLAG, True)

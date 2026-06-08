@@ -29,7 +29,7 @@ from fhy_core.expression.pattern import (
 )
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import CompilerPass, PassExecutionError
-from fhy_core.trait import FrozenMutationError
+from fhy_core.traits import FrozenMutationError
 
 from ..conftest import mock_identifier
 

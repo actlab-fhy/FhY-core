@@ -285,6 +285,17 @@ class CodecMismatchError(SerializationError):
 
 
 @register_error
+class MalformedPayloadError(SerializationError, ValueError):
+    """Raised when raw bytes/text cannot be decoded into a serialized object.
+
+    Covers malformed input that fails before structural validation: invalid
+    UTF-8 in a binary envelope or JSON payload, and text that is not valid
+    JSON. Keeps such failures inside the ``SerializationError`` hierarchy
+    rather than leaking raw ``UnicodeDecodeError``/``json.JSONDecodeError``.
+    """
+
+
+@register_error
 class SerializationTypeError(SerializationError, TypeError):
     """Raised when serialization fails due to a type error."""
 
@@ -436,6 +447,8 @@ def _resolve_type_id(
                 f'type_id "{type_id}" did not resolve to a serializable class.'
             )
         return obj
+    except UnknownTypeIdError:
+        raise
     except Exception as e:
         raise UnknownTypeIdError(f'Could not resolve type_id "{type_id}": {e}') from e
 
@@ -733,6 +746,22 @@ def _dump_to_binary(obj: "Serializable") -> bytes:
     return header + type_id + payload_len + payload_bytes
 
 
+def _decode_utf8(raw: bytes | bytearray | memoryview, *, context: str) -> str:
+    """Decode bytes as UTF-8, raising :class:`MalformedPayloadError` on failure."""
+    try:
+        return bytes(raw).decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise MalformedPayloadError(f"{context} is not valid UTF-8.") from e
+
+
+def _loads_json(text: str, *, context: str) -> Any:
+    """Parse a JSON document, raising :class:`MalformedPayloadError` on failure."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        raise MalformedPayloadError(f"{context} is not valid JSON.") from e
+
+
 def _loads_from_binary(
     data: bytes | bytearray | memoryview,
     *,
@@ -765,7 +794,7 @@ def _loads_from_binary(
     if len(mv) < end_type + _PAYLOAD_LEN_STRUCT.size:
         raise SerializationError("Data too short for type_id and payload length.")
 
-    type_id = mv[offset:end_type].tobytes().decode("utf-8")
+    type_id = _decode_utf8(mv[offset:end_type], context="binary envelope type_id")
     offset = end_type
 
     (payload_len,) = _PAYLOAD_LEN_STRUCT.unpack(
@@ -843,6 +872,9 @@ class FieldCodec(Protocol):
 
 
 _SERIALIZE_SETUP_FLAG: Final[str] = "_fhy_serialize_setup_done"
+# Serialization plans are built once per class and cached forever; this assumes
+# a class's dataclass field schema is frozen after first use (see the matching
+# note on ``_PLAN_CACHE`` in ``traits/derived_equivalence.py``).
 _SERIALIZE_PLAN_CACHE: dict[type, dict[str, FieldCodec]] = {}
 _FIELD_CODEC_REGISTRY: dict[type, FieldCodec] = {}
 
@@ -1255,7 +1287,11 @@ def _derived_deserialize_from_dict(
     }
     try:
         return cls.construct_from_fields(decoded)
-    except ValueError as exc:
+    except SerializationError:
+        # Already in the serialization hierarchy (e.g. a nested
+        # DeserializationValueError); propagate unwrapped.
+        raise
+    except (ValueError, TypeError) as exc:
         raise DeserializationValueError(str(exc)) from exc
 
 
@@ -1438,7 +1474,7 @@ class Serializable(ABC):
         """Decode payload bytes into an instance of this class.
 
         Default implementation supports JSON only (payload is JSON bytes of dict form).
-        Override for CUSTOM/PROTOBUF/etc.
+        Override for CUSTOM (e.g. a compact binary codec).
 
         Args:
             payload: Payload bytes from the envelope.
@@ -1459,7 +1495,8 @@ class Serializable(ABC):
             )
 
         if codec is BinaryPayloadCodec.JSON:
-            payload_obj = json.loads(payload.decode("utf-8"))
+            text = _decode_utf8(payload, context="binary JSON payload")
+            payload_obj = _loads_json(text, context="binary JSON payload")
             if not is_serialized_dict(payload_obj):
                 raise SerializationError("Payload did not decode to an object/dict.")
             return cls.deserialize_from_dict(payload_obj)
@@ -1578,8 +1615,8 @@ class Serializable(ABC):
 
         """
         if isinstance(payload, (bytes, bytearray)):
-            payload = payload.decode("utf-8")
-        payload_obj = json.loads(payload)
+            payload = _decode_utf8(payload, context="JSON payload")
+        payload_obj = _loads_json(payload, context="JSON payload")
         if not is_serialized_dict(payload_obj):
             raise SerializationError("JSON did not decode to an object/dict.")
         return cls.deserialize_from_dict(payload_obj)

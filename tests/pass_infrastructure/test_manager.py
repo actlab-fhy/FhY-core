@@ -24,7 +24,7 @@ from fhy_core.pass_infrastructure import (
     PreservedAnalyses,
     register_pass,
 )
-from fhy_core.trait import FrozenMixin, PartialEqual
+from fhy_core.traits import FrozenMixin, PartialEqual
 
 _MANAGER_LOGGER = "fhy_core.pass_infrastructure.manager"
 

@@ -13,7 +13,7 @@ from fhy_core.symbol_table import (
     SymbolTableFrame,
     VariableSymbolTableFrame,
 )
-from fhy_core.trait import (
+from fhy_core.traits import (
     Canonicalizable,
     Frozen,
     StructuralEquivalence,
@@ -376,26 +376,39 @@ def test_symbol_table_verify_reports_error_for_mismatched_frame_identifier() -> 
         report.raise_if_failed()
 
 
-def test_symbol_table_canonicalize_reports_change_when_order_unsorted() -> None:
-    """Test canonicalization reports change when namespace order is unsorted."""
+def test_symbol_table_canonicalize_sorts_namespaces_in_place() -> None:
+    """Test canonicalization reorders namespaces in place by sort key.
+
+    ``SymbolTable`` is a mutable container, so ``canonicalize`` mutates the
+    receiver. Sort key is ``(id, name_hint)``, so ``low`` (id 1) precedes
+    ``high`` (id 2); a table built in reverse order canonicalizes to the
+    same serialization as one built in sorted order.
+    """
+    unsorted = SymbolTable()
+    unsorted.add_namespace(mock_identifier("high", 2))
+    unsorted.add_namespace(mock_identifier("low", 1))
+
+    sorted_reference = SymbolTable()
+    sorted_reference.add_namespace(mock_identifier("low", 1))
+    sorted_reference.add_namespace(mock_identifier("high", 2))
+
+    assert unsorted.serialize_to_dict() != sorted_reference.serialize_to_dict()
+
+    unsorted.canonicalize()
+
+    assert unsorted.serialize_to_dict() == sorted_reference.serialize_to_dict()
+
+
+def test_symbol_table_canonicalize_is_idempotent_when_already_sorted() -> None:
+    """Test canonicalizing an already-sorted table leaves serialization unchanged."""
     symbol_table = SymbolTable()
-    namespace_high = mock_identifier("high", 2)
-    namespace_low = mock_identifier("low", 1)
-    symbol_table.add_namespace(namespace_high)
-    symbol_table.add_namespace(namespace_low)
+    symbol_table.add_namespace(mock_identifier("low", 1))
+    symbol_table.add_namespace(mock_identifier("high", 2))
+    before = symbol_table.serialize_to_dict()
 
-    assert symbol_table.canonicalize()
+    symbol_table.canonicalize()
 
-
-def test_symbol_table_canonicalize_reports_no_change_when_already_sorted() -> None:
-    """Test canonicalization reports no change when table is already sorted."""
-    symbol_table = SymbolTable()
-    namespace_low = mock_identifier("low", 1)
-    namespace_high = mock_identifier("high", 2)
-    symbol_table.add_namespace(namespace_low)
-    symbol_table.add_namespace(namespace_high)
-
-    assert not symbol_table.canonicalize()
+    assert symbol_table.serialize_to_dict() == before
 
 
 def test_add_and_check_namespace(empty_symbol_table: SymbolTable) -> None:

@@ -25,7 +25,7 @@ from fhy_core.serialization import (
     Serializable,
     SerializedDict,
 )
-from fhy_core.trait import (
+from fhy_core.traits import (
     Frozen,
     FrozenMutationError,
     HasIdentifier,
@@ -261,7 +261,7 @@ def test_op_attribute_deserialize_warns_on_description_mismatch(
         "name": canonical.name.serialize_to_dict(),
         "description": "divergent description",
     }
-    with caplog.at_level("WARNING", logger="fhy_core.trait.interned"):
+    with caplog.at_level("WARNING", logger="fhy_core.traits.interned"):
         restored = OpAttribute.deserialize_from_dict(payload)
 
     assert restored is canonical
@@ -281,7 +281,7 @@ def test_op_attribute_deserialize_does_not_warn_when_descriptions_match(
         Identifier("matching-description-attr"), "matching description"
     )
     payload = canonical.serialize_to_dict()
-    with caplog.at_level("WARNING", logger="fhy_core.trait.interned"):
+    with caplog.at_level("WARNING", logger="fhy_core.traits.interned"):
         restored = OpAttribute.deserialize_from_dict(payload)
 
     assert restored is canonical

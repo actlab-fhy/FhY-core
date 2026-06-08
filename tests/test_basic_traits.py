@@ -25,7 +25,7 @@ from fhy_core.diagnostic import (
 )
 from fhy_core.identifier import Identifier
 from fhy_core.provenance import Provenance
-from fhy_core.trait import (
+from fhy_core.traits import (
     Equal,
     EqualMixin,
     Frozen,
@@ -34,9 +34,7 @@ from fhy_core.trait import (
     FrozenMutationError,
     FrozenValidationError,
     HasIdentifier,
-    HasIdentifierMixin,
     HasProvenance,
-    HasProvenanceMixin,
     Interned,
     InternedMixin,
     Orderable,
@@ -53,7 +51,7 @@ from .conftest import mock_identifier
 
 
 @dataclass
-class _IdentifierCarrier(HasIdentifierMixin):
+class _IdentifierCarrier(HasIdentifier):
     _identifier: Identifier
 
     def get_identifier(self) -> Identifier:
@@ -61,7 +59,7 @@ class _IdentifierCarrier(HasIdentifierMixin):
 
 
 @dataclass
-class _ProvenanceCarrier(HasProvenanceMixin):
+class _ProvenanceCarrier(HasProvenance):
     _provenance: Provenance
 
     def get_provenance(self) -> Provenance:
@@ -111,6 +109,47 @@ class _AutoPartialOrderableValue(PartialOrderableMixin):  # type: ignore[overrid
 @dataclass(order=True)
 class _AutoOrderableValue(OrderableMixin):  # type: ignore[override]
     value: int
+
+
+@dataclass(eq=True)
+class _EqualButUnhashableValue(EqualMixin):  # noqa: PLW1641
+    """Declares total equality and defines ``__eq__`` but is not hashable.
+
+    ``@dataclass(eq=True)`` without ``frozen=True`` sets ``__hash__`` to
+    ``None``, modelling a class that supports partial equality yet cannot
+    support total equality.
+    """
+
+    value: int
+
+
+class _NoLtOrderableValue(OrderableMixin):
+    """Declares total ordering via the mixin but never implements ``__lt__``."""
+
+
+class _ManualEqualValue(EqualMixin):
+    """Hand-rolled total-equality value with real ``__eq__`` and ``__hash__``."""
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _ManualEqualValue) and self.value == other.value
+
+    def __hash__(self) -> int:
+        return hash(self.value)
+
+
+class _ManualOrderableValue(OrderableMixin):
+    """Hand-rolled total-ordering value with a real ``__lt__``."""
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, _ManualOrderableValue):
+            return NotImplemented
+        return self.value < other.value
 
 
 class _OptOutAutoFreeze(FrozenMixin, freeze_on_init=False):
@@ -290,15 +329,97 @@ def test_orderable_mixin_defaults_to_total_order() -> None:
     assert value.supports_ordering is True
 
 
-def test_identifier_mixin_contract() -> None:
-    """Test `HasIdentifierMixin` contract."""
+def test_equal_without_eq_or_hash_does_not_support_equality() -> None:
+    """Test `EqualMixin` reports no equality support without `__eq__`/`__hash__`.
+
+    A class that opts into total equality but supplies neither a real
+    ``__eq__`` nor a real ``__hash__`` cannot honor the contract, so
+    ``supports_equality`` must be ``False`` rather than advertising a
+    capability that ``hash()`` then fails to provide.
+    """
+    value = _NoHashEqualValue()
+    assert value.supports_partial_equality is False
+    assert value.supports_equality is False
+
+
+def test_equal_with_eq_but_no_hash_does_not_support_equality() -> None:
+    """Test `EqualMixin` reports no equality support when not hashable.
+
+    ``_EqualButUnhashableValue`` supports partial equality (it has a real
+    ``__eq__``) but is unhashable (``__hash__`` is ``None``), so total
+    equality is not supported.
+    """
+    value = _EqualButUnhashableValue(3)
+    assert value.supports_partial_equality is True
+    assert value.supports_equality is False
+
+
+def test_orderable_without_lt_does_not_support_ordering() -> None:
+    """Test `OrderableMixin` reports no ordering support without `__lt__`."""
+    value = _NoLtOrderableValue()
+    assert value.supports_partial_ordering is False
+    assert value.supports_ordering is False
+
+
+def test_manual_equal_with_eq_and_hash_supports_equality() -> None:
+    """Test a hand-rolled `__eq__`/`__hash__` reports total equality support."""
+    value = _ManualEqualValue(3)
+    assert value.supports_partial_equality is True
+    assert value.supports_equality is True
+    assert hash(value) == hash(_ManualEqualValue(3))
+
+
+def test_manual_orderable_with_lt_supports_ordering() -> None:
+    """Test a hand-rolled `__lt__` reports total ordering support."""
+    value = _ManualOrderableValue(3)
+    assert value.supports_partial_ordering is True
+    assert value.supports_ordering is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        _AutoEqualValue(3),
+        _NoHashEqualValue(),
+        _EqualButUnhashableValue(3),
+        _ManualEqualValue(3),
+    ],
+)
+def test_total_equality_implies_partial_equality(value: Equal) -> None:
+    """Test the subtype invariant: total equality entails partial equality.
+
+    ``Equal`` is a subtype of ``PartialEqual``, so no object may report
+    ``supports_equality`` while denying ``supports_partial_equality``.
+    """
+    assert not value.supports_equality or value.supports_partial_equality
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        _AutoOrderableValue(3),
+        _NoLtOrderableValue(),
+        _ManualOrderableValue(3),
+    ],
+)
+def test_total_ordering_implies_partial_ordering(value: Orderable) -> None:
+    """Test the subtype invariant: total ordering entails partial ordering.
+
+    ``Orderable`` is a subtype of ``PartialOrderable``, so no object may
+    report ``supports_ordering`` while denying ``supports_partial_ordering``.
+    """
+    assert not value.supports_ordering or value.supports_partial_ordering
+
+
+def test_identifier_returns_identifier() -> None:
+    """Test `HasIdentifier.get_identifier` returns the carried identifier."""
     carrier = _IdentifierCarrier(mock_identifier("field", 2))
     assert carrier.get_identifier().name_hint == "field"
     assert carrier.get_identifier().id == 2
 
 
-def test_provenance_mixin_contract() -> None:
-    """Test `HasProvenanceMixin` contract."""
+def test_provenance_returns_provenance() -> None:
+    """Test `HasProvenance.get_provenance` returns the carried provenance."""
     carrier = _ProvenanceCarrier(Provenance.unknown())
     assert carrier.get_provenance() == Provenance.unknown()
 
@@ -507,7 +628,7 @@ def test_interned_construct_from_fields_warns_on_ignored_metadata(
     _NotedInternedValue.clear_interned_registry()
     canonical = _NotedInternedValue("noted", "original")
 
-    with caplog.at_level("WARNING", logger="fhy_core.trait.interned"):
+    with caplog.at_level("WARNING", logger="fhy_core.traits.interned"):
         restored = _NotedInternedValue.construct_from_fields(
             {"key": "noted", "note": "divergent"}
         )
@@ -525,7 +646,7 @@ def test_interned_construct_from_fields_does_not_warn_when_metadata_matches(
     _NotedInternedValue.clear_interned_registry()
     _NotedInternedValue("noted", "same")
 
-    with caplog.at_level("WARNING", logger="fhy_core.trait.interned"):
+    with caplog.at_level("WARNING", logger="fhy_core.traits.interned"):
         _NotedInternedValue.construct_from_fields({"key": "noted", "note": "same"})
 
     assert "already canonical" not in caplog.text
@@ -896,6 +1017,29 @@ def test_field_type_check_accepts_classvar_field() -> None:
             self.value = value
 
     _GoodClassVar(1)
+
+
+def test_field_type_check_warns_once_for_unresolvable_annotation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test an unresolvable field annotation warns once instead of failing silently.
+
+    The immutability of a field whose annotation cannot be resolved is left
+    unverified; a one-time per-class warning makes that gap visible.
+    """
+
+    @dataclass(frozen=True)
+    class _UnresolvableField(FrozenMixin):
+        value: "_NameThatDoesNotExistAnywhere"  # type: ignore[name-defined]  # noqa: F821
+
+    with caplog.at_level("WARNING", logger="fhy_core.traits.frozen"):
+        _UnresolvableField(1)
+        _UnresolvableField(2)
+
+    matching = [r for r in caplog.records if "not enforced" in r.getMessage()]
+    assert len(matching) == 1
+    assert "value" in matching[0].getMessage()
+    assert "_UnresolvableField" in matching[0].getMessage()
 
 
 def test_field_type_check_skipped_for_abstract_class() -> None:

@@ -20,7 +20,7 @@ from typing import final
 
 from fhy_core.diagnostic import DiagnosticLevel
 from fhy_core.pass_infrastructure import RewritablePass, register_pass
-from fhy_core.trait import FrozenMixin
+from fhy_core.traits import FrozenMixin
 
 from ..core import Expression
 from .core import MatchBindings, Pattern
