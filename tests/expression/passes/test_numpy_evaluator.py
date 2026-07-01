@@ -12,9 +12,12 @@ from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
     CallExpression,
+    EntryLookupError,
+    FunctionArityError,
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
+    NativeFunction,
     StringLiteralPrecisionError,
     UnaryExpression,
     UnaryOperation,
@@ -22,9 +25,12 @@ from fhy_core.expression import (
     UnsupportedNumpyLoweringError,
     call,
     evaluate_expression_with_numpy,
+    get_registered_entries,
+    register_function,
     register_native_function,
     ternary,
 )
+from fhy_core.expression.passes.numpy import _NATIVE_FUNCTION_UFUNC_NAMES
 from fhy_core.pass_infrastructure import PassExecutionError
 
 from ..conftest import mock_identifier
@@ -231,7 +237,7 @@ NATIVE_FUNCTION_CASES = [
 def test_evaluates_native_function_over_array(
     function_name: str, reference: Callable[[Any], Any]
 ) -> None:
-    """Test each mapped native math function matches its NumPy ufunc."""
+    """Test each mapped native math function matches its NumPy reference."""
     x = mock_identifier("x", 0)
     values = np.array([0.1, 0.5, 0.9])
     expression = call(function_name, x)
@@ -270,6 +276,47 @@ def test_native_function_matches_hand_computed_value(
     result = evaluate_expression_with_numpy(expression, {x: np.array([input_value])})
 
     assert np.allclose(result, [expected])
+
+
+# =============================================================================
+# Result-sort conformance
+# =============================================================================
+
+_INTEGER_SORT_FUNCTION_NAMES = ["round", "floor", "ceil"]
+
+
+@pytest.mark.parametrize("function_name", _INTEGER_SORT_FUNCTION_NAMES)
+def test_integer_sort_native_returns_integer_dtype(function_name: str) -> None:
+    """Test an ``INT``-sorted native casts its result to an integer dtype.
+
+    ``numpy.floor``/``round``/``ceil`` return floating-point by default;
+    the evaluator casts to the declared ``INT`` result sort so the NumPy
+    path agrees with ``evaluate_expression`` and the declared sort.
+    """
+    x = mock_identifier("x", 0)
+    values = np.array([2.7, -1.2, 3.5])
+    expression = call(function_name, x)
+
+    result = evaluate_expression_with_numpy(expression, {x: values})
+
+    assert isinstance(result, np.ndarray)
+    assert np.issubdtype(result.dtype, np.integer)
+
+
+def test_real_sort_native_preserves_float_width() -> None:
+    """Test a ``REAL``-sorted native leaves a ``float32`` result as ``float32``.
+
+    Real-sorted results are already floating-point, so the evaluator casts
+    nothing and the input's narrower width survives the call.
+    """
+    x = mock_identifier("x", 0)
+    values = np.array([0.1, 0.5, 0.9], dtype=np.float32)
+    expression = call("sqrt", x)
+
+    result = evaluate_expression_with_numpy(expression, {x: values})
+
+    assert isinstance(result, np.ndarray)
+    assert result.dtype == np.float32
 
 
 # =============================================================================
@@ -543,7 +590,6 @@ def test_author_function_once_and_apply_to_large_array() -> None:
     assert np.allclose(result, reference)
 
 
-@pytest.mark.slow
 def test_large_array_evaluation_stays_near_native_speed() -> None:
     """Test large-array evaluation stays within a constant factor of NumPy."""
     x = mock_identifier("x", 0)
@@ -601,6 +647,7 @@ def test_scalar_environment_returns_scalar_value() -> None:
 
     result = evaluate_expression_with_numpy(expression, {x: 3.0})
 
+    assert not isinstance(result, np.ndarray)
     assert np.ndim(result) == 0
     assert float(result) == 6.0
 
@@ -709,16 +756,20 @@ def test_raises_for_unregistered_function_name() -> None:
     x = mock_identifier("x", 0)
     expression = call("np_eval_never_registered", x)
 
-    with pytest.raises(PassExecutionError, match="EntryLookupError"):
+    with pytest.raises(PassExecutionError) as exception_info:
         evaluate_expression_with_numpy(expression, {x: np.array([0.0])})
+
+    assert isinstance(exception_info.value.__cause__, EntryLookupError)
 
 
 def test_raises_when_calling_native_constant() -> None:
     """Test calling a native constant surfaces ``FunctionArityError``."""
     expression = CallExpression("pi", ())
 
-    with pytest.raises(PassExecutionError, match="FunctionArityError"):
+    with pytest.raises(PassExecutionError) as exception_info:
         evaluate_expression_with_numpy(expression, {})
+
+    assert isinstance(exception_info.value.__cause__, FunctionArityError)
 
 
 def test_raises_for_native_function_without_numpy_mapping(
@@ -743,6 +794,31 @@ def test_raises_for_native_function_without_numpy_mapping(
     assert isinstance(exception_info.value.__cause__, UnsupportedNumpyLoweringError)
 
 
+def test_raises_for_recursive_function(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a transitively-recursive function surfaces ``RecursionError``.
+
+    Inlining runs before the walk; a self-recursive registration cannot be
+    inlined, so the inliner's recursion guard raises ``RecursionError``,
+    wrapped as ``PassExecutionError``.
+    """
+    x = mock_identifier("x", 0)
+    register_function(
+        "np_eval_recursive",
+        parameters=[x],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=call("np_eval_recursive", x),
+    )
+    expression = call("np_eval_recursive", IdentifierExpression(x))
+
+    with pytest.raises(PassExecutionError) as exception_info:
+        evaluate_expression_with_numpy(expression, {x: np.array([1.0])})
+
+    assert isinstance(exception_info.value.__cause__, RecursionError)
+
+
 def test_raises_import_error_when_numpy_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -764,3 +840,41 @@ def test_does_not_mutate_input_expression() -> None:
     evaluate_expression_with_numpy(expression, {x: np.array([1.0, -1.0])})
 
     assert expression.is_structurally_equivalent(reference)
+
+
+# =============================================================================
+# Lowering-table coverage
+# =============================================================================
+
+_UNSUPPORTED_NATIVE_FUNCTION_NAMES = frozenset({"erf"})
+
+
+def test_every_lowered_native_name_resolves_to_a_numpy_callable() -> None:
+    """Test every lowering-table value names a real, callable NumPy attribute.
+
+    A typo'd ufunc name would otherwise surface only as an ``AttributeError``
+    at call time; this makes the drift a fast, deterministic failure.
+    """
+    for ufunc_name in _NATIVE_FUNCTION_UFUNC_NAMES.values():
+        assert callable(getattr(np, ufunc_name))
+
+
+def test_every_builtin_native_function_has_a_lowering() -> None:
+    """Test every built-in native (besides ``erf``) has a NumPy lowering.
+
+    Guards against a newly-registered built-in native silently falling
+    through to ``UnsupportedNumpyLoweringError`` because nobody added it to
+    the lowering table.
+    """
+    native_function_names = {
+        entry.name
+        for entry in get_registered_entries().values()
+        if isinstance(entry, NativeFunction)
+    }
+    unmapped = (
+        native_function_names
+        - set(_NATIVE_FUNCTION_UFUNC_NAMES)
+        - _UNSUPPORTED_NATIVE_FUNCTION_NAMES
+    )
+
+    assert not unmapped

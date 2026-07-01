@@ -62,10 +62,10 @@ class StringLiteralPrecisionError(ValueError):
 
     ``LiteralExpression`` preserves float-grammar string literals to keep
     their exact decimal value. Coercing such a literal to a binary
-    ``float`` -- as the native folding evaluator and the NumPy evaluator
-    must to hand off to Python or NumPy -- would discard that precision,
-    so both refuse the coercion and raise this error. Use a ``float``
-    literal when binary-float semantics are intended.
+    ``float`` -- which handing off to Python or NumPy would require --
+    discards that precision, so the native folding evaluator and the
+    NumPy evaluator both refuse the coercion and raise this error. Use a
+    ``float`` literal when binary-float semantics are intended.
     """
 
 
@@ -81,7 +81,7 @@ class UndecidableError(RuntimeError):
 
 
 @register_error
-class UnboundVariableError(ValueError):
+class UnboundVariableError(KeyError):
     """Raised when a free identifier reaches NumPy evaluation with no value.
 
     :func:`~fhy_core.expression.evaluate_expression_with_numpy` requires
@@ -93,7 +93,7 @@ class UnboundVariableError(ValueError):
 
 
 @register_error
-class UnsupportedNumpyLoweringError(TypeError):
+class UnsupportedNumpyLoweringError(RuntimeError):
     """Raised when an expression node has no NumPy lowering.
 
     Surfaced by :func:`~fhy_core.expression.evaluate_expression_with_numpy`

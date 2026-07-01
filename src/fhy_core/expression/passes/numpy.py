@@ -3,17 +3,25 @@
 This pass is the fast path for computing a function authored in the
 expression vocabulary over data. Given an expression and an environment
 binding every free identifier to a NumPy-consumable value, it walks the
-tree once and applies a vectorized NumPy ufunc at each node, producing a
-NumPy array (or scalar) rather than another :class:`Expression`.
+tree once and applies a vectorized NumPy operation at each node, producing
+a NumPy array (or scalar) rather than another :class:`Expression`.
 
 Walking the tree once with whole arrays bound to the variables issues the
 same sequence of NumPy calls a user would write by hand, so throughput
 approaches native NumPy for an element-wise transform over a large array:
 the tree walk is ``O(tree_size)`` Python calls, each dispatching one
-C-level ufunc over all elements. Contrast the existing paths, which are
+C-level operation over all elements. Contrast the existing paths, which are
 unsuited to per-value computation over arrays: ``evaluate_expression``
 folds only all-literal native calls and returns an ``Expression``, and
 ``simplify_expression`` runs symbolic SymPy algebra on scalars.
+
+A native call's result is cast to the dtype of its declared result sort,
+so ``floor``/``round``/``ceil`` (declared ``INT``) return an integer array
+rather than NumPy's floating-point default, agreeing with the declared
+sort and with ``evaluate_expression``. Floating-point domain conditions
+follow NumPy: ``sqrt(-1)``, ``log(0)``, and division by zero produce
+``nan``/``inf`` (with NumPy's usual warning) rather than raising -- unlike
+``evaluate_expression``, whose scalar native implementations raise.
 
 Expression-bodied built-ins (``relu``, ``sigmoid``, ``clamp``, ...) are
 inlined automatically before the walk via ``inline_functions``, so the
@@ -53,6 +61,8 @@ from ..core import (
     UnaryOperation,
 )
 from ..errors import UnboundVariableError, UnsupportedNumpyLoweringError
+from ..registry import NativeFunction, get_registered_entry
+from ..sort import FunctionSort
 from .inline import inline_functions
 from .native_lowering import coerce_literal_value, try_get_native_constant_value
 
@@ -101,7 +111,8 @@ _UNARY_UFUNC_NAMES: immutabledict[UnaryOperation, str] = immutabledict(
     }
 )
 
-# Native-function name -> attribute name of the NumPy ufunc that lowers it.
+# Native-function name -> attribute name of the NumPy function that lowers it.
+# Most are ufuncs; ``round`` resolves to ``numpy.round`` (an array function).
 # ``erf`` is intentionally absent: NumPy has no vectorized ``erf``.
 _NATIVE_FUNCTION_UFUNC_NAMES: immutabledict[str, str] = immutabledict(
     {
@@ -123,6 +134,19 @@ _NATIVE_FUNCTION_UFUNC_NAMES: immutabledict[str, str] = immutabledict(
         "round": "round",
         "floor": "floor",
         "ceil": "ceil",
+    }
+)
+
+# Result sort -> attribute name of the NumPy dtype a native-call result is
+# cast to, so the result conforms to the call's declared result sort.
+# ``REAL`` is intentionally absent: real-sorted results are already
+# floating-point and pass through with their width preserved (e.g. a
+# ``float32`` input stays ``float32``).
+_SORT_CAST_DTYPE_NAMES: immutabledict[FunctionSort, str] = immutabledict(
+    {
+        FunctionSort.BOOL: "bool_",
+        FunctionSort.NAT: "int64",
+        FunctionSort.INT: "int64",
     }
 )
 
@@ -207,15 +231,35 @@ class NumpyExpressionEvaluator(VisitablePass[Expression, Any]):
         return self._numpy.where(condition, true_value, false_value)
 
     def visit_call_expression(self, expression: CallExpression) -> Any:
-        """Apply the NumPy ufunc for a native-function call to its arguments."""
-        ufunc_name = _NATIVE_FUNCTION_UFUNC_NAMES.get(expression.function_name)
+        """Apply a native call's NumPy operation, then cast to its result sort."""
+        function_name = expression.function_name
+        ufunc_name = _NATIVE_FUNCTION_UFUNC_NAMES.get(function_name)
         if ufunc_name is None:
             raise UnsupportedNumpyLoweringError(
-                f"native function {expression.function_name!r} has no NumPy lowering."
+                f"native function {function_name!r} has no NumPy lowering."
             )
         ufunc = getattr(self._numpy, ufunc_name)
         arguments = [self.visit(argument) for argument in expression.arguments]
-        return ufunc(*arguments)
+        return self._cast_to_result_sort(ufunc(*arguments), function_name)
+
+    def _cast_to_result_sort(self, result: Any, function_name: str) -> Any:
+        """Cast a native-call result to the dtype of its declared result sort.
+
+        Integer- and boolean-sorted natives (``floor``, ``round``, ...)
+        would otherwise return NumPy's floating-point default; casting
+        makes the NumPy path agree with the declared sort and with
+        ``evaluate_expression``. Real-sorted results are already
+        floating-point and pass through unchanged, preserving their width.
+        A non-finite (``nan``/``inf``) result of an integer-sorted native
+        casts per NumPy's own ``astype`` semantics.
+        """
+        entry = get_registered_entry(function_name)
+        if not isinstance(entry, NativeFunction):
+            return result
+        dtype_name = _SORT_CAST_DTYPE_NAMES.get(entry.result_sort)
+        if dtype_name is None:
+            return result
+        return result.astype(getattr(self._numpy, dtype_name))
 
     @override
     def did_change(self, input_ir: Expression, output: Any) -> bool:
@@ -260,16 +304,20 @@ def evaluate_expression_with_numpy(
 
     Returns:
         The evaluated value: a NumPy array when any bound variable is
-        array-valued, otherwise a NumPy or Python scalar. Result dtype
-        follows NumPy's type-promotion rules; declared result sorts are
-        not enforced.
+        array-valued, otherwise a NumPy or Python scalar. A native call's
+        result is cast to the dtype of its declared result sort (so
+        ``floor``/``round``/``ceil`` yield integers); every other node's
+        dtype follows NumPy's type-promotion rules. Floating-point domain
+        conditions (``sqrt(-1)``, ``log(0)``, division by zero) follow
+        NumPy and yield ``nan``/``inf`` rather than raising -- unlike
+        ``evaluate_expression``, whose scalar native implementations raise.
 
     Raises:
         ImportError: If NumPy is not installed. Raised directly, before
             any evaluation, with guidance to install the ``numpy`` extra.
-        PassExecutionError: For every domain failure, with the underlying
-            typed error attached as ``__cause__`` (matching the sibling
-            expression passes). The underlying errors are:
+        PassExecutionError: Wraps each domain failure below, with the
+            underlying typed error attached as ``__cause__`` (matching the
+            sibling expression passes). The underlying errors are:
 
             - :class:`UnboundVariableError`: a free identifier is neither
               bound in ``environment`` nor a registered native constant.
