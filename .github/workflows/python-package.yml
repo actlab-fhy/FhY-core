@@ -1,3 +1,10 @@
+# Install dependencies, lint, type-check, and test across Python versions/OSes.
+# Driven by uv (env/deps) and nox (sessions). See noxfile.py.
+#
+# The config job selects a LEAN matrix (ubuntu x py3.10/3.14) for everyday dev
+# PRs and a FULL matrix (3 OSes x 5 Pythons) for release gates (-> main), main
+# pushes, and manual dispatch. ci-ok aggregates the required jobs into one check.
+
 name: FhY-core CI
 
 on:
@@ -6,7 +13,6 @@ on:
     paths-ignore: [ "**/*.md", "docs/**" ]
   pull_request:
     branches: [ "main", "dev" ]
-    paths-ignore: [ "**/*.md", "docs/**" ]
   workflow_dispatch:
 
 concurrency:
@@ -20,8 +26,6 @@ jobs:
   style:
     runs-on: "ubuntu-latest"
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -94,8 +98,6 @@ jobs:
     runs-on: "ubuntu-latest"
     needs: [tests]
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
