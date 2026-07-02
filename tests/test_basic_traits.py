@@ -15,7 +15,6 @@ from typing import Annotated, ClassVar, Final
 import pytest
 from immutabledict import immutabledict
 
-from fhy_core import DATA_DOMAIN
 from fhy_core.diagnostic import (
     Diagnostic,
     DiagnosticLevel,
@@ -47,6 +46,7 @@ from fhy_core.traits import (
 )
 from fhy_core.utils import Self
 from fhy_core.utils.override import override
+from fhy_core.value_domain import DATA_DOMAIN
 
 from .conftest import mock_identifier
 
