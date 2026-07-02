@@ -35,12 +35,15 @@ dependencies = [
    "typing_extensions; python_version < '3.12'",
 ]
 
+[project.optional-dependencies]
+numpy = ["numpy"]
+
 [project.urls]
 Homepage = "https://github.com/actlab-fhy/FhY-core"
 Issues = "https://github.com/actlab-fhy/FhY-core/issues"
 
 [dependency-groups]
-test = ["pytest", "coverage[toml]", "pytest-xdist"]
+test = ["pytest", "coverage[toml]", "pytest-xdist", "numpy"]
 property = ["hypothesis", {include-group = "test"}]
 lint = ["ruff"]
 type = ["ty", "mypy", {include-group = "test"}]

@@ -26,6 +26,7 @@ from fhy_core.types import (
     promote_type_qualifiers,
     resolve_literal_core_data_type,
 )
+from fhy_core.types.core import _FLOAT_COMPLEX_DATA_TYPES, _INTEGER_DATA_TYPES
 
 from .conftest import mock_identifier
 
@@ -236,6 +237,20 @@ def test_is_weak_core_data_type(
 # =============================================================================
 # Promotion
 # =============================================================================
+
+
+def test_core_data_type_partitions_cover_every_member() -> None:
+    """Test the integer, float/complex, and BOOL partitions cover CoreDataType.
+
+    ``promote_core_data_types`` treats each member as integer-partitioned,
+    float/complex-partitioned, or BOOL (its own side branch). A new
+    ``CoreDataType`` member added without slotting it into a partition would
+    otherwise surface only as a downstream promotion gap; this makes the
+    drift a deterministic failure.
+    """
+    covered = _INTEGER_DATA_TYPES | _FLOAT_COMPLEX_DATA_TYPES | {CoreDataType.BOOL}
+
+    assert covered == frozenset(CoreDataType)
 
 
 @pytest.mark.parametrize(

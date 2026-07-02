@@ -456,22 +456,21 @@ def test_evaluate_does_not_mutate_input_expression(
 # =============================================================================
 
 
-def test_evaluate_coerces_string_form_float_literal_to_float(
+def test_evaluate_rejects_string_form_float_literal_argument(
     function_registry_snapshot: None,
 ) -> None:
-    """Test ``LiteralExpression("3.14")`` is coerced to a float for native calls.
+    """Test a native call with a float-grammar string argument is refused.
 
-    Numeric ``LiteralExpression`` values may be stored as ``str`` to
-    preserve exact decimal form. The evaluator's coercion helper converts
-    the string to a numeric value before invoking the native implementation.
+    A float-grammar string ``LiteralExpression`` preserves an exact
+    decimal value; collapsing it to a binary float for a native call
+    would lose that precision, so evaluation raises instead.
     """
     register_real_unary_native("test_eval_str_coerce", math.sqrt)
 
     expression = CallExpression("test_eval_str_coerce", (LiteralExpression("4.0"),))
-    result = evaluate_expression(expression)
 
-    assert isinstance(result, LiteralExpression)
-    assert result.value == 2.0
+    with pytest.raises(PassExecutionError, match="StringLiteralPrecisionError"):
+        evaluate_expression(expression)
 
 
 def test_evaluate_coerces_string_form_integer_literal_to_int(

@@ -84,8 +84,9 @@ class Analysis(ABC, Generic[_IRType, _AnalysisResultT]):
 
         with Analysis._analysis_name_lock:
             if "_analysis_name" not in cls.__dict__ or cls._analysis_name is None:
-                cls._analysis_name = Identifier(f"{cls.__module__}.{cls.__qualname__}")
-            assert cls._analysis_name is not None
+                analysis_name = Identifier(f"{cls.__module__}.{cls.__qualname__}")
+                cls._analysis_name = analysis_name
+                return analysis_name
             return cls._analysis_name
 
     @abstractmethod
