@@ -35,7 +35,7 @@ from fhy_core.pass_infrastructure import (
     register_verification,
     run_verification,
 )
-from fhy_core.traits import FrozenMixin, VerifiableMixin, Visitable
+from fhy_core.traits import FrozenMixin, VerifiableMixin, Visitable, VisitableMixin
 from fhy_core.utils.override import override
 
 # ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ from fhy_core.utils.override import override
 
 
 @dataclass
-class _BoxIR(FrozenMixin, Visitable):
+class _BoxIR(FrozenMixin, VisitableMixin):
     """Base IR class used by per-test fixtures.
 
     Each test's fixture produces a fresh subclass for registry isolation;
@@ -588,7 +588,7 @@ def test_verifiable_subclass_with_override_can_be_instantiated_without_passes() 
 def test_verifiable_subclass_with_registered_passes_can_be_instantiated() -> None:
     """Test that registering passes makes a subclass instantiable."""
 
-    class _NeedsRegisteredPass(VerifiableMixin, Visitable):
+    class _NeedsRegisteredPass(VerifiableMixin, VisitableMixin):
         def __init__(self, value: int) -> None:
             self.value = value
 
@@ -611,7 +611,7 @@ def test_verifiable_subclass_with_registered_passes_can_be_instantiated() -> Non
 def test_verifiable_subclass_becomes_instantiable_after_late_registration() -> None:
     """Test that a failed instantiation can be retried after registration."""
 
-    class _Late(VerifiableMixin, Visitable):
+    class _Late(VerifiableMixin, VisitableMixin):
         def __init__(self, value: int) -> None:
             self.value = value
 
@@ -640,7 +640,7 @@ def test_verifiable_subclass_caches_positive_instantiation_result(
 ) -> None:
     """Test that a class flagged ``ok`` is not re-checked on later instantiations."""
 
-    class _Cached(VerifiableMixin, Visitable):
+    class _Cached(VerifiableMixin, VisitableMixin):
         def __init__(self, value: int) -> None:
             self.value = value
 
@@ -685,7 +685,7 @@ def test_verifiable_mixin_itself_cannot_be_instantiated() -> None:
 def test_verify_default_returns_report_from_registered_passes() -> None:
     """Test that verify returns the report produced by registered passes."""
 
-    class _IR(VerifiableMixin, Visitable):
+    class _IR(VerifiableMixin, VisitableMixin):
         def __init__(self, value: int) -> None:
             self.value = value
 
@@ -708,7 +708,7 @@ def test_verify_default_returns_report_from_registered_passes() -> None:
 def test_verify_default_aggregates_multiple_registered_passes() -> None:
     """Test that diagnostics from multiple passes aggregate in registration order."""
 
-    class _IR(VerifiableMixin, Visitable):
+    class _IR(VerifiableMixin, VisitableMixin):
         def __init__(self, value: int) -> None:
             self.value = value
 
@@ -740,7 +740,7 @@ def test_verify_override_takes_precedence_over_registry() -> None:
     """Test that a subclass override of verify bypasses the registry."""
     sentinel_report: ValidationReport[object] = ValidationReport()
 
-    class _IR(VerifiableMixin, Visitable):
+    class _IR(VerifiableMixin, VisitableMixin):
         def __init__(self, value: int) -> None:
             self.value = value
 
@@ -769,7 +769,7 @@ def test_verify_override_takes_precedence_over_registry() -> None:
 def test_verify_default_report_can_be_raised_as_validation_failed_error() -> None:
     """Test that callers can convert the returned report to ValidationFailedError."""
 
-    class _IR(VerifiableMixin, Visitable):
+    class _IR(VerifiableMixin, VisitableMixin):
         def __init__(self, value: int) -> None:
             self.value = value
 
@@ -1195,7 +1195,7 @@ def test_verification_report_format_uses_validation_report_protocol(
 def test_verify_report_supports_partial_equal_like_other_reports() -> None:
     """Test that the report returned by verify still satisfies the report contract."""
 
-    class _IR(VerifiableMixin, Visitable):
+    class _IR(VerifiableMixin, VisitableMixin):
         def __init__(self, value: int) -> None:
             self.value = value
 
@@ -1242,7 +1242,7 @@ def test_verify_override_inherited_through_intermediate_class_satisfies_check() 
 def test_verifiable_subclass_with_passes_from_base_satisfies_check() -> None:
     """Test that passes registered on a base class let a subclass instantiate."""
 
-    class _BaseIR(VerifiableMixin, Visitable):
+    class _BaseIR(VerifiableMixin, VisitableMixin):
         def __init__(self, value: int) -> None:
             self.value = value
 

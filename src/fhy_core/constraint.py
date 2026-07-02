@@ -3,28 +3,29 @@
 This module provides the three constraint kinds used by the parameter
 infrastructure in ``fhy_core.param.*``:
 
-- ``EquationConstraint`` -- a Boolean expression that must hold when
-  the variable is bound to a candidate value.
-- ``InSetConstraint`` -- the variable must take a value from a
-  permitted set.
-- ``NotInSetConstraint`` -- the variable must NOT take a value from a
+- ``EquationConstraint``: a Boolean expression that must hold when the
+  variable is bound to a candidate value.
+- ``InSetConstraint``: the variable must take a value from a permitted
+  set.
+- ``NotInSetConstraint``: the variable must NOT take a value from a
   forbidden set.
 
-Every constraint is keyed by a single ``Identifier``, is frozen on
-construction via ``FrozenMixin``'s ``freeze_on_init`` mechanism, is
-serializable through ``WrappedFamilySerializable``, and supports
-structural-equivalence comparison via a singledispatch table.
+``Constraint`` is a sum-type family base. Each concrete constraint is a
+``@register_serializable @dataclass(frozen=True, eq=False)`` leaf whose
+wrapped serialization and structural equivalence are derived from its
+fields rather than hand-written. The base holds no shared state; every
+constraint keeps its own ``variable`` field. Instances are frozen on
+construction via ``FrozenMixin``.
 
-Each constraint is callable as a predicate -- ``constraint(value)`` is
-the same as ``constraint.is_satisfied(value)`` -- and can be converted
-to an equivalent ``Expression`` over its variable through
+Each constraint is callable as a predicate: ``constraint(value)`` is the
+same as ``constraint.is_satisfied(value)``. Each can be converted to an
+equivalent ``Expression`` over its variable through
 ``Constraint.convert_to_expression``.
 
 Set-constraint members are stored with type-strict equality: ``int``,
-``float``, and ``bool`` are not interchangeable, including inside
-nested ``tuple`` and ``frozenset`` members. The wrapping that
-implements this is private; the public API accepts and returns raw
-values.
+``float``, and ``bool`` are not interchangeable, including inside nested
+``tuple`` and ``frozenset`` members. The wrapping that implements this is
+private; the public API accepts and returns raw values.
 
 Set-constraint serialization is deterministic: members are emitted in
 ``repr``-sorted order, and the corresponding ``convert_to_expression``
@@ -43,24 +44,39 @@ __all__ = [
 ]
 
 from abc import ABC, abstractmethod
-from collections.abc import Collection, Hashable
-from functools import singledispatch
-from typing import Any, TypeAlias, TypedDict, TypeGuard
+from collections.abc import Collection, Hashable, Iterator
+from dataclasses import dataclass, field
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Protocol,
+    TypeAlias,
+    TypedDict,
+    TypeGuard,
+    TypeVar,
+    cast,
+    runtime_checkable,
+)
 
 from fhy_core.error import register_error
 from fhy_core.logger import get_logger
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
+    FieldCodec,
     Serializable,
     SerializedDict,
+    SerializedValue,
     WrappedFamilySerializable,
     deserialize_registry_wrapped_value,
     is_serialized_dict,
+    is_serialized_value,
+    make_field_codec,
     register_serializable,
     serialize_registry_wrapped_value,
 )
-from fhy_core.traits import FrozenMixin, StructuralEquivalence
+from fhy_core.traits import DerivedEquivalenceMixin, FrozenMixin
+from fhy_core.traits.derived_equivalence import compared_as_reference, compared_as_value
 from fhy_core.utils import format_comma_separated_list
 
 from .expression import (
@@ -99,6 +115,28 @@ Members are stored with type-strict equality: ``int``, ``float``, and
 ``bool`` are not interchangeable, even at the leaves of nested
 containers.
 """
+
+_MemberT_co = TypeVar("_MemberT_co", covariant=True)
+
+
+@runtime_checkable
+class MemberCollection(Protocol[_MemberT_co]):
+    """Read-only collection input for a set constraint's members.
+
+    A structural, immutable-by-contract collection: any ``set``, ``list``,
+    ``tuple``, or ``frozenset`` of members satisfies it. Used as the
+    constructor-input type for the set constraints so callers can pass any of
+    those literals while the stored field is a normalized
+    ``frozenset[_TypedMember]``. The collection is only iterated during
+    construction; the constraint never mutates or retains the caller's
+    collection.
+    """
+
+    def __iter__(self) -> Iterator[_MemberT_co]: ...
+
+    def __len__(self) -> int: ...
+
+    def __contains__(self, item: object) -> bool: ...
 
 
 def _is_valid_constraint_primitive(value: Any) -> TypeGuard[_ConstraintPrimitive]:
@@ -141,12 +179,9 @@ class _TypedMember(FrozenMixin):
     ensures nested ``tuple`` and ``frozenset`` containers preserve the
     same type-strict semantics for their elements.
 
-    The stored ``_value`` is typed ``Any`` because the wrap stores both
-    raw primitives and nested containers whose elements are themselves
-    ``_TypedMember`` instances (so the static type for nested containers
-    is ``tuple[_TypedMember, ...]`` / ``frozenset[_TypedMember]``, not
-    ``tuple[ConstraintMember, ...]``). Callers should always go through
-    ``_unwrap_member`` rather than reading ``value`` directly.
+    Callers should always go through ``_unwrap_member`` rather than
+    reading ``value`` directly: a wrapped container stores ``_TypedMember``
+    elements, not raw members.
     """
 
     __slots__ = ("_value",)
@@ -204,10 +239,6 @@ def _normalize_constraint_member_collection(
 ) -> frozenset[_TypedMember]:
     """Validate, wrap, and freeze a collection of constraint members.
 
-    Validation, wrapping, and hashing all happen in a single pass over
-    ``values`` so a one-shot iterable would still produce the right
-    result even though the parameter type is ``Collection``.
-
     Args:
         values: Iterable of raw constraint members.
 
@@ -235,15 +266,11 @@ def _normalize_constraint_member_collection(
 
 
 def _lift_member_to_literal_expression(value: ConstraintMember) -> LiteralExpression:
-    """Lifts a constraint member to a ``LiteralExpression``.
+    """Lift a constraint member to a ``LiteralExpression``.
 
     Raises:
-        ConstraintError: If the member is not a ``LiteralType``, if it
-            is a ``str`` (constraint membership is type-strict, but
-            ``LiteralExpression`` equivalence canonicalizes ``"1"`` to
-            int ``1`` and ``"1.5"`` to a ``Decimal``, so the converted
-            expression would not match the constraint's membership
-            semantics), or if ``LiteralExpression`` refuses the value.
+        ConstraintError: If the member is not a ``LiteralType``, if it is
+            a ``str``, or if ``LiteralExpression`` refuses the value.
 
     """
     if not isinstance(value, LiteralType):
@@ -251,6 +278,10 @@ def _lift_member_to_literal_expression(value: ConstraintMember) -> LiteralExpres
             f"Conversion of type {type(value).__name__} to an expression is "
             "not supported."
         )
+    # Strings are rejected: constraint membership is type-strict, but
+    # LiteralExpression equivalence canonicalizes "1" to int 1 and "1.5" to a
+    # Decimal, so the converted expression would not match the membership
+    # semantics.
     if isinstance(value, str):
         raise ConstraintError(
             f"Member {value!r} is a string; constraint membership uses "
@@ -284,46 +315,93 @@ def _deserialize_constraint_member(
     return member
 
 
+class _MemberSetData(TypedDict):
+    members: list[SerializedDict]
+
+
+def _encode_member_set(members: frozenset[_TypedMember]) -> SerializedValue:
+    """Encode a wrapped-member set as a ``repr``-sorted list of wrapped dicts."""
+    return sorted(
+        [_serialize_constraint_member(_unwrap_member(member)) for member in members],
+        key=repr,
+    )
+
+
+def _decode_member_set(field_name: str, data: Any) -> list[ConstraintMember]:
+    """Decode a list of wrapped-member dicts into raw constraint members.
+
+    Raises:
+        DeserializationDictStructureError: If ``data`` is not a list of
+            wrapped member dicts.
+        DeserializationValueError: If a member dict is individually malformed
+            or fails validation.
+
+    """
+    if not isinstance(data, list) or not all(
+        is_serialized_dict(value) for value in data
+    ):
+        raise DeserializationDictStructureError(
+            Constraint,
+            _MemberSetData.__annotations__,
+            {field_name: data} if is_serialized_value(data) else {},
+        )
+    return [_deserialize_constraint_member(field_name, value) for value in data]
+
+
+def _make_member_set_codec(field_name: str) -> FieldCodec:
+    """Build a per-field codec for a set constraint's wrapped-member set.
+
+    Encoding emits a ``repr``-sorted list of registry-wrapped dicts; decoding
+    validates and unwraps the list to raw members for the constructor.
+    """
+
+    def _decode(data: Any) -> list[ConstraintMember]:
+        return _decode_member_set(field_name, data)
+
+    return make_field_codec(_encode_member_set, _decode)
+
+
+_VALID_VALUES_CODEC: FieldCodec = _make_member_set_codec("valid_values")
+_INVALID_VALUES_CODEC: FieldCodec = _make_member_set_codec("invalid_values")
+
+
 class Constraint(
     WrappedFamilySerializable,
     FrozenMixin,
-    StructuralEquivalence,
+    DerivedEquivalenceMixin,
     ABC,
 ):
     """A named-variable predicate.
 
     Subclasses model the three concrete constraint kinds in this module
     (``EquationConstraint``, ``InSetConstraint``, ``NotInSetConstraint``).
-    Instances are frozen at the end of construction; subsequent
-    attribute mutation raises ``FrozenMutationError``. Instances are
-    callable; ``constraint(value)`` is an alias for
-    ``constraint.is_satisfied(value)``.
+    Each concrete constraint is a ``@register_serializable @dataclass(
+    frozen=True, eq=False)`` leaf of this family; serialization and
+    structural equivalence are derived from its fields. The base holds no
+    shared state; each leaf provides its own ``variable`` field.
+    Instances are frozen at the end of construction; subsequent attribute
+    mutation raises ``FrozenMutationError``. Instances are callable;
+    ``constraint(value)`` is an alias for ``constraint.is_satisfied(value)``.
 
     Subclassing contract:
+        - Declare a ``@dataclass(frozen=True, eq=False)`` with a
+          ``variable: Identifier`` field tagged
+          ``compared_as_reference()`` plus the kind's own fields.
         - Override ``is_satisfied`` to define the predicate.
         - Override ``convert_to_expression`` to produce an equivalent
           ``Expression`` over the variable.
-        - Override ``serialize_data_to_dict`` and
-          ``deserialize_data_from_dict`` to enable serialization.
         - Override ``__repr__`` and ``__str__`` so the textual form
           identifies the kind and the variable.
-        - Register a handler with
-          ``_is_constraint_structurally_equivalent.register`` so the
-          singledispatch table knows how to compare instances of the
-          new kind. Unregistered subclasses raise
-          ``NotImplementedError`` on structural-equivalence comparison.
 
     """
 
-    _variable: Identifier
-
-    def __init__(self, constrained_variable: Identifier) -> None:
-        self._variable = constrained_variable
-
-    @property
-    def variable(self) -> Identifier:
-        """Return the constraint's variable identifier."""
-        return self._variable
+    if TYPE_CHECKING:
+        # Every concrete constraint declares a ``variable`` dataclass field;
+        # this declaration (no stored state on the base) lets callers that
+        # iterate over ``Constraint`` values read ``.variable`` with a known
+        # type. Guarded so it does not become a class attribute that would
+        # shadow the leaves' dataclass fields at runtime.
+        variable: Identifier
 
     def __call__(self, value: Any) -> bool:
         """Return whether the value satisfies the constraint."""
@@ -357,10 +435,6 @@ class Constraint(
 
         """
 
-    @override
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return _is_constraint_structurally_equivalent(self, other)
-
     @abstractmethod
     @override
     def __repr__(self) -> str: ...
@@ -370,23 +444,8 @@ class Constraint(
     def __str__(self) -> str: ...
 
 
-class _EquationConstraintData(TypedDict):
-    variable: SerializedDict
-    expression: SerializedDict
-
-
-def _is_valid_equation_constraint_data(
-    data: SerializedDict,
-) -> TypeGuard[_EquationConstraintData]:
-    return (
-        "variable" in data
-        and is_serialized_dict(data["variable"])
-        and "expression" in data
-        and is_serialized_dict(data["expression"])
-    )
-
-
 @register_serializable(type_id="equation_constraint")
+@dataclass(frozen=True, eq=False)
 class EquationConstraint(Constraint):
     """Boolean-expression predicate over the variable.
 
@@ -399,13 +458,13 @@ class EquationConstraint(Constraint):
 
     Indeterminate case:
         If the simplifier cannot reduce the substituted expression to a
-        ``LiteralExpression`` at all -- for example because the
-        expression references additional free identifiers, or because
-        the simplifier just cannot decide -- ``is_satisfied`` logs a
-        ``WARNING`` through the module logger and returns ``False``.
-        Callers that need to distinguish "constraint rejects this
-        value" from "constraint cannot decide" should configure log
-        capture or escalate the warning channel.
+        ``LiteralExpression`` at all (for example because the expression
+        references additional free identifiers, or because the simplifier
+        just cannot decide), ``is_satisfied`` logs a ``WARNING`` through
+        the module logger and returns ``False``. Callers that need to
+        distinguish "constraint rejects this value" from "constraint
+        cannot decide" should configure log capture or escalate the
+        warning channel.
 
         A reduction to a literal whose value is not ``bool`` (for
         example ``LiteralExpression(1)``) also returns ``False`` but
@@ -414,19 +473,14 @@ class EquationConstraint(Constraint):
 
     """
 
-    _expression: Expression
-
-    def __init__(
-        self, constrained_variable: Identifier, expression: Expression
-    ) -> None:
-        super().__init__(constrained_variable)
-        self._expression = expression
+    variable: Identifier = field(metadata=compared_as_reference())
+    expression: Expression
 
     @override
     def is_satisfied(self, value: Expression | LiteralType) -> bool:
         if isinstance(value, (str, float, int, bool)):
             value = LiteralExpression(value)
-        result = simplify_expression(self._expression, {self.variable: value})
+        result = simplify_expression(self.expression, {self.variable: value})
         if isinstance(result, LiteralExpression) and isinstance(result.value, bool):
             return result.value
         if not isinstance(result, LiteralExpression):
@@ -440,34 +494,15 @@ class EquationConstraint(Constraint):
 
     @override
     def convert_to_expression(self) -> Expression:
-        return self._expression
-
-    @override
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {
-            "variable": self.variable.serialize_to_dict(),
-            "expression": self._expression.serialize_to_dict(),
-        }
-
-    @classmethod
-    @override
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> "EquationConstraint":
-        if not _is_valid_equation_constraint_data(data):
-            raise DeserializationDictStructureError(
-                cls, _EquationConstraintData.__annotations__, data
-            )
-        return cls(
-            Identifier.deserialize_from_dict(data["variable"]),
-            Expression.deserialize_from_dict(data["expression"]),
-        )
+        return self.expression
 
     @override
     def __repr__(self) -> str:
-        return f"EquationConstraint({self.variable!r}, expression={self._expression!r})"
+        return f"EquationConstraint({self.variable!r}, expression={self.expression!r})"
 
     @override
     def __str__(self) -> str:
-        return pformat_expression(self._expression)
+        return pformat_expression(self.expression)
 
 
 def _render_member_set(members: frozenset[_TypedMember]) -> str:
@@ -484,31 +519,8 @@ def _render_member_set_str(members: frozenset[_TypedMember]) -> str:
     return f"{{{rendered_members}}}"
 
 
-def _serialize_member_set(members: frozenset[_TypedMember]) -> list[SerializedDict]:
-    return sorted(
-        [_serialize_constraint_member(_unwrap_member(member)) for member in members],
-        key=repr,
-    )
-
-
-class _InSetConstraintData(TypedDict):
-    variable: SerializedDict
-    valid_values: list[SerializedDict]
-
-
-def _is_valid_in_set_constraint_data(
-    data: SerializedDict,
-) -> TypeGuard[_InSetConstraintData]:
-    return (
-        "variable" in data
-        and is_serialized_dict(data["variable"])
-        and "valid_values" in data
-        and isinstance(data["valid_values"], list)
-        and all(is_serialized_dict(value) for value in data["valid_values"])
-    )
-
-
 @register_serializable(type_id="in_set_constraint")
+@dataclass(frozen=True, eq=False)
 class InSetConstraint(Constraint):
     """Permitted-set membership predicate.
 
@@ -525,15 +537,30 @@ class InSetConstraint(Constraint):
 
     """
 
-    _valid_values: frozenset[_TypedMember]
+    variable: Identifier = field(metadata=compared_as_reference())
+    valid_values: MemberCollection[ConstraintMember] = field(
+        metadata={
+            **compared_as_value(),
+            "serialize_codec": _VALID_VALUES_CODEC,
+        },
+    )
 
-    def __init__(
-        self,
-        constrained_variable: Identifier,
-        valid_values: Collection[ConstraintMember],
-    ) -> None:
-        super().__init__(constrained_variable)
-        self._valid_values = _normalize_constraint_member_collection(valid_values)
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "valid_values",
+            _normalize_constraint_member_collection(self.valid_values),
+        )
+
+    @property
+    def _members(self) -> frozenset[_TypedMember]:
+        """Return the normalized, type-strict member set stored after init."""
+        return cast(frozenset[_TypedMember], self.valid_values)
+
+    @classmethod
+    @override
+    def construct_from_fields(cls, fields: dict[str, Any]) -> "InSetConstraint":
+        return cls(fields["variable"], fields["valid_values"])
 
     @override
     def is_satisfied(self, value: Any) -> bool:
@@ -543,13 +570,14 @@ class InSetConstraint(Constraint):
             TypeError: If ``value`` is not hashable.
 
         """
-        return _wrap_member(value) in self._valid_values
+        return _wrap_member(value) in self._members
 
     @override
     def convert_to_expression(self) -> Expression:
-        if len(self._valid_values) == 0:
+        members = self._members
+        if len(members) == 0:
             return LiteralExpression(False)
-        sorted_values = sorted(self._valid_values, key=repr)
+        sorted_values = sorted(members, key=repr)
         if len(sorted_values) == 1:
             return self._build_leaf_expression(sorted_values[0])
         return Expression.logical_or(
@@ -561,55 +589,19 @@ class InSetConstraint(Constraint):
         return make_binary_expression(BinaryOperation.EQUAL, self.variable, literal)
 
     @override
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {
-            "variable": self.variable.serialize_to_dict(),
-            "valid_values": _serialize_member_set(self._valid_values),
-        }
-
-    @classmethod
-    @override
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> "InSetConstraint":
-        if not _is_valid_in_set_constraint_data(data):
-            raise DeserializationDictStructureError(
-                cls, _InSetConstraintData.__annotations__, data
-            )
-        members = [
-            _deserialize_constraint_member("valid_values", value)
-            for value in data["valid_values"]
-        ]
-        return cls(Identifier.deserialize_from_dict(data["variable"]), members)
-
-    @override
     def __repr__(self) -> str:
         return (
             f"InSetConstraint({self.variable!r}, "
-            f"values={_render_member_set(self._valid_values)})"
+            f"values={_render_member_set(self._members)})"
         )
 
     @override
     def __str__(self) -> str:
-        return f"{self.variable} in {_render_member_set_str(self._valid_values)}"
-
-
-class _NotInSetConstraintData(TypedDict):
-    variable: SerializedDict
-    invalid_values: list[SerializedDict]
-
-
-def _is_valid_not_in_set_constraint_data(
-    data: SerializedDict,
-) -> TypeGuard[_NotInSetConstraintData]:
-    return (
-        "variable" in data
-        and is_serialized_dict(data["variable"])
-        and "invalid_values" in data
-        and isinstance(data["invalid_values"], list)
-        and all(is_serialized_dict(value) for value in data["invalid_values"])
-    )
+        return f"{self.variable} in {_render_member_set_str(self._members)}"
 
 
 @register_serializable(type_id="not_in_set_constraint")
+@dataclass(frozen=True, eq=False)
 class NotInSetConstraint(Constraint):
     """Forbidden-set membership predicate.
 
@@ -623,15 +615,30 @@ class NotInSetConstraint(Constraint):
 
     """
 
-    _invalid_values: frozenset[_TypedMember]
+    variable: Identifier = field(metadata=compared_as_reference())
+    invalid_values: MemberCollection[ConstraintMember] = field(
+        metadata={
+            **compared_as_value(),
+            "serialize_codec": _INVALID_VALUES_CODEC,
+        },
+    )
 
-    def __init__(
-        self,
-        constrained_variable: Identifier,
-        invalid_values: Collection[ConstraintMember],
-    ) -> None:
-        super().__init__(constrained_variable)
-        self._invalid_values = _normalize_constraint_member_collection(invalid_values)
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "invalid_values",
+            _normalize_constraint_member_collection(self.invalid_values),
+        )
+
+    @property
+    def _members(self) -> frozenset[_TypedMember]:
+        """Return the normalized, type-strict member set stored after init."""
+        return cast(frozenset[_TypedMember], self.invalid_values)
+
+    @classmethod
+    @override
+    def construct_from_fields(cls, fields: dict[str, Any]) -> "NotInSetConstraint":
+        return cls(fields["variable"], fields["invalid_values"])
 
     @override
     def is_satisfied(self, value: Any) -> bool:
@@ -641,13 +648,14 @@ class NotInSetConstraint(Constraint):
             TypeError: If ``value`` is not hashable.
 
         """
-        return _wrap_member(value) not in self._invalid_values
+        return _wrap_member(value) not in self._members
 
     @override
     def convert_to_expression(self) -> Expression:
-        if len(self._invalid_values) == 0:
+        members = self._members
+        if len(members) == 0:
             return LiteralExpression(True)
-        sorted_values = sorted(self._invalid_values, key=repr)
+        sorted_values = sorted(members, key=repr)
         if len(sorted_values) == 1:
             return self._build_leaf_expression(sorted_values[0])
         return Expression.logical_and(
@@ -659,68 +667,12 @@ class NotInSetConstraint(Constraint):
         return make_binary_expression(BinaryOperation.NOT_EQUAL, self.variable, literal)
 
     @override
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {
-            "variable": self.variable.serialize_to_dict(),
-            "invalid_values": _serialize_member_set(self._invalid_values),
-        }
-
-    @classmethod
-    @override
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> "NotInSetConstraint":
-        if not _is_valid_not_in_set_constraint_data(data):
-            raise DeserializationDictStructureError(
-                cls, _NotInSetConstraintData.__annotations__, data
-            )
-        members = [
-            _deserialize_constraint_member("invalid_values", value)
-            for value in data["invalid_values"]
-        ]
-        return cls(Identifier.deserialize_from_dict(data["variable"]), members)
-
-    @override
     def __repr__(self) -> str:
         return (
             f"NotInSetConstraint({self.variable!r}, "
-            f"values={_render_member_set(self._invalid_values)})"
+            f"values={_render_member_set(self._members)})"
         )
 
     @override
     def __str__(self) -> str:
-        return f"{self.variable} not in {_render_member_set_str(self._invalid_values)}"
-
-
-@singledispatch
-def _is_constraint_structurally_equivalent(
-    constraint: Constraint, other: object
-) -> bool:
-    raise NotImplementedError(
-        f"is_structurally_equivalent is not registered for {type(constraint).__name__}."
-    )
-
-
-@_is_constraint_structurally_equivalent.register
-def _(constraint: EquationConstraint, other: object) -> bool:
-    return (
-        isinstance(other, EquationConstraint)
-        and constraint.variable == other.variable
-        and constraint._expression.is_structurally_equivalent(other._expression)
-    )
-
-
-@_is_constraint_structurally_equivalent.register
-def _(constraint: InSetConstraint, other: object) -> bool:
-    return (
-        isinstance(other, InSetConstraint)
-        and constraint.variable == other.variable
-        and constraint._valid_values == other._valid_values
-    )
-
-
-@_is_constraint_structurally_equivalent.register
-def _(constraint: NotInSetConstraint, other: object) -> bool:
-    return (
-        isinstance(other, NotInSetConstraint)
-        and constraint.variable == other.variable
-        and constraint._invalid_values == other._invalid_values
-    )
+        return f"{self.variable} not in {_render_member_set_str(self._members)}"

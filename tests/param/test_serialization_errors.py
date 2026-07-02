@@ -1,192 +1,111 @@
 """Tests for structural rejection of malformed param serialization payloads.
 
-Each public ``deserialize_from_dict`` entry point validates the structural
-shape of its input through a private predicate (`is_valid_param_data`,
-`_is_valid_ordinal_categorical_perm_param_data`). Replacing any one of the
-short-circuited ``and`` operators in those predicates with ``or`` weakens the
-guard. Each test below feeds a payload with exactly one structural fault and
-asserts the shape-level rejection surfaces as
-`DeserializationDictStructureError`.
+Under the schema-derived format a parameter serializes as
+``{"domain": {...}, "variable": {...}, "constraints": [...]}`` where ``domain``
+is a wrapped family envelope. The derived ``deserialize_from_dict`` validates the
+exact top-level key set and each field's coarse structure before decoding. Each
+test below feeds a payload with exactly one structural fault and asserts the
+shape-level rejection surfaces as `DeserializationDictStructureError`.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 
 from fhy_core.identifier import Identifier
-from fhy_core.param import (
-    CategoricalParam,
-    IntParam,
-    OrdinalParam,
-    Param,
-    PermParam,
-    RealParam,
-)
+from fhy_core.param import Param, create_integer_param, create_ordinal_param
 from fhy_core.serialization import (
     DeserializationDictStructureError,
-    serialize_registry_wrapped_value,
+    DeserializationValueError,
 )
 
-
-def _wrap(type_id: str, inner: dict[str, Any]) -> dict[str, Any]:
-    """Wrap an inner ``__data__`` payload with the given ``__type__`` envelope."""
-    return {"__type__": type_id, "__data__": inner}
+_PARAM_STRUCTURE_ERROR_MATCH = 'deserializing to "Param"'
 
 
-@pytest.fixture
-def valid_variable_data() -> dict[str, Any]:
-    return Identifier("x").serialize_to_dict()
+def _valid_param_payload() -> dict[str, Any]:
+    """Return a well-formed derived-format integer-param payload."""
+    return create_integer_param(name=Identifier("x")).serialize_to_dict()
+
+
+def _drop_domain_field(payload: dict[str, Any]) -> None:
+    """Remove the ``domain`` field from a param payload."""
+    del payload["domain"]
+
+
+def _drop_variable_field(payload: dict[str, Any]) -> None:
+    """Remove the ``variable`` field from a param payload."""
+    del payload["variable"]
+
+
+def _drop_constraints_field(payload: dict[str, Any]) -> None:
+    """Remove the ``constraints`` field from a param payload."""
+    del payload["constraints"]
+
+
+def _add_unexpected_field(payload: dict[str, Any]) -> None:
+    """Add an unexpected extra key to a param payload."""
+    payload["unexpected"] = 1
+
+
+def _set_variable_to_non_dict(payload: dict[str, Any]) -> None:
+    """Replace the ``variable`` field with a non-dict value."""
+    payload["variable"] = "not-a-dict"
+
+
+def _set_constraints_to_non_list(payload: dict[str, Any]) -> None:
+    """Replace the ``constraints`` field with a non-list value."""
+    payload["constraints"] = "not-a-list"
+
+
+def _set_domain_to_non_dict(payload: dict[str, Any]) -> None:
+    """Replace the ``domain`` field with a non-dict value."""
+    payload["domain"] = "not-a-dict"
 
 
 # =============================================================================
-# Param data - `is_valid_param_data` rejection paths
+# Top-level param payload - derived structure rejection
 # =============================================================================
 
 
 @pytest.mark.parametrize(
-    "param_class, type_id",
+    "corrupt_payload",
     [
-        pytest.param(RealParam, "real_param", id="real-param"),
-        pytest.param(IntParam, "int_param", id="int-param"),
+        pytest.param(_drop_domain_field, id="missing-domain-field"),
+        pytest.param(_drop_variable_field, id="missing-variable-field"),
+        pytest.param(_drop_constraints_field, id="missing-constraints-field"),
+        pytest.param(_add_unexpected_field, id="unexpected-extra-field"),
+        pytest.param(_set_variable_to_non_dict, id="variable-not-a-dict"),
+        pytest.param(_set_constraints_to_non_list, id="constraints-not-a-list"),
+        pytest.param(_set_domain_to_non_dict, id="domain-not-a-dict"),
     ],
 )
-class TestParamDeserializeRejectsMalformedParamData:
-    """Tests rejecting structurally malformed `Param` payloads."""
+def test_rejects_payload_with_structural_fault(
+    corrupt_payload: Callable[[dict[str, Any]], None],
+) -> None:
+    """Test the deserializer rejects a payload with a single structural fault."""
+    payload = _valid_param_payload()
+    corrupt_payload(payload)
 
-    def test_rejects_payload_missing_variable_field(
-        self, param_class: type[Param[Any]], type_id: str
-    ) -> None:
-        """Test the deserializer rejects payload missing the ``variable`` field."""
-        payload = _wrap(type_id, {"constraints": []})
-        with pytest.raises(DeserializationDictStructureError):
-            param_class.deserialize_from_dict(payload)
-
-    def test_rejects_payload_with_variable_not_serialized_dict(
-        self, param_class: type[Param[Any]], type_id: str
-    ) -> None:
-        """Test the deserializer rejects payload whose ``variable`` is not a dict."""
-        payload = _wrap(type_id, {"variable": "not-a-dict", "constraints": []})
-        with pytest.raises(DeserializationDictStructureError):
-            param_class.deserialize_from_dict(payload)
-
-    def test_rejects_payload_missing_constraints_field(
-        self,
-        param_class: type[Param[Any]],
-        type_id: str,
-        valid_variable_data: dict[str, Any],
-    ) -> None:
-        """Test the deserializer rejects payload missing the ``constraints`` field."""
-        payload = _wrap(type_id, {"variable": valid_variable_data})
-        with pytest.raises(DeserializationDictStructureError):
-            param_class.deserialize_from_dict(payload)
-
-    def test_rejects_payload_with_constraints_not_a_list(
-        self,
-        param_class: type[Param[Any]],
-        type_id: str,
-        valid_variable_data: dict[str, Any],
-    ) -> None:
-        """Test the deserializer rejects payload whose ``constraints`` is not a list."""
-        payload = _wrap(
-            type_id,
-            {"variable": valid_variable_data, "constraints": "not-a-list"},
-        )
-        with pytest.raises(DeserializationDictStructureError):
-            param_class.deserialize_from_dict(payload)
-
-    def test_rejects_payload_with_constraint_entry_not_serialized_dict(
-        self,
-        param_class: type[Param[Any]],
-        type_id: str,
-        valid_variable_data: dict[str, Any],
-    ) -> None:
-        """Test the deserializer rejects a constraint entry that is not a dict."""
-        payload = _wrap(
-            type_id,
-            {"variable": valid_variable_data, "constraints": [42]},
-        )
-        with pytest.raises(DeserializationDictStructureError):
-            param_class.deserialize_from_dict(payload)
+    with pytest.raises(
+        DeserializationDictStructureError, match=_PARAM_STRUCTURE_ERROR_MATCH
+    ):
+        Param.deserialize_from_dict(payload)
 
 
 # =============================================================================
-# Wrapped-leaf params - `_is_valid_ordinal_categorical_perm_param_data` rejection
+# Finite-domain wrapped-leaf value rejection
 # =============================================================================
 
 
-def _build_valid_wrapped_int(value: int) -> dict[str, Any]:
-    return serialize_registry_wrapped_value(value)
+def test_rejects_finite_domain_with_unwrapped_value() -> None:
+    """Test an ordinal payload with an unwrapped (raw) value is rejected.
 
+    The value list under ``domain.__data__.sorted_values`` must be wrapped
+    registry dicts; a bare integer is rejected by the wrapped-leaf codec.
+    """
+    payload: dict[str, Any] = create_ordinal_param([1, 2, 3]).serialize_to_dict()
+    payload["domain"]["__data__"]["sorted_values"] = [1, 2, 3]
 
-@pytest.mark.parametrize(
-    "param_class, type_id, possible_value",
-    [
-        pytest.param(
-            OrdinalParam, "ordinal_param", _build_valid_wrapped_int(1), id="ordinal"
-        ),
-        pytest.param(
-            CategoricalParam,
-            "categorical_param",
-            _build_valid_wrapped_int(1),
-            id="categorical",
-        ),
-        pytest.param(PermParam, "perm_param", _build_valid_wrapped_int(1), id="perm"),
-    ],
-)
-class TestWrappedLeafParamDeserializeRejectsMalformedPayload:
-    """Tests rejecting structurally malformed wrapped-leaf param payloads."""
-
-    def test_rejects_payload_missing_possible_values_field(
-        self,
-        param_class: type[Param[Any]],
-        type_id: str,
-        possible_value: dict[str, Any],
-        valid_variable_data: dict[str, Any],
-    ) -> None:
-        """Test the deserializer rejects payload missing ``possible_values``."""
-        del possible_value  # unused for this case
-        payload = _wrap(type_id, {"variable": valid_variable_data, "constraints": []})
-        with pytest.raises(DeserializationDictStructureError):
-            param_class.deserialize_from_dict(payload)
-
-    def test_rejects_payload_with_possible_values_not_a_list(
-        self,
-        param_class: type[Param[Any]],
-        type_id: str,
-        possible_value: dict[str, Any],
-        valid_variable_data: dict[str, Any],
-    ) -> None:
-        """Test the deserializer rejects ``possible_values`` that is not a list."""
-        del possible_value  # unused for this case
-        payload = _wrap(
-            type_id,
-            {
-                "variable": valid_variable_data,
-                "constraints": [],
-                "possible_values": "not-a-list",
-            },
-        )
-        with pytest.raises(DeserializationDictStructureError):
-            param_class.deserialize_from_dict(payload)
-
-    def test_rejects_payload_failing_inner_param_data_validation(
-        self,
-        param_class: type[Param[Any]],
-        type_id: str,
-        possible_value: dict[str, Any],
-        valid_variable_data: dict[str, Any],
-    ) -> None:
-        """Test the deserializer rejects payload that fails the inner param-data check.
-
-        The payload has a valid ``possible_values`` list but is missing the
-        ``constraints`` field that the inner param-data predicate requires.
-        """
-        payload = _wrap(
-            type_id,
-            {
-                "variable": valid_variable_data,
-                "possible_values": [possible_value],
-            },
-        )
-        with pytest.raises(DeserializationDictStructureError):
-            param_class.deserialize_from_dict(payload)
+    with pytest.raises(DeserializationValueError, match="sorted_values"):
+        Param.deserialize_from_dict(payload)

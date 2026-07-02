@@ -1,11 +1,17 @@
-"""Trait for IR nodes that can be visited by passes."""
+"""Trait for IR nodes that can be visited by passes.
+
+``Visitable`` is the structural contract (a :class:`typing.Protocol`).
+``VisitableMixin`` carries the default implementation that IR node classes
+inherit.
+"""
 
 __all__ = ["Visitable", "VisitableMixin"]
 
 import re
-from abc import ABC
 from collections.abc import Sequence
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
+
+from fhy_core.utils.override import override
 
 _CAMEL_SPLIT_BEFORE_UPPER_LOWER = re.compile(r"(.)([A-Z][a-z]+)")
 _CAMEL_SPLIT_AT_LOWER_THEN_UPPER = re.compile(r"([a-z0-9])([A-Z])")
@@ -27,35 +33,36 @@ class _SupportsVisit(Protocol):
     def visit(self, node: "Visitable") -> Any: ...
 
 
-class Visitable(ABC):
-    """Interface for nodes that support pass visitor dispatch."""
+@runtime_checkable
+class Visitable(Protocol):
+    """Protocol for nodes that support pass visitor dispatch."""
 
     @classmethod
     def get_visit_method_suffix(cls) -> str:
-        """Return visitor dispatch suffix for this node type."""
-        return _camel_to_snake(cls.__name__)
+        """Return the visitor dispatch suffix for this node type."""
+        ...
 
     def accept(self, visitor: _SupportsVisit) -> Any:
-        """Accept a visitor and return its visit result.
-
-        Args:
-            visitor: Visitor to accept, which must support visiting this node's type.
-
-        Returns:
-            The result of the visitor's visit method for this node.
-
-        """
-        return visitor.visit(self)
+        """Accept a visitor and return its visit result."""
+        ...
 
     def get_visit_children(self) -> Sequence["Visitable"]:
-        """Return child nodes for traversal-aware visitors.
-
-        Nodes can override this to expose ordered children for automatic
-        pre-order/post-order traversal. The default implementation reports no
-        children.
-        """
-        return ()
+        """Return child nodes for traversal-aware visitors."""
+        ...
 
 
 class VisitableMixin(Visitable):
-    """Default `Visitable` behavior for IR node classes."""
+    """Default ``Visitable`` behavior for IR node classes."""
+
+    @classmethod
+    @override
+    def get_visit_method_suffix(cls) -> str:
+        return _camel_to_snake(cls.__name__)
+
+    @override
+    def accept(self, visitor: _SupportsVisit) -> Any:
+        return visitor.visit(self)
+
+    @override
+    def get_visit_children(self) -> Sequence["Visitable"]:
+        return ()

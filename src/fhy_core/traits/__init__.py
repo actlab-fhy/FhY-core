@@ -1,4 +1,23 @@
-"""Compiler object traits package."""
+"""Compiler object traits package.
+
+Each capability is expressed as a structural ``Protocol`` (the contract) paired,
+where there is reusable default behavior, with a ``*Mixin`` (the implementation).
+Implementers inherit the Protocol explicitly and decorate the implementing
+methods with ``@override``.
+
+Most mixins are stateless. Two are stateful and cooperate during construction,
+so their relative order in a class's MRO matters:
+
+- ``FrozenMixin`` seals an instance after ``__init__`` completes.
+- ``InternedMixin`` finalizes (and, if the instance is ``Frozen``/``Verifiable``,
+  freezes and verifies) the instance before registering it in the interning
+  registry.
+
+When a class mixes both, list ``FrozenMixin`` before ``InternedMixin`` so the
+freeze wrap is the inner wrap and the instance is already frozen by the time the
+interner's finalize hook runs. See ``FrozenMixin.__init_subclass__`` and
+``InternedMixin`` for the per-site notes.
+"""
 
 __all__ = [
     "EQUIVALENCE_METADATA_KEY",

@@ -136,6 +136,11 @@ class InternedMixin(Generic[_K], ABC):
             )
 
     def _finalize_interned_instance(self) -> None:
+        # Cooperates with the ``Verifiable`` and ``Frozen`` mixins before
+        # registration. When a class mixes ``InternedMixin`` with ``FrozenMixin``,
+        # list ``FrozenMixin`` first so its freeze wrap is the inner wrap: the
+        # instance is then already frozen here, and this only re-freezes as a
+        # defensive fallback. See the ``traits`` package docstring.
         if isinstance(self, Verifiable):
             self.verify().raise_if_failed()
         if isinstance(self, Frozen) and not self.is_frozen:

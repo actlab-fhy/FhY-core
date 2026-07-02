@@ -5,12 +5,12 @@ from typing import Any
 import pytest
 
 from fhy_core.param import (
-    CategoricalParam,
-    IntParam,
-    OrdinalParam,
     Param,
-    PermParam,
-    RealParam,
+    create_categorical_param,
+    create_integer_param,
+    create_ordinal_param,
+    create_permutation_param,
+    create_real_param,
 )
 from fhy_core.serialization import Serializable, register_serializable
 from fhy_core.traits import OrderableMixin
@@ -249,25 +249,25 @@ def assert_none_satisfied(param: Param[Any], values: list[Any]) -> None:
 
 
 @pytest.fixture
-def default_real_param() -> RealParam:
-    return RealParam()
+def default_real_param() -> Param[str | float]:
+    return create_real_param()
 
 
 @pytest.fixture
-def default_int_param() -> IntParam:
-    return IntParam()
+def default_int_param() -> Param[int]:
+    return create_integer_param()
 
 
 @pytest.fixture
-def ordinal_param_123() -> OrdinalParam[int]:
-    return OrdinalParam([1, 2, 3])
+def ordinal_param_123() -> Param[int]:
+    return create_ordinal_param([1, 2, 3])
 
 
 @pytest.fixture
-def categorical_param_abc() -> CategoricalParam[str]:
-    return CategoricalParam({"a", "b", "c"})
+def categorical_param_abc() -> Param[str]:
+    return create_categorical_param({"a", "b", "c"})
 
 
 @pytest.fixture
-def perm_param_nchw() -> PermParam[str]:
-    return PermParam(["n", "c", "h", "w"])
+def perm_param_nchw() -> Param[tuple[str, ...]]:
+    return create_permutation_param(["n", "c", "h", "w"])

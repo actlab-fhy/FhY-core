@@ -1,11 +1,14 @@
 """Tests for the ABC contract on `Constraint`."""
 
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
 
 from fhy_core.constraint import Constraint
 from fhy_core.expression import Expression, LiteralExpression
+from fhy_core.identifier import Identifier
+from fhy_core.traits.derived_equivalence import compared_as_reference
 from fhy_core.utils.override import override
 
 from .conftest import mock_identifier
@@ -44,13 +47,20 @@ def test_constraint_subclass_missing_abstract_method_cannot_instantiate(
     x = mock_identifier("x", 0)
 
     with pytest.raises(TypeError, match="abstract"):
-        cls(x)  # pylint: disable=abstract-class-instantiated
+        # The stub subclass is abstract (one method omitted), so ABC blocks
+        # instantiation before the constructor runs; the base Constraint has no
+        # variable-taking constructor for the type checker to see, hence the
+        # ignore on the intentionally-rejected call.
+        cls(x)  # type: ignore[call-arg]  # pylint: disable=abstract-class-instantiated
 
 
 def test_constraint_subclass_with_full_overrides_instantiates() -> None:
-    """Test a subclass overriding every abstract method can be instantiated."""
+    """Test a dataclass subclass overriding every abstract method instantiates."""
 
+    @dataclass(frozen=True, eq=False)
     class _ConcreteConstraint(Constraint):
+        variable: Identifier = field(metadata=compared_as_reference())
+
         @override
         def is_satisfied(self, value: object) -> bool:
             return True
@@ -66,17 +76,6 @@ def test_constraint_subclass_with_full_overrides_instantiates() -> None:
         @override
         def __str__(self) -> str:
             return "ConcreteConstraint"
-
-        @override
-        def serialize_data_to_dict(self) -> dict[str, Any]:
-            return {}
-
-        @classmethod
-        @override
-        def deserialize_data_from_dict(
-            cls, data: dict[str, Any]
-        ) -> "_ConcreteConstraint":
-            return cls(mock_identifier("stub", 0))
 
     x = mock_identifier("x", 0)
     instance = _ConcreteConstraint(x)

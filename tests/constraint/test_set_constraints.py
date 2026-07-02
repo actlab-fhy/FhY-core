@@ -34,10 +34,10 @@ _KINDS_WITH_STR_MARKER = [
 @pytest.mark.parametrize(
     "values, member, non_member",
     [
-        ({1, 2, 3}, 1, 4),
-        ({"a", "b", "c"}, "a", "d"),
-        ({True, False}, True, "missing"),
-        ({1.5, 2.5}, 1.5, 3.5),
+        pytest.param({1, 2, 3}, 1, 4, id="ints"),
+        pytest.param({"a", "b", "c"}, "a", "d", id="strings"),
+        pytest.param({True, False}, True, "missing", id="bools"),
+        pytest.param({1.5, 2.5}, 1.5, 3.5, id="floats"),
     ],
 )
 def test_set_constraint_is_satisfied(
@@ -48,8 +48,8 @@ def test_set_constraint_is_satisfied(
     member: Any,
     non_member: Any,
 ) -> None:
-    # pylint: disable=too-many-positional-arguments
     """Test ``is_satisfied`` returns the kind-appropriate polarity for membership."""
+    # pylint: disable=too-many-positional-arguments
     constraint = factory(mock_identifier("x", 0), values)
 
     assert constraint.is_satisfied(member) is member_outcome

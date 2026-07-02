@@ -166,6 +166,14 @@ def _is_immutable_class(cls: type) -> bool:
         return False
     if issubclass(cls, FrozenMixin):
         return True
+    if getattr(cls, "_is_protocol", False):
+        # A ``Protocol`` annotation is a structural value type, not a concrete
+        # class. Treat it as immutable on a best-effort basis -- the same
+        # developer-trusted policy applied to ``Any``/``TypeVar``/``ForwardRef``
+        # leaf annotations above. A field typed by a protocol that admits
+        # mutable implementers is the author's responsibility, just as a bare
+        # ``Any`` field is.
+        return True
     for candidate in _IMMUTABLE_WHITELIST:
         if issubclass(cls, candidate):
             return True

@@ -1,4 +1,4 @@
-"""Tests for `RealParam`."""
+"""Tests for real-valued parameters (new composition API)."""
 
 from functools import partial
 from typing import Any
@@ -6,10 +6,17 @@ from typing import Any
 import pytest
 
 from fhy_core.constraint import EquationConstraint
-from fhy_core.identifier import Identifier
-from fhy_core.param import IntParam, ParamError, RealParam
+from fhy_core.param import (
+    Param,
+    ParamError,
+    create_integer_param,
+    create_real_param,
+    create_real_param_between,
+    create_real_param_with_lower_bound,
+    create_real_param_with_upper_bound,
+)
 
-from .conftest import assert_all_satisfied, assert_none_satisfied
+from .conftest import assert_all_satisfied, assert_none_satisfied, mock_identifier
 
 # =============================================================================
 # Admissibility
@@ -17,9 +24,9 @@ from .conftest import assert_all_satisfied, assert_none_satisfied
 
 
 def test_real_param_assign_rejects_non_numeric_value(
-    default_real_param: RealParam,
+    default_real_param: Param[str | float],
 ) -> None:
-    """Test `RealParam.assign` raises `ParamError` for a non-numeric value."""
+    """Test real param `assign` raises `ParamError` for a non-numeric value."""
     with pytest.raises(ParamError):
         default_real_param.assign([])  # type: ignore[arg-type]  # test: invalid input
 
@@ -37,17 +44,21 @@ def test_real_param_assign_rejects_non_numeric_value(
     ],
 )
 def test_real_param_admissibility_matrix(value: Any, expected: bool) -> None:
-    """Test `RealParam.is_value_admissible` admits floats / numeric strings only.
+    """Test real param `is_value_admissible` admits floats / numeric strings only.
 
     ``bool`` is a subtype of ``int`` but real-valued semantics treat booleans
     as non-numeric to avoid silent ``True``/``False`` admission.
     """
-    assert RealParam().is_value_admissible(value) is expected
+    param = create_real_param()
+
+    result = param.is_value_admissible(value)
+
+    assert result is expected
 
 
 def test_real_param_str_uses_R_for_param_set() -> None:
-    """Test `str(RealParam())` denotes the param set with ``R``."""
-    assert "R" in str(RealParam())
+    """Test `str` of a real param denotes the param set with ``R``."""
+    assert "R" in str(create_real_param())
 
 
 # =============================================================================
@@ -56,7 +67,7 @@ def test_real_param_str_uses_R_for_param_set() -> None:
 
 
 def test_real_param_add_constraint_combines_with_existing_constraints(
-    default_real_param: RealParam,
+    default_real_param: Param[str | float],
 ) -> None:
     """Test sequential `add_constraint` calls produce a combined feasibility set."""
     param = default_real_param.add_constraint(
@@ -68,6 +79,7 @@ def test_real_param_add_constraint_combines_with_existing_constraints(
     param = param.add_constraint(
         EquationConstraint(param.variable, param.variable_expression >= 1.0)
     )
+
     assert_all_satisfied(param, [2.0])
     assert_none_satisfied(param, [0.5, 7.0])
 
@@ -81,63 +93,63 @@ def test_real_param_add_constraint_combines_with_existing_constraints(
     "factory, ops, pass_values, fail_values",
     [
         pytest.param(
-            partial(RealParam),
+            partial(create_real_param),
             [("add_lower_bound_constraint", (1.0,), {"is_inclusive": True})],
             [1.0, 2.0],
             [0.5],
             id="lower-mutating-inclusive",
         ),
         pytest.param(
-            partial(RealParam),
+            partial(create_real_param),
             [("add_lower_bound_constraint", (1.0,), {"is_inclusive": False})],
             [1.5, 2.0],
             [1.0, 0.5],
             id="lower-mutating-exclusive",
         ),
         pytest.param(
-            partial(RealParam.with_lower_bound, 1.0, is_inclusive=True),
+            partial(create_real_param_with_lower_bound, 1.0, is_inclusive=True),
             [],
             [1.0, 2.0],
             [0.5],
             id="lower-constructor-inclusive",
         ),
         pytest.param(
-            partial(RealParam.with_lower_bound, 1.0, is_inclusive=False),
+            partial(create_real_param_with_lower_bound, 1.0, is_inclusive=False),
             [],
             [1.5, 2.0],
             [1.0, 0.5],
             id="lower-constructor-exclusive",
         ),
         pytest.param(
-            partial(RealParam),
+            partial(create_real_param),
             [("add_upper_bound_constraint", (2.0,), {"is_inclusive": True})],
             [2.0, 1.0],
             [2.5],
             id="upper-mutating-inclusive",
         ),
         pytest.param(
-            partial(RealParam),
+            partial(create_real_param),
             [("add_upper_bound_constraint", (2.0,), {"is_inclusive": False})],
             [1.0, 1.5],
             [2.0, 2.5],
             id="upper-mutating-exclusive",
         ),
         pytest.param(
-            partial(RealParam.with_upper_bound, 2.0, is_inclusive=True),
+            partial(create_real_param_with_upper_bound, 2.0, is_inclusive=True),
             [],
             [2.0, 1.0],
             [2.5],
             id="upper-constructor-inclusive",
         ),
         pytest.param(
-            partial(RealParam.with_upper_bound, 2.0, is_inclusive=False),
+            partial(create_real_param_with_upper_bound, 2.0, is_inclusive=False),
             [],
             [1.0, 1.5],
             [2.0, 2.5],
             id="upper-constructor-exclusive",
         ),
         pytest.param(
-            partial(RealParam),
+            partial(create_real_param),
             [
                 ("add_lower_bound_constraint", (1.0,), {"is_inclusive": True}),
                 ("add_upper_bound_constraint", (2.0,), {"is_inclusive": True}),
@@ -147,7 +159,7 @@ def test_real_param_add_constraint_combines_with_existing_constraints(
             id="between-mutating-inclusive",
         ),
         pytest.param(
-            partial(RealParam),
+            partial(create_real_param),
             [
                 ("add_lower_bound_constraint", (1.0,), {"is_inclusive": False}),
                 ("add_upper_bound_constraint", (2.0,), {"is_inclusive": False}),
@@ -158,7 +170,7 @@ def test_real_param_add_constraint_combines_with_existing_constraints(
         ),
         pytest.param(
             partial(
-                RealParam.between,
+                create_real_param_between,
                 1.0,
                 2.0,
                 is_lower_inclusive=True,
@@ -171,7 +183,7 @@ def test_real_param_add_constraint_combines_with_existing_constraints(
         ),
         pytest.param(
             partial(
-                RealParam.between,
+                create_real_param_between,
                 1.0,
                 2.0,
                 is_lower_inclusive=False,
@@ -183,7 +195,7 @@ def test_real_param_add_constraint_combines_with_existing_constraints(
             id="between-constructor-exclusive",
         ),
         pytest.param(
-            partial(RealParam),
+            partial(create_real_param),
             [
                 ("add_lower_bound_constraint", ("1.0",), {"is_inclusive": True}),
                 ("add_upper_bound_constraint", ("2.0",), {"is_inclusive": True}),
@@ -200,10 +212,11 @@ def test_real_param_bounded_construction_admits_expected_values(
     pass_values: list[Any],
     fail_values: list[Any],
 ) -> None:
-    """Test bounded `RealParam` constructions admit and reject the expected values."""
+    """Test bounded real param constructions admit and reject the expected values."""
     param = factory()
     for name, args, kwargs in ops:
         param = getattr(param, name)(*args, **kwargs)
+
     assert_all_satisfied(param, pass_values)
     assert_none_satisfied(param, fail_values)
 
@@ -212,22 +225,22 @@ def test_real_param_bounded_construction_admits_expected_values(
     "factory, ops",
     [
         pytest.param(
-            partial(RealParam),
+            partial(create_real_param),
             [("add_lower_bound_constraint", ("invalid",))],
             id="lower-mutating-invalid",
         ),
         pytest.param(
-            partial(RealParam),
+            partial(create_real_param),
             [("add_upper_bound_constraint", ("invalid",))],
             id="upper-mutating-invalid",
         ),
         pytest.param(
-            partial(RealParam.with_upper_bound, "invalid"),
+            partial(create_real_param_with_upper_bound, "invalid"),
             [],
             id="upper-constructor-invalid",
         ),
         pytest.param(
-            partial(RealParam.with_lower_bound, "invalid"),
+            partial(create_real_param_with_lower_bound, "invalid"),
             [],
             id="lower-constructor-invalid",
         ),
@@ -237,24 +250,23 @@ def test_real_param_bounded_construction_with_invalid_string_bounds_raises(
     factory: Any,
     ops: list[tuple[str, tuple[Any, ...]]],
 ) -> None:
-    """Test bounded `RealParam` constructions reject unparseable string bounds.
+    """Test bounded real param constructions reject unparseable string bounds.
 
     The string ``"invalid"`` reaches the expression layer's
     ``LiteralExpression`` validator and raises a plain ``ValueError`` rather
     than ``ParamError`` -- the failure is in expression construction, not in
     param-domain validation.
     """
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Invalid string-form literal expression"):
         param = factory()
-        for op in ops:
-            name, args = op
+        for name, args in ops:
             param = getattr(param, name)(*args)
 
 
 def test_real_param_between_with_reversed_bounds_raises() -> None:
-    """Test `RealParam.between` raises `ParamError` when ``lower > upper``."""
+    """Test `create_real_param_between` raises `ParamError` when ``lower > upper``."""
     with pytest.raises(ParamError):
-        RealParam.between(2.0, 1.0)
+        create_real_param_between(2.0, 1.0)
 
 
 # =============================================================================
@@ -266,33 +278,37 @@ def test_real_param_between_with_reversed_bounds_raises() -> None:
     "factory, boundary_value",
     [
         pytest.param(
-            partial(RealParam.with_lower_bound, 0.0), 0.0, id="with-lower-bound"
+            partial(create_real_param_with_lower_bound, 0.0), 0.0, id="with-lower-bound"
         ),
         pytest.param(
-            partial(RealParam.with_upper_bound, 1.0), 1.0, id="with-upper-bound"
+            partial(create_real_param_with_upper_bound, 1.0), 1.0, id="with-upper-bound"
         ),
         pytest.param(
-            lambda: RealParam().add_lower_bound_constraint(0.0),
+            lambda: create_real_param().add_lower_bound_constraint(0.0),
             0.0,
             id="add-lower-bound-constraint",
         ),
         pytest.param(
-            lambda: RealParam().add_upper_bound_constraint(1.0),
+            lambda: create_real_param().add_upper_bound_constraint(1.0),
             1.0,
             id="add-upper-bound-constraint",
         ),
         pytest.param(
-            partial(RealParam.between, 0.0, 1.0), 0.0, id="between-lower-endpoint"
+            partial(create_real_param_between, 0.0, 1.0),
+            0.0,
+            id="between-lower-endpoint",
         ),
         pytest.param(
-            partial(RealParam.between, 0.0, 1.0), 1.0, id="between-upper-endpoint"
+            partial(create_real_param_between, 0.0, 1.0),
+            1.0,
+            id="between-upper-endpoint",
         ),
     ],
 )
 def test_real_param_default_bound_inclusivity_admits_endpoint(
     factory: Any, boundary_value: float
 ) -> None:
-    """Test each `RealParam` bound builder defaults to inclusive (admits endpoint)."""
+    """Test each real param bound builder defaults to inclusive (admits endpoint)."""
     assert factory().is_value_valid(boundary_value)
 
 
@@ -302,8 +318,9 @@ def test_real_param_default_bound_inclusivity_admits_endpoint(
 
 
 def test_real_param_between_equal_bounds_with_both_inclusive_is_singleton() -> None:
-    """Test `RealParam.between(x, x)` with both bounds inclusive admits only ``x``."""
-    param = RealParam.between(5.0, 5.0)
+    """Test `create_real_param_between(x, x)` admits only ``x`` (both inclusive)."""
+    param = create_real_param_between(5.0, 5.0)
+
     assert param.is_value_valid(5.0)
     assert not param.is_value_valid(4.999)
     assert not param.is_value_valid(5.001)
@@ -317,17 +334,15 @@ def test_real_param_between_equal_bounds_with_both_inclusive_is_singleton() -> N
         pytest.param(False, False, id="exclusive-exclusive"),
     ],
 )
+# The upper bound is a runtime ``float("5.0")`` so the two bounds are equal but
+# not identity-equal, exercising value-equality (``==``) rather than identity
+# (``is``) on the bounds-equal check.
 def test_real_param_between_equal_bounds_with_any_exclusive_raises(
     is_lower_inclusive: bool, is_upper_inclusive: bool
 ) -> None:
-    """Test `RealParam.between(x, x)` raises when either bound is exclusive.
-
-    Constructs the upper bound as a runtime ``float("5.0")`` so the two bounds
-    are equal but not identity-equal; pins down value-equality (``==``) rather
-    than identity (``is``) on the bounds-equal check.
-    """
+    """Test `create_real_param_between(x, x)` raises when either bound is exclusive."""
     with pytest.raises(ParamError):
-        RealParam.between(
+        create_real_param_between(
             5.0,
             float("5.0"),
             is_lower_inclusive=is_lower_inclusive,
@@ -336,16 +351,17 @@ def test_real_param_between_equal_bounds_with_any_exclusive_raises(
 
 
 # =============================================================================
-# Structural equivalence vs `IntParam`
+# Structural equivalence vs integer param
 # =============================================================================
 
 
 def test_real_param_is_not_structurally_equivalent_to_int_param() -> None:
-    """Test `RealParam` is not equivalent to an otherwise matching `IntParam`."""
-    shared_name = Identifier("x")
-    shared_name_copy = Identifier.deserialize_from_dict(shared_name.serialize_to_dict())
-    real = RealParam(name=shared_name)
-    integer = IntParam(name=shared_name_copy)
+    """Test a real param is not equivalent to an otherwise matching integer param."""
+    shared_name = mock_identifier("x", 1)
+    shared_name_copy = mock_identifier("x", 1)
+    real = create_real_param(name=shared_name)
+    integer = create_integer_param(name=shared_name_copy)
+
     assert not real.is_structurally_equivalent(integer)
 
 
@@ -355,15 +371,17 @@ def test_real_param_is_not_structurally_equivalent_to_int_param() -> None:
 
 
 def test_real_param_serialization_round_trip_preserves_constraints() -> None:
-    """Test `RealParam` round-trips through dict serialization with its constraints."""
-    param = RealParam()
+    """Test real param round-trips through dict serialization with its constraints."""
+    param = create_real_param()
     param = param.add_constraint(
         EquationConstraint(param.variable, param.variable_expression > 0)
     )
     param = param.add_constraint(
         EquationConstraint(param.variable, param.variable_expression < 10)
     )
+
     dictionary = param.serialize_to_dict()
-    restored = RealParam.deserialize_from_dict(dictionary)
+    restored: Param[float] = Param.deserialize_from_dict(dictionary)
+
     assert_all_satisfied(restored, [1.0, 5.0, 9.0])
     assert_none_satisfied(restored, [0.0, 10.0])
