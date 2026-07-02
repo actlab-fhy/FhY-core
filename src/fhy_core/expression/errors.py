@@ -81,7 +81,7 @@ class UndecidableError(RuntimeError):
 
 
 @register_error
-class UnboundVariableError(KeyError):
+class UnboundVariableError(ValueError):
     """Raised when a free identifier reaches NumPy evaluation with no value.
 
     :func:`~fhy_core.expression.evaluate_expression_with_numpy` requires
@@ -89,6 +89,12 @@ class UnboundVariableError(KeyError):
     or to match a registered native constant. An identifier that is
     neither raises this error, since the NumPy evaluator cannot produce
     a value for an unbound variable.
+
+    This is a ``ValueError`` (a caller precondition violation), not a
+    ``KeyError``: the identifier-not-bound message must render cleanly in
+    a traceback, and a bare ``except KeyError`` must not silently swallow
+    this programming error. Contrast :class:`EntryLookupError`, which does
+    subclass ``KeyError`` because it models a literal registry-dict miss.
     """
 
 
@@ -101,6 +107,6 @@ class UnsupportedNumpyLoweringError(RuntimeError):
 
     - The ``erf`` native function (and therefore ``gelu``, whose body
       calls ``erf``): NumPy has no vectorized ``erf`` ufunc.
-    - Any registered :class:`NativeFunction` outside the built-in math
-      set that the evaluator maps to NumPy ufuncs.
+    - Any registered :class:`NativeFunction` the evaluator has no ufunc
+      mapping for (for example, a caller-registered native).
     """

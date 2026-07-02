@@ -7,6 +7,11 @@ Python numerics at the point they hand off to Python or NumPy. These
 helpers centralize that lowering so the two passes share one contract --
 in particular, the refusal to coerce a float-grammar string literal to a
 lossy binary ``float``.
+
+The SymPy bridge (:mod:`fhy_core.expression.passes.sympy`) is deliberately
+exempt from this contract: SymPy operates on binary floats, so it converts
+a float-grammar string with ``sympy.Float`` -- accepting the precision loss
+-- rather than routing through these helpers.
 """
 
 __all__ = [

@@ -30,7 +30,12 @@ from fhy_core.expression import (
     register_native_function,
     ternary,
 )
-from fhy_core.expression.passes.numpy import _NATIVE_FUNCTION_UFUNC_NAMES
+from fhy_core.expression.passes.numpy import (
+    _BINARY_UFUNC_NAMES,
+    _NATIVE_FUNCTION_UFUNC_NAMES,
+    _UNARY_UFUNC_NAMES,
+    NumpyExpressionEvaluator,
+)
 from fhy_core.pass_infrastructure import PassExecutionError
 
 from ..conftest import mock_identifier
@@ -317,6 +322,110 @@ def test_real_sort_native_preserves_float_width() -> None:
 
     assert isinstance(result, np.ndarray)
     assert result.dtype == np.float32
+
+
+_RESULT_SORT_DTYPE_CASES = [
+    (FunctionSort.BOOL, np.bool_),
+    (FunctionSort.NAT, np.int64),
+    (FunctionSort.INT, np.int64),
+]
+
+
+@pytest.mark.parametrize(
+    "result_sort, expected_dtype",
+    _RESULT_SORT_DTYPE_CASES,
+    ids=[sort.name for sort, _ in _RESULT_SORT_DTYPE_CASES],
+)
+def test_cast_to_result_sort_casts_to_declared_dtype(
+    result_sort: FunctionSort, expected_dtype: type
+) -> None:
+    """Test each cast-table sort casts a float result to its declared dtype.
+
+    No built-in native is ``NAT``- or ``BOOL``-sorted, so those branches
+    are unreachable through a whole-expression walk. Exercise the helper
+    directly to guard the cast table against a dtype-name typo.
+    """
+    evaluator = NumpyExpressionEvaluator({}, np)
+
+    result = evaluator._cast_to_result_sort(np.array([1.0, 0.0]), result_sort)
+
+    assert result.dtype == expected_dtype
+
+
+def test_cast_to_result_sort_passes_real_through_unchanged() -> None:
+    """Test a ``REAL`` result sort leaves the array dtype untouched."""
+    evaluator = NumpyExpressionEvaluator({}, np)
+    values = np.array([1.5, 2.5], dtype=np.float32)
+
+    result = evaluator._cast_to_result_sort(values, FunctionSort.REAL)
+
+    assert result.dtype == np.float32
+
+
+@pytest.mark.parametrize("function_name", _INTEGER_SORT_FUNCTION_NAMES)
+def test_non_finite_integer_sort_result_casts_without_raising(
+    function_name: str,
+) -> None:
+    """Test ``nan``/``inf`` through an ``INT``-sorted native casts, not raises.
+
+    Casting a non-finite float to ``int64`` is a documented NumPy
+    ``astype`` behavior (a platform-defined sentinel, with a warning),
+    not an error the evaluator should surface.
+    """
+    x = mock_identifier("x", 0)
+    values = np.array([np.inf, -np.inf, np.nan])
+    expression = call(function_name, x)
+
+    with np.errstate(all="ignore"):
+        result = evaluate_expression_with_numpy(expression, {x: values})
+
+    assert isinstance(result, np.ndarray)
+    assert np.issubdtype(result.dtype, np.integer)
+
+
+# =============================================================================
+# Floating-point domain conditions (nan/inf, not exceptions)
+# =============================================================================
+
+
+def test_sqrt_of_negative_returns_nan_without_raising() -> None:
+    """Test ``sqrt`` of a negative yields ``nan`` rather than raising.
+
+    This is the defining divergence from ``evaluate_expression``, whose
+    scalar native implementations raise on the same input.
+    """
+    x = mock_identifier("x", 0)
+    expression = call("sqrt", x)
+
+    with np.errstate(all="ignore"):
+        result = evaluate_expression_with_numpy(expression, {x: np.array([-1.0])})
+
+    assert np.isnan(result).all()
+
+
+def test_log_of_zero_returns_negative_infinity_without_raising() -> None:
+    """Test ``log`` of zero yields ``-inf`` rather than raising."""
+    x = mock_identifier("x", 0)
+    expression = call("log", x)
+
+    with np.errstate(all="ignore"):
+        result = evaluate_expression_with_numpy(expression, {x: np.array([0.0])})
+
+    assert np.isneginf(result).all()
+
+
+def test_division_by_zero_returns_infinity_without_raising() -> None:
+    """Test division by zero yields ``inf`` rather than raising."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = IdentifierExpression(x) / IdentifierExpression(y)
+
+    with np.errstate(all="ignore"):
+        result = evaluate_expression_with_numpy(
+            expression, {x: np.array([1.0]), y: np.array([0.0])}
+        )
+
+    assert np.isposinf(result).all()
 
 
 # =============================================================================
@@ -719,14 +828,20 @@ def test_raises_for_unbound_variable() -> None:
 
 
 def test_raises_for_unbound_identifier_matching_a_native_function_name() -> None:
-    """Test an unbound identifier named like a native function is not resolved."""
+    """Test an unbound identifier named like a native function is not resolved.
+
+    The error message distinguishes this from an unknown name: it names
+    the registered function and points the caller at the call form.
+    """
     exp_reference = mock_identifier("exp", 0)
     expression = IdentifierExpression(exp_reference) + 1.0
 
     with pytest.raises(PassExecutionError) as exception_info:
         evaluate_expression_with_numpy(expression, {})
 
-    assert isinstance(exception_info.value.__cause__, UnboundVariableError)
+    cause = exception_info.value.__cause__
+    assert isinstance(cause, UnboundVariableError)
+    assert "names a registered function" in str(cause)
 
 
 def test_raises_for_unsupported_erf() -> None:
@@ -794,6 +909,26 @@ def test_raises_for_native_function_without_numpy_mapping(
     assert isinstance(exception_info.value.__cause__, UnsupportedNumpyLoweringError)
 
 
+def test_integer_base_to_negative_integer_power_raises_value_error() -> None:
+    """Test an integer base to a negative integer power surfaces ``ValueError``.
+
+    ``numpy.power`` rejects integer bases with negative integer exponents
+    (rather than folding to ``nan``/``inf``); the raw ``ValueError`` surfaces
+    wrapped in ``PassExecutionError``.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.POWER, IdentifierExpression(x), LiteralExpression(-1)
+    )
+
+    with pytest.raises(PassExecutionError) as exception_info:
+        evaluate_expression_with_numpy(expression, {x: np.array([2, 3])})
+
+    cause = exception_info.value.__cause__
+    assert type(cause) is ValueError
+    assert "power" in str(cause)
+
+
 def test_raises_for_recursive_function(
     function_registry_snapshot: None,
 ) -> None:
@@ -847,6 +982,22 @@ def test_does_not_mutate_input_expression() -> None:
 # =============================================================================
 
 _UNSUPPORTED_NATIVE_FUNCTION_NAMES = frozenset({"erf"})
+
+
+def test_every_binary_operation_has_a_lowering() -> None:
+    """Test every ``BinaryOperation`` member maps to a NumPy ufunc.
+
+    ``visit_binary_expression`` subscripts the table directly, so a member
+    added without a lowering would raise a raw ``KeyError`` only when that
+    operator is first evaluated; this makes the drift a deterministic
+    failure instead.
+    """
+    assert set(_BINARY_UFUNC_NAMES) == set(BinaryOperation)
+
+
+def test_every_unary_operation_has_a_lowering() -> None:
+    """Test every ``UnaryOperation`` member maps to a NumPy ufunc."""
+    assert set(_UNARY_UFUNC_NAMES) == set(UnaryOperation)
 
 
 def test_every_lowered_native_name_resolves_to_a_numpy_callable() -> None:
