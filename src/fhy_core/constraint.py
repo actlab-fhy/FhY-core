@@ -266,10 +266,18 @@ def _normalize_constraint_member_collection(
         Frozen set of wrapped members with type-strict equality and hashing.
 
     Raises:
-        ConstraintError: If any member fails validation or is unhashable
-            after validation.
+        ConstraintError: If ``values`` is itself a ``str``/``bytes``/
+            ``bytearray`` (which would silently split into its elements), or
+            if any member fails validation or is unhashable after validation.
 
     """
+    if isinstance(values, (str, bytes, bytearray)):
+        raise ConstraintError(
+            f"Constraint members must be given as a collection of members, not "
+            f"a bare {type(values).__name__}, which would be split into its "
+            "elements. Wrap a single member in a container, e.g. "
+            f"{{{values!r}}}."
+        )
     wrapped_values: list[_TypedMember] = []
     for value in values:
         _validate_constraint_member(value)

@@ -12,6 +12,7 @@ import pytest
 
 from fhy_core.constraint import (
     Constraint,
+    ConstraintError,
     ConstraintOutcome,
     InSetConstraint,
     NotInSetConstraint,
@@ -337,3 +338,13 @@ def test_set_constraint_supports_negative_and_zero_numeric_members(
 
     for value in (-1, 0, -2.5):
         assert constraint.is_satisfied(value) is in_set
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize("members", ["abc", b"abc", bytearray(b"abc")])
+def test_set_constraint_rejects_bare_string_like_members(
+    factory: SetConstraintFactory, members: Any
+) -> None:
+    """Test a bare str/bytes/bytearray is rejected, not split into elements."""
+    with pytest.raises(ConstraintError):
+        factory(mock_identifier("x", 0), members)

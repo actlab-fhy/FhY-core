@@ -247,7 +247,8 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             raise ParamError(
                 f"Value {value!r} is not admissible for parameter {self!r}."
             )
-        _, failing_constraint, outcome = self._find_failing_constraint(value)
+        normalized = self.domain.normalize_value(value)
+        _, failing_constraint, outcome = self._find_failing_constraint(normalized)
         if failing_constraint is None:
             return
         if outcome is ConstraintOutcome.UNDECIDED:

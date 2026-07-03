@@ -13,7 +13,7 @@ so their relative order in a class's MRO matters:
   freezes and verifies) the instance before registering it in the interning
   registry.
 
-When a class mixes both, list ``FrozenMixin`` before ``InternedMixin`` so the
+When a class mixes both, list ``InternedMixin`` before ``FrozenMixin`` so the
 freeze wrap is the inner wrap and the instance is already frozen by the time the
 interner's finalize hook runs. See ``FrozenMixin.__init_subclass__`` and
 ``InternedMixin`` for the per-site notes.

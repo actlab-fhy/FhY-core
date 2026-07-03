@@ -607,6 +607,26 @@ class OrdinalDomain(ParamDomain):
         metadata={"serialize_codec": _ORDINAL_VALUES_CODEC}
     )
 
+    def __post_init__(self) -> None:
+        values = tuple(self.sorted_values)
+        if not values:
+            raise ParamError("Values must be non-empty.")
+        for value in values:
+            if not is_ordinal_value(value):
+                raise TypeError(
+                    "Ordinal values must satisfy orderable semantics and be "
+                    "serializable, or be primitive bool/int/float/str values."
+                )
+        try:
+            canonical = tuple(sorted(values))
+        except TypeError as exc:
+            raise TypeError(
+                "Ordinal values must be mutually comparable for sorting."
+            ) from exc
+        if not is_sorted_sequence_unique(canonical):
+            raise ParamError("Values must be unique.")
+        object.__setattr__(self, "sorted_values", canonical)
+
     @property
     @override
     def symbol_type(self) -> SymbolType | None:
@@ -699,6 +719,23 @@ class CategoricalDomain(ParamDomain):
     categories: tuple[CategoricalValue, ...] = field(
         metadata={"serialize_codec": _CATEGORICAL_VALUES_CODEC}
     )
+
+    def __post_init__(self) -> None:
+        values = tuple(self.categories)
+        if not values:
+            raise ParamError("Categories must be non-empty.")
+        for category in values:
+            if not is_categorical_value(category):
+                raise TypeError(
+                    "Categorical values must satisfy equal semantics and be "
+                    "serializable, or be primitive bool/int/str values."
+                )
+        if not is_sequence_unique_without_set(values):
+            raise ParamError("Values must be unique.")
+        # Categories are unordered; canonicalize by ``repr`` for a deterministic
+        # storage order (categorical values are not necessarily mutually
+        # orderable).
+        object.__setattr__(self, "categories", tuple(sorted(values, key=repr)))
 
     @property
     @override
@@ -793,6 +830,20 @@ class PermutationDomain(ParamDomain):
     ordered_members: tuple[PermutationMemberValue, ...] = field(
         metadata={"serialize_codec": _PERMUTATION_MEMBERS_CODEC}
     )
+
+    def __post_init__(self) -> None:
+        values = tuple(self.ordered_members)
+        if not values:
+            raise ParamError("Members must be non-empty.")
+        for value in values:
+            if not is_permutation_member_value(value):
+                raise TypeError(
+                    "Permutation members must satisfy equal semantics and be "
+                    "serializable, or be primitive bool/int/float/str values."
+                )
+        if not is_sequence_unique_without_set(values):
+            raise ParamError("Values must be unique.")
+        object.__setattr__(self, "ordered_members", values)
 
     @property
     @override
@@ -905,24 +956,7 @@ def build_ordinal_domain(values: Sequence[OrdinalValue]) -> OrdinalDomain:
             comparable.
 
     """
-    all_values = tuple(values)
-    if not all_values:
-        raise ParamError("Values must be non-empty.")
-    for value in all_values:
-        if not is_ordinal_value(value):
-            raise TypeError(
-                "Ordinal values must satisfy orderable semantics and be "
-                "serializable, or be primitive bool/int/float/str values."
-            )
-    try:
-        sorted_values = tuple(sorted(all_values))
-    except TypeError as exc:
-        raise TypeError(
-            "Ordinal values must be mutually comparable for sorting."
-        ) from exc
-    if not is_sorted_sequence_unique(sorted_values):
-        raise ParamError("Values must be unique.")
-    return OrdinalDomain(sorted_values)
+    return OrdinalDomain(tuple(values))
 
 
 def build_categorical_domain(
@@ -941,21 +975,7 @@ def build_categorical_domain(
         TypeError: If a category is not a categorical value.
 
     """
-    category_values = tuple(categories)
-    if not category_values:
-        raise ParamError("Categories must be non-empty.")
-    for category in category_values:
-        if not is_categorical_value(category):
-            raise TypeError(
-                "Categorical values must satisfy equal semantics and be "
-                "serializable, or be primitive bool/int/str values."
-            )
-    if not is_sequence_unique_without_set(category_values):
-        raise ParamError("Values must be unique.")
-    # Categories are unordered; canonicalize by ``repr`` for a deterministic
-    # storage order (categorical values are not necessarily mutually orderable).
-    canonical_categories = tuple(sorted(category_values, key=repr))
-    return CategoricalDomain(canonical_categories)
+    return CategoricalDomain(tuple(categories))
 
 
 def build_permutation_domain(
@@ -974,15 +994,4 @@ def build_permutation_domain(
         TypeError: If a member is not a permutation member value.
 
     """
-    all_member_values = tuple(members)
-    if not all_member_values:
-        raise ParamError("Members must be non-empty.")
-    for value in all_member_values:
-        if not is_permutation_member_value(value):
-            raise TypeError(
-                "Permutation members must satisfy equal semantics and be "
-                "serializable, or be primitive bool/int/float/str values."
-            )
-    if not is_sequence_unique_without_set(all_member_values):
-        raise ParamError("Values must be unique.")
-    return PermutationDomain(all_member_values)
+    return PermutationDomain(tuple(members))

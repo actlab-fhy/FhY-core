@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from fhy_core.constraint import EquationConstraint
+from fhy_core.constraint import EquationConstraint, NotInSetConstraint
 from fhy_core.expression import IdentifierExpression
 from fhy_core.param import (
     Param,
@@ -202,6 +202,28 @@ def test_assignment_round_trips_through_json_and_binary_serialization() -> None:
     )
     assert isinstance(from_binary.param.domain, PermutationDomain)
     assert from_binary.value == ("n", "c", "h", "w")
+
+
+def test_permutation_validate_value_normalizes_list_before_constraint_check() -> None:
+    """Test `validate_value` normalizes a list to a tuple before checking constraints.
+
+    A permutation param stores set constraints over tuple members; an
+    un-normalized list value would be unhashable. ``validate_value`` normalizes
+    first so it agrees with ``is_constraints_satisfied`` and raises only
+    ``ParamError``, never ``TypeError``.
+    """
+    var = mock_identifier("p", 0)
+    param = create_permutation_param([1, 2, 3], name=var).add_constraint(
+        NotInSetConstraint(var, {(3, 2, 1)})
+    )
+
+    # A permitted permutation given as a list validates (normalized to a tuple).
+    param.validate_value([1, 2, 3])
+    assert param.is_constraints_satisfied([1, 2, 3])
+
+    # A forbidden permutation given as a list raises ParamError, not TypeError.
+    with pytest.raises(ParamError):
+        param.validate_value([3, 2, 1])
 
 
 def test_assignment_deserialize_rejects_value_invalid_for_param() -> None:

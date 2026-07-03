@@ -494,12 +494,15 @@ class FrozenMixin(ABC):
         super().__init_subclass__(**kwargs)
         if freeze_on_init is not None:
             cls._FREEZE_ON_INIT = freeze_on_init
-        # Install the auto-freeze wrap here, BEFORE any sibling mixin's
-        # ``__init_subclass__`` (e.g. ``InternedMixin``) wraps on top.
-        # Cooperative ``super().__init_subclass__(**kwargs)`` ordering
-        # places FrozenMixin's wrap as the inner wrap and InternedMixin's
-        # as the outer wrap, so the instance is frozen by the time the
-        # interner's finalize hook runs.
+        # Install the auto-freeze wrap here, after the cooperative
+        # ``super().__init_subclass__(**kwargs)`` call. When a class lists
+        # ``InternedMixin`` before ``FrozenMixin``, the interner's
+        # ``__init_subclass__`` runs first and reaches this one through
+        # ``super()``, so FrozenMixin's wrap becomes the inner wrap and
+        # InternedMixin's the outer wrap -- the instance is then frozen by the
+        # time the interner's finalize hook runs. In the reverse order the
+        # freeze wrap is outer and the finalize hook performs the freeze itself;
+        # either way the instance is frozen before registration.
         #
         # Only wrap when the subclass defines its own ``__init__``. The
         # "no own ``__init__``" case covers both ``@dataclass(frozen=True)``
