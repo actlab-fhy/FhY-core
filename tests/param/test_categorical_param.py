@@ -1,14 +1,16 @@
-"""Tests for `CategoricalParam`."""
+"""Tests for categorical parameters."""
 
 import pytest
 
 from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.identifier import Identifier
 from fhy_core.param import (
-    CategoricalParam,
     ParamError,
+    create_categorical_param,
     create_single_valid_value_param,
 )
+from fhy_core.param.core import Param
+from fhy_core.param.domains import CategoricalDomain
 from fhy_core.serialization import (
     DeserializationValueError,
     serialize_registry_wrapped_value,
@@ -19,6 +21,7 @@ from .conftest import (
     SerializableHashOnly,
     assert_all_satisfied,
     assert_none_satisfied,
+    mock_identifier,
 )
 
 # =============================================================================
@@ -27,15 +30,17 @@ from .conftest import (
 
 
 def test_categorical_param_initializes_from_set_of_values() -> None:
-    """Test `CategoricalParam` initializes from a set of categorical values."""
-    param = CategoricalParam({"a", "b", "c"})
-    assert isinstance(param, CategoricalParam)
+    """Test categorical param initializes from a set of categorical values."""
+    param = create_categorical_param({"a", "b", "c"})
+
+    assert isinstance(param, Param)
+    assert isinstance(param.domain, CategoricalDomain)
 
 
 def test_categorical_param_init_rejects_duplicate_values() -> None:
-    """Test `CategoricalParam` rejects duplicate values with `ParamError`."""
+    """Test categorical param rejects duplicate values with `ParamError`."""
     with pytest.raises(ParamError):
-        CategoricalParam([1, 1])
+        create_categorical_param([1, 1])
 
 
 @pytest.mark.parametrize(
@@ -48,15 +53,15 @@ def test_categorical_param_init_rejects_duplicate_values() -> None:
     ],
 )
 def test_categorical_param_init_rejects_empty_categories(empty: object) -> None:
-    """Test `CategoricalParam` rejects an empty collection with `ParamError`."""
+    """Test categorical param rejects an empty collection with `ParamError`."""
     with pytest.raises(ParamError, match="non-empty"):
-        CategoricalParam(empty)  # type: ignore[arg-type]  # test: invalid input
+        create_categorical_param(empty)  # type: ignore[arg-type]  # test: invalid input
 
 
 def test_categorical_param_init_rejects_value_without_equal_semantics() -> None:
-    """Test `CategoricalParam` rejects wrapped-leaf values without equal semantics."""
+    """Test categorical param rejects wrapped-leaf values without equal semantics."""
     with pytest.raises(TypeError):
-        CategoricalParam(  # type: ignore[type-var]  # test: invalid input
+        create_categorical_param(  # type: ignore[type-var]  # test: invalid input
             {SerializableHashOnly(1), SerializableHashOnly(2)}
         )
 
@@ -67,10 +72,12 @@ def test_categorical_param_init_rejects_value_without_equal_semantics() -> None:
 
 
 def test_categorical_param_categories_is_a_property() -> None:
-    """Test `CategoricalParam.categories` is a property, not a method."""
-    param = CategoricalParam({"a", "b"})
-    assert not callable(param.categories)
-    assert param.categories == frozenset({"a", "b"})
+    """Test the categorical domain's ``categories`` is a property, not a method."""
+    param = create_categorical_param({"a", "b"})
+
+    assert isinstance(param.domain, CategoricalDomain)
+    assert not callable(param.domain.categories)
+    assert set(param.domain.categories) == {"a", "b"}
 
 
 # =============================================================================
@@ -78,15 +85,28 @@ def test_categorical_param_categories_is_a_property() -> None:
 # =============================================================================
 
 
-def test_create_single_valid_value_param_constrains_to_one_value() -> None:
-    """Test `create_single_valid_value_param` constrains the parameter to one value."""
+def test_create_single_valid_value_param_builds_one_category_param() -> None:
+    """Test `create_single_valid_value_param` builds a one-category param."""
     param = create_single_valid_value_param("only")
-    assert isinstance(param, CategoricalParam)
-    assert param.categories == frozenset({"only"})
+
+    assert isinstance(param, Param)
+    assert isinstance(param.domain, CategoricalDomain)
+    assert param.domain.categories == ("only",)
+
+
+def test_create_single_valid_value_param_assigns_the_single_value() -> None:
+    """Test `create_single_valid_value_param` assigns its single admissible value."""
+    param = create_single_valid_value_param("only")
 
     assignment = param.assign("only")
+
     assert assignment.is_value_set()
     assert assignment.value == "only"
+
+
+def test_create_single_valid_value_param_rejects_any_other_value() -> None:
+    """Test `create_single_valid_value_param` rejects a value other than its own."""
+    param = create_single_valid_value_param("only")
 
     with pytest.raises(ParamError):
         param.assign("different")
@@ -98,17 +118,17 @@ def test_create_single_valid_value_param_constrains_to_one_value() -> None:
 
 
 def test_categorical_param_assigns_values_in_the_category_set(
-    categorical_param_abc: CategoricalParam[str],
+    categorical_param_abc: Param[str],
 ) -> None:
-    """Test `CategoricalParam.assign` accepts values in the category set."""
+    """Test categorical param assign accepts values in the category set."""
     assert categorical_param_abc.assign("a").is_value_set()
     assert categorical_param_abc.assign("c").is_value_set()
 
 
 def test_categorical_param_assign_rejects_values_outside_the_category_set(
-    categorical_param_abc: CategoricalParam[str],
+    categorical_param_abc: Param[str],
 ) -> None:
-    """Test `CategoricalParam.assign` raises `ParamError` for values outside the set."""
+    """Test categorical param assign raises `ParamError` for values outside the set."""
     with pytest.raises(ParamError):
         categorical_param_abc.assign("d")
 
@@ -116,19 +136,23 @@ def test_categorical_param_assign_rejects_values_outside_the_category_set(
 def test_categorical_param_admissibility_distinguishes_bool_from_int_categories() -> (
     None
 ):
-    """Test `CategoricalParam` does not treat ``bool`` as interchangeable with `int`."""
-    param = CategoricalParam([1, 2, 3])
+    """Test categorical param does not treat ``bool`` as interchangeable with `int`."""
+    param = create_categorical_param([1, 2, 3])
+
     assert not param.is_value_admissible(True)
 
 
 def test_categorical_param_does_not_define_get_symbol_type() -> None:
-    """Test ``CategoricalParam`` does not implement ``get_symbol_type``."""
-    assert not hasattr(CategoricalParam({"a", "b"}), "get_symbol_type")
+    """Test categorical param's ``symbol_type`` is ``None`` (non-numeric domain)."""
+    param = create_categorical_param({"a", "b"})
+
+    assert param.symbol_type is None
 
 
 def test_categorical_param_str_lists_categories() -> None:
-    """Test `str(CategoricalParam(...))` lists the categories inside ``{...}``."""
-    text = str(CategoricalParam({"a", "b"}))
+    """Test ``str`` of a categorical param lists the categories inside ``{...}``."""
+    text = str(create_categorical_param({"a", "b"}))
+
     assert "a" in text and "b" in text
     assert "{" in text and "}" in text
 
@@ -136,18 +160,19 @@ def test_categorical_param_str_lists_categories() -> None:
 def test_categorical_param_admissibility_distinguishes_int_from_bool_categories() -> (
     None
 ):
-    """Test a `CategoricalParam` of booleans rejects an integer probe.
+    """Test a categorical param of booleans rejects an integer probe.
 
     Pins down the ``bool``/``int`` mismatch check in both directions: a
     candidate that is plainly ``int`` must not be admitted by a ``bool``-only
     category set.
     """
-    param = CategoricalParam([True])
+    param = create_categorical_param([True])
+
     assert not param.is_value_admissible(1)
 
 
 def test_categorical_param_admissibility_uses_equality_not_identity() -> None:
-    """Test `CategoricalParam` admissibility uses ``==``, not ``is``.
+    """Test categorical param admissibility uses ``==``, not ``is``.
 
     Constructs two equal but non-identical `Serializable` values and asserts a
     candidate is admitted by a category set that contains an equal-but-distinct
@@ -157,7 +182,8 @@ def test_categorical_param_admissibility_uses_equality_not_identity() -> None:
     candidate = SerializableEqualHashable(42)
     assert category is not candidate
     assert category == candidate
-    param: CategoricalParam[SerializableEqualHashable] = CategoricalParam([category])  # type: ignore[type-var]  # test: bespoke `Serializable` value
+    param: Param[SerializableEqualHashable] = create_categorical_param([category])  # type: ignore[type-var]  # test: bespoke `Serializable` value
+
     assert param.is_value_admissible(candidate)
 
 
@@ -167,20 +193,21 @@ def test_categorical_param_admissibility_uses_equality_not_identity() -> None:
 
 
 def test_categorical_param_add_constraint_combines_with_existing_membership(
-    categorical_param_abc: CategoricalParam[str],
+    categorical_param_abc: Param[str],
 ) -> None:
-    """Test `CategoricalParam.add_constraint` further restricts the admissible set."""
+    """Test categorical param add_constraint further restricts the admissible set."""
     param = categorical_param_abc.add_constraint(
         InSetConstraint(categorical_param_abc.variable, {"a", "b"})
     )
+
     assert_all_satisfied(param, ["a", "b"])
     assert_none_satisfied(param, ["c"])
 
 
 def test_categorical_param_rejects_non_set_constraint(
-    categorical_param_abc: CategoricalParam[str],
+    categorical_param_abc: Param[str],
 ) -> None:
-    """Test `CategoricalParam.add_constraint` raises for equation constraints."""
+    """Test categorical param add_constraint raises for equation constraints."""
     with pytest.raises(ParamError):
         categorical_param_abc.add_constraint(
             EquationConstraint(
@@ -196,24 +223,26 @@ def test_categorical_param_rejects_non_set_constraint(
 
 
 def test_categorical_param_is_structurally_equivalent_to_self() -> None:
-    """Test `CategoricalParam.is_structurally_equivalent` is reflexive."""
-    param = CategoricalParam({"a", "b"})
+    """Test categorical param is_structurally_equivalent is reflexive."""
+    param = create_categorical_param({"a", "b"})
+
     assert param.is_structurally_equivalent(param)
 
 
 def test_categorical_param_is_not_structurally_equivalent_to_subset_categories() -> (
     None
 ):
-    """Test `CategoricalParam.is_structurally_equivalent` rejects a subset categories.
+    """Test is_structurally_equivalent rejects a subset categories.
 
-    A frozenset comparison must use ``==`` rather than ``<=`` or ``>=``: two
-    `CategoricalParam`s where one's categories are a strict subset of the
-    other's must compare non-equivalent.
+    Equivalence must require equal-size, mutually matching category sets rather
+    than one-directional containment: two categorical params where one's
+    categories are a strict subset of the other's must compare non-equivalent.
     """
-    shared_name = Identifier("x")
-    shared_name_copy = Identifier.deserialize_from_dict(shared_name.serialize_to_dict())
-    smaller: CategoricalParam[int] = CategoricalParam({1, 2}, name=shared_name)
-    larger: CategoricalParam[int] = CategoricalParam({1, 2, 3}, name=shared_name_copy)
+    smaller: Param[int] = create_categorical_param({1, 2}, name=mock_identifier("x", 1))
+    larger: Param[int] = create_categorical_param(
+        {1, 2, 3}, name=mock_identifier("x", 1)
+    )
+
     assert not smaller.is_structurally_equivalent(larger)
     assert not larger.is_structurally_equivalent(smaller)
 
@@ -221,17 +250,17 @@ def test_categorical_param_is_not_structurally_equivalent_to_subset_categories()
 def test_categorical_param_is_not_structurally_equivalent_for_disjoint_categories() -> (
     None
 ):
-    """Test `CategoricalParam.is_structurally_equivalent` rejects disjoint sets."""
-    shared_name = Identifier("x")
-    shared_name_copy = Identifier.deserialize_from_dict(shared_name.serialize_to_dict())
-    left: CategoricalParam[int] = CategoricalParam({1, 2}, name=shared_name)
-    right: CategoricalParam[int] = CategoricalParam({3, 4}, name=shared_name_copy)
+    """Test is_structurally_equivalent rejects disjoint sets."""
+    left: Param[int] = create_categorical_param({1, 2}, name=mock_identifier("x", 1))
+    right: Param[int] = create_categorical_param({3, 4}, name=mock_identifier("x", 1))
+
     assert not left.is_structurally_equivalent(right)
 
 
 def test_categorical_param_is_not_equivalent_to_non_categorical_object() -> None:
-    """Test categorical equivalence is ``False`` for a non-`CategoricalParam` other."""
-    param: CategoricalParam[str] = CategoricalParam({"a", "b"})
+    """Test categorical equivalence is ``False`` for a non-``Param`` object."""
+    param: Param[str] = create_categorical_param({"a", "b"})
+
     assert not param.is_structurally_equivalent("not a param")
     assert not param.is_structurally_equivalent(object())
 
@@ -242,35 +271,88 @@ def test_categorical_param_is_not_equivalent_to_non_categorical_object() -> None
 
 
 def test_categorical_param_serialization_round_trip_preserves_constraints(
-    categorical_param_abc: CategoricalParam[str],
+    categorical_param_abc: Param[str],
 ) -> None:
-    """Test `CategoricalParam` round-trips with constraints through dict."""
+    """Test categorical param round-trips with constraints through dict."""
     constrained = categorical_param_abc.add_constraint(
         InSetConstraint(categorical_param_abc.variable, {"a", "b"})
     )
+
     dictionary = constrained.serialize_to_dict()
-    restored: CategoricalParam[str] = CategoricalParam.deserialize_from_dict(dictionary)
+    restored: Param[str] = Param.deserialize_from_dict(dictionary)
+
     assert_all_satisfied(restored, ["a", "b"])
     assert_none_satisfied(restored, ["c"])
 
 
 def test_categorical_param_deserialize_rejects_wrapped_non_leaf_values() -> None:
-    """Test categorical deserialize rejects wrapped container values."""
-    payload = CategoricalParam({"a", "b"}).serialize_to_dict()
-    payload["__data__"]["possible_values"] = [  # type: ignore[index]  # test: modify serialized
+    """Test categorical deserialize rejects wrapped container values.
+
+    Under the derived format the value list lives at
+    ``payload["domain"]["__data__"]["categories"]``; a wrapped tuple is not a
+    valid categorical leaf value and must be rejected.
+    """
+    payload = create_categorical_param({"a", "b"}).serialize_to_dict()
+    payload["domain"]["__data__"]["categories"] = [  # type: ignore[index,call-overload]  # test: modify serialized
         serialize_registry_wrapped_value(("a", "b"))
     ]
+
     with pytest.raises(DeserializationValueError):
-        CategoricalParam.deserialize_from_dict(payload)
+        Param.deserialize_from_dict(payload)
 
 
 def test_categorical_param_round_trips_with_serializable_value_type() -> None:
-    """Test `CategoricalParam` round-trips when values are `Serializable` instances."""
-    param: CategoricalParam[Identifier] = CategoricalParam(
+    """Test categorical param round-trips when values are `Serializable` instances."""
+    param: Param[Identifier] = create_categorical_param(
         [Identifier("a"), Identifier("b")]
     )
+
     data = param.serialize_to_dict()
-    restored: CategoricalParam[Identifier] = CategoricalParam.deserialize_from_dict(
-        data
-    )
+    restored: Param[Identifier] = Param.deserialize_from_dict(data)
+
     assert param.is_structurally_equivalent(restored)
+
+
+def test_categorical_param_keeps_bool_and_int_categories_distinct() -> None:
+    """Test a categorical param keeps ``True`` and ``1`` as two distinct categories.
+
+    Native ``frozenset`` storage would collapse ``True`` and ``1`` into one
+    element because ``True == 1``; the tuple storage keeps both and admits each.
+    """
+    param: Param[int] = create_categorical_param([True, 1])
+
+    assert isinstance(param.domain, CategoricalDomain)
+    assert len(param.domain.categories) == 2
+    assert param.is_value_admissible(True)
+    assert param.is_value_admissible(1)
+
+
+def test_categorical_param_bool_and_int_category_sets_are_not_equivalent() -> None:
+    """Test structural equivalence keeps ``bool`` and ``int`` category sets distinct.
+
+    ``(True,)`` and ``(1,)`` must not compare equivalent even though ``True == 1``,
+    so the equivalence check cannot fall back on native ``tuple`` equality.
+    """
+    bool_param: Param[bool] = create_categorical_param(
+        [True], name=mock_identifier("x", 1)
+    )
+    int_param: Param[int] = create_categorical_param([1], name=mock_identifier("x", 1))
+
+    assert not bool_param.is_structurally_equivalent(int_param)
+    assert not int_param.is_structurally_equivalent(bool_param)
+
+
+def test_categorical_param_bool_and_int_categories_round_trip_distinctly() -> None:
+    """Test a mixed ``bool``/``int`` categorical param round-trips both kinds.
+
+    Serialization must not collapse ``True`` and ``1`` during the round trip, so
+    the restored param still admits both distinct categories.
+    """
+    param: Param[int] = create_categorical_param([True, 1])
+
+    restored: Param[int] = Param.deserialize_from_dict(param.serialize_to_dict())
+
+    assert isinstance(restored.domain, CategoricalDomain)
+    assert len(restored.domain.categories) == 2
+    assert restored.is_value_admissible(True)
+    assert restored.is_value_admissible(1)

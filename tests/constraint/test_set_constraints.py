@@ -10,7 +10,13 @@ from typing import Any
 
 import pytest
 
-from fhy_core.constraint import Constraint, InSetConstraint, NotInSetConstraint
+from fhy_core.constraint import (
+    Constraint,
+    ConstraintError,
+    ConstraintOutcome,
+    InSetConstraint,
+    NotInSetConstraint,
+)
 from fhy_core.identifier import Identifier
 
 from .conftest import SET_KINDS, SerializableEqualHashable, mock_identifier
@@ -20,6 +26,21 @@ SetConstraintFactory = Callable[[Identifier, Any], Constraint]
 _KINDS_WITH_OUTCOMES = [
     pytest.param(InSetConstraint, True, False, id="in_set"),
     pytest.param(NotInSetConstraint, False, True, id="not_in_set"),
+]
+
+_KINDS_WITH_EVALUATE_OUTCOMES = [
+    pytest.param(
+        InSetConstraint,
+        ConstraintOutcome.SATISFIED,
+        ConstraintOutcome.VIOLATED,
+        id="in_set",
+    ),
+    pytest.param(
+        NotInSetConstraint,
+        ConstraintOutcome.VIOLATED,
+        ConstraintOutcome.SATISFIED,
+        id="not_in_set",
+    ),
 ]
 
 _KINDS_WITH_STR_MARKER = [
@@ -34,10 +55,10 @@ _KINDS_WITH_STR_MARKER = [
 @pytest.mark.parametrize(
     "values, member, non_member",
     [
-        ({1, 2, 3}, 1, 4),
-        ({"a", "b", "c"}, "a", "d"),
-        ({True, False}, True, "missing"),
-        ({1.5, 2.5}, 1.5, 3.5),
+        pytest.param({1, 2, 3}, 1, 4, id="ints"),
+        pytest.param({"a", "b", "c"}, "a", "d", id="strings"),
+        pytest.param({True, False}, True, "missing", id="bools"),
+        pytest.param({1.5, 2.5}, 1.5, 3.5, id="floats"),
     ],
 )
 def test_set_constraint_is_satisfied(
@@ -48,8 +69,8 @@ def test_set_constraint_is_satisfied(
     member: Any,
     non_member: Any,
 ) -> None:
-    # pylint: disable=too-many-positional-arguments
     """Test ``is_satisfied`` returns the kind-appropriate polarity for membership."""
+    # pylint: disable=too-many-positional-arguments
     constraint = factory(mock_identifier("x", 0), values)
 
     assert constraint.is_satisfied(member) is member_outcome
@@ -159,6 +180,34 @@ def test_set_constraint_str_renders_membership_marker(
     assert str_marker in rendered
     assert "1" in rendered
     assert "2" in rendered
+
+
+# =============================================================================
+# Tri-state `evaluate` outcomes
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "factory, member_outcome, non_member_outcome", _KINDS_WITH_EVALUATE_OUTCOMES
+)
+def test_set_constraint_evaluate_only_decides_satisfied_or_violated(
+    factory: SetConstraintFactory,
+    member_outcome: ConstraintOutcome,
+    non_member_outcome: ConstraintOutcome,
+) -> None:
+    """Test set constraints only ever report SATISFIED or VIOLATED.
+
+    Membership is always decidable, so a set constraint never reports
+    ``ConstraintOutcome.UNDECIDED``.
+    """
+    constraint = factory(mock_identifier("x", 0), {1, 2, 3})
+
+    member_result = constraint.evaluate(1)
+    non_member_result = constraint.evaluate(4)
+
+    assert member_result is member_outcome
+    assert non_member_result is non_member_outcome
+    assert ConstraintOutcome.UNDECIDED not in (member_result, non_member_result)
 
 
 # =============================================================================
@@ -289,3 +338,13 @@ def test_set_constraint_supports_negative_and_zero_numeric_members(
 
     for value in (-1, 0, -2.5):
         assert constraint.is_satisfied(value) is in_set
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize("members", ["abc", b"abc", bytearray(b"abc")])
+def test_set_constraint_rejects_bare_string_like_members(
+    factory: SetConstraintFactory, members: Any
+) -> None:
+    """Test a bare str/bytes/bytearray is rejected, not split into elements."""
+    with pytest.raises(ConstraintError):
+        factory(mock_identifier("x", 0), members)

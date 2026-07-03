@@ -10,7 +10,7 @@ Expected behavior
 
    Component code should simply acquire a logger and emit messages:
 
-       >>> from fhy_core import get_logger
+       >>> from fhy_core.logger import get_logger
        >>> log = get_logger(__name__)
        >>> log.debug("Lowering AST node")
 
@@ -27,7 +27,7 @@ Expected behavior
 
    Example (CLI entrypoint):
 
-       >>> from fhy_core import configure_logging
+       >>> from fhy_core.logger import configure_logging
        >>> configure_logging(
        ...     namespace="mycompiler",
        ...     console_level=logging.INFO,

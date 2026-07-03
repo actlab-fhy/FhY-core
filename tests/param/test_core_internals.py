@@ -1,4 +1,4 @@
-"""Tests for private helpers in `fhy_core.param.core`.
+"""Tests for private helpers in `fhy_core.param`.
 
 The helpers exercised here cover validation paths that the public-API tests
 cannot easily reach because the public constructors and validators reject
@@ -12,14 +12,11 @@ from typing import Any
 import pytest
 
 from fhy_core.identifier import Identifier
-from fhy_core.param.core import (
-    ParamError,
-    _constraint_structural_ordering_key,
-    _serialize_typed_wrapped_leaf_value,
-)
+from fhy_core.param.core import _constraint_structural_ordering_key
+from fhy_core.param.values import ParamError, serialize_wrapped_leaf_value
 
 # =============================================================================
-# `_serialize_typed_wrapped_leaf_value`
+# `serialize_wrapped_leaf_value`
 # =============================================================================
 
 
@@ -33,11 +30,11 @@ from fhy_core.param.core import (
         pytest.param(Identifier("x"), id="serializable"),
     ],
 )
-def test_serialize_typed_wrapped_leaf_value_accepts_each_supported_type(
+def test_serialize_wrapped_leaf_value_accepts_each_supported_type(
     value: Any,
 ) -> None:
     """Test the helper serializes each supported leaf-value type without raising."""
-    _serialize_typed_wrapped_leaf_value(value)
+    serialize_wrapped_leaf_value(value)
 
 
 @pytest.mark.parametrize(
@@ -48,16 +45,21 @@ def test_serialize_typed_wrapped_leaf_value_accepts_each_supported_type(
         pytest.param(object(), id="opaque-object"),
     ],
 )
-def test_serialize_typed_wrapped_leaf_value_rejects_unsupported_type(
+def test_serialize_wrapped_leaf_value_rejects_unsupported_type(
     value: Any,
 ) -> None:
     """Test the helper raises `ParamError` for a value of an unsupported type."""
     with pytest.raises(ParamError, match="serializable leaf"):
-        _serialize_typed_wrapped_leaf_value(value)
+        serialize_wrapped_leaf_value(value)
 
 
 # =============================================================================
 # `_constraint_structural_ordering_key`
+#
+# FLAGGED: tests a module-private helper directly. Kept per convention (the
+# public `Param.is_structurally_equivalent` path cannot easily reach the
+# key-order-independence behavior pinned here). Promote the helper if it needs
+# standalone coverage long-term.
 # =============================================================================
 
 

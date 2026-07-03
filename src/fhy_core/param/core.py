@@ -1,215 +1,166 @@
-"""Core parameter structures."""
+"""Constrained parameters built by composing a value domain.
 
-from fhy_core.utils.override import override
+A :class:`Param` pairs a variable identifier and a set of constraints with a
+:class:`~fhy_core.param.domains.ParamDomain` that supplies all kind-specific
+behavior. There is a single concrete ``Param`` class; the common kinds are built
+through the ``create_*`` factory functions.
 
-__all__ = [
-    "CategoricalParam",
-    "CategoricalValue",
-    "IntParam",
-    "NumericParam",
-    "OrdinalParam",
-    "OrdinalValue",
-    "Param",
-    "ParamAssignment",
-    "ParamData",
-    "ParamError",
-    "PermParam",
-    "PermutationMemberValue",
-    "RealParam",
-    "SerializableEqualValue",
-    "SerializableOrderableValue",
-    "create_single_valid_value_param",
-    "finalize_param_construction_from_data",
-    "is_valid_param_data",
-]
+A parameter serializes through the schema-derived ``Serializable`` engine; the
+``domain`` field carries a wrapped family envelope identifying the concrete
+domain.
+"""
 
-import itertools
 import json
-from abc import ABC, abstractmethod
-from collections.abc import Callable, Collection, Hashable, Sequence
-from typing import (
-    Any,
-    Generic,
-    Protocol,
-    TypeAlias,
-    TypedDict,
-    TypeGuard,
-    TypeVar,
-    cast,
-)
+import operator
+from collections.abc import Callable, Collection, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Generic, TypeVar, cast
 
-from fhy_core.constraint import (
-    Constraint,
-    EquationConstraint,
-    InSetConstraint,
-    NotInSetConstraint,
-)
-from fhy_core.error import register_error
+from fhy_core.constraint import Constraint, ConstraintOutcome, EquationConstraint
 from fhy_core.expression import (
-    Expression,
+    BinaryExpression,
+    BinaryOperation,
     IdentifierExpression,
-    does_expression_imply,
+    LiteralExpression,
 )
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
 from fhy_core.serialization import (
-    DeserializationDictStructureError,
-    DeserializationValueError,
+    FieldCodec,
     Serializable,
-    SerializedDict,
-    WrappedFamilySerializable,
+    _SerializableFieldCodec,
     deserialize_registry_wrapped_value,
-    is_serialized_dict,
+    make_field_codec,
     register_serializable,
     serialize_registry_wrapped_value,
 )
 from fhy_core.symbol_type import SymbolType
-from fhy_core.traits import Equal, FrozenMixin, Orderable, StructuralEquivalence
-from fhy_core.utils import Self, format_comma_separated_list, is_strict_int
+from fhy_core.traits import (
+    DerivedEquivalenceMixin,
+    FrozenMixin,
+    compared_as_binder,
+    compared_as_value,
+)
+from fhy_core.utils.override import override
+
+from .domains import (
+    IntegerDomain,
+    IntervalIntegerDomain,
+    ParamDomain,
+    RealDomain,
+    build_categorical_domain,
+    build_ordinal_domain,
+    build_permutation_domain,
+    is_bound_expression,
+)
+from .values import (
+    CategoricalValue,
+    OrdinalValue,
+    ParamError,
+    PermutationMemberValue,
+    SerializableEqualValue,
+    SerializableOrderableValue,
+    _CategoricalValueT,
+    _OrdinalValueT,
+    _PermutationMemberValueT,
+)
+
+__all__ = [
+    "CategoricalValue",
+    "OrdinalValue",
+    "Param",
+    "ParamAssignment",
+    "ParamError",
+    "PermutationMemberValue",
+    "SerializableEqualValue",
+    "SerializableOrderableValue",
+    "create_categorical_param",
+    "create_integer_param",
+    "create_integer_param_between",
+    "create_integer_param_with_lower_bound",
+    "create_integer_param_with_upper_bound",
+    "create_interval_integer_param",
+    "create_interval_integer_param_between",
+    "create_interval_integer_param_exactly",
+    "create_interval_integer_param_with_lower_bound",
+    "create_interval_integer_param_with_upper_bound",
+    "create_interval_natural_param",
+    "create_natural_param",
+    "create_ordinal_param",
+    "create_permutation_param",
+    "create_real_param",
+    "create_real_param_between",
+    "create_real_param_with_lower_bound",
+    "create_real_param_with_upper_bound",
+    "create_single_valid_value_param",
+]
 
 _LOGGER = get_logger(__name__)
 
 _T = TypeVar("_T")
 
 
-@register_error
-class ParamError(ValueError):
-    """Domain error for parameter construction, validation, and assignment.
-
-    Subclasses ``ValueError`` so call sites that previously caught
-    ``ValueError`` continue to work; new code should prefer ``ParamError``
-    when distinguishing parameter-domain failures from generic value errors.
-    """
-
-
 def _constraint_structural_ordering_key(constraint: Constraint) -> str:
-    """Return a deterministic key for canonical constraint ordering.
-
-    Uses ``json.dumps`` with ``sort_keys=True`` so the key does not depend on
-    the insertion order of keys produced by ``Constraint.serialize_to_dict``.
-    """
+    """Return a deterministic key for canonical constraint ordering."""
     return json.dumps(constraint.serialize_to_dict(), sort_keys=True, default=str)
 
 
-class _ParamAssignmentData(TypedDict):
-    param: SerializedDict
-    value: SerializedDict
+_WRAPPED_VALUE_CODEC: FieldCodec = make_field_codec(
+    serialize_registry_wrapped_value, deserialize_registry_wrapped_value
+)
 
 
-def _is_valid_param_assignment_data(
-    data: SerializedDict,
-) -> TypeGuard[_ParamAssignmentData]:
-    return (
-        "param" in data
-        and is_serialized_dict(data["param"])
-        and "value" in data
-        and is_serialized_dict(data["value"])
+# ---------------------------------------------------------------------------
+# Param container
+# ---------------------------------------------------------------------------
+
+
+@register_serializable(type_id="param")
+@dataclass(frozen=True, eq=False)
+class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
+    """A constrained parameter that composes a value domain.
+
+    A parameter is defined by its variable, a set of constraints, and a
+    :class:`~fhy_core.param.domains.ParamDomain` that supplies admissibility,
+    subset, equivalence, and serialization behavior. Construct one directly with
+    a domain, or use a ``create_*`` factory for the common kinds.
+
+    The ``Param[_T]`` type parameter is an advisory hint for call-site inference
+    only; the admissible value type is enforced by the domain at runtime, not by
+    ``_T``.
+
+    Two parameters are structurally equivalent when they have the same variable,
+    domain, and constraints; under alpha comparison they are equivalent up to
+    renaming of the bound variable. Construction validates and de-duplicates the
+    constraints, appends the domain's implied constraints, and sorts them into a
+    canonical order so that constraint-set order does not affect equivalence.
+    """
+
+    domain: ParamDomain
+    variable: Identifier = field(
+        default_factory=lambda: Identifier("param"),
+        metadata=compared_as_binder(scopes_over=("constraints",)),
     )
+    constraints: tuple[Constraint, ...] = ()
 
+    def __post_init__(self) -> None:
+        canonical = self._build_canonical_constraints(self.constraints)
+        object.__setattr__(self, "constraints", canonical)
 
-@register_serializable(type_id="param_assignment")
-class ParamAssignment(
-    Serializable,
-    FrozenMixin,
-    Generic[_T],
-):
-    """Immutable binding of a parameter definition to a concrete value."""
-
-    _param: "Param[_T]"
-    _value: _T
-
-    def __init__(self, param: "Param[_T]", value: _T) -> None:
-        """Create an assignment after validating value against parameter constraints."""
-        if not param.is_value_admissible(value):
-            raise ParamError(
-                f"Value {value!r} is not admissible for parameter {param!r}."
-            )
-
-        is_constraint_satisfied, failing_constraint = (
-            param._is_constraints_satisfied_with_failing_constraint(value)
-        )
-        if not is_constraint_satisfied:
-            raise ParamError(
-                f"Value {value!r} violates constraint {failing_constraint!r} "
-                f"for parameter {param!r}."
-            )
-
-        self._param = param
-        self._value = value
-
-    @property
-    def param(self) -> "Param[_T]":
-        """Return the assigned parameter definition."""
-        return self._param
-
-    @property
-    def value(self) -> _T:
-        """Return the assigned value."""
-        return self._value
-
-    def is_value_set(self) -> bool:
-        """Return whether this assignment has a value."""
-        return True
-
-    @override
-    def serialize_to_dict(self) -> SerializedDict:
-        return {
-            "param": self._param.serialize_to_dict(),
-            "value": serialize_registry_wrapped_value(cast(Any, self._value)),
-        }
-
-    @classmethod
-    @override
-    def deserialize_from_dict(cls, data: SerializedDict) -> "ParamAssignment[Any]":
-        if not _is_valid_param_assignment_data(data):
-            raise DeserializationDictStructureError(
-                cls, _ParamAssignmentData.__annotations__, data
-            )
-
-        param: Param[Any] = Param.deserialize_from_dict(data["param"])
-        try:
-            value = deserialize_registry_wrapped_value(data["value"])
-        except (DeserializationDictStructureError, DeserializationValueError) as exc:
-            raise DeserializationValueError(
-                cls,
-                "value",
-                f"a wrapped serializable value (underlying error: {exc})",
-                data["value"],
-            ) from exc
-
-        try:
-            return cls(param, cast(Any, value))
-        except ValueError as exc:
-            raise DeserializationValueError(
-                f"Invalid parameter assignment values: {exc}"
-            ) from exc
-
-
-class Param(
-    WrappedFamilySerializable,
-    FrozenMixin,
-    StructuralEquivalence,
-    ABC,
-    Generic[_T],
-):
-    """Abstract base class for constrained parameters."""
-
-    _variable: Identifier
-    _constraints: tuple[Constraint, ...]
-
-    def __init__(
-        self,
-        *,
-        name: Identifier | None = None,
-        constraints: Sequence[Constraint] = (),
-    ) -> None:
-        self._variable = name or Identifier("param")
-        self._constraints = self._validate_and_deduplicate_constraints(constraints)
+    def _build_canonical_constraints(
+        self, constraints: Sequence[Constraint]
+    ) -> tuple[Constraint, ...]:
+        accumulated = self._validate_and_deduplicate_constraints(constraints)
+        for implied in self.domain.get_implied_constraints(self.variable):
+            if not any(
+                existing.is_structurally_equivalent(implied) for existing in accumulated
+            ):
+                accumulated = (*accumulated, implied)
+        return tuple(sorted(accumulated, key=_constraint_structural_ordering_key))
 
     def _validate_and_deduplicate_constraints(
         self, constraints: Sequence[Constraint]
     ) -> tuple[Constraint, ...]:
-        """Validate each constraint and drop structural duplicates, preserving order."""
         accumulated: list[Constraint] = []
         for constraint in constraints:
             self.validate_constraint(constraint)
@@ -222,187 +173,158 @@ class Param(
         return tuple(accumulated)
 
     @property
-    def variable(self) -> Identifier:
-        """Return the parameter's variable identifier."""
-        return self._variable
-
-    @property
     def variable_expression(self) -> IdentifierExpression:
         """Return the parameter's variable as an identifier expression."""
-        return IdentifierExpression(self._variable)
+        return IdentifierExpression(self.variable)
 
     @property
-    def constraints(self) -> tuple[Constraint, ...]:
-        """Return the constraints attached to this parameter."""
-        return self._constraints
+    def symbol_type(self) -> SymbolType | None:
+        """Return the domain's numeric symbol type, or ``None`` if non-numeric."""
+        return self.domain.symbol_type
 
-    def with_new_constraints(self, constraints: Sequence[Constraint]) -> Self:
-        """Return a frozen copy of this parameter with its constraints replaced.
+    def replace_constraints(self, constraints: Sequence[Constraint]) -> "Param[_T]":
+        """Return a copy of this parameter with its constraints replaced.
 
-        The parameter's definition state (variable and value domain) is
-        preserved unchanged; only the constraint set is replaced. Each
-        constraint is validated against this parameter's variable and
-        structural duplicates are dropped, matching constructor semantics.
+        The domain and variable are preserved; only the constraint set is
+        replaced, validated, de-duplicated by structural equivalence, and
+        re-canonicalized.
 
         Args:
             constraints: Constraints for the returned parameter.
 
         Returns:
-            A new frozen parameter of the same concrete type.
+            A new parameter with the same domain and variable.
 
         """
-        clone = type(self).__new__(type(self))
-        # The frozen flag lives in ``FrozenMixin.__slots__``, not ``__dict__``,
-        # so copying ``__dict__`` yields a still-mutable clone that ``freeze``
-        # seals once its constraints are set.
-        clone.__dict__.update(self.__dict__)
-        clone._constraints = self._validate_and_deduplicate_constraints(constraints)
-        clone.freeze()
-        return clone
-
-    @classmethod
-    def with_value(
-        cls: type[Self], value: _T, *, name: Identifier | None = None
-    ) -> ParamAssignment[_T]:
-        """Create a parameter assignment from a parameter definition.
-
-        Args:
-            value: Parameter value.
-            name: Optional parameter name. If not provided, a default name
-                will be used.
-
-        Returns:
-            Assignment with the specified fixed value.
-
-        """
-        param = cls(name=name)
-        return param.assign(value)
-
-    def is_value_valid(self, value: Any) -> bool:
-        """Return whether a value is valid for this parameter."""
-        return self.is_value_admissible(value) and self.is_constraints_satisfied(value)
-
-    @abstractmethod
-    def is_value_admissible(self, value: Any) -> bool:
-        """Return whether a value is admissible for this parameter kind."""
-
-    def is_constraints_satisfied(self, value: Any) -> bool:
-        """Check if the value satisfies all constraints.
-
-        Args:
-            value: Value to check.
-
-        Returns:
-            True if the value satisfies all constraints; False otherwise.
-
-        """
-        return self._is_constraints_satisfied_with_failing_constraint(value)[0]
-
-    @override
-    def is_structurally_equivalent(self, other: object) -> bool:
-        if not isinstance(other, Param):
-            return False
-        if self.variable != other.variable:
-            return False
-
-        self_constraints = self._get_constraints_in_structural_order()
-        other_constraints = other._get_constraints_in_structural_order()
-        if len(self_constraints) != len(other_constraints):
-            return False
-
-        return all(
-            left_constraint.is_structurally_equivalent(right_constraint)
-            for left_constraint, right_constraint in zip(
-                self_constraints, other_constraints, strict=True
-            )
+        return Param(
+            self.domain, variable=self.variable, constraints=tuple(constraints)
         )
 
-    def _get_constraints_in_structural_order(self) -> tuple[Constraint, ...]:
-        return tuple(sorted(self._constraints, key=_constraint_structural_ordering_key))
+    def is_value_valid(self, value: Any) -> bool:
+        """Return whether a value is admissible and satisfies all constraints."""
+        return self.is_value_admissible(value) and self.is_constraints_satisfied(value)
 
-    def _is_constraints_satisfied_with_failing_constraint(
+    def is_value_admissible(self, value: Any) -> bool:
+        """Return whether a value lies in this parameter's value domain."""
+        return self.domain.is_value_admissible(value)
+
+    def is_constraints_satisfied(self, value: Any) -> bool:
+        """Return whether the value satisfies all constraints."""
+        normalized = self.domain.normalize_value(value)
+        return self._find_failing_constraint(normalized)[0]
+
+    def _find_failing_constraint(
         self, value: Any
-    ) -> tuple[bool, Constraint | None]:
-        for constraint in self._constraints:
-            if not constraint.is_satisfied(value):
-                return False, constraint
-        return True, None
+    ) -> tuple[bool, Constraint | None, ConstraintOutcome | None]:
+        """Return the first non-satisfied constraint and its outcome.
 
-    @abstractmethod
+        Constraints are checked in canonical order; the first constraint
+        whose ``evaluate`` does not return ``SATISFIED`` short-circuits.
+
+        Returns:
+            A ``(is_satisfied, constraint, outcome)`` triple. When every
+            constraint is satisfied, this is ``(True, None, None)``.
+            Otherwise ``is_satisfied`` is ``False``, ``constraint`` is the
+            first non-satisfied constraint, and ``outcome`` is its
+            ``ConstraintOutcome`` (``VIOLATED`` or ``UNDECIDED``).
+
+        """
+        for constraint in self.constraints:
+            outcome = constraint.evaluate(value)
+            if outcome is not ConstraintOutcome.SATISFIED:
+                return False, constraint, outcome
+        return True, None, None
+
+    def validate_value(self, value: Any) -> None:
+        """Raise if ``value`` is not a valid assignment for this parameter.
+
+        Raises:
+            ParamError: If the value is not admissible, violates a constraint,
+                or cannot be verified against a constraint.
+
+        """
+        if not self.is_value_admissible(value):
+            raise ParamError(
+                f"Value {value!r} is not admissible for parameter {self!r}."
+            )
+        normalized = self.domain.normalize_value(value)
+        _, failing_constraint, outcome = self._find_failing_constraint(normalized)
+        if failing_constraint is None:
+            return
+        if outcome is ConstraintOutcome.UNDECIDED:
+            raise ParamError(
+                f"Value {value!r} could not be verified against constraint "
+                f"{failing_constraint!r} for parameter {self!r}."
+            )
+        raise ParamError(
+            f"Value {value!r} violates constraint {failing_constraint!r} "
+            f"for parameter {self!r}."
+        )
+
     def is_value_set_subset(self, other: "Param[_T]") -> bool:
-        """Return whether this parameter's value set is a subset of `other`'s.
+        """Return whether this parameter's value set is a subset of ``other``'s."""
+        return self.domain.is_value_set_subset(other.domain)
 
-        The "value set" is the underlying domain the parameter is defined
-        over before constraints narrow it (e.g., the reals for ``RealParam``;
-        the enumerated possible values for ``OrdinalParam``).
-        """
-
-    @abstractmethod
     def is_subset(self, other: "Param[_T]") -> bool:
-        """Return whether this parameter's feasibility set is a subset of `other`'s.
+        """Return whether this parameter's feasible set is a subset of ``other``'s.
 
-        Concrete subclasses define the semantics: :class:`NumericParam`
-        reasons about continuous and integer domains via Z3 implication,
-        while the discrete-set subclasses (:class:`OrdinalParam`,
-        :class:`CategoricalParam`, :class:`PermParam`) iterate over their
-        explicit feasibility sets and test membership directly.
+        Comparison is gated on value space: numeric parameters compare only with
+        numeric parameters sharing the same numeric symbol type (integers with
+        integers, reals with reals), and finite-set parameters compare only
+        within their own family. Cross-space and cross-family queries return
+        ``False``.
+
+        When the solver cannot decide a numeric implication, the relation is
+        assumed to hold, so a ``True`` result means "not disproven", not
+        "proven".
         """
+        return self.domain.compute_feasibility_subset(
+            self.constraints, other.domain, other.constraints
+        )
 
-    def assign(self, value: _T) -> ParamAssignment[_T]:
+    def is_feasible(self) -> bool:
+        """Return whether some value satisfies the domain and all constraints.
+
+        The constraints already include the domain's implied constraints, so the
+        domain reasons only about the constraints it is given.
+        """
+        return self.domain.has_feasible_value(self.constraints)
+
+    def is_empty(self) -> bool:
+        """Return whether no value satisfies the domain and all constraints."""
+        return not self.is_feasible()
+
+    def assign(self, value: _T) -> "ParamAssignment[_T]":
         """Assign a value to the parameter, returning a parameter assignment.
 
         Args:
-            value: Value to assign to the parameter.
+            value: Value to assign; normalized by the domain before binding.
 
         Returns:
-            A parameter assignment with the provided value.
+            A parameter assignment with the normalized value.
 
         Raises:
-            ValueError: If the value is not valid.
+            ParamError: If the value is not admissible or violates a constraint.
 
         """
-        return ParamAssignment(self, value)
+        return ParamAssignment(self, cast(_T, self.domain.normalize_value(value)))
 
-    def add_constraint(self, constraint: Constraint) -> Self:
+    def add_constraint(self, constraint: Constraint) -> "Param[_T]":
         """Return a new parameter with an additional constraint.
 
-        Constraints are deduplicated by structural equivalence: if an
-        equivalent constraint is already present, ``self`` is returned
-        unchanged.
-
-        Args:
-            constraint: Constraint to add.
-
-        Returns:
-            A new parameter instance with the added constraint, or ``self``
-            when an equivalent constraint is already present.
-
+        Structurally-equivalent duplicates are dropped, returning ``self``
+        unchanged when the constraint is already present.
         """
         self.validate_constraint(constraint)
         if any(
             existing.is_structurally_equivalent(constraint)
-            for existing in self._constraints
+            for existing in self.constraints
         ):
-            _LOGGER.debug(
-                "deduplicated structurally-equivalent constraint on %r",
-                self._variable,
-            )
             return self
-        new_param = self.with_new_constraints((*self._constraints, constraint))
-        _LOGGER.debug(
-            "added constraint on %r (total=%d)",
-            self._variable,
-            len(new_param._constraints),
-        )
-        return new_param
+        return self.replace_constraints((*self.constraints, constraint))
 
-    def add_constraints(self, constraints: Collection[Constraint]) -> Self:
-        """Return a new parameter with multiple additional constraints.
-
-        Each constraint is added through :meth:`add_constraint`, so
-        structural duplicates (whether against the existing set or among
-        the incoming constraints) are skipped.
-        """
+    def add_constraints(self, constraints: Collection[Constraint]) -> "Param[_T]":
+        """Return a new parameter with multiple additional constraints."""
         result = self
         for constraint in constraints:
             result = result.add_constraint(constraint)
@@ -411,1193 +333,687 @@ class Param(
     def validate_constraint(self, constraint: Constraint) -> None:
         """Validate whether a constraint can be added to this parameter.
 
-        Args:
-            constraint: Constraint to validate.
-
         Raises:
-            ValueError: If the constraint is not valid for this parameter.
-            TypeError: If the constraint type is not supported by this parameter
-                (may be raised by subclasses).
+            ParamError: If the constraint variable does not match, or the domain
+                rejects the constraint.
+            TypeError: If the domain forbids the constraint's type.
 
         """
         if constraint.variable != self.variable:
             raise ParamError("Constraint variable must match parameter variable.")
+        self.domain.validate_constraint(constraint, self.variable)
 
-    @override
-    def serialize_data_to_dict(self) -> SerializedDict:
-        return {
-            "variable": self._variable.serialize_to_dict(),
-            "constraints": [
-                constraint.serialize_to_dict() for constraint in self._constraints
-            ],
-        }
+    def add_lower_bound_constraint(
+        self, lower_bound: int | float | str, *, is_inclusive: bool = True
+    ) -> "Param[_T]":
+        """Return a new parameter with an added lower-bound constraint."""
+        _validate_natural_bound(
+            self.domain, lower_bound, is_lower=True, is_inclusive=is_inclusive
+        )
+        return self.add_constraint(
+            _create_bound_constraint(
+                self.variable, lower_bound, is_lower=True, is_inclusive=is_inclusive
+            )
+        )
+
+    def add_upper_bound_constraint(
+        self, upper_bound: int | float | str, *, is_inclusive: bool = True
+    ) -> "Param[_T]":
+        """Return a new parameter with an added upper-bound constraint."""
+        _validate_natural_bound(
+            self.domain, upper_bound, is_lower=False, is_inclusive=is_inclusive
+        )
+        return self.add_constraint(
+            _create_bound_constraint(
+                self.variable, upper_bound, is_lower=False, is_inclusive=is_inclusive
+            )
+        )
+
+    # -- interval arithmetic (interval-integer domains only) ----------------
+
+    def _require_interval_domain(self) -> IntervalIntegerDomain:
+        if not isinstance(self.domain, IntervalIntegerDomain):
+            raise TypeError(
+                "Arithmetic is only supported on interval-integer parameters."
+            )
+        return self.domain
+
+    def _coerce_interval_operand(self, other: Any) -> "Param[int] | None":
+        # Both operands are the single ``Param`` type, and Python skips the
+        # reflected dunder when operands share a type. A non-interval ``self``
+        # must therefore coerce and handle ``non_interval OP interval`` itself
+        # rather than relying on the interval operand's reflected method.
+        if isinstance(other, Param) and isinstance(other.domain, IntervalIntegerDomain):
+            return _coerce_to_interval_param(other, self)
+        return None
+
+    def __add__(self, other: Any) -> "Param[int]":
+        if not isinstance(self.domain, IntervalIntegerDomain):
+            coerced_self = self._coerce_interval_operand(other)
+            if coerced_self is None:
+                return NotImplemented
+            return coerced_self.__add__(other)
+        domain = self.domain
+        coerced = _coerce_to_interval_param(self, other)
+        self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
+        other_min, other_max = _get_effective_min_max(
+            coerced.constraints, coerced.variable
+        )
+        new_min = _combine_optional_bounds(self_min, other_min, operator.add)
+        new_max = _combine_optional_bounds(self_max, other_max, operator.add)
+        return _create_class_preserved_interval_param(
+            self, coerced, new_min, new_max, domain
+        )
+
+    def __radd__(self, other: Any) -> "Param[int]":
+        return self.__add__(other)
+
+    def __sub__(self, other: Any) -> "Param[int]":
+        if not isinstance(self.domain, IntervalIntegerDomain):
+            coerced_self = self._coerce_interval_operand(other)
+            if coerced_self is None:
+                return NotImplemented
+            return coerced_self.__sub__(other)
+        domain = self.domain
+        coerced = _coerce_to_interval_param(self, other)
+        self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
+        other_min, other_max = _get_effective_min_max(
+            coerced.constraints, coerced.variable
+        )
+        new_min = _combine_optional_bounds(self_min, other_max, operator.sub)
+        new_max = _combine_optional_bounds(self_max, other_min, operator.sub)
+        return _create_widened_interval_param(self.variable, new_min, new_max, domain)
+
+    def __rsub__(self, other: Any) -> "Param[int]":
+        if not isinstance(self.domain, IntervalIntegerDomain):
+            return NotImplemented
+        return _coerce_to_interval_param(self, other).__sub__(self)
+
+    def __neg__(self) -> "Param[int]":
+        domain = self._require_interval_domain()
+        self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
+        new_min = None if self_max is None else -self_max
+        new_max = None if self_min is None else -self_min
+        return _create_widened_interval_param(self.variable, new_min, new_max, domain)
 
     @override
     def __repr__(self) -> str:
-        param_set_repr = self._get_param_set_repr()
-        if param_set_repr:
-            param_set_repr = f"{param_set_repr}, "
+        set_repr = self.domain.render_set_repr()
+        if set_repr:
+            set_repr = f"{set_repr}, "
         return (
-            f"{self.__class__.__name__}({self._variable!r}, {param_set_repr}"
-            f"constraints={self._constraints!r})"
+            f"{type(self).__name__}({self.variable!r}, {set_repr}"
+            f"constraints={self.constraints!r})"
         )
-
-    def _get_param_set_repr(self) -> str:
-        """Return a string representation of the parameter set.
-
-        Note:
-            If the representation of the parameter set is implicit to the class,
-            this method should return an empty string.
-
-        """
-        return ""
 
     @override
     def __str__(self) -> str:
         land = " /\\ "
         return (
-            "{" + f"{self._variable} in {self._get_param_set_str()} | "
-            f"{land.join(str(c) for c in self._constraints)}"
+            "{" + f"{self.variable} in {self.domain.render_set_string()} | "
+            f"{land.join(str(c) for c in self.constraints)}"
             "}"
         )
 
-    @abstractmethod
-    def _get_param_set_str(self) -> str:
-        """Return a string representation of the parameter set."""
+
+# ---------------------------------------------------------------------------
+# Parameter assignment
+# ---------------------------------------------------------------------------
+
+
+# The ``param`` field is annotated ``Param[_T]``, a parameterized generic the
+# engine cannot resolve to the ``Param`` class for codec inference, so supply the
+# serializable-class codec explicitly.
+_PARAM_CODEC: FieldCodec = _SerializableFieldCodec(Param)
+
+
+@register_serializable(type_id="param_assignment")
+@dataclass(frozen=True, eq=False)
+class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
+    """Immutable binding of a parameter definition to a concrete value.
+
+    Two assignments are structurally equivalent when their parameters are
+    equivalent and their bound values compare equal.
+    """
+
+    param: "Param[_T]" = field(metadata={"serialize_codec": _PARAM_CODEC})
+    value: _T = field(
+        metadata={
+            "serialize_codec": _WRAPPED_VALUE_CODEC,
+            **compared_as_value(),
+        }
+    )
+
+    def __post_init__(self) -> None:
+        self.param.validate_value(self.value)
+
+    def is_value_set(self) -> bool:
+        """Return whether this assignment has a value."""
+        return True
+
+
+# ---------------------------------------------------------------------------
+# Bound constraint helpers and natural-number gates
+# ---------------------------------------------------------------------------
 
 
 def _create_bound_constraint(
-    param_variable: Identifier,
+    variable: Identifier,
     bound: int | float | str,
     *,
     is_lower: bool,
     is_inclusive: bool,
 ) -> EquationConstraint:
-    variable_expression = IdentifierExpression(param_variable)
+    variable_expression = IdentifierExpression(variable)
     if is_lower:
-        constraint_equation = (
+        equation = (
             variable_expression >= bound
             if is_inclusive
             else variable_expression > bound
         )
     else:
-        constraint_equation = (
+        equation = (
             variable_expression <= bound
             if is_inclusive
             else variable_expression < bound
         )
-    return EquationConstraint(param_variable, constraint_equation)
+    return EquationConstraint(variable, equation)
 
 
-def _create_lower_bound_constraint(
-    param_variable: Identifier,
-    lower_bound: int | float | str,
-    is_inclusive: bool = True,
-) -> EquationConstraint:
-    return _create_bound_constraint(
-        param_variable, lower_bound, is_lower=True, is_inclusive=is_inclusive
-    )
-
-
-def _create_upper_bound_constraint(
-    param_variable: Identifier,
-    upper_bound: int | float | str,
-    is_inclusive: bool = True,
-) -> EquationConstraint:
-    return _create_bound_constraint(
-        param_variable, upper_bound, is_lower=False, is_inclusive=is_inclusive
-    )
-
-
-class ParamData(TypedDict):
-    """Structure of parameter data for serialization."""
-
-    variable: SerializedDict
-    constraints: list[SerializedDict]
-
-
-def is_valid_param_data(data: SerializedDict) -> TypeGuard[ParamData]:
-    """Return True if the given data is a valid parameter data; False otherwise."""
-    return (
-        "variable" in data
-        and is_serialized_dict(data["variable"])
-        and "constraints" in data
-        and isinstance(data["constraints"], list)
-        and all(
-            is_serialized_dict(constraint_data)
-            for constraint_data in data["constraints"]
-        )
-    )
-
-
-def finalize_param_construction_from_data(
-    param: Param[Any],
-    data: ParamData,
-    constraint_filter_function: Callable[[Constraint], bool] | None = None,
-) -> Param[Any]:
-    """Finalize the construction of a parameter from serialized data.
-
-    Args:
-        param: Parameter to finalize construction for.
-        data: Serialized parameter data.
-        constraint_filter_function: Optional function to filter constraints to add
-            to the parameter. If not provided, all constraints in the data will be
-            added.
-
-    """
-    constraints_to_add: list[Constraint] = []
-    for constraint_data in data["constraints"]:
-        constraint = Constraint.deserialize_from_dict(constraint_data)
-        if constraint_filter_function is None or constraint_filter_function(constraint):
-            constraints_to_add.append(constraint)
-    return param.add_constraints(constraints_to_add)
-
-
-class NumericParam(Param[_T], ABC, Generic[_T]):
-    """Abstract intermediate base for parameters whose domain is numeric.
-
-    A :class:`NumericParam` reasons about its feasibility set via Z3
-    implication: every value admitted by ``self``'s constraints must also
-    satisfy ``other``'s constraints. The Z3 sort used for that reasoning
-    is determined by :meth:`get_symbol_type`.
-
-    Subclasses (currently :class:`RealParam` and :class:`IntParam`, with
-    transitive descendants :class:`NatParam`, :class:`BoundIntParam`,
-    :class:`BoundNatParam`) commit to a continuous or integer domain that
-    Z3 can model. Discrete-set parameter classes that do not have a
-    natural Z3 sort (e.g. :class:`CategoricalParam` over arbitrary
-    serializable values) inherit from :class:`Param` directly and define
-    their own set-semantics :meth:`is_subset`.
-    """
-
-    @abstractmethod
-    def get_symbol_type(self) -> SymbolType:
-        """Return the Z3 sort used to reason about this parameter's domain."""
-
-    @override
-    def is_subset(self, other: "Param[_T]") -> bool:
-        """Return whether this parameter's feasibility set is a subset of `other`'s.
-
-        The check has two parts:
-
-        1. ``self.is_value_set_subset(other)`` -- the underlying value domain
-           of this parameter must be a subset of ``other``'s.
-        2. Constraint satisfiability -- every value admitted by ``self``'s
-           constraints must also satisfy ``other``'s constraints, checked
-           by Z3 over the sort returned by :meth:`get_symbol_type`.
-
-        Returns ``False`` immediately if ``other`` is not an instance of
-        ``self.__class__``.
-        """
-        if not isinstance(other, self.__class__):
-            return False
-        if not self.is_value_set_subset(other):
-            return False
-
-        constrained_variable = Identifier("var")
-
-        def convert_param_constraints(
-            param_: Param[_T],
-        ) -> Expression | None:
-            constraint_expressions_: list[Expression] = []
-            for constraint_ in param_._constraints:
-                constraint_expression_ = constraint_.convert_to_expression()
-                constraint_expression_ = constraint_expression_.substitute(
-                    {constraint_.variable: IdentifierExpression(constrained_variable)}
-                )
-                constraint_expressions_.append(constraint_expression_)
-            if len(constraint_expressions_) == 0:
-                return None
-            elif len(constraint_expressions_) == 1:
-                return constraint_expressions_[0]
-            else:
-                return Expression.logical_and(*constraint_expressions_)
-
-        self_constraint_expression = convert_param_constraints(self)
-        other_constraint_expression = convert_param_constraints(other)
-
-        if (
-            self_constraint_expression is not None
-            and other_constraint_expression is not None
-        ):
-            implies = does_expression_imply(
-                self_constraint_expression,
-                other_constraint_expression,
-                {constrained_variable: self.get_symbol_type()},
+def _validate_natural_lower_bound(
+    bound: int, *, zero_included: bool, is_inclusive: bool
+) -> None:
+    if zero_included:
+        if bound < 0:
+            raise ParamError("Lower bound must be non-negative.")
+        if not is_inclusive and bound < 1:
+            raise ParamError(
+                "Lower bound must be at least 1 if zero is included and "
+                "bound is exclusive."
             )
-            if implies is None:
-                _LOGGER.debug(
-                    "Z3 returned unknown; treating as subset=True (self=%r, other=%r)",
-                    self._variable,
-                    other._variable,
-                )
-            # Z3 `unknown` is treated as "not a counterexample": when the
-            # solver cannot decide implication, the subset relation is
-            # reported as True rather than as a proof of failure.
-            return implies is None or implies
-        elif (
-            self_constraint_expression is not None
-            and other_constraint_expression is None
-        ):
-            return True
-        elif (
-            self_constraint_expression is None
-            and other_constraint_expression is not None
-        ):
-            return False
-        else:
-            return True
-
-
-@register_serializable(type_id="real_param")
-class RealParam(NumericParam[str | float]):
-    """Real-valued parameter."""
-
-    @override
-    def get_symbol_type(self) -> SymbolType:
-        return SymbolType.REAL
-
-    @override
-    def is_value_admissible(self, value: Any) -> bool:
-        if isinstance(value, bool):
-            return False
-        if isinstance(value, float):
-            return True
-        if isinstance(value, str):
-            try:
-                float(value)
-            except ValueError:
-                return False
-            return True
-        return False
-
-    @override
-    def is_constraints_satisfied(self, value: str | float) -> bool:
-        return super().is_constraints_satisfied(value)
-
-    @override
-    def assign(self, value: str | float) -> ParamAssignment[str | float]:
-        return super().assign(value)
-
-    @override
-    def _get_param_set_str(self) -> str:
-        return "R"
-
-    @classmethod
-    def between(
-        cls: type[Self],
-        lower_bound: float | str,
-        upper_bound: float | str,
-        *,
-        name: Identifier | None = None,
-        is_lower_inclusive: bool = True,
-        is_upper_inclusive: bool = True,
-    ) -> Self:
-        """Create a bounded real-valued parameter.
-
-        Args:
-            lower_bound: Lower bound of the parameter.
-            upper_bound: Upper bound of the parameter.
-            name: Optional parameter name. If not provided, a default name
-                will be used.
-            is_lower_inclusive: Whether the lower bound is inclusive.
-            is_upper_inclusive: Whether the upper bound is inclusive.
-
-        Returns:
-            Bounded real-valued parameter.
-
-        """
-        if float(lower_bound) > float(upper_bound) or (
-            float(lower_bound) == float(upper_bound)
-            and not (is_lower_inclusive and is_upper_inclusive)
-        ):
-            raise ParamError("Lower bound must be less than or equal to upper bound.")
-        param = cls(name=name)
-        param = param.add_lower_bound_constraint(
-            lower_bound, is_inclusive=is_lower_inclusive
-        )
-        param = param.add_upper_bound_constraint(
-            upper_bound, is_inclusive=is_upper_inclusive
-        )
-        return param
-
-    @classmethod
-    def with_lower_bound(
-        cls: type[Self],
-        lower_bound: float | str,
-        *,
-        name: Identifier | None = None,
-        is_inclusive: bool = True,
-    ) -> Self:
-        """Create a real-valued parameter with a lower bound.
-
-        Args:
-            lower_bound: Lower bound of the parameter.
-            name: Optional parameter name. If not provided, a default name
-                will be used.
-            is_inclusive: Whether the lower bound is inclusive.
-
-        Returns:
-            Real-valued parameter with a lower bound.
-
-        """
-        param = cls(name=name)
-        param = param.add_lower_bound_constraint(lower_bound, is_inclusive=is_inclusive)
-        return param
-
-    @classmethod
-    def with_upper_bound(
-        cls: type[Self],
-        upper_bound: float | str,
-        *,
-        name: Identifier | None = None,
-        is_inclusive: bool = True,
-    ) -> Self:
-        """Create a real-valued parameter with an upper bound.
-
-        Args:
-            upper_bound: Upper bound of the parameter.
-            name: Optional parameter name. If not provided, a default name
-                will be used.
-            is_inclusive: Whether the upper bound is inclusive.
-
-        Returns:
-            Real-valued parameter with an upper bound.
-
-        """
-        param = cls(name=name)
-        param = param.add_upper_bound_constraint(upper_bound, is_inclusive=is_inclusive)
-        return param
-
-    def add_upper_bound_constraint(
-        self,
-        upper_bound: float | str,
-        *,
-        is_inclusive: bool = True,
-    ) -> Self:
-        """Add an upper bound constraint to the parameter.
-
-        Args:
-            upper_bound: Upper bound of the parameter.
-            is_inclusive: Whether the upper bound is inclusive.
-
-        """
-        upper_bound_constraint = _create_upper_bound_constraint(
-            self.variable, upper_bound, is_inclusive
-        )
-        return self.add_constraint(upper_bound_constraint)
-
-    def add_lower_bound_constraint(
-        self,
-        lower_bound: float | str,
-        *,
-        is_inclusive: bool = True,
-    ) -> Self:
-        """Add a lower bound constraint to the parameter.
-
-        Args:
-            lower_bound: Lower bound of the parameter.
-            is_inclusive: Whether the lower bound is inclusive.
-
-        """
-        lower_bound_constraint = _create_lower_bound_constraint(
-            self.variable, lower_bound, is_inclusive
-        )
-        return self.add_constraint(lower_bound_constraint)
-
-    @override
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return isinstance(other, RealParam) and super().is_structurally_equivalent(
-            other
-        )
-
-    @override
-    def is_value_set_subset(self, other: "Param[str | float]") -> bool:
-        return isinstance(other, RealParam)
-
-    @classmethod
-    @override
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> "RealParam":
-        if not is_valid_param_data(data):
-            raise DeserializationDictStructureError(
-                cls, ParamData.__annotations__, data
+    elif is_inclusive:
+        if bound < 1:
+            raise ParamError(
+                "Lower bound must be at least 1 when zero is not included."
             )
-        param = RealParam(name=Identifier.deserialize_from_dict(data["variable"]))
-        param = cast(
-            RealParam,
-            finalize_param_construction_from_data(
-                param,
-                data,
-            ),
-        )
-        return param
-
-
-@register_serializable(type_id="int_param")
-class IntParam(NumericParam[int]):
-    """Integer-valued parameter."""
-
-    @override
-    def get_symbol_type(self) -> SymbolType:
-        return SymbolType.INT
-
-    @override
-    def is_value_admissible(self, value: Any) -> bool:
-        return is_strict_int(value)
-
-    @override
-    def is_constraints_satisfied(self, value: int) -> bool:
-        return super().is_constraints_satisfied(value)
-
-    @override
-    def assign(self, value: int) -> ParamAssignment[int]:
-        return super().assign(value)
-
-    @override
-    def _get_param_set_str(self) -> str:
-        return "Z"
-
-    @classmethod
-    def between(
-        cls: type[Self],
-        lower_bound: int,
-        upper_bound: int,
-        *,
-        name: Identifier | None = None,
-        is_lower_inclusive: bool = True,
-        is_upper_inclusive: bool = True,
-    ) -> Self:
-        """Create a bounded integer-valued parameter.
-
-        Args:
-            lower_bound: Lower bound of the parameter.
-            upper_bound: Upper bound of the parameter.
-            name: Optional parameter name. If not provided, a default name
-                will be used.
-            is_lower_inclusive: Whether the lower bound is inclusive.
-            is_upper_inclusive: Whether the upper bound is inclusive.
-
-        Returns:
-            Bounded integer-valued parameter.
-
-        """
-        if lower_bound > upper_bound or (
-            lower_bound == upper_bound
-            and not (is_lower_inclusive and is_upper_inclusive)
-        ):
-            raise ParamError("Lower bound must be less than or equal to upper bound.")
-        param = cls(name=name)
-        param = param.add_lower_bound_constraint(
-            lower_bound, is_inclusive=is_lower_inclusive
-        )
-        param = param.add_upper_bound_constraint(
-            upper_bound, is_inclusive=is_upper_inclusive
-        )
-        return param
-
-    @classmethod
-    def with_lower_bound(
-        cls: type[Self],
-        lower_bound: int,
-        *,
-        name: Identifier | None = None,
-        is_inclusive: bool = True,
-    ) -> Self:
-        """Create an integer-valued parameter with a lower bound.
-
-        Args:
-            lower_bound: Lower bound of the parameter.
-            name: Optional parameter name. If not provided, a default name
-                will be used.
-            is_inclusive: Whether the lower bound is inclusive.
-
-        Returns:
-            Integer-valued parameter with a lower bound.
-
-        """
-        param = cls(name=name)
-        param = param.add_lower_bound_constraint(lower_bound, is_inclusive=is_inclusive)
-        return param
-
-    @classmethod
-    def with_upper_bound(
-        cls: type[Self],
-        upper_bound: int,
-        *,
-        name: Identifier | None = None,
-        is_inclusive: bool = True,
-    ) -> Self:
-        """Create an integer-valued parameter with an upper bound.
-
-        Args:
-            upper_bound: Upper bound of the parameter.
-            name: Optional parameter name. If not provided, a default name
-                will be used.
-            is_inclusive: Whether the upper bound is inclusive.
-
-        Returns:
-            Integer-valued parameter with an upper bound.
-
-        """
-        param = cls(name=name)
-        param = param.add_upper_bound_constraint(upper_bound, is_inclusive=is_inclusive)
-        return param
-
-    def add_upper_bound_constraint(
-        self,
-        upper_bound: int,
-        *,
-        is_inclusive: bool = True,
-    ) -> Self:
-        """Add an upper bound constraint to the parameter.
-
-        Args:
-            upper_bound: Upper bound of the parameter.
-            is_inclusive: Whether the upper bound is inclusive.
-
-        """
-        upper_bound_constraint = _create_upper_bound_constraint(
-            self.variable, upper_bound, is_inclusive
-        )
-        return self.add_constraint(upper_bound_constraint)
-
-    def add_lower_bound_constraint(
-        self,
-        lower_bound: int,
-        *,
-        is_inclusive: bool = True,
-    ) -> Self:
-        """Add a lower bound constraint to the parameter.
-
-        Args:
-            lower_bound: Lower bound of the parameter.
-            is_inclusive: Whether the lower bound is inclusive.
-
-        """
-        lower_bound_constraint = _create_lower_bound_constraint(
-            self.variable, lower_bound, is_inclusive
-        )
-        return self.add_constraint(lower_bound_constraint)
-
-    @override
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return isinstance(other, IntParam) and super().is_structurally_equivalent(other)
-
-    @override
-    def is_value_set_subset(self, other: "Param[int]") -> bool:
-        return isinstance(other, IntParam)
-
-    @classmethod
-    @override
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> "IntParam":
-        if not is_valid_param_data(data):
-            raise DeserializationDictStructureError(
-                cls, ParamData.__annotations__, data
-            )
-        param = IntParam(name=Identifier.deserialize_from_dict(data["variable"]))
-        param = cast(
-            IntParam,
-            finalize_param_construction_from_data(
-                param,
-                data,
-            ),
-        )
-        return param
-
-
-class _SerializableValueLike(Protocol):
-    """Structural instance-side serialization contract for param values."""
-
-    @classmethod
-    def get_serialization_class_type_id(cls) -> str: ...
-
-    def serialize_to_dict(self) -> SerializedDict: ...
-
-
-class SerializableEqualValue(Equal, _SerializableValueLike, Protocol):
-    """Value with equality semantics and serializable instance behavior."""
-
-
-class SerializableOrderableValue(Orderable, _SerializableValueLike, Protocol):
-    """Value with ordering semantics and serializable instance behavior."""
-
-
-# CategoricalValue omits `float`: floating-point equality is unreliable for
-# category membership.
-CategoricalValue: TypeAlias = bool | int | str | SerializableEqualValue
-OrdinalValue: TypeAlias = bool | int | float | str | SerializableOrderableValue
-PermutationMemberValue: TypeAlias = bool | int | float | str | SerializableEqualValue
-
-_CategoricalValueT = TypeVar("_CategoricalValueT", bound=CategoricalValue)
-_OrdinalValueT = TypeVar("_OrdinalValueT", bound=OrdinalValue)
-_PermutationMemberValueT = TypeVar(
-    "_PermutationMemberValueT", bound=PermutationMemberValue
-)
-
-
-def _is_values_unique_in_sequence_without_set(values: Sequence[Any]) -> bool:
-    for i, value_1 in enumerate(values):
-        for value_2 in values[i + 1 :]:
-            if value_1 == value_2:
-                return False
-    return True
-
-
-def _is_values_unique_in_sorted_sequence(values: Sequence[Any]) -> bool:
-    return all(values[i] != values[i + 1] for i in range(len(values) - 1))
-
-
-def _is_values_unique_in_sequence_with_set(values: Collection[Hashable]) -> bool:
-    return len(values) == len(set(values))
-
-
-def _supports_equal_value_semantics(value: Any) -> bool:
-    if isinstance(value, Equal):
-        return value.supports_equality
-    value_type = type(value)
-    return (
-        getattr(value_type, "__eq__", object.__eq__) is not object.__eq__
-        and getattr(value_type, "__hash__", None) is not None
-    )
-
-
-def _supports_orderable_value_semantics(value: Any) -> bool:
-    if isinstance(value, Orderable):
-        return value.supports_ordering
-    return any("__lt__" in cls.__dict__ for cls in type(value).__mro__[:-1])
-
-
-def _is_categorical_value(value: Any) -> TypeGuard[CategoricalValue]:
-    return isinstance(value, (bool, int, str)) or (
-        isinstance(value, Serializable) and _supports_equal_value_semantics(value)
-    )
-
-
-def _is_ordinal_value(value: Any) -> TypeGuard[OrdinalValue]:
-    return isinstance(value, (bool, int, float, str)) or (
-        isinstance(value, Serializable) and _supports_orderable_value_semantics(value)
-    )
-
-
-def _is_permutation_member_value(value: Any) -> TypeGuard[PermutationMemberValue]:
-    return isinstance(value, (bool, int, float, str)) or (
-        isinstance(value, Serializable) and _supports_equal_value_semantics(value)
-    )
-
-
-def _has_bool_numeric_mismatch(value_1: Any, value_2: Any) -> bool:
-    return (
-        isinstance(value_1, bool)
-        and isinstance(value_2, (int, float))
-        and not isinstance(value_2, bool)
-    ) or (
-        isinstance(value_2, bool)
-        and isinstance(value_1, (int, float))
-        and not isinstance(value_1, bool)
-    )
-
-
-def _param_values_match(candidate: Any, allowed_value: Any) -> bool:
-    if _has_bool_numeric_mismatch(candidate, allowed_value):
-        return False
-    return cast(bool, candidate == allowed_value)
-
-
-def _contains_param_value(
-    allowed_values: Collection[Any] | Sequence[Any], candidate: Any
-) -> bool:
-    return any(
-        _param_values_match(candidate, allowed_value)
-        for allowed_value in allowed_values
-    )
-
-
-_ParamValueT = TypeVar("_ParamValueT")
-
-
-def _deserialize_typed_wrapped_leaf_values(
-    owner_cls: type[Any],
-    serialized_values: Sequence[Any],
-    value_type_guard: Callable[[Any], TypeGuard[_ParamValueT]],
-    expected_description: str,
-) -> list[_ParamValueT]:
-    if not all(is_serialized_dict(value) for value in serialized_values):
-        raise DeserializationValueError(
-            owner_cls,
-            "possible_values",
-            expected_description,
-            serialized_values,
-        )
-    wrapped_values = [
-        deserialize_registry_wrapped_value(value) for value in serialized_values
-    ]
-    typed_values: list[_ParamValueT] = []
-    for value in wrapped_values:
-        if not value_type_guard(value):
-            raise DeserializationValueError(
-                owner_cls,
-                "possible_values",
-                expected_description,
-                value,
-            )
-        typed_values.append(value)
-    return typed_values
-
-
-def _serialize_typed_wrapped_leaf_value(value: object) -> SerializedDict:
-    """Serialize a validated leaf value through the wrapped registry.
-
-    Param generics are stricter than the wrapped-registry alias, so we validate
-    the runtime shape here and then hand the value to the shared serializer.
-    """
-    if not isinstance(value, (bool, int, float, str, Serializable)):
+    elif bound < 0:
         raise ParamError(
-            "Parameter values must be serializable leaf values "
-            "(bool/int/float/str/Serializable)."
+            "Lower bound must be non-negative when zero is not included "
+            "and bound is exclusive."
         )
-    return serialize_registry_wrapped_value(cast(Any, value))
 
 
-class _OrdinalCategoricalPermParamData(ParamData):
-    possible_values: list[Any]
+def _validate_natural_upper_bound(
+    bound: int, *, zero_included: bool, is_inclusive: bool
+) -> None:
+    if zero_included:
+        if is_inclusive:
+            if bound < 0:
+                raise ParamError(
+                    "Upper bound must be non-negative when zero is included."
+                )
+        elif bound < 1:
+            raise ParamError(
+                "Upper bound must be at least 1 if zero is included and "
+                "bound is exclusive."
+            )
+    elif is_inclusive:
+        if bound < 1:
+            raise ParamError(
+                "Upper bound must be at least 1 when zero is not included."
+            )
+    elif bound < 2:  # noqa: PLR2004
+        raise ParamError(
+            "Upper bound must be at least 2 when zero is not included "
+            "and bound is exclusive."
+        )
 
 
-def _is_valid_ordinal_categorical_perm_param_data(
-    data: SerializedDict,
-) -> TypeGuard[_OrdinalCategoricalPermParamData]:
-    return (
-        "possible_values" in data
-        and isinstance(data["possible_values"], list)
-        and is_valid_param_data(data)
+def _validate_natural_bound(
+    domain: ParamDomain,
+    bound: int | float | str,
+    *,
+    is_lower: bool,
+    is_inclusive: bool,
+) -> None:
+    """Apply the natural-number bound gates for non-negative integer domains."""
+    if not isinstance(domain, (IntegerDomain, IntervalIntegerDomain)):
+        return
+    if not domain.non_negative:
+        return
+    if not isinstance(bound, int):
+        return
+    zero_included = domain.zero_included
+    if is_lower:
+        _validate_natural_lower_bound(
+            bound, zero_included=zero_included, is_inclusive=is_inclusive
+        )
+    else:
+        _validate_natural_upper_bound(
+            bound, zero_included=zero_included, is_inclusive=is_inclusive
+        )
+
+
+# ---------------------------------------------------------------------------
+# Interval arithmetic helpers
+# ---------------------------------------------------------------------------
+
+
+def _invert_comparison(operation: BinaryOperation) -> BinaryOperation:
+    inverses = {
+        BinaryOperation.GREATER: BinaryOperation.LESS,
+        BinaryOperation.GREATER_EQUAL: BinaryOperation.LESS_EQUAL,
+        BinaryOperation.LESS: BinaryOperation.GREATER,
+        BinaryOperation.LESS_EQUAL: BinaryOperation.GREATER_EQUAL,
+    }
+    if operation not in inverses:
+        raise ValueError(f"Cannot invert non-comparison operation: {operation}")
+    return inverses[operation]
+
+
+def _bound_from_literal(
+    literal: LiteralExpression, operation: BinaryOperation
+) -> tuple[bool, int, bool]:
+    value = literal.value
+    if not isinstance(value, int):  # pragma: no cover
+        raise RuntimeError("Bound expression literal is not an integer.")
+    is_lower = operation in (BinaryOperation.GREATER, BinaryOperation.GREATER_EQUAL)
+    is_inclusive = operation in (
+        BinaryOperation.GREATER_EQUAL,
+        BinaryOperation.LESS_EQUAL,
+    )
+    return is_lower, value, is_inclusive
+
+
+def _bound_from_constraint(constraint: Constraint) -> tuple[bool, int, bool]:
+    if not isinstance(constraint, EquationConstraint):
+        raise RuntimeError(
+            "Interval parameter has a non-EquationConstraint constraint: "
+            f"{type(constraint)}"
+        )
+    if not is_bound_expression(constraint.convert_to_expression()):
+        raise RuntimeError(
+            f"Interval parameter has a non-bound constraint: {constraint!r}"
+        )
+    expression = constraint.convert_to_expression()
+    if not isinstance(expression, BinaryExpression):  # pragma: no cover
+        raise RuntimeError("Interval parameter has a non-bound constraint.")
+    if isinstance(expression.left, IdentifierExpression) and isinstance(
+        expression.right, LiteralExpression
+    ):
+        return _bound_from_literal(expression.right, expression.operation)
+    if isinstance(expression.right, IdentifierExpression) and isinstance(
+        expression.left, LiteralExpression
+    ):
+        return _bound_from_literal(
+            expression.left, _invert_comparison(expression.operation)
+        )
+    raise RuntimeError("Interval bound expression is malformed.")  # pragma: no cover
+
+
+def _iter_interval_bounds(
+    constraints: Sequence[Constraint],
+) -> list[tuple[bool, int, bool]]:
+    return [_bound_from_constraint(constraint) for constraint in constraints]
+
+
+def _get_effective_min_max(
+    constraints: Sequence[Constraint], variable: Identifier
+) -> tuple[int | None, int | None]:
+    min_int: int | None = None
+    max_int: int | None = None
+    for is_lower, bound, inclusive in _iter_interval_bounds(constraints):
+        if is_lower:
+            effective = bound if inclusive else bound + 1
+            min_int = effective if min_int is None else max(min_int, effective)
+        else:
+            effective = bound if inclusive else bound - 1
+            max_int = effective if max_int is None else min(max_int, effective)
+    if min_int is not None and max_int is not None and min_int > max_int:
+        raise ParamError(
+            f"Empty integer interval represented by constraints for {variable}."
+        )
+    return min_int, max_int
+
+
+def _combine_optional_bounds(
+    left: int | None,
+    right: int | None,
+    combine: Callable[[int, int], int],
+) -> int | None:
+    """Combine two optional bounds, yielding ``None`` if either is unbounded."""
+    if left is None or right is None:
+        return None
+    return combine(left, right)
+
+
+def _apply_interval_bounds(
+    param: "Param[int]", min_int: int | None, max_int: int | None
+) -> "Param[int]":
+    domain = cast(IntervalIntegerDomain, param.domain)
+    if min_int is not None:
+        if domain.prefer_inclusive:
+            param = param.add_lower_bound_constraint(min_int, is_inclusive=True)
+        else:
+            param = param.add_lower_bound_constraint(min_int - 1, is_inclusive=False)
+    if max_int is not None:
+        if domain.prefer_inclusive:
+            param = param.add_upper_bound_constraint(max_int, is_inclusive=True)
+        else:
+            param = param.add_upper_bound_constraint(max_int + 1, is_inclusive=False)
+    return param
+
+
+def _create_widened_interval_param(
+    variable: Identifier,
+    min_int: int | None,
+    max_int: int | None,
+    template_domain: IntervalIntegerDomain,
+) -> "Param[int]":
+    param: Param[int] = Param(
+        IntervalIntegerDomain(prefer_inclusive=template_domain.prefer_inclusive),
+        variable=variable,
+    )
+    return _apply_interval_bounds(param, min_int, max_int)
+
+
+def _create_class_preserved_interval_param(
+    template: "Param[Any]",
+    other: "Param[Any]",
+    min_int: int | None,
+    max_int: int | None,
+    template_domain: IntervalIntegerDomain,
+) -> "Param[int]":
+    other_domain = other.domain
+    if (
+        isinstance(other_domain, IntervalIntegerDomain)
+        and template_domain.non_negative
+        and other_domain.non_negative
+    ):
+        param: Param[int] = Param(
+            IntervalIntegerDomain(
+                prefer_inclusive=template_domain.prefer_inclusive,
+                non_negative=True,
+                zero_included=template_domain.zero_included,
+            ),
+            variable=template.variable,
+        )
+        return _apply_interval_bounds(param, min_int, max_int)
+    return _create_widened_interval_param(
+        template.variable, min_int, max_int, template_domain
     )
 
 
-@register_serializable(type_id="ordinal_param")
-class OrdinalParam(Param[_OrdinalValueT], Generic[_OrdinalValueT]):
-    """Ordinal-valued parameter.
-
-    Note:
-        All values must be wrapped-leaf serializable and orderable.
-
-    """
-
-    _sorted_values: tuple[_OrdinalValueT, ...]
-
-    def __init__(
-        self, values: Sequence[_OrdinalValueT], *, name: Identifier | None = None
-    ) -> None:
-        super().__init__(name=name)
-        all_values = tuple(values)
-        if not all_values:
-            raise ParamError("Values must be non-empty.")
-        for value in all_values:
-            if not _is_ordinal_value(value):
+def _coerce_to_interval_param(template: "Param[Any]", other: Any) -> "Param[int]":
+    template_domain = cast(IntervalIntegerDomain, template.domain)
+    if isinstance(other, bool):
+        raise TypeError(f"Unsupported operand type: {type(other)}")
+    if isinstance(other, int):
+        return create_interval_integer_param_exactly(
+            other, prefer_inclusive=template_domain.prefer_inclusive
+        )
+    if isinstance(other, Param) and isinstance(other.domain, IntervalIntegerDomain):
+        return other
+    if isinstance(other, Param) and isinstance(other.domain, IntegerDomain):
+        for constraint in other.constraints:
+            if not is_bound_expression(constraint.convert_to_expression()):
                 raise TypeError(
-                    "Ordinal values must satisfy orderable semantics and be "
-                    "serializable, or be primitive bool/int/float/str values."
+                    "Cannot coerce an integer parameter with non-bound "
+                    "constraints to an interval parameter."
                 )
-        try:
-            sorted_values = tuple(sorted(all_values))
-        except TypeError as exc:
-            raise TypeError(
-                "Ordinal values must be mutually comparable for sorting."
-            ) from exc
-        if not _is_values_unique_in_sorted_sequence(sorted_values):
-            raise ParamError("Values must be unique.")
-        self._sorted_values = sorted_values
-
-    @property
-    def possible_values(self) -> tuple[_OrdinalValueT, ...]:
-        """Return the sorted possible values for this parameter."""
-        return self._sorted_values
-
-    @override
-    def is_value_admissible(self, value: Any) -> bool:
-        return _is_ordinal_value(value) and _contains_param_value(
-            self._sorted_values, value
+        return Param(
+            IntervalIntegerDomain(prefer_inclusive=template_domain.prefer_inclusive),
+            variable=other.variable,
+            constraints=other.constraints,
         )
-
-    @override
-    def assign(self, value: _OrdinalValueT) -> ParamAssignment[_OrdinalValueT]:
-        return super().assign(value)
-
-    @override
-    def validate_constraint(self, constraint: Constraint) -> None:
-        super().validate_constraint(constraint)
-        if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
-            raise ParamError(
-                "Only in-set and not-in-set constraints are allowed for "
-                "ordinal parameters."
-            )
-
-    @override
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return (
-            isinstance(other, OrdinalParam)
-            and super().is_structurally_equivalent(other)
-            and self._sorted_values == other._sorted_values
-        )
-
-    @override
-    def is_value_set_subset(self, other: "Param[_OrdinalValueT]") -> bool:
-        if not isinstance(other, OrdinalParam):
-            return False
-        return all(
-            _contains_param_value(other._sorted_values, value)
-            for value in self._sorted_values
-        )
-
-    @override
-    def is_subset(self, other: "Param[_OrdinalValueT]") -> bool:
-        """Return whether this parameter's feasibility set is a subset of `other`'s.
-
-        Uses set semantics: every value in ``self._sorted_values`` that
-        satisfies ``self``'s constraints must also be admissible by
-        ``other`` and satisfy ``other``'s constraints.
-        """
-        if not isinstance(other, OrdinalParam):
-            return False
-        for value in self._sorted_values:
-            if not self.is_value_valid(value):
-                continue
-            if not other.is_value_valid(value):
-                return False
-        return True
-
-    @override
-    def serialize_data_to_dict(self) -> SerializedDict:
-        super_dict = super().serialize_data_to_dict()
-        super_dict["possible_values"] = [
-            _serialize_typed_wrapped_leaf_value(value) for value in self._sorted_values
-        ]
-        return super_dict
-
-    @classmethod
-    @override
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
-        if not _is_valid_ordinal_categorical_perm_param_data(data):
-            raise DeserializationDictStructureError(
-                cls, _OrdinalCategoricalPermParamData.__annotations__, data
-            )
-        values = _deserialize_typed_wrapped_leaf_values(
-            cls,
-            data["possible_values"],
-            _is_ordinal_value,
-            (
-                "a list of orderable serializable values or primitive "
-                "bool/int/float/str values"
-            ),
-        )
-        param = OrdinalParam(
-            values,
-            name=Identifier.deserialize_from_dict(data["variable"]),
-        )
-        final_param = cast(Self, finalize_param_construction_from_data(param, data))
-        return final_param
-
-    @override
-    def _get_param_set_repr(self) -> str:
-        return f"{{{format_comma_separated_list(self._sorted_values)}}}"
-
-    @override
-    def _get_param_set_str(self) -> str:
-        return f"{{{format_comma_separated_list(self._sorted_values, str_func=str)}}}"
+    raise TypeError(f"Unsupported operand type: {type(other)}")
 
 
-@register_serializable(type_id="categorical_param")
-class CategoricalParam(Param[_CategoricalValueT], Generic[_CategoricalValueT]):
-    """Categorical parameter.
+# ---------------------------------------------------------------------------
+# Factory functions
+# ---------------------------------------------------------------------------
 
-    Note:
-        All values must be wrapped-leaf serializable, hashable, and support
-        equality semantics.
 
-    """
+def create_integer_param(
+    *, name: Identifier | None = None, constraints: Sequence[Constraint] = ()
+) -> Param[int]:
+    """Create an integer-valued parameter."""
+    return Param(
+        IntegerDomain(),
+        variable=name or Identifier("param"),
+        constraints=tuple(constraints),
+    )
 
-    _categories: frozenset[_CategoricalValueT]
 
-    def __init__(
-        self,
-        categories: Collection[_CategoricalValueT],
-        *,
-        name: Identifier | None = None,
-    ) -> None:
-        super().__init__(name=name)
-        category_values = tuple(categories)
-        if not category_values:
-            raise ParamError("Categories must be non-empty.")
-        for category in category_values:
-            if not _is_categorical_value(category):
-                raise TypeError(
-                    "Categorical values must satisfy equal semantics and be "
-                    "serializable, or be primitive bool/int/str values."
-                )
-        if not _is_values_unique_in_sequence_with_set(category_values):
-            raise ParamError("Values must be unique.")
-        self._categories = frozenset(category_values)
+def create_natural_param(
+    *,
+    name: Identifier | None = None,
+    zero_included: bool = True,
+    constraints: Sequence[Constraint] = (),
+) -> Param[int]:
+    """Create a natural-number (non-negative integer) parameter."""
+    return Param(
+        IntegerDomain(non_negative=True, zero_included=zero_included),
+        variable=name or Identifier("param"),
+        constraints=tuple(constraints),
+    )
 
-    @property
-    def categories(self) -> frozenset[_CategoricalValueT]:
-        """Return the set of categories for this parameter."""
-        return self._categories
 
-    @override
-    def is_value_admissible(self, value: Any) -> bool:
-        return _is_categorical_value(value) and _contains_param_value(
-            self._categories, value
-        )
+def create_real_param(
+    *, name: Identifier | None = None, constraints: Sequence[Constraint] = ()
+) -> Param[str | float]:
+    """Create a real-valued parameter."""
+    return Param(
+        RealDomain(),
+        variable=name or Identifier("param"),
+        constraints=tuple(constraints),
+    )
 
-    @override
-    def assign(self, value: _CategoricalValueT) -> ParamAssignment[_CategoricalValueT]:
-        return super().assign(value)
 
-    @override
-    def validate_constraint(self, constraint: Constraint) -> None:
-        super().validate_constraint(constraint)
-        if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
-            raise ParamError(
-                "Only in-set and not-in-set constraints are allowed for "
-                "categorical parameters."
-            )
+def create_integer_param_between(
+    lower_bound: int,
+    upper_bound: int,
+    *,
+    name: Identifier | None = None,
+    is_lower_inclusive: bool = True,
+    is_upper_inclusive: bool = True,
+) -> Param[int]:
+    """Create an integer parameter bounded to ``[lower_bound, upper_bound]``."""
+    if lower_bound > upper_bound or (
+        lower_bound == upper_bound and not (is_lower_inclusive and is_upper_inclusive)
+    ):
+        raise ParamError("Lower bound must be less than or equal to upper bound.")
+    param = create_integer_param(name=name)
+    param = param.add_lower_bound_constraint(
+        lower_bound, is_inclusive=is_lower_inclusive
+    )
+    return param.add_upper_bound_constraint(
+        upper_bound, is_inclusive=is_upper_inclusive
+    )
 
-    @override
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return (
-            isinstance(other, CategoricalParam)
-            and super().is_structurally_equivalent(other)
-            and self._categories == other._categories
-        )
 
-    @override
-    def is_value_set_subset(self, other: "Param[_CategoricalValueT]") -> bool:
-        if not isinstance(other, CategoricalParam):
-            return False
-        return all(
-            _contains_param_value(other._categories, category)
-            for category in self._categories
-        )
+def create_integer_param_with_lower_bound(
+    lower_bound: int, *, name: Identifier | None = None, is_inclusive: bool = True
+) -> Param[int]:
+    """Create an integer parameter with a lower bound."""
+    return create_integer_param(name=name).add_lower_bound_constraint(
+        lower_bound, is_inclusive=is_inclusive
+    )
 
-    @override
-    def is_subset(self, other: "Param[_CategoricalValueT]") -> bool:
-        """Return whether this parameter's feasibility set is a subset of `other`'s.
 
-        Uses set semantics: every category in ``self._categories`` that
-        satisfies ``self``'s constraints must also be admissible by
-        ``other`` and satisfy ``other``'s constraints.
-        """
-        if not isinstance(other, CategoricalParam):
-            return False
-        for value in self._categories:
-            if not self.is_value_valid(value):
-                continue
-            if not other.is_value_valid(value):
-                return False
-        return True
+def create_integer_param_with_upper_bound(
+    upper_bound: int, *, name: Identifier | None = None, is_inclusive: bool = True
+) -> Param[int]:
+    """Create an integer parameter with an upper bound."""
+    return create_integer_param(name=name).add_upper_bound_constraint(
+        upper_bound, is_inclusive=is_inclusive
+    )
 
-    @override
-    def serialize_data_to_dict(self) -> SerializedDict:
-        super_dict = super().serialize_data_to_dict()
-        super_dict["possible_values"] = [
-            _serialize_typed_wrapped_leaf_value(category)
-            for category in self._categories
-        ]
-        return super_dict
 
-    @classmethod
-    @override
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
-        if not _is_valid_ordinal_categorical_perm_param_data(data):
-            raise DeserializationDictStructureError(
-                cls, _OrdinalCategoricalPermParamData.__annotations__, data
-            )
-        values = _deserialize_typed_wrapped_leaf_values(
-            cls,
-            data["possible_values"],
-            _is_categorical_value,
-            ("a list of equal serializable values or primitive bool/int/str values"),
-        )
-        param = CategoricalParam(
-            values,
-            name=Identifier.deserialize_from_dict(data["variable"]),
-        )
-        final_param = cast(Self, finalize_param_construction_from_data(param, data))
-        return final_param
+def create_real_param_between(
+    lower_bound: float | str,
+    upper_bound: float | str,
+    *,
+    name: Identifier | None = None,
+    is_lower_inclusive: bool = True,
+    is_upper_inclusive: bool = True,
+) -> Param[str | float]:
+    """Create a real parameter bounded to ``[lower_bound, upper_bound]``."""
+    if float(lower_bound) > float(upper_bound) or (
+        float(lower_bound) == float(upper_bound)
+        and not (is_lower_inclusive and is_upper_inclusive)
+    ):
+        raise ParamError("Lower bound must be less than or equal to upper bound.")
+    param = create_real_param(name=name)
+    param = param.add_lower_bound_constraint(
+        lower_bound, is_inclusive=is_lower_inclusive
+    )
+    return param.add_upper_bound_constraint(
+        upper_bound, is_inclusive=is_upper_inclusive
+    )
 
-    @override
-    def _get_param_set_repr(self) -> str:
-        return f"{{{format_comma_separated_list(self._categories)}}}"
 
-    @override
-    def _get_param_set_str(self) -> str:
-        return f"{{{format_comma_separated_list(self._categories, str_func=str)}}}"
+def create_real_param_with_lower_bound(
+    lower_bound: float | str,
+    *,
+    name: Identifier | None = None,
+    is_inclusive: bool = True,
+) -> Param[str | float]:
+    """Create a real parameter with a lower bound."""
+    return create_real_param(name=name).add_lower_bound_constraint(
+        lower_bound, is_inclusive=is_inclusive
+    )
+
+
+def create_real_param_with_upper_bound(
+    upper_bound: float | str,
+    *,
+    name: Identifier | None = None,
+    is_inclusive: bool = True,
+) -> Param[str | float]:
+    """Create a real parameter with an upper bound."""
+    return create_real_param(name=name).add_upper_bound_constraint(
+        upper_bound, is_inclusive=is_inclusive
+    )
+
+
+def create_interval_integer_param(
+    *,
+    name: Identifier | None = None,
+    prefer_inclusive: bool = True,
+    non_negative: bool = False,
+    zero_included: bool = True,
+) -> Param[int]:
+    """Create an interval-integer parameter (supports interval arithmetic)."""
+    return Param(
+        IntervalIntegerDomain(
+            prefer_inclusive=prefer_inclusive,
+            non_negative=non_negative,
+            zero_included=zero_included,
+        ),
+        variable=name or Identifier("param"),
+    )
+
+
+def create_interval_integer_param_between(
+    lower_bound: int,
+    upper_bound: int,
+    *,
+    name: Identifier | None = None,
+    is_lower_inclusive: bool = True,
+    is_upper_inclusive: bool = True,
+    prefer_inclusive: bool = True,
+) -> Param[int]:
+    """Create an interval-integer parameter bounded to ``[lower, upper]``."""
+    param = create_interval_integer_param(name=name, prefer_inclusive=prefer_inclusive)
+    param = param.add_lower_bound_constraint(
+        lower_bound, is_inclusive=is_lower_inclusive
+    )
+    param = param.add_upper_bound_constraint(
+        upper_bound, is_inclusive=is_upper_inclusive
+    )
+    _get_effective_min_max(param.constraints, param.variable)
+    return param
+
+
+def create_interval_integer_param_with_lower_bound(
+    lower_bound: int,
+    *,
+    name: Identifier | None = None,
+    is_inclusive: bool = True,
+    prefer_inclusive: bool = True,
+) -> Param[int]:
+    """Create an interval-integer parameter with a lower bound."""
+    return create_interval_integer_param(
+        name=name, prefer_inclusive=prefer_inclusive
+    ).add_lower_bound_constraint(lower_bound, is_inclusive=is_inclusive)
+
+
+def create_interval_integer_param_with_upper_bound(
+    upper_bound: int,
+    *,
+    name: Identifier | None = None,
+    is_inclusive: bool = True,
+    prefer_inclusive: bool = True,
+) -> Param[int]:
+    """Create an interval-integer parameter with an upper bound."""
+    return create_interval_integer_param(
+        name=name, prefer_inclusive=prefer_inclusive
+    ).add_upper_bound_constraint(upper_bound, is_inclusive=is_inclusive)
+
+
+def create_interval_integer_param_exactly(
+    value: int, *, name: Identifier | None = None, prefer_inclusive: bool = True
+) -> Param[int]:
+    """Create an interval-integer parameter bounded to exactly ``value``."""
+    param = create_interval_integer_param(name=name, prefer_inclusive=prefer_inclusive)
+    param = param.add_lower_bound_constraint(value, is_inclusive=True)
+    return param.add_upper_bound_constraint(value, is_inclusive=True)
+
+
+def create_interval_natural_param(
+    *,
+    name: Identifier | None = None,
+    zero_included: bool = True,
+    prefer_inclusive: bool = True,
+) -> Param[int]:
+    """Create a non-negative interval-integer parameter."""
+    return create_interval_integer_param(
+        name=name,
+        prefer_inclusive=prefer_inclusive,
+        non_negative=True,
+        zero_included=zero_included,
+    )
+
+
+def create_ordinal_param(
+    values: Sequence[_OrdinalValueT], *, name: Identifier | None = None
+) -> Param[_OrdinalValueT]:
+    """Create an ordinal parameter over a finite, ordered value set."""
+    return Param(build_ordinal_domain(values), variable=name or Identifier("param"))
+
+
+def create_categorical_param(
+    categories: Collection[_CategoricalValueT], *, name: Identifier | None = None
+) -> Param[_CategoricalValueT]:
+    """Create a categorical parameter over a finite, unordered value set."""
+    return Param(
+        build_categorical_domain(tuple(categories)),
+        variable=name or Identifier("param"),
+    )
+
+
+def create_permutation_param(
+    members: Sequence[_PermutationMemberValueT], *, name: Identifier | None = None
+) -> Param[tuple[_PermutationMemberValueT, ...]]:
+    """Create a permutation parameter over a fixed, ordered set of members."""
+    return Param(
+        build_permutation_domain(members), variable=name or Identifier("param")
+    )
 
 
 def create_single_valid_value_param(
     value: _CategoricalValueT, *, name: Identifier | None = None
-) -> CategoricalParam[_CategoricalValueT]:
-    """Return a parameter that can only take a single valid value."""
-    return CategoricalParam([value], name=name)
-
-
-@register_serializable(type_id="perm_param")
-class PermParam(
-    Param[tuple[_PermutationMemberValueT, ...]], Generic[_PermutationMemberValueT]
-):
-    """Permutation parameter.
-
-    Note:
-        All values must be unique.
-
-    """
-
-    _ordered_members: tuple[_PermutationMemberValueT, ...]
-
-    def __init__(
-        self,
-        all_values: Sequence[_PermutationMemberValueT],
-        *,
-        name: Identifier | None = None,
-    ) -> None:
-        super().__init__(name=name)
-        all_member_values = tuple(all_values)
-        if not all_member_values:
-            raise ParamError("Members must be non-empty.")
-        for value in all_member_values:
-            if not _is_permutation_member_value(value):
-                raise TypeError(
-                    "Permutation members must satisfy equal semantics and be "
-                    "serializable, or be primitive bool/int/float/str values."
-                )
-        if not _is_values_unique_in_sequence_without_set(all_values):
-            raise ParamError("Values must be unique.")
-        self._ordered_members = all_member_values
-
-    @property
-    def members(self) -> tuple[_PermutationMemberValueT, ...]:
-        """Return the ordered permutation members for this parameter."""
-        return self._ordered_members
-
-    @override
-    def is_value_admissible(self, value: Any) -> bool:
-        return (
-            isinstance(value, Sequence)
-            and not isinstance(value, (str, bytes, bytearray))
-            and self._is_value_valid_permutation(value)
-        )
-
-    def _is_value_valid_permutation(self, value: Sequence[Any]) -> bool:
-        return (
-            all(
-                _is_permutation_member_value(value_element)
-                and _contains_param_value(self._ordered_members, value_element)
-                for value_element in value
-            )
-            and len(value) == len(self._ordered_members)
-            and _is_values_unique_in_sequence_without_set(value)
-        )
-
-    @override
-    def is_constraints_satisfied(
-        self, value: Sequence[_PermutationMemberValueT]
-    ) -> bool:
-        value = tuple(value)
-        return super().is_constraints_satisfied(value)
-
-    @override
-    def assign(
-        self, value: Sequence[_PermutationMemberValueT]
-    ) -> ParamAssignment[tuple[_PermutationMemberValueT, ...]]:
-        return super().assign(tuple(value))
-
-    @override
-    def validate_constraint(self, constraint: Constraint) -> None:
-        super().validate_constraint(constraint)
-        if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
-            raise ParamError(
-                "Only in-set and not-in-set constraints are allowed for "
-                "permutation parameters."
-            )
-
-    @override
-    def is_structurally_equivalent(self, other: object) -> bool:
-        return (
-            isinstance(other, PermParam)
-            and super().is_structurally_equivalent(other)
-            and self._ordered_members == other._ordered_members
-        )
-
-    @override
-    def is_value_set_subset(
-        self, other: "Param[tuple[_PermutationMemberValueT, ...]]"
-    ) -> bool:
-        if not isinstance(other, PermParam):
-            return False
-        if len(self._ordered_members) != len(other._ordered_members):
-            return False
-        return all(
-            _contains_param_value(other._ordered_members, member)
-            for member in self._ordered_members
-        )
-
-    @override
-    def is_subset(self, other: "Param[tuple[_PermutationMemberValueT, ...]]") -> bool:
-        """Return whether this parameter's feasibility set is a subset of `other`'s.
-
-        Uses set semantics: every permutation of ``self._ordered_members``
-        that satisfies ``self``'s constraints must also be admissible by
-        ``other`` and satisfy ``other``'s constraints.
-
-        Note:
-            The cost is ``O(n!)`` in the number of members; restrict the
-            universe with ``InSetConstraint`` for large permutation sets.
-        """
-        if not isinstance(other, PermParam):
-            return False
-        if len(self._ordered_members) != len(other._ordered_members):
-            return False
-        for permutation in itertools.permutations(self._ordered_members):
-            if not self.is_value_valid(permutation):
-                continue
-            if not other.is_value_valid(permutation):
-                return False
-        return True
-
-    @override
-    def serialize_data_to_dict(self) -> SerializedDict:
-        super_dict = super().serialize_data_to_dict()
-        super_dict["possible_values"] = [
-            _serialize_typed_wrapped_leaf_value(value)
-            for value in self._ordered_members
-        ]
-        return super_dict
-
-    @classmethod
-    @override
-    def deserialize_data_from_dict(cls, data: SerializedDict) -> Self:
-        if not _is_valid_ordinal_categorical_perm_param_data(data):
-            raise DeserializationDictStructureError(
-                cls, _OrdinalCategoricalPermParamData.__annotations__, data
-            )
-        values = _deserialize_typed_wrapped_leaf_values(
-            cls,
-            data["possible_values"],
-            _is_permutation_member_value,
-            (
-                "a list of equal serializable values or primitive "
-                "bool/int/float/str values"
-            ),
-        )
-        param = PermParam(
-            values,
-            name=Identifier.deserialize_from_dict(data["variable"]),
-        )
-        final_param = cast(Self, finalize_param_construction_from_data(param, data))
-        return final_param
-
-    @override
-    def _get_param_set_repr(self) -> str:
-        return f"{{{format_comma_separated_list(self._ordered_members)}}}"
-
-    @override
-    def _get_param_set_str(self) -> str:
-        return f"{{{format_comma_separated_list(self._ordered_members, str_func=str)}}}"
+) -> Param[_CategoricalValueT]:
+    """Create a parameter that admits only a single value."""
+    return create_categorical_param([value], name=name)
