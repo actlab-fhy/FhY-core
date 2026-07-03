@@ -1,4 +1,4 @@
-"""Tests for `IntParam`."""
+"""Tests for integer parameters (new composition API)."""
 
 from functools import partial
 from typing import Any
@@ -6,7 +6,14 @@ from typing import Any
 import pytest
 
 from fhy_core.constraint import EquationConstraint
-from fhy_core.param import IntParam, ParamError
+from fhy_core.param import (
+    Param,
+    ParamError,
+    create_integer_param,
+    create_integer_param_between,
+    create_integer_param_with_lower_bound,
+    create_integer_param_with_upper_bound,
+)
 
 from .conftest import assert_all_satisfied, assert_none_satisfied
 
@@ -15,8 +22,8 @@ from .conftest import assert_all_satisfied, assert_none_satisfied
 # =============================================================================
 
 
-def test_int_param_assign_rejects_float_value(default_int_param: IntParam) -> None:
-    """Test `IntParam.assign` raises `ParamError` for a `float` value."""
+def test_int_param_assign_rejects_float_value(default_int_param: Param[int]) -> None:
+    """Test integer param `assign` raises `ParamError` for a `float` value."""
     with pytest.raises(ParamError):
         default_int_param.assign(1.0)  # type: ignore[arg-type]  # test: invalid input
 
@@ -32,12 +39,16 @@ def test_int_param_assign_rejects_float_value(default_int_param: IntParam) -> No
     ],
 )
 def test_int_param_admissibility_matrix(value: Any, expected: bool) -> None:
-    """Test `IntParam.is_value_admissible` admits non-bool ints only.
+    """Test integer param `is_value_admissible` admits non-bool ints only.
 
     ``bool`` is a subtype of ``int`` but integer-valued semantics treat booleans
     as non-numeric to avoid silent ``True``/``False`` admission.
     """
-    assert IntParam().is_value_admissible(value) is expected
+    param = create_integer_param()
+
+    result = param.is_value_admissible(value)
+
+    assert result is expected
 
 
 # =============================================================================
@@ -46,7 +57,7 @@ def test_int_param_admissibility_matrix(value: Any, expected: bool) -> None:
 
 
 def test_int_param_add_constraint_combines_with_existing_constraints(
-    default_int_param: IntParam,
+    default_int_param: Param[int],
 ) -> None:
     """Test sequential `add_constraint` calls produce a combined feasibility set."""
     param = default_int_param.add_constraint(
@@ -58,6 +69,7 @@ def test_int_param_add_constraint_combines_with_existing_constraints(
     param = param.add_constraint(
         EquationConstraint(param.variable, param.variable_expression > 10)
     )
+
     assert param.is_constraints_satisfied(15)
     with pytest.raises(ParamError):
         param.assign(12)
@@ -72,63 +84,63 @@ def test_int_param_add_constraint_combines_with_existing_constraints(
     "factory, ops, pass_values, fail_values",
     [
         pytest.param(
-            partial(IntParam),
+            partial(create_integer_param),
             [("add_lower_bound_constraint", (1,), {"is_inclusive": True})],
             [1, 2],
             [0],
             id="lower-mutating-inclusive",
         ),
         pytest.param(
-            partial(IntParam),
+            partial(create_integer_param),
             [("add_lower_bound_constraint", (1,), {"is_inclusive": False})],
             [2, 5],
             [-1, 0],
             id="lower-mutating-exclusive",
         ),
         pytest.param(
-            partial(IntParam.with_lower_bound, 1, is_inclusive=True),
+            partial(create_integer_param_with_lower_bound, 1, is_inclusive=True),
             [],
             [1, 2],
             [0],
             id="lower-constructor-inclusive",
         ),
         pytest.param(
-            partial(IntParam.with_lower_bound, 1, is_inclusive=False),
+            partial(create_integer_param_with_lower_bound, 1, is_inclusive=False),
             [],
             [2, 5],
             [1, 0],
             id="lower-constructor-exclusive",
         ),
         pytest.param(
-            partial(IntParam),
+            partial(create_integer_param),
             [("add_upper_bound_constraint", (2,), {"is_inclusive": True})],
             [2, 1],
             [3],
             id="upper-mutating-inclusive",
         ),
         pytest.param(
-            partial(IntParam),
+            partial(create_integer_param),
             [("add_upper_bound_constraint", (2,), {"is_inclusive": False})],
             [0, 1],
             [2, 3],
             id="upper-mutating-exclusive",
         ),
         pytest.param(
-            partial(IntParam.with_upper_bound, 2, is_inclusive=True),
+            partial(create_integer_param_with_upper_bound, 2, is_inclusive=True),
             [],
             [2, 1],
             [3],
             id="upper-constructor-inclusive",
         ),
         pytest.param(
-            partial(IntParam.with_upper_bound, 2, is_inclusive=False),
+            partial(create_integer_param_with_upper_bound, 2, is_inclusive=False),
             [],
             [1, 1],
             [2, 2],
             id="upper-constructor-exclusive",
         ),
         pytest.param(
-            partial(IntParam),
+            partial(create_integer_param),
             [
                 ("add_lower_bound_constraint", (1,), {"is_inclusive": True}),
                 ("add_upper_bound_constraint", (2,), {"is_inclusive": True}),
@@ -138,7 +150,7 @@ def test_int_param_add_constraint_combines_with_existing_constraints(
             id="between-mutating-inclusive",
         ),
         pytest.param(
-            partial(IntParam),
+            partial(create_integer_param),
             [
                 ("add_lower_bound_constraint", (1,), {"is_inclusive": False}),
                 ("add_upper_bound_constraint", (3,), {"is_inclusive": False}),
@@ -149,7 +161,7 @@ def test_int_param_add_constraint_combines_with_existing_constraints(
         ),
         pytest.param(
             partial(
-                IntParam.between,
+                create_integer_param_between,
                 1,
                 2,
                 is_lower_inclusive=True,
@@ -162,7 +174,7 @@ def test_int_param_add_constraint_combines_with_existing_constraints(
         ),
         pytest.param(
             partial(
-                IntParam.between,
+                create_integer_param_between,
                 1,
                 3,
                 is_lower_inclusive=False,
@@ -181,18 +193,19 @@ def test_int_param_bounded_construction_admits_expected_values(
     pass_values: list[Any],
     fail_values: list[Any],
 ) -> None:
-    """Test bounded `IntParam` constructions admit and reject the expected values."""
+    """Test bounded integer param constructions admit and reject the expected values."""
     param = factory()
     for name, args, kwargs in ops:
         param = getattr(param, name)(*args, **kwargs)
+
     assert_all_satisfied(param, pass_values)
     assert_none_satisfied(param, fail_values)
 
 
 def test_int_param_between_with_reversed_bounds_raises() -> None:
-    """Test `IntParam.between` raises `ParamError` when ``lower > upper``."""
+    """Test `create_integer_param_between` raises `ParamError` when lower > upper."""
     with pytest.raises(ParamError):
-        IntParam.between(2, 1)
+        create_integer_param_between(2, 1)
 
 
 # =============================================================================
@@ -203,26 +216,34 @@ def test_int_param_between_with_reversed_bounds_raises() -> None:
 @pytest.mark.parametrize(
     "factory, boundary_value",
     [
-        pytest.param(partial(IntParam.with_lower_bound, 0), 0, id="with-lower-bound"),
-        pytest.param(partial(IntParam.with_upper_bound, 5), 5, id="with-upper-bound"),
         pytest.param(
-            lambda: IntParam().add_lower_bound_constraint(0),
+            partial(create_integer_param_with_lower_bound, 0), 0, id="with-lower-bound"
+        ),
+        pytest.param(
+            partial(create_integer_param_with_upper_bound, 5), 5, id="with-upper-bound"
+        ),
+        pytest.param(
+            lambda: create_integer_param().add_lower_bound_constraint(0),
             0,
             id="add-lower-bound-constraint",
         ),
         pytest.param(
-            lambda: IntParam().add_upper_bound_constraint(5),
+            lambda: create_integer_param().add_upper_bound_constraint(5),
             5,
             id="add-upper-bound-constraint",
         ),
-        pytest.param(partial(IntParam.between, 0, 5), 0, id="between-lower-endpoint"),
-        pytest.param(partial(IntParam.between, 0, 5), 5, id="between-upper-endpoint"),
+        pytest.param(
+            partial(create_integer_param_between, 0, 5), 0, id="between-lower-endpoint"
+        ),
+        pytest.param(
+            partial(create_integer_param_between, 0, 5), 5, id="between-upper-endpoint"
+        ),
     ],
 )
 def test_int_param_default_bound_inclusivity_admits_endpoint(
     factory: Any, boundary_value: int
 ) -> None:
-    """Test each `IntParam` bound builder defaults to inclusive (admits endpoint)."""
+    """Test each integer param bound builder defaults to inclusive (admits endpoint)."""
     assert factory().is_value_valid(boundary_value)
 
 
@@ -232,8 +253,9 @@ def test_int_param_default_bound_inclusivity_admits_endpoint(
 
 
 def test_int_param_between_equal_bounds_with_both_inclusive_is_singleton() -> None:
-    """Test `IntParam.between(x, x)` with both bounds inclusive admits only ``x``."""
-    param = IntParam.between(5, 5)
+    """Test `create_integer_param_between(x, x)` admits only ``x`` (both inclusive)."""
+    param = create_integer_param_between(5, 5)
+
     assert param.is_value_valid(5)
     assert not param.is_value_valid(4)
     assert not param.is_value_valid(6)
@@ -247,18 +269,15 @@ def test_int_param_between_equal_bounds_with_both_inclusive_is_singleton() -> No
         pytest.param(False, False, id="exclusive-exclusive"),
     ],
 )
+# The bounds ``257`` and ``int("257")`` are equal but not identity-equal (above
+# CPython's small-int cache), so this exercises value-equality (``==``) rather
+# than identity (``is``) on the bounds-equal check.
 def test_int_param_between_equal_bounds_with_any_exclusive_raises(
     is_lower_inclusive: bool, is_upper_inclusive: bool
 ) -> None:
-    """Test `IntParam.between(x, x)` raises `ParamError` when either bound is exclusive.
-
-    Uses an integer above CPython's small-int cache (``257``) and constructs
-    the upper bound via ``int("257")`` so the two bounds are equal but not
-    identity-equal; pins down value-equality (``==``) rather than identity
-    (``is``) on the bounds-equal check.
-    """
+    """Test `create_integer_param_between(x, x)` raises for any exclusive bound."""
     with pytest.raises(ParamError):
-        IntParam.between(
+        create_integer_param_between(
             257,
             int("257"),
             is_lower_inclusive=is_lower_inclusive,
@@ -272,15 +291,17 @@ def test_int_param_between_equal_bounds_with_any_exclusive_raises(
 
 
 def test_int_param_serialization_round_trip_preserves_constraints() -> None:
-    """Test `IntParam` round-trips through dict serialization with its constraints."""
-    param = IntParam()
+    """Test integer param round-trips through dict serialization with constraints."""
+    param = create_integer_param()
     param = param.add_constraint(
         EquationConstraint(param.variable, param.variable_expression > 0)
     )
     param = param.add_constraint(
         EquationConstraint(param.variable, param.variable_expression < 10)
     )
+
     dictionary = param.serialize_to_dict()
-    restored = IntParam.deserialize_from_dict(dictionary)
+    restored: Param[int] = Param.deserialize_from_dict(dictionary)
+
     assert_all_satisfied(restored, [1, 5, 9])
     assert_none_satisfied(restored, [0, 10])

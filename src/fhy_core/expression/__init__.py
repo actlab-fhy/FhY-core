@@ -32,12 +32,15 @@ __all__ = [
     "RegisteredFunction",
     "RewriteRule",
     "RewriteRuleApplier",
+    "StringLiteralPrecisionError",
     "TernaryExpression",
     "TernaryExpressionPattern",
     "UnaryExpression",
     "UnaryExpressionPattern",
     "UnaryOperation",
+    "UnboundVariableError",
     "UndecidableError",
+    "UnsupportedNumpyLoweringError",
     "WildcardPattern",
     "apply_rewrite_rule",
     "apply_rewrite_rules",
@@ -51,6 +54,7 @@ __all__ = [
     "does_expression_imply",
     "does_pattern_match",
     "evaluate_expression",
+    "evaluate_expression_with_numpy",
     "get_core_data_type_from_literal_type",
     "get_registered_entries",
     "get_registered_entry",
@@ -101,9 +105,16 @@ from .core import (
     make_unary_expression,
     ternary,
 )
-from .errors import NativeResultSortError, UndecidableError
+from .errors import (
+    NativeResultSortError,
+    StringLiteralPrecisionError,
+    UnboundVariableError,
+    UndecidableError,
+    UnsupportedNumpyLoweringError,
+)
 from .passes.evaluate import evaluate_expression
 from .passes.inline import FunctionArityError, inline_functions
+from .passes.numpy import evaluate_expression_with_numpy
 from .passes.sympy import (
     convert_expression_to_sympy_expression,
     convert_sympy_expression_to_expression,

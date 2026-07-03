@@ -168,6 +168,7 @@ def _replace(key: str, value: Any) -> Callable[[dict[str, Any]], dict[str, Any]]
 
 @pytest.fixture
 def equation_payload() -> dict[str, Any]:
+    """Return a well-formed serialized `EquationConstraint` data payload."""
     x = mock_identifier("x", 0)
     return {
         "variable": x.serialize_to_dict(),
@@ -280,18 +281,20 @@ def test_set_member_deserializer_rewraps_value_error_with_field_name(
 
 
 @pytest.mark.parametrize("factory, _field", _SET_KINDS_WITH_FIELD)
-def test_set_constraint_deserialization_tolerates_extra_unknown_fields(
+def test_set_constraint_deserialization_rejects_extra_unknown_fields(
     factory: type[Constraint], _field: str
 ) -> None:
-    """Test deserialization silently ignores unknown extra fields."""
+    """Test deserialization rejects unknown extra fields.
+
+    The derived deserialization path enforces an exact key set, so an unknown
+    extra field is a structure error rather than being silently ignored.
+    """
     constraint = factory(mock_identifier("x", 0), {1, 2})  # type: ignore[call-arg]
     payload = constraint.serialize_to_dict()
-    cast(dict[str, Any], payload["__data__"])["unknown_future_field"] = "ignore me"
+    cast(dict[str, Any], payload["__data__"])["unknown_future_field"] = "reject me"
 
-    rebuilt = factory.deserialize_from_dict(payload)
-
-    for member in (1, 2):
-        assert rebuilt.is_satisfied(member) == constraint.is_satisfied(member)
+    with pytest.raises(DeserializationDictStructureError):
+        factory.deserialize_from_dict(payload)
 
 
 @pytest.mark.parametrize("factory, field", _SET_KINDS_WITH_FIELD)

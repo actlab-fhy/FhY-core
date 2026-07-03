@@ -7,6 +7,7 @@ import pytest
 
 from fhy_core.constraint import (
     Constraint,
+    ConstraintOutcome,
     EquationConstraint,
     InSetConstraint,
 )
@@ -14,6 +15,7 @@ from fhy_core.expression import Expression, LiteralExpression
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import SerializedDict
 from fhy_core.traits import StructuralEquivalence
+from fhy_core.traits.derived_equivalence import EquivalenceDerivationError
 from fhy_core.utils.override import override
 
 from .conftest import (
@@ -178,17 +180,26 @@ def test_constraint_satisfies_structural_equivalence_protocol() -> None:
 
 
 # =============================================================================
-# Singledispatch registration / fallback
+# Derived-equivalence requirements
 # =============================================================================
 
 
-def test_dispatch_default_raises_for_unregistered_constraint_subclass() -> None:
-    """Test the singledispatch default branch raises ``NotImplementedError``."""
+def test_equivalence_requires_dataclass_constraint_subclass() -> None:
+    """Test a non-dataclass `Constraint` subclass fails derived equivalence.
 
-    class _UnregisteredConstraint(Constraint):
+    Structural equivalence is derived from the dataclass field schema, so a
+    concrete `Constraint` subclass that is not a dataclass raises
+    ``EquivalenceDerivationError`` on first comparison instead of silently
+    comparing.
+    """
+
+    class _NonDataclassConstraint(Constraint):
+        def __init__(self, variable: Identifier) -> None:
+            object.__setattr__(self, "_variable", variable)
+
         @override
-        def is_satisfied(self, value: object) -> bool:
-            return True
+        def evaluate(self, value: object) -> ConstraintOutcome:
+            return ConstraintOutcome.SATISFIED
 
         @override
         def convert_to_expression(self) -> Expression:
@@ -196,11 +207,11 @@ def test_dispatch_default_raises_for_unregistered_constraint_subclass() -> None:
 
         @override
         def __repr__(self) -> str:
-            return "_UnregisteredConstraint"
+            return "_NonDataclassConstraint"
 
         @override
         def __str__(self) -> str:
-            return "_UnregisteredConstraint"
+            return "_NonDataclassConstraint"
 
         @override
         def serialize_data_to_dict(self) -> SerializedDict:
@@ -210,12 +221,12 @@ def test_dispatch_default_raises_for_unregistered_constraint_subclass() -> None:
         @override
         def deserialize_data_from_dict(
             cls, data: SerializedDict
-        ) -> "_UnregisteredConstraint":
+        ) -> "_NonDataclassConstraint":
             return cls(mock_identifier("stub", 0))
 
     x = mock_identifier("x", 0)
-    a = _UnregisteredConstraint(x)
-    b = _UnregisteredConstraint(x)
+    a = _NonDataclassConstraint(x)
+    b = _NonDataclassConstraint(x)
 
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(EquivalenceDerivationError):
         a.is_structurally_equivalent(b)

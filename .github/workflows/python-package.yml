@@ -1,13 +1,23 @@
 # Install dependencies, lint, type-check, and test across Python versions/OSes.
 # Driven by uv (env/deps) and nox (sessions). See noxfile.py.
+#
+# The config job selects a LEAN matrix (ubuntu x py3.10/3.14) for everyday dev
+# PRs and a FULL matrix (3 OSes x 5 Pythons) for release gates (-> main), main
+# pushes, and manual dispatch. ci-ok aggregates the required jobs into one check.
 
 name: FhY-core CI
 
 on:
   push:
     branches: [ "main" ]
+    paths-ignore: [ "**/*.md", "docs/**" ]
   pull_request:
     branches: [ "main", "dev" ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   FORCE_COLOR: "1"
@@ -15,47 +25,66 @@ env:
 jobs:
   style:
     runs-on: "ubuntu-latest"
-    strategy:
-      fail-fast: false
-
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-
       - name: Code Linting & Formatting
         if: always()
         run: uv run nox -s lint
-
       - name: Static Type Safety Check
         if: always()
         run: uv run nox -s type_check
 
-  tests:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-        os: [ubuntu-latest, macOS-latest, windows-latest]
+  config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.decide.outputs.matrix }}
+      failfast: ${{ steps.decide.outputs.failfast }}
+    steps:
+      - id: decide
+        shell: bash
+        run: |
+          FULL='{"os":["ubuntu-latest","macOS-latest","windows-latest"],"python-version":["3.10","3.11","3.12","3.13","3.14"]}'
+          LEAN='{"os":["ubuntu-latest"],"python-version":["3.10","3.14"]}'
 
+          # Default = everyday PRs into dev.
+          MATRIX="$LEAN"; FAILFAST="true"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            MATRIX="$FULL"; FAILFAST="false"        # manual run = full sweep
+          elif [[ "${{ github.event_name }}" == "pull_request" && "${{ github.base_ref }}" == "main" ]]; then
+            MATRIX="$FULL"; FAILFAST="false"        # release gate: dev -> main
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            MATRIX="$FULL"; FAILFAST="false"        # push to main (post-merge)
+          fi
+
+          echo "matrix=$MATRIX"     >> "$GITHUB_OUTPUT"
+          echo "failfast=$FAILFAST" >> "$GITHUB_OUTPUT"
+          echo "Decided -> matrix=$MATRIX  fail-fast=$FAILFAST"
+
+  tests:
+    needs: [config]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: ${{ fromJSON(needs.config.outputs.failfast) }}
+      matrix: ${{ fromJSON(needs.config.outputs.matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
-
       - name: Unit & Integration Testing
         run: uv run nox -s "tests-${{ matrix.python-version }}"
-
       - name: Save Coverage Data
         uses: actions/upload-artifact@v4
         with:
@@ -68,29 +97,23 @@ jobs:
   coverage:
     runs-on: "ubuntu-latest"
     needs: [tests]
-    strategy:
-      fail-fast: false
-
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Download coverage data
         uses: actions/download-artifact@v4
         with:
           pattern: coverage-data-*
           merge-multiple: true
-
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-
       - name: Report Testing Coverage
         run: |
           set -o pipefail
           uv run nox -s coverage | tee $GITHUB_STEP_SUMMARY
-
       - name: Upload coverage to Codecov
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: codecov/codecov-action@v4
@@ -98,3 +121,19 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.xml
           fail_ci_if_error: false
+
+  ci-ok:
+    if: always()
+    needs: [style, tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Verify required jobs succeeded
+        run: |
+          echo "style: ${{ needs.style.result }}"
+          echo "tests: ${{ needs.tests.result }}"
+          if [[ "${{ needs.style.result }}" != "success" || "${{ needs.tests.result }}" != "success" ]]; then
+            echo "::error::A required job did not succeed."
+            exit 1
+          fi
+          echo "All required jobs passed."

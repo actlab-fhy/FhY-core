@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from fhy_core.constraint import EquationConstraint
+from fhy_core.constraint import ConstraintOutcome, EquationConstraint
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -23,25 +23,43 @@ from .conftest import mock_identifier
 @pytest.mark.parametrize(
     "expression, value, expected_outcome",
     [
-        (LiteralExpression(True), LiteralExpression(0), True),
-        (LiteralExpression(False), LiteralExpression(0), False),
-        (IdentifierExpression(mock_identifier("x", 0)), LiteralExpression(True), True),
-        (
+        pytest.param(
+            LiteralExpression(True),
+            LiteralExpression(0),
+            True,
+            id="literal_true",
+        ),
+        pytest.param(
+            LiteralExpression(False),
+            LiteralExpression(0),
+            False,
+            id="literal_false",
+        ),
+        pytest.param(
+            IdentifierExpression(mock_identifier("x", 0)),
+            LiteralExpression(True),
+            True,
+            id="variable_substituted_true",
+        ),
+        pytest.param(
             IdentifierExpression(mock_identifier("x", 0)),
             LiteralExpression(False),
             False,
+            id="variable_substituted_false",
         ),
-        (
+        pytest.param(
             UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(True)),
             LiteralExpression(True),
             False,
+            id="not_true",
         ),
-        (
+        pytest.param(
             UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(False)),
             LiteralExpression(True),
             True,
+            id="not_false",
         ),
-        (
+        pytest.param(
             BinaryExpression(
                 BinaryOperation.LOGICAL_AND,
                 LiteralExpression(True),
@@ -49,8 +67,9 @@ from .conftest import mock_identifier
             ),
             LiteralExpression(True),
             True,
+            id="and_true_true",
         ),
-        (
+        pytest.param(
             BinaryExpression(
                 BinaryOperation.LOGICAL_AND,
                 LiteralExpression(True),
@@ -58,8 +77,9 @@ from .conftest import mock_identifier
             ),
             LiteralExpression(True),
             False,
+            id="and_true_false",
         ),
-        (
+        pytest.param(
             BinaryExpression(
                 BinaryOperation.LOGICAL_OR,
                 LiteralExpression(True),
@@ -67,8 +87,9 @@ from .conftest import mock_identifier
             ),
             LiteralExpression(0),
             True,
+            id="or_true_false",
         ),
-        (
+        pytest.param(
             BinaryExpression(
                 BinaryOperation.LOGICAL_OR,
                 LiteralExpression(False),
@@ -76,8 +97,9 @@ from .conftest import mock_identifier
             ),
             LiteralExpression(0),
             False,
+            id="or_false_false",
         ),
-        (
+        pytest.param(
             BinaryExpression(
                 BinaryOperation.EQUAL,
                 LiteralExpression(True),
@@ -85,8 +107,9 @@ from .conftest import mock_identifier
             ),
             LiteralExpression(0),
             True,
+            id="equal_true",
         ),
-        (
+        pytest.param(
             BinaryExpression(
                 BinaryOperation.NOT_EQUAL,
                 LiteralExpression(True),
@@ -94,15 +117,17 @@ from .conftest import mock_identifier
             ),
             LiteralExpression(0),
             True,
+            id="not_equal_true",
         ),
-        (
+        pytest.param(
             BinaryExpression(
                 BinaryOperation.LESS, LiteralExpression(5), LiteralExpression(10)
             ),
             LiteralExpression(0),
             True,
+            id="less_true",
         ),
-        (
+        pytest.param(
             BinaryExpression(
                 BinaryOperation.LESS_EQUAL,
                 LiteralExpression(10),
@@ -110,15 +135,17 @@ from .conftest import mock_identifier
             ),
             LiteralExpression(0),
             True,
+            id="less_equal_true",
         ),
-        (
+        pytest.param(
             BinaryExpression(
                 BinaryOperation.GREATER, LiteralExpression(10), LiteralExpression(5)
             ),
             LiteralExpression(0),
             True,
+            id="greater_true",
         ),
-        (
+        pytest.param(
             BinaryExpression(
                 BinaryOperation.GREATER_EQUAL,
                 LiteralExpression(10),
@@ -126,6 +153,7 @@ from .conftest import mock_identifier
             ),
             LiteralExpression(0),
             True,
+            id="greater_equal_true",
         ),
     ],
 )
@@ -139,7 +167,16 @@ def test_equation_constraint_is_satisfied(
     assert constraint.is_satisfied(value) is expected_outcome
 
 
-@pytest.mark.parametrize("primitive", [0, 1, True, False, 1.5])
+@pytest.mark.parametrize(
+    "primitive",
+    [
+        pytest.param(0, id="int_zero"),
+        pytest.param(1, id="int_one"),
+        pytest.param(True, id="bool_true"),
+        pytest.param(False, id="bool_false"),
+        pytest.param(1.5, id="float"),
+    ],
+)
 def test_equation_constraint_is_satisfied_accepts_literal_primitive(
     primitive: int | float | bool,
 ) -> None:
@@ -273,3 +310,56 @@ def test_equation_constraint_ignores_value_when_variable_absent_from_expression(
 
     assert constraint.is_satisfied(LiteralExpression(0)) is True
     assert constraint.is_satisfied(LiteralExpression(False)) is True
+
+
+# =============================================================================
+# Tri-state `evaluate` outcomes
+# =============================================================================
+
+
+def test_equation_constraint_evaluate_reports_satisfied_for_bool_true() -> None:
+    """Test `evaluate` reports SATISFIED when the reduction is bool ``True``."""
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(x, IdentifierExpression(x))
+
+    assert constraint.evaluate(LiteralExpression(True)) is ConstraintOutcome.SATISFIED
+
+
+def test_equation_constraint_evaluate_reports_violated_for_bool_false() -> None:
+    """Test `evaluate` reports VIOLATED when the reduction is bool ``False``."""
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(x, IdentifierExpression(x))
+
+    assert constraint.evaluate(LiteralExpression(False)) is ConstraintOutcome.VIOLATED
+
+
+def test_equation_constraint_evaluate_reports_violated_for_non_bool_literal() -> None:
+    """Test `evaluate` reports VIOLATED when the reduction is a non-bool literal."""
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(x, LiteralExpression(1))
+
+    assert constraint.evaluate(LiteralExpression(0)) is ConstraintOutcome.VIOLATED
+
+
+def test_equation_constraint_evaluate_reports_undecided_when_free_variable_remains(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test the indeterminate case reports UNDECIDED, logs, and rejects.
+
+    The expression references a second free identifier the substitution
+    cannot bind, so the simplifier cannot reduce it to a literal.
+    `evaluate` must report UNDECIDED (and log a warning), while the
+    conservative `is_satisfied` still returns ``False``.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    constraint = EquationConstraint(x, IdentifierExpression(y))
+
+    with caplog.at_level(logging.WARNING, logger="fhy_core.constraint"):
+        outcome = constraint.evaluate(LiteralExpression(True))
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    assert constraint.is_satisfied(LiteralExpression(True)) is False
+    assert any(record.levelno == logging.WARNING for record in caplog.records), (
+        "expected a WARNING-level log record from fhy_core.constraint"
+    )
