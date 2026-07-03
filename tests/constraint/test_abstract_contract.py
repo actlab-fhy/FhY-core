@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from fhy_core.constraint import Constraint
+from fhy_core.constraint import Constraint, ConstraintOutcome
 from fhy_core.expression import Expression, LiteralExpression
 from fhy_core.identifier import Identifier
 from fhy_core.traits.derived_equivalence import compared_as_reference
@@ -14,7 +14,7 @@ from fhy_core.utils.override import override
 from .conftest import mock_identifier
 
 _CONSTRAINT_OWN_ABSTRACT_METHODS = (
-    "is_satisfied",
+    "evaluate",
     "convert_to_expression",
     "__repr__",
     "__str__",
@@ -27,8 +27,8 @@ def _make_constraint_subclass_omitting(method_name: str) -> type[Constraint]:
         "serialize_data_to_dict": lambda self: {},
         "deserialize_data_from_dict": classmethod(lambda cls, data: None),
     }
-    if method_name != "is_satisfied":
-        namespace["is_satisfied"] = lambda self, value: True
+    if method_name != "evaluate":
+        namespace["evaluate"] = lambda self, value: ConstraintOutcome.SATISFIED
     if method_name != "convert_to_expression":
         namespace["convert_to_expression"] = lambda self: LiteralExpression(True)
     if method_name != "__repr__":
@@ -62,8 +62,8 @@ def test_constraint_subclass_with_full_overrides_instantiates() -> None:
         variable: Identifier = field(metadata=compared_as_reference())
 
         @override
-        def is_satisfied(self, value: object) -> bool:
-            return True
+        def evaluate(self, value: object) -> ConstraintOutcome:
+            return ConstraintOutcome.SATISFIED
 
         @override
         def convert_to_expression(self) -> Expression:
@@ -81,6 +81,7 @@ def test_constraint_subclass_with_full_overrides_instantiates() -> None:
     instance = _ConcreteConstraint(x)
 
     assert instance.variable is x
+    assert instance.evaluate(0) is ConstraintOutcome.SATISFIED
     assert instance.is_satisfied(0) is True
     assert instance({x: 0}) is True
     assert isinstance(instance.convert_to_expression(), LiteralExpression)

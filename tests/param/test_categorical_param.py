@@ -77,7 +77,7 @@ def test_categorical_param_categories_is_a_property() -> None:
 
     assert isinstance(param.domain, CategoricalDomain)
     assert not callable(param.domain.categories)
-    assert param.domain.categories == frozenset({"a", "b"})
+    assert set(param.domain.categories) == {"a", "b"}
 
 
 # =============================================================================
@@ -91,7 +91,7 @@ def test_create_single_valid_value_param_builds_one_category_param() -> None:
 
     assert isinstance(param, Param)
     assert isinstance(param.domain, CategoricalDomain)
-    assert param.domain.categories == frozenset({"only"})
+    assert param.domain.categories == ("only",)
 
 
 def test_create_single_valid_value_param_assigns_the_single_value() -> None:
@@ -234,9 +234,9 @@ def test_categorical_param_is_not_structurally_equivalent_to_subset_categories()
 ):
     """Test is_structurally_equivalent rejects a subset categories.
 
-    A frozenset comparison must use ``==`` rather than ``<=`` or ``>=``: two
-    categorical params where one's categories are a strict subset of the
-    other's must compare non-equivalent.
+    Equivalence must require equal-size, mutually matching category sets rather
+    than one-directional containment: two categorical params where one's
+    categories are a strict subset of the other's must compare non-equivalent.
     """
     smaller: Param[int] = create_categorical_param({1, 2}, name=mock_identifier("x", 1))
     larger: Param[int] = create_categorical_param(
@@ -311,3 +311,48 @@ def test_categorical_param_round_trips_with_serializable_value_type() -> None:
     restored: Param[Identifier] = Param.deserialize_from_dict(data)
 
     assert param.is_structurally_equivalent(restored)
+
+
+def test_categorical_param_keeps_bool_and_int_categories_distinct() -> None:
+    """Test a categorical param keeps ``True`` and ``1`` as two distinct categories.
+
+    Native ``frozenset`` storage would collapse ``True`` and ``1`` into one
+    element because ``True == 1``; the tuple storage keeps both and admits each.
+    """
+    param: Param[int] = create_categorical_param([True, 1])
+
+    assert isinstance(param.domain, CategoricalDomain)
+    assert len(param.domain.categories) == 2
+    assert param.is_value_admissible(True)
+    assert param.is_value_admissible(1)
+
+
+def test_categorical_param_bool_and_int_category_sets_are_not_equivalent() -> None:
+    """Test structural equivalence keeps ``bool`` and ``int`` category sets distinct.
+
+    ``(True,)`` and ``(1,)`` must not compare equivalent even though ``True == 1``,
+    so the equivalence check cannot fall back on native ``tuple`` equality.
+    """
+    bool_param: Param[bool] = create_categorical_param(
+        [True], name=mock_identifier("x", 1)
+    )
+    int_param: Param[int] = create_categorical_param([1], name=mock_identifier("x", 1))
+
+    assert not bool_param.is_structurally_equivalent(int_param)
+    assert not int_param.is_structurally_equivalent(bool_param)
+
+
+def test_categorical_param_bool_and_int_categories_round_trip_distinctly() -> None:
+    """Test a mixed ``bool``/``int`` categorical param round-trips both kinds.
+
+    Serialization must not collapse ``True`` and ``1`` during the round trip, so
+    the restored param still admits both distinct categories.
+    """
+    param: Param[int] = create_categorical_param([True, 1])
+
+    restored: Param[int] = Param.deserialize_from_dict(param.serialize_to_dict())
+
+    assert isinstance(restored.domain, CategoricalDomain)
+    assert len(restored.domain.categories) == 2
+    assert restored.is_value_admissible(True)
+    assert restored.is_value_admissible(1)

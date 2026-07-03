@@ -16,7 +16,7 @@ from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar, cast
 
-from fhy_core.constraint import Constraint, EquationConstraint
+from fhy_core.constraint import Constraint, ConstraintOutcome, EquationConstraint
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -125,6 +125,10 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
     subset, equivalence, and serialization behavior. Construct one directly with
     a domain, or use a ``create_*`` factory for the common kinds.
 
+    The ``Param[_T]`` type parameter is an advisory hint for call-site inference
+    only; the admissible value type is enforced by the domain at runtime, not by
+    ``_T``.
+
     Two parameters are structurally equivalent when they have the same variable,
     domain, and constraints; under alpha comparison they are equivalent up to
     renaming of the bound variable. Construction validates and de-duplicates the
@@ -175,7 +179,7 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
 
     @property
     def symbol_type(self) -> SymbolType | None:
-        """Return the domain's Z3 sort, or ``None`` for non-numeric domains."""
+        """Return the domain's numeric symbol type, or ``None`` if non-numeric."""
         return self.domain.symbol_type
 
     def replace_constraints(self, constraints: Sequence[Constraint]) -> "Param[_T]":
@@ -207,15 +211,54 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
     def is_constraints_satisfied(self, value: Any) -> bool:
         """Return whether the value satisfies all constraints."""
         normalized = self.domain.normalize_value(value)
-        return self._is_constraints_satisfied_with_failing_constraint(normalized)[0]
+        return self._find_failing_constraint(normalized)[0]
 
-    def _is_constraints_satisfied_with_failing_constraint(
+    def _find_failing_constraint(
         self, value: Any
-    ) -> tuple[bool, Constraint | None]:
+    ) -> tuple[bool, Constraint | None, ConstraintOutcome | None]:
+        """Return the first non-satisfied constraint and its outcome.
+
+        Constraints are checked in canonical order; the first constraint
+        whose ``evaluate`` does not return ``SATISFIED`` short-circuits.
+
+        Returns:
+            A ``(is_satisfied, constraint, outcome)`` triple. When every
+            constraint is satisfied, this is ``(True, None, None)``.
+            Otherwise ``is_satisfied`` is ``False``, ``constraint`` is the
+            first non-satisfied constraint, and ``outcome`` is its
+            ``ConstraintOutcome`` (``VIOLATED`` or ``UNDECIDED``).
+
+        """
         for constraint in self.constraints:
-            if not constraint.is_satisfied(value):
-                return False, constraint
-        return True, None
+            outcome = constraint.evaluate(value)
+            if outcome is not ConstraintOutcome.SATISFIED:
+                return False, constraint, outcome
+        return True, None, None
+
+    def validate_value(self, value: Any) -> None:
+        """Raise if ``value`` is not a valid assignment for this parameter.
+
+        Raises:
+            ParamError: If the value is not admissible, violates a constraint,
+                or cannot be verified against a constraint.
+
+        """
+        if not self.is_value_admissible(value):
+            raise ParamError(
+                f"Value {value!r} is not admissible for parameter {self!r}."
+            )
+        _, failing_constraint, outcome = self._find_failing_constraint(value)
+        if failing_constraint is None:
+            return
+        if outcome is ConstraintOutcome.UNDECIDED:
+            raise ParamError(
+                f"Value {value!r} could not be verified against constraint "
+                f"{failing_constraint!r} for parameter {self!r}."
+            )
+        raise ParamError(
+            f"Value {value!r} violates constraint {failing_constraint!r} "
+            f"for parameter {self!r}."
+        )
 
     def is_value_set_subset(self, other: "Param[_T]") -> bool:
         """Return whether this parameter's value set is a subset of ``other``'s."""
@@ -225,13 +268,30 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         """Return whether this parameter's feasible set is a subset of ``other``'s.
 
         Comparison is gated on value space: numeric parameters compare only with
-        numeric parameters sharing the same Z3 sort (integers with integers,
-        reals with reals), and finite-set parameters compare only within their
-        own family. Cross-space and cross-family queries return ``False``.
+        numeric parameters sharing the same numeric symbol type (integers with
+        integers, reals with reals), and finite-set parameters compare only
+        within their own family. Cross-space and cross-family queries return
+        ``False``.
+
+        When the solver cannot decide a numeric implication, the relation is
+        assumed to hold, so a ``True`` result means "not disproven", not
+        "proven".
         """
         return self.domain.compute_feasibility_subset(
             self.constraints, other.domain, other.constraints
         )
+
+    def is_feasible(self) -> bool:
+        """Return whether some value satisfies the domain and all constraints.
+
+        The constraints already include the domain's implied constraints, so the
+        domain reasons only about the constraints it is given.
+        """
+        return self.domain.has_feasible_value(self.constraints)
+
+    def is_empty(self) -> bool:
+        """Return whether no value satisfies the domain and all constraints."""
+        return not self.is_feasible()
 
     def assign(self, value: _T) -> "ParamAssignment[_T]":
         """Assign a value to the parameter, returning a parameter assignment.
@@ -424,18 +484,7 @@ class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generi
     )
 
     def __post_init__(self) -> None:
-        if not self.param.is_value_admissible(self.value):
-            raise ParamError(
-                f"Value {self.value!r} is not admissible for parameter {self.param!r}."
-            )
-        is_satisfied, failing_constraint = (
-            self.param._is_constraints_satisfied_with_failing_constraint(self.value)
-        )
-        if not is_satisfied:
-            raise ParamError(
-                f"Value {self.value!r} violates constraint {failing_constraint!r} "
-                f"for parameter {self.param!r}."
-            )
+        self.param.validate_value(self.value)
 
     def is_value_set(self) -> bool:
         """Return whether this assignment has a value."""

@@ -4,12 +4,13 @@ Defines the leaf value types a parameter may range over, the structural
 protocols those values must satisfy to be usable as ordinal, categorical, or
 permutation members, and the predicate helpers that classify and compare them.
 
-The classification rules are deliberately strict about the ``bool``/``int``
-distinction: although ``True == 1`` in Python, a value set built from booleans
-is treated as disjoint from one built from integers.
+The classification rules are deliberately type-strict: ``bool``, ``int``, and
+``float`` are mutually disjoint value kinds, and ``str`` is distinct from all of
+them. Although ``True == 1`` and ``1 == 1.0`` in Python, a value set built from
+booleans never matches one built from integers, and integers never match floats.
 """
 
-from collections.abc import Callable, Collection, Hashable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from typing import Any, Protocol, TypeAlias, TypeGuard, TypeVar, cast
 
 from fhy_core.error import register_error
@@ -74,26 +75,29 @@ _ParamValueT = TypeVar("_ParamValueT")
 
 
 def is_sequence_unique_without_set(values: Sequence[Any]) -> bool:
-    """Return whether ``values`` has no two ``==``-equal elements.
+    """Return whether ``values`` has no two strictly matching elements.
 
-    Uses pairwise comparison rather than a ``set`` so that values which are
-    unhashable or only define ``__eq__`` are still handled.
+    Uses pairwise comparison through :func:`do_param_values_match` rather than a
+    ``set`` so that values which are unhashable or only define ``__eq__`` are
+    still handled and the numeric-kind distinction is honored (``1`` and ``1.0``
+    are treated as distinct).
     """
     for i, value_1 in enumerate(values):
         for value_2 in values[i + 1 :]:
-            if value_1 == value_2:
+            if do_param_values_match(value_1, value_2):
                 return False
     return True
 
 
 def is_sorted_sequence_unique(values: Sequence[Any]) -> bool:
-    """Return whether a pre-sorted ``values`` has no adjacent ``==``-equal pair."""
-    return all(values[i] != values[i + 1] for i in range(len(values) - 1))
+    """Return whether a pre-sorted ``values`` has no adjacent strictly matching pair.
 
-
-def is_collection_unique_with_set(values: Collection[Hashable]) -> bool:
-    """Return whether a hashable ``values`` collection has no duplicates."""
-    return len(values) == len(set(values))
+    Adjacent values are compared through :func:`do_param_values_match`, so a pair
+    such as ``1`` and ``1.0`` that sorts adjacently is treated as distinct.
+    """
+    return not any(
+        do_param_values_match(values[i], values[i + 1]) for i in range(len(values) - 1)
+    )
 
 
 def supports_equal_value_semantics(value: Any) -> bool:
@@ -135,25 +139,39 @@ def is_permutation_member_value(value: Any) -> TypeGuard[PermutationMemberValue]
     )
 
 
-def _has_bool_numeric_mismatch(value_1: Any, value_2: Any) -> bool:
-    return (
-        isinstance(value_1, bool)
-        and isinstance(value_2, (int, float))
-        and not isinstance(value_2, bool)
-    ) or (
-        isinstance(value_2, bool)
-        and isinstance(value_1, (int, float))
-        and not isinstance(value_1, bool)
-    )
+def _get_numeric_value_kind(value: Any) -> str | None:
+    """Return ``"bool"``, ``"int"``, or ``"float"`` for a numeric ``value``.
+
+    Returns ``None`` for any value that is not one of these three numeric kinds,
+    so that non-numeric values (such as ``str`` or ``Serializable``) are compared
+    by plain equality without a numeric-kind gate.
+    """
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    return None
+
+
+def _has_numeric_kind_mismatch(value_1: Any, value_2: Any) -> bool:
+    kind_1 = _get_numeric_value_kind(value_1)
+    kind_2 = _get_numeric_value_kind(value_2)
+    if kind_1 is None and kind_2 is None:
+        return False
+    return kind_1 != kind_2
 
 
 def do_param_values_match(candidate: Any, allowed_value: Any) -> bool:
-    """Return whether ``candidate`` equals ``allowed_value`` honoring bool/int.
+    """Return whether ``candidate`` equals ``allowed_value`` with strict kinds.
 
-    ``True`` and ``1`` are reported as distinct despite ``True == 1`` so that a
-    boolean value set never silently matches an integer one.
+    ``bool``, ``int``, and ``float`` are mutually disjoint value kinds: ``True``
+    and ``1`` are reported as distinct despite ``True == 1``, and ``1`` and
+    ``1.0`` are distinct despite ``1 == 1.0``, so a value set of one kind never
+    silently matches one of another kind.
     """
-    if _has_bool_numeric_mismatch(candidate, allowed_value):
+    if _has_numeric_kind_mismatch(candidate, allowed_value):
         return False
     return cast(bool, candidate == allowed_value)
 

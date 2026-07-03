@@ -314,6 +314,20 @@ def test_nat_param_is_not_structurally_equivalent_to_int_param() -> None:
     assert not nat.is_structurally_equivalent(integer)
 
 
+def test_integer_domain_canonicalizes_zero_included_when_not_non_negative() -> None:
+    """Test ``zero_included`` is inert (canonicalized) when ``non_negative`` is False.
+
+    ``zero_included`` only carries meaning for a natural-number domain, so two
+    non-restricted integer domains that differ solely in ``zero_included`` are
+    the same domain and compare structurally equivalent.
+    """
+    with_zero = IntegerDomain(non_negative=False, zero_included=True)
+    without_zero = IntegerDomain(non_negative=False, zero_included=False)
+
+    assert without_zero.zero_included is True
+    assert with_zero.is_structurally_equivalent(without_zero)
+
+
 # =============================================================================
 # Serialization
 # =============================================================================

@@ -9,6 +9,7 @@ from fhy_core.constraint import EquationConstraint, InSetConstraint
 from fhy_core.error import _COMPILER_ERRORS
 from fhy_core.param import (
     CategoricalDomain,
+    IntegerDomain,
     OrdinalDomain,
     Param,
     ParamError,
@@ -23,6 +24,7 @@ from fhy_core.param import (
     create_real_param,
     create_real_param_with_lower_bound,
 )
+from fhy_core.param.domains import build_ordinal_domain
 from fhy_core.symbol_type import SymbolType
 from fhy_core.traits import FrozenMutationError, StructuralEquivalence
 
@@ -460,7 +462,7 @@ def test_add_constraint_preserves_categorical_categories() -> None:
     updated = param.add_constraint(InSetConstraint(param.variable, {"a"}))
 
     assert isinstance(updated.domain, CategoricalDomain)
-    assert updated.domain.categories == frozenset({"a", "b"})
+    assert set(updated.domain.categories) == {"a", "b"}
     assert updated.is_frozen is True
 
 
@@ -600,3 +602,49 @@ def test_serialize_to_dict_includes_domain_variable_and_constraints_keys() -> No
     assert "domain" in data
     assert "variable" in data
     assert "constraints" in data
+
+
+# =============================================================================
+# Direct construction with a domain (no factory)
+# =============================================================================
+
+
+def test_param_constructed_directly_with_domain_matches_factory() -> None:
+    """Test constructing a `Param` directly with a domain matches its factory."""
+    direct = Param(IntegerDomain(), variable=mock_identifier("x", 1))
+    via_factory = create_integer_param(name=mock_identifier("x", 1))
+
+    assert direct.is_structurally_equivalent(via_factory)
+    assert direct.is_value_admissible(5)
+    assert not direct.is_value_admissible("not an int")
+
+
+def test_param_constructed_directly_with_finite_domain_admits_only_members() -> None:
+    """Test a directly-constructed ordinal `Param` admits exactly its members."""
+    param = Param(build_ordinal_domain((1, 2, 3)), variable=mock_identifier("x", 1))
+
+    assert param.is_value_admissible(2)
+    assert not param.is_value_admissible(4)
+
+
+def test_validate_value_accepts_valid_value() -> None:
+    """Test `Param.validate_value` does not raise for a valid value."""
+    param = create_integer_param_between(0, 10, name=mock_identifier("x", 1))
+
+    param.validate_value(5)
+
+
+def test_validate_value_rejects_inadmissible_value() -> None:
+    """Test `Param.validate_value` reports an inadmissible value distinctly."""
+    param = create_integer_param_between(0, 10, name=mock_identifier("x", 1))
+
+    with pytest.raises(ParamError, match="not admissible"):
+        param.validate_value("not an int")
+
+
+def test_validate_value_rejects_constraint_violating_value() -> None:
+    """Test `Param.validate_value` reports a constraint violation distinctly."""
+    param = create_integer_param_between(0, 10, name=mock_identifier("x", 1))
+
+    with pytest.raises(ParamError, match="violates constraint"):
+        param.validate_value(20)

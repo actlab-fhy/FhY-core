@@ -4,6 +4,8 @@ from typing import Any
 
 import pytest
 
+from fhy_core.constraint import EquationConstraint
+from fhy_core.expression import IdentifierExpression
 from fhy_core.param import (
     Param,
     ParamAssignment,
@@ -22,6 +24,8 @@ from fhy_core.serialization import (
     SerializationFormat,
     serialize_registry_wrapped_value,
 )
+
+from .conftest import mock_identifier
 
 # =============================================================================
 # Construction & accessors
@@ -116,6 +120,51 @@ def test_repeated_assigns_share_param_definition_and_record_value(
     assert assignment_2.value == 1.0
     assert assignment_1.param is default_real_param
     assert assignment_2.param is default_real_param
+
+
+# =============================================================================
+# Constraint-outcome error messages
+# =============================================================================
+
+
+def test_assignment_reports_violation_for_genuinely_violated_constraint() -> None:
+    """Test a decided violation raises the ``violates`` message."""
+    param = create_integer_param_with_lower_bound(0)
+
+    with pytest.raises(ParamError, match="violates constraint"):
+        param.assign(-1)
+
+
+def test_assignment_reports_could_not_verify_for_undecided_constraint() -> None:
+    """Test an undecided constraint raises the ``could not be verified`` message.
+
+    The constraint's expression references a second free identifier that
+    the substitution cannot bind, so the simplifier cannot decide. The
+    assigned value is admissible, so the failure must surface as an
+    undecided (``could not be verified``) error rather than a violation.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    undecided_constraint = EquationConstraint(x, IdentifierExpression(y))
+    param = create_integer_param(name=x, constraints=[undecided_constraint])
+
+    with pytest.raises(ParamError, match="could not be verified against constraint"):
+        param.assign(3)
+
+
+def test_assignment_undecided_message_is_distinct_from_violation_message() -> None:
+    """Test the undecided error does not use the ``violates`` wording."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    undecided_constraint = EquationConstraint(x, IdentifierExpression(y))
+    param = create_integer_param(name=x, constraints=[undecided_constraint])
+
+    with pytest.raises(ParamError) as exc_info:
+        param.assign(3)
+
+    message = str(exc_info.value)
+    assert "could not be verified" in message
+    assert "violates constraint" not in message
 
 
 # =============================================================================

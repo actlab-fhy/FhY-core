@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from fhy_core.constraint import EquationConstraint
+from fhy_core.constraint import ConstraintOutcome, EquationConstraint
 from fhy_core.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -310,3 +310,56 @@ def test_equation_constraint_ignores_value_when_variable_absent_from_expression(
 
     assert constraint.is_satisfied(LiteralExpression(0)) is True
     assert constraint.is_satisfied(LiteralExpression(False)) is True
+
+
+# =============================================================================
+# Tri-state `evaluate` outcomes
+# =============================================================================
+
+
+def test_equation_constraint_evaluate_reports_satisfied_for_bool_true() -> None:
+    """Test `evaluate` reports SATISFIED when the reduction is bool ``True``."""
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(x, IdentifierExpression(x))
+
+    assert constraint.evaluate(LiteralExpression(True)) is ConstraintOutcome.SATISFIED
+
+
+def test_equation_constraint_evaluate_reports_violated_for_bool_false() -> None:
+    """Test `evaluate` reports VIOLATED when the reduction is bool ``False``."""
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(x, IdentifierExpression(x))
+
+    assert constraint.evaluate(LiteralExpression(False)) is ConstraintOutcome.VIOLATED
+
+
+def test_equation_constraint_evaluate_reports_violated_for_non_bool_literal() -> None:
+    """Test `evaluate` reports VIOLATED when the reduction is a non-bool literal."""
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(x, LiteralExpression(1))
+
+    assert constraint.evaluate(LiteralExpression(0)) is ConstraintOutcome.VIOLATED
+
+
+def test_equation_constraint_evaluate_reports_undecided_when_free_variable_remains(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test the indeterminate case reports UNDECIDED, logs, and rejects.
+
+    The expression references a second free identifier the substitution
+    cannot bind, so the simplifier cannot reduce it to a literal.
+    `evaluate` must report UNDECIDED (and log a warning), while the
+    conservative `is_satisfied` still returns ``False``.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    constraint = EquationConstraint(x, IdentifierExpression(y))
+
+    with caplog.at_level(logging.WARNING, logger="fhy_core.constraint"):
+        outcome = constraint.evaluate(LiteralExpression(True))
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    assert constraint.is_satisfied(LiteralExpression(True)) is False
+    assert any(record.levelno == logging.WARNING for record in caplog.records), (
+        "expected a WARNING-level log record from fhy_core.constraint"
+    )

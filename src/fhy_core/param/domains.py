@@ -61,7 +61,6 @@ from .values import (
     deserialize_wrapped_leaf_values,
     does_collection_contain_param_value,
     is_categorical_value,
-    is_collection_unique_with_set,
     is_ordinal_value,
     is_permutation_member_value,
     is_sequence_unique_without_set,
@@ -149,7 +148,7 @@ def compute_constraint_implication_subset(
             own_expression, other_expression, {common_variable: symbol_type}
         )
         if implies is None:
-            _LOGGER.debug("Z3 returned unknown; treating as subset=True")
+            _LOGGER.warning("Z3 returned unknown; treating as subset=True")
         return implies is None or implies
     if own_expression is not None and other_expression is None:
         return True
@@ -171,7 +170,11 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
     @property
     @abstractmethod
     def symbol_type(self) -> SymbolType | None:
-        """Return the Z3 sort for this domain, or ``None`` if it is non-numeric."""
+        """Return this domain's numeric symbol type, or ``None`` if non-numeric.
+
+        This is the sort used when reasoning about the domain's constraints with
+        Z3.
+        """
 
     @abstractmethod
     def is_value_admissible(self, value: Any) -> bool:
@@ -201,6 +204,10 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
         other_constraints: Sequence[Constraint],
     ) -> bool:
         """Return whether this domain's constrained set is a subset of ``other``'s."""
+
+    @abstractmethod
+    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
+        """Return whether some admissible value satisfies every constraint."""
 
     @abstractmethod
     @override
@@ -278,6 +285,26 @@ def _compute_numeric_feasibility_subset(
     )
 
 
+def _numeric_has_feasible_value(
+    symbol_type: SymbolType, constraints: Sequence[Constraint]
+) -> bool:
+    common_variable = Identifier("var")
+    expression = _convert_constraints_to_implication_expression(
+        constraints, common_variable
+    )
+    if expression is None:
+        # No constraints: the (non-empty) numeric domain is feasible.
+        return True
+    implies_false = does_expression_imply(
+        expression, LiteralExpression(False), {common_variable: symbol_type}
+    )
+    # ``implies_false is True``  => constraints unsatisfiable => infeasible.
+    # ``implies_false is False`` => satisfiable => feasible.
+    # ``implies_false is None`` (Z3 unknown) => assume feasible, matching this
+    # module's optimistic convention in ``compute_constraint_implication_subset``.
+    return implies_false is not True
+
+
 @register_serializable(type_id="integer_domain")
 @dataclass(frozen=True, eq=False)
 class IntegerDomain(ParamDomain):
@@ -290,6 +317,14 @@ class IntegerDomain(ParamDomain):
 
     non_negative: bool = False
     zero_included: bool = True
+
+    def __post_init__(self) -> None:
+        # ``zero_included`` is only meaningful for a natural-number domain. When
+        # the domain is not restricted to non-negatives the field is inert, so
+        # canonicalize it: two otherwise-equal domains then never differ solely
+        # in this dead field.
+        if not self.non_negative:
+            object.__setattr__(self, "zero_included", True)
 
     @property
     @override
@@ -333,11 +368,15 @@ class IntegerDomain(ParamDomain):
         )
 
     @override
+    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
+        return _numeric_has_feasible_value(SymbolType.INT, constraints)
+
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, IntegerDomain)
             and self.non_negative == other.non_negative
-            and (not self.non_negative or self.zero_included == other.zero_included)
+            and self.zero_included == other.zero_included
         )
 
     @override
@@ -402,6 +441,10 @@ class RealDomain(ParamDomain):
         )
 
     @override
+    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
+        return _numeric_has_feasible_value(SymbolType.REAL, constraints)
+
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return isinstance(other, RealDomain)
 
@@ -448,17 +491,26 @@ def is_bound_expression(expression: Expression) -> bool:
 @register_serializable(type_id="interval_integer_domain")
 @dataclass(frozen=True, eq=False)
 class IntervalIntegerDomain(ParamDomain):
-    """Integer domain restricted to a (possibly one-sided) interval.
+    """Integer domain whose parameters carry their interval as bound constraints.
 
-    Only :class:`~fhy_core.constraint.EquationConstraint` bound expressions are
-    permitted, enabling interval arithmetic on the composing parameter.
-    ``prefer_inclusive`` selects how arithmetic results render their bounds.
-    ``non_negative`` adds the natural-number implied constraint.
+    Admissibility accepts any strict integer; the interval is expressed through
+    the composing parameter's bound constraints, not through this domain's
+    admissibility. Only :class:`~fhy_core.constraint.EquationConstraint` bound
+    expressions are permitted, enabling interval arithmetic on the composing
+    parameter. ``prefer_inclusive`` selects how arithmetic results render their
+    bounds. ``non_negative`` adds the natural-number implied constraint.
     """
 
     prefer_inclusive: bool = True
     non_negative: bool = False
     zero_included: bool = True
+
+    def __post_init__(self) -> None:
+        # See ``IntegerDomain.__post_init__``: canonicalize the inert
+        # ``zero_included`` field when the domain is not restricted to
+        # non-negatives.
+        if not self.non_negative:
+            object.__setattr__(self, "zero_included", True)
 
     @property
     @override
@@ -513,12 +565,16 @@ class IntervalIntegerDomain(ParamDomain):
         )
 
     @override
+    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
+        return _numeric_has_feasible_value(SymbolType.INT, constraints)
+
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, IntervalIntegerDomain)
             and self.prefer_inclusive == other.prefer_inclusive
             and self.non_negative == other.non_negative
-            and (not self.non_negative or self.zero_included == other.zero_included)
+            and self.zero_included == other.zero_included
         )
 
     @override
@@ -602,6 +658,13 @@ class OrdinalDomain(ParamDomain):
         return True
 
     @override
+    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
+        return any(
+            _is_value_valid_for(self, constraints, value)
+            for value in self.sorted_values
+        )
+
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, OrdinalDomain)
@@ -625,9 +688,15 @@ class OrdinalDomain(ParamDomain):
 @register_serializable(type_id="categorical_domain")
 @dataclass(frozen=True, eq=False)
 class CategoricalDomain(ParamDomain):
-    """Finite, unordered set of admissible category values."""
+    """Finite, unordered set of admissible category values.
 
-    categories: frozenset[CategoricalValue] = field(
+    Categories are stored as a strict-unique, ``repr``-canonicalized tuple.
+    Native ``frozenset`` storage would collapse values that compare ``==`` but
+    are distinct kinds (``True`` and ``1``), so the tuple preserves them while
+    keeping a deterministic order for serialization and rendering.
+    """
+
+    categories: tuple[CategoricalValue, ...] = field(
         metadata={"serialize_codec": _CATEGORICAL_VALUES_CODEC}
     )
 
@@ -682,9 +751,24 @@ class CategoricalDomain(ParamDomain):
         return True
 
     @override
+    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
+        return any(
+            _is_value_valid_for(self, constraints, category)
+            for category in self.categories
+        )
+
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
-        return (
-            isinstance(other, CategoricalDomain) and self.categories == other.categories
+        # Categories are unordered, so compare order-independently with the
+        # strict value predicate. Native ``tuple ==`` would wrongly equate
+        # ``(True,)`` and ``(1,)`` because ``True == 1``.
+        if not isinstance(other, CategoricalDomain):
+            return False
+        if len(self.categories) != len(other.categories):
+            return False
+        return all(
+            does_collection_contain_param_value(other.categories, category)
+            for category in self.categories
         )
 
     @override
@@ -778,6 +862,13 @@ class PermutationDomain(ParamDomain):
         return True
 
     @override
+    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
+        return any(
+            _is_value_valid_for(self, constraints, permutation)
+            for permutation in itertools.permutations(self.ordered_members)
+        )
+
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, PermutationDomain)
@@ -859,9 +950,12 @@ def build_categorical_domain(
                 "Categorical values must satisfy equal semantics and be "
                 "serializable, or be primitive bool/int/str values."
             )
-    if not is_collection_unique_with_set(category_values):
+    if not is_sequence_unique_without_set(category_values):
         raise ParamError("Values must be unique.")
-    return CategoricalDomain(frozenset(category_values))
+    # Categories are unordered; canonicalize by ``repr`` for a deterministic
+    # storage order (categorical values are not necessarily mutually orderable).
+    canonical_categories = tuple(sorted(category_values, key=repr))
+    return CategoricalDomain(canonical_categories)
 
 
 def build_permutation_domain(

@@ -169,7 +169,7 @@ class SerializableOrderableSelf(Serializable):
 class SerializableOrderableTrait(OrderableMixin, Serializable):
     """Serializable value that satisfies the `Orderable` runtime protocol.
 
-    Used to exercise the `_supports_orderable_value_semantics` early-return
+    Used to exercise the `supports_orderable_value_semantics` early-return
     that consults ``value.supports_ordering`` for `Orderable`-trait values.
     """
 

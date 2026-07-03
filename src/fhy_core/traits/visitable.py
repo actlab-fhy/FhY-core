@@ -47,7 +47,11 @@ class Visitable(Protocol):
         ...
 
     def get_visit_children(self) -> Sequence["Visitable"]:
-        """Return child nodes for traversal-aware visitors."""
+        """Return child nodes for traversal-aware visitors.
+
+        Override to expose ordered children for automatic pre-order/post-order
+        traversal; the default implementation reports no children.
+        """
         ...
 
 

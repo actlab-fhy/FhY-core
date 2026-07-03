@@ -38,6 +38,7 @@ __all__ = [
     "Constraint",
     "ConstraintError",
     "ConstraintMember",
+    "ConstraintOutcome",
     "EquationConstraint",
     "InSetConstraint",
     "NotInSetConstraint",
@@ -46,6 +47,7 @@ __all__ = [
 from abc import ABC, abstractmethod
 from collections.abc import Collection, Hashable, Iterator
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -96,6 +98,24 @@ _LOGGER = get_logger(__name__)
 @register_error
 class ConstraintError(ValueError):
     """Domain error for constraint construction, validation, and conversion."""
+
+
+class ConstraintOutcome(Enum):
+    """Tri-state result of checking a value against a constraint.
+
+    A constraint check distinguishes three outcomes:
+
+    - ``SATISFIED``: the value provably satisfies the constraint.
+    - ``VIOLATED``: the value provably violates the constraint.
+    - ``UNDECIDED``: the checker cannot decide (for example, the
+      expression simplifier could not reduce the substituted expression
+      to a literal). This is neither a satisfaction nor a violation; it
+      signals that the value's admissibility could not be determined.
+    """
+
+    SATISFIED = auto()
+    VIOLATED = auto()
+    UNDECIDED = auto()
 
 
 _ConstraintPrimitive: TypeAlias = str | int | float | bool
@@ -387,7 +407,8 @@ class Constraint(
         - Declare a ``@dataclass(frozen=True, eq=False)`` with a
           ``variable: Identifier`` field tagged
           ``compared_as_reference()`` plus the kind's own fields.
-        - Override ``is_satisfied`` to define the predicate.
+        - Override ``evaluate`` to define the tri-state predicate; the
+          concrete ``is_satisfied`` derives from it.
         - Override ``convert_to_expression`` to produce an equivalent
           ``Expression`` over the variable.
         - Override ``__repr__`` and ``__str__`` so the textual form
@@ -408,18 +429,37 @@ class Constraint(
         return self.is_satisfied(value)
 
     @abstractmethod
+    def evaluate(self, value: Any) -> ConstraintOutcome:
+        """Return the tri-state outcome of checking the value.
+
+        Args:
+            value: Candidate value to check.
+
+        Returns:
+            ``ConstraintOutcome.SATISFIED`` if the value provably
+            satisfies the constraint, ``ConstraintOutcome.VIOLATED`` if
+            it provably violates it, and ``ConstraintOutcome.UNDECIDED``
+            if the checker cannot decide. Subclasses document their
+            predicate semantics and which outcomes they can produce.
+
+        """
+
     def is_satisfied(self, value: Any) -> bool:
         """Return whether the value satisfies the constraint.
+
+        A value is treated as satisfying the constraint only when
+        ``evaluate`` decides ``SATISFIED``; both ``VIOLATED`` and the
+        indeterminate ``UNDECIDED`` outcome map to ``False``, so an
+        undecided check conservatively rejects the value.
 
         Args:
             value: Candidate value to check.
 
         Returns:
             True if the value satisfies the constraint; False otherwise.
-            Subclasses document their predicate semantics and any
-            indeterminate cases.
 
         """
+        return self.evaluate(value) is ConstraintOutcome.SATISFIED
 
     @abstractmethod
     def convert_to_expression(self) -> Expression:
@@ -450,26 +490,29 @@ class EquationConstraint(Constraint):
     """Boolean-expression predicate over the variable.
 
     The constraint wraps a Boolean ``Expression`` whose only free
-    identifier is meant to be ``self.variable``. ``is_satisfied``
+    identifier is meant to be ``self.variable``. ``evaluate``
     substitutes the candidate value for that identifier, simplifies the
-    resulting expression, and returns True only when the simplifier
-    reduces it to a ``LiteralExpression`` with a ``bool`` value of
-    ``True``.
+    resulting expression, and reports ``SATISFIED`` only when the
+    simplifier reduces it to a ``LiteralExpression`` with a ``bool``
+    value of ``True``.
 
-    Indeterminate case:
-        If the simplifier cannot reduce the substituted expression to a
-        ``LiteralExpression`` at all (for example because the expression
-        references additional free identifiers, or because the simplifier
-        just cannot decide), ``is_satisfied`` logs a ``WARNING`` through
-        the module logger and returns ``False``. Callers that need to
-        distinguish "constraint rejects this value" from "constraint
-        cannot decide" should configure log capture or escalate the
-        warning channel.
+    Outcomes:
+        - ``SATISFIED``: the substituted expression reduces to the
+          ``bool`` literal ``True``.
+        - ``VIOLATED``: the substituted expression reduces to the
+          ``bool`` literal ``False``, or to a literal whose value is not
+          a ``bool`` (for example ``LiteralExpression(1)``). A non-bool
+          literal is a decided "no", not an indeterminate case: no
+          warning is emitted.
+        - ``UNDECIDED``: the simplifier cannot reduce the substituted
+          expression to a ``LiteralExpression`` at all (for example
+          because the expression references additional free identifiers,
+          or because the simplifier just cannot decide). ``evaluate``
+          logs a ``WARNING`` through the module logger in this case.
 
-        A reduction to a literal whose value is not ``bool`` (for
-        example ``LiteralExpression(1)``) also returns ``False`` but
-        is treated as a decided "no" rather than as an indeterminate
-        case: no warning is emitted.
+    ``is_satisfied`` derives from ``evaluate`` and treats both
+    ``VIOLATED`` and ``UNDECIDED`` as ``False``, so an undecided check
+    conservatively rejects the value.
 
     """
 
@@ -477,20 +520,21 @@ class EquationConstraint(Constraint):
     expression: Expression
 
     @override
-    def is_satisfied(self, value: Expression | LiteralType) -> bool:
+    def evaluate(self, value: Expression | LiteralType) -> ConstraintOutcome:
         if isinstance(value, (str, float, int, bool)):
             value = LiteralExpression(value)
         result = simplify_expression(self.expression, {self.variable: value})
-        if isinstance(result, LiteralExpression) and isinstance(result.value, bool):
-            return result.value
-        if not isinstance(result, LiteralExpression):
-            _LOGGER.warning(
-                "%s.is_satisfied: substituted expression %r did not reduce to a "
-                "literal; returning False",
-                type(self).__name__,
-                result,
-            )
-        return False
+        if isinstance(result, LiteralExpression):
+            if isinstance(result.value, bool) and result.value:
+                return ConstraintOutcome.SATISFIED
+            return ConstraintOutcome.VIOLATED
+        _LOGGER.warning(
+            "%s.evaluate: substituted expression %r did not reduce to a "
+            "literal; reporting UNDECIDED",
+            type(self).__name__,
+            result,
+        )
+        return ConstraintOutcome.UNDECIDED
 
     @override
     def convert_to_expression(self) -> Expression:
@@ -524,10 +568,12 @@ def _render_member_set_str(members: frozenset[_TypedMember]) -> str:
 class InSetConstraint(Constraint):
     """Permitted-set membership predicate.
 
-    ``is_satisfied`` returns True iff ``value`` is in the constraint's
-    value set, comparing by type-strict equality (so ``True`` and ``1``
-    are distinct members, and ``1`` and ``1.0`` are distinct members,
-    including inside nested ``tuple`` or ``frozenset`` members).
+    ``evaluate`` reports ``SATISFIED`` iff ``value`` is in the
+    constraint's value set and ``VIOLATED`` otherwise, comparing by
+    type-strict equality (so ``True`` and ``1`` are distinct members,
+    and ``1`` and ``1.0`` are distinct members, including inside nested
+    ``tuple`` or ``frozenset`` members). Membership is always decidable,
+    so this constraint never reports ``UNDECIDED``.
 
     Determinism:
         ``convert_to_expression`` emits its leaves in ``repr``-sorted
@@ -538,6 +584,10 @@ class InSetConstraint(Constraint):
     """
 
     variable: Identifier = field(metadata=compared_as_reference())
+    # Declared as the constructor-input type. ``__post_init__`` normalizes this
+    # in place to a ``frozenset[_TypedMember]``; read the members through the
+    # ``members`` property (raw values) or ``_members`` (internal wrappers)
+    # rather than this field directly.
     valid_values: MemberCollection[ConstraintMember] = field(
         metadata={
             **compared_as_value(),
@@ -553,6 +603,15 @@ class InSetConstraint(Constraint):
         )
 
     @property
+    def members(self) -> tuple[ConstraintMember, ...]:
+        """Return the permitted members as raw values.
+
+        The ``valid_values`` field stores internal type-strict wrappers; this
+        accessor returns the unwrapped members in no particular order.
+        """
+        return tuple(_unwrap_member(member) for member in self._members)
+
+    @property
     def _members(self) -> frozenset[_TypedMember]:
         """Return the normalized, type-strict member set stored after init."""
         return cast(frozenset[_TypedMember], self.valid_values)
@@ -563,14 +622,16 @@ class InSetConstraint(Constraint):
         return cls(fields["variable"], fields["valid_values"])
 
     @override
-    def is_satisfied(self, value: Any) -> bool:
+    def evaluate(self, value: Any) -> ConstraintOutcome:
         """Return whether ``value`` is in the permitted set.
 
         Raises:
             TypeError: If ``value`` is not hashable.
 
         """
-        return _wrap_member(value) in self._members
+        if _wrap_member(value) in self._members:
+            return ConstraintOutcome.SATISFIED
+        return ConstraintOutcome.VIOLATED
 
     @override
     def convert_to_expression(self) -> Expression:
@@ -605,9 +666,10 @@ class InSetConstraint(Constraint):
 class NotInSetConstraint(Constraint):
     """Forbidden-set membership predicate.
 
-    Symmetric to ``InSetConstraint``: ``is_satisfied`` returns True iff
-    ``value`` is NOT in the constraint's value set, comparing by
-    type-strict equality.
+    Symmetric to ``InSetConstraint``: ``evaluate`` reports ``SATISFIED``
+    iff ``value`` is NOT in the constraint's value set and ``VIOLATED``
+    otherwise, comparing by type-strict equality. Membership is always
+    decidable, so this constraint never reports ``UNDECIDED``.
 
     Determinism:
         ``convert_to_expression`` emits its leaves in ``repr``-sorted
@@ -616,6 +678,10 @@ class NotInSetConstraint(Constraint):
     """
 
     variable: Identifier = field(metadata=compared_as_reference())
+    # Declared as the constructor-input type. ``__post_init__`` normalizes this
+    # in place to a ``frozenset[_TypedMember]``; read the members through the
+    # ``members`` property (raw values) or ``_members`` (internal wrappers)
+    # rather than this field directly.
     invalid_values: MemberCollection[ConstraintMember] = field(
         metadata={
             **compared_as_value(),
@@ -631,6 +697,15 @@ class NotInSetConstraint(Constraint):
         )
 
     @property
+    def members(self) -> tuple[ConstraintMember, ...]:
+        """Return the forbidden members as raw values.
+
+        The ``invalid_values`` field stores internal type-strict wrappers; this
+        accessor returns the unwrapped members in no particular order.
+        """
+        return tuple(_unwrap_member(member) for member in self._members)
+
+    @property
     def _members(self) -> frozenset[_TypedMember]:
         """Return the normalized, type-strict member set stored after init."""
         return cast(frozenset[_TypedMember], self.invalid_values)
@@ -641,14 +716,16 @@ class NotInSetConstraint(Constraint):
         return cls(fields["variable"], fields["invalid_values"])
 
     @override
-    def is_satisfied(self, value: Any) -> bool:
+    def evaluate(self, value: Any) -> ConstraintOutcome:
         """Return whether ``value`` is NOT in the forbidden set.
 
         Raises:
             TypeError: If ``value`` is not hashable.
 
         """
-        return _wrap_member(value) not in self._members
+        if _wrap_member(value) not in self._members:
+            return ConstraintOutcome.SATISFIED
+        return ConstraintOutcome.VIOLATED
 
     @override
     def convert_to_expression(self) -> Expression:

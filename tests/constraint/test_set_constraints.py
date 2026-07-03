@@ -10,7 +10,12 @@ from typing import Any
 
 import pytest
 
-from fhy_core.constraint import Constraint, InSetConstraint, NotInSetConstraint
+from fhy_core.constraint import (
+    Constraint,
+    ConstraintOutcome,
+    InSetConstraint,
+    NotInSetConstraint,
+)
 from fhy_core.identifier import Identifier
 
 from .conftest import SET_KINDS, SerializableEqualHashable, mock_identifier
@@ -20,6 +25,21 @@ SetConstraintFactory = Callable[[Identifier, Any], Constraint]
 _KINDS_WITH_OUTCOMES = [
     pytest.param(InSetConstraint, True, False, id="in_set"),
     pytest.param(NotInSetConstraint, False, True, id="not_in_set"),
+]
+
+_KINDS_WITH_EVALUATE_OUTCOMES = [
+    pytest.param(
+        InSetConstraint,
+        ConstraintOutcome.SATISFIED,
+        ConstraintOutcome.VIOLATED,
+        id="in_set",
+    ),
+    pytest.param(
+        NotInSetConstraint,
+        ConstraintOutcome.VIOLATED,
+        ConstraintOutcome.SATISFIED,
+        id="not_in_set",
+    ),
 ]
 
 _KINDS_WITH_STR_MARKER = [
@@ -159,6 +179,34 @@ def test_set_constraint_str_renders_membership_marker(
     assert str_marker in rendered
     assert "1" in rendered
     assert "2" in rendered
+
+
+# =============================================================================
+# Tri-state `evaluate` outcomes
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "factory, member_outcome, non_member_outcome", _KINDS_WITH_EVALUATE_OUTCOMES
+)
+def test_set_constraint_evaluate_only_decides_satisfied_or_violated(
+    factory: SetConstraintFactory,
+    member_outcome: ConstraintOutcome,
+    non_member_outcome: ConstraintOutcome,
+) -> None:
+    """Test set constraints only ever report SATISFIED or VIOLATED.
+
+    Membership is always decidable, so a set constraint never reports
+    ``ConstraintOutcome.UNDECIDED``.
+    """
+    constraint = factory(mock_identifier("x", 0), {1, 2, 3})
+
+    member_result = constraint.evaluate(1)
+    non_member_result = constraint.evaluate(4)
+
+    assert member_result is member_outcome
+    assert non_member_result is non_member_outcome
+    assert ConstraintOutcome.UNDECIDED not in (member_result, non_member_result)
 
 
 # =============================================================================

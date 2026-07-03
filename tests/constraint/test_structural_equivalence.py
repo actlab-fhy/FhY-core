@@ -7,6 +7,7 @@ import pytest
 
 from fhy_core.constraint import (
     Constraint,
+    ConstraintOutcome,
     EquationConstraint,
     InSetConstraint,
 )
@@ -197,8 +198,8 @@ def test_equivalence_requires_dataclass_constraint_subclass() -> None:
             object.__setattr__(self, "_variable", variable)
 
         @override
-        def is_satisfied(self, value: object) -> bool:
-            return True
+        def evaluate(self, value: object) -> ConstraintOutcome:
+            return ConstraintOutcome.SATISFIED
 
         @override
         def convert_to_expression(self) -> Expression:
