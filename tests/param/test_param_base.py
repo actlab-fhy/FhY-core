@@ -611,7 +611,7 @@ def test_serialize_to_dict_includes_domain_variable_and_constraints_keys() -> No
 
 def test_param_constructed_directly_with_domain_matches_factory() -> None:
     """Test constructing a `Param` directly with a domain matches its factory."""
-    direct = Param(IntegerDomain(), variable=mock_identifier("x", 1))
+    direct: Param[int] = Param(IntegerDomain(), variable=mock_identifier("x", 1))
     via_factory = create_integer_param(name=mock_identifier("x", 1))
 
     assert direct.is_structurally_equivalent(via_factory)
@@ -621,7 +621,9 @@ def test_param_constructed_directly_with_domain_matches_factory() -> None:
 
 def test_param_constructed_directly_with_finite_domain_admits_only_members() -> None:
     """Test a directly-constructed ordinal `Param` admits exactly its members."""
-    param = Param(build_ordinal_domain((1, 2, 3)), variable=mock_identifier("x", 1))
+    param: Param[int] = Param(
+        build_ordinal_domain((1, 2, 3)), variable=mock_identifier("x", 1)
+    )
 
     assert param.is_value_admissible(2)
     assert not param.is_value_admissible(4)
