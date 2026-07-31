@@ -732,6 +732,50 @@ def test_multi_case_piecewise_z3_lowering_matches_hand_nested_encoding() -> None
     assert does_expression_imply(nested_holds, flat_holds, symbol_types) is True
 
 
+def test_piecewise_over_one_hundred_cases_z3_lowering_matches_hand_nested() -> None:
+    """Test a 100+-case piecewise's flat z3 lowering equals a hand-nested equivalent.
+
+    Scales ``test_multi_case_piecewise_z3_lowering_matches_hand_nested_encoding``
+    up to a case count deep enough to expose a fold-direction
+    (first-match-wins) regression in the right-folded ``z3.If`` chain a
+    flat multi-case node lowers to. Conditions are a monotonic, genuinely
+    *overlapping* threshold ladder (``x < 1``, ``x < 2``, ..., ``x <
+    NUM_CASES``) rather than the mutually exclusive equalities used
+    elsewhere in this file: with mutually exclusive conditions, at most
+    one branch is ever true, so a fold-direction bug (last-match-wins
+    instead of first-match-wins) would be invisible -- exactly one case
+    still fires regardless of nesting order. The hand-nested reference is
+    built as single-case ``PiecewiseExpression`` nodes throughout, so its
+    z3 lowering never exercises the multi-case fold at all and is
+    unaffected by a regression in it, making it a valid ground truth for
+    the comparison.
+    """
+    NUM_CASES = 120
+    x = mock_identifier("x", 0)
+    result = mock_identifier("result", 1)
+    x_expression = IdentifierExpression(x)
+    result_expression = IdentifierExpression(result)
+
+    flat_cases = tuple(
+        (x_expression < (i + 1), LiteralExpression(i)) for i in range(NUM_CASES)
+    )
+    flat = PiecewiseExpression(
+        tuple(condition for condition, _ in flat_cases),
+        tuple(value for _, value in flat_cases),
+        LiteralExpression(-1),
+    )
+    nested: Expression = LiteralExpression(-1)
+    for condition, value in reversed(flat_cases):
+        nested = PiecewiseExpression((condition,), (value,), nested)
+
+    flat_holds = BinaryExpression(BinaryOperation.EQUAL, result_expression, flat)
+    nested_holds = BinaryExpression(BinaryOperation.EQUAL, result_expression, nested)
+    symbol_types = {x: SymbolType.INT, result: SymbolType.INT}
+
+    assert does_expression_imply(flat_holds, nested_holds, symbol_types) is True
+    assert does_expression_imply(nested_holds, flat_holds, symbol_types) is True
+
+
 # =============================================================================
 # CallExpression interplay with the z3 converter
 # =============================================================================

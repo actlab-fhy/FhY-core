@@ -427,15 +427,43 @@ _GOLDEN_BLOBS: dict[str, object] = json.loads(_GOLDEN_BLOBS_JSON)
 # right relation for a variable whose concrete id is incidental.
 _ALPHA_EQUIVALENT_ONLY: frozenset[str] = frozenset({"param", "param_assignment"})
 
+# The 18 `type_id` literals this module pins, hard-coded independently of
+# `_ALL_FIXTURES`/`_GOLDEN_BLOBS` so that a stray or accidentally dropped
+# fixture entry (which would otherwise still agree with itself) fails one of
+# the two guard tests below instead of passing vacuously.
+_EXPECTED_PINNED_TYPE_IDS: frozenset[str] = frozenset(
+    {
+        "unary_expression",
+        "binary_expression",
+        "identifier_expression",
+        "literal_expression",
+        "piecewise_expression",
+        "call_expression",
+        "equation_constraint",
+        "in_set_constraint",
+        "not_in_set_constraint",
+        "constraint_system",
+        "integer_domain",
+        "real_domain",
+        "interval_integer_domain",
+        "ordinal_domain",
+        "categorical_domain",
+        "permutation_domain",
+        "param",
+        "param_assignment",
+    }
+)
+
 
 def test_exactly_eighteen_pinned_type_ids_are_covered() -> None:
-    """Test the fixture table covers all 18 pinned `type_id`s, no more, no less."""
-    assert len(_ALL_FIXTURES) == 18
+    """Test the fixture table covers exactly the 18 pinned `type_id` literals."""
+    assert len(_EXPECTED_PINNED_TYPE_IDS) == 18
+    assert set(_ALL_FIXTURES) == _EXPECTED_PINNED_TYPE_IDS
 
 
 def test_golden_blobs_cover_exactly_the_pinned_fixtures() -> None:
     """Test the embedded golden blob table has one entry per pinned `type_id`."""
-    assert set(_GOLDEN_BLOBS) == set(_ALL_FIXTURES)
+    assert set(_GOLDEN_BLOBS) == _EXPECTED_PINNED_TYPE_IDS
 
 
 @pytest.mark.parametrize(

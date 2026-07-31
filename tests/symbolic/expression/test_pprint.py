@@ -19,6 +19,8 @@ from fhy_core.symbolic.expression import (
 from fhy_core.symbolic.expression.pprint import ExpressionPrettyFormatter
 from fhy_core.utils.override import override
 
+from .conftest import mock_identifier
+
 # =============================================================================
 # Symbolic format (default)
 # =============================================================================
@@ -224,6 +226,43 @@ def test_pformat_multi_case_piecewise_renders_functional_form_with_odd_arity() -
         pformat_expression(expression, functional=True)
         == "(piecewise True 1 False 2 3)"
     )
+
+
+def test_pformat_piecewise_with_over_one_hundred_cases_renders_all_in_order() -> None:
+    """Test a 100+-case piecewise renders every case, in order, in both forms.
+
+    Guards the symbolic and functional renderers against a case count far
+    beyond the 1-2 case fixtures used elsewhere in this file, where a
+    dropped, reordered, or truncated case would otherwise go unnoticed.
+    """
+    NUM_CASES = 120
+    x = mock_identifier("x", 0)
+    x_expression = IdentifierExpression(x)
+    cases = tuple(
+        (x_expression.equals(i), LiteralExpression(i)) for i in range(NUM_CASES)
+    )
+    expression = PiecewiseExpression(
+        tuple(condition for condition, _ in cases),
+        tuple(value for _, value in cases),
+        LiteralExpression(-1),
+    )
+
+    symbolic = pformat_expression(expression)
+    expected_symbolic = (
+        "{"
+        + "; ".join(f"{i} if (x == {i})" for i in range(NUM_CASES))
+        + "; -1 otherwise}"
+    )
+    assert symbolic == expected_symbolic
+
+    functional = pformat_expression(expression, functional=True)
+    expected_functional_parts: list[str] = []
+    for i in range(NUM_CASES):
+        expected_functional_parts.append(f"(equal x {i})")
+        expected_functional_parts.append(str(i))
+    expected_functional_parts.append("-1")
+    expected_functional = f"(piecewise {' '.join(expected_functional_parts)})"
+    assert functional == expected_functional
 
 
 def test_pformat_nested_piecewise_renders_inner_form_inside_branch() -> None:

@@ -269,7 +269,9 @@ Leaf conftests keep their `from ..conftest import mock_identifier, ...` chain: `
 
 **Deleted:** the old paths themselves (consequence of `git mv`); the five query-function exports from the expression namespace. No file is deleted with its content discarded.
 
-**Unchanged (verified):** `identifier.py` (and its traits-submodule cycle-breaker), `traits/*`, `serialization.py`, `pass_infrastructure/*`, `value_domain.py`, `lattice.py`, `symbol_table.py`, `op_attribute.py`, `diagnostic.py`, `provenance.py`, `error.py`, `logger.py`, `testing_patches.py`, `utils/*`; `noxfile.py` (whole-tree `src`/`tests` globs), `pyproject.toml` (uv_build src-layout auto-discovers the subpackage; coverage `source=["fhy_core"]` and path maps unaffected), `.pre-commit-config.yaml`; root `tests/conftest.py` (z3 auto-skip, `mock_identifier`, `SerializableEqualHashable` all stay put); `tests/serialization/`, `tests/pass_infrastructure/`, `tests/types/` directories stay in place (only import lines change in `tests/types/`).
+**Unchanged (verified):** `identifier.py` (and its traits-submodule cycle-breaker), `traits/*`, `serialization.py`, `pass_infrastructure/*`, `value_domain.py`, `lattice.py`, `symbol_table.py`, `op_attribute.py`, `diagnostic.py`, `provenance.py`, `error.py`, `logger.py`, `testing_patches.py`, `utils/*`; `noxfile.py` (whole-tree `src`/`tests` globs), `.pre-commit-config.yaml`; root `tests/conftest.py` (z3 auto-skip, `mock_identifier`, `SerializableEqualHashable` all stay put); `tests/serialization/`, `tests/pass_infrastructure/`, `tests/types/` directories stay in place (only import lines change in `tests/types/`).
+
+**Modified (one addition, no packaging impact):** `pyproject.toml` gains the `import_order` pytest marker (`markers = [..., "import_order: pins module import-order for circular-import resolution"]`), registered because `addopts` enables `--strict-markers` and the new `tests/symbolic/test_import_order.py` applies `@pytest.mark.import_order`; without the registration, collection of that suite would fail outright. Packaging and coverage configuration are otherwise unaffected: uv_build's src-layout auto-discovers the subpackage, and coverage's `source=["fhy_core"]` and path maps need no changes.
 
 ## Serialization impact
 
@@ -321,6 +323,7 @@ Leaf conftests keep their `from ..conftest import mock_identifier, ...` chain: `
 - src/fhy_core/__init__.py
 - src/fhy_core/types/core.py
 - src/fhy_core/types/dispatch.py
+- pyproject.toml (`import_order` pytest marker registration)
 - tests/symbolic/__init__.py (new)
 - tests/symbolic/conftest.py (new)
 - tests/symbolic/test_solver.py (new)
