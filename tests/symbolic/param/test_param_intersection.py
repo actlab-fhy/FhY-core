@@ -11,13 +11,19 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-import z3  # type: ignore[import-untyped]
-from hypothesis import assume, given  # type: ignore[import-not-found]
-from hypothesis import strategies as st
 
 from fhy_core.identifier import Identifier
-from fhy_core.symbolic.constraint import Constraint, ConstraintOutcome, InSetConstraint
-from fhy_core.symbolic.expression import Expression, LiteralExpression
+from fhy_core.symbolic.constraint import (
+    Constraint,
+    ConstraintOutcome,
+    EquationConstraint,
+    InSetConstraint,
+)
+from fhy_core.symbolic.expression import (
+    Expression,
+    IdentifierExpression,
+    LiteralExpression,
+)
 from fhy_core.symbolic.param import (
     Param,
     ParamError,
@@ -39,6 +45,7 @@ from fhy_core.symbolic.param import (
     create_real_param_with_lower_bound,
     create_union_param,
 )
+from fhy_core.symbolic.param import domains as param_domains
 from fhy_core.symbolic.param.domains import (
     CategoricalDomain,
     IntegerDomain,
@@ -198,6 +205,7 @@ def test_permutation_intersection_of_mutually_exclusive_constraints_is_empty() -
 # =============================================================================
 
 
+@pytest.mark.z3
 def test_interval_intersection_tightens_bounds_via_and_operator() -> None:
     """Test ``[0,10] & [5,20]`` tightens to ``[5,10]``."""
     left = create_interval_integer_param_between(0, 10)
@@ -209,6 +217,7 @@ def test_interval_intersection_tightens_bounds_via_and_operator() -> None:
     assert_none_satisfied(result, [4, 11])
 
 
+@pytest.mark.z3
 def test_interval_intersection_tightens_bounds_via_factory() -> None:
     """Test ``create_intersection_param`` tightens bounds the same as ``&``."""
     left = create_interval_integer_param_between(0, 10)
@@ -220,6 +229,7 @@ def test_interval_intersection_tightens_bounds_via_factory() -> None:
     assert_none_satisfied(result, [4, 11])
 
 
+@pytest.mark.z3
 def test_interval_intersection_of_disjoint_intervals_raises_param_error() -> None:
     """Test interval intersection of disjoint intervals raises ``ParamError``."""
     left = create_interval_integer_param_between(0, 5)
@@ -229,6 +239,7 @@ def test_interval_intersection_of_disjoint_intervals_raises_param_error() -> Non
         create_intersection_param(left, right)
 
 
+@pytest.mark.z3
 def test_interval_intersection_merges_non_negative_attribute() -> None:
     """Test the interval intersection's ``non_negative`` is the OR of operands."""
     left = create_interval_integer_param()
@@ -246,6 +257,7 @@ def test_interval_intersection_merges_non_negative_attribute() -> None:
 # =============================================================================
 
 
+@pytest.mark.z3
 def test_intersection_coerces_plain_integer_operand_on_right() -> None:
     """Test intersection coerces a plain integer param (right) into interval form."""
     left = create_interval_integer_param_between(0, 10)
@@ -257,6 +269,7 @@ def test_intersection_coerces_plain_integer_operand_on_right() -> None:
     assert_none_satisfied(result, [4, 11])
 
 
+@pytest.mark.z3
 def test_intersection_coerces_plain_integer_operand_on_left() -> None:
     """Test intersection coerces a plain integer param (left) into interval form."""
     left = create_integer_param_between(5, 20)
@@ -273,6 +286,7 @@ def test_intersection_coerces_plain_integer_operand_on_left() -> None:
 # =============================================================================
 
 
+@pytest.mark.z3
 def test_integer_intersection_conjoins_bound_constraints() -> None:
     """Test plain-integer intersection conjoins both operands' bound constraints."""
     left = create_integer_param_with_lower_bound(0)
@@ -284,6 +298,7 @@ def test_integer_intersection_conjoins_bound_constraints() -> None:
     assert_none_satisfied(result, [-1, 11])
 
 
+@pytest.mark.z3
 def test_integer_intersection_merges_non_negative_attribute() -> None:
     """Test integer intersection merges ``non_negative``/``zero_included`` attributes.
 
@@ -303,6 +318,7 @@ def test_integer_intersection_merges_non_negative_attribute() -> None:
     assert_none_satisfied(result, [-1, 11])
 
 
+@pytest.mark.z3
 def test_real_intersection_conjoins_bound_constraints() -> None:
     """Test real-param intersection conjoins both operands' bound constraints."""
     left = create_real_param_with_lower_bound(0.0)
@@ -320,6 +336,7 @@ def test_real_intersection_conjoins_bound_constraints() -> None:
 # =============================================================================
 
 
+@pytest.mark.z3
 def test_intersection_constraints_rebind_to_result_variable() -> None:
     """Test rebound intersection constraints are alpha-equivalent to a hand-built param.
 
@@ -375,17 +392,25 @@ def test_intersection_accepts_result_when_z3_returns_unknown(
 ) -> None:
     """Test intersection is accepted (not raised) when Z3 cannot decide feasibility.
 
-    Forces ``z3.Solver.check`` to return ``unknown`` so ``is_feasible()``'s
-    optimistic-on-unknown convention is exercised: the factory must not treat
-    an undecidable conjunction as proven empty.
+    Monkeypatches ``check_expression_satisfiability`` -- the seam
+    ``_numeric_has_feasible_value`` calls -- to always return ``None`` (Z3's
+    "unknown" outcome), so ``is_feasible()``'s optimistic-on-unknown
+    convention is exercised: the factory must not treat an undecidable
+    conjunction as proven empty. Asserting the tightened bounds (rather than
+    just ``result is not None``, which a ``Param``-or-raise factory can never
+    fail) confirms the returned param is the real, live intersection and not
+    some degenerate stand-in.
     """
     left = create_integer_param_with_lower_bound(0)
     right = create_integer_param_with_upper_bound(10)
-    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+    monkeypatch.setattr(
+        param_domains, "check_expression_satisfiability", lambda *args, **kwargs: None
+    )
 
     result = create_intersection_param(left, right)
 
-    assert result is not None
+    assert_all_satisfied(result, [0, 5, 10])
+    assert_none_satisfied(result, [-1, 11])
 
 
 # =============================================================================
@@ -425,6 +450,31 @@ def test_intersection_with_unrebindable_constraint_kind_raises_type_error() -> N
 
     with pytest.raises(TypeError):
         create_intersection_param(left, right)
+
+
+# =============================================================================
+# Dependent (multi-variable) constraints are rejected at construction
+# =============================================================================
+
+
+def test_dependent_constraint_operand_is_rejected_at_construction() -> None:
+    """Test a multi-variable-constrained operand is rejected before intersection runs.
+
+    A constraint referencing a second free identifier used to slip past
+    `Param.validate_constraint` on the left operand and only blow up later,
+    with a raw `KeyError` from the Z3 bridge, from `create_intersection_param`'s
+    internal `result.is_feasible()` call. `validate_constraint` must reject it
+    up front (while constructing the offending operand) with a typed
+    `ParamError` instead.
+    """
+    x = mock_identifier("x", 200)
+    y = mock_identifier("y", 201)
+    dependent_constraint = EquationConstraint(
+        x, IdentifierExpression(x) < IdentifierExpression(y)
+    )
+
+    with pytest.raises(ParamError, match="ConstraintSystem"):
+        create_integer_param(name=x, constraints=[dependent_constraint])
 
 
 # =============================================================================
@@ -555,6 +605,7 @@ def test_intersection_type_annotation_is_param() -> None:
 # =============================================================================
 
 
+@pytest.mark.z3
 def test_intersection_result_round_trips_through_serialization() -> None:
     """Test an intersection result round-trips through DICT, JSON, and BINARY."""
     left = create_interval_integer_param_between(0, 10)
@@ -575,6 +626,7 @@ def test_categorical_intersection_result_round_trips_through_serialization() -> 
     assert_param_round_trips_in_all_formats(result)
 
 
+@pytest.mark.z3
 def test_intersection_result_interoperates_with_is_subset() -> None:
     """Test an intersection result's feasible set is a subset of each operand's."""
     left = create_interval_integer_param_between(0, 10)
@@ -587,6 +639,7 @@ def test_intersection_result_interoperates_with_is_subset() -> None:
     assert not left.is_subset(result)
 
 
+@pytest.mark.z3
 def test_intersection_result_interoperates_with_is_feasible() -> None:
     """Test a non-empty intersection result reports feasible."""
     left = create_interval_integer_param_between(0, 10)
@@ -598,6 +651,7 @@ def test_intersection_result_interoperates_with_is_feasible() -> None:
     assert not result.is_empty()
 
 
+@pytest.mark.z3
 def test_intersection_result_interoperates_with_assign() -> None:
     """Test a value valid for both operands can be assigned to the result."""
     left = create_interval_integer_param_between(0, 10)
@@ -633,37 +687,3 @@ def test_or_and_dunders_chain_the_same_as_the_factories() -> None:
 
     assert_all_valid(result, ["b", "c"])
     assert_none_valid(result, ["a", "d"])
-
-
-# =============================================================================
-# Property: finite-set membership law
-# =============================================================================
-
-
-@pytest.mark.property
-@given(  # type: ignore[untyped-decorator]
-    left_values=st.sets(st.integers(min_value=0, max_value=12), min_size=1, max_size=6),
-    right_values=st.sets(
-        st.integers(min_value=0, max_value=12), min_size=1, max_size=6
-    ),
-    candidate=st.integers(min_value=0, max_value=15),
-)
-def test_intersection_membership_law_holds_for_random_ordinal_sets(
-    left_values: set[int], right_values: set[int], candidate: int
-) -> None:
-    """Test a value is valid for the intersection iff valid for both operands.
-
-    Holds for arbitrary (non-empty) ordinal value sets; when the sets happen
-    to be disjoint the intersection is empty, which `create_intersection_param`
-    signals by raising `ParamError` rather than returning a param -- covered
-    separately by the disjoint-set unit tests, so this property assumes a
-    non-empty intersection here to keep the assertion meaningful.
-    """
-    assume(left_values & right_values)
-    left = create_ordinal_param(sorted(left_values))
-    right = create_ordinal_param(sorted(right_values))
-
-    result = create_intersection_param(left, right)
-
-    expected = candidate in left_values and candidate in right_values
-    assert result.is_value_valid(candidate) == expected

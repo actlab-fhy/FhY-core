@@ -6,8 +6,16 @@ empty parameter, so these tests confirm the empty constructions build before
 querying feasibility.
 """
 
-from fhy_core.symbolic.constraint import InSetConstraint, NotInSetConstraint
+import pytest
+
+from fhy_core.symbolic.constraint import (
+    EquationConstraint,
+    InSetConstraint,
+    NotInSetConstraint,
+)
+from fhy_core.symbolic.expression import IdentifierExpression
 from fhy_core.symbolic.param import (
+    ParamError,
     create_categorical_param,
     create_integer_param,
     create_integer_param_between,
@@ -30,6 +38,7 @@ def test_unconstrained_integer_param_is_feasible() -> None:
     assert not param.is_empty()
 
 
+@pytest.mark.z3
 def test_bounded_integer_param_is_feasible() -> None:
     """Test a bounded integer parameter with a non-empty interval is feasible."""
     param = create_integer_param_between(0, 10, name=mock_identifier("x", 2))
@@ -96,6 +105,7 @@ def test_categorical_param_with_out_of_domain_in_set_is_empty() -> None:
     assert narrowed.is_empty()
 
 
+@pytest.mark.z3
 def test_integer_param_with_contradictory_bounds_is_empty() -> None:
     """Test a plain integer param with contradictory bounds is empty."""
     param = create_integer_param(name=mock_identifier("x", 9))
@@ -125,3 +135,29 @@ def test_permutation_param_excluding_all_permutations_is_empty() -> None:
 
     assert not narrowed.is_feasible()
     assert narrowed.is_empty()
+
+
+# =============================================================================
+# Dependent (multi-variable) constraints are rejected at construction
+# =============================================================================
+
+
+def test_dependent_constraint_is_rejected_at_construction_not_is_feasible() -> None:
+    """Test a multi-variable constraint is rejected at construction, not query time.
+
+    ``Param`` is strictly single-variable: the numeric feasibility routing
+    only supplies a Z3 sort for the parameter's own variable, so a
+    constraint referencing a second free identifier used to reach
+    `is_feasible` and blow up with a raw `KeyError` from the Z3 bridge.
+    `validate_constraint` must reject it up front with a typed `ParamError`
+    instead, so the (never reached) `is_feasible` call is never at risk of
+    the `KeyError`.
+    """
+    x = mock_identifier("x", 12)
+    y = mock_identifier("y", 13)
+    dependent_constraint = EquationConstraint(
+        x, IdentifierExpression(x) < IdentifierExpression(y)
+    )
+
+    with pytest.raises(ParamError, match="ConstraintSystem"):
+        create_integer_param(name=x, constraints=[dependent_constraint])

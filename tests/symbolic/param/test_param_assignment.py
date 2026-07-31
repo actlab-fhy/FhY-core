@@ -10,7 +10,11 @@ from fhy_core.serialization import (
     SerializationFormat,
     serialize_registry_wrapped_value,
 )
-from fhy_core.symbolic.constraint import EquationConstraint, NotInSetConstraint
+from fhy_core.symbolic.constraint import (
+    ConstraintOutcome,
+    EquationConstraint,
+    NotInSetConstraint,
+)
 from fhy_core.symbolic.expression import IdentifierExpression
 from fhy_core.symbolic.param import (
     Param,
@@ -135,29 +139,42 @@ def test_assignment_reports_violation_for_genuinely_violated_constraint() -> Non
         param.assign(-1)
 
 
-def test_assignment_reports_could_not_verify_for_undecided_constraint() -> None:
+def test_assignment_reports_could_not_verify_for_undecided_constraint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Test an undecided constraint raises the ``could not be verified`` message.
 
-    The constraint's expression references a second free identifier that
-    the substitution cannot bind, so the simplifier cannot decide. The
-    assigned value is admissible, so the failure must surface as an
-    undecided (``could not be verified``) error rather than a violation.
+    ``EquationConstraint.evaluate`` is monkeypatched to unconditionally report
+    ``UNDECIDED``, exercising the branch of ``Param.validate_value`` that
+    distinguishes an indeterminate check from a definite violation without
+    relying on a genuinely dependent (multi-variable) constraint, which
+    ``Param`` no longer accepts.
     """
     x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    undecided_constraint = EquationConstraint(x, IdentifierExpression(y))
+    undecided_constraint = EquationConstraint(x, IdentifierExpression(x) >= 0)
     param = create_integer_param(name=x, constraints=[undecided_constraint])
+    monkeypatch.setattr(
+        EquationConstraint,
+        "evaluate",
+        lambda self, value: ConstraintOutcome.UNDECIDED,
+    )
 
     with pytest.raises(ParamError, match="could not be verified against constraint"):
         param.assign(3)
 
 
-def test_assignment_undecided_message_is_distinct_from_violation_message() -> None:
+def test_assignment_undecided_message_is_distinct_from_violation_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Test the undecided error does not use the ``violates`` wording."""
     x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    undecided_constraint = EquationConstraint(x, IdentifierExpression(y))
+    undecided_constraint = EquationConstraint(x, IdentifierExpression(x) >= 0)
     param = create_integer_param(name=x, constraints=[undecided_constraint])
+    monkeypatch.setattr(
+        EquationConstraint,
+        "evaluate",
+        lambda self, value: ConstraintOutcome.UNDECIDED,
+    )
 
     with pytest.raises(ParamError) as exc_info:
         param.assign(3)

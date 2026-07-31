@@ -1,7 +1,11 @@
 """Tests for `Param.is_subset` and `Param.is_value_set_subset` across param kinds."""
 
+import pytest
+
 from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
+from fhy_core.symbolic.expression import IdentifierExpression
 from fhy_core.symbolic.param import (
+    ParamError,
     create_categorical_param,
     create_integer_param,
     create_integer_param_with_lower_bound,
@@ -12,6 +16,8 @@ from fhy_core.symbolic.param import (
     create_real_param_with_lower_bound,
     create_real_param_with_upper_bound,
 )
+
+from .conftest import mock_identifier
 
 # =============================================================================
 # Same-kind subset relations - real / integer params
@@ -39,6 +45,7 @@ def test_constrained_real_param_is_subset_of_unconstrained_real_param() -> None:
     assert not unconstrained.is_subset(constrained)
 
 
+@pytest.mark.z3
 def test_narrower_interval_real_param_is_subset_of_wider_interval_real_param() -> None:
     """Test a narrower-interval real param is a subset of a wider-interval one."""
     wider = create_real_param()
@@ -515,3 +522,27 @@ def test_discrete_params_reject_cross_family_subset_check() -> None:
     assert not ordinal.is_subset(perm)  # type: ignore[arg-type]  # test: cross-family comparison
     assert not perm.is_subset(cat)  # type: ignore[arg-type]  # test: cross-family comparison
     assert not perm.is_subset(ordinal)  # type: ignore[arg-type]  # test: cross-family comparison
+
+
+# =============================================================================
+# Dependent (multi-variable) constraints are rejected at construction
+# =============================================================================
+
+
+def test_dependent_constraint_is_rejected_at_construction_not_is_subset() -> None:
+    """Test a multi-variable constraint is rejected at construction, not query time.
+
+    A constraint referencing a second free identifier used to slip past
+    `Param.validate_constraint` and only blow up later, with a raw
+    `KeyError` from the Z3 bridge, once `is_subset` tried to reason about
+    the dependent identifier. `validate_constraint` must reject it up
+    front with a typed `ParamError` instead.
+    """
+    x = mock_identifier("x", 100)
+    y = mock_identifier("y", 101)
+    dependent_constraint = EquationConstraint(
+        x, IdentifierExpression(x) < IdentifierExpression(y)
+    )
+
+    with pytest.raises(ParamError, match="ConstraintSystem"):
+        create_integer_param(name=x, constraints=[dependent_constraint])

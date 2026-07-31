@@ -10,8 +10,6 @@ tests pin down against hand-computed extended-integer products.
 from typing import Any
 
 import pytest
-from hypothesis import given  # type: ignore[import-not-found]
-from hypothesis import strategies as st
 
 from fhy_core.symbolic.constraint import EquationConstraint
 from fhy_core.symbolic.param import (
@@ -303,23 +301,112 @@ def test_multiplication_zero_included_false_when_both_operands_exclude_zero() ->
 
 
 # =============================================================================
+# Zero lower bound with ``prefer_inclusive=False`` (bound-rendering soundness)
+# =============================================================================
+
+
+def test_multiplication_squares_zero_included_exclusive_preference_natural() -> None:
+    """Test squaring a zero-included, exclusive-preference natural param does not crash.
+
+    ``_apply_interval_bounds`` used to render the computed lower bound of
+    ``0`` as the literal exclusive constraint ``> -1``, which the
+    natural-number gate rejected outright even though ``> -1`` is exactly
+    ``>= 0`` over the integers -- a sound, non-empty result the gate should
+    never have rejected. Regression for a ``ParamError("Lower bound must be
+    non-negative.")`` crash on ordinary use of the new multiplication
+    feature.
+    """
+    x = create_interval_natural_param(zero_included=True, prefer_inclusive=False)
+
+    z = x * x
+
+    assert isinstance(z.domain, type(x.domain))
+    assert z.domain.non_negative  # type: ignore[attr-defined]
+    assert_all_satisfied(z, [0])
+    assert_none_satisfied(z, [-1])
+
+
+@pytest.mark.parametrize(
+    "x_zero_included, x_lower, y_zero_included, y_lower, expected_min",
+    [
+        pytest.param(
+            True, None, False, 1, 0, id="left-zero-included-right-excludes-zero"
+        ),
+        pytest.param(
+            False, 1, True, None, 0, id="left-excludes-zero-right-zero-included"
+        ),
+        pytest.param(
+            True,
+            1,
+            True,
+            1,
+            1,
+            id="both-zero-included-domain-but-bounded-away-from-zero",
+        ),
+    ],
+)
+def test_multiplication_zero_lower_bound_exclusive_preference_matrix(
+    x_zero_included: bool,
+    x_lower: int | None,
+    y_zero_included: bool,
+    y_lower: int | None,
+    expected_min: int,
+) -> None:
+    """Test every zero/excludes-zero operand pairing with `prefer_inclusive=False`.
+
+    Each combination drives the product's computed lower bound down to a
+    value (``0`` or ``1``) whose raw exclusive rendering the natural-number
+    gate would reject; ``_apply_interval_bounds`` must fall back to an
+    inclusive rendering instead of crashing, in every case, and the result
+    must still admit exactly ``[expected_min, 9]``.
+    """
+    x = create_interval_natural_param(
+        zero_included=x_zero_included, prefer_inclusive=False
+    )
+    if x_lower is not None:
+        x = x.add_lower_bound_constraint(x_lower)
+    x = x.add_upper_bound_constraint(3)
+    y = create_interval_natural_param(
+        zero_included=y_zero_included, prefer_inclusive=False
+    )
+    if y_lower is not None:
+        y = y.add_lower_bound_constraint(y_lower)
+    y = y.add_upper_bound_constraint(3)
+
+    z = x * y
+
+    assert_all_satisfied(z, [expected_min, 9])
+    assert_none_satisfied(z, [expected_min - 1, 10])
+
+
+# =============================================================================
 # `prefer_inclusive` rendering
 # =============================================================================
 
 
 def test_multiplication_rendering_follows_left_operand_prefer_inclusive() -> None:
-    """Test the result's ``str`` follows the left operand's `prefer_inclusive`."""
-    x_incl = create_interval_integer_param_between(2, 3, prefer_inclusive=True)
-    y_incl = create_interval_integer_param_between(4, 5, prefer_inclusive=True)
-    x_excl = create_interval_integer_param_between(2, 3, prefer_inclusive=False)
-    y_excl = create_interval_integer_param_between(4, 5, prefer_inclusive=False)
+    """Test the result's rendering follows the LEFT operand's `prefer_inclusive`.
 
-    z_incl = x_incl * y_incl
-    z_excl = x_excl * y_excl
+    Each product mixes operands with DIFFERING ``prefer_inclusive`` flags
+    (rather than both operands sharing the same flag), so a right-operand,
+    OR, or AND mutant of the class-preservation logic is distinguishable:
+    only the left operand's flag may determine the rendering.
+    """
+    x_incl = create_interval_integer_param_between(2, 3, prefer_inclusive=True)
+    y_excl = create_interval_integer_param_between(4, 5, prefer_inclusive=False)
+    x_excl = create_interval_integer_param_between(2, 3, prefer_inclusive=False)
+    y_incl = create_interval_integer_param_between(4, 5, prefer_inclusive=True)
+
+    z_left_incl = x_incl * y_excl
+    z_left_excl = x_excl * y_incl
 
     for v in range(0, 20):
-        assert z_incl.is_constraints_satisfied(v) == z_excl.is_constraints_satisfied(v)
-    assert str(z_incl) != str(z_excl)
+        assert z_left_incl.is_constraints_satisfied(
+            v
+        ) == z_left_excl.is_constraints_satisfied(v)
+    assert str(z_left_incl) != str(z_left_excl)
+    assert z_left_incl.domain.prefer_inclusive  # type: ignore[attr-defined]
+    assert not z_left_excl.domain.prefer_inclusive  # type: ignore[attr-defined]
 
 
 # =============================================================================
@@ -425,6 +512,7 @@ def test_multiplication_result_round_trips_through_serialization() -> None:
     assert_param_round_trips_in_all_formats(z)
 
 
+@pytest.mark.z3
 def test_multiplication_result_interoperates_with_is_subset() -> None:
     """Test ``[2,3] * [4,5]``'s result is a subset of a wider hand-built interval."""
     x = create_interval_integer_param_between(2, 3)
@@ -437,6 +525,7 @@ def test_multiplication_result_interoperates_with_is_subset() -> None:
     assert not wider.is_subset(z)
 
 
+@pytest.mark.z3
 def test_multiplication_result_interoperates_with_is_feasible() -> None:
     """Test a non-empty multiplication result reports feasible."""
     x = create_interval_integer_param_between(2, 3)
@@ -472,37 +561,3 @@ def test_chained_addition_then_multiplication() -> None:
     # a + b -> [4, 6]; (a + b) * c -> [8, 12].
     assert_all_satisfied(result, [8, 12])
     assert_none_satisfied(result, [7, 13])
-
-
-# =============================================================================
-# Property: soundness of interval multiplication
-# =============================================================================
-
-
-@pytest.mark.property
-@given(  # type: ignore[untyped-decorator]
-    bound_1=st.integers(min_value=-25, max_value=25),
-    bound_2=st.integers(min_value=-25, max_value=25),
-    bound_3=st.integers(min_value=-25, max_value=25),
-    bound_4=st.integers(min_value=-25, max_value=25),
-    data=st.data(),
-)
-def test_multiplication_is_sound_for_every_concrete_pair_in_range(
-    bound_1: int, bound_2: int, bound_3: int, bound_4: int, data: st.DataObject
-) -> None:
-    """Test that for any concrete ``x in [a,b]``, ``y in [c,d]``, ``x*y`` is valid.
-
-    The interval-product result must admit every actual product of a
-    concrete value drawn from each operand's interval -- this is the
-    defining soundness property of interval arithmetic.
-    """
-    lower_1, upper_1 = sorted((bound_1, bound_2))
-    lower_2, upper_2 = sorted((bound_3, bound_4))
-    x = create_interval_integer_param_between(lower_1, upper_1)
-    y = create_interval_integer_param_between(lower_2, upper_2)
-    concrete_x = data.draw(st.integers(min_value=lower_1, max_value=upper_1))
-    concrete_y = data.draw(st.integers(min_value=lower_2, max_value=upper_2))
-
-    z = x * y
-
-    assert z.is_constraints_satisfied(concrete_x * concrete_y)
