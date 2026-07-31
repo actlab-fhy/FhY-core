@@ -9,6 +9,12 @@ and the SymPy lowering/lifting round trip preserves case count.
 from collections.abc import Sequence
 
 import pytest
+
+# Hypothesis is only in the `property` dependency group, not `test`; the
+# `tests` lane (CI's `tests` job, `nox -s tests`) syncs only `test`, so this
+# module must be import-skippable there instead of failing collection.
+pytest.importorskip("hypothesis")
+
 from hypothesis import given, settings  # type: ignore[import-not-found]
 from hypothesis import strategies as st
 

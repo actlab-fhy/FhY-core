@@ -260,14 +260,30 @@ def test_piecewise_helper_coerces_identifier_operand_in_otherwise() -> None:
 
 def test_piecewise_helper_coerces_python_literal_operands() -> None:
     """Test ``piecewise(...)`` wraps Python literal operands in an expression."""
-    expression = piecewise((True, 5), otherwise=10)
+    expression = piecewise((1, 5), otherwise=10)
 
     assert isinstance(expression.conditions[0], LiteralExpression)
-    assert expression.conditions[0].value is True
+    assert expression.conditions[0].value == 1
     assert isinstance(expression.values[0], LiteralExpression)
     assert expression.values[0].value == 5
     assert isinstance(expression.otherwise, LiteralExpression)
     assert expression.otherwise.value == 10
+
+
+def test_piecewise_helper_coerces_bool_case_value() -> None:
+    """Test ``piecewise(...)`` still coerces a bare Python bool case value."""
+    expression = piecewise((LiteralExpression(True), True), otherwise=0)
+
+    assert isinstance(expression.values[0], LiteralExpression)
+    assert expression.values[0].value is True
+
+
+def test_piecewise_helper_coerces_bool_otherwise() -> None:
+    """Test ``piecewise(...)`` still coerces a bare Python bool ``otherwise``."""
+    expression = piecewise((LiteralExpression(True), 1), otherwise=False)
+
+    assert isinstance(expression.otherwise, LiteralExpression)
+    assert expression.otherwise.value is False
 
 
 def test_piecewise_helper_rejects_zero_cases() -> None:
@@ -290,6 +306,79 @@ def test_piecewise_helper_rejects_unsupported_operand_type() -> None:
     """Test ``piecewise(...)`` raises ``ValueError`` for an unsupported operand type."""
     with pytest.raises(ValueError):
         piecewise((LiteralExpression(True), object()), otherwise=0)  # type: ignore[arg-type]
+
+
+def test_piecewise_helper_rejects_bare_bool_true_condition() -> None:
+    """Test ``piecewise(...)`` rejects a bare Python ``True`` condition.
+
+    A literal ``bool`` condition is (almost) always the accidental result
+    of ``expr == k``, which is ``Expression`` identity comparison rather
+    than IR equality (``Expression.__eq__`` is not overridden, so it falls
+    back to object identity, per the class docstring). Before this guard,
+    ``piecewise`` silently coerced the bool into a constant condition,
+    making the intended case unreachable with no diagnostic.
+    """
+    with pytest.raises(ValueError, match=r"(?i)equals"):
+        piecewise((True, 1), otherwise=0)
+
+
+def test_piecewise_helper_rejects_bare_bool_false_condition() -> None:
+    """Test ``piecewise(...)`` rejects a bare Python ``False`` condition."""
+    with pytest.raises(ValueError, match=r"(?i)equals"):
+        piecewise((LiteralExpression(True), 1), (False, 2), otherwise=0)
+
+
+def test_piecewise_helper_rejects_accidental_expression_equality_condition() -> None:
+    """Test the ``expr == k`` footgun is rejected instead of silently miscompiled.
+
+    ``xe == 0`` does not build an IR equality node; it evaluates to a
+    plain Python ``bool`` via object-identity fallback. Before this
+    guard, that ``bool`` was silently baked into a constant condition,
+    making the first case permanently unreachable (or permanently
+    selected) with no error, warning, or type-checker diagnostic --
+    reproduced against the pre-fix code as
+    ``piecewise((xe == 0, 7), (xe <= 0, 8), otherwise=9)`` evaluating to
+    8 at ``x = 0`` on every backend instead of the intended 7.
+    """
+    identifier = mock_identifier("x", 0)
+    xe = IdentifierExpression(identifier)
+
+    with pytest.raises(ValueError, match=r"(?i)equals"):
+        piecewise((xe == 0, 7), (xe <= 0, 8), otherwise=9)  # type: ignore[comparison-overlap]
+
+
+def test_piecewise_helper_accepts_explicit_equals_condition() -> None:
+    """Test the still-legal spelling ``xe.equals(0)`` builds a real IR condition."""
+    identifier = mock_identifier("x", 0)
+    xe = IdentifierExpression(identifier)
+
+    expression = piecewise((xe.equals(0), 7), (xe <= 0, 8), otherwise=9)
+
+    assert expression.conditions[0].is_structurally_equivalent(xe.equals(0))
+
+
+def test_expression_piecewise_rejects_bare_bool_condition() -> None:
+    """Test ``Expression.piecewise`` rejects a bare Python bool condition too."""
+    with pytest.raises(ValueError, match=r"(?i)equals"):
+        Expression.piecewise((True, 1), otherwise=0)
+
+
+def test_piecewise_expression_direct_construction_with_literal_condition_is_legal() -> (
+    None
+):
+    """Test constructing the node directly with a ``LiteralExpression`` condition.
+
+    The builder guard only applies to the ``piecewise()``/
+    ``Expression.piecewise`` coercion path; constructing
+    ``PiecewiseExpression`` directly with an explicit boolean-literal
+    condition remains legal.
+    """
+    condition = LiteralExpression(True)
+    expression = PiecewiseExpression(
+        (condition,), (LiteralExpression(1),), LiteralExpression(0)
+    )
+
+    assert expression.conditions == (condition,)
 
 
 def test_piecewise_helper_requires_otherwise_as_keyword() -> None:

@@ -28,8 +28,32 @@ def test_fhy_core_top_level_gains_symbolic() -> None:
 
 
 def test_fhy_core_top_level_still_has_only_identifier_as_a_re_exported_symbol() -> None:
-    """Test `Identifier` remains the only concrete re-exported symbol."""
-    assert "Identifier" in fhy_core.__all__
+    """Test `Identifier` remains the only concrete re-exported symbol.
+
+    Asserts exact set equality against the curated top-level export list,
+    not mere membership: a regression that re-adds a family symbol (e.g.
+    `LiteralExpression` or `Param`) to `fhy_core.__all__` alongside
+    `Identifier` must fail here.
+    """
+    assert set(fhy_core.__all__) == {
+        "Identifier",
+        "diagnostic",
+        "error",
+        "identifier",
+        "lattice",
+        "logger",
+        "op_attribute",
+        "pass_infrastructure",
+        "provenance",
+        "serialization",
+        "symbol_table",
+        "symbolic",
+        "testing_patches",
+        "traits",
+        "types",
+        "utils",
+        "value_domain",
+    }
 
 
 def test_symbolic_namespace_exposes_its_five_submodules() -> None:

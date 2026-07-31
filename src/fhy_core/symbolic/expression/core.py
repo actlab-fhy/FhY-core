@@ -233,7 +233,8 @@ def piecewise(
 
     Raises:
         ValueError: If no case is supplied, if a case is not a 2-tuple,
-            or if an operand has an unsupported type.
+            if a condition is a bare Python ``bool``, or if an operand
+            has an unsupported type.
 
     """
     if not cases:
@@ -247,6 +248,14 @@ def piecewise(
                 f"got {case!r}."
             )
         condition, value = case
+        if type(condition) is bool:
+            raise ValueError(
+                f"piecewise case {index} condition is a bare Python bool "
+                f"({condition!r}), not an expression. This is almost always "
+                "the accidental result of `expr == k`, which is Expression "
+                "identity comparison, not IR equality; use `.equals()` or "
+                "`.not_equals()` to build an equality condition."
+            )
         conditions.append(Expression._get_expression_from_other(condition))
         values.append(Expression._get_expression_from_other(value))
     return PiecewiseExpression(
@@ -513,7 +522,8 @@ class Expression(
 
         Raises:
             ValueError: If no case is supplied, if a case is not a
-                2-tuple, or if an operand has an unsupported type.
+                2-tuple, if a condition is a bare Python ``bool``, or if
+                an operand has an unsupported type.
 
         """
         return piecewise(*cases, otherwise=otherwise)
