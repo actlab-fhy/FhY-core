@@ -232,6 +232,28 @@ def test_substitute_sympy_variables_on_raw_bool_is_identity(value: bool) -> None
     assert substitute_sympy_expression_variables(value, {}) is value
 
 
+def test_substitute_sympy_expression_variables_is_simultaneous_not_chained() -> None:
+    """Test chained bindings substitute simultaneously rather than sequentially.
+
+    A sequential ``dict``-based ``.subs`` would chain ``x_0 -> y_1 -> 5``,
+    collapsing ``x_0 < 5`` to the literal ``False`` (``5 < 5``).
+    Simultaneous substitution must instead leave the residual ``y_1 < 5``,
+    since ``y_1``'s replacement value is never itself re-substituted by
+    the ``y_1: 5`` binding.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    sympy_expression = sympy.Symbol("x_0") < 5
+    substitutions: dict[Identifier, Expression] = {
+        x: IdentifierExpression(y),
+        y: LiteralExpression(5),
+    }
+
+    result = substitute_sympy_expression_variables(sympy_expression, substitutions)
+
+    assert result == (sympy.Symbol("y_1") < 5)
+
+
 # =============================================================================
 # SymPy -> Expression
 # =============================================================================
@@ -610,6 +632,110 @@ def test_simplify_variable_expression_with_environment_folds_to_scalar() -> None
 
     assert isinstance(result, LiteralExpression)
     assert result.value == 35
+
+
+def test_simplify_expression_chained_bindings_leave_a_residual_not_a_literal() -> None:
+    """Test chained bindings `{x: y, y: 3}` on `x + y` yield the residual `y + 3`.
+
+    Sequential substitution would chain ``x -> y -> 3``, folding the sum to
+    the literal ``6``. Simultaneous substitution must instead leave ``y``
+    unresolved past its own binding, yielding the residual ``y + 3``.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.ADD,
+        IdentifierExpression(x),
+        IdentifierExpression(y),
+    )
+
+    result = simplify_expression(
+        expression, {x: IdentifierExpression(y), y: LiteralExpression(3)}
+    )
+
+    expected = BinaryExpression(
+        BinaryOperation.ADD,
+        LiteralExpression(3),
+        IdentifierExpression(y),
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_simplify_expression_chained_bindings_on_inequality_leave_a_residual() -> None:
+    """Test chained bindings `{x: y, y: 5}` on `x < 5` leave the residual `y < 5`.
+
+    Sequential substitution would chain ``x -> y -> 5``, folding the
+    comparison to the literal ``False`` (``5 < 5``). Simultaneous
+    substitution must instead leave the residual ``y < 5``.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.LESS,
+        IdentifierExpression(x),
+        LiteralExpression(5),
+    )
+
+    result = simplify_expression(
+        expression, {x: IdentifierExpression(y), y: LiteralExpression(5)}
+    )
+
+    expected = BinaryExpression(
+        BinaryOperation.LESS,
+        IdentifierExpression(y),
+        LiteralExpression(5),
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_simplify_expression_swap_bindings_on_equality_stays_undecided() -> None:
+    """Test swap bindings `{x: y, y: x}` on `x - y == 0` do not fold to a literal.
+
+    Sequential substitution would chain the first binding's replacement
+    through the second, resolving `x - y == 0` to `y - y == 0` and folding
+    it to the literal `True`. Simultaneous substitution instead swaps the
+    identifiers, leaving an undecided residual comparing two distinct
+    identifiers.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        BinaryExpression(
+            BinaryOperation.SUBTRACT, IdentifierExpression(x), IdentifierExpression(y)
+        ),
+        LiteralExpression(0),
+    )
+
+    result = simplify_expression(
+        expression, {x: IdentifierExpression(y), y: IdentifierExpression(x)}
+    )
+
+    assert not isinstance(result, LiteralExpression)
+
+
+def test_simplify_expression_swap_bindings_on_inequality_stays_undecided() -> None:
+    """Test swap bindings `{x: y, y: x}` on `x < y` do not fold to a literal.
+
+    Sequential substitution would chain the first binding's replacement
+    through the second, resolving `x < y` to `y < y` and folding it to the
+    literal `False`. Simultaneous substitution instead swaps the
+    identifiers, leaving an undecided residual comparing two distinct
+    identifiers.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.LESS,
+        IdentifierExpression(x),
+        IdentifierExpression(y),
+    )
+
+    result = simplify_expression(
+        expression, {x: IdentifierExpression(y), y: IdentifierExpression(x)}
+    )
+
+    assert not isinstance(result, LiteralExpression)
 
 
 # =============================================================================

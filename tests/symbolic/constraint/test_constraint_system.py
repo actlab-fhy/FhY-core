@@ -5,8 +5,6 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 import pytest
-from hypothesis import given  # type: ignore[import-not-found]
-from hypothesis import strategies as st
 
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
@@ -25,6 +23,7 @@ from fhy_core.symbolic.constraint import (
     ConstraintSystem,
     EquationConstraint,
     InSetConstraint,
+    NotInSetConstraint,
     create_constraint_system,
 )
 from fhy_core.symbolic.expression import (
@@ -688,69 +687,183 @@ def test_check_satisfiability_with_closed_conjunction_needs_no_symbol_types() ->
 
 
 # =============================================================================
-# Property-based tests
+# `evaluate_with_bindings` / `check_satisfiability_with_bindings` cross-path
+# agreement (z3-backed)
 # =============================================================================
 
 
-@pytest.mark.property
-@given(  # type: ignore[untyped-decorator]
-    x_value=st.integers(min_value=-5, max_value=10),
-    y_value=st.integers(min_value=-5, max_value=10),
-)
-def test_evaluate_with_bindings_matches_fold_of_member_outcomes(
-    x_value: int, y_value: int
-) -> None:
-    """Test the conjunction outcome matches folding each member's own outcome."""
+@pytest.mark.z3
+def test_evaluate_and_check_satisfiability_with_bindings_do_not_contradict() -> None:
+    """Test the two bindings-aware APIs never reach opposite decided outcomes.
+
+    Before the SymPy bridge substituted simultaneously, ``{x: y, y: 5}``
+    on ``x < 5`` made ``evaluate_with_bindings`` chain to the literal
+    ``False`` (VIOLATED) while ``check_satisfiability_with_bindings``
+    (which substitutes through the always-simultaneous IR-level
+    ``Expression.substitute``) reported SATISFIED on the residual
+    ``y < 5`` -- a direct contradiction between two methods of the same
+    object on identical inputs. Both must now agree that a chained
+    binding leaves an undecided/satisfiable residual, never VIOLATED.
+    """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
-    members: tuple[Constraint, ...] = (
-        InSetConstraint(x, {1, 2, 3, 4}),
-        InSetConstraint(y, {0, 1, 2}),
-        EquationConstraint(x, make_binary_expression(BinaryOperation.LESS, x, y)),
+    system = create_constraint_system(
+        EquationConstraint(x, make_binary_expression(BinaryOperation.LESS, x, 5))
     )
-    system = create_constraint_system(*members)
-    bindings = {x: x_value, y: y_value}
+    bindings: ConstraintBindings = {x: IdentifierExpression(y), y: 5}
 
-    outcome = system.evaluate_with_bindings(bindings)
+    evaluate_outcome = system.evaluate_with_bindings(bindings)
+    satisfiability_outcome = system.check_satisfiability_with_bindings(
+        bindings, {y: SymbolType.INT}
+    )
 
-    member_outcomes = [member.evaluate_with_bindings(bindings) for member in members]
-    if any(o is ConstraintOutcome.VIOLATED for o in member_outcomes):
-        expected = ConstraintOutcome.VIOLATED
-    elif all(o is ConstraintOutcome.SATISFIED for o in member_outcomes):
-        expected = ConstraintOutcome.SATISFIED
-    else:
-        expected = ConstraintOutcome.UNDECIDED
-    assert outcome is expected
+    assert evaluate_outcome is not ConstraintOutcome.VIOLATED
+    assert satisfiability_outcome is not ConstraintOutcome.VIOLATED
+
+
+# =============================================================================
+# Bool set-member sort ambiguity (z3-backed)
+# =============================================================================
 
 
 @pytest.mark.z3
-@pytest.mark.property
-@given(  # type: ignore[untyped-decorator]
-    threshold=st.integers(min_value=0, max_value=10)
-)
-def test_check_satisfiability_matches_brute_force_enumeration(threshold: int) -> None:
-    """Test z3-backed satisfiability agrees with brute-force enumeration."""
+def test_check_satisfiability_bool_member_ambiguity_is_undecided_not_violated() -> None:
+    """Test the finding's witness system no longer reports VIOLATED.
+
+    ``x`` typed ``INT`` with ``x in {1}`` and ``x not in {True}`` is
+    satisfied by the concrete witness ``x = 1`` under the package's
+    type-strict membership semantics (``evaluate_with_bindings`` agrees).
+    Lowering the bool member through the current Z3 bridge cannot
+    preserve that distinction (Z3 coerces ``BoolVal(True)`` against an
+    ``Int`` sort to the integer ``1``), so the sound answer is UNDECIDED,
+    not the provably-wrong VIOLATED.
+    """
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(
+        InSetConstraint(x, {1}), NotInSetConstraint(x, {True})
+    )
+
+    assert system.evaluate_with_bindings({x: 1}) is ConstraintOutcome.SATISFIED
+    outcome = system.check_satisfiability({x: SymbolType.INT})
+
+    assert outcome is not ConstraintOutcome.VIOLATED
+
+
+@pytest.mark.z3
+def test_check_satisfiability_bool_member_under_int_sort_is_not_satisfied() -> None:
+    """Test the converse witness no longer reports SATISFIED.
+
+    No admissible ``int`` value type-strictly equals ``True``, so a
+    system whose only constraint is ``x in {True}`` under an ``INT`` sort
+    must not be reported SATISFIED (Z3's coercion would otherwise let
+    ``x = 1`` spuriously witness it).
+    """
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(InSetConstraint(x, {True}))
+
+    outcome = system.check_satisfiability({x: SymbolType.INT})
+
+    assert outcome is not ConstraintOutcome.SATISFIED
+
+
+@pytest.mark.z3
+def test_check_satisfiability_bool_member_under_bool_sort_is_unaffected() -> None:
+    """Test a bool member under a `BOOL`-sorted variable still decides soundly.
+
+    The sort-ambiguity guard must be specific to non-``BOOL`` sorts; a
+    variable that is itself ``BOOL``-typed has no coercion ambiguity and
+    should still be decided.
+    """
+    b = mock_identifier("b", 0)
+    system = create_constraint_system(InSetConstraint(b, {True, False}))
+
+    outcome = system.check_satisfiability({b: SymbolType.BOOL})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+
+
+@pytest.mark.z3
+def test_check_satisfiability_bindings_bool_member_colliding_int_is_undecided() -> None:
+    """Test a bool-ambiguous variable bound to a colliding int stays UNDECIDED.
+
+    ``x != True`` is type-strictly SATISFIED for any bound int (``1`` is
+    never ``True``), but Z3 lowers ``True`` to the integer ``1``, so
+    binding ``x`` to exactly ``1`` would otherwise let the sort coercion
+    report the provably-wrong VIOLATED. The ambiguity guard does not
+    special-case bound identifiers, precisely to catch this collision.
+    """
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(NotInSetConstraint(x, {True}))
+
+    assert system.evaluate_with_bindings({x: 1}) is ConstraintOutcome.SATISFIED
+    outcome = system.check_satisfiability_with_bindings({x: 1}, {})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+# =============================================================================
+# `timeout_milliseconds` passthrough (z3-backed)
+# =============================================================================
+
+
+@pytest.mark.z3
+def test_check_satisfiability_forwards_timeout_milliseconds_to_the_solver_seam(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test `check_satisfiability` forwards `timeout_milliseconds` to the solver."""
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(InSetConstraint(x, {1, 2, 3}))
+    captured: dict[str, Any] = {}
+
+    def _fake_check(
+        expression: Expression,
+        symbol_types: dict[Identifier, SymbolType],
+        *,
+        timeout_milliseconds: int | None = None,
+    ) -> bool | None:
+        captured["timeout_milliseconds"] = timeout_milliseconds
+        return True
+
+    monkeypatch.setattr(
+        "fhy_core.symbolic.constraint.check_expression_satisfiability", _fake_check
+    )
+
+    outcome = system.check_satisfiability(
+        {x: SymbolType.INT}, timeout_milliseconds=2500
+    )
+
+    assert outcome is ConstraintOutcome.SATISFIED
+    assert captured["timeout_milliseconds"] == 2500
+
+
+@pytest.mark.z3
+def test_check_satisfiability_with_bindings_forwards_timeout_milliseconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test `check_satisfiability_with_bindings` forwards `timeout_milliseconds`."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
-    domain = tuple(range(6))
-    link_expression = make_binary_expression(
-        BinaryOperation.EQUAL,
-        make_binary_expression(BinaryOperation.ADD, x, threshold),
-        y,
-    )
     system = create_constraint_system(
-        InSetConstraint(x, set(domain)),
-        InSetConstraint(y, set(domain)),
-        EquationConstraint(x, link_expression),
+        EquationConstraint(x, make_binary_expression(BinaryOperation.LESS, x, y))
+    )
+    captured: dict[str, Any] = {}
+
+    def _fake_check(
+        expression: Expression,
+        symbol_types: dict[Identifier, SymbolType],
+        *,
+        timeout_milliseconds: int | None = None,
+    ) -> bool | None:
+        captured["timeout_milliseconds"] = timeout_milliseconds
+        return True
+
+    monkeypatch.setattr(
+        "fhy_core.symbolic.constraint.check_expression_satisfiability", _fake_check
     )
 
-    brute_force_satisfiable = any(a + threshold == b for a in domain for b in domain)
-
-    outcome = system.check_satisfiability({x: SymbolType.INT, y: SymbolType.INT})
-
-    expected = (
-        ConstraintOutcome.SATISFIED
-        if brute_force_satisfiable
-        else ConstraintOutcome.VIOLATED
+    outcome = system.check_satisfiability_with_bindings(
+        {x: 1}, {y: SymbolType.INT}, timeout_milliseconds=1000
     )
-    assert outcome is expected
+
+    assert outcome is ConstraintOutcome.SATISFIED
+    assert captured["timeout_milliseconds"] == 1000

@@ -168,11 +168,13 @@ def test_check_expression_satisfiability_false_for_unsatisfiable_expression() ->
     assert check_expression_satisfiability(expression, {x: SymbolType.INT}) is False
 
 
+@pytest.mark.z3
 def test_check_expression_satisfiability_true_for_closed_true_expression() -> None:
     """Test a closed (no free identifiers) `True` expression needs no symbol types."""
     assert check_expression_satisfiability(LiteralExpression(True), {}) is True
 
 
+@pytest.mark.z3
 def test_check_expression_satisfiability_false_for_closed_false_expression() -> None:
     """Test a closed (no free identifiers) `False` expression needs no symbol types."""
     assert check_expression_satisfiability(LiteralExpression(False), {}) is False
@@ -192,6 +194,7 @@ def test_check_expression_satisfiability_returns_none_on_unknown(
     assert check_expression_satisfiability(expression, {x: SymbolType.INT}) is None
 
 
+@pytest.mark.z3
 def test_check_expression_satisfiability_raises_key_error_for_missing_symbol_type() -> (
     None
 ):
