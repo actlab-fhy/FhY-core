@@ -12,13 +12,12 @@ shared by its callers, and a documented place where future capabilities
 is aspiration encoded as an extension point, not a claim about current
 behavior.
 
-Known divergences (restructured here, not fixed; see the package audit
-for full detail): the Z3 and SymPy bridges disagree with each other and
+Known divergences: the Z3 and SymPy bridges disagree with each other and
 with the type checker on logical-not, ``Rational`` lifting, integer
 division, floor-division/modulo Euclidean semantics, and inf/nan
-lifting (audit findings F-001, F-002, F-003, F-008, F-009, F-013,
-F-014). This module does not change that math; it gives it one
-documented home so future fixes land at a single choke point.
+lifting (findings F-001, F-002, F-003, F-008, F-009, F-013, F-014).
+This module does not change that math; it gives it one documented home
+so future fixes land at a single choke point.
 """
 
 __all__ = [

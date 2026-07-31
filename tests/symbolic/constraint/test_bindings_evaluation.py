@@ -255,6 +255,72 @@ def test_equation_constraint_bindings_symbolic_binding_can_decide() -> None:
     assert outcome is ConstraintOutcome.SATISFIED
 
 
+def test_equation_constraint_bindings_chained_assignment_is_undecided() -> None:
+    """Test a chained binding leaves a residual instead of folding through it.
+
+    ``{x: y, y: 5}`` must not be applied sequentially (``x -> y -> 5``,
+    folding ``x < 5`` to the literal ``False``/VIOLATED); simultaneous
+    substitution leaves the residual ``y < 5``, which is UNDECIDED because
+    ``y`` remains free.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    constraint = EquationConstraint(
+        x, make_binary_expression(BinaryOperation.LESS, x, 5)
+    )
+
+    outcome = constraint.evaluate_with_bindings({x: IdentifierExpression(y), y: 5})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+def test_equation_constraint_bindings_swap_assignment_on_equality_is_undecided() -> (
+    None
+):
+    """Test a swap binding on `x - y == 0` is UNDECIDED, not SATISFIED.
+
+    Sequential substitution would resolve `x - y == 0` to `y - y == 0`
+    (SATISFIED); simultaneous substitution swaps the identifiers instead,
+    leaving an undecided residual comparing two distinct identifiers.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = make_binary_expression(
+        BinaryOperation.EQUAL,
+        make_binary_expression(BinaryOperation.SUBTRACT, x, y),
+        0,
+    )
+    constraint = EquationConstraint(x, expression)
+
+    outcome = constraint.evaluate_with_bindings(
+        {x: IdentifierExpression(y), y: IdentifierExpression(x)}
+    )
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+def test_equation_constraint_bindings_swap_assignment_on_inequality_is_undecided() -> (
+    None
+):
+    """Test a swap binding on `x < y` is UNDECIDED, not VIOLATED.
+
+    Sequential substitution would resolve `x < y` to `y < y` (VIOLATED);
+    simultaneous substitution swaps the identifiers instead, leaving an
+    undecided residual comparing two distinct identifiers.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    constraint = EquationConstraint(
+        x, make_binary_expression(BinaryOperation.LESS, x, y)
+    )
+
+    outcome = constraint.evaluate_with_bindings(
+        {x: IdentifierExpression(y), y: IdentifierExpression(x)}
+    )
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
 def test_equation_constraint_bindings_ignores_extraneous_keys() -> None:
     """Test bindings for identifiers outside the expression do not affect the result."""
     x = mock_identifier("x", 0)

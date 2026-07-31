@@ -912,15 +912,51 @@ class NotInSetConstraint(Constraint):
 
 
 def _decide_satisfiability(
-    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
+    expression: Expression,
+    symbol_types: Mapping[Identifier, SymbolType],
+    *,
+    timeout_milliseconds: int | None = None,
 ) -> ConstraintOutcome:
     """Classify satisfiability of ``expression`` via the solver seam."""
-    satisfiable = check_expression_satisfiability(expression, dict(symbol_types))
+    satisfiable = check_expression_satisfiability(
+        expression,
+        dict(symbol_types),
+        timeout_milliseconds=timeout_milliseconds,
+    )
     if satisfiable is None:
         return ConstraintOutcome.UNDECIDED
     if satisfiable:
         return ConstraintOutcome.SATISFIED
     return ConstraintOutcome.VIOLATED
+
+
+def _find_bool_member_type_ambiguity(
+    constraints: tuple[Constraint, ...],
+    symbol_types: Mapping[Identifier, SymbolType],
+) -> bool:
+    """Return whether a set constraint's ``bool`` member is sort-ambiguous.
+
+    A ``bool`` member of an ``InSetConstraint``/``NotInSetConstraint``
+    lowers to a Z3 ``BoolVal``. Compared against an ``IntVal``/``RealVal``
+    (whether that literal comes from a free variable or from a bound
+    identifier substituted to a concrete value), the Z3 Python bindings
+    silently coerce the ``BoolVal`` into an integer via an implicit
+    ``If`` (``True`` becomes ``1``, ``False`` becomes ``0``). This
+    collapses the type-strict distinction the constraint's own
+    ``evaluate``/``evaluate_with_bindings`` preserve whenever the bound
+    value happens to be ``0`` or ``1``, so this check does not special-case
+    already-bound identifiers: only a variable whose ``symbol_types``
+    entry is confirmed ``SymbolType.BOOL`` is exempt.
+
+    """
+    for constraint in constraints:
+        if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
+            continue
+        if symbol_types.get(constraint.variable) is SymbolType.BOOL:
+            continue
+        if any(isinstance(member, bool) for member in constraint.members):
+            return True
+    return False
 
 
 def create_constraint_system(*constraints: Constraint) -> "ConstraintSystem":
@@ -1025,7 +1061,10 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
         return Expression.logical_and(*expressions)
 
     def check_satisfiability(
-        self, symbol_types: Mapping[Identifier, SymbolType]
+        self,
+        symbol_types: Mapping[Identifier, SymbolType],
+        *,
+        timeout_milliseconds: int | None = None,
     ) -> ConstraintOutcome:
         """Return whether some joint assignment satisfies every constraint.
 
@@ -1036,8 +1075,20 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
         The empty system returns ``SATISFIED`` without invoking the
         solver.
 
+        Limitation: a ``bool`` member of an ``InSetConstraint`` or
+        ``NotInSetConstraint`` whose variable's sort is not
+        ``SymbolType.BOOL`` cannot be lowered soundly through the current
+        Z3 bridge -- the Z3 Python bindings coerce a ``BoolVal`` compared
+        against a non-bool sort into an integer (``True`` becomes ``1``),
+        collapsing the package's type-strict membership semantics. This
+        method detects that case and returns ``UNDECIDED`` rather than a
+        provably-wrong decided outcome.
+
         Args:
             symbol_types: Z3 sort for each free identifier of the system.
+            timeout_milliseconds: Optional bound, in milliseconds, on the
+                underlying Z3 solver invocation. ``None`` (the default)
+                leaves the solver unbounded.
 
         Raises:
             KeyError: If ``symbol_types`` lacks an entry for a free
@@ -1045,16 +1096,26 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
                 z3 bridge).
             ConstraintError: If a member cannot be converted to an
                 expression.
+            ValueError: If ``timeout_milliseconds`` is not None and not
+                positive.
 
         """
         if not self.constraints:
             return ConstraintOutcome.SATISFIED
-        return _decide_satisfiability(self.convert_to_expression(), symbol_types)
+        if _find_bool_member_type_ambiguity(self.constraints, symbol_types):
+            return ConstraintOutcome.UNDECIDED
+        return _decide_satisfiability(
+            self.convert_to_expression(),
+            symbol_types,
+            timeout_milliseconds=timeout_milliseconds,
+        )
 
     def check_satisfiability_with_bindings(
         self,
         bindings: ConstraintBindings,
         symbol_types: Mapping[Identifier, SymbolType],
+        *,
+        timeout_milliseconds: int | None = None,
     ) -> ConstraintOutcome:
         """Return whether the system is satisfiable given a partial assignment.
 
@@ -1064,12 +1125,36 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
         identifiers left free after substitution. Answers questions of the
         form "given x = 4, can y and z still be chosen?".
 
+        Limitation: the same ``bool`` set-membership sort ambiguity
+        documented on ``check_satisfiability`` applies here; a system with
+        a ``bool`` set member whose variable's ``symbol_types`` entry is
+        not ``SymbolType.BOOL`` returns ``UNDECIDED``, even when
+        ``bindings`` assigns that variable a concrete value (Z3's sort
+        coercion can still misclassify a bound value of ``0`` or ``1``).
+
+        Args:
+            bindings: Partial assignment substituted into the conjunction
+                before the satisfiability check.
+            symbol_types: Z3 sort for each identifier left free after
+                substitution.
+            timeout_milliseconds: Optional bound, in milliseconds, on the
+                underlying Z3 solver invocation. ``None`` (the default)
+                leaves the solver unbounded.
+
+        Raises:
+            ValueError: If ``timeout_milliseconds`` is not None and not
+                positive.
+
         """
         if not self.constraints:
             return ConstraintOutcome.SATISFIED
+        if _find_bool_member_type_ambiguity(self.constraints, symbol_types):
+            return ConstraintOutcome.UNDECIDED
         environment = _coerce_bindings_to_environment(bindings)
         residual = self.convert_to_expression().substitute(environment)
-        return _decide_satisfiability(residual, symbol_types)
+        return _decide_satisfiability(
+            residual, symbol_types, timeout_milliseconds=timeout_milliseconds
+        )
 
     @classmethod
     @override

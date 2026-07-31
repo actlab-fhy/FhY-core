@@ -316,6 +316,13 @@ def substitute_sympy_expression_variables(
 ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
     """Substitute variables in a SymPy expression.
 
+    Every binding in ``environment`` is applied simultaneously: a
+    replacement value is never itself re-substituted by another binding in
+    the same call, matching the IR-level ``Expression.substitute``
+    semantics that this bridge must agree with. For example, substituting
+    ``{x: y, y: 5}`` into ``x < 5`` yields the residual ``y < 5``, not
+    ``5 < 5``.
+
     Args:
         sympy_expression: SymPy expression to substitute variables in.
         environment: Environment to substitute variables from.
@@ -336,7 +343,8 @@ def substitute_sympy_expression_variables(
                 k
             ): convert_expression_to_sympy_expression(v)
             for k, v in environment.items()
-        }
+        },
+        simultaneous=True,
     )
 
 
