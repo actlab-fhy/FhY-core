@@ -336,13 +336,25 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         """Validate whether a constraint can be added to this parameter.
 
         Raises:
-            ParamError: If the constraint variable does not match, or the domain
-                rejects the constraint.
-            TypeError: If the domain forbids the constraint's type.
+            ParamError: If the constraint variable does not match, the
+                constraint references a free identifier other than the
+                parameter's variable, or the domain rejects the constraint.
+            TypeError: If ``constraint`` is not a ``Constraint``, or the
+                domain forbids the constraint's type.
 
         """
+        if not isinstance(constraint, Constraint):
+            raise TypeError(f"Expected a Constraint, got {type(constraint).__name__}.")
         if constraint.variable != self.variable:
             raise ParamError("Constraint variable must match parameter variable.")
+        extra_identifiers = constraint.get_free_identifiers() - {self.variable}
+        if extra_identifiers:
+            sorted_extra = sorted(extra_identifiers, key=lambda i: i.id)
+            raise ParamError(
+                "Param only supports single-variable constraints; constraint "
+                f"references additional free identifiers {sorted_extra!r}. Use "
+                "a ConstraintSystem to represent multi-variable constraints."
+            )
         self.domain.validate_constraint(constraint, self.variable)
 
     def add_lower_bound_constraint(
@@ -543,27 +555,38 @@ def _create_bound_constraint(
     return EquationConstraint(variable, equation)
 
 
+def _is_valid_natural_lower_bound(
+    bound: int, *, zero_included: bool, is_inclusive: bool
+) -> bool:
+    """Return whether ``bound`` is an admissible natural-domain lower-bound literal."""
+    if zero_included:
+        if bound < 0:
+            return False
+        return is_inclusive or bound >= 1
+    if is_inclusive:
+        return bound >= 1
+    return bound >= 0
+
+
 def _validate_natural_lower_bound(
     bound: int, *, zero_included: bool, is_inclusive: bool
 ) -> None:
+    if _is_valid_natural_lower_bound(
+        bound, zero_included=zero_included, is_inclusive=is_inclusive
+    ):
+        return
     if zero_included:
         if bound < 0:
             raise ParamError("Lower bound must be non-negative.")
-        if not is_inclusive and bound < 1:
-            raise ParamError(
-                "Lower bound must be at least 1 if zero is included and "
-                "bound is exclusive."
-            )
-    elif is_inclusive:
-        if bound < 1:
-            raise ParamError(
-                "Lower bound must be at least 1 when zero is not included."
-            )
-    elif bound < 0:
         raise ParamError(
-            "Lower bound must be non-negative when zero is not included "
-            "and bound is exclusive."
+            "Lower bound must be at least 1 if zero is included and bound is exclusive."
         )
+    if is_inclusive:
+        raise ParamError("Lower bound must be at least 1 when zero is not included.")
+    raise ParamError(
+        "Lower bound must be non-negative when zero is not included "
+        "and bound is exclusive."
+    )
 
 
 def _validate_natural_upper_bound(
@@ -778,10 +801,23 @@ def _apply_interval_bounds(
 ) -> "Param[int]":
     domain = cast(IntervalIntegerDomain, param.domain)
     if min_int is not None:
-        if domain.prefer_inclusive:
-            param = param.add_lower_bound_constraint(min_int, is_inclusive=True)
-        else:
+        # An exclusive rendering of ``min_int`` (``> min_int - 1``) is
+        # mathematically identical to the inclusive one, but on a
+        # non-negative domain the natural-number gate can reject the
+        # exclusive literal even though it is a sound rendering of a
+        # perfectly valid bound (e.g. ``> -1`` on a zero-included natural
+        # domain is exactly ``>= 0``). Fall back to inclusive rendering in
+        # that case instead of tripping the gate.
+        prefer_exclusive = not domain.prefer_inclusive and (
+            not domain.non_negative
+            or _is_valid_natural_lower_bound(
+                min_int - 1, zero_included=domain.zero_included, is_inclusive=False
+            )
+        )
+        if prefer_exclusive:
             param = param.add_lower_bound_constraint(min_int - 1, is_inclusive=False)
+        else:
+            param = param.add_lower_bound_constraint(min_int, is_inclusive=True)
     if max_int is not None:
         if domain.prefer_inclusive:
             param = param.add_upper_bound_constraint(max_int, is_inclusive=True)

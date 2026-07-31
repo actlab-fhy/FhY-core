@@ -6,7 +6,12 @@ from typing import Any
 import pytest
 
 from fhy_core.error import _COMPILER_ERRORS
-from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
+from fhy_core.symbolic.constraint import (
+    EquationConstraint,
+    InSetConstraint,
+    create_constraint_system,
+)
+from fhy_core.symbolic.expression import IdentifierExpression
 from fhy_core.symbolic.param import (
     CategoricalDomain,
     IntegerDomain,
@@ -300,6 +305,43 @@ def test_add_constraint_rejects_constraint_with_mismatched_variable() -> None:
         param.add_constraint(EquationConstraint(other, param.variable_expression >= 0))
 
 
+def test_add_constraint_rejects_constraint_referencing_a_second_variable() -> None:
+    """Test `add_constraint` rejects a constraint with an extra free identifier.
+
+    ``Param`` is strictly single-variable: even though the constraint's own
+    ``variable`` matches the parameter's, its expression also references a
+    second identifier, so it must be rejected the same as an outright
+    mismatched-variable constraint, not silently accepted and left to crash
+    later when the numeric feasibility/subset routing cannot supply a sort
+    for the dependent identifier.
+    """
+    param = create_integer_param(name=mock_identifier("x", 1))
+    other = mock_identifier("y", 2)
+    dependent_constraint = EquationConstraint(
+        param.variable, param.variable_expression < IdentifierExpression(other)
+    )
+    with pytest.raises(ParamError, match="ConstraintSystem"):
+        param.add_constraint(dependent_constraint)
+
+
+def test_validate_constraint_rejects_constraint_system_with_type_error() -> None:
+    """Test passing a `ConstraintSystem` where a `Constraint` is expected raises.
+
+    ``ConstraintSystem`` is deliberately not a ``Constraint`` subclass and has
+    no ``variable`` attribute, so before this fix `validate_constraint` read
+    ``constraint.variable`` unguarded and let a bare `AttributeError` escape.
+    A `ConstraintSystem` passed to `add_constraint` (or the constructor's
+    ``constraints`` kwarg) must instead raise a typed `TypeError`.
+    """
+    param = create_integer_param(name=mock_identifier("x", 1))
+    system = create_constraint_system(
+        EquationConstraint(param.variable, param.variable_expression >= 0)
+    )
+
+    with pytest.raises(TypeError):
+        param.add_constraint(system)  # type: ignore[arg-type]  # test: misuse
+
+
 def test_add_constraint_deduplicates_structurally_equivalent_constraints() -> None:
     """Test `add_constraint` skips a structurally-equivalent existing constraint.
 
@@ -360,6 +402,27 @@ def test_constructor_constraints_kwarg_rejects_mismatched_variable() -> None:
 
     with pytest.raises(ParamError):
         create_integer_param(name=variable, constraints=(bad,))
+
+
+def test_constructor_constraints_kwarg_rejects_constraint_system() -> None:
+    """Test `Param.__init__` raises `TypeError` for a `ConstraintSystem` constraint.
+
+    Mirrors ``test_validate_constraint_rejects_constraint_system_with_type_error``
+    but through the constructor's ``constraints`` kwarg rather than
+    `add_constraint`.
+    """
+    variable = mock_identifier("x", 1)
+    system = create_constraint_system(
+        EquationConstraint(
+            variable, create_integer_param(name=variable).variable_expression >= 0
+        )
+    )
+
+    with pytest.raises(TypeError):
+        create_integer_param(
+            name=variable,
+            constraints=(system,),  # type: ignore[arg-type]  # test: misuse
+        )
 
 
 def test_constructor_constraints_kwarg_deduplicates_structurally_equivalent() -> None:

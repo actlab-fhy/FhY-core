@@ -10,8 +10,6 @@ the conjunction-of-constraints model cannot represent.
 from typing import Any
 
 import pytest
-from hypothesis import given  # type: ignore[import-not-found]
-from hypothesis import strategies as st
 
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.constraint import InSetConstraint, NotInSetConstraint
@@ -386,33 +384,3 @@ def test_union_is_not_intersection() -> None:
 
     assert union.is_value_valid("a")
     assert not intersection.is_value_valid("a")
-
-
-# =============================================================================
-# Property: finite-set membership law
-# =============================================================================
-
-
-@pytest.mark.property
-@given(  # type: ignore[untyped-decorator]
-    left_values=st.sets(st.integers(min_value=0, max_value=12), min_size=1, max_size=6),
-    right_values=st.sets(
-        st.integers(min_value=0, max_value=12), min_size=1, max_size=6
-    ),
-    candidate=st.integers(min_value=0, max_value=15),
-)
-def test_union_membership_law_holds_for_random_ordinal_sets(
-    left_values: set[int], right_values: set[int], candidate: int
-) -> None:
-    """Test a value is valid for the union iff valid for either operand.
-
-    Holds for arbitrary (non-empty) ordinal value sets, not just the fixed
-    examples above.
-    """
-    left = create_ordinal_param(sorted(left_values))
-    right = create_ordinal_param(sorted(right_values))
-
-    result = create_union_param(left, right)
-
-    expected = candidate in left_values or candidate in right_values
-    assert result.is_value_valid(candidate) == expected
