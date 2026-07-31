@@ -20,6 +20,7 @@ from fhy_core.param import (
     create_integer_param_between,
     create_integer_param_with_lower_bound,
     create_integer_param_with_upper_bound,
+    create_intersection_param,
     create_ordinal_param,
     create_permutation_param,
     create_real_param,
@@ -27,6 +28,7 @@ from fhy_core.param import (
     create_real_param_with_lower_bound,
     create_real_param_with_upper_bound,
     create_single_valid_value_param,
+    create_union_param,
 )
 
 # =============================================================================
@@ -67,6 +69,26 @@ _KEYWORD_ONLY_NAME_CALLABLES: list[ParameterSet,] = [
         id="perm-init",
     ),
     pytest.param(create_single_valid_value_param, ("only",), id="single-valid-value"),
+    pytest.param(
+        lambda *args, **kwargs: create_union_param(
+            create_categorical_param({"a", "b"}),
+            create_categorical_param({"b", "c"}),
+            *args,
+            **kwargs,
+        ),
+        (),
+        id="union-init",
+    ),
+    pytest.param(
+        lambda *args, **kwargs: create_intersection_param(
+            create_categorical_param({"a", "b"}),
+            create_categorical_param({"b", "c"}),
+            *args,
+            **kwargs,
+        ),
+        (),
+        id="intersection-init",
+    ),
 ]
 
 
