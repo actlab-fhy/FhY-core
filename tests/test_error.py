@@ -2,10 +2,10 @@
 
 import pytest
 
-from fhy_core.constraint import ConstraintError
 from fhy_core.error import get_registered_errors, register_error
-from fhy_core.param import ParamError
 from fhy_core.pass_infrastructure import PassExecutionError
+from fhy_core.symbolic.constraint import ConstraintError
+from fhy_core.symbolic.param import ParamError
 from fhy_core.types import FhYCoreTypeError
 
 # =============================================================================

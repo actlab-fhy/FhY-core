@@ -40,11 +40,11 @@ from fhy_core.serialization import (
 from fhy_core.traits import FrozenMixin, StructuralEquivalence
 
 from ..error import register_error
-from ..expression.core import Expression, LiteralExpression
-from ..expression.pprint import pformat_expression
 from ..identifier import Identifier
 from ..lattice import Lattice
 from ..logger import get_logger
+from ..symbolic.expression.core import Expression, LiteralExpression
+from ..symbolic.expression.pprint import pformat_expression
 from ..utils import StrEnum, format_comma_separated_list
 
 _LOGGER = get_logger(__name__)
