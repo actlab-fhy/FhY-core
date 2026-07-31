@@ -55,14 +55,14 @@ from typing import Any
 
 from immutabledict import immutabledict
 
-from ..expression.core import (
+from ..identifier import Identifier
+from ..logger import get_logger
+from ..symbolic.expression.core import (
     BinaryExpression,
     Expression,
     IdentifierExpression,
     UnaryExpression,
 )
-from ..identifier import Identifier
-from ..logger import get_logger
 from ..traits import FrozenMixin, StructuralEquivalence, VerificationError
 from .core import (
     DataType,

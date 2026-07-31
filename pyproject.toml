@@ -69,6 +69,7 @@ markers = [
     "integration: exercises multiple modules together",
     "network: requires network access",
     "property: hypothesis-based property test",
+    "import_order: pins module import-order for circular-import resolution",
 ]
 
 [tool.coverage.run]
