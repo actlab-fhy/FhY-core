@@ -18,7 +18,7 @@ is the operand dispatching the Python operator (for example
 ``x * y``, ``x > y``, ``-x``). By contrast, expression-side operators
 and helpers still auto-lift bare ``Identifier`` operands in
 non-dispatching positions, so forms like ``LiteralExpression(0.5) * x``
-and arguments passed directly to ``call(...)`` or ``ternary(...)``
+and arguments passed directly to ``call(...)`` or ``piecewise(...)``
 need no wrapping. Removing the asymmetry by also wrapping those
 operands is harmless but adds noise; introducing it by using a bare
 ``Identifier`` as the dispatching operand is a ``TypeError`` at
@@ -47,7 +47,7 @@ from .core import (
     logical_or,
     make_binary_expression,
     make_unary_expression,
-    ternary,
+    piecewise,
 )
 from .registry import (
     NativeConstant,
@@ -174,7 +174,7 @@ def _register_max() -> RegisteredFunction:
         parameters=[a, b],
         parameter_sorts=_REAL_PARAMS_2,
         result_sort=FunctionSort.REAL,
-        body=ternary(IdentifierExpression(a) > b, a, b),
+        body=piecewise((IdentifierExpression(a) > b, a), otherwise=b),
     )
 
 
@@ -186,7 +186,7 @@ def _register_min() -> RegisteredFunction:
         parameters=[a, b],
         parameter_sorts=_REAL_PARAMS_2,
         result_sort=FunctionSort.REAL,
-        body=ternary(IdentifierExpression(a) < b, a, b),
+        body=piecewise((IdentifierExpression(a) < b, a), otherwise=b),
     )
 
 
@@ -198,7 +198,7 @@ def _register_abs() -> RegisteredFunction:
         parameters=[x],
         parameter_sorts=_REAL_PARAMS_1,
         result_sort=FunctionSort.REAL,
-        body=ternary(x_expression >= 0.0, x, -x_expression),
+        body=piecewise((x_expression >= 0.0, x), otherwise=-x_expression),
     )
 
 
@@ -210,7 +210,7 @@ def _register_sign() -> RegisteredFunction:
         parameters=[x],
         parameter_sorts=_REAL_PARAMS_1,
         result_sort=FunctionSort.INT,
-        body=ternary(x_expression > 0.0, 1, ternary(x_expression < 0.0, -1, 0)),
+        body=piecewise((x_expression > 0.0, 1), (x_expression < 0.0, -1), otherwise=0),
     )
 
 
@@ -259,7 +259,7 @@ def _register_leaky_relu() -> RegisteredFunction:
         parameters=[x, slope],
         parameter_sorts=_REAL_PARAMS_2,
         result_sort=FunctionSort.REAL,
-        body=ternary(x_expression > 0.0, x, x_expression * slope),
+        body=piecewise((x_expression > 0.0, x), otherwise=x_expression * slope),
     )
 
 

@@ -20,8 +20,8 @@ __all__ = [
     "LiteralPattern",
     "MatchBindings",
     "Pattern",
+    "PiecewiseExpressionPattern",
     "PredicatePattern",
-    "TernaryExpressionPattern",
     "UnaryExpressionPattern",
     "WildcardPattern",
     "does_pattern_match",
@@ -46,7 +46,7 @@ from ..core import (
     IdentifierExpression,
     LiteralExpression,
     LiteralType,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
 )
@@ -405,34 +405,42 @@ class BinaryExpressionPattern(Pattern):
 
 @final
 @dataclass(frozen=True)
-class TernaryExpressionPattern(Pattern):
-    """Match a `TernaryExpression`.
+class PiecewiseExpressionPattern(Pattern):
+    """Match a `PiecewiseExpression`.
 
     Attributes:
-        condition: Pattern the condition must match.
-        true_value: Pattern the true-branch value must match.
-        false_value: Pattern the false-branch value must match.
+        cases: `(condition_pattern, value_pattern)` pairs matched
+            position-wise against the expression's cases; the case
+            count must match exactly. `None` means "any cases."
+        otherwise: Pattern the `otherwise` expression must match.
 
     """
 
-    condition: Pattern
-    true_value: Pattern
-    false_value: Pattern
+    cases: tuple[tuple[Pattern, Pattern], ...] | None
+    otherwise: Pattern
 
     @override
     def match_under(
         self, expression: Expression, bindings: MatchBindings
     ) -> MatchBindings | None:
-        if not isinstance(expression, TernaryExpression):
+        if not isinstance(expression, PiecewiseExpression):
             return None
-        after_condition = self.condition.match_under(expression.condition, bindings)
-        if after_condition is None:
-            return None
-        after_true = self.true_value.match_under(expression.true_value, after_condition)
-        if after_true is None:
-            return None
-        else:
-            return self.false_value.match_under(expression.false_value, after_true)
+        accumulator = bindings
+        if self.cases is not None:
+            expression_cases = expression.get_cases()
+            if len(self.cases) != len(expression_cases):
+                return None
+            for (condition_pattern, value_pattern), (condition, value) in zip(
+                self.cases, expression_cases, strict=True
+            ):
+                after_condition = condition_pattern.match_under(condition, accumulator)
+                if after_condition is None:
+                    return None
+                after_value = value_pattern.match_under(value, after_condition)
+                if after_value is None:
+                    return None
+                accumulator = after_value
+        return self.otherwise.match_under(expression.otherwise, accumulator)
 
 
 @final

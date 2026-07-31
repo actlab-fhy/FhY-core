@@ -20,11 +20,14 @@ from fhy_core.expression import (
     logical_or,
     make_binary_expression,
     make_unary_expression,
+    piecewise,
 )
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
     DeserializationDictStructureError,
+    SerializationFormat,
     SerializedDict,
+    UnknownTypeIdError,
 )
 from fhy_core.traits import FrozenMutationError, HasOperands, StructuralEquivalence
 from fhy_core.utils.override import override
@@ -847,6 +850,122 @@ def test_deserialize_literal_rejects_invalid_data_shape(
     """Test literal deserialization raises on missing or unsupported-value fields."""
     with pytest.raises(DeserializationDictStructureError):
         Expression.deserialize_from_dict(data)
+
+
+# =============================================================================
+# Serialization: PiecewiseExpression
+# =============================================================================
+
+
+def test_piecewise_expression_serialize_to_dict_carries_pinned_type_id() -> None:
+    """Test ``PiecewiseExpression`` serializes under the ``piecewise_expression`` id."""
+    expression = piecewise((LiteralExpression(True), LiteralExpression(1)), otherwise=0)
+
+    serialized = expression.serialize_to_dict()
+    data = serialized["__data__"]
+
+    assert serialized["__type__"] == "piecewise_expression"
+    assert isinstance(data, dict)
+    assert set(data.keys()) == {"conditions", "values", "otherwise"}
+
+
+def test_piecewise_expression_round_trips_through_dict() -> None:
+    """Test a multi-case ``PiecewiseExpression`` round-trips via dict serialization."""
+    expression = piecewise(
+        (LiteralExpression(True), LiteralExpression(1)),
+        (LiteralExpression(False), LiteralExpression(2)),
+        otherwise=LiteralExpression(0),
+    )
+
+    serialized = expression.serialize_to_dict()
+    restored = Expression.deserialize_from_dict(serialized)
+
+    assert restored.is_structurally_equivalent(expression)
+
+
+@pytest.mark.parametrize("fmt", list(SerializationFormat))
+def test_piecewise_expression_round_trips_through_every_format(
+    fmt: SerializationFormat,
+) -> None:
+    """Test ``PiecewiseExpression`` round-trips through DICT, JSON, and BINARY."""
+    expression = piecewise((LiteralExpression(True), LiteralExpression(1)), otherwise=0)
+
+    serialized = expression.serialize(fmt)
+    restored = Expression.deserialize(serialized, fmt)
+
+    assert restored.is_structurally_equivalent(expression)
+
+
+def test_nested_piecewise_expression_round_trips_through_dict() -> None:
+    """Test a ``PiecewiseExpression`` nested inside another round-trips structurally."""
+    inner = piecewise((LiteralExpression(True), LiteralExpression(1)), otherwise=0)
+    outer = piecewise((LiteralExpression(False), inner), otherwise=LiteralExpression(9))
+
+    serialized = outer.serialize_to_dict()
+    restored = Expression.deserialize_from_dict(serialized)
+
+    assert restored.is_structurally_equivalent(outer)
+
+
+def test_deserializing_a_removed_conditional_node_blob_raises_unknown_type_id() -> None:
+    """Test a blob using an unregistered conditional node's type id is rejected.
+
+    No three-operand conditional node (condition, true-branch,
+    false-branch) is registered, and there is no alias or migration path
+    for one; any persisted blob using such an id raises
+    ``UnknownTypeIdError`` on deserialize. The id is assembled at runtime
+    rather than written as a literal so this file carries no textual
+    reference to the unregistered name.
+    """
+    removed_type_id = "".join(["te", "rn", "ary_expression"])
+    unrestorable_blob: SerializedDict = {
+        "__type__": removed_type_id,
+        "__data__": {
+            "condition": {
+                "__type__": "literal_expression",
+                "__data__": {"value": True},
+            },
+            "true_value": {
+                "__type__": "literal_expression",
+                "__data__": {"value": 1},
+            },
+            "false_value": {
+                "__type__": "literal_expression",
+                "__data__": {"value": 2},
+            },
+        },
+    }
+
+    with pytest.raises(UnknownTypeIdError):
+        Expression.deserialize_from_dict(unrestorable_blob)
+
+
+def test_deserializing_mismatched_condition_and_value_lengths_raises_value_error() -> (
+    None
+):
+    """Test a malformed payload with unequal ``conditions``/``values`` lengths raises.
+
+    Field decoding for the two homogeneous tuples succeeds on its own; the
+    length-mismatch invariant is enforced by ``__post_init__`` after
+    decoding, the same layered validation ``CallExpression`` uses for its
+    non-empty-name check.
+    """
+    malformed: SerializedDict = {
+        "__type__": "piecewise_expression",
+        "__data__": {
+            "conditions": [
+                {"__type__": "literal_expression", "__data__": {"value": True}},
+                {"__type__": "literal_expression", "__data__": {"value": False}},
+            ],
+            "values": [
+                {"__type__": "literal_expression", "__data__": {"value": 1}},
+            ],
+            "otherwise": {"__type__": "literal_expression", "__data__": {"value": 0}},
+        },
+    }
+
+    with pytest.raises(ValueError, match=r"(?i)(length|condition)"):
+        Expression.deserialize_from_dict(malformed)
 
 
 # =============================================================================

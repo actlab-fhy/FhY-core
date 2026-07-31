@@ -12,7 +12,7 @@ from fhy_core.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
 )
@@ -25,8 +25,8 @@ from fhy_core.expression.pattern import (
     LiteralPattern,
     MatchBindings,
     Pattern,
+    PiecewiseExpressionPattern,
     PredicatePattern,
-    TernaryExpressionPattern,
     UnaryExpressionPattern,
     WildcardPattern,
     does_pattern_match,
@@ -598,82 +598,146 @@ def test_binary_expression_pattern_propagates_right_failure() -> None:
 
 
 # ===========================================================================
-# TernaryExpressionPattern
+# PiecewiseExpressionPattern
 # ===========================================================================
 
 
-def test_ternary_expression_pattern_matches_ternary() -> None:
-    """Test ``TernaryExpressionPattern`` matches a ternary expression."""
-    pattern = TernaryExpressionPattern(
-        WildcardPattern(), WildcardPattern(), WildcardPattern()
+def test_piecewise_expression_pattern_matches_single_case_piecewise() -> None:
+    """Test ``PiecewiseExpressionPattern`` matches a one-case piecewise expression."""
+    pattern = PiecewiseExpressionPattern(
+        ((WildcardPattern(), WildcardPattern()),), WildcardPattern()
     )
-    expression = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+    expression = PiecewiseExpression(
+        (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
     )
 
     assert pattern.match(expression) is not None
 
 
-def test_ternary_expression_pattern_rejects_non_ternary_expression() -> None:
-    """Test ``TernaryExpressionPattern`` rejects a non-ternary expression."""
-    pattern = TernaryExpressionPattern(
-        WildcardPattern(), WildcardPattern(), WildcardPattern()
-    )
+def test_piecewise_expression_pattern_rejects_non_piecewise_expression() -> None:
+    """Test ``PiecewiseExpressionPattern`` rejects a non-piecewise expression."""
+    pattern = PiecewiseExpressionPattern(None, WildcardPattern())
 
     assert pattern.match(LiteralExpression(5)) is None
 
 
-def test_ternary_expression_pattern_threads_bindings_through_branches() -> None:
-    """Test bindings from each ternary branch combine."""
-    pattern = TernaryExpressionPattern(
-        CapturePattern("c", WildcardPattern()),
-        CapturePattern("t", WildcardPattern()),
-        CapturePattern("f", WildcardPattern()),
+def test_piecewise_expression_pattern_with_none_cases_matches_any_case_count() -> None:
+    """Test ``cases=None`` matches piecewise expressions of any case count."""
+    pattern = PiecewiseExpressionPattern(None, WildcardPattern())
+    single_case = PiecewiseExpression(
+        (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
+    )
+    multi_case = PiecewiseExpression(
+        (LiteralExpression(True), LiteralExpression(False)),
+        (LiteralExpression(1), LiteralExpression(2)),
+        LiteralExpression(3),
+    )
+
+    assert pattern.match(single_case) is not None
+    assert pattern.match(multi_case) is not None
+
+
+def test_piecewise_expression_pattern_rejects_case_count_mismatch() -> None:
+    """Test a non-``None`` ``cases`` tuple requires an exact case-count match."""
+    pattern = PiecewiseExpressionPattern(
+        ((WildcardPattern(), WildcardPattern()),), WildcardPattern()
+    )
+    two_case_expression = PiecewiseExpression(
+        (LiteralExpression(True), LiteralExpression(False)),
+        (LiteralExpression(1), LiteralExpression(2)),
+        LiteralExpression(3),
+    )
+
+    assert pattern.match(two_case_expression) is None
+
+
+def test_piecewise_expression_pattern_threads_bindings_through_case_and_otherwise() -> (
+    None
+):
+    """Test bindings from the case condition, case value, and otherwise combine."""
+    pattern = PiecewiseExpressionPattern(
+        (
+            (
+                CapturePattern("c", WildcardPattern()),
+                CapturePattern("v", WildcardPattern()),
+            ),
+        ),
+        CapturePattern("o", WildcardPattern()),
     )
     condition = LiteralExpression(True)
-    true_value = LiteralExpression(1)
-    false_value = LiteralExpression(2)
-    expression = TernaryExpression(condition, true_value, false_value)
+    value = LiteralExpression(1)
+    otherwise = LiteralExpression(2)
+    expression = PiecewiseExpression((condition,), (value,), otherwise)
 
     result = pattern.match(expression)
 
     assert result is not None
     assert result.get("c") is condition
-    assert result.get("t") is true_value
-    assert result.get("f") is false_value
+    assert result.get("v") is value
+    assert result.get("o") is otherwise
 
 
-def test_ternary_expression_pattern_propagates_branch_failure() -> None:
-    """Test ``TernaryExpressionPattern`` fails when any branch sub-pattern fails."""
-    pattern = TernaryExpressionPattern(
-        WildcardPattern(), LiteralPattern(value=99), WildcardPattern()
+def test_piecewise_expression_pattern_threads_bindings_across_cases_in_order() -> None:
+    """Test bindings from every case thread through in evaluation order."""
+    pattern = PiecewiseExpressionPattern(
+        (
+            (
+                CapturePattern("c1", WildcardPattern()),
+                CapturePattern("v1", WildcardPattern()),
+            ),
+            (
+                CapturePattern("c2", WildcardPattern()),
+                CapturePattern("v2", WildcardPattern()),
+            ),
+        ),
+        WildcardPattern(),
     )
-    expression = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+    c1, c2 = LiteralExpression(True), LiteralExpression(False)
+    v1, v2 = LiteralExpression(1), LiteralExpression(2)
+    expression = PiecewiseExpression((c1, c2), (v1, v2), LiteralExpression(0))
+
+    result = pattern.match(expression)
+
+    assert result is not None
+    assert result.get("c1") is c1
+    assert result.get("v1") is v1
+    assert result.get("c2") is c2
+    assert result.get("v2") is v2
+
+
+def test_piecewise_expression_pattern_propagates_condition_failure_within_a_case() -> (
+    None
+):
+    """Test a failing condition sub-pattern in any case fails the whole match."""
+    pattern = PiecewiseExpressionPattern(
+        ((LiteralPattern(value=99), WildcardPattern()),), WildcardPattern()
+    )
+    expression = PiecewiseExpression(
+        (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
     )
 
     assert pattern.match(expression) is None
 
 
-def test_ternary_expression_pattern_propagates_false_branch_failure() -> None:
-    """Test ``TernaryExpressionPattern`` fails when only the false-branch fails."""
-    pattern = TernaryExpressionPattern(
-        WildcardPattern(), WildcardPattern(), LiteralPattern(value=99)
+def test_piecewise_expression_pattern_propagates_value_failure_within_a_case() -> None:
+    """Test a failing value sub-pattern in any case fails the whole match."""
+    pattern = PiecewiseExpressionPattern(
+        ((WildcardPattern(), LiteralPattern(value=99)),), WildcardPattern()
     )
-    expression = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+    expression = PiecewiseExpression(
+        (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
     )
 
     assert pattern.match(expression) is None
 
 
-def test_ternary_expression_pattern_propagates_condition_failure() -> None:
-    """Test ``TernaryExpressionPattern`` fails when the condition sub-pattern fails."""
-    pattern = TernaryExpressionPattern(
-        LiteralPattern(value=99), WildcardPattern(), WildcardPattern()
+def test_piecewise_expression_pattern_propagates_otherwise_failure() -> None:
+    """Test a failing ``otherwise`` sub-pattern fails the match even if cases match."""
+    pattern = PiecewiseExpressionPattern(
+        ((WildcardPattern(), WildcardPattern()),), LiteralPattern(value=99)
     )
-    expression = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+    expression = PiecewiseExpression(
+        (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
     )
 
     assert pattern.match(expression) is None

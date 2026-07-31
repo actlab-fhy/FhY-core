@@ -14,7 +14,7 @@ synthesized type is the constant's sort-derived weak type, qualifier
 ``PARAM``.
 
 The tests are scoped tightly around the new behavior; existing
-arithmetic and ternary cases remain in ``test_type_checker.py`` and
+arithmetic and piecewise cases remain in ``test_type_checker.py`` and
 ``test_type_checker_booleans.py``.
 """
 

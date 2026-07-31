@@ -25,7 +25,7 @@ from fhy_core.expression.core import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
 )
@@ -213,15 +213,15 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             return constant_value
         return sympy.Symbol(self.format_identifier(identifier))
 
-    def visit_ternary_expression(
-        self, ternary_expression: TernaryExpression
+    def visit_piecewise_expression(
+        self, piecewise_expression: PiecewiseExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
-        condition = self.visit(ternary_expression.condition)
-        true_value = self.visit(ternary_expression.true_value)
-        false_value = self.visit(ternary_expression.false_value)
-        return sympy.Piecewise(
-            (true_value, condition), (false_value, True), evaluate=False
-        )
+        branches = [
+            (self.visit(value), self.visit(condition))
+            for condition, value in piecewise_expression.get_cases()
+        ]
+        branches.append((self.visit(piecewise_expression.otherwise), True))
+        return sympy.Piecewise(*branches, evaluate=False)
 
     def visit_call_expression(
         self, call_expression: CallExpression
@@ -638,22 +638,29 @@ class SymPyToExpressionConverter(
         return LiteralExpression(float(float_))
 
     def _convert_piecewise(self, piecewise: sympy.Piecewise) -> Expression:
-        if not piecewise.args:
-            raise ValueError("Cannot convert an empty Piecewise expression.")
-        return self._convert_piecewise_branches(tuple(piecewise.args))
+        """Lift a ``sympy.Piecewise`` to a flat ``PiecewiseExpression``.
 
-    def _convert_piecewise_branches(
-        self,
-        branches: tuple[tuple[sympy.Expr, sympy.Expr], ...],
-    ) -> Expression:
+        All branches but the last become cases; the last branch's value
+        becomes ``otherwise`` and its condition is dropped, even when
+        that condition is not ``sympy.true`` -- a genuinely partial
+        ``Piecewise`` is still lifted this way. A single-branch
+        ``Piecewise`` (the only shape that survives construction with a
+        non-``True`` condition) degenerates to just the converted value.
+        """
+        branches = tuple(piecewise.args)
+        if not branches:
+            raise ValueError("Cannot convert an empty Piecewise expression.")
         if len(branches) == 1:
             value, _ = branches[0]
             return self.convert(value)
-        head_value, head_condition = branches[0]
-        true_value = self.convert(head_value)
-        condition = self.convert(head_condition)
-        false_value = self._convert_piecewise_branches(branches[1:])
-        return TernaryExpression(condition, true_value, false_value)
+        conditions: list[Expression] = []
+        values: list[Expression] = []
+        for value, condition in branches[:-1]:
+            values.append(self.convert(value))
+            conditions.append(self.convert(condition))
+        otherwise_value, _ = branches[-1]
+        otherwise = self.convert(otherwise_value)
+        return PiecewiseExpression(tuple(conditions), tuple(values), otherwise)
 
 
 def convert_sympy_expression_to_expression(

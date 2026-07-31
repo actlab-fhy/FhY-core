@@ -33,8 +33,8 @@ from fhy_core.expression import (
     LiteralExpression,
     NativeConstant,
     NativeFunction,
+    PiecewiseExpression,
     RegisteredFunction,
-    TernaryExpression,
     UnaryExpression,
     call,
     evaluate_expression,
@@ -43,6 +43,8 @@ from fhy_core.expression import (
     is_entry_registered,
 )
 from fhy_core.identifier import Identifier
+
+from ..conftest import mock_identifier
 
 _BINARY_SYMBOLS: dict[BinaryOperation, str] = {
     BinaryOperation.GREATER: ">",
@@ -86,13 +88,13 @@ def _structure_summary(expression: Expression) -> str:  # noqa: PLR0911
             f"{operation_symbol}({_structure_summary(expression.left)}, "
             f"{_structure_summary(expression.right)})"
         )
-    if isinstance(expression, TernaryExpression):
-        condition_kind = _condition_shape_tag(expression.condition)
-        return (
-            f"ternary({condition_kind}, "
-            f"{_structure_summary(expression.true_value)}, "
-            f"{_structure_summary(expression.false_value)})"
+    if isinstance(expression, PiecewiseExpression):
+        case_summaries = ", ".join(
+            f"({_condition_shape_tag(condition)}, {_structure_summary(value)})"
+            for condition, value in expression.get_cases()
         )
+        otherwise_summary = _structure_summary(expression.otherwise)
+        return f"piecewise([{case_summaries}], {otherwise_summary})"
     if isinstance(expression, CallExpression):
         argument_summaries = ", ".join(
             _structure_summary(argument) for argument in expression.arguments
@@ -227,33 +229,53 @@ def test_each_built_in_constant_is_a_native_constant(name: str) -> None:
 # =============================================================================
 
 
-def test_abs_inlining_produces_documented_ternary_body() -> None:
-    """Test ``abs(x)`` inlines to ``x >= 0 ? x : -x``."""
+def test_abs_inlining_produces_documented_piecewise_body() -> None:
+    """Test ``abs(x)`` inlines to ``{x if x >= 0; -x otherwise}``."""
     x = Identifier("x")
     expression = call("abs", x)
 
     inlined = inline_functions(expression)
 
-    # The shape is a ternary; the condition is `x >= 0`; the true branch
-    # is `x`; the false branch is `-x`. Structural equivalence is enough
-    # — we don't pin down the exact `Identifier` instances used inside
-    # the body.
-    assert _structure_summary(inlined) == "ternary(>=, identifier, negate(identifier))"
+    # The shape is a one-case piecewise; the condition is `x >= 0`; the
+    # case value is `x`; `otherwise` is `-x`. Structural equivalence is
+    # enough — we don't pin down the exact `Identifier` instances used
+    # inside the body.
+    assert (
+        _structure_summary(inlined)
+        == "piecewise([(>=, identifier)], negate(identifier))"
+    )
 
 
-def test_relu_inlining_produces_max_x_zero_ternary() -> None:
-    """Test ``relu(x)`` inlines to ``max(x, 0)``'s ternary body."""
+def test_sign_inlining_produces_two_case_piecewise_body() -> None:
+    """Test ``sign(x)`` inlines to a flat two-case ``piecewise`` on ``>`` then ``<``.
+
+    A single node carries both cases (``x > 0`` and ``x < 0``) plus one
+    ``otherwise``, rather than a nested chain of one-case conditionals.
+    """
+    x = mock_identifier("x", 0)
+    expression = call("sign", x)
+
+    inlined = inline_functions(expression)
+
+    assert (
+        _structure_summary(inlined)
+        == "piecewise([(>, literal), (<, literal)], literal)"
+    )
+
+
+def test_relu_inlining_produces_max_x_zero_piecewise() -> None:
+    """Test ``relu(x)`` inlines to ``max(x, 0)``'s piecewise body."""
     x = Identifier("x")
     expression = call("relu", x)
 
     inlined = inline_functions(expression)
 
-    # Inlining max gives a ternary on `>`.
-    assert _structure_summary(inlined).startswith("ternary(>")
+    # Inlining max gives a one-case piecewise on `>`.
+    assert _structure_summary(inlined).startswith("piecewise([(>")
 
 
-def test_clamp_inlining_produces_nested_max_min_ternaries() -> None:
-    """Test ``clamp(x, lo, hi)`` inlines to the documented nested ternary tree."""
+def test_clamp_inlining_produces_nested_max_min_piecewise() -> None:
+    """Test ``clamp(x, lo, hi)`` inlines to the documented nested piecewise tree."""
     x = Identifier("x")
     lo = Identifier("lo")
     hi = Identifier("hi")
@@ -262,8 +284,8 @@ def test_clamp_inlining_produces_nested_max_min_ternaries() -> None:
     inlined = inline_functions(expression)
 
     # We don't pin down the precise inner shape, but the outer node must
-    # be a ternary (from `max`).
-    assert _structure_summary(inlined).startswith("ternary(")
+    # be a piecewise (from `max`).
+    assert _structure_summary(inlined).startswith("piecewise(")
 
 
 def test_xor_inlining_produces_or_and_not_and_combination() -> None:
@@ -308,18 +330,18 @@ def test_evaluate_inlined_sigmoid_at_zero_leaves_exp_call_intact() -> None:
 
 
 def test_evaluate_inlined_relu_with_literal_argument_folds_to_literal_tree() -> None:
-    """Test inlining ``relu(2.0)`` evaluates to a ternary on literal operands.
+    """Test inlining ``relu(2.0)`` evaluates to a piecewise on literal operands.
 
     The evaluator does not fold the literal arithmetic itself; the
-    resulting expression is the ternary tree with all literals present.
+    resulting expression is the piecewise tree with all literals present.
     """
     expression = CallExpression("relu", (LiteralExpression(2.0),))
 
     inlined = inline_functions(expression)
     evaluated = evaluate_expression(inlined)
 
-    # Still a ternary; no native calls in the result.
-    assert _structure_summary(evaluated).startswith("ternary(")
+    # Still a piecewise; no native calls in the result.
+    assert _structure_summary(evaluated).startswith("piecewise(")
     assert "CallExpression" not in _structure_summary(evaluated)
 
 
@@ -397,24 +419,24 @@ def test_seeded_native_implementation_matches_math_callable(
 # =============================================================================
 
 
-def test_max_inlining_yields_greater_ternary() -> None:
-    """Test inlining ``max(a, b)`` yields ``a > b ? a : b``."""
+def test_max_inlining_yields_greater_piecewise() -> None:
+    """Test inlining ``max(a, b)`` yields ``{a if a > b; b otherwise}``."""
     a = LiteralExpression(7)
     b = LiteralExpression(2)
 
     result = inline_functions(CallExpression("max", (a, b)))
 
-    assert _structure_summary(result).startswith("ternary(>")
+    assert _structure_summary(result).startswith("piecewise([(>")
 
 
-def test_min_inlining_yields_less_ternary() -> None:
-    """Test inlining ``min(a, b)`` yields ``a < b ? a : b``."""
+def test_min_inlining_yields_less_piecewise() -> None:
+    """Test inlining ``min(a, b)`` yields ``{a if a < b; b otherwise}``."""
     a = LiteralExpression(7)
     b = LiteralExpression(2)
 
     result = inline_functions(CallExpression("min", (a, b)))
 
-    assert _structure_summary(result).startswith("ternary(<")
+    assert _structure_summary(result).startswith("piecewise([(<")
 
 
 # =============================================================================

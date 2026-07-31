@@ -9,7 +9,7 @@ from fhy_core.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     pformat_expression,
@@ -103,12 +103,12 @@ def test_pformat_expression_with_show_id_includes_name_hint_and_id() -> None:
     assert str(identifier.id) in result
 
 
-def test_pformat_expression_with_show_id_propagates_into_ternary() -> None:
-    """Test ``show_id=True`` reaches identifiers nested in a ``TernaryExpression``."""
+def test_pformat_expression_with_show_id_propagates_into_piecewise() -> None:
+    """Test ``show_id=True`` reaches identifiers nested in a ``PiecewiseExpression``."""
     condition_identifier = Identifier("cond")
-    expression = TernaryExpression(
-        IdentifierExpression(condition_identifier),
-        LiteralExpression(1),
+    expression = PiecewiseExpression(
+        (IdentifierExpression(condition_identifier),),
+        (LiteralExpression(1),),
         LiteralExpression(0),
     )
 
@@ -179,39 +179,71 @@ def test_pretty_formatter_get_noop_output_raises() -> None:
 
 
 # =============================================================================
-# TernaryExpression rendering
+# PiecewiseExpression rendering
 # =============================================================================
 
 
-def test_pformat_ternary_expression_renders_as_question_colon_form() -> None:
-    """Test ``TernaryExpression`` renders as ``(c ? t : f)`` in default form."""
-    expression = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+def test_pformat_single_case_piecewise_renders_symbolic_case_form() -> None:
+    """Test a one-case ``PiecewiseExpression`` renders as ``{v if c; o otherwise}``."""
+    expression = PiecewiseExpression(
+        (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
     )
 
-    assert pformat_expression(expression) == "(True ? 1 : 2)"
+    assert pformat_expression(expression) == "{1 if True; 2 otherwise}"
 
 
-def test_pformat_ternary_expression_renders_in_functional_form() -> None:
-    """Test ``TernaryExpression`` renders as ``(ternary c t f)`` functionally."""
-    expression = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+def test_pformat_multi_case_piecewise_renders_all_cases_then_otherwise() -> None:
+    """Test a multi-case piecewise renders every case, then ``otherwise``."""
+    expression = PiecewiseExpression(
+        (LiteralExpression(True), LiteralExpression(False)),
+        (LiteralExpression(1), LiteralExpression(2)),
+        LiteralExpression(3),
     )
 
-    assert pformat_expression(expression, functional=True) == "(ternary True 1 2)"
+    assert pformat_expression(expression) == "{1 if True; 2 if False; 3 otherwise}"
 
 
-def test_pformat_nested_ternary_renders_inner_form_inside_branch() -> None:
-    """Test nested ternary expressions render with the inner form inside the branch."""
-    expression = TernaryExpression(
-        LiteralExpression(True),
-        TernaryExpression(
-            LiteralExpression(False), LiteralExpression(1), LiteralExpression(2)
+def test_pformat_piecewise_expression_renders_in_functional_form() -> None:
+    """Test piecewise renders as ``(piecewise c1 v1 ... o)`` in functional form."""
+    expression = PiecewiseExpression(
+        (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
+    )
+
+    assert pformat_expression(expression, functional=True) == "(piecewise True 1 2)"
+
+
+def test_pformat_multi_case_piecewise_renders_functional_form_with_odd_arity() -> None:
+    """Test the functional form lists every case pair, then ``otherwise``."""
+    expression = PiecewiseExpression(
+        (LiteralExpression(True), LiteralExpression(False)),
+        (LiteralExpression(1), LiteralExpression(2)),
+        LiteralExpression(3),
+    )
+
+    assert (
+        pformat_expression(expression, functional=True)
+        == "(piecewise True 1 False 2 3)"
+    )
+
+
+def test_pformat_nested_piecewise_renders_inner_form_inside_branch() -> None:
+    """Test a nested piecewise renders with the inner form inside a branch."""
+    expression = PiecewiseExpression(
+        (LiteralExpression(True),),
+        (
+            PiecewiseExpression(
+                (LiteralExpression(False),),
+                (LiteralExpression(1),),
+                LiteralExpression(2),
+            ),
         ),
         LiteralExpression(3),
     )
 
-    assert pformat_expression(expression) == "(True ? (False ? 1 : 2) : 3)"
+    assert (
+        pformat_expression(expression)
+        == "{{1 if False; 2 otherwise} if True; 3 otherwise}"
+    )
 
 
 # =============================================================================

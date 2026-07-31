@@ -11,7 +11,7 @@ from fhy_core.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
 )
@@ -395,22 +395,22 @@ def test_apply_rewrite_rules_threads_rewritten_children_into_parent_match() -> N
     assert result.is_structurally_equivalent(IdentifierExpression(x))
 
 
-def test_apply_rewrite_rules_rewrites_inside_ternary_branch() -> None:
-    """Test a rewrite inside one ternary branch leaves the sibling branches intact."""
+def test_apply_rewrite_rules_rewrites_inside_piecewise_branch() -> None:
+    """Test a rewrite inside one piecewise branch leaves the sibling branches intact."""
     condition_id = mock_identifier("c", 0)
     x = mock_identifier("x", 1)
     y = mock_identifier("y", 2)
     condition = IdentifierExpression(condition_id)
-    true_branch = _make_x_plus_zero(x)
-    false_branch = IdentifierExpression(y)
-    expression = TernaryExpression(condition, true_branch, false_branch)
+    value_branch = _make_x_plus_zero(x)
+    otherwise_branch = IdentifierExpression(y)
+    expression = PiecewiseExpression((condition,), (value_branch,), otherwise_branch)
 
     result = apply_rewrite_rules(expression, [_make_x_plus_zero_rule()])
 
-    assert isinstance(result, TernaryExpression)
-    assert result.condition is condition
-    assert result.true_value.is_structurally_equivalent(IdentifierExpression(x))
-    assert result.false_value is false_branch
+    assert isinstance(result, PiecewiseExpression)
+    assert result.conditions[0] is condition
+    assert result.values[0].is_structurally_equivalent(IdentifierExpression(x))
+    assert result.otherwise is otherwise_branch
 
 
 # ===========================================================================

@@ -14,7 +14,7 @@ from .core import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
 )
 
@@ -77,13 +77,22 @@ class ExpressionPrettyFormatter(VisitablePass[Expression, str]):
     def visit_literal_expression(self, literal_expression: LiteralExpression) -> str:
         return str(literal_expression.value)
 
-    def visit_ternary_expression(self, ternary_expression: TernaryExpression) -> str:
-        condition = self.visit(ternary_expression.condition)
-        true_value = self.visit(ternary_expression.true_value)
-        false_value = self.visit(ternary_expression.false_value)
+    def visit_piecewise_expression(
+        self, piecewise_expression: PiecewiseExpression
+    ) -> str:
+        otherwise = self.visit(piecewise_expression.otherwise)
         if self._is_printed_functional:
-            return f"(ternary {condition} {true_value} {false_value})"
-        return f"({condition} ? {true_value} : {false_value})"
+            parts: list[str] = []
+            for condition, value in piecewise_expression.get_cases():
+                parts.append(self.visit(condition))
+                parts.append(self.visit(value))
+            parts.append(otherwise)
+            return f"(piecewise {' '.join(parts)})"
+        case_clauses = [
+            f"{self.visit(value)} if {self.visit(condition)}"
+            for condition, value in piecewise_expression.get_cases()
+        ]
+        return "{" + "; ".join([*case_clauses, f"{otherwise} otherwise"]) + "}"
 
     def visit_call_expression(self, call_expression: CallExpression) -> str:
         rendered_arguments = [

@@ -25,7 +25,7 @@ from fhy_core.expression.core import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     logical_and,
@@ -143,13 +143,24 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
         self._identifier_to_z3_expression[identifier_expression.identifier] = result
         return result
 
-    def visit_ternary_expression(
-        self, ternary_expression: TernaryExpression
+    def visit_piecewise_expression(
+        self, piecewise_expression: PiecewiseExpression
     ) -> z3.ExprRef:
-        condition = self.visit(ternary_expression.condition)
-        true_value = self.visit(ternary_expression.true_value)
-        false_value = self.visit(ternary_expression.false_value)
-        return z3.If(condition, true_value, false_value)
+        """Lower to a right-folded ``z3.If`` chain.
+
+        Conditions and values are visited in case order, then
+        ``otherwise`` -- deterministic left-to-right for the identifier
+        cache side effects. Z3 has no n-ary conditional; the right-folded
+        nested ``If`` is first-match-wins by construction.
+        """
+        case_values = [
+            (self.visit(condition), self.visit(value))
+            for condition, value in piecewise_expression.get_cases()
+        ]
+        result = self.visit(piecewise_expression.otherwise)
+        for condition_z3, value_z3 in reversed(case_values):
+            result = z3.If(condition_z3, value_z3, result)
+        return result
 
     def visit_call_expression(self, call_expression: CallExpression) -> z3.ExprRef:
         name = call_expression.function_name
