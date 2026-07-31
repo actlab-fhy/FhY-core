@@ -26,6 +26,7 @@ __all__ = [
     "create_integer_param_between",
     "create_integer_param_with_lower_bound",
     "create_integer_param_with_upper_bound",
+    "create_intersection_param",
     "create_interval_integer_param",
     "create_interval_integer_param_between",
     "create_interval_integer_param_exactly",
@@ -40,6 +41,7 @@ __all__ = [
     "create_real_param_with_lower_bound",
     "create_real_param_with_upper_bound",
     "create_single_valid_value_param",
+    "create_union_param",
 ]
 
 from .core import (
@@ -56,6 +58,7 @@ from .core import (
     create_integer_param_between,
     create_integer_param_with_lower_bound,
     create_integer_param_with_upper_bound,
+    create_intersection_param,
     create_interval_integer_param,
     create_interval_integer_param_between,
     create_interval_integer_param_exactly,
@@ -70,6 +73,7 @@ from .core import (
     create_real_param_with_lower_bound,
     create_real_param_with_upper_bound,
     create_single_valid_value_param,
+    create_union_param,
 )
 from .domains import (
     CategoricalDomain,

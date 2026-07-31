@@ -157,6 +157,102 @@ def compute_constraint_implication_subset(
     return True
 
 
+def _rebind_constraint_to_variable(
+    constraint: Constraint, variable: Identifier
+) -> Constraint:
+    """Return a copy of ``constraint`` bound to ``variable`` instead of its own.
+
+    Args:
+        constraint: The constraint to rebind.
+        variable: The variable the returned constraint is bound to.
+
+    Returns:
+        An equivalent constraint bound to ``variable``.
+
+    Raises:
+        TypeError: If ``constraint`` is not one of the three known constraint
+            kinds (``EquationConstraint``, ``InSetConstraint``,
+            ``NotInSetConstraint``).
+
+    """
+    if isinstance(constraint, EquationConstraint):
+        substituted = constraint.convert_to_expression().substitute(
+            {constraint.variable: IdentifierExpression(variable)}
+        )
+        return EquationConstraint(variable, substituted)
+    if isinstance(constraint, InSetConstraint):
+        return InSetConstraint(variable, constraint.members)
+    if isinstance(constraint, NotInSetConstraint):
+        return NotInSetConstraint(variable, constraint.members)
+    raise TypeError(
+        f"Cannot rebind constraint of type {type(constraint).__name__} to a "
+        "new variable."
+    )
+
+
+def _rebind_constraints_to_variable(
+    constraints: Sequence[Constraint], variable: Identifier
+) -> tuple[Constraint, ...]:
+    """Return ``constraints`` each rebound to ``variable``, in the given order."""
+    return tuple(
+        _rebind_constraint_to_variable(constraint, variable)
+        for constraint in constraints
+    )
+
+
+def _collect_effective_finite_values(
+    domain: "ParamDomain", constraints: Sequence[Constraint], values: Sequence[Any]
+) -> tuple[Any, ...]:
+    """Return the members of ``values`` that satisfy ``domain``'s own constraints."""
+    return tuple(
+        value for value in values if _is_value_valid_for(domain, constraints, value)
+    )
+
+
+def _merge_finite_values(own: Sequence[Any], other: Sequence[Any]) -> tuple[Any, ...]:
+    """Return the strict-kind union of two finite value sequences.
+
+    ``own`` is kept in full; values from ``other`` are appended only when no
+    value already collected matches them under
+    :func:`~fhy_core.param.values.do_param_values_match` strict-kind equality.
+    """
+    merged = list(own)
+    for value in other:
+        if not does_collection_contain_param_value(merged, value):
+            merged.append(value)
+    return tuple(merged)
+
+
+def _intersect_finite_values(
+    own: Sequence[Any], other: Sequence[Any]
+) -> tuple[Any, ...]:
+    """Return the strict-kind intersection of two finite value sequences."""
+    return tuple(
+        value for value in own if does_collection_contain_param_value(other, value)
+    )
+
+
+def _merge_non_negative_attributes(
+    left_non_negative: bool,
+    left_zero_included: bool,
+    right_non_negative: bool,
+    right_zero_included: bool,
+) -> tuple[bool, bool]:
+    """Return the conservative ``(non_negative, zero_included)`` merge for intersection.
+
+    ``non_negative`` is the OR of both operands (either operand ruling out
+    negative values rules them out for the intersection too).
+    ``zero_included`` is tightened to ``False`` when either operand is
+    non-negative and excludes zero.
+    """
+    non_negative = left_non_negative or right_non_negative
+    zero_included = not (
+        (left_non_negative and not left_zero_included)
+        or (right_non_negative and not right_zero_included)
+    )
+    return non_negative, zero_included
+
+
 class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence, ABC):
     """Sum-type family base describing the value space of a parameter kind.
 
@@ -208,6 +304,84 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
     @abstractmethod
     def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
         """Return whether some admissible value satisfies every constraint."""
+
+    def compute_union(
+        self,
+        own_constraints: Sequence[Constraint],
+        other: "ParamDomain",
+        other_constraints: Sequence[Constraint],
+        variable: Identifier,
+    ) -> tuple["ParamDomain", tuple[Constraint, ...]]:
+        """Compute the domain and constraints representing the union of two value sets.
+
+        The base implementation raises: union is representable only for
+        finite-set domain kinds that can bake both operands' effective value
+        sets into a new member set. ``OrdinalDomain`` and ``CategoricalDomain``
+        override this.
+
+        Args:
+            own_constraints: Constraints carried by the parameter owning this
+                domain (referencing that parameter's variable).
+            other: Domain of the right operand.
+            other_constraints: Constraints carried by the right operand.
+            variable: Variable of the result parameter; every returned
+                constraint is bound to it.
+
+        Returns:
+            A ``(domain, constraints)`` pair describing the union. For the
+            finite-set overrides the returned constraint tuple is always empty
+            (operand constraints are baked into the member set).
+
+        Raises:
+            TypeError: If this domain kind does not support union, or ``other``
+                is a different domain kind. Ordinal unions whose merged values
+                are not mutually comparable also raise ``TypeError``
+                (propagated from ``build_ordinal_domain``).
+            ParamError: If both operands' effective value sets are empty, so
+                the merged set would be empty.
+
+        """
+        del own_constraints, other, other_constraints, variable
+        raise TypeError(
+            f"Union is not supported for domain kind {type(self).__name__}."
+        )
+
+    @abstractmethod
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        other: "ParamDomain",
+        other_constraints: Sequence[Constraint],
+        variable: Identifier,
+    ) -> tuple["ParamDomain", tuple[Constraint, ...]]:
+        """Compute the domain and constraints representing the intersection of two sets.
+
+        Every domain kind implements intersection. Finite-set kinds bake the
+        strict-kind intersection of both operands' effective value sets into a
+        fresh member set with no constraints; permutation kinds keep the
+        member set and return the conjunction of both operands' constraints
+        rebound to ``variable``; numeric kinds merge domain attributes
+        conservatively and return the rebound constraint conjunction.
+
+        Args:
+            own_constraints: Constraints carried by the parameter owning this
+                domain.
+            other: Domain of the right operand; must be the same domain kind.
+            other_constraints: Constraints carried by the right operand.
+            variable: Variable of the result parameter; every returned
+                constraint is bound to it.
+
+        Returns:
+            A ``(domain, constraints)`` pair describing the intersection.
+
+        Raises:
+            TypeError: If ``other`` is a different domain kind, or a carried
+                constraint kind cannot be rebound.
+            ParamError: If the intersection is provably empty (finite-set
+                kinds detect this here; numeric emptiness is detected by the
+                calling factory).
+
+        """
 
     @abstractmethod
     @override
@@ -372,6 +546,33 @@ class IntegerDomain(ParamDomain):
         return _numeric_has_feasible_value(SymbolType.INT, constraints)
 
     @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        if not isinstance(other, IntegerDomain):
+            raise TypeError(
+                "Cannot intersect an IntegerDomain with a domain of type "
+                f"{type(other).__name__}."
+            )
+        non_negative, zero_included = _merge_non_negative_attributes(
+            self.non_negative,
+            self.zero_included,
+            other.non_negative,
+            other.zero_included,
+        )
+        merged_domain = IntegerDomain(
+            non_negative=non_negative, zero_included=zero_included
+        )
+        constraints = _rebind_constraints_to_variable(
+            own_constraints, variable
+        ) + _rebind_constraints_to_variable(other_constraints, variable)
+        return merged_domain, constraints
+
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, IntegerDomain)
@@ -443,6 +644,24 @@ class RealDomain(ParamDomain):
     @override
     def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
         return _numeric_has_feasible_value(SymbolType.REAL, constraints)
+
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        if not isinstance(other, RealDomain):
+            raise TypeError(
+                "Cannot intersect a RealDomain with a domain of type "
+                f"{type(other).__name__}."
+            )
+        constraints = _rebind_constraints_to_variable(
+            own_constraints, variable
+        ) + _rebind_constraints_to_variable(other_constraints, variable)
+        return RealDomain(), constraints
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:
@@ -569,6 +788,35 @@ class IntervalIntegerDomain(ParamDomain):
         return _numeric_has_feasible_value(SymbolType.INT, constraints)
 
     @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        if not isinstance(other, IntervalIntegerDomain):
+            raise TypeError(
+                "Cannot intersect an IntervalIntegerDomain with a domain of "
+                f"type {type(other).__name__}."
+            )
+        non_negative, zero_included = _merge_non_negative_attributes(
+            self.non_negative,
+            self.zero_included,
+            other.non_negative,
+            other.zero_included,
+        )
+        merged_domain = IntervalIntegerDomain(
+            prefer_inclusive=self.prefer_inclusive,
+            non_negative=non_negative,
+            zero_included=zero_included,
+        )
+        constraints = _rebind_constraints_to_variable(
+            own_constraints, variable
+        ) + _rebind_constraints_to_variable(other_constraints, variable)
+        return merged_domain, constraints
+
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, IntervalIntegerDomain)
@@ -685,6 +933,56 @@ class OrdinalDomain(ParamDomain):
         )
 
     @override
+    def compute_union(
+        self,
+        own_constraints: Sequence[Constraint],
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        del variable
+        if not isinstance(other, OrdinalDomain):
+            raise TypeError(
+                "Cannot union an OrdinalDomain with a domain of type "
+                f"{type(other).__name__}."
+            )
+        own_values = _collect_effective_finite_values(
+            self, own_constraints, self.sorted_values
+        )
+        other_values = _collect_effective_finite_values(
+            other, other_constraints, other.sorted_values
+        )
+        merged = _merge_finite_values(own_values, other_values)
+        if not merged:
+            raise ParamError("Union of ordinal value sets is empty.")
+        return build_ordinal_domain(merged), ()
+
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        del variable
+        if not isinstance(other, OrdinalDomain):
+            raise TypeError(
+                "Cannot intersect an OrdinalDomain with a domain of type "
+                f"{type(other).__name__}."
+            )
+        own_values = _collect_effective_finite_values(
+            self, own_constraints, self.sorted_values
+        )
+        other_values = _collect_effective_finite_values(
+            other, other_constraints, other.sorted_values
+        )
+        intersected = _intersect_finite_values(own_values, other_values)
+        if not intersected:
+            raise ParamError("Intersection of ordinal value sets is empty.")
+        return build_ordinal_domain(intersected), ()
+
+    @override
     def is_structurally_equivalent(self, other: object) -> bool:
         return (
             isinstance(other, OrdinalDomain)
@@ -793,6 +1091,56 @@ class CategoricalDomain(ParamDomain):
             _is_value_valid_for(self, constraints, category)
             for category in self.categories
         )
+
+    @override
+    def compute_union(
+        self,
+        own_constraints: Sequence[Constraint],
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        del variable
+        if not isinstance(other, CategoricalDomain):
+            raise TypeError(
+                "Cannot union a CategoricalDomain with a domain of type "
+                f"{type(other).__name__}."
+            )
+        own_values = _collect_effective_finite_values(
+            self, own_constraints, self.categories
+        )
+        other_values = _collect_effective_finite_values(
+            other, other_constraints, other.categories
+        )
+        merged = _merge_finite_values(own_values, other_values)
+        if not merged:
+            raise ParamError("Union of categorical value sets is empty.")
+        return build_categorical_domain(merged), ()
+
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        del variable
+        if not isinstance(other, CategoricalDomain):
+            raise TypeError(
+                "Cannot intersect a CategoricalDomain with a domain of type "
+                f"{type(other).__name__}."
+            )
+        own_values = _collect_effective_finite_values(
+            self, own_constraints, self.categories
+        )
+        other_values = _collect_effective_finite_values(
+            other, other_constraints, other.categories
+        )
+        intersected = _intersect_finite_values(own_values, other_values)
+        if not intersected:
+            raise ParamError("Intersection of categorical value sets is empty.")
+        return build_categorical_domain(intersected), ()
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:
@@ -918,6 +1266,29 @@ class PermutationDomain(ParamDomain):
             _is_value_valid_for(self, constraints, permutation)
             for permutation in itertools.permutations(self.ordered_members)
         )
+
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        if not isinstance(other, PermutationDomain):
+            raise TypeError(
+                "Cannot intersect a PermutationDomain with a domain of type "
+                f"{type(other).__name__}."
+            )
+        if not (self.is_value_set_subset(other) and other.is_value_set_subset(self)):
+            raise ParamError(
+                "Intersection of permutation domains with different member "
+                "sets is empty."
+            )
+        constraints = _rebind_constraints_to_variable(
+            own_constraints, variable
+        ) + _rebind_constraints_to_variable(other_constraints, variable)
+        return self, constraints
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:

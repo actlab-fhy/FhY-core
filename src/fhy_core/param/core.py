@@ -79,6 +79,7 @@ __all__ = [
     "create_integer_param_between",
     "create_integer_param_with_lower_bound",
     "create_integer_param_with_upper_bound",
+    "create_intersection_param",
     "create_interval_integer_param",
     "create_interval_integer_param_between",
     "create_interval_integer_param_exactly",
@@ -93,6 +94,7 @@ __all__ = [
     "create_real_param_with_lower_bound",
     "create_real_param_with_upper_bound",
     "create_single_valid_value_param",
+    "create_union_param",
 ]
 
 _LOGGER = get_logger(__name__)
@@ -402,7 +404,7 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         new_min = _combine_optional_bounds(self_min, other_min, operator.add)
         new_max = _combine_optional_bounds(self_max, other_max, operator.add)
         return _create_class_preserved_interval_param(
-            self, coerced, new_min, new_max, domain
+            self, coerced, new_min, new_max, domain, zero_included=domain.zero_included
         )
 
     def __radd__(self, other: Any) -> "Param[int]":
@@ -435,6 +437,27 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         new_min = None if self_max is None else -self_max
         new_max = None if self_min is None else -self_min
         return _create_widened_interval_param(self.variable, new_min, new_max, domain)
+
+    def __mul__(self, other: Any) -> "Param[int]":
+        if not isinstance(self.domain, IntervalIntegerDomain):
+            coerced_self = self._coerce_interval_operand(other)
+            if coerced_self is None:
+                return NotImplemented
+            return coerced_self.__mul__(other)
+        return _multiply_interval_params(self, other)
+
+    def __rmul__(self, other: Any) -> "Param[int]":
+        return self.__mul__(other)
+
+    def __or__(self, other: Any) -> "Param[_T]":
+        if not isinstance(other, Param):
+            return NotImplemented
+        return create_union_param(self, other)
+
+    def __and__(self, other: Any) -> "Param[_T]":
+        if not isinstance(other, Param):
+            return NotImplemented
+        return create_intersection_param(self, other)
 
     @override
     def __repr__(self) -> str:
@@ -687,6 +710,69 @@ def _combine_optional_bounds(
     return combine(left, right)
 
 
+# An extended-integer bound is a ``(bucket, value)`` pair: ``bucket`` is ``-1``
+# for negative infinity, ``0`` for a finite value, or ``1`` for positive
+# infinity. ``value`` carries the finite magnitude when ``bucket == 0`` and is
+# an unused placeholder otherwise. Ordinary tuple comparison then gives a
+# total order (``-inf < any finite < +inf``) without any float sentinel.
+def _to_extended_bound(value: int | None, *, is_lower: bool) -> tuple[int, int]:
+    if value is not None:
+        return (0, value)
+    return (-1, 0) if is_lower else (1, 0)
+
+
+def _multiply_extended_bounds(
+    left: tuple[int, int], right: tuple[int, int]
+) -> tuple[int, int]:
+    """Multiply two extended-integer bounds, per interval-product set semantics.
+
+    A finite zero operand forces the product to zero even against an
+    unbounded operand (0 * unbounded end == 0).
+    """
+    left_bucket, left_value = left
+    right_bucket, right_value = right
+    if left_bucket == 0 and left_value == 0:
+        return (0, 0)
+    if right_bucket == 0 and right_value == 0:
+        return (0, 0)
+    if left_bucket == 0 and right_bucket == 0:
+        return (0, left_value * right_value)
+    left_sign = left_bucket if left_bucket != 0 else (1 if left_value > 0 else -1)
+    right_sign = right_bucket if right_bucket != 0 else (1 if right_value > 0 else -1)
+    return (left_sign * right_sign, 0)
+
+
+def _from_extended_bound(extended: tuple[int, int]) -> int | None:
+    bucket, value = extended
+    return value if bucket == 0 else None
+
+
+def _multiply_optional_bounds(
+    self_min: int | None,
+    self_max: int | None,
+    other_min: int | None,
+    other_max: int | None,
+) -> tuple[int | None, int | None]:
+    """Multiply two extended-integer intervals via the four-candidate rule.
+
+    ``[self_min, self_max] x [other_min, other_max] = [min(...), max(...)]``
+    over the four pairwise products of the endpoints, where ``None`` denotes
+    an unbounded end (negative infinity for a lower bound, positive infinity
+    for an upper bound).
+    """
+    self_low = _to_extended_bound(self_min, is_lower=True)
+    self_high = _to_extended_bound(self_max, is_lower=False)
+    other_low = _to_extended_bound(other_min, is_lower=True)
+    other_high = _to_extended_bound(other_max, is_lower=False)
+    candidates = (
+        _multiply_extended_bounds(self_low, other_low),
+        _multiply_extended_bounds(self_low, other_high),
+        _multiply_extended_bounds(self_high, other_low),
+        _multiply_extended_bounds(self_high, other_high),
+    )
+    return _from_extended_bound(min(candidates)), _from_extended_bound(max(candidates))
+
+
 def _apply_interval_bounds(
     param: "Param[int]", min_int: int | None, max_int: int | None
 ) -> "Param[int]":
@@ -723,6 +809,8 @@ def _create_class_preserved_interval_param(
     min_int: int | None,
     max_int: int | None,
     template_domain: IntervalIntegerDomain,
+    *,
+    zero_included: bool,
 ) -> "Param[int]":
     other_domain = other.domain
     if (
@@ -734,7 +822,7 @@ def _create_class_preserved_interval_param(
             IntervalIntegerDomain(
                 prefer_inclusive=template_domain.prefer_inclusive,
                 non_negative=True,
-                zero_included=template_domain.zero_included,
+                zero_included=zero_included,
             ),
             variable=template.variable,
         )
@@ -767,6 +855,26 @@ def _coerce_to_interval_param(template: "Param[Any]", other: Any) -> "Param[int]
             constraints=other.constraints,
         )
     raise TypeError(f"Unsupported operand type: {type(other)}")
+
+
+def _multiply_interval_params(self: "Param[Any]", other: Any) -> "Param[int]":
+    """Body of ``__mul__`` once ``self`` is known to be an interval-integer param."""
+    domain = cast(IntervalIntegerDomain, self.domain)
+    coerced = _coerce_to_interval_param(self, other)
+    coerced_domain = cast(IntervalIntegerDomain, coerced.domain)
+    self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
+    other_min, other_max = _get_effective_min_max(coerced.constraints, coerced.variable)
+    new_min, new_max = _multiply_optional_bounds(
+        self_min, self_max, other_min, other_max
+    )
+    # Multiplication-specific zero rule: unlike addition, a non-negative
+    # product can be zero even when only one operand admits zero (e.g.
+    # ``x > 0``, ``y >= 0`` admits ``x * y == 0``), so the result includes
+    # zero whenever either operand does.
+    zero_included = domain.zero_included or coerced_domain.zero_included
+    return _create_class_preserved_interval_param(
+        self, coerced, new_min, new_max, domain, zero_included=zero_included
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1017,3 +1125,114 @@ def create_single_valid_value_param(
 ) -> Param[_CategoricalValueT]:
     """Create a parameter that admits only a single value."""
     return create_categorical_param([value], name=name)
+
+
+# ---------------------------------------------------------------------------
+# Set algebra
+# ---------------------------------------------------------------------------
+
+
+def create_union_param(
+    left: Param[_T],
+    right: Param[_T],
+    *,
+    name: Identifier | None = None,
+) -> Param[_T]:
+    """Create a parameter admitting exactly the values valid for either operand.
+
+    Both operands' constraints are folded into the result: each operand's
+    member set is filtered by its own constraints before the sets are merged,
+    so the result carries no constraints of its own.
+
+    Args:
+        left: Left operand; must have an ``OrdinalDomain`` or
+            ``CategoricalDomain``.
+        right: Right operand; must have the same domain kind as ``left``.
+        name: Variable for the result; defaults to a fresh
+            ``Identifier("param")``.
+
+    Returns:
+        A new parameter over the union of the operands' effective value sets.
+
+    Raises:
+        TypeError: If either operand's domain kind does not support union, the
+            kinds differ, or merged ordinal values are not mutually comparable.
+        ParamError: If both operands' effective value sets are empty, so the
+            union would be empty.
+
+    """
+    variable = name or Identifier("param")
+    domain, constraints = left.domain.compute_union(
+        left.constraints, right.domain, right.constraints, variable
+    )
+    return Param(domain, variable=variable, constraints=constraints)
+
+
+def _coerce_intersection_operands(
+    left: "Param[Any]", right: "Param[Any]"
+) -> tuple["Param[Any]", "Param[Any]"]:
+    """Coerce a mixed (interval-integer, plain-integer) operand pair to match kinds.
+
+    Reuses the existing ``_coerce_to_interval_param`` machinery: the plain
+    integer operand is rewrapped over an ``IntervalIntegerDomain`` so both
+    operands share a domain kind before dispatching to ``compute_intersection``.
+    Any other pairing (same kind already, or an unsupported mix) is returned
+    unchanged; kind mismatches are reported by the delegated ``compute_intersection``.
+    """
+    if isinstance(left.domain, IntervalIntegerDomain) and isinstance(
+        right.domain, IntegerDomain
+    ):
+        return left, _coerce_to_interval_param(left, right)
+    if isinstance(right.domain, IntervalIntegerDomain) and isinstance(
+        left.domain, IntegerDomain
+    ):
+        return _coerce_to_interval_param(right, left), right
+    return left, right
+
+
+def create_intersection_param(
+    left: Param[_T],
+    right: Param[_T],
+    *,
+    name: Identifier | None = None,
+) -> Param[_T]:
+    """Create a parameter admitting exactly the values valid for both operands.
+
+    Finite-set operands are intersected by baking both effective value sets;
+    permutation and numeric operands keep their domain (attributes merged
+    conservatively) and carry the conjunction of both operands' constraints
+    rebound to the result variable. A mixed pair of one interval-integer
+    parameter and one plain integer parameter whose constraints are all bound
+    expressions is supported by first coercing the plain parameter through the
+    existing interval coercion machinery.
+
+    Args:
+        left: Left operand.
+        right: Right operand; must have the same domain kind as ``left``
+            (modulo the interval/integer coercion above).
+        name: Variable for the result; defaults to a fresh
+            ``Identifier("param")``.
+
+    Returns:
+        A new parameter over the intersection of the operands' feasible sets.
+
+    Raises:
+        TypeError: If the domain kinds are incompatible or a carried constraint
+            cannot be rebound.
+        ParamError: If the intersection is provably empty (an empty finite set,
+            an empty integer interval, or a numeric constraint conjunction the
+            solver proves infeasible).
+
+    """
+    coerced_left, coerced_right = _coerce_intersection_operands(left, right)
+    variable = name or Identifier("param")
+    domain, constraints = coerced_left.domain.compute_intersection(
+        coerced_left.constraints,
+        coerced_right.domain,
+        coerced_right.constraints,
+        variable,
+    )
+    result: Param[Any] = Param(domain, variable=variable, constraints=constraints)
+    if not result.is_feasible():
+        raise ParamError("Intersection of parameters is empty.")
+    return cast("Param[_T]", result)
