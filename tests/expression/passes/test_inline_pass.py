@@ -10,7 +10,7 @@ from fhy_core.expression import (
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     inline_functions,
     register_function,
     register_native_constant,
@@ -54,10 +54,10 @@ def test_inline_functions_traverses_binary_expression_without_calls() -> None:
     assert result.is_structurally_equivalent(original)
 
 
-def test_inline_functions_preserves_ternary_expression_structurally() -> None:
-    """Test a call-free ``TernaryExpression`` is returned unchanged."""
-    original = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+def test_inline_functions_preserves_piecewise_expression_structurally() -> None:
+    """Test a call-free ``PiecewiseExpression`` is returned unchanged."""
+    original = PiecewiseExpression(
+        (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
     )
 
     result = inline_functions(original)
@@ -91,28 +91,28 @@ def test_inline_functions_substitutes_call_with_registered_body(
     assert result.is_structurally_equivalent(expected)
 
 
-def test_inline_functions_substitutes_parameter_in_ternary_body(
+def test_inline_functions_substitutes_parameter_in_piecewise_body(
     function_registry_snapshot: None,
 ) -> None:
-    """Test a ``TernaryExpression`` body is inlined with arguments substituted."""
+    """Test a ``PiecewiseExpression`` body is inlined with arguments substituted."""
     a = Identifier("a")
     b = Identifier("b")
     register_function(
-        "test_ternary_body",
+        "test_piecewise_body",
         parameters=[a, b],
         parameter_sorts=[FunctionSort.REAL, FunctionSort.REAL],
         result_sort=FunctionSort.REAL,
-        body=TernaryExpression(
-            IdentifierExpression(a) > IdentifierExpression(b),
-            IdentifierExpression(a),
+        body=PiecewiseExpression(
+            (IdentifierExpression(a) > IdentifierExpression(b),),
+            (IdentifierExpression(a),),
             IdentifierExpression(b),
         ),
     )
 
     x = LiteralExpression(7)
     y = LiteralExpression(2)
-    expression = CallExpression("test_ternary_body", (x, y))
-    expected = TernaryExpression(x > y, x, y)
+    expression = CallExpression("test_piecewise_body", (x, y))
+    expected = PiecewiseExpression((x > y,), (x,), y)
 
     result = inline_functions(expression)
 

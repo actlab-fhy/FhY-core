@@ -54,7 +54,7 @@ from fhy_core.expression.core import (
     IdentifierExpression,
     LiteralExpression,
     LiteralType,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
 )
@@ -506,11 +506,11 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             TypeQualifier.PARAM,
         )
 
-    def visit_ternary_expression(
-        self, ternary_expression: TernaryExpression
+    def visit_piecewise_expression(
+        self, piecewise_expression: PiecewiseExpression
     ) -> tuple[Type, TypeQualifier]:
-        """Infer and check the type of the ternary expression."""
-        return self._infer_ternary_expression(ternary_expression)
+        """Infer and check the type of the piecewise expression."""
+        return self._infer_piecewise_expression(piecewise_expression)
 
     def visit_call_expression(
         self, call_expression: CallExpression
@@ -538,8 +538,8 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 return self.visit_identifier_expression(expression)
             case LiteralExpression():
                 return self._infer_literal_expression(expression, expected_type)
-            case TernaryExpression():
-                return self._infer_ternary_expression(expression, expected_type)
+            case PiecewiseExpression():
+                return self._infer_piecewise_expression(expression, expected_type)
             case CallExpression():
                 return self._infer_call_expression(expression, expected_type)
             case _:
@@ -856,60 +856,76 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         )
         return operand_value_type, operand_qualifier
 
-    def _infer_ternary_expression(
+    def _infer_piecewise_expression(
         self,
-        ternary_expression: TernaryExpression,
+        piecewise_expression: PiecewiseExpression,
         expected_type: Type | None = None,
     ) -> tuple[Type, TypeQualifier]:
-        with self._context.entering(ternary_expression):
-            condition_type, condition_qualifier = self._infer(
-                ternary_expression.condition, _BOOLEAN_NUMERICAL_TYPE
+        with self._context.entering(piecewise_expression):
+            branch_expected = self._piecewise_branch_expected_type(expected_type)
+
+            condition_qualifiers: list[TypeQualifier] = []
+            for index, condition in enumerate(piecewise_expression.conditions):
+                condition_type, condition_qualifier = self._infer(
+                    condition, _BOOLEAN_NUMERICAL_TYPE
+                )
+                condition_value_type = self._as_expression_value_type(
+                    condition, condition_type
+                )
+                if not _is_boolean_numerical_type(condition_value_type):
+                    raise self._context.type_error(
+                        f"piecewise case {index} condition must be boolean, but "
+                        f"got {condition_value_type}"
+                    )
+                condition_qualifiers.append(condition_qualifier)
+
+            value_value_types: list[NumericalType] = []
+            value_qualifiers: list[TypeQualifier] = []
+            for index, value in enumerate(piecewise_expression.values):
+                value_type, value_qualifier = self._infer(value, branch_expected)
+                value_value_type = self._as_expression_value_type(value, value_type)
+                if not isinstance(value_value_type, NumericalType):
+                    raise self._context.type_error(
+                        "piecewise case values and otherwise must all be scalar "
+                        f"numerical types, but got {value_value_type} for case "
+                        f"{index}"
+                    )
+                value_value_types.append(value_value_type)
+                value_qualifiers.append(value_qualifier)
+
+            otherwise_type, otherwise_qualifier = self._infer(
+                piecewise_expression.otherwise, branch_expected
             )
-            condition_value_type = self._as_expression_value_type(
-                ternary_expression.condition, condition_type
+            otherwise_value_type = self._as_expression_value_type(
+                piecewise_expression.otherwise, otherwise_type
             )
-            if not _is_boolean_numerical_type(condition_value_type):
+            if not isinstance(otherwise_value_type, NumericalType):
                 raise self._context.type_error(
-                    f"ternary condition must be boolean, but got {condition_value_type}"
+                    "piecewise case values and otherwise must all be scalar "
+                    f"numerical types, but got {otherwise_value_type} for otherwise"
                 )
 
-            branch_expected = self._ternary_branch_expected_type(expected_type)
-
-            true_type, true_qualifier = self._infer(
-                ternary_expression.true_value, branch_expected
-            )
-            false_type, false_qualifier = self._infer(
-                ternary_expression.false_value, branch_expected
-            )
-
-            true_value_type = self._as_expression_value_type(
-                ternary_expression.true_value, true_type
-            )
-            false_value_type = self._as_expression_value_type(
-                ternary_expression.false_value, false_type
-            )
-
-            if not (
-                isinstance(true_value_type, NumericalType)
-                and isinstance(false_value_type, NumericalType)
-            ):
-                raise self._context.type_error(
-                    "ternary branches must both be scalar numerical types, but "
-                    f"got {true_value_type} and {false_value_type}"
+            result_primitive = _get_primitive_data_type(value_value_types[0])
+            for value_value_type in value_value_types[1:]:
+                result_primitive = promote_primitive_data_types(
+                    result_primitive, _get_primitive_data_type(value_value_type)
                 )
-
             result_primitive = promote_primitive_data_types(
-                _get_primitive_data_type(true_value_type),
-                _get_primitive_data_type(false_value_type),
+                result_primitive, _get_primitive_data_type(otherwise_value_type)
             )
-            result_qualifier = promote_type_qualifiers(
-                condition_qualifier,
-                promote_type_qualifiers(true_qualifier, false_qualifier),
-            )
+
+            result_qualifier = condition_qualifiers[0]
+            for qualifier in (
+                *condition_qualifiers[1:],
+                *value_qualifiers,
+                otherwise_qualifier,
+            ):
+                result_qualifier = promote_type_qualifiers(result_qualifier, qualifier)
+
             return NumericalType(result_primitive), result_qualifier
 
     @staticmethod
-    def _ternary_branch_expected_type(
+    def _piecewise_branch_expected_type(
         expected_type: Type | None,
     ) -> Type | None:
         if isinstance(expected_type, NumericalType) and expected_type.is_scalar():

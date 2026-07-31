@@ -27,10 +27,11 @@ does still raise for operations it rejects outright rather than folding to
 power (``numpy.power``) -- and such a ``ValueError`` surfaces wrapped in
 ``PassExecutionError``.
 
-A ternary lowers to ``numpy.where``, which is not lazy: both branches are
-evaluated for every element before selection. A domain error in the
-*untaken* branch still produces its ``nan``/``inf`` (and warning); the
-condition does not guard its sibling branch from evaluation.
+A piecewise expression lowers to a right-folded chain of ``numpy.where``
+calls, one per case. This is not lazy: every case value and ``otherwise``
+are evaluated for every element before selection. A domain error in an
+*unselected* case still produces its ``nan``/``inf`` (and warning); the
+conditions do not guard their sibling cases from evaluation.
 
 Expression-bodied built-ins (``relu``, ``sigmoid``, ``clamp``, ...) are
 inlined automatically before the walk via ``inline_functions``, so the
@@ -65,7 +66,7 @@ from ..core import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
 )
@@ -253,19 +254,26 @@ class NumpyExpressionEvaluator(VisitablePass[Expression, "NumpyResult"]):
         ufunc = getattr(self._numpy, _BINARY_UFUNC_NAMES[expression.operation])
         return ufunc(left, right)
 
-    def visit_ternary_expression(self, expression: TernaryExpression) -> Any:
-        """Select elementwise between the branches with ``numpy.where``.
+    def visit_piecewise_expression(self, expression: PiecewiseExpression) -> Any:
+        """Select elementwise via a right-folded chain of ``numpy.where`` calls.
 
-        ``numpy.where`` is not lazy: both branches are evaluated for every
-        element before selection, so a domain error (division by zero,
-        ``log`` of a non-positive) in the *untaken* branch still produces
-        its ``nan``/``inf`` and NumPy warning -- the condition does not
-        guard its sibling branch from evaluation.
+        Every case value and ``otherwise`` are evaluated for every
+        element before selection (``numpy.where`` is not lazy), so a
+        domain error (division by zero, ``log`` of a non-positive) in an
+        unselected case still produces its ``nan``/``inf`` and NumPy
+        warning -- the conditions do not guard their sibling cases from
+        evaluation. The chain is right-folded from ``otherwise``, so the
+        first case's ``numpy.where`` is outermost and first-match-wins
+        holds.
         """
-        condition = self.visit(expression.condition)
-        true_value = self.visit(expression.true_value)
-        false_value = self.visit(expression.false_value)
-        return self._numpy.where(condition, true_value, false_value)
+        case_values = [
+            (self.visit(condition), self.visit(value))
+            for condition, value in expression.get_cases()
+        ]
+        result = self.visit(expression.otherwise)
+        for condition_value, value_value in reversed(case_values):
+            result = self._numpy.where(condition_value, value_value, result)
+        return result
 
     def visit_call_expression(self, expression: CallExpression) -> Any:
         """Apply a native call's NumPy operation, then cast to its result sort.
@@ -348,7 +356,7 @@ def evaluate_expression_with_numpy(
     Returns:
         The evaluated value: a NumPy array when any bound variable is
         array-valued. For a fully scalar environment the result is a NumPy
-        or Python scalar, except that a ternary- or bare-identifier-rooted
+        or Python scalar, except that a piecewise- or bare-identifier-rooted
         expression returns a rank-0 ``ndarray``. A native call's result is
         cast to the dtype of its declared result sort (so
         ``floor``/``round``/``ceil`` yield integers); every other node's
@@ -356,9 +364,10 @@ def evaluate_expression_with_numpy(
         conditions (``sqrt(-1)``, ``log(0)``, division by zero) follow
         NumPy and yield ``nan``/``inf`` rather than raising -- unlike
         ``evaluate_expression``, whose scalar native implementations raise.
-        A ternary evaluates both branches for every element (it lowers to
-        ``numpy.where``), so a domain error in the untaken branch is not
-        suppressed by the condition.
+        A piecewise expression evaluates every case value and ``otherwise``
+        for every element (it lowers to a chain of ``numpy.where`` calls),
+        so a domain error in an unselected case is not suppressed by its
+        condition.
 
     Raises:
         ImportError: If NumPy is not installed. Raised directly, before

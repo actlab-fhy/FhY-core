@@ -24,7 +24,7 @@ from fhy_core.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     convert_expression_to_z3_expression,
@@ -649,20 +649,22 @@ def test_does_expression_imply_raises_on_missing_symbol_type() -> None:
 
 
 # =============================================================================
-# TernaryExpression -> z3.If
+# PiecewiseExpression -> z3.If
 # =============================================================================
 
 
-def test_convert_ternary_expression_to_z3_if() -> None:
-    """Test ``TernaryExpression`` lowers to ``z3.If``."""
+def test_convert_single_case_piecewise_expression_to_z3_if() -> None:
+    """Test a one-case ``PiecewiseExpression`` lowers to ``z3.If``."""
     x = mock_identifier("x", 0)
-    expression = TernaryExpression(
-        BinaryExpression(
-            BinaryOperation.GREATER,
-            IdentifierExpression(x),
-            LiteralExpression(0),
+    expression = PiecewiseExpression(
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER,
+                IdentifierExpression(x),
+                LiteralExpression(0),
+            ),
         ),
-        IdentifierExpression(x),
+        (IdentifierExpression(x),),
         UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(x)),
     )
 
@@ -673,12 +675,12 @@ def test_convert_ternary_expression_to_z3_if() -> None:
     assert isinstance(z3_expression, z3.ExprRef)
 
 
-def test_convert_ternary_with_boolean_literal_branches_to_z3_if() -> None:
-    """Test ``cond ? True : False`` lowers cleanly via z3 with bool symbols."""
+def test_convert_piecewise_with_boolean_literal_branches_to_z3_if() -> None:
+    """Test ``{True if cond; False otherwise}`` lowers cleanly with bool symbols."""
     flag = mock_identifier("flag", 0)
-    expression = TernaryExpression(
-        IdentifierExpression(flag),
-        LiteralExpression(True),
+    expression = PiecewiseExpression(
+        (IdentifierExpression(flag),),
+        (LiteralExpression(True),),
         LiteralExpression(False),
     )
 
@@ -687,6 +689,42 @@ def test_convert_ternary_with_boolean_literal_branches_to_z3_if() -> None:
     )
 
     assert isinstance(z3_expression, z3.ExprRef)
+
+
+def test_multi_case_piecewise_z3_lowering_matches_hand_nested_encoding() -> None:
+    """Test a flat multi-case piecewise's z3 lowering equals a hand-nested equivalent.
+
+    First-match-wins semantics guarantee ``{1 if x > 0; -1 if x < 0;
+    0 otherwise}`` denotes exactly the same value as the hand-nested
+    ``{1 if x > 0; otherwise {-1 if x < 0; 0 otherwise}}``. Establishing
+    ``does_expression_imply`` both ways over ``result == <expr>`` proves
+    the flat right-folded ``z3.If`` chain the multi-case node lowers to
+    is logically equivalent to the nested one.
+    """
+    x = mock_identifier("x", 0)
+    result = mock_identifier("result", 1)
+    x_expression = IdentifierExpression(x)
+    result_expression = IdentifierExpression(result)
+
+    flat = PiecewiseExpression(
+        (x_expression > 0, x_expression < 0),
+        (LiteralExpression(1), LiteralExpression(-1)),
+        LiteralExpression(0),
+    )
+    nested = PiecewiseExpression(
+        (x_expression > 0,),
+        (LiteralExpression(1),),
+        PiecewiseExpression(
+            (x_expression < 0,), (LiteralExpression(-1),), LiteralExpression(0)
+        ),
+    )
+
+    flat_holds = BinaryExpression(BinaryOperation.EQUAL, result_expression, flat)
+    nested_holds = BinaryExpression(BinaryOperation.EQUAL, result_expression, nested)
+    symbol_types = {x: SymbolType.INT, result: SymbolType.INT}
+
+    assert does_expression_imply(flat_holds, nested_holds, symbol_types) is True
+    assert does_expression_imply(nested_holds, flat_holds, symbol_types) is True
 
 
 # =============================================================================

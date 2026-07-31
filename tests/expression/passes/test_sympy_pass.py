@@ -12,7 +12,7 @@ from fhy_core.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     convert_expression_to_sympy_expression,
@@ -811,24 +811,26 @@ def test_sympy_two_argument_helper_rejects_wrong_arg_count() -> None:
 
 
 # =============================================================================
-# TernaryExpression <-> SymPy.Piecewise
+# PiecewiseExpression <-> SymPy.Piecewise
 # =============================================================================
 
 
-def test_convert_ternary_expression_to_sympy_piecewise() -> None:
-    """Test ``TernaryExpression`` lowers to a ``sympy.Piecewise`` two-branch form.
+def test_convert_single_case_piecewise_expression_to_sympy_piecewise() -> None:
+    """Test a one-case ``PiecewiseExpression`` lowers to a two-branch ``Piecewise``.
 
     The condition is symbolic so sympy does not fold the ``Piecewise``
     at construction time.
     """
     x_identifier = mock_identifier("x", 0)
-    expression = TernaryExpression(
-        BinaryExpression(
-            BinaryOperation.GREATER,
-            IdentifierExpression(x_identifier),
-            LiteralExpression(0),
+    expression = PiecewiseExpression(
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER,
+                IdentifierExpression(x_identifier),
+                LiteralExpression(0),
+            ),
         ),
-        LiteralExpression(1),
+        (LiteralExpression(1),),
         LiteralExpression(2),
     )
 
@@ -837,8 +839,72 @@ def test_convert_ternary_expression_to_sympy_piecewise() -> None:
     assert isinstance(result, sympy.Piecewise)
 
 
-def test_sympy_piecewise_lifts_to_ternary_expression() -> None:
-    """Test a two-branch ``sympy.Piecewise`` lifts back to a ``TernaryExpression``.
+def test_convert_piecewise_expression_emits_true_guarded_otherwise_branch() -> None:
+    """Test the lowered ``sympy.Piecewise`` trailing branch is guarded by ``True``.
+
+    Every case becomes a ``(value, condition)`` pair (SymPy's pair order
+    is reversed from ours); the final branch pairs ``otherwise`` with an
+    unconditional ``True`` guard so the result is total.
+    """
+    x_identifier = mock_identifier("x", 0)
+    expression = PiecewiseExpression(
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER,
+                IdentifierExpression(x_identifier),
+                LiteralExpression(0),
+            ),
+        ),
+        (LiteralExpression(1),),
+        LiteralExpression(2),
+    )
+
+    result = convert_expression_to_sympy_expression(expression)
+
+    assert isinstance(result, sympy.Piecewise)
+    last_value, last_condition = result.args[-1]
+    assert last_value == sympy.Integer(2)
+    assert last_condition == sympy.true
+
+
+def test_convert_multi_case_piecewise_expression_to_sympy_emits_every_case() -> None:
+    """Test a multi-case ``PiecewiseExpression`` lowers with one branch per case."""
+    x_identifier = mock_identifier("x", 0)
+    x_symbol = IdentifierExpression(x_identifier)
+    expression = PiecewiseExpression(
+        (x_symbol > 0, x_symbol < 0),
+        (LiteralExpression(1), LiteralExpression(-1)),
+        LiteralExpression(0),
+    )
+
+    result = convert_expression_to_sympy_expression(expression)
+
+    assert isinstance(result, sympy.Piecewise)
+    NUM_EXPECTED_BRANCHES = 3
+    assert len(result.args) == NUM_EXPECTED_BRANCHES
+
+
+def test_single_branch_sympy_piecewise_degenerates_to_bare_value() -> None:
+    """Test a single-branch ``sympy.Piecewise`` lifts directly to its value.
+
+    A ``True``-condition single branch collapses to a bare SymPy value
+    before it ever reaches the lifter, so the only single-branch
+    ``Piecewise`` object that survives construction has a symbolic
+    condition. The lifter still degenerates it to the converted value,
+    dropping the (never-checked) condition, rather than wrapping it in
+    a ``PiecewiseExpression``.
+    """
+    sympy_expression = sympy.Piecewise(
+        (sympy.Integer(5), sympy.Symbol("flag_0")), evaluate=False
+    )
+
+    result = convert_sympy_expression_to_expression(sympy_expression)
+
+    assert result.is_structurally_equivalent(LiteralExpression(5))
+
+
+def test_two_branch_sympy_piecewise_lifts_to_single_case_piecewise_expression() -> None:
+    """Test a two-branch ``sympy.Piecewise`` lifts back to a one-case ``Piecewise``.
 
     The first branch's condition is symbolic so sympy does not fold the
     ``Piecewise`` at construction.
@@ -849,23 +915,72 @@ def test_sympy_piecewise_lifts_to_ternary_expression() -> None:
 
     result = convert_sympy_expression_to_expression(sympy_expression)
 
-    assert isinstance(result, TernaryExpression)
+    assert isinstance(result, PiecewiseExpression)
+    assert len(result.conditions) == 1
+    assert result.values[0].is_structurally_equivalent(LiteralExpression(1))
+    assert result.otherwise.is_structurally_equivalent(LiteralExpression(2))
 
 
-def test_ternary_expression_round_trips_through_sympy() -> None:
-    """Test ``TernaryExpression`` round-trips structurally through SymPy.
+def test_multi_branch_sympy_piecewise_lifts_to_one_flat_piecewise_expression() -> None:
+    """Test a multi-branch ``sympy.Piecewise`` lifts to a single flat node.
 
-    Both branches are leaves whose sympy lowerings preserve their shape;
-    unary-negate branches do not round-trip because sympy represents
+    A three-branch ``sympy.Piecewise`` produces exactly one
+    ``PiecewiseExpression`` with two cases and one ``otherwise`` --
+    not a tree of nested one-case nodes.
+    """
+    sympy_expression = sympy.Piecewise(
+        (sympy.Integer(1), sympy.Symbol("flag_0")),
+        (sympy.Integer(2), sympy.Symbol("flag_1")),
+        (sympy.Integer(3), True),
+    )
+
+    result = convert_sympy_expression_to_expression(sympy_expression)
+
+    assert isinstance(result, PiecewiseExpression)
+    NUM_EXPECTED_CASES = 2
+    assert len(result.conditions) == NUM_EXPECTED_CASES
+    assert not isinstance(result.otherwise, PiecewiseExpression)
+    assert result.values[0].is_structurally_equivalent(LiteralExpression(1))
+    assert result.values[1].is_structurally_equivalent(LiteralExpression(2))
+    assert result.otherwise.is_structurally_equivalent(LiteralExpression(3))
+
+
+def test_sympy_piecewise_lift_silently_drops_a_non_true_final_condition() -> None:
+    """Test the lifter treats the final branch's value as ``otherwise`` regardless.
+
+    Even when the final branch's condition is not ``sympy.true`` (a
+    genuinely partial ``Piecewise``), the lifter still takes its value
+    as ``otherwise`` and drops the condition, rather than raising.
+    """
+    sympy_expression = sympy.Piecewise(
+        (sympy.Integer(1), sympy.Symbol("flag_0")),
+        (sympy.Integer(2), sympy.Symbol("flag_1")),
+    )
+
+    result = convert_sympy_expression_to_expression(sympy_expression)
+
+    assert isinstance(result, PiecewiseExpression)
+    assert len(result.conditions) == 1
+    assert result.otherwise.is_structurally_equivalent(LiteralExpression(2))
+
+
+def test_single_case_piecewise_expression_round_trips_through_sympy() -> None:
+    """Test a one-case ``PiecewiseExpression`` round-trips structurally through SymPy.
+
+    Both operands are leaves whose sympy lowerings preserve their shape;
+    unary-negate values do not round-trip because sympy represents
     ``-x`` as ``Mul(-1, x)``.
     """
-    original = TernaryExpression(
-        BinaryExpression(
-            BinaryOperation.GREATER,
-            IdentifierExpression(mock_identifier("x", 0)),
-            LiteralExpression(0),
+    x_identifier = mock_identifier("x", 0)
+    original = PiecewiseExpression(
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER,
+                IdentifierExpression(x_identifier),
+                LiteralExpression(0),
+            ),
         ),
-        IdentifierExpression(mock_identifier("x", 0)),
+        (IdentifierExpression(x_identifier),),
         LiteralExpression(0),
     )
 

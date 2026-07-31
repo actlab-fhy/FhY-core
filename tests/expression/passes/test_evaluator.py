@@ -9,7 +9,7 @@ substitutions:
 2. ``IdentifierExpression`` whose identifier name matches a registered
    ``NativeConstant`` becomes ``LiteralExpression(constant.value)``.
 
-Every other node kind (arithmetic, comparison, logical, ternary,
+Every other node kind (arithmetic, comparison, logical, piecewise,
 non-native calls, calls with at least one non-literal argument,
 identifier references that do not match a constant) is reconstructed
 with its evaluated children but otherwise left as-is. The evaluator
@@ -30,7 +30,7 @@ from fhy_core.expression import (
     IdentifierExpression,
     LiteralExpression,
     NativeFunction,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     call,
@@ -304,17 +304,17 @@ def test_evaluate_does_not_fold_unary_negation_of_literal() -> None:
     assert result.operation == UnaryOperation.NEGATE
 
 
-def test_evaluate_does_not_fold_literal_only_ternary() -> None:
-    """Test ``True ? 1 : 2`` is left intact."""
-    expression = TernaryExpression(
-        LiteralExpression(True),
-        LiteralExpression(1),
+def test_evaluate_does_not_fold_literal_only_piecewise() -> None:
+    """Test ``{1 if True; 2 otherwise}`` is left intact."""
+    expression = PiecewiseExpression(
+        (LiteralExpression(True),),
+        (LiteralExpression(1),),
         LiteralExpression(2),
     )
 
     result = evaluate_expression(expression)
 
-    assert isinstance(result, TernaryExpression)
+    assert isinstance(result, PiecewiseExpression)
 
 
 # =============================================================================
@@ -341,23 +341,23 @@ def test_evaluate_recurses_into_binary_expression_children(
     assert result.right.is_structurally_equivalent(LiteralExpression(1))
 
 
-def test_evaluate_recurses_into_ternary_branches(
+def test_evaluate_recurses_into_piecewise_branches(
     function_registry_snapshot: None,
 ) -> None:
-    """Test the evaluator folds native calls within the ternary's branches."""
-    register_real_unary_native("test_eval_into_ternary", math.exp)
+    """Test the evaluator folds native calls within the piecewise's branches."""
+    register_real_unary_native("test_eval_into_piecewise", math.exp)
     x = Identifier("x")
 
-    expression = TernaryExpression(
-        IdentifierExpression(x) > 0,
-        call("test_eval_into_ternary", LiteralExpression(0.0)),
+    expression = PiecewiseExpression(
+        (IdentifierExpression(x) > 0,),
+        (call("test_eval_into_piecewise", LiteralExpression(0.0)),),
         LiteralExpression(0),
     )
     result = evaluate_expression(expression)
 
-    assert isinstance(result, TernaryExpression)
-    assert isinstance(result.true_value, LiteralExpression)
-    assert result.true_value.value == 1.0
+    assert isinstance(result, PiecewiseExpression)
+    assert isinstance(result.values[0], LiteralExpression)
+    assert result.values[0].value == 1.0
 
 
 # =============================================================================

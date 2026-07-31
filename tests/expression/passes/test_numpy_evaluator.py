@@ -26,9 +26,9 @@ from fhy_core.expression import (
     call,
     evaluate_expression_with_numpy,
     get_registered_entries,
+    piecewise,
     register_function,
     register_native_function,
-    ternary,
 )
 from fhy_core.expression.passes.numpy import (
     _BINARY_UFUNC_NAMES,
@@ -515,15 +515,15 @@ def test_resolves_native_constant_within_expression() -> None:
 
 
 # =============================================================================
-# Ternary selection
+# Piecewise selection
 # =============================================================================
 
 
-def test_evaluates_ternary_as_elementwise_select() -> None:
-    """Test a ternary computes absolute value elementwise via select."""
+def test_evaluates_single_case_piecewise_as_elementwise_select() -> None:
+    """Test a one-case piecewise computes absolute value elementwise via select."""
     x = mock_identifier("x", 0)
     x_expression = IdentifierExpression(x)
-    expression = ternary(x_expression > 0.0, x_expression, -x_expression)
+    expression = piecewise((x_expression > 0.0, x_expression), otherwise=-x_expression)
     values = np.array([-2.0, 3.0, -4.0, 0.0])
 
     result = evaluate_expression_with_numpy(expression, {x: values})
@@ -531,12 +531,14 @@ def test_evaluates_ternary_as_elementwise_select() -> None:
     assert np.allclose(result, [2.0, 3.0, 4.0, 0.0])
 
 
-def test_ternary_selects_between_two_arrays() -> None:
-    """Test a ternary selects elementwise between two bound arrays."""
+def test_single_case_piecewise_selects_between_two_arrays() -> None:
+    """Test a one-case piecewise selects elementwise between two bound arrays."""
     condition = mock_identifier("c", 0)
     true_values = mock_identifier("t", 1)
     false_values = mock_identifier("f", 2)
-    expression = ternary(IdentifierExpression(condition), true_values, false_values)
+    expression = piecewise(
+        (IdentifierExpression(condition), true_values), otherwise=false_values
+    )
     mask = np.array([True, False, True])
     on_true = np.array([10.0, 20.0, 30.0])
     on_false = np.array([1.0, 2.0, 3.0])
@@ -547,6 +549,142 @@ def test_ternary_selects_between_two_arrays() -> None:
     )
 
     assert np.allclose(result, [10.0, 2.0, 30.0])
+
+
+def test_multi_case_piecewise_selects_first_matching_case_per_element() -> None:
+    """Test the numpy lowering is first-match-wins under overlapping conditions.
+
+    Every element satisfies both ``x > -100.0`` and ``x > 0.0``; the first
+    case in declaration order must win, not the last.
+    """
+    x = mock_identifier("x", 0)
+    x_expression = IdentifierExpression(x)
+    expression = piecewise(
+        (x_expression > -100.0, LiteralExpression(1)),
+        (x_expression > 0.0, LiteralExpression(2)),
+        otherwise=LiteralExpression(3),
+    )
+    values = np.array([-5.0, 5.0, 50.0])
+
+    result = evaluate_expression_with_numpy(expression, {x: values})
+
+    assert np.array_equal(result, [1, 1, 1])
+
+
+def test_multi_case_piecewise_falls_through_to_second_case() -> None:
+    """Test an element failing the first case is selected by the second case."""
+    x = mock_identifier("x", 0)
+    x_expression = IdentifierExpression(x)
+    expression = piecewise(
+        (x_expression > 0.0, LiteralExpression(1)),
+        (x_expression < 0.0, LiteralExpression(-1)),
+        otherwise=LiteralExpression(0),
+    )
+    values = np.array([5.0, -5.0, 0.0])
+
+    result = evaluate_expression_with_numpy(expression, {x: values})
+
+    assert np.array_equal(result, [1, -1, 0])
+
+
+def test_piecewise_with_duplicate_identical_conditions_selects_first() -> None:
+    """Test two cases with the exact same condition still resolve first-match-wins.
+
+    Distinct from overlapping-but-different conditions: both cases here
+    test the identical predicate, so only declaration order distinguishes
+    them.
+    """
+    x = mock_identifier("x", 0)
+    x_expression = IdentifierExpression(x)
+    expression = piecewise(
+        (x_expression > 0.0, LiteralExpression(1)),
+        (x_expression > 0.0, LiteralExpression(2)),
+        otherwise=LiteralExpression(0),
+    )
+    values = np.array([-1.0, 1.0])
+
+    result = evaluate_expression_with_numpy(expression, {x: values})
+
+    assert np.array_equal(result, [0, 1])
+
+
+def test_piecewise_with_over_one_hundred_cases_selects_correctly() -> None:
+    """Test a piecewise with well over one hundred cases selects the right value.
+
+    Guards the right-folded ``numpy.where`` chain against case counts far
+    beyond the two- and three-case examples used elsewhere in this file.
+    """
+    NUM_CASES = 150
+    x = mock_identifier("x", 0)
+    x_expression = IdentifierExpression(x)
+    cases = tuple(
+        (x_expression.equals(float(i)), LiteralExpression(i)) for i in range(NUM_CASES)
+    )
+    expression = piecewise(*cases, otherwise=LiteralExpression(-1))
+    values = np.array([0.0, 37.0, 149.0, 150.0, 75.5])
+
+    result = evaluate_expression_with_numpy(expression, {x: values})
+
+    assert np.array_equal(result, [0, 37, 149, -1, -1])
+
+
+def test_unselected_case_domain_error_still_warns_and_is_discarded() -> None:
+    """Test a domain error in a never-selected case still warns (no laziness).
+
+    ``numpy.where`` evaluates every case eagerly regardless of which one
+    is ultimately selected, so a domain error (``log`` of zero) in a case
+    whose condition is always false still raises NumPy's usual warning
+    and produces ``nan``/``inf`` for that case -- even though the value
+    is discarded and never appears in the final result.
+    """
+    x = mock_identifier("x", 0)
+    x_expression = IdentifierExpression(x)
+    never_true = x_expression > 1000.0
+    expression = piecewise(
+        (never_true, call("log", x_expression)), otherwise=LiteralExpression(0.0)
+    )
+    values = np.array([0.0])
+
+    with pytest.warns(RuntimeWarning, match="divide by zero"):
+        result = evaluate_expression_with_numpy(expression, {x: values})
+
+    assert np.allclose(result, [0.0])
+
+
+def test_piecewise_broadcasts_scalar_case_value_against_array_otherwise() -> None:
+    """Test a scalar case value broadcasts against an array-valued ``otherwise``."""
+    condition = mock_identifier("c", 0)
+    otherwise_values = mock_identifier("o", 1)
+    expression = piecewise(
+        (IdentifierExpression(condition), LiteralExpression(9.0)),
+        otherwise=IdentifierExpression(otherwise_values),
+    )
+    mask = np.array([True, False, True])
+    otherwise_array = np.array([1.0, 2.0, 3.0])
+
+    result = evaluate_expression_with_numpy(
+        expression, {condition: mask, otherwise_values: otherwise_array}
+    )
+
+    assert np.allclose(result, [9.0, 2.0, 9.0])
+
+
+def test_piecewise_broadcasts_array_case_value_against_scalar_otherwise() -> None:
+    """Test an array-valued case value broadcasts against a scalar ``otherwise``."""
+    condition = mock_identifier("c", 0)
+    case_values = mock_identifier("v", 1)
+    expression = piecewise(
+        (IdentifierExpression(condition), IdentifierExpression(case_values)),
+        otherwise=LiteralExpression(-1.0),
+    )
+    mask = np.array([True, False, True])
+    values = np.array([10.0, 20.0, 30.0])
+
+    result = evaluate_expression_with_numpy(
+        expression, {condition: mask, case_values: values}
+    )
+
+    assert np.allclose(result, [10.0, -1.0, 30.0])
 
 
 # =============================================================================
