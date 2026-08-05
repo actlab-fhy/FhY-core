@@ -1,4 +1,4 @@
-"""End-to-end user-story and integration tests for the expression-functions feature.
+"""End-to-end user-story and integration tests for expression functions.
 
 These exercise the public surface (registry, inliner, type-checker,
 pretty-printer) in shapes that mirror real callers. They are
@@ -30,6 +30,8 @@ from fhy_core.types import (
     Type,
     TypeQualifier,
 )
+
+from .conftest import mock_identifier
 
 
 def _scalar(core_data_type: CoreDataType) -> NumericalType:
@@ -113,9 +115,9 @@ def test_user_story_clamp_a_value_between_low_and_high() -> None:
     a valid bound. They build the call via the public ``call`` helper and
     rely on inlining to substitute the body.
     """
-    low = Identifier("low")
-    high = Identifier("high")
-    value = Identifier("value")
+    low = mock_identifier("low", 0)
+    high = mock_identifier("high", 1)
+    value = mock_identifier("value", 2)
 
     expression = call(
         "max",
@@ -164,9 +166,9 @@ def test_user_story_predicate_guarded_fallback_with_piecewise() -> None:
     They build the expression directly via the public ``piecewise``
     helper.
     """
-    x = Identifier("x")
-    sqrt_path = Identifier("sqrt_path")
-    fallback_path = Identifier("fallback_path")
+    x = mock_identifier("x", 0)
+    sqrt_path = mock_identifier("sqrt_path", 1)
+    fallback_path = mock_identifier("fallback_path", 2)
 
     expression = piecewise(
         (IdentifierExpression(x) > 0, IdentifierExpression(sqrt_path)),
@@ -201,7 +203,7 @@ def test_user_story_register_and_inline_custom_abs_function(
     and then references it. Inlining substitutes the body. The inlined
     expression should match an equivalent hand-built tree.
     """
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     register_function(
         "test_user_story_abs",
         parameters=[parameter],
@@ -213,7 +215,7 @@ def test_user_story_register_and_inline_custom_abs_function(
         ),
     )
 
-    y = Identifier("y")
+    y = mock_identifier("y", 1)
     expression = call("test_user_story_abs", IdentifierExpression(y))
     inlined = inline_functions(expression)
     expected = PiecewiseExpression(

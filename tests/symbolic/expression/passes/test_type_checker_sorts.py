@@ -1,9 +1,9 @@
 """Type-checker tests for the sort-driven call-site path and constant references.
 
-The call-site type checker now uses the registered function's declared
-sorts (rather than re-walking its body) to validate arguments and to
-synthesize the result type. For each argument, the synthesized core
-data type is checked against the corresponding parameter sort via
+The call-site type checker validates arguments against the registered
+function's declared sorts and synthesizes the result type from them.
+For each argument, the synthesized core data type is checked against
+the corresponding parameter sort via
 ``is_core_data_type_compatible_with_sort``; the result type is the
 sort-derived weak core data type wrapped in
 ``NumericalType(PrimitiveDataType(...))``.
@@ -13,9 +13,8 @@ registry when the local lookup does not bind the identifier; the
 synthesized type is the constant's sort-derived weak type, qualifier
 ``PARAM``.
 
-The tests are scoped tightly around the new behavior; existing
-arithmetic and piecewise cases remain in ``test_type_checker.py`` and
-``test_type_checker_booleans.py``.
+Arithmetic and piecewise cases are covered in ``test_type_checker.py``
+and ``test_type_checker_booleans.py``.
 """
 
 import math
@@ -44,6 +43,8 @@ from fhy_core.types import (
     Type,
     TypeQualifier,
 )
+
+from ..conftest import mock_identifier
 
 
 def _scalar(core_data_type: CoreDataType) -> NumericalType:
@@ -151,7 +152,7 @@ class TestNativeCallSiteSortInference:
     ) -> None:
         """Test a `TEMP` argument promotes the call qualifier to `TEMP`."""
         register_real_unary_native("test_tc_temp_qualifier")
-        x = Identifier("x")
+        x = mock_identifier("x", 0)
         expression = call("test_tc_temp_qualifier", x)
 
         lookup = _single_lookup(x, _scalar(CoreDataType.FLOAT64), TypeQualifier.TEMP)
@@ -255,7 +256,7 @@ class TestExpressionBodiedCallSiteSortInference:
         self, function_registry_snapshot: None
     ) -> None:
         """Test the call-site type is built from the declared `result_sort`."""
-        parameter = Identifier("x")
+        parameter = mock_identifier("x", 0)
         register_function(
             "test_tc_expr_bodied_real",
             parameters=[parameter],
@@ -273,7 +274,7 @@ class TestExpressionBodiedCallSiteSortInference:
         self, function_registry_snapshot: None
     ) -> None:
         """Test the call-site validates arguments against declared parameter sorts."""
-        parameter = Identifier("x")
+        parameter = mock_identifier("x", 0)
         register_function(
             "test_tc_expr_bodied_arg_sort",
             parameters=[parameter],
@@ -304,7 +305,7 @@ class TestNativeConstantTypeInference:
         register_native_constant(
             "test_tc_const_real", sort=FunctionSort.REAL, value=math.pi
         )
-        expression = IdentifierExpression(Identifier("test_tc_const_real"))
+        expression = IdentifierExpression(mock_identifier("test_tc_const_real", 0))
 
         # The local lookup is not consulted because the identifier
         # resolves through the registry.
@@ -320,7 +321,7 @@ class TestNativeConstantTypeInference:
     ) -> None:
         """Test an `INT`-sort constant reference yields concrete `INT64`."""
         register_native_constant("test_tc_const_int", sort=FunctionSort.INT, value=42)
-        expression = IdentifierExpression(Identifier("test_tc_const_int"))
+        expression = IdentifierExpression(mock_identifier("test_tc_const_int", 0))
 
         result_type, _ = synthesize_expression_type(expression, _unexpected_lookup)
 
@@ -337,7 +338,7 @@ class TestNativeConstantTypeInference:
         register_native_constant(
             "test_tc_const_shadow", sort=FunctionSort.REAL, value=math.pi
         )
-        identifier = Identifier("test_tc_const_shadow")
+        identifier = mock_identifier("test_tc_const_shadow", 0)
         expression = IdentifierExpression(identifier)
 
         # Local lookup returns INT32 — different from the constant's REAL sort.

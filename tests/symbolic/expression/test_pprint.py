@@ -31,7 +31,7 @@ from .conftest import mock_identifier
     [
         (LiteralExpression(4.5), "4.5"),
         (LiteralExpression("0.1"), "0.1"),
-        (IdentifierExpression(Identifier("baz")), "baz"),
+        (IdentifierExpression(mock_identifier("baz", 0)), "baz"),
         (
             UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(True)),
             "(!True)",
@@ -62,7 +62,10 @@ def test_pformat_expression_renders_symbolic_form(
     "expression, expected_str",
     [
         (LiteralExpression(5), "5"),
-        (IdentifierExpression(Identifier("test_identifier")), "test_identifier"),
+        (
+            IdentifierExpression(mock_identifier("test_identifier", 0)),
+            "test_identifier",
+        ),
         (
             UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(5)),
             "(negate 5)",
@@ -140,7 +143,7 @@ def test_pformat_expression_with_show_id_propagates_into_call_arguments() -> Non
 
 def test_pretty_formatter_default_does_not_show_identifier_id() -> None:
     """Test `ExpressionPrettyFormatter()` defaults render identifiers without an id."""
-    identifier = Identifier("name_only")
+    identifier = mock_identifier("name_only", 0)
     result = ExpressionPrettyFormatter()(IdentifierExpression(identifier))
     assert result == identifier.name_hint
 
@@ -229,11 +232,8 @@ def test_pformat_multi_case_piecewise_renders_functional_form_with_odd_arity() -
 
 
 def test_pformat_piecewise_with_over_one_hundred_cases_renders_all_in_order() -> None:
-    """Test a 100+-case piecewise renders every case, in order, in both forms.
-
-    Guards the symbolic and functional renderers against a case count far
-    beyond the 1-2 case fixtures used elsewhere in this file, where a
-    dropped, reordered, or truncated case would otherwise go unnoticed.
+    """Test a 120-case piecewise renders every case, in order, in both the
+    symbolic and functional forms.
     """
     NUM_CASES = 120
     x = mock_identifier("x", 0)

@@ -614,8 +614,8 @@ def test_simplify_preserves_integer_bucket_for_int_grammar_string(
 
 def test_simplify_variable_expression_with_environment_folds_to_scalar() -> None:
     """Test `simplify_expression` with an environment folds identifiers plus ops."""
-    x_1 = Identifier("x")
-    x_2 = Identifier("x")
+    x_1 = mock_identifier("x", 0)
+    x_2 = mock_identifier("x", 1)
     expression = BinaryExpression(
         BinaryOperation.ADD,
         IdentifierExpression(x_1),
