@@ -123,8 +123,7 @@ def test_perm_param_admissibility_rejects_value_outside_member_set() -> None:
 
     A candidate sequence containing a value that is a valid permutation-member
     type but not in the param's allowed members must be rejected. Pins down
-    the per-element ``and _contains_param_value`` clause in the membership
-    walk.
+    the per-element membership check in ``_is_valid_permutation``.
     """
     param = create_permutation_param([1, 2, 3])
 

@@ -1,4 +1,4 @@
-"""Tests for integer parameters (new composition API)."""
+"""Tests for integer parameters."""
 
 from functools import partial
 from typing import Any
@@ -269,13 +269,15 @@ def test_int_param_between_equal_bounds_with_both_inclusive_is_singleton() -> No
         pytest.param(False, False, id="exclusive-exclusive"),
     ],
 )
-# The bounds ``257`` and ``int("257")`` are equal but not identity-equal (above
-# CPython's small-int cache), so this exercises value-equality (``==``) rather
-# than identity (``is``) on the bounds-equal check.
 def test_int_param_between_equal_bounds_with_any_exclusive_raises(
     is_lower_inclusive: bool, is_upper_inclusive: bool
 ) -> None:
-    """Test `create_integer_param_between(x, x)` raises for any exclusive bound."""
+    """Test `create_integer_param_between(x, x)` raises for any exclusive bound.
+
+    The bounds ``257`` and ``int("257")`` are equal but not identity-equal
+    (above CPython's small-int cache), so this exercises value-equality
+    (``==``) rather than identity (``is``) on the bounds-equal check.
+    """
     with pytest.raises(ParamError):
         create_integer_param_between(
             257,

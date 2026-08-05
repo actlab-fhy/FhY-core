@@ -57,12 +57,12 @@ def test_assignment_is_value_set_after_assign(
     assert assignment.is_value_set()
 
 
-def test_param_no_longer_exposes_get_value_attribute(
+def test_param_has_no_get_value_attribute(
     default_real_param: Param[str | float],
 ) -> None:
-    """Test `Param` no longer exposes a direct `get_value` attribute."""
+    """Test `Param` has no direct `get_value` attribute."""
     with pytest.raises(AttributeError, match="get_value"):
-        default_real_param.get_value()  # type: ignore[attr-defined]  # test: removed
+        default_real_param.get_value()  # type: ignore[attr-defined]  # test: no such attribute
 
 
 def test_assignment_value_property_returns_assigned_value(
@@ -146,9 +146,9 @@ def test_assignment_reports_could_not_verify_for_undecided_constraint(
 
     ``EquationConstraint.evaluate`` is monkeypatched to unconditionally report
     ``UNDECIDED``, exercising the branch of ``Param.validate_value`` that
-    distinguishes an indeterminate check from a definite violation without
-    relying on a genuinely dependent (multi-variable) constraint, which
-    ``Param`` no longer accepts.
+    distinguishes an indeterminate check from a definite violation. ``Param``
+    accepts only single-variable constraints, so a genuinely dependent
+    (multi-variable) constraint is not available to trigger this branch.
     """
     x = mock_identifier("x", 0)
     undecided_constraint = EquationConstraint(x, IdentifierExpression(x) >= 0)

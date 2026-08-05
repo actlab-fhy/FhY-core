@@ -36,7 +36,7 @@ from fhy_core.symbolic.param import (
 # =============================================================================
 
 
-_KEYWORD_ONLY_NAME_CALLABLES: list[ParameterSet,] = [
+_KEYWORD_ONLY_NAME_CALLABLES: list[ParameterSet] = [
     pytest.param(create_integer_param, (), id="int-param-init"),
     pytest.param(create_real_param, (), id="real-param-init"),
     pytest.param(create_real_param_between, (1.0, 2.0), id="real-between"),

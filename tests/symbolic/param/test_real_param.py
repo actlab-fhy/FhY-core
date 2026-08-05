@@ -1,4 +1,4 @@
-"""Tests for real-valued parameters (new composition API)."""
+"""Tests for real-valued parameters."""
 
 from functools import partial
 from typing import Any
@@ -334,13 +334,15 @@ def test_real_param_between_equal_bounds_with_both_inclusive_is_singleton() -> N
         pytest.param(False, False, id="exclusive-exclusive"),
     ],
 )
-# The upper bound is a runtime ``float("5.0")`` so the two bounds are equal but
-# not identity-equal, exercising value-equality (``==``) rather than identity
-# (``is``) on the bounds-equal check.
 def test_real_param_between_equal_bounds_with_any_exclusive_raises(
     is_lower_inclusive: bool, is_upper_inclusive: bool
 ) -> None:
-    """Test `create_real_param_between(x, x)` raises when either bound is exclusive."""
+    """Test `create_real_param_between(x, x)` raises when either bound is exclusive.
+
+    The upper bound is a runtime ``float("5.0")`` so the two bounds are equal
+    but not identity-equal, exercising value-equality (``==``) rather than
+    identity (``is``) on the bounds-equal check.
+    """
     with pytest.raises(ParamError):
         create_real_param_between(
             5.0,

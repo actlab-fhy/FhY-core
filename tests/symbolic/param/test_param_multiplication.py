@@ -306,15 +306,11 @@ def test_multiplication_zero_included_false_when_both_operands_exclude_zero() ->
 
 
 def test_multiplication_squares_zero_included_exclusive_preference_natural() -> None:
-    """Test squaring a zero-included, exclusive-preference natural param does not crash.
+    """Test squaring a zero-included, exclusive-preference natural param does not raise.
 
-    ``_apply_interval_bounds`` used to render the computed lower bound of
-    ``0`` as the literal exclusive constraint ``> -1``, which the
-    natural-number gate rejected outright even though ``> -1`` is exactly
-    ``>= 0`` over the integers -- a sound, non-empty result the gate should
-    never have rejected. Regression for a ``ParamError("Lower bound must be
-    non-negative.")`` crash on ordinary use of the new multiplication
-    feature.
+    A computed lower bound of ``0`` renders as the inclusive literal ``>= 0``
+    rather than the exclusive ``> -1``, which the natural-number gate would
+    otherwise reject even though it is an equivalent bound.
     """
     x = create_interval_natural_param(zero_included=True, prefer_inclusive=False)
 

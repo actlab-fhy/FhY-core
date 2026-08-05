@@ -146,12 +146,9 @@ def test_dependent_constraint_is_rejected_at_construction_not_is_feasible() -> N
     """Test a multi-variable constraint is rejected at construction, not query time.
 
     ``Param`` is strictly single-variable: the numeric feasibility routing
-    only supplies a Z3 sort for the parameter's own variable, so a
-    constraint referencing a second free identifier used to reach
-    `is_feasible` and blow up with a raw `KeyError` from the Z3 bridge.
-    `validate_constraint` must reject it up front with a typed `ParamError`
-    instead, so the (never reached) `is_feasible` call is never at risk of
-    the `KeyError`.
+    only supplies a Z3 sort for the parameter's own variable. A constraint
+    referencing a second free identifier is rejected by `validate_constraint`
+    with a typed `ParamError` before `is_feasible` can be called.
     """
     x = mock_identifier("x", 12)
     y = mock_identifier("y", 13)

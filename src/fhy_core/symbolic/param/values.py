@@ -4,9 +4,9 @@ Defines the leaf value types a parameter may range over, the structural
 protocols those values must satisfy to be usable as ordinal, categorical, or
 permutation members, and the predicate helpers that classify and compare them.
 
-The classification rules are deliberately type-strict: ``bool``, ``int``, and
-``float`` are mutually disjoint value kinds, and ``str`` is distinct from all of
-them. Although ``True == 1`` and ``1 == 1.0`` in Python, a value set built from
+The classification rules are type-strict: ``bool``, ``int``, and ``float`` are
+mutually disjoint value kinds, and ``str`` is distinct from all of them.
+Although ``True == 1`` and ``1 == 1.0`` in Python, a value set built from
 booleans never matches one built from integers, and integers never match floats.
 """
 

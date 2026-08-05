@@ -704,7 +704,7 @@ def test_bound_int_param_default_inclusivity_admits_endpoint(
 
 
 # =============================================================================
-# Literal-on-left bound expressions and `_invert_binary_comparison_operation`
+# Literal-on-left bound expressions and `_invert_comparison`
 # =============================================================================
 
 
@@ -773,7 +773,7 @@ def test_bound_int_param_iter_bounds_accepts_literal_on_left_constraint() -> Non
 
 
 # =============================================================================
-# `_create_param_from_min_max` exact constraint form
+# `_apply_interval_bounds` exact constraint form
 # =============================================================================
 
 
@@ -856,7 +856,7 @@ def test_bound_int_param_is_not_structurally_equivalent_to_int_param() -> None:
 
 
 # =============================================================================
-# `validate_constraint` / `_is_valid_bound_expression`
+# `validate_constraint` / `is_bound_expression`
 # =============================================================================
 
 
@@ -921,7 +921,8 @@ def test_bound_int_param_add_constraint_rejects_each_invalid_bound_expression(
 # =============================================================================
 
 
-def _valid_bound_int_payload() -> dict[str, Any]:
+@pytest.fixture
+def valid_bound_int_payload() -> dict[str, Any]:
     """Return a well-formed derived-format interval-integer-param payload."""
     param = create_interval_integer_param(name=mock_identifier("x", 1))
     return param.serialize_to_dict()
@@ -953,13 +954,13 @@ def _valid_bound_int_payload() -> dict[str, Any]:
 )
 def test_bound_int_param_deserialize_rejects_each_malformed_payload(
     mutate: Any,
+    valid_bound_int_payload: dict[str, Any],
 ) -> None:
     """Test ``Param.deserialize_from_dict`` rejects each malformed bound_int payload."""
-    payload = _valid_bound_int_payload()
-    mutate(payload)
+    mutate(valid_bound_int_payload)
 
     with pytest.raises(DeserializationDictStructureError):
-        Param.deserialize_from_dict(payload)
+        Param.deserialize_from_dict(valid_bound_int_payload)
 
 
 # =============================================================================
@@ -1001,7 +1002,7 @@ def test_bound_int_param_arithmetic_with_unbounded_operand_does_not_raise(
 
 
 # =============================================================================
-# `_coerce_other` validation of integer-param operands
+# `_coerce_to_interval_param` validation of integer-param operands
 # =============================================================================
 
 

@@ -23,7 +23,8 @@ from fhy_core.symbolic.param import Param, create_integer_param, create_ordinal_
 _PARAM_STRUCTURE_ERROR_MATCH = 'deserializing to "Param"'
 
 
-def _valid_param_payload() -> dict[str, Any]:
+@pytest.fixture
+def valid_param_payload() -> dict[str, Any]:
     """Return a well-formed derived-format integer-param payload."""
     return create_integer_param(name=Identifier("x")).serialize_to_dict()
 
@@ -82,15 +83,15 @@ def _set_domain_to_non_dict(payload: dict[str, Any]) -> None:
 )
 def test_rejects_payload_with_structural_fault(
     corrupt_payload: Callable[[dict[str, Any]], None],
+    valid_param_payload: dict[str, Any],
 ) -> None:
     """Test the deserializer rejects a payload with a single structural fault."""
-    payload = _valid_param_payload()
-    corrupt_payload(payload)
+    corrupt_payload(valid_param_payload)
 
     with pytest.raises(
         DeserializationDictStructureError, match=_PARAM_STRUCTURE_ERROR_MATCH
     ):
-        Param.deserialize_from_dict(payload)
+        Param.deserialize_from_dict(valid_param_payload)
 
 
 # =============================================================================

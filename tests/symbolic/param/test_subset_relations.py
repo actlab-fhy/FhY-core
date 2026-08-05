@@ -532,11 +532,9 @@ def test_discrete_params_reject_cross_family_subset_check() -> None:
 def test_dependent_constraint_is_rejected_at_construction_not_is_subset() -> None:
     """Test a multi-variable constraint is rejected at construction, not query time.
 
-    A constraint referencing a second free identifier used to slip past
-    `Param.validate_constraint` and only blow up later, with a raw
-    `KeyError` from the Z3 bridge, once `is_subset` tried to reason about
-    the dependent identifier. `validate_constraint` must reject it up
-    front with a typed `ParamError` instead.
+    A constraint referencing a second free identifier is rejected by
+    `Param.validate_constraint` with a typed `ParamError` before `is_subset`
+    can reason about the dependent identifier.
     """
     x = mock_identifier("x", 100)
     y = mock_identifier("y", 101)
