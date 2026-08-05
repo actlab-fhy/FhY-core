@@ -34,12 +34,12 @@ leaves are emitted in the same order.
 Every constraint additionally supports a *bindings* evaluation API --
 ``evaluate_with_bindings`` / ``is_satisfied_with_bindings`` -- that checks
 the constraint against a ``Mapping[Identifier, value]`` instead of a single
-positional value. This is what makes multi-variable (dependent) constraints
+positional value. This makes multi-variable (dependent) constraints
 usable: an ``EquationConstraint`` whose expression mentions identifiers
-beyond ``self.variable`` can now be decided once every identifier it
-references is bound. ``ConstraintSystem`` is the companion set-level value
-object: a canonically ordered conjunction of constraints, possibly spanning
-several variables, with joint-satisfiability checking backed by
+beyond ``self.variable`` is decided once every identifier it references
+is bound. ``ConstraintSystem`` is the companion set-level value object: a
+canonically ordered conjunction of constraints, possibly spanning several
+variables, with joint-satisfiability checking backed by
 ``fhy_core.symbolic.solver.check_expression_satisfiability``. It is not a
 ``Constraint`` subclass -- joint satisfiability is a property of a
 collection, not of any single predicate.

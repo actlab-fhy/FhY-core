@@ -1,23 +1,16 @@
 """Backend-agnostic entry point for symbolic queries over expressions.
 
-Simplification and evaluation are answered by the SymPy bridge;
-satisfiability, implication, and universal validity by the Z3 bridge.
-Backend selection is explicit; asking a backend for a query kind it
-cannot answer raises ``SolverCapabilityError``. Each query kind
-currently has exactly one capable backend -- the seam's value today is
-uniform routing, a single home for the satisfiability construction
-shared by its callers, and a documented place where future capabilities
-(e.g. Z3 simplification via tactics, SymPy satisfiability via
-``solveset``) could attach without new entry points. "Interchangeable"
-is aspiration encoded as an extension point, not a claim about current
-behavior.
+Simplification is answered by the SymPy bridge; satisfiability,
+implication, and universal validity by the Z3 bridge. Backend
+selection is explicit: asking a backend for a query kind it cannot
+answer raises ``SolverCapabilityError``. Each query kind currently has
+exactly one capable backend.
 
-Known divergences: the Z3 and SymPy bridges disagree with each other and
-with the type checker on logical-not, ``Rational`` lifting, integer
+Known divergences: the Z3 and SymPy bridges disagree with each other
+and with the type checker on logical-not, ``Rational`` lifting, integer
 division, floor-division/modulo Euclidean semantics, and inf/nan
-lifting (findings F-001, F-002, F-003, F-008, F-009, F-013, F-014).
-This module does not change that math; it gives it one documented home
-so future fixes land at a single choke point.
+lifting. This module routes to each bridge unchanged; it does not
+reconcile that math.
 """
 
 __all__ = [
@@ -250,7 +243,7 @@ def holds_for_all_free_assignments(
     backend: SolverBackend = SolverBackend.Z3,
     timeout_milliseconds: int | None = None,
 ) -> bool | None:
-    """Check the forall/exists validity query; contract unchanged from the bridge.
+    """Return whether the expression holds for every free assignment.
 
     Args:
         considered_identifiers: Identifiers existentially quantified by
