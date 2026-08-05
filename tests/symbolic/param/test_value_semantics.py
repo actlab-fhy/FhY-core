@@ -3,8 +3,8 @@
 `create_ordinal_param`, `create_categorical_param`, and `create_permutation_param`
 accept either primitive values or `Serializable` values that satisfy the
 appropriate value-semantics contract. These tests exercise the wrapped-leaf
-branches in `_is_categorical_value`, `_is_ordinal_value`, and
-`_is_permutation_member_value` through the public constructors only.
+branches in `is_categorical_value`, `is_ordinal_value`, and
+`is_permutation_member_value` through the public constructors only.
 """
 
 import pytest

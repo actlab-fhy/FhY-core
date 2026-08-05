@@ -200,10 +200,8 @@ def test_union_of_real_params_raises_type_error() -> None:
 def test_union_of_interval_integer_params_raises_type_error() -> None:
     """Test union of two interval-integer parameters raises ``TypeError``.
 
-    Interval union as a convex hull is deliberately excluded (silent
-    over-approximation); interval-integer params are the ones users most
-    likely try to combine arithmetically, so this case is worth pinning
-    down explicitly rather than relying only on the plain-integer case.
+    Union is not defined for interval-integer domains: a convex-hull union
+    would silently over-approximate the value set.
     """
     left = create_interval_integer_param_between(0, 5)
     right = create_interval_integer_param_between(3, 8)

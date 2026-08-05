@@ -460,12 +460,10 @@ def test_intersection_with_unrebindable_constraint_kind_raises_type_error() -> N
 def test_dependent_constraint_operand_is_rejected_at_construction() -> None:
     """Test a multi-variable-constrained operand is rejected before intersection runs.
 
-    A constraint referencing a second free identifier used to slip past
-    `Param.validate_constraint` on the left operand and only blow up later,
-    with a raw `KeyError` from the Z3 bridge, from `create_intersection_param`'s
-    internal `result.is_feasible()` call. `validate_constraint` must reject it
-    up front (while constructing the offending operand) with a typed
-    `ParamError` instead.
+    A constraint referencing a second free identifier is rejected by
+    `Param.validate_constraint` while constructing the offending operand,
+    with a typed `ParamError`, before `create_intersection_param` can reach
+    its internal `result.is_feasible()` call.
     """
     x = mock_identifier("x", 200)
     y = mock_identifier("y", 201)

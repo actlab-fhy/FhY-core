@@ -308,12 +308,10 @@ def test_add_constraint_rejects_constraint_with_mismatched_variable() -> None:
 def test_add_constraint_rejects_constraint_referencing_a_second_variable() -> None:
     """Test `add_constraint` rejects a constraint with an extra free identifier.
 
-    ``Param`` is strictly single-variable: even though the constraint's own
-    ``variable`` matches the parameter's, its expression also references a
-    second identifier, so it must be rejected the same as an outright
-    mismatched-variable constraint, not silently accepted and left to crash
-    later when the numeric feasibility/subset routing cannot supply a sort
-    for the dependent identifier.
+    ``Param`` is strictly single-variable: a constraint whose own ``variable``
+    matches the parameter's but whose expression also references a second
+    identifier is rejected the same as an outright mismatched-variable
+    constraint.
     """
     param = create_integer_param(name=mock_identifier("x", 1))
     other = mock_identifier("y", 2)
@@ -327,11 +325,9 @@ def test_add_constraint_rejects_constraint_referencing_a_second_variable() -> No
 def test_validate_constraint_rejects_constraint_system_with_type_error() -> None:
     """Test passing a `ConstraintSystem` where a `Constraint` is expected raises.
 
-    ``ConstraintSystem`` is deliberately not a ``Constraint`` subclass and has
-    no ``variable`` attribute, so before this fix `validate_constraint` read
-    ``constraint.variable`` unguarded and let a bare `AttributeError` escape.
-    A `ConstraintSystem` passed to `add_constraint` (or the constructor's
-    ``constraints`` kwarg) must instead raise a typed `TypeError`.
+    ``ConstraintSystem`` is not a ``Constraint`` subclass and has no
+    ``variable`` attribute. A `ConstraintSystem` passed to `add_constraint`
+    (or the constructor's ``constraints`` kwarg) raises a typed `TypeError`.
     """
     param = create_integer_param(name=mock_identifier("x", 1))
     system = create_constraint_system(
@@ -632,7 +628,7 @@ def test_perm_param_is_not_numeric() -> None:
 
 
 def test_repr_starts_with_param_marker() -> None:
-    """Test `__repr__` renders as ``Param(...)`` after the inheritance removal."""
+    """Test `__repr__` renders as ``Param(...)``."""
     assert repr(create_integer_param(name=mock_identifier("x", 1))).startswith("Param(")
 
 

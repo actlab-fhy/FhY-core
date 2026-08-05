@@ -303,8 +303,8 @@ def test_nat_param_is_not_structurally_equivalent_when_super_constraints_differ(
 def test_nat_param_is_not_structurally_equivalent_to_int_param() -> None:
     """Test a natural param is not structurally equivalent to a plain integer param.
 
-    In the new API both are `Param`, but their domains differ:
-    `IntegerDomain(non_negative=True)` vs `IntegerDomain(non_negative=False)`.
+    Both are `Param`, but their domains differ: `IntegerDomain(non_negative=True)`
+    vs `IntegerDomain(non_negative=False)`.
     """
     shared_name = mock_identifier("x", 1)
     shared_name_copy = mock_identifier("x", 1)

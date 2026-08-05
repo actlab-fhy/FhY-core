@@ -3,8 +3,7 @@
 The helpers exercised here cover validation paths that the public-API tests
 cannot easily reach because the public constructors and validators reject
 malformed inputs before they propagate. Each test calls the private helper
-directly, mirroring the convention established in
-`tests/param/test_nat_param_helpers.py`.
+directly.
 """
 
 from typing import Any
@@ -56,10 +55,8 @@ def test_serialize_wrapped_leaf_value_rejects_unsupported_type(
 # =============================================================================
 # `_constraint_structural_ordering_key`
 #
-# FLAGGED: tests a module-private helper directly. Kept per convention (the
-# public `Param.is_structurally_equivalent` path cannot easily reach the
-# key-order-independence behavior pinned here). Promote the helper if it needs
-# standalone coverage long-term.
+# Tests this private helper directly: the public `Param.is_structurally_equivalent`
+# path cannot easily reach the key-order-independence behavior pinned here.
 # =============================================================================
 
 

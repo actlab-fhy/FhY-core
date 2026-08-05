@@ -134,7 +134,6 @@ class SerializableOrderableInherited(_OrderableBase):
 
     The leaf class itself does not define ``__lt__``; an MRO walk must look
     past ``__mro__[0]`` to discover ordering semantics.
-
     """
 
 
@@ -221,7 +220,6 @@ class SerializableNonComparable(Serializable):
     Inherits ``object.__eq__`` (identity), has no ``__lt__``, and uses the
     default identity hash. Useful for asserting the wrapped-leaf admissibility
     checks reject values that lack the required value semantics.
-
     """
 
     _value: int
