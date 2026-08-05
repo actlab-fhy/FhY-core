@@ -1,8 +1,7 @@
 """Type-checker tests for booleans, ``PiecewiseExpression``, and ``CallExpression``.
 
-Lives alongside ``test_type_checker.py``; this file holds new cases for
-the boolean type, the piecewise conditional node, and the function-call
-node introduced by the expression-functions feature.
+Companion to ``test_type_checker.py``; covers the boolean type, the
+piecewise conditional node, and the function-call node.
 """
 
 import pytest
@@ -54,7 +53,7 @@ def _lookup_failure(identifier: Identifier) -> tuple[Type, TypeQualifier]:
 
 
 # =============================================================================
-# get_core_data_type_from_literal_type: bool now returns BOOL
+# get_core_data_type_from_literal_type: bool returns BOOL
 # =============================================================================
 
 
@@ -134,7 +133,7 @@ def test_synthesize_logical_binary_rejects_non_bool_operand(
 
 
 # =============================================================================
-# Synthesis: comparison operations now return BOOL
+# Synthesis: comparison operations return BOOL
 # =============================================================================
 
 
@@ -521,7 +520,7 @@ def test_synthesize_call_with_wrong_arity_raises(
     function_registry_snapshot: None,
 ) -> None:
     """Test a call with an argument count not matching the parameters raises."""
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     register_function(
         "test_synthesize_arity",
         parameters=[parameter],
@@ -548,7 +547,7 @@ def test_synthesize_call_returns_sort_derived_type(
     ``result_sort`` (concrete ``FLOAT64`` for ``REAL``), not by walking
     the body and propagating the argument types.
     """
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     register_function(
         "test_synthesize_identity",
         parameters=[parameter],
@@ -576,8 +575,8 @@ def test_synthesize_call_to_max_returns_sort_derived_float64(
     the sort-derived concrete type, not a promotion of the argument
     types.
     """
-    a = Identifier("a")
-    b = Identifier("b")
+    a = mock_identifier("a", 0)
+    b = mock_identifier("b", 1)
     checker = make_identifier_checker(
         {
             a: (_make_scalar(CoreDataType.INT8), TypeQualifier.PARAM),

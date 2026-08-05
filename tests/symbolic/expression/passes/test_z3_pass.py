@@ -733,22 +733,18 @@ def test_multi_case_piecewise_z3_lowering_matches_hand_nested_encoding() -> None
 
 
 def test_piecewise_over_one_hundred_cases_z3_lowering_matches_hand_nested() -> None:
-    """Test a 100+-case piecewise's flat z3 lowering equals a hand-nested equivalent.
+    """Test a 120-case piecewise's flat z3 lowering equals a hand-nested equivalent.
 
-    Scales ``test_multi_case_piecewise_z3_lowering_matches_hand_nested_encoding``
-    up to a case count deep enough to expose a fold-direction
-    (first-match-wins) regression in the right-folded ``z3.If`` chain a
-    flat multi-case node lowers to. Conditions are a monotonic, genuinely
-    *overlapping* threshold ladder (``x < 1``, ``x < 2``, ..., ``x <
-    NUM_CASES``) rather than the mutually exclusive equalities used
-    elsewhere in this file: with mutually exclusive conditions, at most
-    one branch is ever true, so a fold-direction bug (last-match-wins
-    instead of first-match-wins) would be invisible -- exactly one case
-    still fires regardless of nesting order. The hand-nested reference is
-    built as single-case ``PiecewiseExpression`` nodes throughout, so its
-    z3 lowering never exercises the multi-case fold at all and is
-    unaffected by a regression in it, making it a valid ground truth for
-    the comparison.
+    Conditions are a monotonic, overlapping threshold ladder (``x < 1``,
+    ``x < 2``, ..., ``x < NUM_CASES``) rather than the mutually exclusive
+    equalities used elsewhere in this file, so more than one condition
+    can hold at once and the comparison exercises which branch wins: the
+    flat multi-case node's right-folded ``z3.If`` chain must pick the
+    same first-matching branch as the hand-nested reference. The
+    hand-nested reference is built from single-case
+    ``PiecewiseExpression`` nodes, so its z3 lowering never itself
+    exercises the multi-case fold, making it an independent ground truth
+    for the comparison.
     """
     NUM_CASES = 120
     x = mock_identifier("x", 0)

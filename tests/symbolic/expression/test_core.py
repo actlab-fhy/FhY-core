@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 
-from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     SerializationFormat,
@@ -59,7 +58,7 @@ def test_binary_expression_stores_operation_left_and_right() -> None:
 
 def test_identifier_expression_stores_identifier() -> None:
     """Test `IdentifierExpression` exposes the `Identifier` it was built with."""
-    identifier = Identifier("x")
+    identifier = mock_identifier("x", 0)
     expression = IdentifierExpression(identifier)
     assert expression.identifier is identifier
 
@@ -628,7 +627,7 @@ def test_module_level_logical_not_wraps_operand_in_unary_expression() -> None:
 
 def test_module_level_logical_not_coerces_bare_identifier() -> None:
     """Test `logical_not` lifts a bare `Identifier` via `IdentifierExpression`."""
-    identifier = Identifier("a")
+    identifier = mock_identifier("a", 0)
 
     result = logical_not(identifier)
 
@@ -713,7 +712,7 @@ def _build_instance_pair(
     if subclass is LiteralExpression:
         return LiteralExpression(42), LiteralExpression(42)
     elif subclass is IdentifierExpression:
-        identifier = Identifier("shared")
+        identifier = mock_identifier("shared", 0)
         return IdentifierExpression(identifier), IdentifierExpression(identifier)
     elif subclass is UnaryExpression:
         operand = LiteralExpression(1)

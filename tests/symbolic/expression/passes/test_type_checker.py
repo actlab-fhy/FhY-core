@@ -11,7 +11,6 @@ from unittest.mock import Mock
 
 import pytest
 
-from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
 from fhy_core.symbolic.expression import (
     BinaryExpression,
@@ -43,7 +42,11 @@ from fhy_core.types import (
     TypeQualifier,
 )
 
-from ..conftest import make_identifier_checker, make_single_type_checker
+from ..conftest import (
+    make_identifier_checker,
+    make_single_type_checker,
+    mock_identifier,
+)
 
 
 def _make_scalar(core_data_type: CoreDataType) -> NumericalType:
@@ -126,7 +129,7 @@ def test_unary_negate_of_zero_literal_stays_weak_unsigned_int() -> None:
 
 def test_positive_integer_literal_upgrades_to_signed_context() -> None:
     """Test a positive integer literal adopts the surrounding signed strong type."""
-    identifier = Identifier("x")
+    identifier = mock_identifier("x", 0)
     checker = make_identifier_checker(
         {identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM)}
     )
@@ -176,7 +179,7 @@ def test_integer_literals_remain_weak_without_context() -> None:
 
 def test_integer_literal_can_upgrade_to_float_context() -> None:
     """Test a positive integer literal adopts the surrounding float context."""
-    identifier = Identifier("y")
+    identifier = mock_identifier("y", 0)
     checker = make_identifier_checker(
         {identifier: (_make_scalar(CoreDataType.FLOAT32), TypeQualifier.PARAM)}
     )
@@ -276,7 +279,7 @@ def test_check_binary_expression_uses_expected_type_bidirectionally() -> None:
 
 def test_check_binary_hint_reaches_left_literal_operand() -> None:
     """Test `check` propagates the expected type into a literal left operand."""
-    identifier = Identifier("right")
+    identifier = mock_identifier("right", 0)
     checker = make_identifier_checker(
         {identifier: (_make_scalar(CoreDataType.UINT16), TypeQualifier.PARAM)}
     )
@@ -295,7 +298,7 @@ def test_check_binary_hint_reaches_left_literal_operand() -> None:
 
 def test_check_binary_hint_reaches_right_literal_operand() -> None:
     """Test `check` propagates the expected type into a literal right operand."""
-    identifier = Identifier("left")
+    identifier = mock_identifier("left", 0)
     checker = make_identifier_checker(
         {identifier: (_make_scalar(CoreDataType.UINT16), TypeQualifier.PARAM)}
     )
@@ -319,7 +322,7 @@ def test_check_binary_hint_reaches_right_literal_operand() -> None:
 
 def test_check_accepts_expression_exactly_matching_expected() -> None:
     """Test `check` returns normally when the synthesized type equals the expected."""
-    identifier = Identifier("x")
+    identifier = mock_identifier("x", 0)
     checker = make_identifier_checker(
         {identifier: (_make_scalar(CoreDataType.UINT16), TypeQualifier.PARAM)}
     )
@@ -344,7 +347,7 @@ def test_check_rejects_expression_wider_than_expected(
     actual_core_data_type: CoreDataType, expected_core_data_type: CoreDataType
 ) -> None:
     """Test `check` rejects an expression wider than its expected narrower type."""
-    identifier = Identifier("x")
+    identifier = mock_identifier("x", 0)
     checker = make_identifier_checker(
         {identifier: (_make_scalar(actual_core_data_type), TypeQualifier.PARAM)}
     )
@@ -357,7 +360,7 @@ def test_check_rejects_expression_wider_than_expected(
 
 def test_check_index_against_equivalent_index_succeeds() -> None:
     """Test `check` passes when actual and expected are equal index types."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -371,7 +374,7 @@ def test_check_index_against_equivalent_index_succeeds() -> None:
 
 def test_check_index_against_nonequivalent_index_raises() -> None:
     """Test `check` raises when actual and expected are different index types."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -389,7 +392,7 @@ def test_check_index_against_nonequivalent_index_raises() -> None:
 
 def test_check_index_against_numerical_raises() -> None:
     """Test `check` rejects an index-typed expression against a numerical type."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -425,8 +428,8 @@ def test_check_numerical_against_index_raises() -> None:
 
 def test_addition_of_mixed_bit_width_signed_integers_promotes_to_wider_width() -> None:
     """Test ``INT8 + INT64`` synthesizes as ``INT64``."""
-    left = Identifier("left")
-    right = Identifier("right")
+    left = mock_identifier("left", 0)
+    right = mock_identifier("right", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(CoreDataType.INT8), TypeQualifier.PARAM),
@@ -447,8 +450,8 @@ def test_addition_of_mixed_bit_width_signed_integers_promotes_to_wider_width() -
 
 def test_addition_of_unsigned_and_signed_same_width_promotes_to_wider_signed() -> None:
     """Test ``UINT32 + INT32`` widens to ``INT64`` to fit both operand ranges."""
-    left = Identifier("left")
-    right = Identifier("right")
+    left = mock_identifier("left", 0)
+    right = mock_identifier("right", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(CoreDataType.UINT32), TypeQualifier.PARAM),
@@ -489,8 +492,8 @@ def test_integer_division_promotes_to_smallest_sufficient_float_width(
     expected_float_core_data_type: CoreDataType,
 ) -> None:
     """Test same-type integer division promotes to the smallest float >= that width."""
-    left = Identifier("left")
-    right = Identifier("right")
+    left = mock_identifier("left", 0)
+    right = mock_identifier("right", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(operand_core_data_type), TypeQualifier.PARAM),
@@ -513,8 +516,8 @@ def test_integer_division_promotes_to_smallest_sufficient_float_width(
 
 def test_division_of_strong_integers_produces_concrete_float() -> None:
     """Test division of two `INT32` identifiers yields a concrete `FLOAT32` type."""
-    left = Identifier("left")
-    right = Identifier("right")
+    left = mock_identifier("left", 0)
+    right = mock_identifier("right", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM),
@@ -562,8 +565,8 @@ def test_division_mixed_int_and_float_promotes_to_float(
     expected_core_data_type: CoreDataType,
 ) -> None:
     """Test mixed-integer-and-float division promotes to the dominant float type."""
-    left = Identifier("left")
-    right = Identifier("right")
+    left = mock_identifier("left", 0)
+    right = mock_identifier("right", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(left_core_data_type), TypeQualifier.PARAM),
@@ -595,8 +598,8 @@ def test_division_mixed_int_and_complex_promotes_to_complex(
     expected_core_data_type: CoreDataType,
 ) -> None:
     """Test mixed-integer-and-complex division promotes to the dominant complex type."""
-    left = Identifier("left")
-    right = Identifier("right")
+    left = mock_identifier("left", 0)
+    right = mock_identifier("right", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(left_core_data_type), TypeQualifier.PARAM),
@@ -617,8 +620,8 @@ def test_division_mixed_int_and_complex_promotes_to_complex(
 
 def test_unsigned_and_signed_integers_share_integral_promotion_under_division() -> None:
     """Test `UINT8 / INT8` promotes integral-to-integral, then picks `FLOAT16`."""
-    left = Identifier("left")
-    right = Identifier("right")
+    left = mock_identifier("left", 0)
+    right = mock_identifier("right", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(CoreDataType.UINT8), TypeQualifier.PARAM),
@@ -639,8 +642,8 @@ def test_unsigned_and_signed_integers_share_integral_promotion_under_division() 
 
 def test_floor_division_of_integers_produces_integer_type() -> None:
     """Test floor division of two `INT32` identifiers yields `INT32`."""
-    left = Identifier("left")
-    right = Identifier("right")
+    left = mock_identifier("left", 0)
+    right = mock_identifier("right", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM),
@@ -672,8 +675,8 @@ def test_floor_division_mixed_int_and_float_promotes_to_float(
     expected_core_data_type: CoreDataType,
 ) -> None:
     """Test floor division with one float operand promotes to a float result type."""
-    left = Identifier("left")
-    right = Identifier("right")
+    left = mock_identifier("left", 0)
+    right = mock_identifier("right", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(left_core_data_type), TypeQualifier.PARAM),
@@ -694,8 +697,8 @@ def test_floor_division_mixed_int_and_float_promotes_to_float(
 
 def test_floor_division_int64_by_float16_widens_to_max_bit_width_float() -> None:
     """Test ``INT64 // FLOAT16`` promotes to ``FLOAT64`` to honor the wider operand."""
-    left = Identifier("left")
-    right = Identifier("right")
+    left = mock_identifier("left", 0)
+    right = mock_identifier("right", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(CoreDataType.INT64), TypeQualifier.PARAM),
@@ -725,8 +728,8 @@ def test_floor_division_involving_complex_is_rejected(
     left_core_data_type: CoreDataType, right_core_data_type: CoreDataType
 ) -> None:
     """Test floor division with any complex operand is rejected."""
-    left = Identifier("left")
-    right = Identifier("right")
+    left = mock_identifier("left", 0)
+    right = mock_identifier("right", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(left_core_data_type), TypeQualifier.PARAM),
@@ -754,7 +757,7 @@ def test_floor_division_involving_complex_is_rejected(
 
 def test_tensor_type_is_rejected_in_expression_typing() -> None:
     """Test a tensor-typed operand in a compound expression is rejected."""
-    identifier = Identifier("tensor")
+    identifier = mock_identifier("tensor", 0)
     checker = make_identifier_checker(
         {identifier: (_make_tensor(CoreDataType.FLOAT32, 4), TypeQualifier.PARAM)}
     )
@@ -774,7 +777,7 @@ def test_tensor_type_is_rejected_in_expression_typing() -> None:
 
 def test_tensor_identifier_is_rejected_immediately() -> None:
     """Test a tensor-typed identifier is rejected outside a compound expression."""
-    identifier = Identifier("tensor")
+    identifier = mock_identifier("tensor", 0)
     checker = make_identifier_checker(
         {identifier: (_make_tensor(CoreDataType.FLOAT32, 4), TypeQualifier.PARAM)}
     )
@@ -790,7 +793,7 @@ def test_tensor_identifier_is_rejected_immediately() -> None:
 
 def test_output_qualifier_identifier_is_rejected_on_read() -> None:
     """Test reading an identifier with an ``output`` qualifier is rejected."""
-    identifier = Identifier("out")
+    identifier = mock_identifier("out", 0)
     checker = make_identifier_checker(
         {identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.OUTPUT)}
     )
@@ -807,7 +810,7 @@ def test_non_output_qualifier_identifier_is_accepted_on_read(
     qualifier: TypeQualifier,
 ) -> None:
     """Test an identifier with any non-``output`` qualifier is accepted on read."""
-    identifier = Identifier("x")
+    identifier = mock_identifier("x", 0)
     checker = make_identifier_checker(
         {identifier: (_make_scalar(CoreDataType.INT32), qualifier)}
     )
@@ -825,7 +828,7 @@ def test_aliased_input_identifier_promotes_qualifier_through_addition() -> None:
     confuse the context tracker; the synthesized qualifier should follow the
     documented promotion rule for ``INPUT + INPUT``.
     """
-    x = Identifier("x")
+    x = mock_identifier("x", 0)
     checker = make_identifier_checker(
         {x: (_make_scalar(CoreDataType.INT32), TypeQualifier.INPUT)}
     )
@@ -847,7 +850,7 @@ def test_non_output_qualifier_operand_is_accepted_in_unary_expression(
     qualifier: TypeQualifier,
 ) -> None:
     """Test a non-``output`` operand is accepted inside a unary expression."""
-    identifier = Identifier("x")
+    identifier = mock_identifier("x", 0)
     checker = make_identifier_checker(
         {identifier: (_make_scalar(CoreDataType.INT32), qualifier)}
     )
@@ -866,8 +869,8 @@ def test_non_output_qualifier_operand_is_accepted_in_unary_expression(
 
 def test_index_plus_scalar_produces_shifted_index_type() -> None:
     """Test adding an integer scalar to an index shifts both bounds."""
-    identifier = Identifier("idx")
-    upper = Identifier("N")
+    identifier = mock_identifier("idx", 0)
+    upper = mock_identifier("N", 1)
     index = IndexType(
         LiteralExpression(1),
         IdentifierExpression(upper),
@@ -894,7 +897,7 @@ def test_index_plus_scalar_produces_shifted_index_type() -> None:
 
 def test_scalar_plus_index_produces_shifted_index_type() -> None:
     """Test adding a scalar on the left also shifts both bounds."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -916,7 +919,7 @@ def test_scalar_plus_index_produces_shifted_index_type() -> None:
 
 def test_index_minus_scalar_produces_shifted_index_type() -> None:
     """Test subtracting a scalar from an index shifts both bounds downward."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(
         LiteralExpression(2),
         LiteralExpression(12),
@@ -942,7 +945,7 @@ def test_index_minus_scalar_produces_shifted_index_type() -> None:
 
 def test_index_with_negative_stride_shifts_bounds_and_preserves_stride() -> None:
     """Test shifting a negative-stride index leaves the stride untouched."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(
         LiteralExpression(10), LiteralExpression(0), LiteralExpression(-1)
     )
@@ -966,7 +969,7 @@ def test_index_with_negative_stride_shifts_bounds_and_preserves_stride() -> None
 
 def test_index_with_negative_stride_scales_bounds_and_stride() -> None:
     """Test scaling a negative-stride index multiplies bounds and stride together."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(
         LiteralExpression(10), LiteralExpression(0), LiteralExpression(-1)
     )
@@ -990,7 +993,7 @@ def test_index_with_negative_stride_scales_bounds_and_stride() -> None:
 
 def test_index_plus_float_is_rejected() -> None:
     """Test adding a float scalar to an index is rejected."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1015,7 +1018,7 @@ def test_index_plus_float_is_rejected() -> None:
 
 def test_unary_positive_index_preserves_index_type() -> None:
     """Test unary positive preserves the exact index type."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1028,7 +1031,7 @@ def test_unary_positive_index_preserves_index_type() -> None:
 
 def test_unary_negation_of_index_is_rejected() -> None:
     """Test unary negation of an index type is rejected."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1048,7 +1051,7 @@ def test_unary_negation_of_index_is_rejected() -> None:
 
 def test_index_times_positive_integer_literal_scales_bounds_and_stride() -> None:
     """Test scaling an index with an explicit stride multiplies bounds and stride."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(2))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1070,7 +1073,7 @@ def test_index_times_positive_integer_literal_scales_bounds_and_stride() -> None
 
 def test_positive_integer_literal_times_index_scales_symmetrically() -> None:
     """Test scalar-times-index scales the same way as index-times-scalar."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1092,7 +1095,7 @@ def test_positive_integer_literal_times_index_scales_symmetrically() -> None:
 
 def test_index_scaling_by_one_preserves_unit_stride() -> None:
     """Test scaling an index with unit stride by ``1`` yields a unit-stride index."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1114,8 +1117,8 @@ def test_index_scaling_by_one_preserves_unit_stride() -> None:
 
 def test_index_scaling_with_non_literal_stride_emits_scalar_times_stride() -> None:
     """Test scaling an index with a non-literal stride emits ``scalar * stride``."""
-    identifier = Identifier("idx")
-    stride_identifier = Identifier("s")
+    identifier = mock_identifier("idx", 0)
+    stride_identifier = mock_identifier("s", 1)
     index = IndexType(
         LiteralExpression(1),
         LiteralExpression(8),
@@ -1141,7 +1144,7 @@ def test_index_scaling_with_non_literal_stride_emits_scalar_times_stride() -> No
 
 def test_index_times_zero_literal_is_rejected() -> None:
     """Test scaling an index by `0` is rejected (positive-integer requirement)."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1161,7 +1164,7 @@ def test_index_times_zero_literal_is_rejected() -> None:
 
 def test_index_times_negative_literal_is_rejected() -> None:
     """Test scaling an index by a negative integer literal is rejected."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1181,8 +1184,8 @@ def test_index_times_negative_literal_is_rejected() -> None:
 
 def test_index_times_non_literal_scalar_is_rejected() -> None:
     """Test scaling an index by a non-literal integer identifier is rejected."""
-    identifier = Identifier("idx")
-    scalar = Identifier("k")
+    identifier = mock_identifier("idx", 0)
+    scalar = mock_identifier("k", 1)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker(
         {
@@ -1207,7 +1210,7 @@ def test_index_times_non_literal_scalar_is_rejected() -> None:
 
 def test_index_times_float_literal_is_rejected() -> None:
     """Test scaling an index by a float literal is rejected."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1232,7 +1235,7 @@ def test_index_times_float_literal_is_rejected() -> None:
 
 def test_index_division_is_rejected_with_specific_message() -> None:
     """Test dividing an index by a scalar raises a division-specific message."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1258,8 +1261,8 @@ def test_division_with_one_index_operand_uses_division_specific_message(
     operation: BinaryOperation, index_on: str
 ) -> None:
     """Test mixed index/numerical division raises a division-specific error message."""
-    index_identifier = Identifier("idx")
-    scalar_identifier = Identifier("k")
+    index_identifier = mock_identifier("idx", 0)
+    scalar_identifier = mock_identifier("k", 1)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker(
         {
@@ -1310,8 +1313,8 @@ def test_index_index_binary_operation_is_rejected(
     ``DIVIDE`` and ``FLOOR_DIVIDE`` hit an earlier, more specific
     division-not-defined branch and are tested separately.
     """
-    left = Identifier("i")
-    right = Identifier("j")
+    left = mock_identifier("i", 0)
+    right = mock_identifier("j", 1)
     index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker(
         {
@@ -1338,8 +1341,8 @@ def test_index_index_division_uses_specific_division_message(
     operation: BinaryOperation,
 ) -> None:
     """Test ``DIVIDE``/``FLOOR_DIVIDE`` between indices use the division-error path."""
-    left = Identifier("i")
-    right = Identifier("j")
+    left = mock_identifier("i", 0)
+    right = mock_identifier("j", 1)
     index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker(
         {
@@ -1374,7 +1377,7 @@ def test_index_index_division_uses_specific_division_message(
 
 def test_type_error_includes_root_expression_for_top_level_failure() -> None:
     """Test the error message frames the failure with the root expression."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
     expression = UnaryExpression(
@@ -1393,7 +1396,7 @@ def test_type_error_includes_root_expression_for_top_level_failure() -> None:
 
 def test_type_error_includes_sub_expression_for_deeply_nested_failure() -> None:
     """Test the error message names the sub-expression where the failure surfaced."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
     inner = UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(identifier))
@@ -1411,7 +1414,7 @@ def test_type_error_includes_sub_expression_for_deeply_nested_failure() -> None:
 
 def test_type_error_from_check_includes_root_expression() -> None:
     """Test `check` failures are framed by the root expression, not just `_infer`."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(10), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
     expression = IdentifierExpression(identifier)
@@ -1472,7 +1475,7 @@ def test_synthesize_non_additive_index_and_scalar_uses_operands_of_types_message
     operation: BinaryOperation,
 ) -> None:
     """Test ``MODULO``/``POWER`` of index and numerical reports an operand-types err."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1488,8 +1491,8 @@ def test_synthesize_non_additive_index_and_scalar_uses_operands_of_types_message
 
 def test_division_complex_left_real_float_right_promotes_to_complex() -> None:
     """Test ``DIVIDE(complex64, float64)`` promotes to ``complex128``."""
-    left = Identifier("c")
-    right = Identifier("f")
+    left = mock_identifier("c", 0)
+    right = mock_identifier("f", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(CoreDataType.COMPLEX64), TypeQualifier.PARAM),
@@ -1510,8 +1513,8 @@ def test_division_complex_left_real_float_right_promotes_to_complex() -> None:
 
 def test_division_real_float_left_complex_right_promotes_to_complex() -> None:
     """Test ``DIVIDE(float64, complex64)`` promotes to ``complex128``."""
-    left = Identifier("f")
-    right = Identifier("c")
+    left = mock_identifier("f", 0)
+    right = mock_identifier("c", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(CoreDataType.FLOAT64), TypeQualifier.PARAM),
@@ -1537,7 +1540,7 @@ def test_division_real_float_left_complex_right_promotes_to_complex() -> None:
 
 def test_synthesize_expression_type_top_level_function() -> None:
     """Test `synthesize_expression_type` returns the synthesized type from the class."""
-    identifier = Identifier("x")
+    identifier = mock_identifier("x", 0)
     lookup_type = _make_scalar(CoreDataType.INT32)
 
     result_type, result_qualifier = synthesize_expression_type(
@@ -1565,7 +1568,7 @@ def test_check_expression_type_top_level_function() -> None:
 
 def test_checker_synthesize_method_routes_through_infer() -> None:
     """Test `ExpressionTypeChecker.synthesize` yields the same result as `visit`."""
-    identifier = Identifier("x")
+    identifier = mock_identifier("x", 0)
     checker = make_identifier_checker(
         {identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM)}
     )
@@ -1582,7 +1585,7 @@ def test_checker_synthesize_method_routes_through_infer() -> None:
 
 def test_weak_left_literal_upgrades_against_strong_right_identifier() -> None:
     """Test a weak left-literal adopts the right identifier's strong type."""
-    right_identifier = Identifier("right")
+    right_identifier = mock_identifier("right", 0)
     checker = make_identifier_checker(
         {right_identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM)}
     )
@@ -1605,7 +1608,7 @@ def test_weak_left_literal_upgrades_against_strong_right_identifier() -> None:
 
 def test_numerical_float_plus_index_is_rejected() -> None:
     """Test ``ADD(Lit(1.5), idx)`` rejects because the left operand isn't integral."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1625,7 +1628,7 @@ def test_numerical_float_plus_index_is_rejected() -> None:
 
 def test_index_minus_float_literal_is_rejected() -> None:
     """Test ``SUBTRACT(idx, Lit(1.5))`` rejects for a non-integral right operand."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1645,8 +1648,8 @@ def test_index_minus_float_literal_is_rejected() -> None:
 
 def test_multiply_index_by_non_literal_identifier_on_right_is_rejected() -> None:
     """Test ``MULTIPLY(idx, scalar_id)`` rejects because right is a non-literal."""
-    index_identifier = Identifier("idx")
-    scalar_identifier = Identifier("k")
+    index_identifier = mock_identifier("idx", 0)
+    scalar_identifier = mock_identifier("k", 1)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker(
         {
@@ -1670,7 +1673,7 @@ def test_multiply_index_by_non_literal_identifier_on_right_is_rejected() -> None
 
 def test_multiply_float_literal_times_index_rejected_on_left() -> None:
     """Test ``MULTIPLY(Lit(2.0), idx)`` rejects because the left is non-integral."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(1))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1694,8 +1697,8 @@ def test_multiply_float_literal_times_index_rejected_on_left() -> None:
 
 def test_floor_division_of_two_real_floats_promotes_via_lattice() -> None:
     """Test floor-div of two real-float identifiers skips both int-side branches."""
-    left = Identifier("left")
-    right = Identifier("right")
+    left = mock_identifier("left", 0)
+    right = mock_identifier("right", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(CoreDataType.FLOAT32), TypeQualifier.PARAM),
@@ -1721,8 +1724,8 @@ def test_floor_division_of_two_real_floats_promotes_via_lattice() -> None:
 
 def test_synthesize_logical_and_on_non_bool_identifiers_raises_type_error() -> None:
     """Test `LOGICAL_AND` rejects non-boolean operands with `FhYCoreTypeError`."""
-    left = Identifier("a")
-    right = Identifier("b")
+    left = mock_identifier("a", 0)
+    right = mock_identifier("b", 1)
     checker = make_identifier_checker(
         {
             left: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM),
@@ -1742,7 +1745,7 @@ def test_synthesize_logical_and_on_non_bool_identifiers_raises_type_error() -> N
 
 def test_synthesize_logical_not_on_non_bool_identifier_raises_type_error() -> None:
     """Test `LOGICAL_NOT` rejects a non-boolean operand with `FhYCoreTypeError`."""
-    identifier = Identifier("p")
+    identifier = mock_identifier("p", 0)
     checker = make_identifier_checker(
         {identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM)}
     )
@@ -1762,8 +1765,8 @@ def test_synthesize_logical_not_on_non_bool_identifier_raises_type_error() -> No
 
 def test_synthesize_rejects_identifier_with_template_numerical_data_type() -> None:
     """Test an identifier bound to a template (non-primitive) data type is rejected."""
-    identifier = Identifier("t")
-    template_type = NumericalType(TemplateDataType(Identifier("T")))
+    identifier = mock_identifier("t", 0)
+    template_type = NumericalType(TemplateDataType(mock_identifier("T", 1)))
     checker = make_identifier_checker(
         {identifier: (template_type, TypeQualifier.PARAM)}
     )
@@ -1807,7 +1810,7 @@ def test_get_core_data_type_from_literal_type_rejects_unsupported_type() -> None
 
 def test_get_primitive_data_type_rejects_non_primitive_data_type() -> None:
     """Test `_get_primitive_data_type` rejects a numerical with a template data type."""
-    numerical = NumericalType(TemplateDataType(Identifier("T")))
+    numerical = NumericalType(TemplateDataType(mock_identifier("T", 0)))
 
     with pytest.raises(FhYCoreTypeError, match=r"expected a primitive data type"):
         _get_primitive_data_type(numerical)
@@ -1862,7 +1865,7 @@ def test_infer_rejects_unsupported_expression_subclass() -> None:
 
 def test_synthesize_rejects_index_with_literal_zero_stride() -> None:
     """Test an identifier whose `IndexType` has stride literal `0` is rejected."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(0))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
 
@@ -1875,7 +1878,7 @@ def test_synthesize_rejects_index_with_literal_zero_stride() -> None:
 
 def test_check_rejects_index_with_literal_zero_stride() -> None:
     """Test `check` also rejects an `IndexType` with stride literal `0`."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     index = IndexType(LiteralExpression(1), LiteralExpression(8), LiteralExpression(0))
     checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
     expected = IndexType(
@@ -1891,8 +1894,8 @@ def test_check_rejects_index_with_literal_zero_stride() -> None:
 
 def test_index_arithmetic_with_zero_stride_operand_is_rejected() -> None:
     """Test arithmetic involving a stride-`0` index is rejected at the operand."""
-    left = Identifier("i")
-    right = Identifier("j")
+    left = mock_identifier("i", 0)
+    right = mock_identifier("j", 1)
     zero_stride = IndexType(
         LiteralExpression(1), LiteralExpression(10), LiteralExpression(0)
     )
@@ -1921,7 +1924,7 @@ def test_index_arithmetic_with_zero_stride_operand_is_rejected() -> None:
 
 def test_unary_positive_on_zero_stride_index_is_rejected() -> None:
     """Test unary `+` of a stride-`0` index also surfaces the rejection."""
-    identifier = Identifier("idx")
+    identifier = mock_identifier("idx", 0)
     zero_stride = IndexType(
         LiteralExpression(1), LiteralExpression(10), LiteralExpression(0)
     )
@@ -1943,7 +1946,7 @@ def test_unary_positive_on_zero_stride_index_is_rejected() -> None:
 
 def test_unary_expression_with_unknown_operation_raises_not_implemented() -> None:
     """Test an `UnaryExpression` carrying an unknown operation is rejected."""
-    identifier = Identifier("x")
+    identifier = mock_identifier("x", 0)
     checker = make_identifier_checker(
         {identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM)}
     )

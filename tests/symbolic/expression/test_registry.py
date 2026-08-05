@@ -1,6 +1,6 @@
 """Tests for the process-wide expression-IR registry.
 
-The registry now holds three kinds of entries:
+The registry holds three kinds of entries:
 
 - ``RegisteredFunction``: expression-bodied function with declared
   parameter and result sorts.
@@ -19,7 +19,6 @@ import math
 
 import pytest
 
-from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
     BUILTIN_CONSTANTS,
     EntryLookupError,
@@ -38,6 +37,8 @@ from fhy_core.symbolic.expression import (
     register_native_function,
 )
 
+from .conftest import mock_identifier
+
 # =============================================================================
 # register_function: happy paths
 # =============================================================================
@@ -47,7 +48,7 @@ def test_register_function_stores_name_parameters_and_body(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``register_function`` records the supplied name, parameters, and body."""
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     body = IdentifierExpression(parameter)
 
     registered = register_function(
@@ -67,7 +68,7 @@ def test_register_function_records_parameter_sorts_and_result_sort(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``register_function`` records the declared sorts on the stored entry."""
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     registered = register_function(
         "test_sort_fields",
         parameters=[parameter],
@@ -84,7 +85,7 @@ def test_register_function_returns_a_registered_function_instance(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``register_function`` returns a ``RegisteredFunction``."""
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
 
     registered = register_function(
         "test_returns_instance",
@@ -101,9 +102,9 @@ def test_register_function_with_multiple_parameters_records_order(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``register_function`` preserves the parameter order on registration."""
-    a = Identifier("a")
-    b = Identifier("b")
-    c = Identifier("c")
+    a = mock_identifier("a", 0)
+    b = mock_identifier("b", 1)
+    c = mock_identifier("c", 2)
 
     registered = register_function(
         "test_three_params",
@@ -120,7 +121,7 @@ def test_registered_function_dataclass_is_frozen(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``RegisteredFunction`` instances reject attribute mutation."""
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     registered = register_function(
         "test_frozen",
         parameters=[parameter],
@@ -142,7 +143,7 @@ def test_register_function_rejects_duplicate_name(
     function_registry_snapshot: None,
 ) -> None:
     """Test re-registering an existing name raises ``EntryRegistrationError``."""
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     register_function(
         "test_duplicate",
         parameters=[parameter],
@@ -165,8 +166,8 @@ def test_register_function_rejects_captured_free_identifier(
     function_registry_snapshot: None,
 ) -> None:
     """Test a body referencing identifiers outside the parameter list is rejected."""
-    parameter = Identifier("x")
-    captured = Identifier("y")
+    parameter = mock_identifier("x", 0)
+    captured = mock_identifier("y", 1)
 
     with pytest.raises(EntryRegistrationError, match="test_captured"):
         register_function(
@@ -186,10 +187,10 @@ def test_register_function_lists_multiple_captured_identifiers_in_sorted_order(
     Pins the sort and the comma-join so that error messages are stable
     when a body captures more than one free identifier.
     """
-    parameter = Identifier("a")
-    captured_z = Identifier("z")
-    captured_y = Identifier("y")
-    captured_x = Identifier("x")
+    parameter = mock_identifier("a", 0)
+    captured_z = mock_identifier("z", 1)
+    captured_y = mock_identifier("y", 2)
+    captured_x = mock_identifier("x", 3)
 
     with pytest.raises(EntryRegistrationError, match=r"x, y, z"):
         register_function(
@@ -209,8 +210,8 @@ def test_register_function_accepts_subset_of_parameters_used_in_body(
     Free-identifier validation is a subset relation: every body identifier
     must be a declared parameter, but declared parameters may go unused.
     """
-    used = Identifier("a")
-    unused = Identifier("b")
+    used = mock_identifier("a", 0)
+    unused = mock_identifier("b", 1)
 
     registered = register_function(
         "test_unused_param",
@@ -242,8 +243,8 @@ def test_register_function_rejects_sort_arity_mismatch(
     function_registry_snapshot: None,
 ) -> None:
     """Test a parameter / parameter-sort length mismatch is rejected."""
-    a = Identifier("a")
-    b = Identifier("b")
+    a = mock_identifier("a", 0)
+    b = mock_identifier("b", 1)
 
     with pytest.raises(EntryRegistrationError, match="test_sort_arity_mismatch"):
         register_function(
@@ -264,8 +265,8 @@ def test_register_function_rejects_body_result_sort_mismatch(
     ``result_sort`` is ``REAL``: registration must fail because the boolean
     core data type is not compatible with the ``REAL`` sort.
     """
-    a = Identifier("a")
-    b = Identifier("b")
+    a = mock_identifier("a", 0)
+    b = mock_identifier("b", 1)
 
     with pytest.raises(EntryRegistrationError, match="test_body_result_mismatch"):
         register_function(
@@ -289,8 +290,8 @@ def test_register_function_rolls_back_placeholder_on_body_check_failure(
     subsequent ``register_function`` call with the same name would
     fail with a spurious "already registered" error.
     """
-    a = Identifier("a")
-    b = Identifier("b")
+    a = mock_identifier("a", 0)
+    b = mock_identifier("b", 1)
 
     with pytest.raises(EntryRegistrationError):
         register_function(
@@ -315,8 +316,8 @@ def test_register_function_accepts_body_referencing_registered_constant(
     ``pi`` in a body must therefore be treated as a constant reference,
     not a captured free identifier.
     """
-    x = Identifier("x")
-    pi = Identifier("pi")
+    x = mock_identifier("x", 0)
+    pi = mock_identifier("pi", 1)
 
     # Should not raise: ``pi`` matches the registered native constant.
     registered = register_function(
@@ -339,7 +340,7 @@ def test_get_registered_entry_returns_previously_registered_entry(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``get_registered_entry`` returns the same record as registration."""
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     expected = register_function(
         "test_lookup",
         parameters=[parameter],
@@ -365,7 +366,7 @@ def test_is_entry_registered_true_after_registration(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``is_entry_registered`` returns True for a registered name."""
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     register_function(
         "test_is_registered_true",
         parameters=[parameter],
@@ -388,7 +389,7 @@ def test_get_registered_entries_includes_registered_entry(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``get_registered_entries`` snapshots include newly registered entries."""
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     expected = register_function(
         "test_snapshot_includes",
         parameters=[parameter],
@@ -408,7 +409,7 @@ def test_get_registered_entries_returns_immutable_snapshot(
     function_registry_snapshot: None,
 ) -> None:
     """Test mutating the snapshot does not affect the registry."""
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     register_function(
         "test_snapshot_immutable",
         parameters=[parameter],
@@ -431,7 +432,7 @@ def test_function_registry_snapshot_restores_state_after_test_a(
     function_registry_snapshot: None,
 ) -> None:
     """Test the snapshot fixture leaves the registry clean for the sibling test."""
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     register_function(
         "test_isolation_marker",
         parameters=[parameter],
@@ -619,7 +620,7 @@ def test_register_native_function_rejects_collision_with_registered_function(
     function_registry_snapshot: None,
 ) -> None:
     """Test a native registration cannot reuse an expression-bodied function name."""
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     register_function(
         "test_native_collides_with_function",
         parameters=[parameter],
@@ -710,7 +711,7 @@ def test_register_native_constant_rejects_collision_with_function(
     function_registry_snapshot: None,
 ) -> None:
     """Test a constant registration cannot reuse an existing function name."""
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     register_function(
         "test_const_collides_with_function",
         parameters=[parameter],
@@ -790,7 +791,7 @@ def test_get_registered_entries_snapshot_includes_all_entry_kinds(
     function_registry_snapshot: None,
 ) -> None:
     """Test the snapshot mapping holds the union of all three entry kinds."""
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     expression_function = register_function(
         "test_snapshot_function",
         parameters=[parameter],

@@ -314,9 +314,7 @@ def test_piecewise_helper_rejects_bare_bool_true_condition() -> None:
     A literal ``bool`` condition is (almost) always the accidental result
     of ``expr == k``, which is ``Expression`` identity comparison rather
     than IR equality (``Expression.__eq__`` is not overridden, so it falls
-    back to object identity, per the class docstring). Before this guard,
-    ``piecewise`` silently coerced the bool into a constant condition,
-    making the intended case unreachable with no diagnostic.
+    back to object identity, per the class docstring).
     """
     with pytest.raises(ValueError, match=r"(?i)equals"):
         piecewise((True, 1), otherwise=0)
@@ -329,16 +327,12 @@ def test_piecewise_helper_rejects_bare_bool_false_condition() -> None:
 
 
 def test_piecewise_helper_rejects_accidental_expression_equality_condition() -> None:
-    """Test the ``expr == k`` footgun is rejected instead of silently miscompiled.
+    """Test ``piecewise`` rejects a condition built from ``expr == literal``.
 
     ``xe == 0`` does not build an IR equality node; it evaluates to a
-    plain Python ``bool`` via object-identity fallback. Before this
-    guard, that ``bool`` was silently baked into a constant condition,
-    making the first case permanently unreachable (or permanently
-    selected) with no error, warning, or type-checker diagnostic --
-    reproduced against the pre-fix code as
-    ``piecewise((xe == 0, 7), (xe <= 0, 8), otherwise=9)`` evaluating to
-    8 at ``x = 0`` on every backend instead of the intended 7.
+    plain Python ``bool`` via object-identity fallback. ``piecewise``
+    rejects that bare bool rather than accepting it as a constant
+    condition.
     """
     identifier = mock_identifier("x", 0)
     xe = IdentifierExpression(identifier)

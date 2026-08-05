@@ -22,7 +22,6 @@ import math
 
 import pytest
 
-from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
     BUILTIN_CONSTANTS,
     BUILTIN_FUNCTIONS,
@@ -231,7 +230,7 @@ def test_each_built_in_constant_is_a_native_constant(name: str) -> None:
 
 def test_abs_inlining_produces_documented_piecewise_body() -> None:
     """Test ``abs(x)`` inlines to ``{x if x >= 0; -x otherwise}``."""
-    x = Identifier("x")
+    x = mock_identifier("x", 0)
     expression = call("abs", x)
 
     inlined = inline_functions(expression)
@@ -265,7 +264,7 @@ def test_sign_inlining_produces_two_case_piecewise_body() -> None:
 
 def test_relu_inlining_produces_max_x_zero_piecewise() -> None:
     """Test ``relu(x)`` inlines to ``max(x, 0)``'s piecewise body."""
-    x = Identifier("x")
+    x = mock_identifier("x", 0)
     expression = call("relu", x)
 
     inlined = inline_functions(expression)
@@ -276,9 +275,9 @@ def test_relu_inlining_produces_max_x_zero_piecewise() -> None:
 
 def test_clamp_inlining_produces_nested_max_min_piecewise() -> None:
     """Test ``clamp(x, lo, hi)`` inlines to the documented nested piecewise tree."""
-    x = Identifier("x")
-    lo = Identifier("lo")
-    hi = Identifier("hi")
+    x = mock_identifier("x", 0)
+    lo = mock_identifier("lo", 1)
+    hi = mock_identifier("hi", 2)
     expression = call("clamp", x, lo, hi)
 
     inlined = inline_functions(expression)
@@ -290,8 +289,8 @@ def test_clamp_inlining_produces_nested_max_min_piecewise() -> None:
 
 def test_xor_inlining_produces_or_and_not_and_combination() -> None:
     """Test ``xor(a, b)`` inlines to ``(a || b) && !(a && b)``."""
-    a = Identifier("a")
-    b = Identifier("b")
+    a = mock_identifier("a", 0)
+    b = mock_identifier("b", 1)
     expression = call("xor", a, b)
 
     inlined = inline_functions(expression)
