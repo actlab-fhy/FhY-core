@@ -11,26 +11,22 @@ primitives used across every subsystem are re-exported at the top level.
 
 from importlib.metadata import version
 
-# Two submodules must bootstrap before the rest, both for load-bearing
-# circular-import reasons that are otherwise invisible from this file:
+# `traits` and `symbolic` must each import before anything that touches
+# their circular-import partner, or the partial-init reentry fails:
 #
-# - `traits` before anything that touches `identifier` (e.g. `diagnostic`):
-#   `identifier.py` imports `.traits.equality`/`.traits.frozen` directly,
-#   and `traits.alpha_equivalence` imports `fhy_core.identifier` back.
-#   Importing `traits` first here resolves that reverse edge against a
-#   fresh (not partially-initialized) `identifier` module; touching
-#   `identifier` first would instead re-enter `traits` mid-import and fail.
-# - `symbolic` before anything that touches `types` (e.g. `symbol_table`,
-#   which -- because of the underscore in its name -- sorts before
-#   `symbolic` and would otherwise reach `types` first): `types/core.py`
-#   imports `..symbolic.expression.core`/`.pprint`, while
+# - `traits` before `identifier`: `identifier.py` imports
+#   `.traits.equality`/`.traits.frozen` directly, and
+#   `traits.alpha_equivalence` imports `fhy_core.identifier` back.
+#   Importing `traits` first resolves that reverse edge against a fresh
+#   `identifier` module.
+# - `symbolic` before `types`: `types/core.py` imports
+#   `..symbolic.expression.core`/`.pprint`, while
 #   `symbolic/expression/passes/{type_checker,numpy,body_type_checker}.py`
-#   import `fhy_core.types`. `symbolic/expression/__init__.py` fully loads
-#   `.core` (via its `.builtins` import) before any pass imports
-#   `fhy_core.types`, so importing `symbolic` first here means `types` is
-#   still untouched when those passes trigger its first (fresh) import,
-#   and `expression.core` is already complete by the time `types/core.py`
-#   reaches back for it.
+#   import `fhy_core.types`. `symbolic/expression/__init__.py` fully
+#   loads `.core` before any pass imports `fhy_core.types`, so importing
+#   `symbolic` first means `expression.core` is already complete when
+#   `types/core.py` reaches back for it. `symbol_table` sorts ahead of
+#   `symbolic` alphabetically, so this order is not isort's default.
 from . import traits
 
 # isort: split

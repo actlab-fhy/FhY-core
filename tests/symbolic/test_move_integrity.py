@@ -1,15 +1,13 @@
-"""Golden `type_id` regression covering the move's zero-wire-change guarantee.
+"""Golden `type_id` and wire-shape pins for the expression/constraint/param tree.
 
-Every `Serializable` in the moved `expression` / `constraint` / `param`
-tree pins an explicit `type_id`. This module hard-codes all 18 pinned
+Every `Serializable` in the `expression` / `constraint` / `param` tree
+pins an explicit `type_id`. This module hard-codes all 18 pinned
 strings and checks, for one representative instance of each class, that
-`get_serialization_class_type_id()` still equals the pinned literal
-(the registry key regardless of wrapped-family vs. plain dict form) and
-that a golden, previously-captured blob for that class still
-deserializes into an equivalent instance. A rename or wire-format
-change introduced by the move (accidental or otherwise) would flip a
-pinned id, or break a golden blob's deserialization, and fail here even
-though every other test still passes.
+`get_serialization_class_type_id()` equals the pinned literal (the
+registry key regardless of wrapped-family vs. plain dict form) and that
+a golden blob for that class deserializes into an equivalent instance.
+A rename or wire-format change flips a pinned id or breaks a golden
+blob's deserialization here, even when every other test still passes.
 """
 
 import json
@@ -96,18 +94,15 @@ _ALL_FIXTURES: dict[str, object] = {
 
 # Golden serialized forms for the 18 classes covered by `_ALL_FIXTURES`. Each
 # blob is the literal `serialize_to_dict()` output of one representative
-# instance, captured by constructing that instance and calling
-# `serialize_to_dict()` against the `fhy_core.expression` /
-# `fhy_core.constraint` / `fhy_core.param` implementation as it stood
-# immediately before the `fhy_core.symbolic` reorganization relocated those
-# modules. Regenerating this JSON from the current code would defeat the
-# test's purpose: a wire-format regression that changes both the writer and
-# the golden data in lockstep would still pass. Every identifier embeds a
-# fixed id (0 for the shared variable `x`, 1 for the `Param` variable)
-# rather than one drawn from the process-global identifier counter, so the
-# blob is exactly reproducible; `param` and `param_assignment` are compared
-# by alpha equivalence below precisely because their variable's id is not
-# expected to match the id `create_integer_param()` assigns in this process.
+# instance, held as a static literal independent of the current
+# implementation. Regenerating this JSON from the current code would defeat
+# the test's purpose: a wire-format regression that changes both the writer
+# and the golden data in lockstep would still pass. Every identifier embeds a
+# fixed id (0 for the shared variable `x`, 1 for the `Param` variable) rather
+# than one drawn from the process-global identifier counter, so the blob is
+# exactly reproducible; `param` and `param_assignment` are compared by alpha
+# equivalence below because their variable's id is not expected to match the
+# id `create_integer_param()` assigns in this process.
 _GOLDEN_BLOBS_JSON = """
 {
   "binary_expression": {
@@ -428,9 +423,9 @@ _GOLDEN_BLOBS: dict[str, object] = json.loads(_GOLDEN_BLOBS_JSON)
 _ALPHA_EQUIVALENT_ONLY: frozenset[str] = frozenset({"param", "param_assignment"})
 
 # The 18 `type_id` literals this module pins, hard-coded independently of
-# `_ALL_FIXTURES`/`_GOLDEN_BLOBS` so that a stray or accidentally dropped
-# fixture entry (which would otherwise still agree with itself) fails one of
-# the two guard tests below instead of passing vacuously.
+# `_ALL_FIXTURES` and `_GOLDEN_BLOBS`. Because this set does not derive from
+# either table, a missing or mismatched fixture or golden-blob entry is
+# caught by the two guard tests below rather than passing vacuously.
 _EXPECTED_PINNED_TYPE_IDS: frozenset[str] = frozenset(
     {
         "unary_expression",

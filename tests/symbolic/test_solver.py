@@ -214,7 +214,7 @@ def test_check_expression_satisfiability_raises_key_error_for_missing_symbol_typ
 
 
 @pytest.mark.z3
-def test_does_expression_imply_parity_with_pre_seam_contract() -> None:
+def test_does_expression_imply_reports_true_for_a_valid_implication() -> None:
     """Test `does_expression_imply` reports True for `x >= 5 -> x > 3` over int x."""
     x = mock_identifier("x", 0)
     antecedent = BinaryExpression(
@@ -228,8 +228,8 @@ def test_does_expression_imply_parity_with_pre_seam_contract() -> None:
 
 
 @pytest.mark.z3
-def test_holds_for_all_free_assignments_parity_with_pre_seam_contract() -> None:
-    """Test the universal-validity query degenerates with no considered ids."""
+def test_holds_for_all_free_assignments_reports_true_with_no_considered_ids() -> None:
+    """Test the universal-validity query holds with no considered identifiers."""
     x = mock_identifier("x", 0)
     expression = BinaryExpression(
         BinaryOperation.GREATER_EQUAL,

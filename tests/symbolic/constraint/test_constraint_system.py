@@ -696,14 +696,12 @@ def test_check_satisfiability_with_closed_conjunction_needs_no_symbol_types() ->
 def test_evaluate_and_check_satisfiability_with_bindings_do_not_contradict() -> None:
     """Test the two bindings-aware APIs never reach opposite decided outcomes.
 
-    Before the SymPy bridge substituted simultaneously, ``{x: y, y: 5}``
-    on ``x < 5`` made ``evaluate_with_bindings`` chain to the literal
-    ``False`` (VIOLATED) while ``check_satisfiability_with_bindings``
+    For a chained binding such as ``{x: y, y: 5}`` on ``x < 5``,
+    ``evaluate_with_bindings`` and ``check_satisfiability_with_bindings``
     (which substitutes through the always-simultaneous IR-level
-    ``Expression.substitute``) reported SATISFIED on the residual
-    ``y < 5`` -- a direct contradiction between two methods of the same
-    object on identical inputs. Both must now agree that a chained
-    binding leaves an undecided/satisfiable residual, never VIOLATED.
+    ``Expression.substitute``) must agree: neither reports VIOLATED
+    while the other reports SATISFIED or UNDECIDED on the residual
+    ``y < 5``.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
@@ -728,15 +726,15 @@ def test_evaluate_and_check_satisfiability_with_bindings_do_not_contradict() -> 
 
 @pytest.mark.z3
 def test_check_satisfiability_bool_member_ambiguity_is_undecided_not_violated() -> None:
-    """Test the finding's witness system no longer reports VIOLATED.
+    """Test a bool-ambiguous system that is type-strictly satisfiable reports UNDECIDED.
 
     ``x`` typed ``INT`` with ``x in {1}`` and ``x not in {True}`` is
     satisfied by the concrete witness ``x = 1`` under the package's
     type-strict membership semantics (``evaluate_with_bindings`` agrees).
-    Lowering the bool member through the current Z3 bridge cannot
-    preserve that distinction (Z3 coerces ``BoolVal(True)`` against an
-    ``Int`` sort to the integer ``1``), so the sound answer is UNDECIDED,
-    not the provably-wrong VIOLATED.
+    The Z3 bridge cannot preserve that distinction when lowering the bool
+    member (Z3 coerces ``BoolVal(True)`` against an ``Int`` sort to the
+    integer ``1``), so ``check_satisfiability`` reports UNDECIDED rather
+    than the provably wrong VIOLATED.
     """
     x = mock_identifier("x", 0)
     system = create_constraint_system(
@@ -751,12 +749,12 @@ def test_check_satisfiability_bool_member_ambiguity_is_undecided_not_violated() 
 
 @pytest.mark.z3
 def test_check_satisfiability_bool_member_under_int_sort_is_not_satisfied() -> None:
-    """Test the converse witness no longer reports SATISFIED.
+    """Test a bool member under a non-bool sort is never reported SATISFIED.
 
     No admissible ``int`` value type-strictly equals ``True``, so a
     system whose only constraint is ``x in {True}`` under an ``INT`` sort
-    must not be reported SATISFIED (Z3's coercion would otherwise let
-    ``x = 1`` spuriously witness it).
+    must not be reported SATISFIED; Z3's coercion of ``True`` to the
+    integer ``1`` would otherwise let ``x = 1`` spuriously satisfy it.
     """
     x = mock_identifier("x", 0)
     system = create_constraint_system(InSetConstraint(x, {True}))

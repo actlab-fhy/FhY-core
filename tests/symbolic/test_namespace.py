@@ -1,10 +1,11 @@
-"""Tests pinning the post-reorganization package namespace shape.
+"""Tests pinning the `fhy_core` package namespace shape.
 
-Covers two contracts: `fhy_core`'s top level drops the four moved names
-and gains `symbolic`, and `fhy_core.symbolic` aggregates its five
-submodule namespaces plus the full solver surface and `SymbolType` --
-while the five query functions rehomed to `solver` are no longer
-exported from `symbolic.expression`.
+Covers two contracts: `fhy_core.__all__` excludes the family-owned
+`expression`, `constraint`, `param`, and `symbol_type` names and
+includes `symbolic`; and `fhy_core.symbolic` aggregates its five
+submodule namespaces plus the full solver surface and `SymbolType`,
+while `symbolic.expression` does not export the five query functions
+that live in `solver`.
 """
 
 import types
@@ -15,14 +16,14 @@ import fhy_core.symbolic.expression
 from fhy_core.symbolic import solver
 
 
-def test_fhy_core_top_level_drops_the_four_moved_names() -> None:
-    """Test `fhy_core.__all__` no longer names the moved subsystems."""
+def test_fhy_core_top_level_excludes_the_family_owned_names() -> None:
+    """Test `fhy_core.__all__` excludes the family-owned subsystem names."""
     for name in ("expression", "constraint", "param", "symbol_type"):
         assert name not in fhy_core.__all__
 
 
-def test_fhy_core_top_level_gains_symbolic() -> None:
-    """Test `fhy_core.__all__` names the new `symbolic` namespace, itself a module."""
+def test_fhy_core_top_level_exposes_symbolic_as_a_module() -> None:
+    """Test `fhy_core.__all__` names `symbolic`, itself a module."""
     assert "symbolic" in fhy_core.__all__
     assert isinstance(fhy_core.symbolic, types.ModuleType)
 
@@ -76,15 +77,15 @@ def test_symbolic_namespace_reexports_symbol_type() -> None:
     assert fhy_core.symbolic.SymbolType is fhy_core.symbolic.symbol_type.SymbolType
 
 
-def test_rehomed_query_functions_are_absent_from_expression_exports() -> None:
-    """Test the five rehomed query functions are gone from `symbolic.expression`."""
-    rehomed_names = (
+def test_solver_query_functions_are_absent_from_expression_exports() -> None:
+    """Test `symbolic.expression` does not export the five solver query functions."""
+    solver_query_names = (
         "simplify_expression",
         "does_expression_imply",
         "holds_for_all_free_assignments",
         "assert_expression_implies",
         "assert_holds_for_all_free_assignments",
     )
-    for name in rehomed_names:
+    for name in solver_query_names:
         assert name not in fhy_core.symbolic.expression.__all__
         assert not hasattr(fhy_core.symbolic.expression, name)
