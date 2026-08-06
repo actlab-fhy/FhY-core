@@ -26,6 +26,8 @@ __all__ = [
     "NativeConstant",
     "NativeFunction",
     "NativeResultSortError",
+    "NonFiniteCastError",
+    "PartialPiecewiseError",
     "Pattern",
     "PiecewiseExpression",
     "PiecewiseExpressionPattern",
@@ -102,6 +104,8 @@ from .core import (
 )
 from .errors import (
     NativeResultSortError,
+    NonFiniteCastError,
+    PartialPiecewiseError,
     StringLiteralPrecisionError,
     UnboundVariableError,
     UndecidableError,

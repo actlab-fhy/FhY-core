@@ -49,11 +49,36 @@ def _leaf_expressions() -> st.SearchStrategy[Expression]:
     )
 
 
+def _coerce_to_valid_condition(expression: Expression) -> Expression:
+    """Coerce a drawn expression into one valid as a piecewise condition.
+
+    A literal condition must be boolean-valued, so a non-boolean literal
+    maps to an equivalent boolean literal (nonzero is truthy); a
+    non-literal expression (a nested piecewise node, here) carries no
+    such restriction and passes through unchanged. Mapping rather than
+    filtering keeps every draw usable, so the strategy never relies on
+    rejection sampling.
+    """
+    if isinstance(expression, LiteralExpression) and not isinstance(
+        expression.value, bool
+    ):
+        return LiteralExpression(bool(expression.value))
+    return expression
+
+
+def _condition_expressions(
+    children: st.SearchStrategy[Expression],
+) -> st.SearchStrategy[Expression]:
+    """Return ``children``, mapped so every draw is valid as a piecewise condition."""
+    return children.map(_coerce_to_valid_condition)
+
+
 def _extend_with_piecewise(
     children: st.SearchStrategy[Expression],
 ) -> st.SearchStrategy[PiecewiseExpression]:
     """Build a strategy for a piecewise node whose parts are drawn from ``children``."""
-    cases = st.lists(st.tuples(children, children), min_size=1, max_size=3)
+    condition_children = _condition_expressions(children)
+    cases = st.lists(st.tuples(condition_children, children), min_size=1, max_size=3)
 
     def _build(
         case_list: Sequence[tuple[Expression, Expression]], otherwise: Expression

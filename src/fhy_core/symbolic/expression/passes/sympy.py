@@ -38,6 +38,7 @@ from ..core import (
     UnaryExpression,
     UnaryOperation,
 )
+from ..errors import PartialPiecewiseError
 from ..registry import (
     EntryLookupError,
     NativeConstant,
@@ -217,6 +218,16 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
     def visit_piecewise_expression(
         self, piecewise_expression: PiecewiseExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
+        """Lower to a ``sympy.Piecewise`` with an unconditional trailing branch.
+
+        Each case becomes a ``(value, condition)`` branch, in case
+        order; ``otherwise`` becomes a final branch guarded by an
+        unconditional ``True``, so the result is total and
+        first-match-wins by construction (SymPy's ``Piecewise``
+        evaluates to the first branch whose condition holds). Every
+        condition must be boolean-valued; SymPy raises ``TypeError``
+        for a branch condition it can determine is not a Boolean.
+        """
         branches = [
             (self.visit(value), self.visit(condition))
             for condition, value in piecewise_expression.get_cases()
@@ -668,35 +679,34 @@ class SymPyToExpressionConverter(
     def _convert_piecewise(self, piecewise: sympy.Piecewise) -> Expression:
         """Lift a ``sympy.Piecewise`` to a flat ``PiecewiseExpression``.
 
-        All branches but the last become cases; the last branch's value
-        becomes ``otherwise`` and its condition is dropped, even when
-        that condition is not ``sympy.true`` -- a genuinely partial
-        ``Piecewise`` is still lifted this way, logging a ``WARNING`` when
-        it happens. A single-branch ``Piecewise`` (the only shape that
-        survives construction with a non-``True`` condition) degenerates
-        to just the converted value, dropping its condition without a log
-        call.
+        All branches but the last become cases, in branch order; the
+        last branch's value becomes ``otherwise``. The last branch's
+        condition must be ``sympy.true``: ``PiecewiseExpression`` is a
+        total function, so a ``Piecewise`` whose final condition is not
+        ``sympy.true`` -- meaning it does not cover its domain -- has no
+        faithful IR representation and raises :class:`PartialPiecewiseError`
+        rather than being silently totalized. A single-branch
+        ``Piecewise`` (the only shape that survives construction with a
+        non-``True`` condition) is rejected the same way; the degenerate
+        case of a single branch whose condition is already ``sympy.true``
+        converts directly to the branch's bare value.
         """
         branches = tuple(piecewise.args)
         if not branches:
             raise ValueError("Cannot convert an empty Piecewise expression.")
-        if len(branches) == 1:
-            value, _ = branches[0]
-            return self.convert(value)
-        conditions: list[Expression] = []
-        values: list[Expression] = []
-        for value, condition in branches[:-1]:
-            values.append(self.convert(value))
-            conditions.append(self.convert(condition))
-        otherwise_value, final_condition = branches[-1]
+        *case_branches, (otherwise_value, final_condition) = branches
         if final_condition is not sympy.true:
-            _LOGGER.warning(
-                "lifting a multi-branch Piecewise whose final condition is "
-                "%r (not sympy.true); the condition is dropped and the "
-                "branch value is treated as `otherwise`, totalizing what "
-                "may be a genuinely partial function",
-                final_condition,
+            raise PartialPiecewiseError(
+                "cannot lift a partial sympy.Piecewise to PiecewiseExpression: "
+                f"the final branch's condition is {final_condition!r}, not "
+                "sympy.true. PiecewiseExpression is a total function and has "
+                "no faithful representation for a Piecewise that does not "
+                "cover its domain."
             )
+        if not case_branches:
+            return self.convert(otherwise_value)
+        conditions = [self.convert(condition) for _, condition in case_branches]
+        values = [self.convert(value) for value, _ in case_branches]
         otherwise = self.convert(otherwise_value)
         return PiecewiseExpression(tuple(conditions), tuple(values), otherwise)
 
@@ -706,24 +716,22 @@ def convert_sympy_expression_to_expression(
 ) -> Expression:
     """Convert a SymPy expression to an expression.
 
-    Caveat: lifting a ``sympy.Piecewise`` always treats its last branch's
-    value as ``otherwise`` and drops that branch's condition, even when
-    the condition is not ``sympy.true``. SymPy itself only produces a
-    non-``True`` final condition for a genuinely partial ``Piecewise``
-    (one that does not cover its domain), so this drop silently
-    totalizes the result: the returned expression evaluates to the
-    former last branch's value on the region the original condition
-    excluded, rather than being undefined there. A multi-branch drop of
-    this kind logs a ``WARNING``; a single-branch ``Piecewise`` degrades
-    to its bare value without logging, since a single-branch ``Piecewise``
-    with a non-``True`` condition already discards that condition by
-    construction.
+    Lifting a ``sympy.Piecewise`` requires its last branch's condition
+    to be ``sympy.true``: ``PiecewiseExpression`` is a total function,
+    so a ``Piecewise`` whose final condition is not ``sympy.true`` --
+    meaning it does not cover its domain -- has no faithful
+    representation and raises :class:`PartialPiecewiseError`.
 
     Args:
         sympy_expression: SymPy expression to convert.
 
     Returns:
         Expression.
+
+    Raises:
+        PartialPiecewiseError: If ``sympy_expression`` contains a
+            ``sympy.Piecewise`` whose final branch condition is not
+            ``sympy.true``.
 
     """
     converter = SymPyToExpressionConverter()
@@ -741,6 +749,11 @@ def simplify_expression(
 
     Returns:
         Simplified expression.
+
+    Raises:
+        PartialPiecewiseError: If simplification yields a
+            ``sympy.Piecewise`` whose final branch condition is not
+            ``sympy.true``.
 
     """
     sympy_expression = convert_expression_to_sympy_expression(expression)

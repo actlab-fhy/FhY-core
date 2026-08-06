@@ -108,6 +108,74 @@ def test_piecewise_expression_rejects_non_expression_otherwise() -> None:
 
 
 # =============================================================================
+# PiecewiseExpression.__post_init__: literal-condition boolean check
+# =============================================================================
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_piecewise_expression_accepts_boolean_literal_condition(value: bool) -> None:
+    """Test a boolean ``LiteralExpression`` condition constructs cleanly."""
+    condition = LiteralExpression(value)
+
+    expression = PiecewiseExpression(
+        (condition,), (LiteralExpression(1),), LiteralExpression(0)
+    )
+
+    assert expression.conditions == (condition,)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(1, id="int_one"),
+        pytest.param(0, id="int_zero"),
+        pytest.param(5.0, id="float"),
+        pytest.param("5", id="integer_grammar_string"),
+        pytest.param("1.5", id="float_grammar_string"),
+    ],
+)
+def test_piecewise_expression_rejects_non_boolean_literal_condition(
+    value: int | float | str,
+) -> None:
+    """Test a non-boolean ``LiteralExpression`` condition raises ``ValueError``.
+
+    ``ExpressionTypeChecker`` only ever classifies a literal as boolean
+    when its stored value is a Python ``bool``; every other literal
+    value synthesizes to ``UINT``/``INT``/``FLOAT`` or is unsupported
+    entirely. ``PiecewiseExpression`` mirrors that classification at
+    construction time, since a literal's boolean-ness is knowable
+    without any surrounding type context, unlike a non-literal
+    condition's.
+    """
+    with pytest.raises(ValueError, match=r"(?i)condition"):
+        PiecewiseExpression(
+            (LiteralExpression(value),),
+            (LiteralExpression(1),),
+            LiteralExpression(0),
+        )
+
+
+def test_piecewise_expression_accepts_non_literal_condition_regardless_of_kind() -> (
+    None
+):
+    """Test a non-literal condition is never rejected by the boolean check.
+
+    A non-literal condition (an identifier, here) carries no compile-time
+    -visible value, so the literal-only boolean check cannot apply to it;
+    whether it is actually boolean-typed is a question for the type
+    checker, not construction.
+    """
+    identifier = mock_identifier("flag", 0)
+    condition = IdentifierExpression(identifier)
+
+    expression = PiecewiseExpression(
+        (condition,), (LiteralExpression(1),), LiteralExpression(0)
+    )
+
+    assert expression.conditions == (condition,)
+
+
+# =============================================================================
 # PiecewiseExpression.__post_init__: list-to-tuple coercion
 # =============================================================================
 
@@ -328,15 +396,34 @@ def test_piecewise_helper_coerces_identifier_operand_in_otherwise() -> None:
 
 
 def test_piecewise_helper_coerces_python_literal_operands() -> None:
-    """Test ``piecewise(...)`` wraps Python literal operands in an expression."""
-    expression = piecewise((1, 5), otherwise=10)
+    """Test ``piecewise(...)`` wraps Python literal value/otherwise operands.
 
-    assert isinstance(expression.conditions[0], LiteralExpression)
-    assert expression.conditions[0].value == 1
+    The condition slot is not exercised with a bare non-boolean literal
+    here: ``piecewise`` itself already rejects a bare boolean condition
+    (see the bare-bool-condition tests below), and a bare non-boolean
+    literal coerces into a non-boolean ``LiteralExpression``, which
+    ``PiecewiseExpression`` rejects as a condition (see
+    ``test_piecewise_helper_rejects_bare_non_boolean_literal_condition``).
+    """
+    expression = piecewise((LiteralExpression(True), 5), otherwise=10)
+
     assert isinstance(expression.values[0], LiteralExpression)
     assert expression.values[0].value == 5
     assert isinstance(expression.otherwise, LiteralExpression)
     assert expression.otherwise.value == 10
+
+
+def test_piecewise_helper_rejects_bare_non_boolean_literal_condition() -> None:
+    """Test ``piecewise(...)`` rejects a bare non-boolean literal condition.
+
+    Unlike a bare Python ``bool``, which ``piecewise`` itself already
+    rejects as a probable ``expr == k`` typo, a bare non-boolean literal
+    (an ``int`` here) coerces cleanly into a ``LiteralExpression`` --
+    that coercion then fails ``PiecewiseExpression``'s boolean-literal
+    condition check.
+    """
+    with pytest.raises(ValueError, match=r"(?i)condition"):
+        piecewise((1, 5), otherwise=10)
 
 
 def test_piecewise_helper_coerces_bool_case_value() -> None:
@@ -520,6 +607,52 @@ def test_call_expression_rejects_empty_function_name() -> None:
     """
     with pytest.raises(ValueError, match="non-empty"):
         CallExpression("", (LiteralExpression(1),))
+
+
+def test_call_expression_rejects_non_expression_argument() -> None:
+    """Test a bare Python value in ``arguments`` raises ``ValueError``.
+
+    A bare ``int`` argument would otherwise construct cleanly and
+    silently bypass every ``Expression``-only downstream pass, mirroring
+    ``PiecewiseExpression``'s element validation.
+    """
+    with pytest.raises(ValueError, match=r"(?i)argument"):
+        CallExpression("f", (1,))  # type: ignore[arg-type]
+
+
+def test_call_expression_coerces_list_arguments_to_tuple() -> None:
+    """Test constructing with a list ``arguments`` coerces it to a tuple.
+
+    ``arguments`` is declared as ``tuple[Expression, ...]``, but nothing
+    at the language level stops a caller from passing a ``list``
+    instead; ``__post_init__`` normalizes either input to a real tuple.
+    """
+    argument = LiteralExpression(1)
+
+    expression = CallExpression("f", [argument])  # type: ignore[arg-type]
+
+    assert type(expression.arguments) is tuple
+    assert expression.arguments == (argument,)
+
+
+def test_call_expression_constructed_from_a_list_is_unaffected_by_later_mutation() -> (
+    None
+):
+    """Test mutating the original list after construction does not alias.
+
+    Before coercion, a caller passing a ``list`` produced an instance
+    whose ``arguments`` field aliased the caller's own list: appending to
+    the original list after construction would silently change the
+    already-built ``CallExpression``. Coercing to a real ``tuple`` in
+    ``__post_init__`` closes that gap.
+    """
+    argument = LiteralExpression(1)
+    original_arguments = [argument]
+
+    expression = CallExpression("f", original_arguments)  # type: ignore[arg-type]
+    original_arguments.append(LiteralExpression(2))
+
+    assert expression.arguments == (argument,)
 
 
 def test_call_expression_is_frozen_after_construction() -> None:

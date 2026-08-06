@@ -152,7 +152,10 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
         Conditions and values are visited in case order, then
         ``otherwise`` -- deterministic left-to-right for the identifier
         cache side effects. Z3 has no n-ary conditional; the right-folded
-        nested ``If`` is first-match-wins by construction.
+        nested ``If`` is first-match-wins by construction. Every
+        condition must be boolean-valued; Z3 raises
+        ``z3.z3types.Z3Exception`` for a condition it cannot convert to
+        a Z3 Boolean.
         """
         case_values = [
             (self.visit(condition), self.visit(value))

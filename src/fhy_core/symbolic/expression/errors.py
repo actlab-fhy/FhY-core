@@ -11,6 +11,8 @@ __all__ = [
     "EntryLookupError",
     "EntryRegistrationError",
     "NativeResultSortError",
+    "NonFiniteCastError",
+    "PartialPiecewiseError",
     "StringLiteralPrecisionError",
     "UnboundVariableError",
     "UndecidableError",
@@ -53,6 +55,34 @@ class NativeResultSortError(RuntimeError):
     indicates the native implementation's contract is broken: the
     declared sort promised one runtime type family, but the
     implementation produced another.
+    """
+
+
+@register_error
+class NonFiniteCastError(ValueError):
+    """Raised when a non-finite NumPy result reaches an integer-sorted cast.
+
+    The NumPy evaluator casts a native call's result to the dtype of its
+    declared result sort. A ``nan``/``inf`` value has no faithful
+    ``BOOL``-, ``NAT``-, or ``INT``-sorted representation, so casting it
+    would silently produce a platform-defined sentinel; the evaluator
+    checks for non-finite values before the cast and raises this error
+    instead.
+    """
+
+
+@register_error
+class PartialPiecewiseError(ValueError):
+    """Raised when a lifted ``sympy.Piecewise`` does not cover its domain.
+
+    ``PiecewiseExpression`` is a total function: it always denotes
+    ``otherwise`` when no case condition holds. Lifting a
+    ``sympy.Piecewise`` whose final branch condition is not
+    ``sympy.true`` -- including the single-branch shape, whose only
+    surviving construction has a non-``True`` condition -- has no
+    faithful representation in the IR, since treating the final
+    branch's value as ``otherwise`` would silently cover the region the
+    original condition excluded.
     """
 
 

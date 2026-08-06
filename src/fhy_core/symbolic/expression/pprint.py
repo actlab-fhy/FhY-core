@@ -80,18 +80,18 @@ class ExpressionPrettyFormatter(VisitablePass[Expression, str]):
     def visit_piecewise_expression(
         self, piecewise_expression: PiecewiseExpression
     ) -> str:
-        otherwise = self.visit(piecewise_expression.otherwise)
         if self._is_printed_functional:
             parts: list[str] = []
             for condition, value in piecewise_expression.get_cases():
                 parts.append(self.visit(condition))
                 parts.append(self.visit(value))
-            parts.append(otherwise)
+            parts.append(self.visit(piecewise_expression.otherwise))
             return f"(piecewise {' '.join(parts)})"
         case_clauses = [
             f"{self.visit(value)} if {self.visit(condition)}"
             for condition, value in piecewise_expression.get_cases()
         ]
+        otherwise = self.visit(piecewise_expression.otherwise)
         return "{" + "; ".join([*case_clauses, f"{otherwise} otherwise"]) + "}"
 
     def visit_call_expression(self, call_expression: CallExpression) -> str:

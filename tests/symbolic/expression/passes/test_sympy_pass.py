@@ -15,6 +15,7 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    PartialPiecewiseError,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
@@ -253,6 +254,27 @@ def test_substitute_sympy_expression_variables_is_simultaneous_not_chained() -> 
     result = substitute_sympy_expression_variables(sympy_expression, substitutions)
 
     assert result == (sympy.Symbol("y_1") < 5)
+
+
+def test_substitute_sympy_variables_replaces_piecewise_condition_symbol() -> None:
+    """Test substituting a ``Piecewise`` condition symbol with a relational.
+
+    The substitution must succeed and preserve the branch structure.
+    """
+    flag = mock_identifier("flag", 0)
+    y = mock_identifier("y", 1)
+    sympy_expression = sympy.Piecewise(
+        (sympy.Integer(1), sympy.Symbol("flag_0")), (sympy.Integer(2), True)
+    )
+    substitutions: dict[Identifier, Expression] = {
+        flag: IdentifierExpression(y) > 0,
+    }
+
+    result = substitute_sympy_expression_variables(sympy_expression, substitutions)
+
+    assert isinstance(result, sympy.Piecewise)
+    assert result.args[0] == (sympy.Integer(1), sympy.Symbol("y_1") > 0)
+    assert result.args[1] == (sympy.Integer(2), True)
 
 
 # =============================================================================
@@ -1100,33 +1122,29 @@ def test_convert_multi_case_piecewise_preserves_branch_order_and_content() -> No
         )
 
 
-def test_single_branch_sympy_piecewise_degenerates_to_bare_value(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Test a single-branch ``sympy.Piecewise`` lifts directly to its value.
+def test_single_branch_sympy_piecewise_with_non_true_condition_raises() -> None:
+    """Test a single-branch ``sympy.Piecewise`` with a non-``True`` condition raises.
 
     A ``True``-condition single branch collapses to a bare SymPy value
     before it ever reaches the lifter, so the only single-branch
     ``Piecewise`` object that survives construction has a symbolic
-    condition. The lifter still degenerates it to the converted value,
-    dropping the (never-checked) condition, rather than wrapping it in
-    a ``PiecewiseExpression`` -- without logging, unlike the analogous
-    multi-branch drop (see
-    ``test_multi_branch_sympy_piecewise_lift_with_non_true_final_condition_logs_warning``).
+    condition. ``PiecewiseExpression`` is a total function, so this
+    partial shape has no faithful IR representation: the lifter raises
+    rather than degenerating to the branch's bare value.
+    ``SymPyToExpressionConverter`` is a registered ``CompilerPass``, so
+    the underlying ``PartialPiecewiseError`` is wrapped in
+    ``PassExecutionError`` with the original error attached as
+    ``__cause__``.
     """
     sympy_expression = sympy.Piecewise(
         (sympy.Integer(5), sympy.Symbol("flag_0")), evaluate=False
     )
 
-    with caplog.at_level(
-        logging.WARNING, logger="fhy_core.symbolic.expression.passes.sympy"
-    ):
-        result = convert_sympy_expression_to_expression(sympy_expression)
+    with pytest.raises(PassExecutionError, match=r"PartialPiecewiseError") as exc_info:
+        convert_sympy_expression_to_expression(sympy_expression)
 
-    assert result.is_structurally_equivalent(LiteralExpression(5))
-    assert not any(record.levelno == logging.WARNING for record in caplog.records), (
-        "the single-branch degenerate case must not log a dropped-condition warning"
-    )
+    assert isinstance(exc_info.value.__cause__, PartialPiecewiseError)
+    assert "flag_0" in str(exc_info.value.__cause__)
 
 
 def test_two_branch_sympy_piecewise_lifts_to_single_case_piecewise_expression() -> None:
@@ -1156,9 +1174,10 @@ def test_multi_branch_sympy_piecewise_lifts_to_one_flat_piecewise_expression(
     ``PiecewiseExpression`` with two cases and one ``otherwise`` --
     not a tree of nested one-case nodes. The final condition here is
     ``True`` (a total ``Piecewise``), so this normal round-trip shape
-    must not log the dropped-condition warning that a genuinely partial
-    final condition triggers (see
-    ``test_multi_branch_sympy_piecewise_lift_with_non_true_final_condition_logs_warning``).
+    logs no warning, contrasting with a genuinely partial final
+    condition (see
+    ``test_multi_branch_sympy_piecewise_with_non_true_final_condition_raises``),
+    which raises ``PartialPiecewiseError`` instead.
     """
     sympy_expression = sympy.Piecewise(
         (sympy.Integer(1), sympy.Symbol("flag_0")),
@@ -1183,35 +1202,27 @@ def test_multi_branch_sympy_piecewise_lifts_to_one_flat_piecewise_expression(
     )
 
 
-def test_multi_branch_sympy_piecewise_lift_with_non_true_final_condition_logs_warning(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Test the lifter treats the final branch's value as ``otherwise`` and warns.
+def test_multi_branch_sympy_piecewise_with_non_true_final_condition_raises() -> None:
+    """Test a multi-branch ``sympy.Piecewise`` whose final condition is not ``True``.
 
-    Even when the final branch's condition is not ``sympy.true`` (a
-    genuinely partial ``Piecewise``), the lifter still takes its value
-    as ``otherwise`` and drops the condition, rather than raising -- but,
-    unlike the single-branch degenerate case, it logs a ``WARNING``
-    naming the dropped condition, since dropping it here silently
-    totalizes what may be a genuinely partial function.
+    A final branch condition that is not ``sympy.true`` means the
+    ``Piecewise`` does not cover its domain. Treating the final
+    branch's value as ``otherwise`` would silently cover the region the
+    original condition excluded, so the lifter raises
+    ``PartialPiecewiseError`` naming the offending condition instead of
+    totalizing the result, wrapped in ``PassExecutionError`` per
+    ``SymPyToExpressionConverter``'s pass contract.
     """
     sympy_expression = sympy.Piecewise(
         (sympy.Integer(1), sympy.Symbol("flag_0")),
         (sympy.Integer(2), sympy.Symbol("flag_1")),
     )
 
-    with caplog.at_level(
-        logging.WARNING, logger="fhy_core.symbolic.expression.passes.sympy"
-    ):
-        result = convert_sympy_expression_to_expression(sympy_expression)
+    with pytest.raises(PassExecutionError, match=r"PartialPiecewiseError") as exc_info:
+        convert_sympy_expression_to_expression(sympy_expression)
 
-    assert isinstance(result, PiecewiseExpression)
-    assert len(result.conditions) == 1
-    assert result.otherwise.is_structurally_equivalent(LiteralExpression(2))
-    assert any(
-        record.levelno == logging.WARNING and "flag_1" in record.getMessage()
-        for record in caplog.records
-    ), "expected a WARNING log record naming the dropped final condition"
+    assert isinstance(exc_info.value.__cause__, PartialPiecewiseError)
+    assert "flag_1" in str(exc_info.value.__cause__)
 
 
 def test_single_case_piecewise_expression_round_trips_through_sympy() -> None:

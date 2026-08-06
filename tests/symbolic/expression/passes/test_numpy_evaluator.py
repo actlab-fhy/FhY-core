@@ -19,6 +19,7 @@ from fhy_core.symbolic.expression import (
     IdentifierExpression,
     LiteralExpression,
     NativeFunction,
+    NonFiniteCastError,
     StringLiteralPrecisionError,
     UnaryExpression,
     UnaryOperation,
@@ -362,25 +363,86 @@ def test_cast_to_result_sort_passes_real_through_unchanged() -> None:
     assert result.dtype == np.float32
 
 
+@pytest.mark.parametrize(
+    "result_sort",
+    [FunctionSort.BOOL, FunctionSort.NAT, FunctionSort.INT],
+    ids=["BOOL", "NAT", "INT"],
+)
+def test_cast_to_result_sort_raises_for_non_finite_value(
+    result_sort: FunctionSort,
+) -> None:
+    """Test each cast-table sort raises ``NonFiniteCastError`` for a non-finite input.
+
+    Exercised directly (bypassing a whole-expression walk) for the same
+    reason as ``test_cast_to_result_sort_casts_to_declared_dtype``: no
+    built-in native is ``NAT``- or ``BOOL``-sorted.
+    """
+    evaluator = NumpyExpressionEvaluator({}, np)
+
+    with pytest.raises(NonFiniteCastError):
+        evaluator._cast_to_result_sort(np.array([1.0, np.nan]), result_sort)
+
+
 @pytest.mark.parametrize("function_name", _INTEGER_SORT_FUNCTION_NAMES)
-def test_non_finite_integer_sort_result_casts_without_raising(
+def test_non_finite_integer_sort_result_raises_non_finite_cast_error(
     function_name: str,
 ) -> None:
-    """Test ``nan``/``inf`` through an ``INT``-sorted native casts, not raises.
+    """Test ``nan``/``inf`` through an ``INT``-sorted native raises.
 
-    Casting a non-finite float to ``int64`` is a documented NumPy
-    ``astype`` behavior (a platform-defined sentinel, with a warning),
-    not an error the evaluator should surface.
+    A non-finite float has no faithful integer representation; casting
+    it to ``int64`` would silently produce a platform-defined sentinel,
+    so the evaluator raises ``NonFiniteCastError`` instead.
     """
     x = mock_identifier("x", 0)
     values = np.array([np.inf, -np.inf, np.nan])
     expression = call(function_name, x)
 
     with np.errstate(all="ignore"):
-        result = evaluate_expression_with_numpy(expression, {x: values})
+        with pytest.raises(PassExecutionError) as exception_info:
+            evaluate_expression_with_numpy(expression, {x: values})
 
-    assert isinstance(result, np.ndarray)
-    assert np.issubdtype(result.dtype, np.integer)
+    assert isinstance(exception_info.value.__cause__, NonFiniteCastError)
+
+
+def test_partially_non_finite_integer_sort_result_raises() -> None:
+    """Test a single ``nan`` among otherwise-finite values still raises.
+
+    The finiteness check applies elementwise across the whole result,
+    not only when every element is non-finite.
+    """
+    x = mock_identifier("x", 0)
+    values = np.array([2.7, np.nan, 3.5])
+    expression = call("round", x)
+
+    with np.errstate(all="ignore"):
+        with pytest.raises(PassExecutionError) as exception_info:
+            evaluate_expression_with_numpy(expression, {x: values})
+
+    assert isinstance(exception_info.value.__cause__, NonFiniteCastError)
+
+
+def test_floor_of_sqrt_of_negative_raises_non_finite_cast_error() -> None:
+    """Test ``floor(sqrt(-1))`` raises: ``sqrt`` yields ``nan``, then the cast fails."""
+    x = mock_identifier("x", 0)
+    expression = call("floor", call("sqrt", x))
+
+    with np.errstate(all="ignore"):
+        with pytest.raises(PassExecutionError) as exception_info:
+            evaluate_expression_with_numpy(expression, {x: np.array([-1.0])})
+
+    assert isinstance(exception_info.value.__cause__, NonFiniteCastError)
+
+
+def test_round_of_reciprocal_at_zero_raises_non_finite_cast_error() -> None:
+    """Test ``round(1 / x)`` at ``x = 0`` raises: the division yields ``inf``."""
+    x = mock_identifier("x", 0)
+    expression = call("round", LiteralExpression(1.0) / IdentifierExpression(x))
+
+    with np.errstate(all="ignore"):
+        with pytest.raises(PassExecutionError) as exception_info:
+            evaluate_expression_with_numpy(expression, {x: np.array([0.0])})
+
+    assert isinstance(exception_info.value.__cause__, NonFiniteCastError)
 
 
 # =============================================================================
@@ -685,6 +747,41 @@ def test_piecewise_broadcasts_array_case_value_against_scalar_otherwise() -> Non
     )
 
     assert np.allclose(result, [10.0, -1.0, 30.0])
+
+
+def test_piecewise_with_non_boolean_condition_array_raises() -> None:
+    """Test a non-boolean-dtyped condition raises rather than being silently truthy.
+
+    ``numpy.where`` treats any nonzero value as true, so an int-typed
+    condition bound directly (not built from a comparison) would
+    otherwise silently "work" while hiding a condition the type checker
+    would reject as non-boolean.
+    """
+    condition = mock_identifier("c", 0)
+    expression = piecewise(
+        (IdentifierExpression(condition), LiteralExpression(1)),
+        otherwise=LiteralExpression(0),
+    )
+    values = np.array([0, 1, 2])
+
+    with pytest.raises(PassExecutionError, match=r"(?i)boolean") as exception_info:
+        evaluate_expression_with_numpy(expression, {condition: values})
+
+    assert isinstance(exception_info.value.__cause__, TypeError)
+
+
+def test_piecewise_with_boolean_condition_array_is_unaffected() -> None:
+    """Test a genuinely boolean-dtyped condition is unaffected by the dtype guard."""
+    condition = mock_identifier("c", 0)
+    expression = piecewise(
+        (IdentifierExpression(condition), LiteralExpression(1)),
+        otherwise=LiteralExpression(0),
+    )
+    mask = np.array([True, False, True])
+
+    result = evaluate_expression_with_numpy(expression, {condition: mask})
+
+    assert np.array_equal(result, [1, 0, 1])
 
 
 # =============================================================================

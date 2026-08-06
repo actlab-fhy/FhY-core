@@ -506,26 +506,10 @@ class Expression(
         ],
         otherwise: "Expression | Identifier | LiteralType",
     ) -> "PiecewiseExpression":
-        """Build a ``PiecewiseExpression`` from ``(condition, value)`` case pairs.
+        """Build a ``PiecewiseExpression``; delegates to the free :func:`piecewise`.
 
-        Each element of each pair, and ``otherwise``, may be an
-        ``Expression``, an ``Identifier``, or a value of ``LiteralType``;
-        the same coercion rules as the operator dunders apply.
-
-        Args:
-            cases: One or more ``(condition, value)`` pairs, in
-                evaluation order.
-            otherwise: Result when no case's condition holds.
-
-        Returns:
-            A ``PiecewiseExpression`` over the coerced cases and
-            ``otherwise``.
-
-        Raises:
-            ValueError: If no case is supplied, if a case is not a
-                2-tuple, if a condition is a bare Python ``bool``, or if
-                an operand has an unsupported type.
-
+        See :func:`piecewise` for the operand coercion rules and the
+        conditions under which construction raises.
         """
         return piecewise(*cases, otherwise=otherwise)
 
@@ -838,9 +822,11 @@ class PiecewiseExpression(Expression, HasOperands[Expression]):
 
     Raises:
         ValueError: If no case is supplied, if ``conditions`` and
-            ``values`` differ in length, or if any element of
+            ``values`` differ in length, if any element of
             ``conditions``, any element of ``values``, or
-            ``otherwise`` is not an :class:`Expression` instance.
+            ``otherwise`` is not an :class:`Expression` instance, or if
+            a condition is a :class:`LiteralExpression` whose value is
+            not a Python ``bool``.
 
     """
 
@@ -868,6 +854,18 @@ class PiecewiseExpression(Expression, HasOperands[Expression]):
                     "PiecewiseExpression.conditions must contain only "
                     f"Expression instances, but got value {condition!r} of "
                     f"type {type(condition).__name__}."
+                )
+            if (
+                isinstance(condition, LiteralExpression)
+                and type(condition.value) is not bool
+            ):
+                raise ValueError(
+                    "PiecewiseExpression condition literal must be a boolean "
+                    f"literal, but got literal value {condition.value!r} of "
+                    f"type {type(condition.value).__name__}. A non-literal "
+                    "condition (an identifier, a call, ...) has no such "
+                    "restriction here, since its type is not known without "
+                    "surrounding type context."
                 )
         for value in values:
             if not isinstance(value, Expression):
@@ -939,6 +937,10 @@ class CallExpression(Expression, HasOperands[Expression]):
         function_name: Key under which the called function is registered.
         arguments: Positional argument expressions, in declared order.
 
+    Raises:
+        ValueError: If ``function_name`` is empty, or if any element of
+            ``arguments`` is not an :class:`Expression` instance.
+
     """
 
     function_name: str
@@ -947,6 +949,15 @@ class CallExpression(Expression, HasOperands[Expression]):
     def __post_init__(self) -> None:
         if not self.function_name:
             raise ValueError("CallExpression.function_name must be non-empty.")
+        arguments = tuple(self.arguments)
+        for argument in arguments:
+            if not isinstance(argument, Expression):
+                raise ValueError(
+                    "CallExpression.arguments must contain only Expression "
+                    f"instances, but got value {argument!r} of type "
+                    f"{type(argument).__name__}."
+                )
+        object.__setattr__(self, "arguments", arguments)
 
     @override
     def get_operands(self) -> tuple[Expression, ...]:

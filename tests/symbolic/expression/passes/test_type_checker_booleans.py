@@ -337,23 +337,6 @@ def test_synthesize_piecewise_with_non_boolean_condition_raises() -> None:
         checker.synthesize(expression)
 
 
-def test_synthesize_piecewise_with_non_boolean_literal_condition_raises() -> None:
-    """Test a bare non-boolean literal condition is rejected.
-
-    Unlike the identifier-bound case above, this condition is a plain
-    non-boolean ``LiteralExpression``, so the failure comes from the
-    literal-vs-expected-type check (a non-boolean literal against the
-    boolean context) rather than the piecewise-specific indexed
-    boolean-condition check.
-    """
-    expression = PiecewiseExpression(
-        (LiteralExpression(1),), (LiteralExpression(10),), LiteralExpression(20)
-    )
-
-    with pytest.raises(FhYCoreTypeError):
-        synthesize_expression_type(expression, _lookup_failure)
-
-
 def test_synthesize_piecewise_reports_index_of_failing_condition() -> None:
     """Test the second case's non-boolean condition is named by its zero-based index."""
     cond0 = mock_identifier("cond0", 0)
