@@ -304,8 +304,9 @@ class Expression(
     """Abstract base class for expressions.
 
     Expression subclasses are ``@dataclass(frozen=True, eq=False)`` so
-    that the comparison dunders (``__lt__``, ``__eq__``, etc.) can
-    return :class:`BinaryExpression` IR nodes instead of ``bool``. As a
+    that the comparison and arithmetic dunders (``__lt__``, ``__le__``,
+    ``__gt__``, ``__ge__``, ``__add__``, etc.) can return
+    :class:`BinaryExpression` IR nodes instead of ``bool``. As a
     consequence, ``__eq__`` and ``__hash__`` fall back to object
     identity. Two structurally equivalent expressions are therefore
     **distinct dict keys** and **distinct set members**: use
@@ -836,8 +837,10 @@ class PiecewiseExpression(Expression, HasOperands[Expression]):
             total.
 
     Raises:
-        ValueError: If ``conditions`` and ``values`` differ in length,
-            or if no case is supplied.
+        ValueError: If no case is supplied, if ``conditions`` and
+            ``values`` differ in length, or if any element of
+            ``conditions``, any element of ``values``, or
+            ``otherwise`` is not an :class:`Expression` instance.
 
     """
 
@@ -846,17 +849,41 @@ class PiecewiseExpression(Expression, HasOperands[Expression]):
     otherwise: Expression
 
     def __post_init__(self) -> None:
-        if not self.conditions:
+        conditions = tuple(self.conditions)
+        values = tuple(self.values)
+        if not conditions:
             raise ValueError(
                 "PiecewiseExpression requires at least one case; a piecewise "
                 "with only `otherwise` is meaningless -- use the value directly."
             )
-        if len(self.conditions) != len(self.values):
+        if len(conditions) != len(values):
             raise ValueError(
                 "PiecewiseExpression.conditions and .values must have equal "
-                f"length, but got {len(self.conditions)} conditions and "
-                f"{len(self.values)} values."
+                f"length, but got {len(conditions)} conditions and "
+                f"{len(values)} values."
             )
+        for condition in conditions:
+            if not isinstance(condition, Expression):
+                raise ValueError(
+                    "PiecewiseExpression.conditions must contain only "
+                    f"Expression instances, but got value {condition!r} of "
+                    f"type {type(condition).__name__}."
+                )
+        for value in values:
+            if not isinstance(value, Expression):
+                raise ValueError(
+                    "PiecewiseExpression.values must contain only Expression "
+                    f"instances, but got value {value!r} of type "
+                    f"{type(value).__name__}."
+                )
+        if not isinstance(self.otherwise, Expression):
+            raise ValueError(
+                "PiecewiseExpression.otherwise must be an Expression "
+                f"instance, but got value {self.otherwise!r} of type "
+                f"{type(self.otherwise).__name__}."
+            )
+        object.__setattr__(self, "conditions", conditions)
+        object.__setattr__(self, "values", values)
 
     def get_cases(self) -> tuple[tuple[Expression, Expression], ...]:
         """Return the ``(condition, value)`` case pairs in evaluation order.

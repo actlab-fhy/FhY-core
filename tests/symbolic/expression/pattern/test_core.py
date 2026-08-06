@@ -602,6 +602,17 @@ def test_binary_expression_pattern_propagates_right_failure() -> None:
 # ===========================================================================
 
 
+def test_piecewise_expression_pattern_rejects_empty_cases_tuple() -> None:
+    """Test ``PiecewiseExpressionPattern`` rejects an empty (non-``None``) cases tuple.
+
+    A real ``PiecewiseExpression`` always has at least one case, so an empty
+    ``cases`` tuple could never match anything; ``None`` is the correct
+    spelling for "match any case count."
+    """
+    with pytest.raises(ValueError, match="cases"):
+        PiecewiseExpressionPattern((), WildcardPattern())
+
+
 def test_piecewise_expression_pattern_matches_single_case_piecewise() -> None:
     """Test ``PiecewiseExpressionPattern`` matches a one-case piecewise expression."""
     pattern = PiecewiseExpressionPattern(

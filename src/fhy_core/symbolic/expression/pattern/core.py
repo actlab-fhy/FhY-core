@@ -411,13 +411,21 @@ class PiecewiseExpressionPattern(Pattern):
     Attributes:
         cases: `(condition_pattern, value_pattern)` pairs matched
             position-wise against the expression's cases; the case
-            count must match exactly. `None` means "any cases."
+            count must match exactly. Must be non-empty when
+            supplied; `None` means "any cases."
         otherwise: Pattern the `otherwise` expression must match.
 
     """
 
     cases: tuple[tuple[Pattern, Pattern], ...] | None
     otherwise: Pattern
+
+    def __post_init__(self) -> None:
+        if self.cases is not None and not self.cases:
+            raise ValueError(
+                "PiecewiseExpressionPattern.cases must be non-empty when "
+                "supplied; use `None` to match any case count."
+            )
 
     @override
     def match_under(

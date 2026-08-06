@@ -19,6 +19,7 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     logical_and,
@@ -727,6 +728,14 @@ def _build_instance_pair(
             BinaryExpression(BinaryOperation.ADD, left, right),
             BinaryExpression(BinaryOperation.ADD, left, right),
         )
+    elif subclass is PiecewiseExpression:
+        condition = LiteralExpression(True)
+        value = LiteralExpression(1)
+        otherwise = LiteralExpression(0)
+        return (
+            PiecewiseExpression((condition,), (value,), otherwise),
+            PiecewiseExpression((condition,), (value,), otherwise),
+        )
     else:
         raise AssertionError(f"Unknown subclass: {subclass}")
 
@@ -741,6 +750,9 @@ def _build_instance_pair(
         (BinaryExpression, "operation"),
         (IdentifierExpression, "identifier"),
         (LiteralExpression, "value"),
+        (PiecewiseExpression, "conditions"),
+        (PiecewiseExpression, "values"),
+        (PiecewiseExpression, "otherwise"),
     ],
 )
 def test_expression_instances_are_frozen(
@@ -754,7 +766,13 @@ def test_expression_instances_are_frozen(
 
 @pytest.mark.parametrize(
     "subclass",
-    [LiteralExpression, IdentifierExpression, UnaryExpression, BinaryExpression],
+    [
+        LiteralExpression,
+        IdentifierExpression,
+        UnaryExpression,
+        BinaryExpression,
+        PiecewiseExpression,
+    ],
 )
 def test_distinct_expression_instances_are_unequal_under_eq(
     subclass: type[Expression],
@@ -768,7 +786,13 @@ def test_distinct_expression_instances_are_unequal_under_eq(
 
 @pytest.mark.parametrize(
     "subclass",
-    [LiteralExpression, IdentifierExpression, UnaryExpression, BinaryExpression],
+    [
+        LiteralExpression,
+        IdentifierExpression,
+        UnaryExpression,
+        BinaryExpression,
+        PiecewiseExpression,
+    ],
 )
 def test_distinct_expression_instances_have_distinct_object_ids(
     subclass: type[Expression],
@@ -787,7 +811,13 @@ def test_distinct_expression_instances_have_distinct_object_ids(
 
 @pytest.mark.parametrize(
     "subclass",
-    [LiteralExpression, IdentifierExpression, UnaryExpression, BinaryExpression],
+    [
+        LiteralExpression,
+        IdentifierExpression,
+        UnaryExpression,
+        BinaryExpression,
+        PiecewiseExpression,
+    ],
 )
 def test_set_of_distinct_field_equal_expressions_keeps_both_members(
     subclass: type[Expression],
@@ -795,6 +825,32 @@ def test_set_of_distinct_field_equal_expressions_keeps_both_members(
     """Test a `set` of two field-equal but distinct instances retains both."""
     first, second = _build_instance_pair(subclass)
     assert len({first, second}) == 2
+
+
+def test_reordered_piecewise_cases_are_not_structurally_equivalent() -> None:
+    """Test reordering piecewise cases breaks structural equivalence.
+
+    Case order is semantically load-bearing under first-match-wins
+    evaluation, so two piecewise expressions built from the same cases in a
+    different order must not compare structurally equivalent.
+    """
+    c1, c2 = LiteralExpression(True), LiteralExpression(False)
+    v1, v2 = LiteralExpression(1), LiteralExpression(2)
+    otherwise = LiteralExpression(0)
+    forward = PiecewiseExpression((c1, c2), (v1, v2), otherwise)
+    reversed_order = PiecewiseExpression((c2, c1), (v2, v1), otherwise)
+
+    assert not forward.is_structurally_equivalent(reversed_order)
+    assert not reversed_order.is_structurally_equivalent(forward)
+
+
+def test_piecewise_expression_hash_is_defined_and_follows_identity() -> None:
+    """Test `hash()` succeeds on `PiecewiseExpression` and follows identity."""
+    first, second = _build_instance_pair(PiecewiseExpression)
+
+    assert hash(first) == hash(first)
+    assert hash(first) == object.__hash__(first)
+    assert hash(second) == object.__hash__(second)
 
 
 # =============================================================================

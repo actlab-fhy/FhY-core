@@ -85,6 +85,75 @@ def test_piecewise_expression_rejects_mismatched_condition_and_value_lengths() -
         )
 
 
+def test_piecewise_expression_rejects_non_expression_condition() -> None:
+    """Test a bare Python value in ``conditions`` raises ``ValueError``.
+
+    A bare ``bool``/``int`` condition would otherwise construct cleanly and
+    silently bypass every ``Expression``-only downstream pass.
+    """
+    with pytest.raises(ValueError, match=r"(?i)condition"):
+        PiecewiseExpression((True,), (LiteralExpression(1),), LiteralExpression(0))  # type: ignore[arg-type]
+
+
+def test_piecewise_expression_rejects_non_expression_value() -> None:
+    """Test a bare Python value in ``values`` raises ``ValueError``."""
+    with pytest.raises(ValueError, match=r"(?i)value"):
+        PiecewiseExpression((LiteralExpression(True),), (1,), LiteralExpression(0))  # type: ignore[arg-type]
+
+
+def test_piecewise_expression_rejects_non_expression_otherwise() -> None:
+    """Test a bare Python value ``otherwise`` raises ``ValueError``."""
+    with pytest.raises(ValueError, match=r"(?i)otherwise"):
+        PiecewiseExpression((LiteralExpression(True),), (LiteralExpression(1),), 0)  # type: ignore[arg-type]
+
+
+# =============================================================================
+# PiecewiseExpression.__post_init__: list-to-tuple coercion
+# =============================================================================
+
+
+def test_piecewise_expression_coerces_list_conditions_and_values_to_tuples() -> None:
+    """Test constructing with list ``conditions``/``values`` coerces them to tuples.
+
+    ``conditions``/``values`` are declared as ``tuple[Expression, ...]``, but
+    nothing at the language level stops a caller from passing a ``list``
+    instead; ``__post_init__`` normalizes either input to a real tuple.
+    """
+    condition = LiteralExpression(True)
+    value = LiteralExpression(1)
+    otherwise = LiteralExpression(0)
+
+    expression = PiecewiseExpression([condition], [value], otherwise)  # type: ignore[arg-type]
+
+    assert type(expression.conditions) is tuple
+    assert type(expression.values) is tuple
+    assert expression.conditions == (condition,)
+    assert expression.values == (value,)
+
+
+def test_piecewise_expression_constructed_from_lists_rejects_in_place_mutation() -> (
+    None
+):
+    """Test list-constructed ``conditions``/``values`` reject in-place mutation.
+
+    Before coercion, a caller passing a ``list`` produced an instance whose
+    ``is_frozen`` was ``True`` yet whose ``.conditions``/``.values`` could
+    still be mutated in place via ``.append``, since that mutation never goes
+    through ``__setattr__``. Coercing to a real ``tuple`` in ``__post_init__``
+    closes that gap: a ``tuple`` has no ``.append`` at all.
+    """
+    expression = PiecewiseExpression(
+        [LiteralExpression(True)],  # type: ignore[arg-type]
+        [LiteralExpression(1)],  # type: ignore[arg-type]
+        LiteralExpression(0),
+    )
+
+    with pytest.raises(AttributeError):
+        expression.conditions.append(LiteralExpression(False))  # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        expression.values.append(LiteralExpression(2))  # type: ignore[attr-defined]
+
+
 # =============================================================================
 # PiecewiseExpression.get_cases()
 # =============================================================================

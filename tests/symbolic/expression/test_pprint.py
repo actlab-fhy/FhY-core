@@ -110,7 +110,7 @@ def test_pformat_expression_with_show_id_includes_name_hint_and_id() -> None:
 
 def test_pformat_expression_with_show_id_propagates_into_piecewise() -> None:
     """Test ``show_id=True`` reaches identifiers nested in a ``PiecewiseExpression``."""
-    condition_identifier = Identifier("cond")
+    condition_identifier = mock_identifier("cond", 0)
     expression = PiecewiseExpression(
         (IdentifierExpression(condition_identifier),),
         (LiteralExpression(1),),
@@ -119,8 +119,7 @@ def test_pformat_expression_with_show_id_propagates_into_piecewise() -> None:
 
     result = pformat_expression(expression, show_id=True)
 
-    assert condition_identifier.name_hint in result
-    assert str(condition_identifier.id) in result
+    assert repr(condition_identifier) in result
 
 
 def test_pformat_expression_with_show_id_propagates_into_call_arguments() -> None:
