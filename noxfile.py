@@ -88,10 +88,11 @@ def coverage(session: nox.Session) -> None:
 
 @nox.session
 def property(session: nox.Session) -> None:
-    """Run hypothesis-based property tests (opt-in)."""
+    """Run hypothesis-based property tests (CI release gate; opt-in locally)."""
     _sync(session, "property")
-    # Exit 5 == no tests collected; tolerate it until property tests are added.
-    session.run("pytest", "-m", "property", *session.posargs, success_codes=[0, 5])
+    # An empty collection (pytest exit 5) is a failure: it means the property
+    # suites lost their `property` marker and the gate would pass vacuously.
+    session.run("pytest", "-m", "property", *session.posargs)
 
 
 @nox.session

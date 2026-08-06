@@ -4,11 +4,15 @@ from types import EllipsisType
 
 import pytest
 
-from fhy_core.expression import Expression, IdentifierExpression, LiteralExpression
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
     SerializedDict,
+)
+from fhy_core.symbolic.expression import (
+    Expression,
+    IdentifierExpression,
+    LiteralExpression,
 )
 from fhy_core.types import (
     CoreDataType,

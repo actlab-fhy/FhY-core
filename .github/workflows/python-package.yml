@@ -3,7 +3,9 @@
 #
 # The config job selects a LEAN matrix (ubuntu x py3.10/3.14) for everyday dev
 # PRs and a FULL matrix (3 OSes x 5 Pythons) for release gates (-> main), main
-# pushes, and manual dispatch. ci-ok aggregates the required jobs into one check.
+# pushes, and manual dispatch. The property job (hypothesis suites) runs only
+# on release gates (PRs -> main) and manual dispatch — never on dev PRs.
+# ci-ok aggregates the required jobs into one check.
 
 name: FhY-core CI
 
@@ -94,6 +96,25 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
 
+  property:
+    # Release gate only: hypothesis property suites are slow and probe deep
+    # soundness invariants, so they gate PRs into main (version releases) and
+    # manual full sweeps, not everyday feature PRs into dev.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.base_ref == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Property-Based Testing
+        run: uv run nox -s property
+
   coverage:
     runs-on: "ubuntu-latest"
     needs: [tests]
@@ -124,7 +145,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [style, tests]
+    needs: [style, tests, property]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -132,8 +153,14 @@ jobs:
         run: |
           echo "style: ${{ needs.style.result }}"
           echo "tests: ${{ needs.tests.result }}"
+          echo "property: ${{ needs.property.result }}"
           if [[ "${{ needs.style.result }}" != "success" || "${{ needs.tests.result }}" != "success" ]]; then
             echo "::error::A required job did not succeed."
+            exit 1
+          fi
+          # property is conditional: skipped is fine (dev PRs), failure is not.
+          if [[ "${{ needs.property.result }}" != "success" && "${{ needs.property.result }}" != "skipped" ]]; then
+            echo "::error::The property job ran and did not succeed."
             exit 1
           fi
           echo "All required jobs passed."

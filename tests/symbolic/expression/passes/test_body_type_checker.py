@@ -1,0 +1,302 @@
+"""Tests for ``check_registered_function_body`` and its backing pass class."""
+
+from unittest.mock import patch
+
+import pytest
+
+from fhy_core.pass_infrastructure import CompilerPass, PassExecutionError
+from fhy_core.symbolic.expression import (
+    BinaryExpression,
+    BinaryOperation,
+    CallExpression,
+    EntryRegistrationError,
+    FunctionSort,
+    IdentifierExpression,
+    LiteralExpression,
+    get_registered_entry,
+)
+from fhy_core.symbolic.expression.passes.body_type_checker import (
+    RegisteredFunctionBodyTypeChecker,
+    check_registered_function_body,
+)
+from fhy_core.types import (
+    IndexType,
+    NumericalType,
+    TypeQualifier,
+)
+
+from ..conftest import mock_identifier
+
+
+def _make_int_pass(name: str = "f") -> RegisteredFunctionBodyTypeChecker:
+    """Build a pass with one INT parameter ``x`` and INT result."""
+    x = mock_identifier("x", 0)
+    return RegisteredFunctionBodyTypeChecker(
+        name=name,
+        parameters=(x,),
+        parameter_sorts=(FunctionSort.INT,),
+        result_sort=FunctionSort.INT,
+        resolve_call_target=get_registered_entry,
+    )
+
+
+def _make_less_than_body() -> BinaryExpression:
+    """Build a body expression ``x < y`` over fresh INT parameters."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    return BinaryExpression(
+        BinaryOperation.LESS,
+        IdentifierExpression(x),
+        IdentifierExpression(y),
+    )
+
+
+def test_check_accepts_body_with_matching_result_sort(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a scalar-numerical body matching the declared result sort passes."""
+    x = mock_identifier("x", 0)
+    missing_name = check_registered_function_body(
+        name="identity",
+        parameters=(x,),
+        parameter_sorts=(FunctionSort.INT,),
+        result_sort=FunctionSort.INT,
+        body=IdentifierExpression(x),
+        resolve_call_target=get_registered_entry,
+    )
+
+    assert missing_name is None
+
+
+def test_check_rejects_body_whose_synthesized_type_clashes_with_result_sort(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a boolean body cannot satisfy an INT result sort."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    with pytest.raises(PassExecutionError) as exc_info:
+        check_registered_function_body(
+            name="lt_as_int",
+            parameters=(x, y),
+            parameter_sorts=(FunctionSort.INT, FunctionSort.INT),
+            result_sort=FunctionSort.INT,
+            body=_make_less_than_body(),
+            resolve_call_target=get_registered_entry,
+        )
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, EntryRegistrationError)
+    assert "lt_as_int" in str(cause)
+
+
+def test_check_rejects_body_referencing_undeclared_identifier(
+    function_registry_snapshot: None,
+) -> None:
+    """Test identifiers outside parameter list and not a registered constant fail."""
+    import re  # noqa: PLC0415
+
+    declared = mock_identifier("x", 0)
+    stray = mock_identifier("y", 1)
+    with pytest.raises(PassExecutionError) as exc_info:
+        check_registered_function_body(
+            name="captures",
+            parameters=(declared,),
+            parameter_sorts=(FunctionSort.INT,),
+            result_sort=FunctionSort.INT,
+            body=IdentifierExpression(stray),
+            resolve_call_target=get_registered_entry,
+        )
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, EntryRegistrationError)
+    assert re.search(r"captures.*y", str(cause))
+
+
+def test_check_tolerates_forward_reference_to_unregistered_function(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a call to an as-yet-unregistered function defers instead of raising.
+
+    The deferral reports the unresolved name rather than discarding it.
+    """
+    x = mock_identifier("x", 0)
+    missing_name = check_registered_function_body(
+        name="uses_forward",
+        parameters=(x,),
+        parameter_sorts=(FunctionSort.INT,),
+        result_sort=FunctionSort.INT,
+        body=CallExpression(
+            function_name="not_yet_registered",
+            arguments=(IdentifierExpression(x),),
+        ),
+        resolve_call_target=get_registered_entry,
+    )
+
+    assert missing_name == "not_yet_registered"
+
+
+def test_check_method_reports_the_deferred_call_name_directly(
+    function_registry_snapshot: None,
+) -> None:
+    """Test calling ``.check`` directly also reports the deferred call name.
+
+    ``check_registered_function_body`` invokes the pass through the
+    ``__call__`` / ``execute`` framework path; this pins that the raw
+    ``.check`` method returns the same value.
+    """
+    x = mock_identifier("x", 0)
+    checker = RegisteredFunctionBodyTypeChecker(
+        name="uses_forward_direct",
+        parameters=(x,),
+        parameter_sorts=(FunctionSort.INT,),
+        result_sort=FunctionSort.INT,
+        resolve_call_target=get_registered_entry,
+    )
+
+    missing_name = checker.check(
+        CallExpression(
+            function_name="still_not_registered",
+            arguments=(IdentifierExpression(x),),
+        )
+    )
+
+    assert missing_name == "still_not_registered"
+
+
+def test_check_does_not_leak_a_stale_deferred_name_across_calls(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a later fully-validating call does not report a stale deferred name."""
+    x = mock_identifier("x", 0)
+    checker = RegisteredFunctionBodyTypeChecker(
+        name="reused_checker",
+        parameters=(x,),
+        parameter_sorts=(FunctionSort.INT,),
+        result_sort=FunctionSort.INT,
+        resolve_call_target=get_registered_entry,
+    )
+    checker.check(
+        CallExpression(
+            function_name="missing_once", arguments=(IdentifierExpression(x),)
+        )
+    )
+
+    missing_name = checker.check(IdentifierExpression(x))
+
+    assert missing_name is None
+
+
+def test_check_accepts_literal_body_when_sort_compatible(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a literal body whose value's type matches the result sort passes."""
+    missing_name = check_registered_function_body(
+        name="const_zero",
+        parameters=(),
+        parameter_sorts=(),
+        result_sort=FunctionSort.INT,
+        body=LiteralExpression(0),
+        resolve_call_target=get_registered_entry,
+    )
+
+    assert missing_name is None
+
+
+def test_get_noop_output_returns_none(function_registry_snapshot: None) -> None:
+    """Test ``get_noop_output`` is ``None``; the pass is validation-only."""
+    checker = _make_int_pass()
+
+    assert checker.get_noop_output(LiteralExpression(0)) is None
+
+
+@pytest.mark.parametrize(
+    "output", [None, "some_pending_name"], ids=["no-deferral", "deferred-name"]
+)
+def test_did_change_is_always_false(
+    function_registry_snapshot: None, output: str | None
+) -> None:
+    """Test ``did_change`` is always ``False``; the pass never rewrites the input."""
+    checker = _make_int_pass()
+    body = LiteralExpression(0)
+
+    assert checker.did_change(body, output) is False
+
+
+def test_pass_is_registered_under_canonical_name(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``@register_pass`` registers the pass under its stable, qualified name."""
+    pass_name = "fhy_core.symbolic.expression.check_registered_function_body"
+
+    registry = CompilerPass.get_registered_passes()
+
+    assert pass_name in registry
+    assert registry[pass_name].pass_type is RegisteredFunctionBodyTypeChecker
+
+
+def test_check_rejects_body_synthesizing_non_numerical_type(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a body synthesizing a non-NumericalType raises ``EntryRegistrationError``.
+
+    The check guards the result-sort comparison from receiving an
+    ``IndexType`` or any other non-numerical type. The path is
+    defensive (today's expression IR never synthesizes such types from
+    plain scalar arithmetic) so the test injects the synthesized type
+    via patching the type-checker's ``synthesize`` method.
+    """
+    x = mock_identifier("x", 0)
+    index_type = IndexType(LiteralExpression(0), LiteralExpression(1))
+
+    with patch(
+        "fhy_core.symbolic.expression.passes.type_checker.ExpressionTypeChecker.synthesize",
+        return_value=(index_type, TypeQualifier.PARAM),
+    ):
+        with pytest.raises(PassExecutionError) as exc_info:
+            check_registered_function_body(
+                name="f",
+                parameters=(x,),
+                parameter_sorts=(FunctionSort.INT,),
+                result_sort=FunctionSort.INT,
+                body=LiteralExpression(0),
+                resolve_call_target=get_registered_entry,
+            )
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, EntryRegistrationError)
+    assert "must synthesize a scalar numerical type" in str(cause)
+
+
+def test_check_rejects_body_synthesizing_non_primitive_data_type(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a body whose ``NumericalType.data_type`` is non-primitive is rejected.
+
+    The path guards against template / tensor types entering the
+    result-sort comparison. As with the previous test, today's
+    expression IR cannot reach this branch from plain scalar arithmetic
+    so the synthesized type is patched in.
+    """
+    from unittest.mock import MagicMock  # noqa: PLC0415
+
+    x = mock_identifier("x", 0)
+    fake_numerical = MagicMock(spec=NumericalType)
+    fake_numerical.data_type = MagicMock()  # not a PrimitiveDataType
+
+    with patch(
+        "fhy_core.symbolic.expression.passes.type_checker.ExpressionTypeChecker.synthesize",
+        return_value=(fake_numerical, TypeQualifier.PARAM),
+    ):
+        with pytest.raises(PassExecutionError) as exc_info:
+            check_registered_function_body(
+                name="f",
+                parameters=(x,),
+                parameter_sorts=(FunctionSort.INT,),
+                result_sort=FunctionSort.INT,
+                body=LiteralExpression(0),
+                resolve_call_target=get_registered_entry,
+            )
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, EntryRegistrationError)
+    assert "must synthesize a scalar numerical type" in str(cause)

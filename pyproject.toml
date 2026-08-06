@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "fhy_core"
-version = "0.1.8"
+version = "0.2.0"
 description = "Core utilities for the FhY compiler infrastructure."
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -46,7 +46,7 @@ Issues = "https://github.com/actlab-fhy/FhY-core/issues"
 test = ["pytest", "coverage[toml]", "pytest-xdist", "numpy"]
 property = ["hypothesis", {include-group = "test"}]
 lint = ["ruff"]
-type = ["ty", "mypy", {include-group = "test"}]
+type = ["ty", "mypy", {include-group = "property"}]
 mutation = ["cosmic-ray", {include-group = "test"}]
 dev = [
    {include-group = "test"},
@@ -69,6 +69,7 @@ markers = [
     "integration: exercises multiple modules together",
     "network: requires network access",
     "property: hypothesis-based property test",
+    "import_order: pins module import-order for circular-import resolution",
 ]
 
 [tool.coverage.run]

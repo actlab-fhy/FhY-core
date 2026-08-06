@@ -1,5 +1,7 @@
 """Tests the identifier."""
 
+import copy
+import pickle
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -517,3 +519,60 @@ def test_deserialized_identifier_is_frozen() -> None:
     assert identifier.is_frozen
     with pytest.raises(FrozenMutationError):
         identifier._id = 0
+
+
+# =============================================================================
+# Pickle & deepcopy round-trips
+# =============================================================================
+
+
+def test_deepcopy_preserves_equality_and_frozen_state() -> None:
+    """Test a deep copy is a distinct, equal, still-frozen identifier."""
+    identifier = Identifier("original")
+
+    duplicate = copy.deepcopy(identifier)
+
+    assert duplicate is not identifier
+    assert duplicate == identifier
+    assert duplicate.id == identifier.id
+    assert duplicate.name_hint == "original"
+    assert duplicate.is_frozen
+
+
+def test_pickle_round_trip_preserves_equality_and_frozen_state() -> None:
+    """Test pickling round-trips id, name hint, and frozenness."""
+    identifier = Identifier("original")
+
+    restored = pickle.loads(pickle.dumps(identifier))
+
+    assert restored == identifier
+    assert restored.id == identifier.id
+    assert restored.name_hint == "original"
+    assert restored.is_frozen
+    with pytest.raises(FrozenMutationError):
+        restored._name_hint = "rewritten"
+
+
+def test_restoring_pickled_state_advances_the_global_id_counter() -> None:
+    """Test ``__setstate__`` advances the id counter past the restored id.
+
+    Restoring a pickled identifier in a process whose counter has not yet
+    reached its id must not let a later construction re-issue that id,
+    mirroring ``deserialize_from_dict``. The restore is driven through the
+    same ``__reduce_ex__`` seam pickle itself uses, with the pickled id
+    raised beyond any id issued so far in this process.
+    """
+    identifier = Identifier("far")
+    target_id = Identifier("probe").id + 1000
+    reduced = identifier.__reduce_ex__(2)
+    assert isinstance(reduced, tuple)
+    reconstructor, arguments, state = reduced[:3]
+    dict_state, slots_state = state
+    raised_dict_state = {**dict_state, "_id": target_id}
+
+    clone = reconstructor(*arguments)
+    clone.__setstate__((raised_dict_state, slots_state))
+
+    assert clone.id == target_id
+    assert clone.is_frozen
+    assert Identifier("after").id > target_id
