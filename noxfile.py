@@ -88,7 +88,7 @@ def coverage(session: nox.Session) -> None:
 
 @nox.session
 def property(session: nox.Session) -> None:
-    """Run hypothesis-based property tests."""
+    """Run hypothesis-based property tests (CI release gate; opt-in locally)."""
     _sync(session, "property")
     # No success_codes override: exit 5 (nothing collected) must fail, so a
     # marker typo or a collection error cannot pass as a clean run.

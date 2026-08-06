@@ -10,7 +10,7 @@ import pytest
 
 pytest.importorskip("hypothesis")
 
-from hypothesis import assume, given
+from hypothesis import given
 from hypothesis import strategies as st
 
 from fhy_core.symbolic.constraint import InSetConstraint
@@ -19,9 +19,42 @@ from fhy_core.symbolic.param import create_intersection_param, create_ordinal_pa
 pytestmark = pytest.mark.property
 
 
-def _build_non_empty_subset_strategy(values: set[int]) -> st.SearchStrategy[set[int]]:
-    """Return a strategy over the non-empty subsets of ``values``."""
-    return st.sets(st.sampled_from(sorted(values)), min_size=1, max_size=len(values))
+_VALUES = st.integers(min_value=0, max_value=12)
+
+
+@st.composite
+def _draw_overlapping_value_sets(draw: st.DrawFn) -> tuple[set[int], set[int], int]:
+    """Draw two ordinal value sets plus a member they are built to share.
+
+    The shared member is drawn first and unioned into both sets, so the
+    intersection is non-empty by construction. Building the overlap in
+    rather than drawing freely and discarding disjoint pairs keeps every
+    generated input usable: filtering for overlap rejects most pairs of
+    small sets, which starves generation and skews what does get through.
+    """
+    pivot = draw(_VALUES)
+    left_rest = draw(st.sets(_VALUES, max_size=5))
+    right_rest = draw(st.sets(_VALUES, max_size=5))
+    return {pivot} | left_rest, {pivot} | right_rest, pivot
+
+
+@st.composite
+def _draw_overlapping_narrowed_sets(
+    draw: st.DrawFn,
+) -> tuple[set[int], set[int], set[int], set[int]]:
+    """Draw two value sets with in-set narrowings that share a member.
+
+    Each narrowing is a non-empty subset of its own value set containing
+    the shared pivot, so the narrowed sets overlap by construction.
+    """
+    left_values, right_values, pivot = draw(_draw_overlapping_value_sets())
+    left_narrowed = {pivot} | draw(
+        st.sets(st.sampled_from(sorted(left_values)), max_size=5)
+    )
+    right_narrowed = {pivot} | draw(
+        st.sets(st.sampled_from(sorted(right_values)), max_size=5)
+    )
+    return left_values, right_values, left_narrowed, right_narrowed
 
 
 # =============================================================================
@@ -29,25 +62,19 @@ def _build_non_empty_subset_strategy(values: set[int]) -> st.SearchStrategy[set[
 # =============================================================================
 
 
-@given(
-    left_values=st.sets(st.integers(min_value=0, max_value=12), min_size=1, max_size=6),
-    right_values=st.sets(
-        st.integers(min_value=0, max_value=12), min_size=1, max_size=6
-    ),
-    candidate=st.integers(min_value=0, max_value=15),
-)
+@given(value_sets=_draw_overlapping_value_sets(), candidate=st.integers(0, 15))
 def test_intersection_membership_law_holds_for_random_ordinal_sets(
-    left_values: set[int], right_values: set[int], candidate: int
+    value_sets: tuple[set[int], set[int], int], candidate: int
 ) -> None:
     """Test a value is valid for the intersection iff valid for both operands.
 
     Holds for arbitrary (non-empty) ordinal value sets; when the sets happen
     to be disjoint the intersection is empty, which `create_intersection_param`
     signals by raising `ParamError` rather than returning a param -- covered
-    separately by the disjoint-set unit tests, so this property assumes a
-    non-empty intersection here to keep the assertion meaningful.
+    separately by the disjoint-set unit tests, so the generated sets are
+    built to share a member and keep the assertion meaningful.
     """
-    assume(left_values & right_values)
+    left_values, right_values, _ = value_sets
     left = create_ordinal_param(sorted(left_values))
     right = create_ordinal_param(sorted(right_values))
 
@@ -57,35 +84,19 @@ def test_intersection_membership_law_holds_for_random_ordinal_sets(
     assert result.is_value_valid(candidate) == expected
 
 
-@given(
-    left_values=st.sets(st.integers(min_value=0, max_value=12), min_size=1, max_size=6),
-    right_values=st.sets(
-        st.integers(min_value=0, max_value=12), min_size=1, max_size=6
-    ),
-    candidate=st.integers(min_value=0, max_value=15),
-    data=st.data(),
-)
+@given(narrowed_sets=_draw_overlapping_narrowed_sets(), candidate=st.integers(0, 15))
 def test_intersection_membership_law_follows_each_operands_narrowed_set(
-    left_values: set[int],
-    right_values: set[int],
-    candidate: int,
-    data: st.DataObject,
+    narrowed_sets: tuple[set[int], set[int], set[int], set[int]], candidate: int
 ) -> None:
     """Test intersection membership is decided by both operands' narrowed sets.
 
     Each operand is narrowed by an in-set constraint drawn from its own
     members, so a value is valid for the intersection iff it lies in both
-    narrowed sets, not merely in both declared value sets. As above, a
-    non-empty intersection is assumed, since an empty one raises rather
-    than returning a param.
+    narrowed sets, not merely in both declared value sets. As above, the
+    narrowings are built to share a member, since an empty intersection
+    raises rather than returning a param.
     """
-    left_narrowed = data.draw(
-        _build_non_empty_subset_strategy(left_values), label="left_narrowed"
-    )
-    right_narrowed = data.draw(
-        _build_non_empty_subset_strategy(right_values), label="right_narrowed"
-    )
-    assume(left_narrowed & right_narrowed)
+    left_values, right_values, left_narrowed, right_narrowed = narrowed_sets
     left = create_ordinal_param(sorted(left_values))
     left = left.add_constraint(InSetConstraint(left.variable, left_narrowed))
     right = create_ordinal_param(sorted(right_values))
