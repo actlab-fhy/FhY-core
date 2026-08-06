@@ -65,8 +65,8 @@ def test_categorical_union_dedups_a_category_common_to_both_operands() -> None:
 
     assert isinstance(result.domain, CategoricalDomain)
     assert_all_valid(result, ["a", "b", "c"])
-    assert set(result.domain.categories) == {"a", "b", "c"}  # type: ignore[attr-defined]
-    assert len(result.domain.categories) == 3  # type: ignore[attr-defined]
+    assert set(result.domain.categories) == {"a", "b", "c"}
+    assert len(result.domain.categories) == 3
 
 
 def test_categorical_union_of_superset_and_subset_equals_the_superset_value_set() -> (
@@ -179,6 +179,7 @@ def test_ordinal_union_of_superset_and_subset_equals_the_superset_value_set() ->
 
     result = create_union_param(superset, subset)
 
+    assert isinstance(result.domain, OrdinalDomain)
     assert result.domain.sorted_values == (1, 2, 3, 4, 5)
 
 
@@ -230,7 +231,7 @@ def test_union_of_permutation_and_categorical_raises_type_error() -> None:
     categorical/ordinal mismatch tests, neither of which pairs a
     permutation operand against a finite-set operand).
     """
-    left = create_permutation_param(["a", "b"])
+    left: Param[Any] = create_permutation_param(["a", "b"])
     right = create_categorical_param({"a", "b"})
 
     with pytest.raises(
@@ -294,7 +295,7 @@ def test_union_of_interval_integer_and_categorical_raises_type_error() -> None:
     the mismatch from the interval-integer side rather than from a
     finite-set operand.
     """
-    left = create_interval_integer_param_between(0, 5)
+    left: Param[Any] = create_interval_integer_param_between(0, 5)
     right = create_categorical_param({"a"})
 
     with pytest.raises(
