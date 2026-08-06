@@ -68,11 +68,11 @@ def set_registry_state_for_tests(
 ) -> None:
     """Replace the registry contents with ``state``.
 
-    Intended for the test-isolation fixture in
-    ``tests/expression/conftest.py``: the fixture snapshots the
-    registry before each test and calls this hook to restore the
-    snapshot after the test runs. The ``_for_tests`` suffix marks
-    this as a test-only seam; production code must not call it.
+    Intended for the test-isolation fixture in ``tests/conftest.py``:
+    the fixture snapshots the registry before each test and calls this
+    hook to restore the snapshot after the test runs. The
+    ``_for_tests`` suffix marks this as a test-only seam; production
+    code must not call it.
     """
     with _REGISTRY_LOCK:
         _REGISTRY.clear()
@@ -85,12 +85,6 @@ def _insert_unique_entry(name: str, entry: RegisteredEntry) -> None:
         if name in _REGISTRY:
             raise EntryRegistrationError(f"A name is already registered: {name!r}.")
         _REGISTRY[name] = entry
-
-
-def _remove_entry(name: str) -> None:
-    """Remove ``name`` from the registry if present."""
-    with _REGISTRY_LOCK:
-        _REGISTRY.pop(name, None)
 
 
 def _registered_constant_names() -> set[str]:

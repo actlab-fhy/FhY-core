@@ -1,4 +1,4 @@
-"""Tests for `fhy_core.symbolic.expression.passes.type_checker`.
+"""Tests for `fhy_core.types.checking.type_checker`.
 
 Every assertion on a returned ``Type`` goes through
 ``Type.is_structurally_equivalent`` against a built-up expected
@@ -23,16 +23,6 @@ from fhy_core.symbolic.expression import (
     UnaryOperation,
     pformat_expression,
 )
-from fhy_core.symbolic.expression.passes.type_checker import (
-    ExpressionTypeChecker,
-    _get_numeric_literal_value,
-    _get_primitive_data_type,
-    _get_real_float_core_data_type_for_bit_width,
-    _TypeCheckContext,
-    check_expression_type,
-    get_core_data_type_from_literal_type,
-    synthesize_expression_type,
-)
 from fhy_core.types import (
     CoreDataType,
     FhYCoreTypeError,
@@ -42,8 +32,18 @@ from fhy_core.types import (
     TemplateDataType,
     TypeQualifier,
 )
+from fhy_core.types.checking.type_checker import (
+    ExpressionTypeChecker,
+    _get_numeric_literal_value,
+    _get_primitive_data_type,
+    _get_real_float_core_data_type_for_bit_width,
+    _TypeCheckContext,
+    check_expression_type,
+    get_core_data_type_from_literal_type,
+    synthesize_expression_type,
+)
 
-from ..conftest import make_identifier_checker, make_single_type_checker
+from .conftest import make_identifier_checker, make_single_type_checker
 
 
 def _make_scalar(core_data_type: CoreDataType) -> NumericalType:
@@ -1962,6 +1962,5 @@ def test_unary_expression_with_unknown_operation_raises_not_implemented() -> Non
 def test_pass_registered_under_renamed_name() -> None:
     """Test the pass is registered under the `type_checker` name (was `type_check`)."""
     assert (
-        ExpressionTypeChecker.get_pass_name()
-        == "fhy_core.symbolic.expression.type_checker"
+        ExpressionTypeChecker.get_pass_name() == "fhy_core.types.checking.type_checker"
     )

@@ -32,18 +32,18 @@ from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
 from fhy_core.error import register_error
-from fhy_core.identifier import Identifier
+from fhy_core.identifier import HasIdentifier, Identifier
 from fhy_core.serialization import (
     Serializable,
     register_serializable,
 )
+from fhy_core.term import DerivedEquivalenceMixin
 from fhy_core.traits import (
-    DerivedEquivalenceMixin,
-    HasIdentifier,
+    EqualMixin,
+    FrozenMixin,
     InternedMixin,
+    PartialEqualMixin,
 )
-from fhy_core.traits.equality import EqualMixin, PartialEqualMixin
-from fhy_core.traits.frozen import FrozenMixin
 from fhy_core.utils import StrEnum
 
 

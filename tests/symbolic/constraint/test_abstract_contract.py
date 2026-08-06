@@ -8,7 +8,7 @@ import pytest
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.constraint import Constraint, ConstraintOutcome
 from fhy_core.symbolic.expression import Expression, LiteralExpression
-from fhy_core.traits.derived_equivalence import compared_as_reference
+from fhy_core.term.derived_equivalence import compared_as_reference
 from fhy_core.utils.override import override
 
 from .conftest import mock_identifier

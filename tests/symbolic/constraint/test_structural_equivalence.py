@@ -14,8 +14,8 @@ from fhy_core.symbolic.constraint import (
     InSetConstraint,
 )
 from fhy_core.symbolic.expression import Expression, LiteralExpression
+from fhy_core.term.derived_equivalence import EquivalenceDerivationError
 from fhy_core.traits import StructuralEquivalence
-from fhy_core.traits.derived_equivalence import EquivalenceDerivationError
 from fhy_core.utils.override import override
 
 from .conftest import (

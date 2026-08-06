@@ -27,7 +27,6 @@ from fhy_core.symbolic.expression import (
     register_native_function,
     simplify_expression,
 )
-from fhy_core.symbolic.expression.passes.type_checker import synthesize_expression_type
 from fhy_core.types import (
     CoreDataType,
     FhYCoreTypeError,
@@ -36,6 +35,7 @@ from fhy_core.types import (
     Type,
     TypeQualifier,
 )
+from fhy_core.types.checking import synthesize_expression_type
 
 pytestmark = pytest.mark.integration
 

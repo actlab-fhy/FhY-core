@@ -20,10 +20,6 @@ from fhy_core.symbolic.expression import (
     UnaryOperation,
     register_function,
 )
-from fhy_core.symbolic.expression.passes.type_checker import (
-    get_core_data_type_from_literal_type,
-    synthesize_expression_type,
-)
 from fhy_core.types import (
     CoreDataType,
     FhYCoreTypeError,
@@ -32,8 +28,12 @@ from fhy_core.types import (
     Type,
     TypeQualifier,
 )
+from fhy_core.types.checking.type_checker import (
+    get_core_data_type_from_literal_type,
+    synthesize_expression_type,
+)
 
-from ..conftest import make_identifier_checker, make_single_type_checker
+from .conftest import make_identifier_checker, make_single_type_checker
 
 
 def _make_scalar(core_data_type: CoreDataType) -> NumericalType:

@@ -2,8 +2,15 @@
 
 Importing this module is a side-effecting registration: every member of
 :data:`BUILTIN_FUNCTIONS` and :data:`BUILTIN_CONSTANTS` is bound into
-the process-wide registry. Adding a new built-in is one field on the
-relevant ``TypedDict`` and one entry in the corresponding mapping.
+the process-wide expression registry. Adding a new built-in is one field
+on the relevant ``TypedDict`` and one entry in the corresponding mapping.
+
+Registration stores each body as written; it does not type-check it, so
+this module needs nothing above the expression IR. That the composed
+bodies do type-check against their declared sorts is a property of this
+repository's own source, and is pinned by
+``tests/types/checking/test_builtin_bodies.py`` rather than by a
+runtime check on every import.
 
 Numerical native implementations are backed by Python's ``math``
 module. Their results are reproducible within a single run but the

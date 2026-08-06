@@ -45,10 +45,9 @@ from enum import Enum
 from typing import Any, Final, Protocol, runtime_checkable
 
 from fhy_core.error import register_error
+from fhy_core.traits import PartialEqual, StructuralEquivalence
 
 from .alpha_equivalence import AlphaEquivalence, AlphaEquivalenceMixin, AlphaRenaming
-from .equality import PartialEqual
-from .structural_equivalence import StructuralEquivalence
 
 EQUIVALENCE_METADATA_KEY: Final[str] = "fhy_equivalence"
 """``dataclasses.field(metadata=...)`` key holding an equivalence role override."""

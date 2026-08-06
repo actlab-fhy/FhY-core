@@ -12,6 +12,7 @@ kinds of things the registry can hold:
 """
 
 __all__ = [
+    "CallTargetResolver",
     "NativeConstant",
     "NativeFunction",
     "RegisteredEntry",
@@ -23,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import TypeAlias
 
 from fhy_core.identifier import Identifier
-from fhy_core.traits import (
+from fhy_core.term import (
     DerivedEquivalenceMixin,
     compared_as_binder,
     excluded_from_equivalence,
@@ -153,3 +154,6 @@ class NativeConstant:
 
 
 RegisteredEntry: TypeAlias = RegisteredFunction | NativeFunction | NativeConstant
+
+CallTargetResolver: TypeAlias = Callable[[str], RegisteredEntry]
+"""Resolve a call-site name to its registered entry, or raise ``EntryLookupError``."""

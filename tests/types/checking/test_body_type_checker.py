@@ -16,14 +16,14 @@ from fhy_core.symbolic.expression import (
     LiteralExpression,
     get_registered_entry,
 )
-from fhy_core.symbolic.expression.passes.body_type_checker import (
-    RegisteredFunctionBodyTypeChecker,
-    check_registered_function_body,
-)
 from fhy_core.types import (
     IndexType,
     NumericalType,
     TypeQualifier,
+)
+from fhy_core.types.checking.body_type_checker import (
+    RegisteredFunctionBodyTypeChecker,
+    check_registered_function_body,
 )
 
 
@@ -164,7 +164,7 @@ def test_pass_is_registered_under_canonical_name(
     function_registry_snapshot: None,
 ) -> None:
     """Test ``@register_pass`` registers the pass under its stable, qualified name."""
-    pass_name = "fhy_core.symbolic.expression.check_registered_function_body"
+    pass_name = "fhy_core.types.checking.check_registered_function_body"
 
     registry = CompilerPass.get_registered_passes()
 
@@ -187,7 +187,7 @@ def test_check_rejects_body_synthesizing_non_numerical_type(
     index_type = IndexType(LiteralExpression(0), LiteralExpression(1))
 
     with patch(
-        "fhy_core.symbolic.expression.passes.type_checker.ExpressionTypeChecker.synthesize",
+        "fhy_core.types.checking.type_checker.ExpressionTypeChecker.synthesize",
         return_value=(index_type, TypeQualifier.PARAM),
     ):
         with pytest.raises(PassExecutionError) as exc_info:
@@ -222,7 +222,7 @@ def test_check_rejects_body_synthesizing_non_primitive_data_type(
     fake_numerical.data_type = MagicMock()  # not a PrimitiveDataType
 
     with patch(
-        "fhy_core.symbolic.expression.passes.type_checker.ExpressionTypeChecker.synthesize",
+        "fhy_core.types.checking.type_checker.ExpressionTypeChecker.synthesize",
         return_value=(fake_numerical, TypeQualifier.PARAM),
     ):
         with pytest.raises(PassExecutionError) as exc_info:

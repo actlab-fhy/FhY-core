@@ -24,8 +24,8 @@ from fhy_core.diagnostic import (
     ValidationFailedError,
     ValidationReport,
 )
-from fhy_core.identifier import Identifier
-from fhy_core.provenance import Provenance
+from fhy_core.identifier import HasIdentifier, Identifier
+from fhy_core.provenance import HasProvenance, Provenance
 from fhy_core.traits import (
     Equal,
     EqualMixin,
@@ -34,8 +34,6 @@ from fhy_core.traits import (
     FrozenMixin,
     FrozenMutationError,
     FrozenValidationError,
-    HasIdentifier,
-    HasProvenance,
     Interned,
     InternedMixin,
     Orderable,

@@ -16,7 +16,7 @@ from fhy_core.symbolic.expression import (
     UnaryExpression,
     UnaryOperation,
 )
-from fhy_core.traits import HasFreeIdentifiers, Term
+from fhy_core.term import HasFreeIdentifiers, Term
 
 from .conftest import mock_identifier
 

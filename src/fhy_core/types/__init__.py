@@ -1,4 +1,9 @@
-"""Core type system and its extensible dispatchers."""
+"""Core type system, its extensible dispatchers, and type checking.
+
+The vocabulary of the type system itself -- data types, qualifiers,
+unification -- is re-exported here. Type checking is a family of its own
+and keeps its own namespace: reach it at ``fhy_core.types.checking``.
+"""
 
 __all__ = [
     "CoreDataType",
@@ -13,6 +18,7 @@ __all__ = [
     "TypeUnificationEnvironment",
     "bind_data_template",
     "bind_template",
+    "checking",
     "get_core_data_type_bit_width",
     "is_structurally_equivalent",
     "is_weak_core_data_type",
@@ -26,6 +32,7 @@ __all__ = [
     "unify_expression",
 ]
 
+from . import checking
 from .core import (
     CoreDataType,
     DataType,

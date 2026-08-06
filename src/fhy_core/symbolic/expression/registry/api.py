@@ -4,6 +4,11 @@ Exposes ``register_function`` / ``register_native_function`` /
 ``register_native_constant``: the write-side surface that mutates the
 process-wide registry. Read-side accessors and the underlying storage
 live in :mod:`fhy_core.symbolic.expression.registry.storage`.
+
+Registration records an entry; it does not type-check it. Checking a
+function body against its declared sorts needs the IR type system, which
+sits above this package in the dependency graph, so callers who want that
+answer ask the type-checking layer for it explicitly.
 """
 
 __all__ = [
@@ -17,19 +22,12 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from fhy_core.identifier import Identifier
-from fhy_core.pass_infrastructure import PassExecutionError
 
 from ..core import Expression
 from ..errors import EntryRegistrationError
-from ..passes.body_type_checker import check_registered_function_body
 from ..sort import FunctionSort
 from .entries import NativeConstant, NativeFunction, RegisteredFunction
-from .storage import (
-    _insert_unique_entry,
-    _registered_constant_names,
-    _remove_entry,
-    get_registered_entry,
-)
+from .storage import _insert_unique_entry, _registered_constant_names
 
 _POSITIONAL_PARAMETER_KINDS = frozenset(
     {
@@ -145,10 +143,9 @@ def register_function(
 ) -> RegisteredFunction:
     """Register a pure expression-bodied function.
 
-    The function is inserted under a placeholder entry before the body
-    is type-checked, so a self-recursive body can resolve its own call
-    site against the declared sorts. If the body type-check fails, the
-    placeholder is removed.
+    The body is stored as given. Whether it synthesizes a type
+    compatible with ``result_sort`` is a separate question, answered on
+    demand by the body checker in the type-checking layer above.
 
     Args:
         name: Unique registry key.
@@ -164,9 +161,8 @@ def register_function(
         The newly stored ``RegisteredFunction``.
 
     Raises:
-        EntryRegistrationError: On duplicate name, sort-arity
-            mismatch, captured free identifier, or body-result sort
-            mismatch.
+        EntryRegistrationError: On duplicate name, sort-arity mismatch,
+            or captured free identifier.
 
     """
     parameter_tuple = tuple(parameters)
@@ -183,22 +179,6 @@ def register_function(
         raise EntryRegistrationError(str(exc)) from exc
     _reject_captured_free_identifiers(name, parameter_tuple, body)
     _insert_unique_entry(name, registered)
-    try:
-        check_registered_function_body(
-            name=name,
-            parameters=parameter_tuple,
-            parameter_sorts=parameter_sort_tuple,
-            result_sort=result_sort,
-            body=body,
-            resolve_call_target=get_registered_entry,
-        )
-    except PassExecutionError as exc:
-        _remove_entry(name)
-        body_check_error = exc.__cause__
-        if isinstance(body_check_error, EntryRegistrationError):
-            # pylint: disable-next=raising-non-exception
-            raise body_check_error from body_check_error.__cause__
-        raise
     return registered
 
 

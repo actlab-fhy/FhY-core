@@ -39,12 +39,12 @@ from fhy_core.symbolic.expression import (
     LiteralExpression,
 )
 from fhy_core.symbolic.symbol_type import SymbolType
-from fhy_core.traits import (
+from fhy_core.term import (
     DerivedEquivalenceMixin,
-    FrozenMixin,
     compared_as_binder,
     compared_as_value,
 )
+from fhy_core.traits import FrozenMixin
 from fhy_core.utils.override import override
 
 from .domains import (

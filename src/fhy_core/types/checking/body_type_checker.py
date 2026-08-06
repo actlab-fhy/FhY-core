@@ -1,9 +1,9 @@
 """Validate that a registered function's body matches its declared result sort.
 
-The pass is invoked by :func:`fhy_core.symbolic.expression.registry.register_function`
-after the function has been inserted as a placeholder under its declared
-sorts (so self-recursive bodies resolve their own call site). The pass
-synthesizes the body type under a parameter-lookup that maps each
+Callers invoke the check explicitly, through
+:func:`check_registered_function_body`, on a function that is already in
+the registry (so self-recursive bodies resolve their own call site). The
+pass synthesizes the body type under a parameter-lookup that maps each
 parameter identifier to the concrete core data type derived from its
 sort, then checks that the synthesized core data type is compatible
 with the declared ``result_sort``.
@@ -27,18 +27,23 @@ from immutabledict import immutabledict
 
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import CompilerPass, register_pass
-from fhy_core.types import (
+from fhy_core.symbolic.expression.core import Expression
+from fhy_core.symbolic.expression.errors import (
+    EntryLookupError,
+    EntryRegistrationError,
+)
+from fhy_core.symbolic.expression.registry import CallTargetResolver
+from fhy_core.symbolic.expression.sort import FunctionSort
+
+from ..core import (
     CoreDataType,
     FhYCoreTypeError,
     NumericalType,
     PrimitiveDataType,
     TypeQualifier,
 )
-
-from ..core import Expression
-from ..errors import EntryLookupError, EntryRegistrationError
-from ..sort import FunctionSort, is_core_data_type_compatible_with_sort
-from .type_checker import CallTargetResolver, ExpressionTypeChecker
+from .sort_compatibility import is_core_data_type_compatible_with_sort
+from .type_checker import ExpressionTypeChecker
 
 # Concrete core data types used as the parameter lookup when body-
 # checking a registered function. Concrete (non-weak) types so
@@ -55,7 +60,7 @@ _BODY_CHECK_CONCRETE_TYPES: immutabledict[FunctionSort, CoreDataType] = immutabl
 
 
 @register_pass(
-    "fhy_core.symbolic.expression.check_registered_function_body",
+    "fhy_core.types.checking.check_registered_function_body",
     "Validate that a registered function's body synthesizes a type "
     "compatible with its declared result sort.",
 )

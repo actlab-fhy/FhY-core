@@ -7,7 +7,6 @@ from fhy_core.symbolic.expression.passes.sympy import (
     ExpressionToSympyConverter,
     SymPyToExpressionConverter,
 )
-from fhy_core.symbolic.expression.passes.type_checker import ExpressionTypeChecker
 from fhy_core.symbolic.expression.passes.z3 import ExpressionToZ3Converter
 
 # =============================================================================
@@ -15,7 +14,6 @@ from fhy_core.symbolic.expression.passes.z3 import ExpressionToZ3Converter
 # =============================================================================
 
 _EXPECTED_REGISTRATIONS: list[tuple[str, type]] = [
-    ("fhy_core.symbolic.expression.type_checker", ExpressionTypeChecker),
     ("fhy_core.symbolic.expression.from_sympy", SymPyToExpressionConverter),
     ("fhy_core.symbolic.expression.to_sympy", ExpressionToSympyConverter),
     ("fhy_core.symbolic.expression.to_z3", ExpressionToZ3Converter),

@@ -14,13 +14,18 @@ The registry holds three kinds of entries:
 All three kinds expose declared sorts that drive the call-site type
 checker, decoupling type inference from body inspection.
 
+Registration records an entry; it does not type-check it. Checking a
+registered function's body against its declared result sort is an
+explicit call into the type-checking layer above, which keeps the IR
+type system out of this package's dependencies.
+
 The registry is process-wide. Tests that need isolation should request
-the ``function_registry_snapshot`` fixture defined in
-``tests/expression/conftest.py`` rather than mutating the registry
-directly.
+the ``function_registry_snapshot`` fixture defined in ``tests/conftest.py``
+rather than mutating the registry directly.
 """
 
 __all__ = [
+    "CallTargetResolver",
     "EntryLookupError",
     "EntryRegistrationError",
     "NativeConstant",
@@ -43,6 +48,7 @@ from .api import (
     register_native_function,
 )
 from .entries import (
+    CallTargetResolver,
     NativeConstant,
     NativeFunction,
     RegisteredEntry,

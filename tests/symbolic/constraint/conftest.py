@@ -1,4 +1,4 @@
-"""Shared helpers for the `tests/constraint` sub-package."""
+"""Shared helpers for the `tests/symbolic/constraint` sub-package."""
 
 from typing import Any
 

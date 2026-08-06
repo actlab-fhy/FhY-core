@@ -42,15 +42,17 @@ from fhy_core.serialization import (
     WrappedFamilySerializable,
     register_serializable,
 )
-from fhy_core.traits import (
+from fhy_core.term import (
     DerivedEquivalenceMixin,
+    Term,
+    compared_as_reference,
+    compared_as_value,
+)
+from fhy_core.traits import (
     FrozenMixin,
     HasOperands,
     RewritableMixin,
-    Term,
     VisitableMixin,
-    compared_as_reference,
-    compared_as_value,
 )
 from fhy_core.utils import StrEnum, invert_frozen_dict
 
@@ -288,7 +290,7 @@ class Expression(
     and avoid using :class:`Expression` instances as dict keys when you
     expect value-based lookups.
 
-    Expressions are :class:`~fhy_core.traits.Term` instances: they compare
+    Expressions are :class:`~fhy_core.term.Term` instances: they compare
     by alpha-equivalence (derived from the field schema), report their free
     identifiers, and support substitution. The IR has no binders, so every
     referenced identifier is free and substitution is always capture-free.

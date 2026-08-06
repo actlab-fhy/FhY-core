@@ -1,4 +1,13 @@
-"""General expression tree utility."""
+"""Expression IR: syntax, entry registry, sorts, and the passes over them.
+
+The package is self-contained. It owns the expression tree, the
+process-wide registry of functions and constants, the ``FunctionSort``
+vocabulary, the built-in functions and constants seeded into the
+registry at import, and the passes that evaluate, inline, rewrite,
+pretty-print, and lower expressions to SymPy, Z3, or NumPy. None of it
+depends on the IR type system; assigning IR types to expressions is the
+job of the type-checking layer, which sits above this package.
+"""
 
 __all__ = [
     "BUILTIN_CONSTANTS",
@@ -11,6 +20,7 @@ __all__ = [
     "BuiltinFunctions",
     "CallExpression",
     "CallExpressionPattern",
+    "CallTargetResolver",
     "CapturePattern",
     "EntryLookupError",
     "EntryRegistrationError",
@@ -47,7 +57,6 @@ __all__ = [
     "assert_expression_implies",
     "assert_holds_for_all_free_assignments",
     "call",
-    "check_expression_type",
     "convert_expression_to_sympy_expression",
     "convert_expression_to_z3_expression",
     "convert_sympy_expression_to_expression",
@@ -55,13 +64,10 @@ __all__ = [
     "does_pattern_match",
     "evaluate_expression",
     "evaluate_expression_with_numpy",
-    "get_core_data_type_from_literal_type",
     "get_registered_entries",
     "get_registered_entry",
-    "get_result_core_data_type_for_sort",
     "holds_for_all_free_assignments",
     "inline_functions",
-    "is_core_data_type_compatible_with_sort",
     "is_entry_registered",
     "is_python_value_compatible_with_sort",
     "logical_and",
@@ -76,7 +82,6 @@ __all__ = [
     "register_native_function",
     "simplify_expression",
     "substitute_sympy_expression_variables",
-    "synthesize_expression_type",
     "ternary",
 ]
 
@@ -121,11 +126,6 @@ from .passes.sympy import (
     simplify_expression,
     substitute_sympy_expression_variables,
 )
-from .passes.type_checker import (
-    check_expression_type,
-    get_core_data_type_from_literal_type,
-    synthesize_expression_type,
-)
 from .passes.z3 import (
     assert_expression_implies,
     assert_holds_for_all_free_assignments,
@@ -155,6 +155,7 @@ from .pattern import (
 )
 from .pprint import pformat_expression
 from .registry import (
+    CallTargetResolver,
     EntryLookupError,
     EntryRegistrationError,
     NativeConstant,
@@ -168,9 +169,4 @@ from .registry import (
     register_native_constant,
     register_native_function,
 )
-from .sort import (
-    FunctionSort,
-    get_result_core_data_type_for_sort,
-    is_core_data_type_compatible_with_sort,
-    is_python_value_compatible_with_sort,
-)
+from .sort import FunctionSort, is_python_value_compatible_with_sort

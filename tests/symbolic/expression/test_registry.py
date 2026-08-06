@@ -21,7 +21,6 @@ import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
-    BUILTIN_CONSTANTS,
     EntryLookupError,
     EntryRegistrationError,
     FunctionSort,
@@ -37,6 +36,7 @@ from fhy_core.symbolic.expression import (
     register_native_constant,
     register_native_function,
 )
+from fhy_core.symbolic.expression.builtins import BUILTIN_CONSTANTS
 
 # =============================================================================
 # register_function: happy paths
@@ -253,57 +253,6 @@ def test_register_function_rejects_sort_arity_mismatch(
             result_sort=FunctionSort.REAL,
             body=IdentifierExpression(a) + b,
         )
-
-
-def test_register_function_rejects_body_result_sort_mismatch(
-    function_registry_snapshot: None,
-) -> None:
-    """Test a body whose type is incompatible with ``result_sort`` is rejected.
-
-    Here the body synthesizes a boolean type (``a < b``), but the declared
-    ``result_sort`` is ``REAL``: registration must fail because the boolean
-    core data type is not compatible with the ``REAL`` sort.
-    """
-    a = Identifier("a")
-    b = Identifier("b")
-
-    with pytest.raises(EntryRegistrationError, match="test_body_result_mismatch"):
-        register_function(
-            "test_body_result_mismatch",
-            parameters=[a, b],
-            parameter_sorts=[FunctionSort.REAL, FunctionSort.REAL],
-            result_sort=FunctionSort.REAL,
-            body=IdentifierExpression(a) < b,
-        )
-
-
-def test_register_function_rolls_back_placeholder_on_body_check_failure(
-    function_registry_snapshot: None,
-) -> None:
-    """Test a failed body type-check removes the placeholder registration.
-
-    ``register_function`` inserts a placeholder entry under the
-    declared sorts before running the body type-check (so a
-    self-recursive body can resolve its own call). When the body
-    check fails, the placeholder must be removed; otherwise a
-    subsequent ``register_function`` call with the same name would
-    fail with a spurious "already registered" error.
-    """
-    a = Identifier("a")
-    b = Identifier("b")
-
-    with pytest.raises(EntryRegistrationError):
-        register_function(
-            "test_rollback",
-            parameters=[a, b],
-            parameter_sorts=[FunctionSort.REAL, FunctionSort.REAL],
-            result_sort=FunctionSort.REAL,
-            body=IdentifierExpression(a) < b,
-        )
-
-    assert not is_entry_registered("test_rollback")
-    with pytest.raises(EntryLookupError):
-        get_registered_entry("test_rollback")
 
 
 def test_register_function_accepts_body_referencing_registered_constant(

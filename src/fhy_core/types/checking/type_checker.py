@@ -35,7 +35,6 @@ them, so callers can see either form on a failed type check.
 from fhy_core.utils.override import override
 
 __all__ = [
-    "CallTargetResolver",
     "ExpressionTypeChecker",
     "check_expression_type",
     "get_core_data_type_from_literal_type",
@@ -67,17 +66,16 @@ from fhy_core.symbolic.expression.core import (
 from fhy_core.symbolic.expression.errors import EntryLookupError
 from fhy_core.symbolic.expression.pprint import pformat_expression
 from fhy_core.symbolic.expression.registry.entries import (
+    CallTargetResolver,
     NativeConstant,
     NativeFunction,
     RegisteredFunction,
 )
 from fhy_core.symbolic.expression.registry.storage import get_registered_entry
-from fhy_core.symbolic.expression.sort import (
-    FunctionSort,
-    get_result_core_data_type_for_sort,
-    is_core_data_type_compatible_with_sort,
-)
-from fhy_core.types import (
+from fhy_core.symbolic.expression.sort import FunctionSort
+from fhy_core.utils import Stack, is_strict_int
+
+from ..core import (
     CoreDataType,
     FhYCoreTypeError,
     IndexType,
@@ -92,14 +90,12 @@ from fhy_core.types import (
     promote_type_qualifiers,
     resolve_literal_core_data_type,
 )
-from fhy_core.utils import Stack, is_strict_int
+from .sort_compatibility import (
+    get_result_core_data_type_for_sort,
+    is_core_data_type_compatible_with_sort,
+)
 
 ExpressionValueType: TypeAlias = NumericalType | IndexType
-
-CallTargetResolver: TypeAlias = Callable[
-    [str], RegisteredFunction | NativeFunction | NativeConstant
-]
-"""Resolve a call-site name to its registered entry, or raise ``EntryLookupError``."""
 
 _ARITHMETIC_OPERATIONS = frozenset(
     {
@@ -381,7 +377,7 @@ def _promote_argument_qualifiers(
 
 
 @register_pass(
-    "fhy_core.symbolic.expression.type_checker",
+    "fhy_core.types.checking.type_checker",
     "Bidirectionally synthesize and check expression types.",
 )
 class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]]):

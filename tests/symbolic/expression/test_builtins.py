@@ -24,8 +24,6 @@ import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
-    BUILTIN_CONSTANTS,
-    BUILTIN_FUNCTIONS,
     BinaryExpression,
     BinaryOperation,
     CallExpression,
@@ -43,6 +41,7 @@ from fhy_core.symbolic.expression import (
     inline_functions,
     is_entry_registered,
 )
+from fhy_core.symbolic.expression.builtins import BUILTIN_CONSTANTS, BUILTIN_FUNCTIONS
 
 _BINARY_SYMBOLS: dict[BinaryOperation, str] = {
     BinaryOperation.GREATER: ">",

@@ -77,8 +77,12 @@ from fhy_core.serialization import (
     register_serializable,
     serialize_registry_wrapped_value,
 )
-from fhy_core.traits import DerivedEquivalenceMixin, FrozenMixin
-from fhy_core.traits.derived_equivalence import compared_as_reference, compared_as_value
+from fhy_core.term import (
+    DerivedEquivalenceMixin,
+    compared_as_reference,
+    compared_as_value,
+)
+from fhy_core.traits import FrozenMixin
 from fhy_core.utils import format_comma_separated_list
 
 from ..identifier import Identifier

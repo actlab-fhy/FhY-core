@@ -20,17 +20,13 @@ __all__ = ["ADDRESS_DOMAIN", "DATA_DOMAIN", "ValueDomain"]
 
 from dataclasses import dataclass, field
 
-from .identifier import Identifier
+from .identifier import HasIdentifier, Identifier
 from .serialization import (
     Serializable,
     register_serializable,
 )
-from .traits import (
-    DerivedEquivalenceMixin,
-    FrozenMixin,
-    HasIdentifier,
-    InternedMixin,
-)
+from .term import DerivedEquivalenceMixin
+from .traits import FrozenMixin, InternedMixin
 
 
 @register_serializable(type_id="value_domain")

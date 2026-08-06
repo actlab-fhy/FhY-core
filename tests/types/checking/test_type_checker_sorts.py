@@ -35,7 +35,6 @@ from fhy_core.symbolic.expression import (
     register_native_constant,
     register_native_function,
 )
-from fhy_core.symbolic.expression.passes.type_checker import synthesize_expression_type
 from fhy_core.types import (
     CoreDataType,
     FhYCoreTypeError,
@@ -44,6 +43,7 @@ from fhy_core.types import (
     Type,
     TypeQualifier,
 )
+from fhy_core.types.checking.type_checker import synthesize_expression_type
 
 
 def _scalar(core_data_type: CoreDataType) -> NumericalType:

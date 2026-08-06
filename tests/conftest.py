@@ -1,5 +1,6 @@
 """Testing utilitiy functions."""
 
+from collections.abc import Iterator
 from importlib.util import find_spec
 from typing import Any
 from unittest.mock import MagicMock, Mock
@@ -8,6 +9,7 @@ import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import Serializable, register_serializable
+from fhy_core.symbolic.expression import registry as _registry
 from fhy_core.utils.override import override
 
 __all__ = [
@@ -24,6 +26,23 @@ def pytest_collection_modifyitems(
         for item in items:
             if "z3" in item.keywords:
                 item.add_marker(skip_z3)
+
+
+@pytest.fixture()
+def function_registry_snapshot() -> Iterator[None]:
+    """Snapshot the process-wide function registry around the test.
+
+    Captures the registry's contents before the test runs, then restores
+    them after the test completes. Tests that mutate the registry
+    request this fixture explicitly. Built-in registrations
+    (``max``, ``min``) survive across tests because they are in the
+    snapshot.
+    """
+    snapshot = dict(_registry.get_registered_entries())
+    try:
+        yield
+    finally:
+        _registry.set_registry_state_for_tests(snapshot)
 
 
 def mock_identifier(name_hint: str, identifier_id: int) -> Identifier:

@@ -1,4 +1,4 @@
-"""Shared helpers for the `tests/param` sub-package."""
+"""Shared helpers for the `tests/symbolic/param` sub-package."""
 
 from typing import Any
 
