@@ -800,6 +800,98 @@ def test_check_satisfiability_bindings_bool_member_colliding_int_is_undecided() 
 
 
 # =============================================================================
+# Bool literal sort ambiguity in an `EquationConstraint` (z3-backed)
+# =============================================================================
+
+
+@pytest.mark.z3
+def test_check_satisfiability_equation_bool_literal_ambiguity_is_undecided() -> None:
+    """Test an equation's bool literal against a non-bool variable is UNDECIDED.
+
+    ``x == True`` with ``x`` typed ``INT`` has no honest ``INT`` witness:
+    the only value that actually satisfies it is the ``bool`` ``True``
+    itself (``constraint.evaluate(True)`` is SATISFIED), which is not an
+    ``int`` at all, and every genuine ``int`` -- including ``1``, the
+    value Z3's coercion identifies ``True`` with -- provably VIOLATES it
+    under the package's type-strict semantics (``constraint.evaluate(1)``
+    is VIOLATED). The Z3 bridge does not see this distinction: it lowers
+    the bool literal ``True`` to the integer ``1`` and would spuriously
+    decide the system SATISFIED at ``x = 1``, contradicting
+    ``evaluate(1)``. Both satisfiability APIs must report UNDECIDED
+    instead of that provably wrong decided outcome.
+    """
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(
+        x,
+        make_binary_expression(
+            BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(True)
+        ),
+    )
+    system = create_constraint_system(constraint)
+
+    assert constraint.evaluate(1) is ConstraintOutcome.VIOLATED
+    assert constraint.evaluate(True) is ConstraintOutcome.SATISFIED
+
+    outcome = system.check_satisfiability({x: SymbolType.INT})
+    outcome_with_bindings = system.check_satisfiability_with_bindings(
+        {}, {x: SymbolType.INT}
+    )
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    assert outcome_with_bindings is ConstraintOutcome.UNDECIDED
+
+
+@pytest.mark.z3
+def test_check_satisfiability_equation_bool_literal_under_bool_sort_is_unaffected() -> (
+    None
+):
+    """Test the guard exempts an equation whose only free identifier is BOOL-typed.
+
+    The sort-ambiguity guard must be specific to non-``BOOL`` sorts; a
+    variable that is itself ``BOOL``-typed has no coercion ambiguity, so
+    ``x == True`` under a ``BOOL`` sort should still be decided.
+    """
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(
+        x,
+        make_binary_expression(
+            BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(True)
+        ),
+    )
+    system = create_constraint_system(constraint)
+
+    outcome = system.check_satisfiability({x: SymbolType.BOOL})
+    outcome_with_bindings = system.check_satisfiability_with_bindings(
+        {}, {x: SymbolType.BOOL}
+    )
+
+    assert outcome is ConstraintOutcome.SATISFIED
+    assert outcome_with_bindings is ConstraintOutcome.SATISFIED
+
+
+@pytest.mark.z3
+def test_check_satisfiability_set_ambiguity_survives_equation_branch() -> None:
+    """Test the pre-existing set-constraint bool-ambiguity guard still fires.
+
+    Guards against a regression where extending the ambiguity check to
+    ``EquationConstraint`` could shadow or short-circuit the original
+    ``InSetConstraint``/``NotInSetConstraint`` branch: a bool-ambiguous set
+    constraint alongside an ordinary (non-bool-literal) equation
+    constraint must still be reported UNDECIDED.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    system = create_constraint_system(
+        InSetConstraint(x, {True}),
+        EquationConstraint(y, make_binary_expression(BinaryOperation.LESS, y, 5)),
+    )
+
+    outcome = system.check_satisfiability({x: SymbolType.INT, y: SymbolType.INT})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+# =============================================================================
 # `timeout_milliseconds` passthrough (z3-backed)
 # =============================================================================
 
@@ -865,3 +957,71 @@ def test_check_satisfiability_with_bindings_forwards_timeout_milliseconds(
 
     assert outcome is ConstraintOutcome.SATISFIED
     assert captured["timeout_milliseconds"] == 1000
+
+
+# =============================================================================
+# Solver `unknown` result (`None`) maps to `UNDECIDED`
+# =============================================================================
+
+
+@pytest.mark.z3
+def test_check_satisfiability_solver_unknown_result_is_undecided(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test `check_satisfiability` maps a solver `None` (unknown) result to UNDECIDED.
+
+    Complements the `timeout_milliseconds` passthrough tests above, which
+    patch the same seam but always return `True`: this covers the
+    `_decide_satisfiability` branch where the solver itself is
+    inconclusive.
+    """
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(InSetConstraint(x, {1, 2, 3}))
+
+    def _fake_check(
+        expression: Expression,
+        symbol_types: dict[Identifier, SymbolType],
+        *,
+        timeout_milliseconds: int | None = None,
+    ) -> bool | None:
+        return None
+
+    monkeypatch.setattr(
+        "fhy_core.symbolic.constraint.check_expression_satisfiability", _fake_check
+    )
+
+    outcome = system.check_satisfiability({x: SymbolType.INT})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+@pytest.mark.z3
+def test_check_satisfiability_with_bindings_solver_unknown_result_is_undecided(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test `check_satisfiability_with_bindings` maps solver `None` to UNDECIDED.
+
+    Mirrors `test_check_satisfiability_solver_unknown_result_is_undecided`
+    for the bindings-aware entry point.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    system = create_constraint_system(
+        EquationConstraint(x, make_binary_expression(BinaryOperation.LESS, x, y))
+    )
+
+    def _fake_check(
+        expression: Expression,
+        symbol_types: dict[Identifier, SymbolType],
+        *,
+        timeout_milliseconds: int | None = None,
+    ) -> bool | None:
+        return None
+
+    monkeypatch.setattr(
+        "fhy_core.symbolic.constraint.check_expression_satisfiability", _fake_check
+    )
+
+    outcome = system.check_satisfiability_with_bindings({x: 1}, {y: SymbolType.INT})
+
+    assert outcome is ConstraintOutcome.UNDECIDED

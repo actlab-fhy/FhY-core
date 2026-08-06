@@ -728,8 +728,9 @@ class InSetConstraint(Constraint):
     constraint's value set and ``VIOLATED`` otherwise, comparing by
     type-strict equality (so ``True`` and ``1`` are distinct members,
     and ``1`` and ``1.0`` are distinct members, including inside nested
-    ``tuple`` or ``frozenset`` members). Membership is always decidable,
-    so this constraint never reports ``UNDECIDED``.
+    ``tuple`` or ``frozenset`` members). A membership check against a
+    concrete value is always decidable, so ``evaluate`` never reports
+    ``UNDECIDED``.
 
     Determinism:
         ``convert_to_expression`` emits its leaves in ``repr``-sorted
@@ -824,8 +825,9 @@ class NotInSetConstraint(Constraint):
 
     Symmetric to ``InSetConstraint``: ``evaluate`` reports ``SATISFIED``
     iff ``value`` is NOT in the constraint's value set and ``VIOLATED``
-    otherwise, comparing by type-strict equality. Membership is always
-    decidable, so this constraint never reports ``UNDECIDED``.
+    otherwise, comparing by type-strict equality. A membership check
+    against a concrete value is always decidable, so ``evaluate`` never
+    reports ``UNDECIDED``.
 
     Determinism:
         ``convert_to_expression`` emits its leaves in ``repr``-sorted
@@ -930,31 +932,76 @@ def _decide_satisfiability(
     return ConstraintOutcome.VIOLATED
 
 
+def _contains_bool_literal(expression: Expression) -> bool:
+    """Return whether ``expression``'s tree contains a `bool`-valued literal.
+
+    Recurses via ``get_visit_children``, the same traversal
+    ``Expression.get_free_identifiers`` uses, so a nested
+    ``LiteralExpression`` is found regardless of depth. Checks
+    ``type(value) is bool`` rather than ``isinstance(value, bool)``,
+    matching ``LiteralExpression.__post_init__``'s own discrimination
+    between a ``bool`` value and a plain ``int`` value (``bool`` is an
+    ``int`` subclass).
+
+    """
+    if isinstance(expression, LiteralExpression) and type(expression.value) is bool:
+        return True
+    return any(
+        _contains_bool_literal(child) for child in expression.get_visit_children()
+    )
+
+
 def _find_bool_member_type_ambiguity(
     constraints: tuple[Constraint, ...],
     symbol_types: Mapping[Identifier, SymbolType],
 ) -> bool:
-    """Return whether a set constraint's ``bool`` member is sort-ambiguous.
+    """Return whether a `bool` literal among ``constraints`` is sort-ambiguous.
 
-    A ``bool`` member of an ``InSetConstraint``/``NotInSetConstraint``
-    lowers to a Z3 ``BoolVal``. Compared against an ``IntVal``/``RealVal``
-    (whether that literal comes from a free variable or from a bound
-    identifier substituted to a concrete value), the Z3 Python bindings
-    silently coerce the ``BoolVal`` into an integer via an implicit
-    ``If`` (``True`` becomes ``1``, ``False`` becomes ``0``). This
-    collapses the type-strict distinction the constraint's own
-    ``evaluate``/``evaluate_with_bindings`` preserve whenever the bound
-    value happens to be ``0`` or ``1``, so this check does not special-case
-    already-bound identifiers: only a variable whose ``symbol_types``
-    entry is confirmed ``SymbolType.BOOL`` is exempt.
+    Two constructs hit the same Z3 coercion hazard:
+
+    - A ``bool`` member of an ``InSetConstraint``/``NotInSetConstraint``
+      lowers to a Z3 ``BoolVal``.
+    - A ``bool``-valued ``LiteralExpression`` anywhere in an
+      ``EquationConstraint``'s expression tree also lowers to a Z3
+      ``BoolVal``.
+
+    Compared against an ``IntVal``/``RealVal`` (whether that literal comes
+    from a free variable or from a bound identifier substituted to a
+    concrete value), the Z3 Python bindings silently coerce the
+    ``BoolVal`` into an integer via an implicit ``If`` (``True`` becomes
+    ``1``, ``False`` becomes ``0``). This collapses the type-strict
+    distinction the constraint's own ``evaluate``/``evaluate_with_bindings``
+    preserve whenever the bound value happens to be ``0`` or ``1``, so this
+    check does not special-case already-bound identifiers: only a variable
+    whose ``symbol_types`` entry is confirmed ``SymbolType.BOOL`` is
+    exempt -- for an ``EquationConstraint``, every free identifier of its
+    *expression* (not necessarily including its declared ``variable``,
+    which ``convert_to_expression`` does not add back in when the
+    expression does not itself reference it) must be confirmed
+    ``SymbolType.BOOL``, since the bool literal's position within the
+    expression tree is not tracked.
+
+    This is deliberately conservative: an ``EquationConstraint`` can hold a
+    ``bool`` literal that is never actually compared against a non-bool
+    identifier, in which case this still reports ambiguity. Over-triggering
+    only costs a spurious ``UNDECIDED``; the alternative -- a provably
+    wrong decided outcome -- is not acceptable.
 
     """
     for constraint in constraints:
-        if not isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
-            continue
-        if symbol_types.get(constraint.variable) is SymbolType.BOOL:
-            continue
-        if any(isinstance(member, bool) for member in constraint.members):
+        if isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
+            if symbol_types.get(constraint.variable) is SymbolType.BOOL:
+                continue
+            if any(isinstance(member, bool) for member in constraint.members):
+                return True
+        elif isinstance(constraint, EquationConstraint):
+            if not _contains_bool_literal(constraint.expression):
+                continue
+            if all(
+                symbol_types.get(identifier) is SymbolType.BOOL
+                for identifier in constraint.expression.get_free_identifiers()
+            ):
+                continue
             return True
     return False
 
@@ -988,6 +1035,14 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
     are structurally equivalent and serialize identically. Duplicate
     constraints are retained (conjunction is idempotent). Instances are
     frozen; mutation raises ``FrozenMutationError``.
+
+    ``ConstraintSystem`` is declared ``@dataclass(frozen=True, eq=False)``,
+    so ``__eq__`` and ``__hash__`` fall back to object identity rather than
+    comparing the ``constraints`` tuple. Two structurally equivalent
+    systems are therefore **distinct dict keys** and **distinct set
+    members**: use ``is_structurally_equivalent`` for value-equality
+    semantics, and avoid using ``ConstraintSystem`` instances as dict keys
+    when you expect value-based lookups.
 
     """
 
@@ -1077,12 +1132,15 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
 
         Limitation: a ``bool`` member of an ``InSetConstraint`` or
         ``NotInSetConstraint`` whose variable's sort is not
-        ``SymbolType.BOOL`` cannot be lowered soundly through the current
-        Z3 bridge -- the Z3 Python bindings coerce a ``BoolVal`` compared
-        against a non-bool sort into an integer (``True`` becomes ``1``),
-        collapsing the package's type-strict membership semantics. This
-        method detects that case and returns ``UNDECIDED`` rather than a
-        provably-wrong decided outcome.
+        ``SymbolType.BOOL``, or a ``bool``-valued literal anywhere in an
+        ``EquationConstraint``'s expression whose free identifiers are not
+        all ``SymbolType.BOOL``, cannot be lowered soundly through the
+        current Z3 bridge -- the Z3 Python bindings coerce a ``BoolVal``
+        compared against a non-bool sort into an integer (``True`` becomes
+        ``1``), collapsing the package's type-strict membership (and, for
+        an equation, literal-comparison) semantics. This method detects
+        both cases and returns ``UNDECIDED`` rather than a provably-wrong
+        decided outcome.
 
         Args:
             symbol_types: Z3 sort for each free identifier of the system.
@@ -1125,11 +1183,13 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
         identifiers left free after substitution. Answers questions of the
         form "given x = 4, can y and z still be chosen?".
 
-        Limitation: the same ``bool`` set-membership sort ambiguity
-        documented on ``check_satisfiability`` applies here; a system with
-        a ``bool`` set member whose variable's ``symbol_types`` entry is
-        not ``SymbolType.BOOL`` returns ``UNDECIDED``, even when
-        ``bindings`` assigns that variable a concrete value (Z3's sort
+        Limitation: the same ``bool`` sort ambiguity documented on
+        ``check_satisfiability`` applies here, covering both the
+        set-membership case and the equation-constraint bool-literal case:
+        a system with a ``bool`` set member, or an ``EquationConstraint``
+        with a ``bool``-valued literal, whose relevant identifier(s) are
+        not confirmed ``SymbolType.BOOL`` returns ``UNDECIDED``, even when
+        ``bindings`` assigns those variables concrete values (Z3's sort
         coercion can still misclassify a bound value of ``0`` or ``1``).
 
         Args:
