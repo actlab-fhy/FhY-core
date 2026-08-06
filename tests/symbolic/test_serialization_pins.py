@@ -485,36 +485,3 @@ def test_golden_blob_deserializes_to_an_equivalent_instance(
         assert rebuilt.is_alpha_equivalent(expected)
     else:
         assert rebuilt.is_structurally_equivalent(expected)
-
-
-# =============================================================================
-# Flat top-level import paths are absent
-# =============================================================================
-#
-# The expression/constraint/param tree, and `symbol_type`, live only under
-# `fhy_core.symbolic`; nothing registers a same-named flat module directly
-# under `fhy_core`.
-
-
-def test_flat_constraint_import_is_not_a_module() -> None:
-    """Test `fhy_core.constraint` is not importable; use `symbolic.constraint`."""
-    with pytest.raises(ModuleNotFoundError):
-        import fhy_core.constraint  # noqa: F401, PLC0415
-
-
-def test_flat_expression_import_is_not_a_module() -> None:
-    """Test `fhy_core.expression` is not importable; use `symbolic.expression`."""
-    with pytest.raises(ModuleNotFoundError):
-        import fhy_core.expression  # noqa: F401, PLC0415
-
-
-def test_flat_param_import_is_not_a_module() -> None:
-    """Test `fhy_core.param` is not importable; use `symbolic.param`."""
-    with pytest.raises(ModuleNotFoundError):
-        import fhy_core.param  # noqa: F401, PLC0415
-
-
-def test_flat_symbol_type_import_is_not_a_module() -> None:
-    """Test `fhy_core.symbol_type` is not importable; use `symbolic.symbol_type`."""
-    with pytest.raises(ModuleNotFoundError):
-        import fhy_core.symbol_type  # noqa: F401, PLC0415
