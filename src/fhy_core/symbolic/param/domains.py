@@ -2,9 +2,9 @@
 
 A :class:`ParamDomain` captures everything that varies between kinds of
 parameter: admissibility, constraint validation, implied constraints, subset
-semantics, structural equivalence, and rendering. A single
-:class:`~fhy_core.symbolic.param.core.Param` composes one domain rather than being
-subclassed per kind.
+semantics, set algebra (union and intersection), structural equivalence, and
+rendering. A single :class:`~fhy_core.symbolic.param.core.Param` composes one
+domain rather than being subclassed per kind.
 
 :class:`ParamDomain` is a sum-type family base. Each concrete domain is a
 ``@register_serializable @dataclass(frozen=True, eq=False)`` leaf, and the
@@ -472,6 +472,8 @@ def _numeric_has_feasible_value(
     satisfiable = check_expression_satisfiability(
         expression, {common_variable: symbol_type}
     )
+    if satisfiable is None:
+        _LOGGER.warning("Z3 returned unknown; assuming feasible")
     # ``satisfiable is True``  => a satisfying assignment exists => feasible.
     # ``satisfiable is False`` => provably unsatisfiable => infeasible.
     # ``satisfiable is None`` (Z3 unknown) => assume feasible, matching this
@@ -795,6 +797,14 @@ class IntervalIntegerDomain(ParamDomain):
         other_constraints: Sequence[Constraint],
         variable: Identifier,
     ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        """Compute the intersection, rendering bounds with the left operand's bias.
+
+        The merged domain's ``prefer_inclusive`` is taken from ``self`` (the
+        left operand after any interval/plain-integer coercion), not merged
+        with ``other``'s. This is only a rendering preference for how the
+        result's bounds print; the intersected value set itself is
+        order-independent between the two operands.
+        """
         if not isinstance(other, IntervalIntegerDomain):
             raise TypeError(
                 "Cannot intersect an IntervalIntegerDomain with a domain of "

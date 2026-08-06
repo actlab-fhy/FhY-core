@@ -230,6 +230,18 @@ def test_interval_intersection_tightens_bounds_via_factory() -> None:
 
 
 @pytest.mark.z3
+def test_interval_intersection_of_strict_subset_yields_the_subset_bounds() -> None:
+    """Test ``[1,10] & [3,5]`` yields exactly ``[3,5]``: a strict-subset case."""
+    left = create_interval_integer_param_between(1, 10)
+    right = create_interval_integer_param_between(3, 5)
+
+    result = left & right
+
+    assert_all_satisfied(result, [3, 5])
+    assert_none_satisfied(result, [2, 6])
+
+
+@pytest.mark.z3
 def test_interval_intersection_of_disjoint_intervals_raises_param_error() -> None:
     """Test interval intersection of disjoint intervals raises ``ParamError``."""
     left = create_interval_integer_param_between(0, 5)
@@ -448,7 +460,7 @@ def test_intersection_with_unrebindable_constraint_kind_raises_type_error() -> N
     left = left.add_constraint(_UnrebindableConstraint(left.variable))
     right = create_integer_param()
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="Cannot rebind constraint of type"):
         create_intersection_param(left, right)
 
 
@@ -519,11 +531,28 @@ def test_and_dunder_delegates_to_create_intersection_param() -> None:
     assert_none_valid(result, ["a", "d"])
 
 
+def test_and_dunder_result_is_alpha_equivalent_to_create_intersection_param() -> None:
+    """Test ``left & right`` is alpha-equivalent to the factory's result.
+
+    Both calls mint a fresh default result variable, so the two results are
+    not structurally equivalent (different variable identity) but must be
+    alpha-equivalent.
+    """
+    left = create_categorical_param({"a", "b", "c"})
+    right = create_categorical_param({"b", "c", "d"})
+
+    dunder_result = left & right
+    factory_result = create_intersection_param(left, right)
+
+    assert dunder_result.is_alpha_equivalent(factory_result)
+    assert not dunder_result.is_structurally_equivalent(factory_result)
+
+
 def test_and_dunder_with_non_param_operand_raises_type_error() -> None:
     """Test ``&`` raises ``TypeError`` (via ``NotImplemented``) for a non-`Param`."""
     left = create_categorical_param({"a"})
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="unsupported operand type"):
         _ = left & "not a param"
 
 
@@ -537,7 +566,27 @@ def test_intersection_across_categorical_and_ordinal_raises_type_error() -> None
     left: Param[Any] = create_categorical_param({"a", "b"})
     right = create_ordinal_param([1, 2])
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError, match="Cannot intersect a CategoricalDomain with a domain of type"
+    ):
+        create_intersection_param(left, right)
+
+
+def test_intersection_across_ordinal_and_categorical_raises_type_error() -> None:
+    """Test intersection across ordinal and categorical domains raises ``TypeError``.
+
+    Mirrors ``test_intersection_across_categorical_and_ordinal_raises_type_error``
+    with the operand order swapped, closing the directional gap that
+    ``test_param_union.py`` already covers for its own categorical/ordinal
+    mismatch (``test_union_across_categorical_and_ordinal_kinds_raises_type_error``
+    and its reversed sibling).
+    """
+    left: Param[Any] = create_ordinal_param([1, 2])
+    right = create_categorical_param({"a", "b"})
+
+    with pytest.raises(
+        TypeError, match="Cannot intersect an OrdinalDomain with a domain of type"
+    ):
         create_intersection_param(left, right)
 
 
@@ -546,7 +595,9 @@ def test_intersection_of_permutation_and_categorical_raises_type_error() -> None
     left: Param[Any] = create_permutation_param(["a", "b"])
     right = create_categorical_param({"a", "b"})
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError, match="Cannot intersect a PermutationDomain with a domain of type"
+    ):
         create_intersection_param(left, right)
 
 
@@ -555,7 +606,9 @@ def test_intersection_of_integer_and_real_raises_type_error() -> None:
     left: Param[Any] = create_integer_param()
     right = create_real_param()
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError, match="Cannot intersect an IntegerDomain with a domain of type"
+    ):
         create_intersection_param(left, right)
 
 
@@ -589,13 +642,21 @@ def test_intersection_membership_law_holds_for_categorical_operands(
 
 
 def test_intersection_type_annotation_is_param() -> None:
-    """Test `create_intersection_param` returns a `Param` (public-surface check)."""
+    """Test `create_intersection_param` returns a `Param` (public-surface check).
+
+    Also confirms the actual resulting value set for this identical-operand
+    case: both operands are the same singleton set, so the intersection must
+    still resolve to exactly ``{"a"}``, not merely satisfy the return-type
+    annotation.
+    """
     left = create_categorical_param({"a"})
     right = create_categorical_param({"a"})
 
     result = create_intersection_param(left, right)
 
     assert isinstance(result, Param)
+    assert_all_valid(result, ["a"])
+    assert result.domain.categories == ("a",)  # type: ignore[attr-defined]
 
 
 # =============================================================================

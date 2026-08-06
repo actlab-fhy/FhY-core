@@ -76,6 +76,43 @@ def test_multiplication_of_two_negative_intervals_flips_to_positive() -> None:
     assert_none_satisfied(z, [0, 7])
 
 
+def test_multiplication_of_wholly_positive_and_wholly_negative_interval() -> None:
+    """Test ``[2,5] * [-3,-1] -> [-15,-2]``.
+
+    Distinct corner-selection path from the mixed-sign and negative-negative
+    cases above: neither operand straddles zero, so the minimum comes from
+    ``hi * lo`` (``5 * -3``) and the maximum from ``lo * hi`` (``2 * -1``).
+    """
+    x = create_interval_integer_param_between(2, 5)
+    y = create_interval_integer_param_between(-3, -1)
+
+    z = x * y
+
+    assert_all_satisfied(z, [-15, -2])
+    assert_none_satisfied(z, [-16, -1])
+
+
+def test_multiplication_of_wholly_negative_and_wholly_positive_interval() -> None:
+    """Test ``[-3,-1] * [2,5] -> [-15,-2]``: operand order mirrored from above."""
+    x = create_interval_integer_param_between(-3, -1)
+    y = create_interval_integer_param_between(2, 5)
+
+    z = x * y
+
+    assert_all_satisfied(z, [-15, -2])
+    assert_none_satisfied(z, [-16, -1])
+
+
+def test_multiplication_by_one_is_identity() -> None:
+    """Test ``[2,5] * 1 -> [2,5]``: multiplying by the scalar ``1`` is an identity."""
+    x = create_interval_integer_param_between(2, 5)
+
+    z = x * 1
+
+    assert_all_satisfied(z, [2, 5])
+    assert_none_satisfied(z, [1, 6])
+
+
 # =============================================================================
 # Unbounded-end propagation
 # =============================================================================
@@ -155,7 +192,7 @@ def test_multiplication_with_bool_operand_raises_type_error() -> None:
     """Test multiplication rejects a ``bool`` operand (``bool`` is not ``int`` here)."""
     x = create_interval_integer_param_between(0, 1)
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="Unsupported operand type"):
         _ = x * True
 
 
@@ -163,7 +200,7 @@ def test_multiplication_with_bool_on_left_raises_type_error() -> None:
     """Test reflected multiplication rejects a ``bool`` operand on the left."""
     x = create_interval_integer_param_between(0, 1)
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="Unsupported operand type"):
         _ = True * x
 
 
@@ -176,7 +213,7 @@ def test_multiplication_with_unsupported_type_raises_type_error() -> None:
     """Test multiplication raises ``TypeError`` for an unsupported operand type."""
     x = create_interval_integer_param_between(0, 1)
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="Unsupported operand type"):
         _ = x * "nope"
 
 
@@ -185,7 +222,7 @@ def test_multiplication_with_real_param_raises_type_error() -> None:
     x = create_interval_integer_param_between(0, 1)
     y = create_real_param()
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="Unsupported operand type"):
         _ = x * y
 
 
@@ -194,7 +231,7 @@ def test_multiplication_with_categorical_param_raises_type_error() -> None:
     x = create_interval_integer_param_between(0, 1)
     y = create_categorical_param({1, 2})
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="Unsupported operand type"):
         _ = x * y
 
 
@@ -235,7 +272,9 @@ def test_multiplication_rejects_integer_param_with_non_bound_constraint() -> Non
     )
     bound = create_interval_integer_param_exactly(2)
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError, match="Cannot coerce an integer parameter with non-bound constraints"
+    ):
         _ = bound * integer
 
 

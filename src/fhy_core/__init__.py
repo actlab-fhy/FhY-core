@@ -21,7 +21,7 @@ from importlib.metadata import version
 #   `identifier` module.
 # - `symbolic` before `types`: `types/core.py` imports
 #   `..symbolic.expression.core`/`.pprint`, while
-#   `symbolic/expression/passes/{type_checker,numpy,body_type_checker}.py`
+#   `symbolic/expression/passes/{type_checker,body_type_checker}.py`
 #   import `fhy_core.types`. `symbolic/expression/__init__.py` fully
 #   loads `.core` before any pass imports `fhy_core.types`, so importing
 #   `symbolic` first means `expression.core` is already complete when

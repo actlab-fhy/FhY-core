@@ -51,6 +51,37 @@ def test_categorical_union_merges_both_category_sets() -> None:
     assert_all_valid(result, ["a", "b", "c", "d"])
 
 
+def test_categorical_union_dedups_a_category_common_to_both_operands() -> None:
+    """Test categorical union dedups a category shared by both operands.
+
+    Mirrors ``test_ordinal_union_merges_and_resorts_values``: ``"b"`` is a
+    member of both operands, so the merged category set has exactly three
+    members, not four.
+    """
+    left = create_categorical_param({"a", "b"})
+    right = create_categorical_param({"b", "c"})
+
+    result = create_union_param(left, right)
+
+    assert isinstance(result.domain, CategoricalDomain)
+    assert_all_valid(result, ["a", "b", "c"])
+    assert set(result.domain.categories) == {"a", "b", "c"}  # type: ignore[attr-defined]
+    assert len(result.domain.categories) == 3  # type: ignore[attr-defined]
+
+
+def test_categorical_union_of_superset_and_subset_equals_the_superset_value_set() -> (
+    None
+):
+    """Test a categorical union of a superset and a subset equals the superset's set."""
+    superset = create_categorical_param({"a", "b", "c"})
+    subset = create_categorical_param({"b"})
+
+    result = create_union_param(superset, subset)
+
+    assert set(result.domain.categories) == {"a", "b", "c"}  # type: ignore[attr-defined]
+    assert len(result.domain.categories) == 3  # type: ignore[attr-defined]
+
+
 def test_categorical_union_bakes_not_in_set_constraint_before_merging() -> None:
     """Test a `NotInSetConstraint` on the left operand is folded into the merge.
 
@@ -141,12 +172,22 @@ def test_ordinal_union_merges_and_resorts_values() -> None:
     assert result.domain.sorted_values == (1, 2, 3)
 
 
+def test_ordinal_union_of_superset_and_subset_equals_the_superset_value_set() -> None:
+    """Test an ordinal union of a superset and a subset equals the superset's set."""
+    superset = create_ordinal_param([1, 2, 3, 4, 5])
+    subset = create_ordinal_param([2, 3])
+
+    result = create_union_param(superset, subset)
+
+    assert result.domain.sorted_values == (1, 2, 3, 4, 5)
+
+
 def test_ordinal_union_of_incomparable_values_raises_type_error() -> None:
     """Test an ordinal union whose merged values are not mutually comparable raises."""
     left: Param[Any] = create_ordinal_param([1, 2])
     right = create_ordinal_param(["a"])
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="mutually comparable"):
         create_union_param(left, right)
 
 
@@ -175,7 +216,26 @@ def test_union_of_permutation_params_raises_type_error() -> None:
     left = create_permutation_param(["a", "b"])
     right = create_permutation_param(["a", "b"])
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError, match="Union is not supported for domain kind PermutationDomain"
+    ):
+        create_union_param(left, right)
+
+
+def test_union_of_permutation_and_categorical_raises_type_error() -> None:
+    """Test union of a permutation param and a categorical param raises ``TypeError``.
+
+    Union dispatches on the left operand's domain kind, so this exercises
+    the mismatch from the permutation side (as opposed to the existing
+    categorical/ordinal mismatch tests, neither of which pairs a
+    permutation operand against a finite-set operand).
+    """
+    left = create_permutation_param(["a", "b"])
+    right = create_categorical_param({"a", "b"})
+
+    with pytest.raises(
+        TypeError, match="Union is not supported for domain kind PermutationDomain"
+    ):
         create_union_param(left, right)
 
 
@@ -184,7 +244,9 @@ def test_union_of_integer_params_raises_type_error() -> None:
     left = create_integer_param()
     right = create_integer_param()
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError, match="Union is not supported for domain kind IntegerDomain"
+    ):
         create_union_param(left, right)
 
 
@@ -193,7 +255,9 @@ def test_union_of_real_params_raises_type_error() -> None:
     left = create_real_param()
     right = create_real_param()
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError, match="Union is not supported for domain kind RealDomain"
+    ):
         create_union_param(left, right)
 
 
@@ -206,7 +270,9 @@ def test_union_of_interval_integer_params_raises_type_error() -> None:
     left = create_interval_integer_param_between(0, 5)
     right = create_interval_integer_param_between(3, 8)
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError, match="Union is not supported for domain kind IntervalIntegerDomain"
+    ):
         create_union_param(left, right)
 
 
@@ -215,7 +281,25 @@ def test_union_of_mixed_interval_integer_and_plain_integer_raises_type_error() -
     left = create_interval_integer_param_between(0, 5)
     right = create_integer_param_between(3, 8)
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError, match="Union is not supported for domain kind IntervalIntegerDomain"
+    ):
+        create_union_param(left, right)
+
+
+def test_union_of_interval_integer_and_categorical_raises_type_error() -> None:
+    """Test union of an interval-integer param and a categorical param raises.
+
+    Union dispatches on the left operand's domain kind, so this exercises
+    the mismatch from the interval-integer side rather than from a
+    finite-set operand.
+    """
+    left = create_interval_integer_param_between(0, 5)
+    right = create_categorical_param({"a"})
+
+    with pytest.raises(
+        TypeError, match="Union is not supported for domain kind IntervalIntegerDomain"
+    ):
         create_union_param(left, right)
 
 
@@ -224,7 +308,9 @@ def test_union_across_categorical_and_ordinal_kinds_raises_type_error() -> None:
     left: Param[Any] = create_categorical_param({"a", "b"})
     right = create_ordinal_param([1, 2])
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError, match="Cannot union a CategoricalDomain with a domain of type"
+    ):
         create_union_param(left, right)
 
 
@@ -233,7 +319,9 @@ def test_union_across_ordinal_and_categorical_kinds_raises_type_error() -> None:
     left: Param[Any] = create_ordinal_param([1, 2])
     right = create_categorical_param({"a", "b"})
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError, match="Cannot union an OrdinalDomain with a domain of type"
+    ):
         create_union_param(left, right)
 
 
@@ -280,11 +368,28 @@ def test_or_dunder_delegates_to_create_union_param() -> None:
     assert_all_valid(result, ["a", "b", "c"])
 
 
+def test_or_dunder_result_is_alpha_equivalent_to_create_union_param() -> None:
+    """Test ``left | right`` is alpha-equivalent to the factory's result.
+
+    Both calls mint a fresh default result variable, so the two results are
+    not structurally equivalent (different variable identity) but must be
+    alpha-equivalent.
+    """
+    left = create_categorical_param({"a", "b"})
+    right = create_categorical_param({"b", "c"})
+
+    dunder_result = left | right
+    factory_result = create_union_param(left, right)
+
+    assert dunder_result.is_alpha_equivalent(factory_result)
+    assert not dunder_result.is_structurally_equivalent(factory_result)
+
+
 def test_or_dunder_with_non_param_operand_raises_type_error() -> None:
     """Test ``|`` raises ``TypeError`` (via ``NotImplemented``) for a non-`Param`."""
     left = create_categorical_param({"a"})
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="unsupported operand type"):
         _ = left | "not a param"
 
 

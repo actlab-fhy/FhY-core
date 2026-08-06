@@ -6,6 +6,8 @@ empty parameter, so these tests confirm the empty constructions build before
 querying feasibility.
 """
 
+import logging
+
 import pytest
 
 from fhy_core.symbolic.constraint import (
@@ -19,9 +21,11 @@ from fhy_core.symbolic.param import (
     create_categorical_param,
     create_integer_param,
     create_integer_param_between,
+    create_integer_param_with_lower_bound,
     create_ordinal_param,
     create_permutation_param,
 )
+from fhy_core.symbolic.param import domains as param_domains
 
 from .conftest import mock_identifier
 
@@ -158,3 +162,38 @@ def test_dependent_constraint_is_rejected_at_construction_not_is_feasible() -> N
 
     with pytest.raises(ParamError, match="ConstraintSystem"):
         create_integer_param(name=x, constraints=[dependent_constraint])
+
+
+# =============================================================================
+# Z3 `unknown` handling
+# =============================================================================
+
+
+@pytest.mark.z3
+def test_is_feasible_logs_warning_when_z3_returns_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test `is_feasible` logs a warning when Z3 cannot decide feasibility.
+
+    Mirrors the monkeypatch technique in
+    `test_intersection_accepts_result_when_z3_returns_unknown`
+    (`tests/symbolic/param/test_param_intersection.py`): patches
+    `check_expression_satisfiability` -- the seam `_numeric_has_feasible_value`
+    calls -- to always return ``None`` (Z3's "unknown" outcome). This test
+    checks the warning `_numeric_has_feasible_value` logs on that path, which
+    mirrors the warning `compute_constraint_implication_subset` already logs
+    for its own analogous Z3-unknown fallback.
+    """
+    param = create_integer_param_with_lower_bound(0, name=mock_identifier("x", 14))
+    monkeypatch.setattr(
+        param_domains, "check_expression_satisfiability", lambda *args, **kwargs: None
+    )
+
+    with caplog.at_level(logging.WARNING, logger="fhy_core.symbolic.param.domains"):
+        result = param.is_feasible()
+
+    assert result
+    assert any(record.levelno == logging.WARNING for record in caplog.records), (
+        "expected a WARNING-level log record from fhy_core.symbolic.param.domains"
+    )

@@ -124,8 +124,8 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
 
     A parameter is defined by its variable, a set of constraints, and a
     :class:`~fhy_core.symbolic.param.domains.ParamDomain` that supplies admissibility,
-    subset, equivalence, and serialization behavior. Construct one directly with
-    a domain, or use a ``create_*`` factory for the common kinds.
+    subset, set algebra, equivalence, and serialization behavior. Construct one
+    directly with a domain, or use a ``create_*`` factory for the common kinds.
 
     The ``Param[_T]`` type parameter is an advisory hint for call-site inference
     only; the admissible value type is enforced by the domain at runtime, not by
@@ -360,7 +360,17 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
     def add_lower_bound_constraint(
         self, lower_bound: int | float | str, *, is_inclusive: bool = True
     ) -> "Param[_T]":
-        """Return a new parameter with an added lower-bound constraint."""
+        """Return a new parameter with an added lower-bound constraint.
+
+        ``lower_bound`` is validated on its own (against the domain's
+        natural-number gates, if any); it is not checked against any upper
+        bound already on the parameter. Chaining this with
+        :meth:`add_upper_bound_constraint` in a way that crosses the bounds
+        (e.g. a lower bound of 10 followed by an upper bound of 5) is
+        accepted and constructs successfully; the resulting parameter is
+        simply infeasible, which is only discoverable by querying
+        :meth:`is_feasible`.
+        """
         _validate_natural_bound(
             self.domain, lower_bound, is_lower=True, is_inclusive=is_inclusive
         )
@@ -373,7 +383,17 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
     def add_upper_bound_constraint(
         self, upper_bound: int | float | str, *, is_inclusive: bool = True
     ) -> "Param[_T]":
-        """Return a new parameter with an added upper-bound constraint."""
+        """Return a new parameter with an added upper-bound constraint.
+
+        ``upper_bound`` is validated on its own (against the domain's
+        natural-number gates, if any); it is not checked against any lower
+        bound already on the parameter. Chaining this with
+        :meth:`add_lower_bound_constraint` in a way that crosses the bounds
+        (e.g. a lower bound of 10 followed by an upper bound of 5) is
+        accepted and constructs successfully; the resulting parameter is
+        simply infeasible, which is only discoverable by querying
+        :meth:`is_feasible`.
+        """
         _validate_natural_bound(
             self.domain, upper_bound, is_lower=False, is_inclusive=is_inclusive
         )
@@ -894,7 +914,7 @@ def _coerce_to_interval_param(template: "Param[Any]", other: Any) -> "Param[int]
 
 
 def _multiply_interval_params(self: "Param[Any]", other: Any) -> "Param[int]":
-    """Body of ``__mul__`` once ``self`` is known to be an interval-integer param."""
+    """Multiply ``self`` by ``other``, given ``self`` is an interval-integer param."""
     domain = cast(IntervalIntegerDomain, self.domain)
     coerced = _coerce_to_interval_param(self, other)
     coerced_domain = cast(IntervalIntegerDomain, coerced.domain)
@@ -1235,12 +1255,13 @@ def create_intersection_param(
     """Create a parameter admitting exactly the values valid for both operands.
 
     Finite-set operands are intersected by baking both effective value sets;
-    permutation and numeric operands keep their domain (attributes merged
-    conservatively) and carry the conjunction of both operands' constraints
-    rebound to the result variable. A mixed pair of one interval-integer
-    parameter and one plain integer parameter whose constraints are all bound
-    expressions is supported by first coercing the plain parameter through the
-    existing interval coercion machinery.
+    permutation operands keep their member set unchanged, and numeric
+    operands merge domain attributes conservatively -- both of these kinds
+    carry the conjunction of both operands' constraints rebound to the
+    result variable. A mixed pair of one interval-integer parameter and one
+    plain integer parameter whose constraints are all bound expressions is
+    supported by first coercing the plain parameter through the existing
+    interval coercion machinery.
 
     Args:
         left: Left operand.
@@ -1253,8 +1274,10 @@ def create_intersection_param(
         A new parameter over the intersection of the operands' feasible sets.
 
     Raises:
-        TypeError: If the domain kinds are incompatible or a carried constraint
-            cannot be rebound.
+        TypeError: If the domain kinds are incompatible, a carried constraint
+            cannot be rebound, or a mixed interval-integer/plain-integer
+            pair's plain operand carries a non-bound constraint (so it
+            cannot be coerced to interval form).
         ParamError: If the intersection is provably empty (an empty finite set,
             an empty integer interval, or a numeric constraint conjunction the
             solver proves infeasible).
