@@ -755,6 +755,111 @@ def test_piecewise_expression_pattern_propagates_otherwise_failure() -> None:
 
 
 # ===========================================================================
+# PiecewiseExpressionPattern: __post_init__ coercion and validation
+# ===========================================================================
+
+
+def test_piecewise_expression_pattern_none_cases_remains_none() -> None:
+    """Test constructing with ``cases=None`` leaves the field as ``None``."""
+    pattern = PiecewiseExpressionPattern(None, WildcardPattern())
+
+    assert pattern.cases is None
+
+
+def test_piecewise_expression_pattern_coerces_list_cases_to_tuple_of_tuples() -> None:
+    """Test constructing with list ``cases`` (and list pairs) coerces to tuples.
+
+    ``cases`` is declared as ``tuple[tuple[Pattern, Pattern], ...] | None``, but
+    nothing at the language level stops a caller from passing a list of lists
+    instead; ``__post_init__`` normalizes both levels to real tuples.
+    """
+    condition_pattern = WildcardPattern()
+    value_pattern = LiteralPattern(value=1)
+
+    pattern = PiecewiseExpressionPattern(
+        [[condition_pattern, value_pattern]],  # type: ignore[arg-type]
+        WildcardPattern(),
+    )
+
+    assert type(pattern.cases) is tuple
+    assert pattern.cases is not None
+    assert type(pattern.cases[0]) is tuple
+    assert pattern.cases == ((condition_pattern, value_pattern),)
+
+
+def test_piecewise_expression_pattern_cases_unaffected_by_later_list_mutation() -> None:
+    """Test mutating the list passed as ``cases`` after construction has no effect."""
+    condition_pattern = WildcardPattern()
+    value_pattern = LiteralPattern(value=1)
+    cases_list: list[tuple[Pattern, Pattern]] = [(condition_pattern, value_pattern)]
+
+    pattern = PiecewiseExpressionPattern(cases_list, WildcardPattern())  # type: ignore[arg-type]
+    cases_list.append((LiteralPattern(value=2), LiteralPattern(value=3)))
+
+    assert pattern.cases == ((condition_pattern, value_pattern),)
+
+
+def test_piecewise_expression_pattern_case_pair_unaffected_by_later_list_mutation() -> (
+    None
+):
+    """Test mutating a case-pair list passed inside ``cases`` has no effect.
+
+    Each case pair may itself be supplied as a list rather than a tuple;
+    ``__post_init__`` must coerce that inner sequence too, or a caller
+    mutating the pair in place after construction would silently change
+    the pattern's matching behavior.
+    """
+    original_condition = WildcardPattern()
+    value_pattern = LiteralPattern(value=1)
+    pair = [original_condition, value_pattern]
+
+    pattern = PiecewiseExpressionPattern([pair], WildcardPattern())  # type: ignore[arg-type]
+    pair[0] = LiteralPattern(value=99)
+
+    assert pattern.cases == ((original_condition, value_pattern),)
+
+
+def test_piecewise_expression_pattern_rejects_non_pattern_condition_in_case() -> None:
+    """Test a non-``Pattern`` condition inside a case raises ``ValueError``."""
+    with pytest.raises(
+        ValueError, match="condition pattern must be a Pattern instance"
+    ):
+        PiecewiseExpressionPattern(
+            (("not a pattern", WildcardPattern()),),  # type: ignore[arg-type]
+            WildcardPattern(),
+        )
+
+
+def test_piecewise_expression_pattern_rejects_non_pattern_value_in_case() -> None:
+    """Test a non-``Pattern`` value inside a case raises ``ValueError``."""
+    with pytest.raises(ValueError, match="value pattern must be a Pattern instance"):
+        PiecewiseExpressionPattern(
+            ((WildcardPattern(), "not a pattern"),),  # type: ignore[arg-type]
+            WildcardPattern(),
+        )
+
+
+def test_piecewise_expression_pattern_rejects_non_pattern_otherwise() -> None:
+    """Test a non-``Pattern`` ``otherwise`` raises ``ValueError``."""
+    with pytest.raises(ValueError, match="otherwise must be a Pattern instance"):
+        PiecewiseExpressionPattern(
+            ((WildcardPattern(), WildcardPattern()),),
+            "not a pattern",  # type: ignore[arg-type]
+        )
+
+
+def test_piecewise_expression_pattern_rejects_case_with_wrong_pair_length() -> None:
+    """Test a case that is not a two-element pair raises ``ValueError``."""
+    with pytest.raises(ValueError, match="pairs"):
+        PiecewiseExpressionPattern(
+            (  # type: ignore[arg-type]
+                (WildcardPattern(), WildcardPattern(), WildcardPattern()),
+            ),
+            WildcardPattern(),
+        )
+
+
+# ===========================================================================
 # CallExpressionPattern
 # ===========================================================================
 
@@ -838,6 +943,68 @@ def test_call_expression_pattern_matches_empty_argument_call() -> None:
 
     assert pattern.match(CallExpression("f", ())) is not None
     assert pattern.match(CallExpression("f", (LiteralExpression(1),))) is None
+
+
+# ===========================================================================
+# CallExpressionPattern: __post_init__ coercion and validation
+# ===========================================================================
+
+
+def test_call_expression_pattern_none_arguments_remains_none() -> None:
+    """Test constructing with ``arguments=None`` leaves the field as ``None``."""
+    pattern = CallExpressionPattern(function_name="f", arguments=None)
+
+    assert pattern.arguments is None
+
+
+def test_call_expression_pattern_empty_tuple_arguments_remains_empty_tuple() -> None:
+    """Test constructing with ``arguments=()`` leaves the field as an empty tuple."""
+    pattern = CallExpressionPattern(function_name="f", arguments=())
+
+    assert pattern.arguments == ()
+
+
+def test_call_expression_pattern_coerces_list_arguments_to_tuple() -> None:
+    """Test constructing with a list ``arguments`` coerces it to a tuple.
+
+    ``arguments`` is declared as ``tuple[Pattern, ...] | None``, but nothing
+    at the language level stops a caller from passing a list instead;
+    ``__post_init__`` normalizes it to a real tuple.
+    """
+    argument_pattern = WildcardPattern()
+
+    pattern = CallExpressionPattern(
+        function_name="f",
+        arguments=[argument_pattern],  # type: ignore[arg-type]
+    )
+
+    assert type(pattern.arguments) is tuple
+    assert pattern.arguments == (argument_pattern,)
+
+
+def test_call_expression_pattern_arguments_unaffected_by_later_list_mutation() -> None:
+    """Test post-construction mutation of the ``arguments`` list has no effect."""
+    argument_pattern = WildcardPattern()
+    arguments_list: list[Pattern] = [argument_pattern]
+
+    pattern = CallExpressionPattern(
+        function_name="f",
+        arguments=arguments_list,  # type: ignore[arg-type]
+    )
+    arguments_list.append(LiteralPattern(value=1))
+
+    assert pattern.arguments == (argument_pattern,)
+
+
+def test_call_expression_pattern_rejects_non_pattern_argument() -> None:
+    """Test a non-``Pattern`` element in ``arguments`` raises ``ValueError``."""
+    with pytest.raises(
+        ValueError, match="arguments element must be a Pattern instance"
+    ):
+        CallExpressionPattern(
+            function_name="f",
+            arguments=(WildcardPattern(), "not a pattern"),  # type: ignore[arg-type]
+        )
 
 
 # ===========================================================================
@@ -1003,6 +1170,46 @@ def test_alternatives_pattern_discards_captures_from_failed_alternative() -> Non
     assert result is not None
     assert not result.has("captured_in_failed")
     assert result.has("captured_in_successful")
+
+
+# ===========================================================================
+# AlternativesPattern: __post_init__ coercion and validation
+# ===========================================================================
+
+
+def test_alternatives_pattern_coerces_list_alternatives_to_tuple() -> None:
+    """Test constructing with a list ``alternatives`` coerces it to a tuple.
+
+    ``alternatives`` is declared as ``tuple[Pattern, ...]``, but nothing at
+    the language level stops a caller from passing a list instead;
+    ``__post_init__`` normalizes it to a real tuple.
+    """
+    first = LiteralPattern(value=1)
+    second = LiteralPattern(value=2)
+
+    pattern = AlternativesPattern([first, second])  # type: ignore[arg-type]
+
+    assert type(pattern.alternatives) is tuple
+    assert pattern.alternatives == (first, second)
+
+
+def test_alternatives_pattern_unaffected_by_later_list_mutation() -> None:
+    """Test post-construction mutation of the ``alternatives`` list has no effect."""
+    first = LiteralPattern(value=1)
+    alternatives_list = [first]
+
+    pattern = AlternativesPattern(alternatives_list)  # type: ignore[arg-type]
+    alternatives_list.append(LiteralPattern(value=2))
+
+    assert pattern.alternatives == (first,)
+
+
+def test_alternatives_pattern_rejects_non_pattern_alternative() -> None:
+    """Test a non-``Pattern`` element in ``alternatives`` raises ``ValueError``."""
+    with pytest.raises(
+        ValueError, match="alternatives element must be a Pattern instance"
+    ):
+        AlternativesPattern((LiteralPattern(value=1), "not a pattern"))  # type: ignore[arg-type]
 
 
 # ===========================================================================
