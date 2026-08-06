@@ -1,5 +1,6 @@
 """Tests for `fhy_core.symbolic.expression.passes.sympy`."""
 
+import logging
 from unittest.mock import Mock
 
 import pytest
@@ -738,6 +739,60 @@ def test_simplify_expression_swap_bindings_on_inequality_stays_undecided() -> No
     assert not isinstance(result, LiteralExpression)
 
 
+@pytest.mark.filterwarnings("error::DeprecationWarning")
+def test_simplify_expression_bool_binding_value_avoids_sympy_deprecation() -> None:
+    """Test a bare `bool` binding value does not hit SymPy's simultaneous-subs warning.
+
+    SymPy's own ``.subs(..., simultaneous=True)`` masks every replacement
+    behind a synthetic ``Dummy() * Dummy()`` product before unmasking it
+    with a final ``xreplace``. When the replacement is a SymPy ``Boolean``
+    (here, ``sympy.true`` from a ``LiteralExpression(True)`` binding),
+    that unmasking step reconstructs a ``Mul`` with a non-``Expr``
+    argument, which SymPy has deprecated since 1.7
+    (``SymPyDeprecationWarning``, escalated to an error by this test's
+    marker). Without the ``xreplace``-based fix in
+    ``substitute_sympy_expression_variables``, this test fails on that
+    warning.
+    """
+    x = mock_identifier("x", 0)
+    expression = IdentifierExpression(x)
+
+    result = simplify_expression(expression, {x: LiteralExpression(True)})
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value is True
+
+
+@pytest.mark.filterwarnings("error::DeprecationWarning")
+def test_simplify_expression_boolean_expression_binding_avoids_sympy_deprecation() -> (
+    None
+):
+    """Test a boolean-*valued expression* binding does not raise or warn.
+
+    Binding ``x`` to a comparison (``y > 0``, a SymPy ``Relational``,
+    itself a ``Boolean``) hits the same masking path as a bare ``bool``
+    binding value, but harder: SymPy's simultaneous ``.subs`` does not
+    merely warn here, it raises ``TypeError: Relational cannot be used in
+    Mul`` outright, because the mask-unmask trick literally tries to
+    build ``Mul(<Relational>, 1)``. Without the ``xreplace``-based fix,
+    this test fails with that ``TypeError`` regardless of any warnings
+    filter.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = IdentifierExpression(x)
+    binding = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(y), LiteralExpression(0)
+    )
+
+    result = simplify_expression(expression, {x: binding})
+
+    expected = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(y), LiteralExpression(0)
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
 # =============================================================================
 # Defensive dispatch branches and noop output
 # =============================================================================
@@ -1010,7 +1065,44 @@ def test_convert_multi_case_piecewise_expression_to_sympy_emits_every_case() -> 
     assert len(result.args) == NUM_EXPECTED_BRANCHES
 
 
-def test_single_branch_sympy_piecewise_degenerates_to_bare_value() -> None:
+def test_convert_multi_case_piecewise_preserves_branch_order_and_content() -> None:
+    """Test lowering a 4-case ``PiecewiseExpression`` pairs each branch correctly.
+
+    Uses distinguishable literal values (10/20/30/99) so a bug that
+    reordered branches, or paired a value with the wrong condition,
+    would be caught -- unlike
+    ``test_convert_multi_case_piecewise_expression_to_sympy_emits_every_case``
+    above, which only checks the branch count.
+    """
+    x_identifier = mock_identifier("x", 0)
+    x_symbol = IdentifierExpression(x_identifier)
+    expression = PiecewiseExpression(
+        (x_symbol > 0, x_symbol > 10, x_symbol > 20),
+        (LiteralExpression(10), LiteralExpression(20), LiteralExpression(30)),
+        LiteralExpression(99),
+    )
+
+    result = convert_expression_to_sympy_expression(expression)
+
+    assert isinstance(result, sympy.Piecewise)
+    x = sympy.Symbol("x_0")
+    expected_branches = (
+        (sympy.Integer(10), x > 0),
+        (sympy.Integer(20), x > 10),
+        (sympy.Integer(30), x > 20),
+        (sympy.Integer(99), sympy.true),
+    )
+    NUM_EXPECTED_BRANCHES = 4
+    assert len(result.args) == NUM_EXPECTED_BRANCHES
+    for index, expected_branch in enumerate(expected_branches):
+        assert result.args[index] == expected_branch, (
+            f"branch {index}: expected {expected_branch}, got {result.args[index]}"
+        )
+
+
+def test_single_branch_sympy_piecewise_degenerates_to_bare_value(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Test a single-branch ``sympy.Piecewise`` lifts directly to its value.
 
     A ``True``-condition single branch collapses to a bare SymPy value
@@ -1018,15 +1110,23 @@ def test_single_branch_sympy_piecewise_degenerates_to_bare_value() -> None:
     ``Piecewise`` object that survives construction has a symbolic
     condition. The lifter still degenerates it to the converted value,
     dropping the (never-checked) condition, rather than wrapping it in
-    a ``PiecewiseExpression``.
+    a ``PiecewiseExpression`` -- without logging, unlike the analogous
+    multi-branch drop (see
+    ``test_multi_branch_sympy_piecewise_lift_with_non_true_final_condition_logs_warning``).
     """
     sympy_expression = sympy.Piecewise(
         (sympy.Integer(5), sympy.Symbol("flag_0")), evaluate=False
     )
 
-    result = convert_sympy_expression_to_expression(sympy_expression)
+    with caplog.at_level(
+        logging.WARNING, logger="fhy_core.symbolic.expression.passes.sympy"
+    ):
+        result = convert_sympy_expression_to_expression(sympy_expression)
 
     assert result.is_structurally_equivalent(LiteralExpression(5))
+    assert not any(record.levelno == logging.WARNING for record in caplog.records), (
+        "the single-branch degenerate case must not log a dropped-condition warning"
+    )
 
 
 def test_two_branch_sympy_piecewise_lifts_to_single_case_piecewise_expression() -> None:
@@ -1047,12 +1147,18 @@ def test_two_branch_sympy_piecewise_lifts_to_single_case_piecewise_expression() 
     assert result.otherwise.is_structurally_equivalent(LiteralExpression(2))
 
 
-def test_multi_branch_sympy_piecewise_lifts_to_one_flat_piecewise_expression() -> None:
+def test_multi_branch_sympy_piecewise_lifts_to_one_flat_piecewise_expression(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Test a multi-branch ``sympy.Piecewise`` lifts to a single flat node.
 
     A three-branch ``sympy.Piecewise`` produces exactly one
     ``PiecewiseExpression`` with two cases and one ``otherwise`` --
-    not a tree of nested one-case nodes.
+    not a tree of nested one-case nodes. The final condition here is
+    ``True`` (a total ``Piecewise``), so this normal round-trip shape
+    must not log the dropped-condition warning that a genuinely partial
+    final condition triggers (see
+    ``test_multi_branch_sympy_piecewise_lift_with_non_true_final_condition_logs_warning``).
     """
     sympy_expression = sympy.Piecewise(
         (sympy.Integer(1), sympy.Symbol("flag_0")),
@@ -1060,7 +1166,10 @@ def test_multi_branch_sympy_piecewise_lifts_to_one_flat_piecewise_expression() -
         (sympy.Integer(3), True),
     )
 
-    result = convert_sympy_expression_to_expression(sympy_expression)
+    with caplog.at_level(
+        logging.WARNING, logger="fhy_core.symbolic.expression.passes.sympy"
+    ):
+        result = convert_sympy_expression_to_expression(sympy_expression)
 
     assert isinstance(result, PiecewiseExpression)
     NUM_EXPECTED_CASES = 2
@@ -1069,25 +1178,40 @@ def test_multi_branch_sympy_piecewise_lifts_to_one_flat_piecewise_expression() -
     assert result.values[0].is_structurally_equivalent(LiteralExpression(1))
     assert result.values[1].is_structurally_equivalent(LiteralExpression(2))
     assert result.otherwise.is_structurally_equivalent(LiteralExpression(3))
+    assert not any(record.levelno == logging.WARNING for record in caplog.records), (
+        "a total (True-terminated) multi-branch lift must not warn"
+    )
 
 
-def test_sympy_piecewise_lift_silently_drops_a_non_true_final_condition() -> None:
-    """Test the lifter treats the final branch's value as ``otherwise`` regardless.
+def test_multi_branch_sympy_piecewise_lift_with_non_true_final_condition_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test the lifter treats the final branch's value as ``otherwise`` and warns.
 
     Even when the final branch's condition is not ``sympy.true`` (a
     genuinely partial ``Piecewise``), the lifter still takes its value
-    as ``otherwise`` and drops the condition, rather than raising.
+    as ``otherwise`` and drops the condition, rather than raising -- but,
+    unlike the single-branch degenerate case, it logs a ``WARNING``
+    naming the dropped condition, since dropping it here silently
+    totalizes what may be a genuinely partial function.
     """
     sympy_expression = sympy.Piecewise(
         (sympy.Integer(1), sympy.Symbol("flag_0")),
         (sympy.Integer(2), sympy.Symbol("flag_1")),
     )
 
-    result = convert_sympy_expression_to_expression(sympy_expression)
+    with caplog.at_level(
+        logging.WARNING, logger="fhy_core.symbolic.expression.passes.sympy"
+    ):
+        result = convert_sympy_expression_to_expression(sympy_expression)
 
     assert isinstance(result, PiecewiseExpression)
     assert len(result.conditions) == 1
     assert result.otherwise.is_structurally_equivalent(LiteralExpression(2))
+    assert any(
+        record.levelno == logging.WARNING and "flag_1" in record.getMessage()
+        for record in caplog.records
+    ), "expected a WARNING log record naming the dropped final condition"
 
 
 def test_single_case_piecewise_expression_round_trips_through_sympy() -> None:
@@ -1108,6 +1232,36 @@ def test_single_case_piecewise_expression_round_trips_through_sympy() -> None:
         ),
         (IdentifierExpression(x_identifier),),
         LiteralExpression(0),
+    )
+
+    intermediate = convert_expression_to_sympy_expression(original)
+    restored = convert_sympy_expression_to_expression(intermediate)
+
+    assert restored.is_structurally_equivalent(original)
+
+
+def test_multi_case_piecewise_expression_round_trips_with_full_order_and_content() -> (
+    None
+):
+    """Test a 3-case ``PiecewiseExpression`` round-trips with every case intact.
+
+    Uses distinguishable literal values (10/20/30/99), and checks the
+    *entire* round-tripped tree against the original via
+    ``is_structurally_equivalent`` rather than comparing lengths or
+    individual fields, so a lowering/lifting bug that reordered cases or
+    paired a value with the wrong condition -- not just dropped one --
+    would be caught. ``PiecewiseExpression.conditions`` cannot be
+    compared with plain ``==`` here: each round-tripped
+    ``IdentifierExpression`` wraps a freshly reconstructed ``Identifier``
+    (see ``SymPyToExpressionConverter._convert_symbol``), so only
+    ``is_structurally_equivalent`` recognizes it as the same variable.
+    """
+    x_identifier = mock_identifier("x", 0)
+    x_symbol = IdentifierExpression(x_identifier)
+    original = PiecewiseExpression(
+        (x_symbol > 0, x_symbol > 10, x_symbol > 20),
+        (LiteralExpression(10), LiteralExpression(20), LiteralExpression(30)),
+        LiteralExpression(99),
     )
 
     intermediate = convert_expression_to_sympy_expression(original)

@@ -337,15 +337,34 @@ def substitute_sympy_expression_variables(
     # also have nothing to substitute, so we short-circuit the no-op case.
     if isinstance(sympy_expression, bool):
         return sympy_expression
-    return sympy_expression.subs(
-        {
-            ExpressionToSympyConverter.format_identifier(
-                k
-            ): convert_expression_to_sympy_expression(v)
-            for k, v in environment.items()
-        },
-        simultaneous=True,
-    )
+    # ``.subs(..., simultaneous=True)`` is deliberately avoided here.
+    # Internally it masks every replacement behind a synthetic
+    # ``Dummy() * Dummy()`` product before unmasking it with a final
+    # ``xreplace`` -- a trick that exists solely to disambiguate bound vs.
+    # free occurrences in calculus constructs (``Derivative``, ``Integral``,
+    # ...) that this IR never produces (see
+    # ``sympy.core.basic.Basic.subs``). When a replacement value is a
+    # SymPy ``Boolean`` (e.g. ``sympy.true``, or a ``Relational`` such as
+    # ``y > 0``), unmasking reconstructs a ``Mul`` with a non-``Expr``
+    # argument: at best a ``SymPyDeprecationWarning`` (deprecated since
+    # SymPy 1.7), at worst a hard ``TypeError`` (e.g. substituting a
+    # ``Piecewise`` condition symbol, or substituting with a
+    # ``Relational``, both raise outright).
+    #
+    # Every substitution key here is an atomic ``Symbol`` (never a
+    # compound pattern), and the IR never constructs bound-variable
+    # expressions, so ``xreplace`` is a safe, exact replacement: it
+    # matches each tree node against the full replacement mapping in a
+    # single bottom-up pass, so a replacement value is never itself
+    # re-substituted by another binding -- the same simultaneous,
+    # non-chaining semantics, without the deprecated masking path.
+    replacements = {
+        sympy.Symbol(
+            ExpressionToSympyConverter.format_identifier(k)
+        ): convert_expression_to_sympy_expression(v)
+        for k, v in environment.items()
+    }
+    return sympy_expression.xreplace(replacements)
 
 
 @register_pass(
@@ -652,9 +671,11 @@ class SymPyToExpressionConverter(
         All branches but the last become cases; the last branch's value
         becomes ``otherwise`` and its condition is dropped, even when
         that condition is not ``sympy.true`` -- a genuinely partial
-        ``Piecewise`` is still lifted this way. A single-branch
-        ``Piecewise`` (the only shape that survives construction with a
-        non-``True`` condition) degenerates to just the converted value.
+        ``Piecewise`` is still lifted this way, logging a ``WARNING`` when
+        it happens. A single-branch ``Piecewise`` (the only shape that
+        survives construction with a non-``True`` condition) degenerates
+        to just the converted value, dropping its condition without a log
+        call.
         """
         branches = tuple(piecewise.args)
         if not branches:
@@ -667,7 +688,15 @@ class SymPyToExpressionConverter(
         for value, condition in branches[:-1]:
             values.append(self.convert(value))
             conditions.append(self.convert(condition))
-        otherwise_value, _ = branches[-1]
+        otherwise_value, final_condition = branches[-1]
+        if final_condition is not sympy.true:
+            _LOGGER.warning(
+                "lifting a multi-branch Piecewise whose final condition is "
+                "%r (not sympy.true); the condition is dropped and the "
+                "branch value is treated as `otherwise`, totalizing what "
+                "may be a genuinely partial function",
+                final_condition,
+            )
         otherwise = self.convert(otherwise_value)
         return PiecewiseExpression(tuple(conditions), tuple(values), otherwise)
 
@@ -676,6 +705,19 @@ def convert_sympy_expression_to_expression(
     sympy_expression: sympy.Expr | sympy.logic.boolalg.Boolean,
 ) -> Expression:
     """Convert a SymPy expression to an expression.
+
+    Caveat: lifting a ``sympy.Piecewise`` always treats its last branch's
+    value as ``otherwise`` and drops that branch's condition, even when
+    the condition is not ``sympy.true``. SymPy itself only produces a
+    non-``True`` final condition for a genuinely partial ``Piecewise``
+    (one that does not cover its domain), so this drop silently
+    totalizes the result: the returned expression evaluates to the
+    former last branch's value on the region the original condition
+    excluded, rather than being undefined there. A multi-branch drop of
+    this kind logs a ``WARNING``; a single-branch ``Piecewise`` degrades
+    to its bare value without logging, since a single-branch ``Piecewise``
+    with a non-``True`` condition already discards that condition by
+    construction.
 
     Args:
         sympy_expression: SymPy expression to convert.

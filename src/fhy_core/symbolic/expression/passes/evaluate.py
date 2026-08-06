@@ -105,6 +105,16 @@ class ExpressionEvaluator(RewritablePass[Expression]):
               argument is a float-grammar string literal, whose exact
               decimal form cannot be collapsed to a binary ``float``
               without precision loss.
+            - ``TypeError`` when a :class:`NativeFunction` call's
+              all-literal argument count does not match what its
+              ``implementation`` accepts (e.g. ``sin(1.0, 2.0)``). Unlike
+              :class:`FunctionInliner`, this evaluator never validates a
+              native call's arity against its declared
+              ``parameter_sorts`` before invoking ``implementation``;
+              running :func:`inline_functions` first, which does
+              validate arity and raises :class:`FunctionArityError`
+              instead, is the only way to route around this bare
+              ``TypeError``.
             - ``ValueError``, ``OverflowError``, or
               ``ZeroDivisionError`` from a native implementation's
               own raises (e.g. ``math.sqrt(-1)``).

@@ -335,7 +335,15 @@ class _TypeCheckContext:
 
     def type_error(self, reason: str) -> FhYCoreTypeError:
         """Build a :class:`FhYCoreTypeError` framed by the current context trace."""
-        if not self._stack:
+        if not self._stack:  # pragma: no cover
+            # Every reachable call site is nested inside a `with
+            # self._context.entering(...)` block opened by `synthesize`,
+            # `check`, or one of the `_infer_*`/`visit_*` methods, so the
+            # stack is never empty through the public API
+            # (`ExpressionTypeChecker.synthesize`/`.check`,
+            # `synthesize_expression_type`, `check_expression_type`).
+            # This fallback only guards a directly-instantiated,
+            # unentered `_TypeCheckContext`, which is private.
             return FhYCoreTypeError(f"Type error: {reason}")
         stack_elements = tuple(self._stack)
         root = stack_elements[0]
@@ -863,7 +871,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         expected_type: Type | None = None,
     ) -> tuple[Type, TypeQualifier]:
         with self._context.entering(piecewise_expression):
-            branch_expected = self._piecewise_branch_expected_type(expected_type)
+            branch_expected = self._get_piecewise_branch_expected_type(expected_type)
 
             condition_qualifiers: list[TypeQualifier] = []
             for index, condition in enumerate(piecewise_expression.conditions):
@@ -926,7 +934,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             return NumericalType(result_primitive), result_qualifier
 
     @staticmethod
-    def _piecewise_branch_expected_type(
+    def _get_piecewise_branch_expected_type(
         expected_type: Type | None,
     ) -> Type | None:
         if isinstance(expected_type, NumericalType) and expected_type.is_scalar():
