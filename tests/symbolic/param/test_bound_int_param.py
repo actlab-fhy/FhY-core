@@ -331,6 +331,29 @@ def test_bound_int_param_addition_with_unsupported_type_raises() -> None:
         _ = x + "nope"
 
 
+class _ReflectedAdder:
+    """Third-party type that composes with a `Param` via `__radd__`."""
+
+    def __radd__(self, other: object) -> str:
+        del other
+        return "reflected-add"
+
+
+def test_bound_int_param_addition_defers_to_a_third_party_operands_radd() -> None:
+    """Test `+` returns ``NotImplemented`` for an uncoercible operand, not a raise.
+
+    An uncoercible right operand that defines its own ``__radd__`` gets a
+    chance to handle the operation: `Param.__add__` must signal failure via
+    ``NotImplemented`` rather than raising directly, so Python's operator
+    protocol can fall back to the reflected method.
+    """
+    x = create_interval_integer_param_between(0, 1)
+
+    result: object = x + _ReflectedAdder()
+
+    assert result == "reflected-add"
+
+
 def test_bound_int_param_prefer_inclusive_changes_str_not_membership_addition() -> None:
     """Test `prefer_inclusive` changes string form but not membership for addition."""
     x_incl = create_interval_integer_param_between(
@@ -448,6 +471,20 @@ def test_bound_int_param_rsub_accepts_int_param_on_left() -> None:
 
     assert_all_satisfied(z, [0, 7])
     assert_none_satisfied(z, [-1, 8])
+
+
+def test_bound_int_param_rsub_with_uncoercible_left_operand_raises_type_error() -> None:
+    """Test reflected subtraction raises ``TypeError`` for an uncoercible left operand.
+
+    Neither side of ``"nope" - x`` can handle the operation, so
+    ``Param.__rsub__`` must signal failure via ``NotImplemented`` (letting
+    Python raise its own ``TypeError``) rather than crashing on a coercion
+    failure it does not check for.
+    """
+    x = create_interval_integer_param_between(0, 1)
+
+    with pytest.raises(TypeError):
+        _ = "nope" - x
 
 
 # =============================================================================

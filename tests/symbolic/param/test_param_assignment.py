@@ -127,6 +127,47 @@ def test_repeated_assigns_share_param_definition_and_record_value(
 
 
 # =============================================================================
+# Direct construction normalizes the value
+# =============================================================================
+
+
+def test_direct_construction_with_permutation_list_value_normalizes_to_tuple() -> None:
+    """Test direct `ParamAssignment` construction normalizes a list value to a tuple.
+
+    `Param.assign` normalizes through the domain before binding; constructing
+    a `ParamAssignment` directly (bypassing `assign`) must reach the same
+    normalized state so the bound value is hashable and serializable.
+    """
+    param = create_permutation_param(["n", "c", "h", "w"])
+
+    assignment = ParamAssignment[Any](
+        param,
+        ["n", "c", "h", "w"],  # test: list as permutation value
+    )
+
+    assert assignment.value == ("n", "c", "h", "w")
+    assert hash(assignment.value) == hash(("n", "c", "h", "w"))
+
+
+def test_direct_construction_with_permutation_list_value_round_trips() -> None:
+    """Test a directly-constructed `ParamAssignment` with a list value serializes.
+
+    The wrapped-value registry serializes tuples but not lists; the value
+    must be normalized to a tuple before serialization can succeed.
+    """
+    param = create_permutation_param(["n", "c", "h", "w"])
+    assignment = ParamAssignment[Any](
+        param,
+        ["n", "c", "h", "w"],  # test: list as permutation value
+    )
+
+    dictionary = assignment.serialize_to_dict()
+    restored: ParamAssignment[Any] = ParamAssignment.deserialize_from_dict(dictionary)
+
+    assert restored.value == ("n", "c", "h", "w")
+
+
+# =============================================================================
 # Constraint-outcome error messages
 # =============================================================================
 

@@ -17,6 +17,9 @@ Subset semantics use value-space gating: two parameters are comparable for
 space (the integer line for integer and interval-integer domains, the reals for
 real domains, or the same finite family for ordinal, categorical, and
 permutation domains). Cross-space and cross-family queries return ``False``.
+:meth:`compute_feasibility_subset` and :meth:`has_feasible_value` both return
+``bool | None`` for numeric domains: ``None`` means the Z3 solver could not
+decide. Finite-set domains never return ``None``; they always decide.
 """
 
 import itertools
@@ -118,13 +121,11 @@ def compute_constraint_implication_subset(
     own_constraints: Sequence[Constraint],
     other_constraints: Sequence[Constraint],
     symbol_type: SymbolType,
-) -> bool:
+) -> bool | None:
     """Return whether ``own_constraints`` imply ``other_constraints`` over a sort.
 
     Every value admitted by ``own_constraints`` must also satisfy
-    ``other_constraints``, decided by Z3 over ``symbol_type``. An ``unknown``
-    result from the solver is treated as "not a counterexample", so the subset
-    relation holds.
+    ``other_constraints``, decided by Z3 over ``symbol_type``.
 
     Args:
         own_constraints: Constraints of the candidate subset parameter.
@@ -132,7 +133,8 @@ def compute_constraint_implication_subset(
         symbol_type: The Z3 sort used to reason about the shared variable.
 
     Returns:
-        Whether the implication holds.
+        True if the implication is proven, False if disproven, or None if
+        the solver returns unknown.
 
     """
     common_variable = Identifier("var")
@@ -148,8 +150,8 @@ def compute_constraint_implication_subset(
             own_expression, other_expression, {common_variable: symbol_type}
         )
         if implies is None:
-            _LOGGER.warning("Z3 returned unknown; treating as subset=True")
-        return implies is None or implies
+            _LOGGER.debug("Z3 returned unknown for a subset implication query.")
+        return implies
     if own_expression is not None and other_expression is None:
         return True
     if own_expression is None and other_expression is not None:
@@ -298,12 +300,27 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
         own_constraints: Sequence[Constraint],
         other: "ParamDomain",
         other_constraints: Sequence[Constraint],
-    ) -> bool:
-        """Return whether this domain's constrained set is a subset of ``other``'s."""
+    ) -> bool | None:
+        """Return whether this domain's constrained set is a subset of ``other``'s.
+
+        Returns:
+            True if the subset relation is proven, False if disproven or the
+            two domains are not comparable, or None if a numeric domain's
+            solver query returns unknown. Finite-set domains never return
+            None.
+
+        """
 
     @abstractmethod
-    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
-        """Return whether some admissible value satisfies every constraint."""
+    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool | None:
+        """Return whether some admissible value satisfies every constraint.
+
+        Returns:
+            True if a satisfying value is proven to exist, False if none can
+            exist, or None if a numeric domain's solver query returns
+            unknown. Finite-set domains never return None.
+
+        """
 
     def compute_union(
         self,
@@ -451,7 +468,7 @@ def _compute_numeric_feasibility_subset(
     own_constraints: Sequence[Constraint],
     other: ParamDomain,
     other_constraints: Sequence[Constraint],
-) -> bool:
+) -> bool | None:
     if own_symbol_type is None or other.symbol_type != own_symbol_type:
         return False
     return compute_constraint_implication_subset(
@@ -461,7 +478,12 @@ def _compute_numeric_feasibility_subset(
 
 def _numeric_has_feasible_value(
     symbol_type: SymbolType, constraints: Sequence[Constraint]
-) -> bool:
+) -> bool | None:
+    """Return whether some value over ``symbol_type`` satisfies ``constraints``.
+
+    True if a satisfying value is proven to exist, False if none can exist,
+    or None if the solver returns unknown.
+    """
     common_variable = Identifier("var")
     expression = _convert_constraints_to_implication_expression(
         constraints, common_variable
@@ -473,12 +495,8 @@ def _numeric_has_feasible_value(
         expression, {common_variable: symbol_type}
     )
     if satisfiable is None:
-        _LOGGER.warning("Z3 returned unknown; assuming feasible")
-    # ``satisfiable is True``  => a satisfying assignment exists => feasible.
-    # ``satisfiable is False`` => provably unsatisfiable => infeasible.
-    # ``satisfiable is None`` (Z3 unknown) => assume feasible, matching this
-    # module's optimistic convention in ``compute_constraint_implication_subset``.
-    return satisfiable is not False
+        _LOGGER.debug("Z3 returned unknown for a feasibility query.")
+    return satisfiable
 
 
 @register_serializable(type_id="integer_domain")
@@ -488,7 +506,9 @@ class IntegerDomain(ParamDomain):
 
     ``non_negative`` does not change admissibility (any strict integer is
     admissible); it adds an implied ``>= 0`` constraint, or ``> 0`` when
-    ``zero_included`` is ``False``.
+    ``zero_included`` is ``False``. Union is not supported for this domain;
+    :meth:`ParamDomain.compute_union`'s base implementation raises
+    ``TypeError``.
     """
 
     non_negative: bool = False
@@ -538,13 +558,13 @@ class IntegerDomain(ParamDomain):
         own_constraints: Sequence[Constraint],
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
-    ) -> bool:
+    ) -> bool | None:
         return _compute_numeric_feasibility_subset(
             self.symbol_type, own_constraints, other, other_constraints
         )
 
     @override
-    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
+    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool | None:
         return _numeric_has_feasible_value(SymbolType.INT, constraints)
 
     @override
@@ -594,7 +614,11 @@ class IntegerDomain(ParamDomain):
 @register_serializable(type_id="real_domain")
 @dataclass(frozen=True, eq=False)
 class RealDomain(ParamDomain):
-    """Real-valued domain (floats and float-parseable strings)."""
+    """Real-valued domain (floats and float-parseable strings).
+
+    Union is not supported for this domain; :meth:`ParamDomain.compute_union`'s
+    base implementation raises ``TypeError``.
+    """
 
     @property
     @override
@@ -638,13 +662,13 @@ class RealDomain(ParamDomain):
         own_constraints: Sequence[Constraint],
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
-    ) -> bool:
+    ) -> bool | None:
         return _compute_numeric_feasibility_subset(
             self.symbol_type, own_constraints, other, other_constraints
         )
 
     @override
-    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
+    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool | None:
         return _numeric_has_feasible_value(SymbolType.REAL, constraints)
 
     @override
@@ -719,7 +743,9 @@ class IntervalIntegerDomain(ParamDomain):
     admissibility. Only :class:`~fhy_core.symbolic.constraint.EquationConstraint` bound
     expressions are permitted, enabling interval arithmetic on the composing
     parameter. ``prefer_inclusive`` selects how arithmetic results render their
-    bounds. ``non_negative`` adds the natural-number implied constraint.
+    bounds. ``non_negative`` adds the natural-number implied constraint. Union
+    is not supported for this domain; :meth:`ParamDomain.compute_union`'s base
+    implementation raises ``TypeError``.
     """
 
     prefer_inclusive: bool = True
@@ -780,13 +806,13 @@ class IntervalIntegerDomain(ParamDomain):
         own_constraints: Sequence[Constraint],
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
-    ) -> bool:
+    ) -> bool | None:
         return _compute_numeric_feasibility_subset(
             self.symbol_type, own_constraints, other, other_constraints
         )
 
     @override
-    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
+    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool | None:
         return _numeric_has_feasible_value(SymbolType.INT, constraints)
 
     @override
@@ -1183,7 +1209,11 @@ class CategoricalDomain(ParamDomain):
 @register_serializable(type_id="permutation_domain")
 @dataclass(frozen=True, eq=False)
 class PermutationDomain(ParamDomain):
-    """Admissible permutations of a fixed, ordered set of members."""
+    """Admissible permutations of a fixed, ordered set of members.
+
+    Union is not supported for this domain; :meth:`ParamDomain.compute_union`'s
+    base implementation raises ``TypeError``.
+    """
 
     ordered_members: tuple[PermutationMemberValue, ...] = field(
         metadata={"serialize_codec": _PERMUTATION_MEMBERS_CODEC}

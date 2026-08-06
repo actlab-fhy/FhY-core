@@ -15,7 +15,11 @@ from fhy_core.symbolic.expression import (
     LiteralExpression,
 )
 from fhy_core.symbolic.param import create_interval_integer_param
-from fhy_core.symbolic.param.core import _bound_from_literal, _invert_comparison
+from fhy_core.symbolic.param.core import (
+    _bound_from_literal,
+    _invert_comparison,
+    _normalize_natural_bound,
+)
 
 from .conftest import mock_identifier
 
@@ -87,6 +91,35 @@ def test_get_bound_from_expression_rejects_non_int_literal() -> None:
     """Test the helper raises ``RuntimeError`` for a non-``int`` literal value."""
     with pytest.raises(RuntimeError):
         _bound_from_literal(LiteralExpression(1.5), BinaryOperation.GREATER)
+
+
+# =============================================================================
+# `_normalize_natural_bound` - equivalent bound spellings collapse together
+#
+# An exclusive fractional upper bound, an inclusive fractional upper bound,
+# and an inclusive integer upper bound at the fractional bound's floor all
+# admit exactly the same integers, so they must normalize to the same
+# ``(integer bound, inclusive)`` gate value.
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "bound, is_inclusive",
+    [
+        pytest.param(2.5, False, id="x-less-than-2.5"),
+        pytest.param(2.5, True, id="x-less-equal-2.5"),
+        pytest.param(2, True, id="x-less-equal-2"),
+    ],
+)
+def test_normalize_natural_bound_collapses_equivalent_upper_bound_spellings(
+    bound: int | float, is_inclusive: bool
+) -> None:
+    """Test equivalent upper-bound spellings normalize to the same gate value."""
+    normalized = _normalize_natural_bound(
+        bound, is_lower=False, is_inclusive=is_inclusive
+    )
+
+    assert normalized == (2, True)
 
 
 # =============================================================================

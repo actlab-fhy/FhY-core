@@ -1,9 +1,10 @@
-"""Tests for `Param.is_feasible` and `Param.is_empty` across param kinds.
+"""Tests for `Param.check_feasibility`, `Param.is_feasible`, and `Param.is_empty`.
 
 A parameter is feasible when at least one value satisfies its domain and all of
 its constraints; it is empty otherwise. Construction never rejects a jointly
 empty parameter, so these tests confirm the empty constructions build before
-querying feasibility.
+querying feasibility. `check_feasibility` is tri-state (`True`/`False`/`None`);
+`is_feasible` and `is_empty` are conservative boolean wrappers over it.
 """
 
 import logging
@@ -165,35 +166,113 @@ def test_dependent_constraint_is_rejected_at_construction_not_is_feasible() -> N
 
 
 # =============================================================================
-# Z3 `unknown` handling
+# `check_feasibility` tri-state: proven True / proven False / undecided
 # =============================================================================
 
 
 @pytest.mark.z3
-def test_is_feasible_logs_warning_when_z3_returns_unknown(
+def test_check_feasibility_returns_true_for_a_proven_feasible_parameter() -> None:
+    """Test `check_feasibility` returns ``True`` when the solver proves feasibility."""
+    param = create_integer_param_between(0, 10, name=mock_identifier("x", 20))
+
+    assert param.check_feasibility() is True
+
+
+@pytest.mark.z3
+def test_check_feasibility_returns_false_for_a_proven_infeasible_parameter() -> None:
+    """Test `check_feasibility` returns ``False`` for a proven-infeasible parameter."""
+    param = create_integer_param(name=mock_identifier("x", 21))
+    narrowed = param.add_lower_bound_constraint(10).add_upper_bound_constraint(5)
+
+    assert narrowed.check_feasibility() is False
+
+
+@pytest.mark.z3
+def test_check_feasibility_returns_none_when_z3_returns_unknown(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test `is_feasible` logs a warning when Z3 cannot decide feasibility.
+    """Test `check_feasibility` returns ``None`` when Z3 cannot decide.
 
     Mirrors the monkeypatch technique in
     `test_intersection_accepts_result_when_z3_returns_unknown`
     (`tests/symbolic/param/test_param_intersection.py`): patches
     `check_expression_satisfiability` -- the seam `_numeric_has_feasible_value`
-    calls -- to always return ``None`` (Z3's "unknown" outcome). This test
-    checks the warning `_numeric_has_feasible_value` logs on that path, which
-    mirrors the warning `compute_constraint_implication_subset` already logs
-    for its own analogous Z3-unknown fallback.
+    calls -- to always return ``None`` (Z3's "unknown" outcome).
     """
-    param = create_integer_param_with_lower_bound(0, name=mock_identifier("x", 14))
+    param = create_integer_param_with_lower_bound(0, name=mock_identifier("x", 22))
     monkeypatch.setattr(
         param_domains, "check_expression_satisfiability", lambda *args, **kwargs: None
     )
 
-    with caplog.at_level(logging.WARNING, logger="fhy_core.symbolic.param.domains"):
-        result = param.is_feasible()
+    assert param.check_feasibility() is None
 
-    assert result
-    assert any(record.levelno == logging.WARNING for record in caplog.records), (
-        "expected a WARNING-level log record from fhy_core.symbolic.param.domains"
+
+# =============================================================================
+# `is_feasible` / `is_empty`: conservative wrappers, not complements, under
+# an undecided `check_feasibility`
+# =============================================================================
+
+
+@pytest.mark.z3
+def test_is_feasible_is_false_when_z3_returns_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test `is_feasible` reports ``False`` (not proven) when Z3 cannot decide."""
+    param = create_integer_param_with_lower_bound(0, name=mock_identifier("x", 23))
+    monkeypatch.setattr(
+        param_domains, "check_expression_satisfiability", lambda *args, **kwargs: None
     )
+
+    assert not param.is_feasible()
+
+
+@pytest.mark.z3
+def test_is_empty_is_also_false_when_z3_returns_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test `is_empty` is not the complement of `is_feasible` when Z3 is undecided.
+
+    Both `is_feasible` and `is_empty` report ``False`` for the same undecided
+    parameter: neither claims a definite answer without proof.
+    """
+    param = create_integer_param_with_lower_bound(0, name=mock_identifier("x", 24))
+    monkeypatch.setattr(
+        param_domains, "check_expression_satisfiability", lambda *args, **kwargs: None
+    )
+
+    assert not param.is_feasible()
+    assert not param.is_empty()
+
+
+# =============================================================================
+# Z3 `unknown` diagnostic logging
+# =============================================================================
+
+
+@pytest.mark.z3
+def test_check_feasibility_logs_debug_record_when_z3_returns_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test `check_feasibility` logs a debug record when Z3 cannot decide.
+
+    The logged record is diagnostic only: it must not claim that feasibility
+    was assumed, since `check_feasibility` reports the undecided outcome
+    honestly as ``None`` rather than collapsing it to a guess.
+    """
+    param = create_integer_param_with_lower_bound(0, name=mock_identifier("x", 25))
+    monkeypatch.setattr(
+        param_domains, "check_expression_satisfiability", lambda *args, **kwargs: None
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="fhy_core.symbolic.param.domains"):
+        result = param.check_feasibility()
+
+    assert result is None
+    assert any(
+        record.levelno == logging.DEBUG and "unknown" in record.getMessage().lower()
+        for record in caplog.records
+    ), "expected a DEBUG-level log record naming the unknown outcome"
+    assert not any(
+        "assum" in record.getMessage().lower() for record in caplog.records
+    ), "the log must not claim feasibility was assumed"

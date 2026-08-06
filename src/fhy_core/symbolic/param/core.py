@@ -269,7 +269,7 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         """Return whether this parameter's value set is a subset of ``other``'s."""
         return self.domain.is_value_set_subset(other.domain)
 
-    def is_subset(self, other: "Param[_T]") -> bool:
+    def check_subset(self, other: "Param[_T]") -> bool | None:
         """Return whether this parameter's feasible set is a subset of ``other``'s.
 
         Comparison is gated on value space: numeric parameters compare only with
@@ -278,25 +278,60 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         within their own family. Cross-space and cross-family queries return
         ``False``.
 
-        When the solver cannot decide a numeric implication, the relation is
-        assumed to hold, so a ``True`` result means "not disproven", not
-        "proven".
+        Returns:
+            True if the subset relation is proven, False if disproven or the
+            value spaces are incompatible, or None if the solver could not
+            decide.
+
         """
         return self.domain.compute_feasibility_subset(
             self.constraints, other.domain, other.constraints
         )
 
-    def is_feasible(self) -> bool:
+    def is_subset(self, other: "Param[_T]") -> bool:
+        """Return whether this parameter's feasible set is proven a subset of other's.
+
+        A conservative wrapper over :meth:`check_subset`: ``True`` only when
+        the subset relation is proven. ``False`` covers a disproven relation,
+        an incompatible value space, and an undecided solver result alike.
+        Call :meth:`check_subset` directly to distinguish those cases.
+        """
+        return self.check_subset(other) is True
+
+    def check_feasibility(self) -> bool | None:
         """Return whether some value satisfies the domain and all constraints.
 
         The constraints already include the domain's implied constraints, so the
         domain reasons only about the constraints it is given.
+
+        Returns:
+            True if a satisfying value is proven to exist, False if none can
+            exist, or None if the solver could not decide.
+
         """
         return self.domain.has_feasible_value(self.constraints)
 
+    def is_feasible(self) -> bool:
+        """Return whether some value is proven to satisfy the domain and constraints.
+
+        A conservative wrapper over :meth:`check_feasibility`: ``True`` only
+        when feasibility is proven. ``False`` covers both a disproven and an
+        undecided result alike. Call :meth:`check_feasibility` directly to
+        distinguish a disproven parameter from an undecided one.
+        """
+        return self.check_feasibility() is True
+
     def is_empty(self) -> bool:
-        """Return whether no value satisfies the domain and all constraints."""
-        return not self.is_feasible()
+        """Return whether no value is proven to satisfy the domain and constraints.
+
+        A conservative wrapper over :meth:`check_feasibility`: ``True`` only
+        when infeasibility is proven. This is not the logical complement of
+        :meth:`is_feasible`: when the solver is undecided, both
+        :meth:`is_feasible` and :meth:`is_empty` return ``False``. Call
+        :meth:`check_feasibility` directly to distinguish a disproven
+        parameter from an undecided one.
+        """
+        return self.check_feasibility() is False
 
     def assign(self, value: _T) -> "ParamAssignment[_T]":
         """Assign a value to the parameter, returning a parameter assignment.
@@ -431,6 +466,8 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             return coerced_self.__add__(other)
         domain = self.domain
         coerced = _coerce_to_interval_param(self, other)
+        if coerced is None:
+            return NotImplemented
         self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
         other_min, other_max = _get_effective_min_max(
             coerced.constraints, coerced.variable
@@ -452,6 +489,8 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             return coerced_self.__sub__(other)
         domain = self.domain
         coerced = _coerce_to_interval_param(self, other)
+        if coerced is None:
+            return NotImplemented
         self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
         other_min, other_max = _get_effective_min_max(
             coerced.constraints, coerced.variable
@@ -463,7 +502,10 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
     def __rsub__(self, other: Any) -> "Param[int]":
         if not isinstance(self.domain, IntervalIntegerDomain):
             return NotImplemented
-        return _coerce_to_interval_param(self, other).__sub__(self)
+        coerced = _coerce_to_interval_param(self, other)
+        if coerced is None:
+            return NotImplemented
+        return coerced.__sub__(self)
 
     def __neg__(self) -> "Param[int]":
         domain = self._require_interval_domain()
@@ -478,7 +520,10 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             if coerced_self is None:
                 return NotImplemented
             return coerced_self.__mul__(other)
-        return _multiply_interval_params(self, other)
+        result = _multiply_interval_params(self, other)
+        if result is None:
+            return NotImplemented
+        return result
 
     def __rmul__(self, other: Any) -> "Param[int]":
         return self.__mul__(other)
@@ -543,6 +588,8 @@ class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generi
 
     def __post_init__(self) -> None:
         self.param.validate_value(self.value)
+        normalized = self.param.domain.normalize_value(self.value)
+        object.__setattr__(self, "value", normalized)
 
     def is_value_set(self) -> bool:
         """Return whether this assignment has a value."""
@@ -590,6 +637,19 @@ def _is_valid_natural_lower_bound(
     return bound >= 0
 
 
+def _is_valid_natural_upper_bound(
+    bound: int, *, zero_included: bool, is_inclusive: bool
+) -> bool:
+    """Return whether ``bound`` is an admissible natural-domain upper-bound literal."""
+    if zero_included:
+        if is_inclusive:
+            return bound >= 0
+        return bound >= 1
+    if is_inclusive:
+        return bound >= 1
+    return bound >= 2  # noqa: PLR2004
+
+
 def _validate_natural_lower_bound(
     bound: int, *, zero_included: bool, is_inclusive: bool
 ) -> None:
@@ -614,27 +674,22 @@ def _validate_natural_lower_bound(
 def _validate_natural_upper_bound(
     bound: int, *, zero_included: bool, is_inclusive: bool
 ) -> None:
+    if _is_valid_natural_upper_bound(
+        bound, zero_included=zero_included, is_inclusive=is_inclusive
+    ):
+        return
     if zero_included:
         if is_inclusive:
-            if bound < 0:
-                raise ParamError(
-                    "Upper bound must be non-negative when zero is included."
-                )
-        elif bound < 1:
-            raise ParamError(
-                "Upper bound must be at least 1 if zero is included and "
-                "bound is exclusive."
-            )
-    elif is_inclusive:
-        if bound < 1:
-            raise ParamError(
-                "Upper bound must be at least 1 when zero is not included."
-            )
-    elif bound < 2:  # noqa: PLR2004
+            raise ParamError("Upper bound must be non-negative when zero is included.")
         raise ParamError(
-            "Upper bound must be at least 2 when zero is not included "
-            "and bound is exclusive."
+            "Upper bound must be at least 1 if zero is included and bound is exclusive."
         )
+    if is_inclusive:
+        raise ParamError("Upper bound must be at least 1 when zero is not included.")
+    raise ParamError(
+        "Upper bound must be at least 2 when zero is not included "
+        "and bound is exclusive."
+    )
 
 
 def _compute_exact_bound_value(
@@ -642,28 +697,32 @@ def _compute_exact_bound_value(
 ) -> int | Decimal | None:
     """Return ``bound`` as an exact ``int`` or ``Decimal``.
 
-    Returns ``None`` if ``bound`` is a value the literal grammar will reject.
+    Returns ``None`` if ``bound`` is a value outside ``int | float | str``,
+    which the natural-bound gate does not police; such a value falls through
+    to the expression layer.
 
     Raises:
-        ParamError: If ``bound`` is a non-finite float.
+        ParamError: If ``bound`` is a non-finite or unparsable ``float`` or
+            ``str``, naming which bound ("Lower"/"Upper") was offending.
 
     """
+    label = "Lower" if is_lower else "Upper"
     if isinstance(bound, int):
         return int(bound)
     elif isinstance(bound, float):
         if not math.isfinite(bound):
-            raise ParamError(
-                f"{'Lower' if is_lower else 'Upper'} bound must be finite; got {bound}."
-            )
+            raise ParamError(f"{label} bound must be finite; got {bound}.")
         # Decimal keeps the float's exact value, so the floor/ceiling taken
         # from it matches the literal that ends up stored.
         return Decimal(bound)
     elif isinstance(bound, str):
         try:
             decimal_bound = Decimal(bound)
-        except InvalidOperation:
-            return None
-        return decimal_bound if decimal_bound.is_finite() else None
+        except InvalidOperation as exc:
+            raise ParamError(f"{label} bound {bound!r} is not a valid number.") from exc
+        if not decimal_bound.is_finite():
+            raise ParamError(f"{label} bound must be finite; got {bound!r}.")
+        return decimal_bound
     else:
         return None
 
@@ -673,7 +732,13 @@ def _normalize_natural_bound(
 ) -> tuple[int, bool] | None:
     """Return ``bound`` as the equivalent ``(integer bound, inclusive)`` pair.
 
-    Returns ``None`` if ``bound`` is a value the literal grammar will reject.
+    Returns ``None`` if ``bound`` is a value outside ``int | float | str``,
+    which the natural-bound gate does not police.
+
+    Raises:
+        ParamError: If ``bound`` is a non-finite or unparsable ``float`` or
+            ``str`` (propagated from :func:`_compute_exact_bound_value`).
+
     """
     exact_bound = _compute_exact_bound_value(bound, is_lower=is_lower)
     if exact_bound is None:
@@ -897,10 +962,21 @@ def _apply_interval_bounds(
         else:
             param = param.add_lower_bound_constraint(min_int, is_inclusive=True)
     if max_int is not None:
-        if domain.prefer_inclusive:
-            param = param.add_upper_bound_constraint(max_int, is_inclusive=True)
-        else:
+        # Mirrors the lower-bound fallback above: an exclusive rendering of
+        # ``max_int`` (``< max_int + 1``) is mathematically identical to the
+        # inclusive one, but the natural-number gate can reject the exclusive
+        # literal even though it is a sound rendering of a valid bound. Fall
+        # back to inclusive rendering in that case instead of tripping the gate.
+        prefer_exclusive = not domain.prefer_inclusive and (
+            not domain.non_negative
+            or _is_valid_natural_upper_bound(
+                max_int + 1, zero_included=domain.zero_included, is_inclusive=False
+            )
+        )
+        if prefer_exclusive:
             param = param.add_upper_bound_constraint(max_int + 1, is_inclusive=False)
+        else:
+            param = param.add_upper_bound_constraint(max_int, is_inclusive=True)
     return param
 
 
@@ -946,10 +1022,33 @@ def _create_class_preserved_interval_param(
     )
 
 
-def _coerce_to_interval_param(template: "Param[Any]", other: Any) -> "Param[int]":
+def _coerce_to_interval_param(
+    template: "Param[Any]", other: Any
+) -> "Param[int] | None":
+    """Coerce ``other`` into an interval-integer parameter compatible with ``template``.
+
+    Args:
+        template: The interval-integer parameter whose ``prefer_inclusive``
+            flag governs the coerced result's rendering.
+        other: The operand to coerce: an ``int``, another interval-integer
+            parameter, or a plain integer parameter whose constraints are all
+            bound expressions.
+
+    Returns:
+        The coerced interval-integer parameter, or ``None`` if ``other`` is
+        not a coercible operand kind. A dunder-method caller should return
+        ``NotImplemented`` in that case so Python can try ``other``'s
+        reflected operator.
+
+    Raises:
+        TypeError: If ``other`` is a ``Param`` with an ``IntegerDomain`` that
+            carries a non-bound constraint, which cannot be represented as an
+            interval.
+
+    """
     template_domain = cast(IntervalIntegerDomain, template.domain)
     if isinstance(other, bool):
-        raise TypeError(f"Unsupported operand type: {type(other)}")
+        return None
     if isinstance(other, int):
         return create_interval_integer_param_exactly(
             other, prefer_inclusive=template_domain.prefer_inclusive
@@ -968,13 +1067,21 @@ def _coerce_to_interval_param(template: "Param[Any]", other: Any) -> "Param[int]
             variable=other.variable,
             constraints=other.constraints,
         )
-    raise TypeError(f"Unsupported operand type: {type(other)}")
+    return None
 
 
-def _multiply_interval_params(self: "Param[Any]", other: Any) -> "Param[int]":
-    """Multiply ``self`` by ``other``, given ``self`` is an interval-integer param."""
+def _multiply_interval_params(self: "Param[Any]", other: Any) -> "Param[int] | None":
+    """Multiply ``self`` by ``other``, given ``self`` is an interval-integer param.
+
+    Returns:
+        The product parameter, or ``None`` if ``other`` is not a coercible
+        operand kind (the caller should return ``NotImplemented``).
+
+    """
     domain = cast(IntervalIntegerDomain, self.domain)
     coerced = _coerce_to_interval_param(self, other)
+    if coerced is None:
+        return None
     coerced_domain = cast(IntervalIntegerDomain, coerced.domain)
     self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
     other_min, other_max = _get_effective_min_max(coerced.constraints, coerced.variable)
@@ -1296,11 +1403,21 @@ def _coerce_intersection_operands(
     if isinstance(left.domain, IntervalIntegerDomain) and isinstance(
         right.domain, IntegerDomain
     ):
-        return left, _coerce_to_interval_param(left, right)
+        coerced_right = _coerce_to_interval_param(left, right)
+        if coerced_right is None:  # pragma: no cover
+            raise RuntimeError(
+                "Failed to coerce a validated IntegerDomain operand to interval form."
+            )
+        return left, coerced_right
     if isinstance(right.domain, IntervalIntegerDomain) and isinstance(
         left.domain, IntegerDomain
     ):
-        return _coerce_to_interval_param(right, left), right
+        coerced_left = _coerce_to_interval_param(right, left)
+        if coerced_left is None:  # pragma: no cover
+            raise RuntimeError(
+                "Failed to coerce a validated IntegerDomain operand to interval form."
+            )
+        return coerced_left, right
     return left, right
 
 
@@ -1350,6 +1467,10 @@ def create_intersection_param(
         variable,
     )
     result: Param[Any] = Param(domain, variable=variable, constraints=constraints)
-    if not result.is_feasible():
+    # Route through the tri-state query rather than the conservative
+    # ``is_feasible`` wrapper: only a *proven* infeasible conjunction should
+    # raise here. An undecided solver result must not be treated as empty
+    # (the caller then holds a live, merely-unproven-feasible parameter).
+    if result.check_feasibility() is False:
         raise ParamError("Intersection of parameters is empty.")
     return cast("Param[_T]", result)

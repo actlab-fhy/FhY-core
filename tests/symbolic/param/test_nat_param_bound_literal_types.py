@@ -180,24 +180,42 @@ def test_nat_param_gates_zero_padded_string_bound_by_its_numeric_value() -> None
         param.add_upper_bound_constraint("00")
 
 
-# "nan" and "Infinity" parse as Decimal but are non-finite, so the natural
-# gate treats them the same as an ungrammatical string like "not-a-number".
+# "nan", "Infinity", and "-Infinity" parse as `Decimal` but are non-finite;
+# "not-a-number" fails to parse at all. Both kinds of failure are rejected
+# directly by the natural-bound gate, naming the offending bound, rather than
+# falling through to the literal grammar's error.
 @pytest.mark.parametrize(
     "bound", ["not-a-number", "nan", "Infinity", "-Infinity"], ids=str
 )
-def test_nat_param_leaves_ungrammatical_string_bound_to_the_literal_grammar(
+def test_nat_param_rejects_unparsable_or_non_finite_upper_bound_string(
     bound: str,
 ) -> None:
-    """Test a string outside the literal grammar still fails as a literal.
-
-    The natural gates cannot judge a value the grammar will not accept, so
-    the bound falls through to ``LiteralExpression``, which raises
-    ``ValueError``.
-    """
+    """Test an unparsable or non-finite string upper bound raises ``ParamError``."""
     param = _create_natural_param()
 
-    with pytest.raises(ValueError, match="does not match the integer or float grammar"):
+    with pytest.raises(ParamError, match="Upper bound"):
         param.add_upper_bound_constraint(bound)
+
+
+@pytest.mark.parametrize(
+    "bound", ["not-a-number", "nan", "Infinity", "-Infinity"], ids=str
+)
+def test_nat_param_rejects_unparsable_or_non_finite_lower_bound_string(
+    bound: str,
+) -> None:
+    """Test an unparsable or non-finite string lower bound raises ``ParamError``."""
+    param = _create_natural_param()
+
+    with pytest.raises(ParamError, match="Lower bound"):
+        param.add_lower_bound_constraint(bound)
+
+
+def test_nat_param_rejects_negative_numeric_string_lower_bound() -> None:
+    """Test a negative numeric-string lower bound raises ``ParamError``."""
+    param = _create_natural_param()
+
+    with pytest.raises(ParamError, match="non-negative"):
+        param.add_lower_bound_constraint("-5")
 
 
 @pytest.mark.parametrize("bound", [Decimal("5"), None], ids=["decimal", "none"])

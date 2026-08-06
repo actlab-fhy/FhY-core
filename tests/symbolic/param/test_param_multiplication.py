@@ -189,10 +189,16 @@ def test_multiplication_with_int_scalar_on_left_scales_interval() -> None:
 
 
 def test_multiplication_with_bool_operand_raises_type_error() -> None:
-    """Test multiplication rejects a ``bool`` operand (``bool`` is not ``int`` here)."""
+    """Test multiplication rejects a ``bool`` operand (``bool`` is not ``int`` here).
+
+    The rejection is signaled through ``NotImplemented`` (so a well-behaved
+    reflected operand still gets a chance, per the reflected-operator tests
+    below); with no side able to handle it, Python raises its own generic
+    ``TypeError``.
+    """
     x = create_interval_integer_param_between(0, 1)
 
-    with pytest.raises(TypeError, match="Unsupported operand type"):
+    with pytest.raises(TypeError, match="unsupported operand type"):
         _ = x * True
 
 
@@ -200,7 +206,7 @@ def test_multiplication_with_bool_on_left_raises_type_error() -> None:
     """Test reflected multiplication rejects a ``bool`` operand on the left."""
     x = create_interval_integer_param_between(0, 1)
 
-    with pytest.raises(TypeError, match="Unsupported operand type"):
+    with pytest.raises(TypeError, match="unsupported operand type"):
         _ = True * x
 
 
@@ -210,10 +216,15 @@ def test_multiplication_with_bool_on_left_raises_type_error() -> None:
 
 
 def test_multiplication_with_unsupported_type_raises_type_error() -> None:
-    """Test multiplication raises ``TypeError`` for an unsupported operand type."""
+    """Test multiplication raises ``TypeError`` for an unsupported operand type.
+
+    ``str`` defines its own ``__rmul__`` (sequence repetition), so the
+    resulting message is Python's sequence-repetition error rather than the
+    generic operator fallback; only the exception type is asserted here.
+    """
     x = create_interval_integer_param_between(0, 1)
 
-    with pytest.raises(TypeError, match="Unsupported operand type"):
+    with pytest.raises(TypeError):
         _ = x * "nope"
 
 
@@ -222,7 +233,7 @@ def test_multiplication_with_real_param_raises_type_error() -> None:
     x = create_interval_integer_param_between(0, 1)
     y = create_real_param()
 
-    with pytest.raises(TypeError, match="Unsupported operand type"):
+    with pytest.raises(TypeError, match="unsupported operand type"):
         _ = x * y
 
 
@@ -231,8 +242,36 @@ def test_multiplication_with_categorical_param_raises_type_error() -> None:
     x = create_interval_integer_param_between(0, 1)
     y = create_categorical_param({1, 2})
 
-    with pytest.raises(TypeError, match="Unsupported operand type"):
+    with pytest.raises(TypeError, match="unsupported operand type"):
         _ = x * y
+
+
+# =============================================================================
+# Reflected operator: a coercion failure defers to the other operand
+# =============================================================================
+
+
+class _ReflectedMultiplier:
+    """Third-party type that composes with a `Param` via `__rmul__`."""
+
+    def __rmul__(self, other: object) -> str:
+        del other
+        return "reflected-mul"
+
+
+def test_multiplication_defers_to_a_third_party_operands_rmul() -> None:
+    """Test `*` returns ``NotImplemented`` for an uncoercible operand, not a raise.
+
+    An uncoercible right operand that defines its own ``__rmul__`` gets a
+    chance to handle the operation: `Param.__mul__` must signal failure via
+    ``NotImplemented`` rather than raising directly, so Python's operator
+    protocol can fall back to the reflected method.
+    """
+    x = create_interval_integer_param_between(0, 1)
+
+    result: object = x * _ReflectedMultiplier()
+
+    assert result == "reflected-mul"
 
 
 # =============================================================================

@@ -1,4 +1,11 @@
-"""Tests for `Param.is_subset` and `Param.is_value_set_subset` across param kinds."""
+"""Tests for `Param.check_subset`, `Param.is_subset`, and `Param.is_value_set_subset`.
+
+`check_subset` is tri-state (`True`/`False`/`None`); `is_subset` is a
+conservative boolean wrapper over it: `True` only when the solver proves the
+relation.
+"""
+
+import logging
 
 import pytest
 
@@ -16,6 +23,7 @@ from fhy_core.symbolic.param import (
     create_real_param_with_lower_bound,
     create_real_param_with_upper_bound,
 )
+from fhy_core.symbolic.param import domains as param_domains
 
 from .conftest import mock_identifier
 
@@ -65,6 +73,108 @@ def test_narrower_interval_real_param_is_subset_of_wider_interval_real_param() -
 
     assert not wider.is_subset(narrower)
     assert narrower.is_subset(wider)
+
+
+# =============================================================================
+# `check_subset` tri-state: proven True / proven False / undecided
+# =============================================================================
+
+
+@pytest.mark.z3
+def test_check_subset_returns_true_when_the_relation_is_proven() -> None:
+    """Test `check_subset` returns ``True`` when the solver proves the relation."""
+    narrower = create_real_param_with_lower_bound(1.0)
+    wider = create_real_param_with_lower_bound(0.0)
+
+    assert narrower.check_subset(wider) is True
+
+
+@pytest.mark.z3
+def test_check_subset_returns_false_when_the_relation_is_disproven() -> None:
+    """Test `check_subset` returns ``False`` when the solver disproves the relation."""
+    wider = create_real_param_with_lower_bound(0.0)
+    narrower = create_real_param_with_lower_bound(1.0)
+
+    assert wider.check_subset(narrower) is False
+
+
+@pytest.mark.z3
+def test_check_subset_returns_none_when_z3_returns_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test `check_subset` returns ``None`` when Z3 cannot decide the implication.
+
+    Mirrors the monkeypatch technique in
+    `test_intersection_accepts_result_when_z3_returns_unknown`
+    (`tests/symbolic/param/test_param_intersection.py`): patches
+    `does_expression_imply` -- the seam `compute_constraint_implication_subset`
+    calls -- to always return ``None`` (Z3's "unknown" outcome).
+    """
+    left = create_real_param_with_lower_bound(0.0)
+    right = create_real_param_with_upper_bound(10.0)
+    monkeypatch.setattr(
+        param_domains, "does_expression_imply", lambda *args, **kwargs: None
+    )
+
+    assert left.check_subset(right) is None
+
+
+# =============================================================================
+# `is_subset`: conservative wrapper, unknown maps to False
+# =============================================================================
+
+
+@pytest.mark.z3
+def test_is_subset_is_false_when_z3_returns_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test `is_subset` reports ``False`` (not proven) when Z3 cannot decide.
+
+    An undecided solver result does not count as a proven subset relation:
+    `is_subset` is `True` only when `check_subset` proves it.
+    """
+    left = create_real_param_with_lower_bound(0.0)
+    right = create_real_param_with_upper_bound(10.0)
+    monkeypatch.setattr(
+        param_domains, "does_expression_imply", lambda *args, **kwargs: None
+    )
+
+    assert not left.is_subset(right)
+
+
+# =============================================================================
+# Z3 `unknown` diagnostic logging
+# =============================================================================
+
+
+@pytest.mark.z3
+def test_check_subset_logs_debug_record_when_z3_returns_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test `check_subset` logs a debug record when Z3 cannot decide.
+
+    The logged record is diagnostic only: it must not claim the subset
+    relation was assumed to hold, since `check_subset` reports the undecided
+    outcome honestly as ``None`` rather than collapsing it to a guess.
+    """
+    left = create_real_param_with_lower_bound(0.0)
+    right = create_real_param_with_upper_bound(10.0)
+    monkeypatch.setattr(
+        param_domains, "does_expression_imply", lambda *args, **kwargs: None
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="fhy_core.symbolic.param.domains"):
+        result = left.check_subset(right)
+
+    assert result is None
+    assert any(
+        record.levelno == logging.DEBUG and "unknown" in record.getMessage().lower()
+        for record in caplog.records
+    ), "expected a DEBUG-level log record naming the unknown outcome"
+    assert not any(
+        "subset=true" in record.getMessage().lower() for record in caplog.records
+    ), "the log must not claim the subset relation was assumed to hold"
 
 
 # =============================================================================
