@@ -2,12 +2,12 @@
 
 __all__ = ["SymbolType"]
 
-from enum import Enum, auto
+from fhy_core.utils import StrEnum
 
 
-class SymbolType(Enum):
+class SymbolType(StrEnum):
     """Symbol type."""
 
-    REAL = auto()
-    INT = auto()
-    BOOL = auto()
+    REAL = "real"
+    INT = "int"
+    BOOL = "bool"

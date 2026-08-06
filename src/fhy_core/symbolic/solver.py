@@ -28,6 +28,8 @@ __all__ = [
 
 from collections.abc import Set as AbstractSet
 
+from immutabledict import immutabledict
+
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
 from fhy_core.utils import StrEnum
@@ -68,16 +70,20 @@ class SolverCapabilityError(ValueError):
     """Raised when the requested backend cannot answer the requested query kind."""
 
 
-_BACKEND_CAPABILITIES: dict[SolverBackend, frozenset[SolverQueryKind]] = {
-    SolverBackend.SYMPY: frozenset({SolverQueryKind.SIMPLIFICATION}),
-    SolverBackend.Z3: frozenset(
+_BACKEND_CAPABILITIES: immutabledict[SolverBackend, frozenset[SolverQueryKind]] = (
+    immutabledict(
         {
-            SolverQueryKind.SATISFIABILITY,
-            SolverQueryKind.IMPLICATION,
-            SolverQueryKind.UNIVERSAL_VALIDITY,
+            SolverBackend.SYMPY: frozenset({SolverQueryKind.SIMPLIFICATION}),
+            SolverBackend.Z3: frozenset(
+                {
+                    SolverQueryKind.SATISFIABILITY,
+                    SolverQueryKind.IMPLICATION,
+                    SolverQueryKind.UNIVERSAL_VALIDITY,
+                }
+            ),
         }
-    ),
-}
+    )
+)
 
 
 def get_backend_capabilities(backend: SolverBackend) -> frozenset[SolverQueryKind]:
@@ -139,6 +145,10 @@ def simplify_expression(
 
     """
     _validate_backend_capability(backend, SolverQueryKind.SIMPLIFICATION)
+    # INVARIANT: _BACKEND_CAPABILITIES grants SIMPLIFICATION to exactly one
+    # backend (SYMPY), so delegating straight to the SymPy bridge is valid
+    # without dispatching on `backend`. Adding a second SIMPLIFICATION-capable
+    # backend requires real dispatch here.
     return _sympy_simplify_expression(expression, environment)
 
 
@@ -179,6 +189,10 @@ def check_expression_satisfiability(
     """
     _validate_backend_capability(backend, SolverQueryKind.SATISFIABILITY)
     _validate_timeout_milliseconds(timeout_milliseconds)
+    # INVARIANT: _BACKEND_CAPABILITIES grants SATISFIABILITY to exactly one
+    # backend (Z3), so delegating straight to the Z3 bridge is valid without
+    # dispatching on `backend`. Adding a second SATISFIABILITY-capable
+    # backend requires real dispatch here.
     implies_false = _z3_does_expression_imply(
         expression,
         LiteralExpression(False),
@@ -227,6 +241,10 @@ def does_expression_imply(
     """
     _validate_backend_capability(backend, SolverQueryKind.IMPLICATION)
     _validate_timeout_milliseconds(timeout_milliseconds)
+    # INVARIANT: _BACKEND_CAPABILITIES grants IMPLICATION to exactly one
+    # backend (Z3), so delegating straight to the Z3 bridge is valid without
+    # dispatching on `backend`. Adding a second IMPLICATION-capable backend
+    # requires real dispatch here.
     return _z3_does_expression_imply(
         antecedent,
         consequent,
@@ -271,6 +289,10 @@ def holds_for_all_free_assignments(
     """
     _validate_backend_capability(backend, SolverQueryKind.UNIVERSAL_VALIDITY)
     _validate_timeout_milliseconds(timeout_milliseconds)
+    # INVARIANT: _BACKEND_CAPABILITIES grants UNIVERSAL_VALIDITY to exactly
+    # one backend (Z3), so delegating straight to the Z3 bridge is valid
+    # without dispatching on `backend`. Adding a second
+    # UNIVERSAL_VALIDITY-capable backend requires real dispatch here.
     return _z3_holds_for_all_free_assignments(
         considered_identifiers,
         expression,
@@ -287,7 +309,7 @@ def assert_holds_for_all_free_assignments(
     backend: SolverBackend = SolverBackend.Z3,
     timeout_milliseconds: int | None = None,
 ) -> bool:
-    """Strict variant: raise ``UndecidableError`` instead of returning None.
+    """Check universal validity, raising ``UndecidableError`` on ``unknown``.
 
     Args:
         considered_identifiers: As for
@@ -308,6 +330,10 @@ def assert_holds_for_all_free_assignments(
     """
     _validate_backend_capability(backend, SolverQueryKind.UNIVERSAL_VALIDITY)
     _validate_timeout_milliseconds(timeout_milliseconds)
+    # INVARIANT: _BACKEND_CAPABILITIES grants UNIVERSAL_VALIDITY to exactly
+    # one backend (Z3), so delegating straight to the Z3 bridge is valid
+    # without dispatching on `backend`. Adding a second
+    # UNIVERSAL_VALIDITY-capable backend requires real dispatch here.
     return _z3_assert_holds_for_all_free_assignments(
         considered_identifiers,
         expression,
@@ -324,7 +350,7 @@ def assert_expression_implies(
     backend: SolverBackend = SolverBackend.Z3,
     timeout_milliseconds: int | None = None,
 ) -> bool:
-    """Strict variant of ``does_expression_imply``.
+    """Check the implication, raising ``UndecidableError`` on ``unknown``.
 
     Raises ``UndecidableError`` instead of returning ``None`` when the
     solver's result is unknown.
@@ -347,6 +373,10 @@ def assert_expression_implies(
     """
     _validate_backend_capability(backend, SolverQueryKind.IMPLICATION)
     _validate_timeout_milliseconds(timeout_milliseconds)
+    # INVARIANT: _BACKEND_CAPABILITIES grants IMPLICATION to exactly one
+    # backend (Z3), so delegating straight to the Z3 bridge is valid without
+    # dispatching on `backend`. Adding a second IMPLICATION-capable backend
+    # requires real dispatch here.
     return _z3_assert_expression_implies(
         antecedent,
         consequent,

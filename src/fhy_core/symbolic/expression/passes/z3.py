@@ -293,6 +293,31 @@ def holds_for_all_free_assignments(
             result.
 
     """
+    result, _ = _holds_for_all_free_assignments_with_reason(
+        considered_identifiers,
+        expression,
+        symbol_types,
+        timeout_milliseconds=timeout_milliseconds,
+    )
+    return result
+
+
+def _holds_for_all_free_assignments_with_reason(
+    considered_identifiers: AbstractSet[Identifier],
+    expression: Expression,
+    symbol_types: dict[Identifier, SymbolType],
+    *,
+    timeout_milliseconds: int | None = None,
+) -> tuple[bool | None, str | None]:
+    """Run the check behind :func:`holds_for_all_free_assignments`, with Z3's reason.
+
+    Computes the same tri-valued result as
+    :func:`holds_for_all_free_assignments`, paired with Z3's
+    ``reason_unknown()`` text when the result is ``None`` (and ``None``
+    otherwise) so :func:`assert_holds_for_all_free_assignments` can
+    report the reason without widening the public function's return type.
+
+    """
     z3_expression, identifier_to_z3_expression = convert_expression_to_z3_expression(
         expression, symbol_types
     )
@@ -319,18 +344,20 @@ def holds_for_all_free_assignments(
     )
     result = solver.check()
     if result == z3.unsat:
-        return True
+        return True, None
     elif result == z3.sat:
-        return False
+        return False, None
     elif result == z3.unknown:
+        reason = solver.reason_unknown()
         _LOGGER.warning(
-            "Z3 returned `unknown` (considered=%d, quantified=%d); returning None",
+            "Z3 returned `unknown` (considered=%d, quantified=%d): %s; returning None",
             len(considered_identifiers),
             len(quantified_variables),
+            reason,
         )
-        return None
+        return None, reason
     else:
-        raise RuntimeError("Unexpected Z3 result.")
+        raise RuntimeError(f"Unexpected Z3 result: {result!r}.")
 
 
 def does_expression_imply(
@@ -365,18 +392,40 @@ def does_expression_imply(
             result.
 
     """
+    result, _ = _does_expression_imply_with_reason(
+        antecedent, consequent, symbol_types, timeout_milliseconds=timeout_milliseconds
+    )
+    return result
+
+
+def _does_expression_imply_with_reason(
+    antecedent: Expression,
+    consequent: Expression,
+    symbol_types: dict[Identifier, SymbolType],
+    *,
+    timeout_milliseconds: int | None = None,
+) -> tuple[bool | None, str | None]:
+    """Run the check behind :func:`does_expression_imply`, with Z3's reason.
+
+    Computes the same tri-valued result as :func:`does_expression_imply`,
+    paired with Z3's ``reason_unknown()`` text when the result is
+    ``None`` (and ``None`` otherwise) so :func:`assert_expression_implies`
+    can report the reason without widening the public function's return
+    type.
+
+    """
     _LOGGER.debug("antecedent=%r, consequent=%r", antecedent, consequent)
     combined = logical_and(antecedent, logical_not(consequent))
     all_identifiers = combined.get_free_identifiers()
-    has_counterexample = holds_for_all_free_assignments(
+    has_counterexample, reason = _holds_for_all_free_assignments_with_reason(
         all_identifiers,
         combined,
         symbol_types,
         timeout_milliseconds=timeout_milliseconds,
     )
     if has_counterexample is None:
-        return None
-    return not has_counterexample
+        return None, reason
+    return not has_counterexample, None
 
 
 def assert_holds_for_all_free_assignments(
@@ -386,7 +435,7 @@ def assert_holds_for_all_free_assignments(
     *,
     timeout_milliseconds: int | None = None,
 ) -> bool:
-    """Strict variant of :func:`holds_for_all_free_assignments`.
+    """Check universal validity, raising :class:`UndecidableError` on ``unknown``.
 
     Raises :class:`UndecidableError` when the underlying solver returns
     ``unknown`` instead of returning ``None``. Callers that need a
@@ -406,13 +455,14 @@ def assert_holds_for_all_free_assignments(
         The decided ``bool`` result.
 
     Raises:
-        UndecidableError: When Z3 returns ``unknown``.
+        UndecidableError: When Z3 returns ``unknown``. The message
+            includes Z3's ``reason_unknown()`` text.
         KeyError: If ``symbol_types`` is missing an entry.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
 
     """
-    result = holds_for_all_free_assignments(
+    result, reason = _holds_for_all_free_assignments_with_reason(
         considered_identifiers,
         expression,
         symbol_types,
@@ -420,9 +470,9 @@ def assert_holds_for_all_free_assignments(
     )
     if result is None:
         raise UndecidableError(
-            "Z3 returned `unknown` for "
-            "`holds_for_all_free_assignments`; the property is undecidable "
-            "with the current solver configuration."
+            "Z3 returned `unknown` for `holds_for_all_free_assignments` "
+            f"({reason}); the property is undecidable with the current "
+            "solver configuration."
         )
     return result
 
@@ -434,7 +484,7 @@ def assert_expression_implies(
     *,
     timeout_milliseconds: int | None = None,
 ) -> bool:
-    """Strict variant of :func:`does_expression_imply`.
+    """Check the implication, raising :class:`UndecidableError` on ``unknown``.
 
     Raises :class:`UndecidableError` when the underlying solver returns
     ``unknown`` instead of returning ``None``.
@@ -449,18 +499,20 @@ def assert_expression_implies(
         The decided ``bool`` result.
 
     Raises:
-        UndecidableError: When Z3 returns ``unknown``.
+        UndecidableError: When Z3 returns ``unknown``. The message
+            includes Z3's ``reason_unknown()`` text.
         KeyError: If ``symbol_types`` is missing an entry.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
 
     """
-    result = does_expression_imply(
+    result, reason = _does_expression_imply_with_reason(
         antecedent, consequent, symbol_types, timeout_milliseconds=timeout_milliseconds
     )
     if result is None:
         raise UndecidableError(
-            "Z3 returned `unknown` for `does_expression_imply`; the "
-            "implication is undecidable with the current solver configuration."
+            "Z3 returned `unknown` for `does_expression_imply` "
+            f"({reason}); the implication is undecidable with the "
+            "current solver configuration."
         )
     return result

@@ -208,6 +208,29 @@ def test_check_expression_satisfiability_raises_key_error_for_missing_symbol_typ
         check_expression_satisfiability(expression, {})
 
 
+@pytest.mark.z3
+def test_check_expression_satisfiability_is_threaded_through_symbol_type() -> None:
+    """Test `0 < x < 1` is unsatisfiable over INT but satisfiable over REAL.
+
+    Proves ``symbol_types`` is actually threaded through to the Z3 bridge
+    rather than ignored: the same expression is decided differently
+    depending on the sort assigned to its one free identifier.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.LOGICAL_AND,
+        BinaryExpression(
+            BinaryOperation.LESS, LiteralExpression(0), IdentifierExpression(x)
+        ),
+        BinaryExpression(
+            BinaryOperation.LESS, IdentifierExpression(x), LiteralExpression(1)
+        ),
+    )
+
+    assert check_expression_satisfiability(expression, {x: SymbolType.INT}) is False
+    assert check_expression_satisfiability(expression, {x: SymbolType.REAL}) is True
+
+
 # =============================================================================
 # does_expression_imply / holds_for_all_free_assignments parity
 # =============================================================================
@@ -241,6 +264,58 @@ def test_holds_for_all_free_assignments_reports_true_with_no_considered_ids() ->
 
     assert (
         holds_for_all_free_assignments(frozenset(), expression, {x: SymbolType.REAL})
+        is True
+    )
+
+
+@pytest.mark.z3
+def test_assert_expression_implies_returns_true_for_a_valid_implication() -> None:
+    """Test the strict variant returns a decided `True` without raising."""
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL, IdentifierExpression(x), LiteralExpression(5)
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(3)
+    )
+
+    assert (
+        assert_expression_implies(antecedent, consequent, {x: SymbolType.INT}) is True
+    )
+
+
+@pytest.mark.z3
+def test_assert_expression_implies_returns_false_for_a_counterexample() -> None:
+    """Test the strict variant returns a decided `False` without raising."""
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL, IdentifierExpression(x), LiteralExpression(5)
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(10)
+    )
+
+    assert (
+        assert_expression_implies(antecedent, consequent, {x: SymbolType.INT}) is False
+    )
+
+
+@pytest.mark.z3
+def test_assert_holds_for_all_free_assignments_returns_true_without_raising() -> None:
+    """Test the strict variant returns a decided `True` without raising."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL,
+        BinaryExpression(
+            BinaryOperation.MULTIPLY, IdentifierExpression(x), IdentifierExpression(x)
+        ),
+        LiteralExpression(0),
+    )
+
+    assert (
+        assert_holds_for_all_free_assignments(
+            frozenset(), expression, {x: SymbolType.REAL}
+        )
         is True
     )
 

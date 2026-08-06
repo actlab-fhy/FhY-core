@@ -12,6 +12,7 @@ Notes on known-equivalent mutants not targeted by this file:
   distinguishable in CPython.
 """
 
+import logging
 from unittest.mock import Mock
 
 import pytest
@@ -518,6 +519,27 @@ def test_holds_for_all_free_assignments_raises_on_unexpected_solver_result(
 
     with pytest.raises(RuntimeError, match=r"Unexpected Z3 result"):
         holds_for_all_free_assignments(considered, expression, symbol_types)
+
+
+def test_holds_for_all_free_assignments_logs_z3s_reason_for_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test the `unknown`-result warning includes Z3's `reason_unknown()` text."""
+    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+    monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
+    considered, expression, symbol_types = _make_trivial_satisfiability_inputs()
+
+    with caplog.at_level(
+        logging.WARNING, logger="fhy_core.symbolic.expression.passes.z3"
+    ):
+        result = holds_for_all_free_assignments(considered, expression, symbol_types)
+
+    assert result is None
+    assert any(
+        record.levelno == logging.WARNING and "timeout" in record.getMessage()
+        for record in caplog.records
+    ), "expected a WARNING log record mentioning z3's stated reason"
 
 
 # =============================================================================
