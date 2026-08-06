@@ -1,4 +1,4 @@
-"""End-to-end user-story and integration tests for the expression-functions feature.
+"""End-to-end user-story and integration tests for expression functions.
 
 These exercise the public surface (registry, inliner, type-checker,
 pretty-printer) in shapes that mirror real callers. They are
@@ -14,13 +14,13 @@ from fhy_core.symbolic.expression import (
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     call,
     inline_functions,
+    piecewise,
     register_function,
-    ternary,
 )
 from fhy_core.types import (
     CoreDataType,
@@ -30,6 +30,8 @@ from fhy_core.types import (
     TypeQualifier,
 )
 from fhy_core.types.checking import synthesize_expression_type
+
+from .conftest import mock_identifier
 
 
 def _scalar(core_data_type: CoreDataType) -> NumericalType:
@@ -48,34 +50,34 @@ def _no_identifiers(identifier: Identifier) -> tuple[Type, TypeQualifier]:
 pytestmark = pytest.mark.integration
 
 
-def test_max_call_then_inline_yields_expected_ternary_tree() -> None:
-    """Test ``max(1, 2)`` inlines to a literal ternary tree."""
+def test_max_call_then_inline_yields_expected_piecewise_tree() -> None:
+    """Test ``max(1, 2)`` inlines to a literal piecewise tree."""
     expression = call("max", LiteralExpression(1), LiteralExpression(2))
 
     inlined = inline_functions(expression)
 
-    expected = TernaryExpression(
-        BinaryExpression(
-            BinaryOperation.GREATER,
-            LiteralExpression(1),
-            LiteralExpression(2),
+    expected = PiecewiseExpression(
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER,
+                LiteralExpression(1),
+                LiteralExpression(2),
+            ),
         ),
-        LiteralExpression(1),
+        (LiteralExpression(1),),
         LiteralExpression(2),
     )
 
     assert inlined.is_structurally_equivalent(expected)
 
 
-def test_ternary_synthesize_type_returns_branch_type() -> None:
-    """Test ``True ? 1 : 2`` synthesizes to the branches' type.
+def test_piecewise_synthesize_type_returns_value_and_otherwise_common_type() -> None:
+    """Test ``{1 if True; 2 otherwise}`` synthesizes to the common branch type.
 
-    Two weak unsigned-int literal branches stay weak ``UINT`` without an
+    Two weak unsigned-int literal operands stay weak ``UINT`` without an
     outer context.
     """
-    expression = ternary(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
-    )
+    expression = piecewise((LiteralExpression(True), LiteralExpression(1)), otherwise=2)
 
     result_type, _ = synthesize_expression_type(expression, _no_identifiers)
 
@@ -113,9 +115,9 @@ def test_user_story_clamp_a_value_between_low_and_high() -> None:
     a valid bound. They build the call via the public ``call`` helper and
     rely on inlining to substitute the body.
     """
-    low = Identifier("low")
-    high = Identifier("high")
-    value = Identifier("value")
+    low = mock_identifier("low", 0)
+    high = mock_identifier("high", 1)
+    value = mock_identifier("value", 2)
 
     expression = call(
         "max",
@@ -125,30 +127,27 @@ def test_user_story_clamp_a_value_between_low_and_high() -> None:
 
     inlined = inline_functions(expression)
 
-    expected = TernaryExpression(
-        BinaryExpression(
-            BinaryOperation.GREATER,
-            IdentifierExpression(low),
-            TernaryExpression(
-                BinaryExpression(
-                    BinaryOperation.LESS,
-                    IdentifierExpression(value),
-                    IdentifierExpression(high),
-                ),
-                IdentifierExpression(value),
-                IdentifierExpression(high),
-            ),
-        ),
-        IdentifierExpression(low),
-        TernaryExpression(
+    inner_min = PiecewiseExpression(
+        (
             BinaryExpression(
                 BinaryOperation.LESS,
                 IdentifierExpression(value),
                 IdentifierExpression(high),
             ),
-            IdentifierExpression(value),
-            IdentifierExpression(high),
         ),
+        (IdentifierExpression(value),),
+        IdentifierExpression(high),
+    )
+    expected = PiecewiseExpression(
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER,
+                IdentifierExpression(low),
+                inner_min,
+            ),
+        ),
+        (IdentifierExpression(low),),
+        inner_min,
     )
 
     assert inlined.is_structurally_equivalent(expected)
@@ -159,33 +158,33 @@ def test_user_story_clamp_a_value_between_low_and_high() -> None:
 # =============================================================================
 
 
-def test_user_story_predicate_guarded_fallback_with_ternary() -> None:
-    """Test using ``ternary`` to choose between a fast-path and a fallback expression.
+def test_user_story_predicate_guarded_fallback_with_piecewise() -> None:
+    """Test using ``piecewise`` to choose between a fast-path and a fallback expression.
 
     Caller: a lowering pass that wants to express
-    ``x > 0 ? sqrt_path : fallback_path`` at the IR level. They build the
-    expression directly via the public ``ternary`` helper.
+    ``{sqrt_path if x > 0; fallback_path otherwise}`` at the IR level.
+    They build the expression directly via the public ``piecewise``
+    helper.
     """
-    x = Identifier("x")
-    sqrt_path = Identifier("sqrt_path")
-    fallback_path = Identifier("fallback_path")
+    x = mock_identifier("x", 0)
+    sqrt_path = mock_identifier("sqrt_path", 1)
+    fallback_path = mock_identifier("fallback_path", 2)
 
-    expression = ternary(
-        IdentifierExpression(x) > 0,
-        IdentifierExpression(sqrt_path),
-        IdentifierExpression(fallback_path),
+    expression = piecewise(
+        (IdentifierExpression(x) > 0, IdentifierExpression(sqrt_path)),
+        otherwise=IdentifierExpression(fallback_path),
     )
 
-    assert isinstance(expression, TernaryExpression)
-    assert expression.condition.is_structurally_equivalent(
+    assert isinstance(expression, PiecewiseExpression)
+    assert expression.conditions[0].is_structurally_equivalent(
         BinaryExpression(
             BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
         )
     )
-    assert expression.true_value.is_structurally_equivalent(
+    assert expression.values[0].is_structurally_equivalent(
         IdentifierExpression(sqrt_path)
     )
-    assert expression.false_value.is_structurally_equivalent(
+    assert expression.otherwise.is_structurally_equivalent(
         IdentifierExpression(fallback_path)
     )
 
@@ -204,29 +203,30 @@ def test_user_story_register_and_inline_custom_abs_function(
     and then references it. Inlining substitutes the body. The inlined
     expression should match an equivalent hand-built tree.
     """
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     register_function(
         "test_user_story_abs",
         parameters=[parameter],
         parameter_sorts=[FunctionSort.REAL],
         result_sort=FunctionSort.REAL,
-        body=ternary(
-            IdentifierExpression(parameter) < 0,
-            -IdentifierExpression(parameter),
-            IdentifierExpression(parameter),
+        body=piecewise(
+            (IdentifierExpression(parameter) < 0, -IdentifierExpression(parameter)),
+            otherwise=IdentifierExpression(parameter),
         ),
     )
 
-    y = Identifier("y")
+    y = mock_identifier("y", 1)
     expression = call("test_user_story_abs", IdentifierExpression(y))
     inlined = inline_functions(expression)
-    expected = TernaryExpression(
-        BinaryExpression(
-            BinaryOperation.LESS,
-            IdentifierExpression(y),
-            LiteralExpression(0),
+    expected = PiecewiseExpression(
+        (
+            BinaryExpression(
+                BinaryOperation.LESS,
+                IdentifierExpression(y),
+                LiteralExpression(0),
+            ),
         ),
-        UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(y)),
+        (UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(y)),),
         IdentifierExpression(y),
     )
 

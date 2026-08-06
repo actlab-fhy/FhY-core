@@ -12,6 +12,7 @@ Notes on known-equivalent mutants not targeted by this file:
   distinguishable in CPython.
 """
 
+import logging
 from unittest.mock import Mock
 
 import pytest
@@ -26,16 +27,18 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     convert_expression_to_z3_expression,
-    does_expression_imply,
-    holds_for_all_free_assignments,
 )
 from fhy_core.symbolic.expression.passes.z3 import (
     ExpressionToZ3Converter,
     _z3_floor_divide,
+)
+from fhy_core.symbolic.solver import (
+    does_expression_imply,
+    holds_for_all_free_assignments,
 )
 from fhy_core.symbolic.symbol_type import SymbolType
 
@@ -518,6 +521,27 @@ def test_holds_for_all_free_assignments_raises_on_unexpected_solver_result(
         holds_for_all_free_assignments(considered, expression, symbol_types)
 
 
+def test_holds_for_all_free_assignments_logs_z3s_reason_for_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test the `unknown`-result warning includes Z3's `reason_unknown()` text."""
+    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+    monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
+    considered, expression, symbol_types = _make_trivial_satisfiability_inputs()
+
+    with caplog.at_level(
+        logging.WARNING, logger="fhy_core.symbolic.expression.passes.z3"
+    ):
+        result = holds_for_all_free_assignments(considered, expression, symbol_types)
+
+    assert result is None
+    assert any(
+        record.levelno == logging.WARNING and "timeout" in record.getMessage()
+        for record in caplog.records
+    ), "expected a WARNING log record mentioning z3's stated reason"
+
+
 # =============================================================================
 # does_expression_imply
 # =============================================================================
@@ -652,20 +676,22 @@ def test_does_expression_imply_raises_on_missing_symbol_type() -> None:
 
 
 # =============================================================================
-# TernaryExpression -> z3.If
+# PiecewiseExpression -> z3.If
 # =============================================================================
 
 
-def test_convert_ternary_expression_to_z3_if() -> None:
-    """Test ``TernaryExpression`` lowers to ``z3.If``."""
+def test_convert_single_case_piecewise_expression_to_z3_if() -> None:
+    """Test a one-case ``PiecewiseExpression`` lowers to the matching ``z3.If``."""
     x = mock_identifier("x", 0)
-    expression = TernaryExpression(
-        BinaryExpression(
-            BinaryOperation.GREATER,
-            IdentifierExpression(x),
-            LiteralExpression(0),
+    expression = PiecewiseExpression(
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER,
+                IdentifierExpression(x),
+                LiteralExpression(0),
+            ),
         ),
-        IdentifierExpression(x),
+        (IdentifierExpression(x),),
         UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(x)),
     )
 
@@ -673,15 +699,16 @@ def test_convert_ternary_expression_to_z3_if() -> None:
         expression, {x: SymbolType.INT}
     )
 
-    assert isinstance(z3_expression, z3.ExprRef)
+    expected = z3.If(z3.Int("x_0") > z3.IntVal(0), z3.Int("x_0"), -z3.Int("x_0"))
+    assert z3_expression.eq(expected)
 
 
-def test_convert_ternary_with_boolean_literal_branches_to_z3_if() -> None:
-    """Test ``cond ? True : False`` lowers cleanly via z3 with bool symbols."""
+def test_convert_piecewise_with_boolean_literal_branches_to_z3_if() -> None:
+    """Test ``{True if cond; False otherwise}`` lowers to the matching ``z3.If``."""
     flag = mock_identifier("flag", 0)
-    expression = TernaryExpression(
-        IdentifierExpression(flag),
-        LiteralExpression(True),
+    expression = PiecewiseExpression(
+        (IdentifierExpression(flag),),
+        (LiteralExpression(True),),
         LiteralExpression(False),
     )
 
@@ -689,7 +716,84 @@ def test_convert_ternary_with_boolean_literal_branches_to_z3_if() -> None:
         expression, {flag: SymbolType.BOOL}
     )
 
-    assert isinstance(z3_expression, z3.ExprRef)
+    expected = z3.If(z3.Bool("flag_0"), z3.BoolVal(True), z3.BoolVal(False))
+    assert z3_expression.eq(expected)
+
+
+def test_multi_case_piecewise_z3_lowering_matches_hand_nested_encoding() -> None:
+    """Test a flat multi-case piecewise's z3 lowering equals a hand-nested equivalent.
+
+    First-match-wins semantics guarantee ``{1 if x > 0; -1 if x < 0;
+    0 otherwise}`` denotes exactly the same value as the hand-nested
+    ``{1 if x > 0; otherwise {-1 if x < 0; 0 otherwise}}``. Establishing
+    ``does_expression_imply`` both ways over ``result == <expr>`` proves
+    the flat right-folded ``z3.If`` chain the multi-case node lowers to
+    is logically equivalent to the nested one.
+    """
+    x = mock_identifier("x", 0)
+    result = mock_identifier("result", 1)
+    x_expression = IdentifierExpression(x)
+    result_expression = IdentifierExpression(result)
+
+    flat = PiecewiseExpression(
+        (x_expression > 0, x_expression < 0),
+        (LiteralExpression(1), LiteralExpression(-1)),
+        LiteralExpression(0),
+    )
+    nested = PiecewiseExpression(
+        (x_expression > 0,),
+        (LiteralExpression(1),),
+        PiecewiseExpression(
+            (x_expression < 0,), (LiteralExpression(-1),), LiteralExpression(0)
+        ),
+    )
+
+    flat_holds = BinaryExpression(BinaryOperation.EQUAL, result_expression, flat)
+    nested_holds = BinaryExpression(BinaryOperation.EQUAL, result_expression, nested)
+    symbol_types = {x: SymbolType.INT, result: SymbolType.INT}
+
+    assert does_expression_imply(flat_holds, nested_holds, symbol_types) is True
+    assert does_expression_imply(nested_holds, flat_holds, symbol_types) is True
+
+
+def test_piecewise_over_one_hundred_cases_z3_lowering_matches_hand_nested() -> None:
+    """Test a 120-case piecewise's flat z3 lowering equals a hand-nested equivalent.
+
+    Conditions are a monotonic, overlapping threshold ladder (``x < 1``,
+    ``x < 2``, ..., ``x < NUM_CASES``) rather than the mutually exclusive
+    equalities used elsewhere in this file, so more than one condition
+    can hold at once and the comparison exercises which branch wins: the
+    flat multi-case node's right-folded ``z3.If`` chain must pick the
+    same first-matching branch as the hand-nested reference. The
+    hand-nested reference is built from single-case
+    ``PiecewiseExpression`` nodes, so its z3 lowering never itself
+    exercises the multi-case fold, making it an independent ground truth
+    for the comparison.
+    """
+    NUM_CASES = 120
+    x = mock_identifier("x", 0)
+    result = mock_identifier("result", 1)
+    x_expression = IdentifierExpression(x)
+    result_expression = IdentifierExpression(result)
+
+    flat_cases = tuple(
+        (x_expression < (i + 1), LiteralExpression(i)) for i in range(NUM_CASES)
+    )
+    flat = PiecewiseExpression(
+        tuple(condition for condition, _ in flat_cases),
+        tuple(value for _, value in flat_cases),
+        LiteralExpression(-1),
+    )
+    nested: Expression = LiteralExpression(-1)
+    for condition, value in reversed(flat_cases):
+        nested = PiecewiseExpression((condition,), (value,), nested)
+
+    flat_holds = BinaryExpression(BinaryOperation.EQUAL, result_expression, flat)
+    nested_holds = BinaryExpression(BinaryOperation.EQUAL, result_expression, nested)
+    symbol_types = {x: SymbolType.INT, result: SymbolType.INT}
+
+    assert does_expression_imply(flat_holds, nested_holds, symbol_types) is True
+    assert does_expression_imply(nested_holds, flat_holds, symbol_types) is True
 
 
 # =============================================================================

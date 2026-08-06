@@ -28,6 +28,10 @@ class FunctionSort(StrEnum):
     wider sort. ``BOOL`` is a side branch and is never compatible with
     the numeric sorts.
 
+    Contrast :class:`~fhy_core.symbolic.symbol_type.SymbolType`, which
+    selects a Z3 lowering sort for an expression rather than describing a
+    registered function's declared signature.
+
     Members:
         BOOL: A boolean value. Compatible only with ``CoreDataType.BOOL``.
         NAT: A non-negative integer. Compatible with the unsigned-

@@ -20,8 +20,8 @@ __all__ = [
     "LiteralPattern",
     "MatchBindings",
     "Pattern",
+    "PiecewiseExpressionPattern",
     "PredicatePattern",
-    "TernaryExpressionPattern",
     "UnaryExpressionPattern",
     "WildcardPattern",
     "does_pattern_match",
@@ -46,7 +46,7 @@ from ..core import (
     IdentifierExpression,
     LiteralExpression,
     LiteralType,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
 )
@@ -403,36 +403,103 @@ class BinaryExpressionPattern(Pattern):
             return self.right.match_under(expression.right, after_left)
 
 
+def _validate_pattern_instance(value: object, context: str) -> None:
+    """Validate that ``value`` is a `Pattern` instance.
+
+    Args:
+        value: Candidate to check.
+        context: Description of the field or position being validated,
+            used verbatim at the front of the error message.
+
+    Raises:
+        ValueError: If ``value`` is not a `Pattern` instance.
+
+    """
+    if not isinstance(value, Pattern):
+        raise ValueError(
+            f"{context} must be a Pattern instance, but got value {value!r} "
+            f"of type {type(value).__name__}."
+        )
+
+
 @final
 @dataclass(frozen=True)
-class TernaryExpressionPattern(Pattern):
-    """Match a `TernaryExpression`.
+class PiecewiseExpressionPattern(Pattern):
+    """Match a `PiecewiseExpression`.
 
     Attributes:
-        condition: Pattern the condition must match.
-        true_value: Pattern the true-branch value must match.
-        false_value: Pattern the false-branch value must match.
+        cases: `(condition_pattern, value_pattern)` pairs matched
+            position-wise against the expression's cases; the case
+            count must match exactly. Must be non-empty when
+            supplied; `None` means "any cases."
+        otherwise: Pattern the `otherwise` expression must match.
+
+    Raises:
+        ValueError: If `cases` is supplied empty, if any element of
+            `cases` is not a two-element `(condition_pattern,
+            value_pattern)` pair, if any condition or value pattern
+            within `cases` is not a `Pattern` instance, or if
+            `otherwise` is not a `Pattern` instance.
 
     """
 
-    condition: Pattern
-    true_value: Pattern
-    false_value: Pattern
+    cases: tuple[tuple[Pattern, Pattern], ...] | None
+    otherwise: Pattern
+
+    def __post_init__(self) -> None:
+        cases = None if self.cases is None else tuple(self.cases)
+        if cases is not None:
+            if not cases:
+                raise ValueError(
+                    "PiecewiseExpressionPattern.cases must be non-empty when "
+                    "supplied; use `None` to match any case count."
+                )
+            coerced_cases: list[tuple[Pattern, Pattern]] = []
+            for case in cases:
+                try:
+                    condition_pattern, value_pattern = case
+                except (TypeError, ValueError) as error:
+                    raise ValueError(
+                        "PiecewiseExpressionPattern.cases elements must be "
+                        "(condition_pattern, value_pattern) pairs, but got "
+                        f"value {case!r} of type {type(case).__name__}."
+                    ) from error
+                _validate_pattern_instance(
+                    condition_pattern,
+                    "PiecewiseExpressionPattern.cases condition pattern",
+                )
+                _validate_pattern_instance(
+                    value_pattern, "PiecewiseExpressionPattern.cases value pattern"
+                )
+                coerced_cases.append((condition_pattern, value_pattern))
+            cases = tuple(coerced_cases)
+        _validate_pattern_instance(
+            self.otherwise, "PiecewiseExpressionPattern.otherwise"
+        )
+        object.__setattr__(self, "cases", cases)
 
     @override
     def match_under(
         self, expression: Expression, bindings: MatchBindings
     ) -> MatchBindings | None:
-        if not isinstance(expression, TernaryExpression):
+        if not isinstance(expression, PiecewiseExpression):
             return None
-        after_condition = self.condition.match_under(expression.condition, bindings)
-        if after_condition is None:
-            return None
-        after_true = self.true_value.match_under(expression.true_value, after_condition)
-        if after_true is None:
-            return None
-        else:
-            return self.false_value.match_under(expression.false_value, after_true)
+        accumulator = bindings
+        if self.cases is not None:
+            expression_cases = expression.get_cases()
+            if len(self.cases) != len(expression_cases):
+                return None
+            for (condition_pattern, value_pattern), (condition, value) in zip(
+                self.cases, expression_cases, strict=True
+            ):
+                after_condition = condition_pattern.match_under(condition, accumulator)
+                if after_condition is None:
+                    return None
+                after_value = value_pattern.match_under(value, after_condition)
+                if after_value is None:
+                    return None
+                accumulator = after_value
+        return self.otherwise.match_under(expression.otherwise, accumulator)
 
 
 @final
@@ -450,10 +517,23 @@ class CallExpressionPattern(Pattern):
             pattern matches only when
             ``len(self.arguments) == len(call.arguments)``.
 
+    Raises:
+        ValueError: If `arguments` is supplied and any element is
+            not a `Pattern` instance.
+
     """
 
     function_name: str | None
     arguments: tuple[Pattern, ...] | None
+
+    def __post_init__(self) -> None:
+        arguments = None if self.arguments is None else tuple(self.arguments)
+        if arguments is not None:
+            for argument in arguments:
+                _validate_pattern_instance(
+                    argument, "CallExpressionPattern.arguments element"
+                )
+        object.__setattr__(self, "arguments", arguments)
 
     @override
     def match_under(
@@ -523,13 +603,23 @@ class AlternativesPattern(Pattern):
     Attributes:
         alternatives: Tuple of sub-patterns. Must be non-empty.
 
+    Raises:
+        ValueError: If `alternatives` is empty, or if any element is
+            not a `Pattern` instance.
+
     """
 
     alternatives: tuple[Pattern, ...]
 
     def __post_init__(self) -> None:
-        if not self.alternatives:
+        alternatives = tuple(self.alternatives)
+        if not alternatives:
             raise ValueError("AlternativesPattern.alternatives must be non-empty.")
+        for alternative in alternatives:
+            _validate_pattern_instance(
+                alternative, "AlternativesPattern.alternatives element"
+            )
+        object.__setattr__(self, "alternatives", alternatives)
 
     @override
     def match_under(

@@ -13,16 +13,21 @@ The subpackage exposes three layers:
 - :mod:`~fhy_core.types.checking.type_checker` bidirectionally synthesizes
   and checks the type of an expression.
 - :mod:`~fhy_core.types.checking.body_type_checker` checks that a
-  registered function's body matches its declared result sort.
+  registered function's body matches its declared result sort, one
+  function at a time or across the whole registry at once.
 
 Body checking is explicit: registering a function stores it, and
 :func:`check_registered_function_body` is called by whoever wants the
-answer.
+answer. Because registration never rejects a body, a body is free to
+call a function registered later; the whole-registry sweep,
+:func:`check_all_registered_function_bodies`, is what holds such a body
+to its declared result sort once every name it uses exists.
 """
 
 __all__ = [
     "ExpressionTypeChecker",
     "RegisteredFunctionBodyTypeChecker",
+    "check_all_registered_function_bodies",
     "check_expression_type",
     "check_registered_function_body",
     "get_core_data_type_from_literal_type",
@@ -33,6 +38,7 @@ __all__ = [
 
 from .body_type_checker import (
     RegisteredFunctionBodyTypeChecker,
+    check_all_registered_function_bodies,
     check_registered_function_body,
 )
 from .sort_compatibility import (

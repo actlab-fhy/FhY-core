@@ -26,18 +26,20 @@ from fhy_core.pass_infrastructure import (
     VisitablePass,
     register_pass,
 )
-from fhy_core.symbolic.expression.core import (
+
+from ..core import (
     BinaryExpression,
     BinaryOperation,
     CallExpression,
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
 )
-from fhy_core.symbolic.expression.registry import (
+from ..errors import PartialPiecewiseError
+from ..registry import (
     EntryLookupError,
     NativeConstant,
     RegisteredFunction,
@@ -213,15 +215,25 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             return constant_value
         return sympy.Symbol(self.format_identifier(identifier))
 
-    def visit_ternary_expression(
-        self, ternary_expression: TernaryExpression
+    def visit_piecewise_expression(
+        self, piecewise_expression: PiecewiseExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
-        condition = self.visit(ternary_expression.condition)
-        true_value = self.visit(ternary_expression.true_value)
-        false_value = self.visit(ternary_expression.false_value)
-        return sympy.Piecewise(
-            (true_value, condition), (false_value, True), evaluate=False
-        )
+        """Lower to a ``sympy.Piecewise`` with an unconditional trailing branch.
+
+        Each case becomes a ``(value, condition)`` branch, in case
+        order; ``otherwise`` becomes a final branch guarded by an
+        unconditional ``True``, so the result is total and
+        first-match-wins by construction (SymPy's ``Piecewise``
+        evaluates to the first branch whose condition holds). Every
+        condition must be boolean-valued; SymPy raises ``TypeError``
+        for a branch condition it can determine is not a Boolean.
+        """
+        branches = [
+            (self.visit(value), self.visit(condition))
+            for condition, value in piecewise_expression.get_cases()
+        ]
+        branches.append((self.visit(piecewise_expression.otherwise), True))
+        return sympy.Piecewise(*branches, evaluate=False)
 
     def visit_call_expression(
         self, call_expression: CallExpression
@@ -315,6 +327,13 @@ def substitute_sympy_expression_variables(
 ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
     """Substitute variables in a SymPy expression.
 
+    Every binding in ``environment`` is applied simultaneously: a
+    replacement value is never itself re-substituted by another binding in
+    the same call, matching the IR-level ``Expression.substitute``
+    semantics that this bridge must agree with. For example, substituting
+    ``{x: y, y: 5}`` into ``x < 5`` yields the residual ``y < 5``, not
+    ``5 < 5``.
+
     Args:
         sympy_expression: SymPy expression to substitute variables in.
         environment: Environment to substitute variables from.
@@ -329,14 +348,34 @@ def substitute_sympy_expression_variables(
     # also have nothing to substitute, so we short-circuit the no-op case.
     if isinstance(sympy_expression, bool):
         return sympy_expression
-    return sympy_expression.subs(
-        {
-            ExpressionToSympyConverter.format_identifier(
-                k
-            ): convert_expression_to_sympy_expression(v)
-            for k, v in environment.items()
-        }
-    )
+    # ``.subs(..., simultaneous=True)`` is deliberately avoided here.
+    # Internally it masks every replacement behind a synthetic
+    # ``Dummy() * Dummy()`` product before unmasking it with a final
+    # ``xreplace`` -- a trick that exists solely to disambiguate bound vs.
+    # free occurrences in calculus constructs (``Derivative``, ``Integral``,
+    # ...) that this IR never produces (see
+    # ``sympy.core.basic.Basic.subs``). When a replacement value is a
+    # SymPy ``Boolean`` (e.g. ``sympy.true``, or a ``Relational`` such as
+    # ``y > 0``), unmasking reconstructs a ``Mul`` with a non-``Expr``
+    # argument: at best a ``SymPyDeprecationWarning`` (deprecated since
+    # SymPy 1.7), at worst a hard ``TypeError`` (e.g. substituting a
+    # ``Piecewise`` condition symbol, or substituting with a
+    # ``Relational``, both raise outright).
+    #
+    # Every substitution key here is an atomic ``Symbol`` (never a
+    # compound pattern), and the IR never constructs bound-variable
+    # expressions, so ``xreplace`` is a safe, exact replacement: it
+    # matches each tree node against the full replacement mapping in a
+    # single bottom-up pass, so a replacement value is never itself
+    # re-substituted by another binding -- the same simultaneous,
+    # non-chaining semantics, without the deprecated masking path.
+    replacements = {
+        sympy.Symbol(
+            ExpressionToSympyConverter.format_identifier(k)
+        ): convert_expression_to_sympy_expression(v)
+        for k, v in environment.items()
+    }
+    return sympy_expression.xreplace(replacements)
 
 
 @register_pass(
@@ -638,22 +677,38 @@ class SymPyToExpressionConverter(
         return LiteralExpression(float(float_))
 
     def _convert_piecewise(self, piecewise: sympy.Piecewise) -> Expression:
-        if not piecewise.args:
-            raise ValueError("Cannot convert an empty Piecewise expression.")
-        return self._convert_piecewise_branches(tuple(piecewise.args))
+        """Lift a ``sympy.Piecewise`` to a flat ``PiecewiseExpression``.
 
-    def _convert_piecewise_branches(
-        self,
-        branches: tuple[tuple[sympy.Expr, sympy.Expr], ...],
-    ) -> Expression:
-        if len(branches) == 1:
-            value, _ = branches[0]
-            return self.convert(value)
-        head_value, head_condition = branches[0]
-        true_value = self.convert(head_value)
-        condition = self.convert(head_condition)
-        false_value = self._convert_piecewise_branches(branches[1:])
-        return TernaryExpression(condition, true_value, false_value)
+        All branches but the last become cases, in branch order; the
+        last branch's value becomes ``otherwise``. The last branch's
+        condition must be ``sympy.true``: ``PiecewiseExpression`` is a
+        total function, so a ``Piecewise`` whose final condition is not
+        ``sympy.true`` -- meaning it does not cover its domain -- has no
+        faithful IR representation and raises :class:`PartialPiecewiseError`
+        rather than being silently totalized. A single-branch
+        ``Piecewise`` (the only shape that survives construction with a
+        non-``True`` condition) is rejected the same way; the degenerate
+        case of a single branch whose condition is already ``sympy.true``
+        converts directly to the branch's bare value.
+        """
+        branches = tuple(piecewise.args)
+        if not branches:
+            raise ValueError("Cannot convert an empty Piecewise expression.")
+        *case_branches, (otherwise_value, final_condition) = branches
+        if final_condition is not sympy.true:
+            raise PartialPiecewiseError(
+                "cannot lift a partial sympy.Piecewise to PiecewiseExpression: "
+                f"the final branch's condition is {final_condition!r}, not "
+                "sympy.true. PiecewiseExpression is a total function and has "
+                "no faithful representation for a Piecewise that does not "
+                "cover its domain."
+            )
+        if not case_branches:
+            return self.convert(otherwise_value)
+        conditions = [self.convert(condition) for _, condition in case_branches]
+        values = [self.convert(value) for value, _ in case_branches]
+        otherwise = self.convert(otherwise_value)
+        return PiecewiseExpression(tuple(conditions), tuple(values), otherwise)
 
 
 def convert_sympy_expression_to_expression(
@@ -661,11 +716,23 @@ def convert_sympy_expression_to_expression(
 ) -> Expression:
     """Convert a SymPy expression to an expression.
 
+    Lifting a ``sympy.Piecewise`` requires its last branch's condition
+    to be ``sympy.true``: ``PiecewiseExpression`` is a total function,
+    so a ``Piecewise`` whose final condition is not ``sympy.true`` --
+    meaning it does not cover its domain -- has no faithful
+    representation and raises :class:`PartialPiecewiseError`.
+
     Args:
         sympy_expression: SymPy expression to convert.
 
     Returns:
         Expression.
+
+    Raises:
+        PassExecutionError: Wrapping :class:`PartialPiecewiseError` as
+            ``__cause__`` if ``sympy_expression`` contains a
+            ``sympy.Piecewise`` whose final branch condition is not
+            ``sympy.true``.
 
     """
     converter = SymPyToExpressionConverter()
@@ -683,6 +750,11 @@ def simplify_expression(
 
     Returns:
         Simplified expression.
+
+    Raises:
+        PassExecutionError: Wrapping :class:`PartialPiecewiseError` as
+            ``__cause__`` if simplification yields a ``sympy.Piecewise``
+            whose final branch condition is not ``sympy.true``.
 
     """
     sympy_expression = convert_expression_to_sympy_expression(expression)

@@ -15,24 +15,50 @@ that an unresolved call name raises :class:`EntryLookupError` directly
 instead of being framed as a type error. The body checker catches the
 raw lookup error and returns ``None``: "trust the declared target sort;
 the call-site check enforces the actual signature at use time."
+
+:func:`check_all_registered_function_bodies` applies that per-function
+check to the whole registry at once. Run after registration is
+complete, it is where a forward-referencing body is finally held to its
+declared result sort: every call target it names is resolvable by then,
+so nothing is skipped.
 """
 
 from fhy_core.utils.override import override
 
-__all__ = ["RegisteredFunctionBodyTypeChecker", "check_registered_function_body"]
+__all__ = [
+    "RegisteredFunctionBodyTypeChecker",
+    "check_all_registered_function_bodies",
+    "check_registered_function_body",
+]
 
 from collections.abc import Sequence
+from typing import Any
 
 from immutabledict import immutabledict
 
+from fhy_core.diagnostic import (
+    Diagnostic,
+    DiagnosticLevel,
+    Note,
+    ValidationReport,
+)
 from fhy_core.identifier import Identifier
-from fhy_core.pass_infrastructure import CompilerPass, register_pass
+from fhy_core.pass_infrastructure import (
+    CompilerPass,
+    PassExecutionError,
+    register_pass,
+)
 from fhy_core.symbolic.expression.core import Expression
 from fhy_core.symbolic.expression.errors import (
     EntryLookupError,
     EntryRegistrationError,
 )
-from fhy_core.symbolic.expression.registry import CallTargetResolver
+from fhy_core.symbolic.expression.registry import (
+    CallTargetResolver,
+    RegisteredFunction,
+    get_registered_entries,
+    get_registered_entry,
+)
 from fhy_core.symbolic.expression.sort import FunctionSort
 
 from ..core import (
@@ -44,6 +70,8 @@ from ..core import (
 )
 from .sort_compatibility import is_core_data_type_compatible_with_sort
 from .type_checker import ExpressionTypeChecker
+
+_REGISTRY_SWEEP_SOURCE = "fhy_core.types.checking.check_all_registered_function_bodies"
 
 # Concrete core data types used as the parameter lookup when body-
 # checking a registered function. Concrete (non-weak) types so
@@ -251,3 +279,53 @@ def check_registered_function_body(
         result_sort=result_sort,
         resolve_call_target=resolve_call_target,
     )(body)
+
+
+def check_all_registered_function_bodies() -> ValidationReport[Any]:
+    """Validate every registered function body against its declared result sort.
+
+    Walks a snapshot of the process-wide registry and runs
+    :func:`check_registered_function_body` on each
+    :class:`RegisteredFunction`, resolving call sites against that same
+    registry. Registration is complete by the time the sweep runs, so a
+    body that calls a function registered after it resolves normally
+    and is held to its declared result sort like any other; the
+    per-function check skips a body only while its call target is still
+    absent.
+
+    Every entry is checked. A body that fails does not stop the walk,
+    so one broken body cannot hide another. Callers that want the sweep
+    to be fatal escalate the returned report with
+    :meth:`ValidationReport.raise_if_failed`.
+
+    Returns:
+        A :class:`ValidationReport` carrying one ERROR diagnostic per
+        function whose body does not satisfy its declared result sort,
+        in registration order. Each diagnostic's message names the
+        offending function. The report is empty when every body checks
+        out and when no expression-bodied function is registered.
+
+    """
+    diagnostics: list[Diagnostic] = []
+    for entry in get_registered_entries().values():
+        if not isinstance(entry, RegisteredFunction):
+            continue
+        try:
+            check_registered_function_body(
+                name=entry.name,
+                parameters=entry.parameters,
+                parameter_sorts=entry.parameter_sorts,
+                result_sort=entry.result_sort,
+                body=entry.body,
+                resolve_call_target=get_registered_entry,
+            )
+        except PassExecutionError as exc:
+            cause = exc.__cause__
+            diagnostics.append(
+                Diagnostic(
+                    level=DiagnosticLevel.ERROR,
+                    message=Note(str(cause) if cause is not None else str(exc)),
+                    source=_REGISTRY_SWEEP_SOURCE,
+                )
+            )
+    return ValidationReport(diagnostics=tuple(diagnostics))

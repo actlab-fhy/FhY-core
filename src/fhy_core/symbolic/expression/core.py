@@ -14,7 +14,7 @@ __all__ = [
     "IdentifierExpression",
     "LiteralExpression",
     "LiteralType",
-    "TernaryExpression",
+    "PiecewiseExpression",
     "UnaryExpression",
     "UnaryOperation",
     "call",
@@ -23,7 +23,7 @@ __all__ = [
     "logical_or",
     "make_binary_expression",
     "make_unary_expression",
-    "ternary",
+    "piecewise",
 ]
 
 import re
@@ -211,34 +211,59 @@ def logical_or(
     return _build_right_folded_binary_tree(BinaryOperation.LOGICAL_OR, *expressions)
 
 
-def ternary(
-    condition: "Expression | Identifier | LiteralType",
-    true_value: "Expression | Identifier | LiteralType",
-    false_value: "Expression | Identifier | LiteralType",
-) -> "TernaryExpression":
-    """Build a ``TernaryExpression`` from three operands.
+def piecewise(
+    *cases: tuple[
+        "Expression | Identifier | LiteralType",
+        "Expression | Identifier | LiteralType",
+    ],
+    otherwise: "Expression | Identifier | LiteralType",
+) -> "PiecewiseExpression":
+    """Build a ``PiecewiseExpression`` from ``(condition, value)`` case pairs.
 
-    Each operand may be an ``Expression`` (used as-is), an ``Identifier``
-    (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
-    (wrapped in ``LiteralExpression``); the same coercion rules as the
-    operator dunders apply.
+    Each element of each pair, and ``otherwise``, may be an ``Expression``
+    (used as-is), an ``Identifier`` (wrapped in ``IdentifierExpression``),
+    or a value of ``LiteralType`` (wrapped in ``LiteralExpression``); the
+    same coercion rules as the operator dunders apply.
 
     Args:
-        condition: Scalar boolean expression operand.
-        true_value: Expression chosen when ``condition`` is true.
-        false_value: Expression chosen when ``condition`` is false.
+        cases: One or more ``(condition, value)`` pairs, in evaluation
+            order.
+        otherwise: Result when no case's condition holds.
 
     Returns:
-        A ``TernaryExpression`` over the three coerced operands.
+        A ``PiecewiseExpression`` over the coerced cases and ``otherwise``.
 
     Raises:
-        ValueError: If an operand has an unsupported type.
+        ValueError: If no case is supplied, if a case is not a 2-tuple,
+            if a condition is a bare Python ``bool``, or if an operand
+            has an unsupported type.
 
     """
-    return TernaryExpression(
-        Expression._get_expression_from_other(condition),
-        Expression._get_expression_from_other(true_value),
-        Expression._get_expression_from_other(false_value),
+    if not cases:
+        raise ValueError("piecewise requires at least one (condition, value) case.")
+    conditions: list[Expression] = []
+    values: list[Expression] = []
+    for index, case in enumerate(cases):
+        if not (isinstance(case, tuple) and len(case) == 2):  # noqa: PLR2004
+            raise ValueError(
+                f"piecewise case {index} must be a 2-tuple of (condition, value), "
+                f"got {case!r}."
+            )
+        condition, value = case
+        if type(condition) is bool:
+            raise ValueError(
+                f"piecewise case {index} condition is a bare Python bool "
+                f"({condition!r}), not an expression. This is almost always "
+                "the accidental result of `expr == k`, which is Expression "
+                "identity comparison, not IR equality; use `.equals()` or "
+                "`.not_equals()` to build an equality condition."
+            )
+        conditions.append(Expression._get_expression_from_other(condition))
+        values.append(Expression._get_expression_from_other(value))
+    return PiecewiseExpression(
+        tuple(conditions),
+        tuple(values),
+        Expression._get_expression_from_other(otherwise),
     )
 
 
@@ -281,8 +306,9 @@ class Expression(
     """Abstract base class for expressions.
 
     Expression subclasses are ``@dataclass(frozen=True, eq=False)`` so
-    that the comparison dunders (``__lt__``, ``__eq__``, etc.) can
-    return :class:`BinaryExpression` IR nodes instead of ``bool``. As a
+    that the comparison and arithmetic dunders (``__lt__``, ``__le__``,
+    ``__gt__``, ``__ge__``, ``__add__``, etc.) can return
+    :class:`BinaryExpression` IR nodes instead of ``bool``. As a
     consequence, ``__eq__`` and ``__hash__`` fall back to object
     identity. Two structurally equivalent expressions are therefore
     **distinct dict keys** and **distinct set members**: use
@@ -475,30 +501,19 @@ class Expression(
         return logical_or(self, *others)
 
     @staticmethod
-    def ternary(
-        condition: "Expression | Identifier | LiteralType",
-        true_value: "Expression | Identifier | LiteralType",
-        false_value: "Expression | Identifier | LiteralType",
-    ) -> "TernaryExpression":
-        """Build a ``TernaryExpression`` from three operands.
+    def piecewise(
+        *cases: tuple[
+            "Expression | Identifier | LiteralType",
+            "Expression | Identifier | LiteralType",
+        ],
+        otherwise: "Expression | Identifier | LiteralType",
+    ) -> "PiecewiseExpression":
+        """Build a ``PiecewiseExpression``; delegates to the free :func:`piecewise`.
 
-        Each operand may be an ``Expression``, an ``Identifier``, or a
-        value of ``LiteralType``; the same coercion rules as the operator
-        dunders apply.
-
-        Args:
-            condition: Scalar boolean expression operand.
-            true_value: Expression chosen when ``condition`` is true.
-            false_value: Expression chosen when ``condition`` is false.
-
-        Returns:
-            A ``TernaryExpression`` over the three coerced operands.
-
-        Raises:
-            ValueError: If an operand has an unsupported type.
-
+        See :func:`piecewise` for the operand coercion rules and the
+        conditions under which construction raises.
         """
-        return ternary(condition, true_value, false_value)
+        return piecewise(*cases, otherwise=otherwise)
 
     @staticmethod
     def call(
@@ -786,41 +801,128 @@ class LiteralExpression(Expression):
         return cls(data["value"])
 
 
-@register_serializable(type_id="ternary_expression")
+@register_serializable(type_id="piecewise_expression")
 @dataclass(frozen=True, eq=False)
-class TernaryExpression(Expression, HasOperands[Expression]):
-    """Ternary conditional expression: ``condition ? true_value : false_value``.
+class PiecewiseExpression(Expression, HasOperands[Expression]):
+    """Mathematical piecewise expression: ordered first-match cases with a fallback.
 
-    A pure 3-arg form: when ``condition`` evaluates to true the
-    expression takes the value of ``true_value``; otherwise it takes the
-    value of ``false_value``. Both branches are part of the expression
-    tree; the form does not imply lazy evaluation at the IR level.
+    The expression denotes the value of the first case whose condition
+    holds; if no condition holds it denotes ``otherwise``, which makes
+    the expression a total function. Overlapping conditions are legal:
+    first match wins. Cases are stored as two parallel tuples rather
+    than a tuple of pairs so the fields derive automatic serialization,
+    matching :class:`CallExpression`; :meth:`get_cases` reconstructs the
+    ``(condition, value)`` pairs for callers that want case-shaped
+    iteration. The form does not imply lazy evaluation at the IR level.
 
     Attributes:
-        condition: Scalar boolean expression.
-        true_value: Result when ``condition`` is true.
-        false_value: Result when ``condition`` is false.
+        conditions: Scalar boolean case conditions, in evaluation order.
+        values: Case result values, positionally paired with
+            ``conditions``.
+        otherwise: Result when no condition holds; makes the function
+            total.
+
+    Raises:
+        ValueError: If no case is supplied, if ``conditions`` and
+            ``values`` differ in length, if any element of
+            ``conditions``, any element of ``values``, or
+            ``otherwise`` is not an :class:`Expression` instance, or if
+            a condition is a :class:`LiteralExpression` whose value is
+            not a Python ``bool``.
 
     """
 
-    condition: Expression
-    true_value: Expression
-    false_value: Expression
+    conditions: tuple[Expression, ...]
+    values: tuple[Expression, ...]
+    otherwise: Expression
+
+    def __post_init__(self) -> None:
+        conditions = tuple(self.conditions)
+        values = tuple(self.values)
+        if not conditions:
+            raise ValueError(
+                "PiecewiseExpression requires at least one case; a piecewise "
+                "with only `otherwise` is meaningless -- use the value directly."
+            )
+        if len(conditions) != len(values):
+            raise ValueError(
+                "PiecewiseExpression.conditions and .values must have equal "
+                f"length, but got {len(conditions)} conditions and "
+                f"{len(values)} values."
+            )
+        for condition in conditions:
+            if not isinstance(condition, Expression):
+                raise ValueError(
+                    "PiecewiseExpression.conditions must contain only "
+                    f"Expression instances, but got value {condition!r} of "
+                    f"type {type(condition).__name__}."
+                )
+            if (
+                isinstance(condition, LiteralExpression)
+                and type(condition.value) is not bool
+            ):
+                raise ValueError(
+                    "PiecewiseExpression condition literal must be a boolean "
+                    f"literal, but got literal value {condition.value!r} of "
+                    f"type {type(condition.value).__name__}. A non-literal "
+                    "condition (an identifier, a call, ...) has no such "
+                    "restriction here, since its type is not known without "
+                    "surrounding type context."
+                )
+        for value in values:
+            if not isinstance(value, Expression):
+                raise ValueError(
+                    "PiecewiseExpression.values must contain only Expression "
+                    f"instances, but got value {value!r} of type "
+                    f"{type(value).__name__}."
+                )
+        if not isinstance(self.otherwise, Expression):
+            raise ValueError(
+                "PiecewiseExpression.otherwise must be an Expression "
+                f"instance, but got value {self.otherwise!r} of type "
+                f"{type(self.otherwise).__name__}."
+            )
+        object.__setattr__(self, "conditions", conditions)
+        object.__setattr__(self, "values", values)
+
+    def get_cases(self) -> tuple[tuple[Expression, Expression], ...]:
+        """Return the ``(condition, value)`` case pairs in evaluation order.
+
+        Returns:
+            The zipped ``(condition, value)`` pairs.
+
+        """
+        return tuple(zip(self.conditions, self.values, strict=True))
 
     @override
-    def get_operands(self) -> tuple[Expression, Expression, Expression]:
-        return (self.condition, self.true_value, self.false_value)
+    def get_operands(self) -> tuple[Expression, ...]:
+        return self.get_visit_children()
 
     @override
     def get_visit_children(self) -> tuple["Expression", ...]:
-        return (self.condition, self.true_value, self.false_value)
+        interleaved: list[Expression] = []
+        for condition, value in self.get_cases():
+            interleaved.append(condition)
+            interleaved.append(value)
+        interleaved.append(self.otherwise)
+        return tuple(interleaved)
 
     @override
     def rebuild_with_visit_children(
         self, new_children: Sequence["Expression"]
-    ) -> "TernaryExpression":
-        condition, true_value, false_value = new_children
-        return TernaryExpression(condition, true_value, false_value)
+    ) -> "PiecewiseExpression":
+        flat = tuple(new_children)
+        if len(flat) < 3 or len(flat) % 2 == 0:  # noqa: PLR2004
+            raise ValueError(
+                "PiecewiseExpression.rebuild_with_visit_children requires an "
+                f"odd child count of at least 3 (conditions/values pairs plus "
+                f"otherwise), but got {len(flat)}."
+            )
+        case_children = flat[:-1]
+        conditions = case_children[0::2]
+        values = case_children[1::2]
+        otherwise = flat[-1]
+        return PiecewiseExpression(conditions, values, otherwise)
 
 
 @register_serializable(type_id="call_expression")
@@ -837,6 +939,10 @@ class CallExpression(Expression, HasOperands[Expression]):
         function_name: Key under which the called function is registered.
         arguments: Positional argument expressions, in declared order.
 
+    Raises:
+        ValueError: If ``function_name`` is empty, or if any element of
+            ``arguments`` is not an :class:`Expression` instance.
+
     """
 
     function_name: str
@@ -845,6 +951,15 @@ class CallExpression(Expression, HasOperands[Expression]):
     def __post_init__(self) -> None:
         if not self.function_name:
             raise ValueError("CallExpression.function_name must be non-empty.")
+        arguments = tuple(self.arguments)
+        for argument in arguments:
+            if not isinstance(argument, Expression):
+                raise ValueError(
+                    "CallExpression.arguments must contain only Expression "
+                    f"instances, but got value {argument!r} of type "
+                    f"{type(argument).__name__}."
+                )
+        object.__setattr__(self, "arguments", arguments)
 
     @override
     def get_operands(self) -> tuple[Expression, ...]:

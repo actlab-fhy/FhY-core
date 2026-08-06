@@ -19,18 +19,25 @@ A native call's result is cast to the dtype of its declared result sort,
 so ``floor``/``round``/``ceil`` (declared ``INT``) return an integer array
 rather than NumPy's floating-point default, agreeing with the declared
 sort and with ``evaluate_expression``. Floating-point domain conditions
-follow NumPy: ``sqrt(-1)``, ``log(0)``, and division by zero produce
-``nan``/``inf`` (with NumPy's usual warning) rather than raising -- unlike
-``evaluate_expression``, whose scalar native implementations raise. NumPy
-does still raise for operations it rejects outright rather than folding to
-``nan``/``inf`` -- most notably an integer base raised to a negative integer
-power (``numpy.power``) -- and such a ``ValueError`` surfaces wrapped in
-``PassExecutionError``.
+follow NumPy at the point of computation: ``sqrt(-1)``, ``log(0)``, and
+division by zero produce ``nan``/``inf`` (with NumPy's usual warning)
+rather than raising -- unlike ``evaluate_expression``, whose scalar native
+implementations raise immediately. A non-finite value that reaches an
+integer- or boolean-sorted cast (for example ``round(nan)``) raises
+``NonFiniteCastError`` instead of being cast to a platform-defined
+sentinel. NumPy does still raise for operations it rejects outright
+rather than folding to ``nan``/``inf`` -- most notably an integer base
+raised to a negative integer power (``numpy.power``) -- and such a
+``ValueError`` surfaces wrapped in ``PassExecutionError``.
 
-A ternary lowers to ``numpy.where``, which is not lazy: both branches are
-evaluated for every element before selection. A domain error in the
-*untaken* branch still produces its ``nan``/``inf`` (and warning); the
-condition does not guard its sibling branch from evaluation.
+A piecewise expression lowers to a right-folded chain of ``numpy.where``
+calls, one per case. This is not lazy: every case value and ``otherwise``
+are evaluated for every element before selection. A domain error in an
+*unselected* case still produces its ``nan``/``inf`` (and warning); the
+conditions do not guard their sibling cases from evaluation. Each
+condition must be boolean-dtyped: ``numpy.where`` would otherwise
+silently treat a nonzero numeric condition as true, so a non-boolean
+condition raises ``TypeError``.
 
 Expression-bodied built-ins (``relu``, ``sigmoid``, ``clamp``, ...) are
 inlined automatically before the walk via ``inline_functions``, so the
@@ -65,12 +72,13 @@ from ..core import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
 )
 from ..errors import (
     EntryLookupError,
+    NonFiniteCastError,
     UnboundVariableError,
     UnsupportedNumpyLoweringError,
 )
@@ -253,19 +261,46 @@ class NumpyExpressionEvaluator(VisitablePass[Expression, "NumpyResult"]):
         ufunc = getattr(self._numpy, _BINARY_UFUNC_NAMES[expression.operation])
         return ufunc(left, right)
 
-    def visit_ternary_expression(self, expression: TernaryExpression) -> Any:
-        """Select elementwise between the branches with ``numpy.where``.
+    def visit_piecewise_expression(self, expression: PiecewiseExpression) -> Any:
+        """Select elementwise via a right-folded chain of ``numpy.where`` calls.
 
-        ``numpy.where`` is not lazy: both branches are evaluated for every
-        element before selection, so a domain error (division by zero,
-        ``log`` of a non-positive) in the *untaken* branch still produces
-        its ``nan``/``inf`` and NumPy warning -- the condition does not
-        guard its sibling branch from evaluation.
+        Every case value and ``otherwise`` are evaluated for every
+        element before selection (``numpy.where`` is not lazy), so a
+        domain error (division by zero, ``log`` of a non-positive) in an
+        unselected case still produces its ``nan``/``inf`` and NumPy
+        warning -- the conditions do not guard their sibling cases from
+        evaluation. The chain is right-folded from ``otherwise``, so the
+        first case's ``numpy.where`` is outermost and first-match-wins
+        holds. Each condition must be boolean-dtyped: ``numpy.where``
+        would otherwise silently treat a nonzero numeric condition as
+        true, so a non-boolean condition raises ``TypeError`` instead.
         """
-        condition = self.visit(expression.condition)
-        true_value = self.visit(expression.true_value)
-        false_value = self.visit(expression.false_value)
-        return self._numpy.where(condition, true_value, false_value)
+        case_values: list[tuple[Any, Any]] = []
+        for index, (condition, value) in enumerate(expression.get_cases()):
+            condition_value = self.visit(condition)
+            if not self._is_boolean_condition_value(condition_value):
+                raise TypeError(
+                    f"piecewise case {index} condition must be boolean-dtyped, "
+                    f"but got dtype "
+                    f"{getattr(condition_value, 'dtype', type(condition_value))}"
+                )
+            case_values.append((condition_value, self.visit(value)))
+        result = self.visit(expression.otherwise)
+        for condition_value, value_value in reversed(case_values):
+            result = self._numpy.where(condition_value, value_value, result)
+        return result
+
+    def _is_boolean_condition_value(self, value: Any) -> bool:
+        """Return whether a lowered piecewise condition value is boolean-dtyped.
+
+        A raw Python ``bool`` (from a boolean ``LiteralExpression``, the
+        only literal value a piecewise condition may hold) has no
+        ``dtype`` attribute and is checked directly; every other lowered
+        condition is NumPy-typed and is checked by dtype.
+        """
+        if isinstance(value, bool):
+            return True
+        return bool(getattr(value, "dtype", None) == self._numpy.bool_)
 
     def visit_call_expression(self, expression: CallExpression) -> Any:
         """Apply a native call's NumPy operation, then cast to its result sort.
@@ -295,13 +330,19 @@ class NumpyExpressionEvaluator(VisitablePass[Expression, "NumpyResult"]):
         makes the NumPy path agree with the declared sort and with
         ``evaluate_expression``. Real-sorted results are already
         floating-point and pass through unchanged, preserving their width.
-        A non-finite (``nan``/``inf``) result of an integer-sorted native
-        casts to a platform-defined sentinel per NumPy's own ``astype``
-        semantics (no exception is raised).
+        A non-finite (``nan``/``inf``) result raises ``NonFiniteCastError``
+        rather than casting, since neither value has a faithful integer
+        or boolean representation.
         """
         dtype_name = _SORT_CAST_DTYPE_NAMES.get(result_sort)
         if dtype_name is None:
             return result
+        if not self._numpy.all(self._numpy.isfinite(result)):
+            raise NonFiniteCastError(
+                f"cannot cast a non-finite value to the {result_sort.value}-sorted "
+                f"dtype {dtype_name!r}: the result contains a nan/inf value with "
+                "no faithful representation there."
+            )
         return result.astype(getattr(self._numpy, dtype_name))
 
     @override
@@ -348,17 +389,18 @@ def evaluate_expression_with_numpy(
     Returns:
         The evaluated value: a NumPy array when any bound variable is
         array-valued. For a fully scalar environment the result is a NumPy
-        or Python scalar, except that a ternary- or bare-identifier-rooted
+        or Python scalar, except that a piecewise- or bare-identifier-rooted
         expression returns a rank-0 ``ndarray``. A native call's result is
         cast to the dtype of its declared result sort (so
         ``floor``/``round``/``ceil`` yield integers); every other node's
         dtype follows NumPy's type-promotion rules. Floating-point domain
         conditions (``sqrt(-1)``, ``log(0)``, division by zero) follow
-        NumPy and yield ``nan``/``inf`` rather than raising -- unlike
-        ``evaluate_expression``, whose scalar native implementations raise.
-        A ternary evaluates both branches for every element (it lowers to
-        ``numpy.where``), so a domain error in the untaken branch is not
-        suppressed by the condition.
+        NumPy and yield ``nan``/``inf`` rather than raising at the point of
+        computation -- unlike ``evaluate_expression``, whose scalar native
+        implementations raise immediately. A piecewise expression evaluates
+        every case value and ``otherwise`` for every element (it lowers to
+        a chain of ``numpy.where`` calls), so a domain error in an
+        unselected case is not suppressed by its condition.
 
     Raises:
         ImportError: If NumPy is not installed. Raised directly, before
@@ -375,6 +417,10 @@ def evaluate_expression_with_numpy(
             - :class:`StringLiteralPrecisionError`: a float-grammar
               string literal cannot be coerced to a binary ``float``
               without precision loss.
+            - :class:`NonFiniteCastError`: a ``nan``/``inf`` value reaches
+              a ``BOOL``/``NAT``/``INT``-sorted cast, which has no
+              faithful representation for it.
+            - ``TypeError``: a piecewise condition is not boolean-dtyped.
             - :class:`EntryLookupError`: a call references an
               unregistered function name.
             - :class:`FunctionArityError`: a call's argument count does

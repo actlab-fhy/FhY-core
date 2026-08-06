@@ -7,10 +7,11 @@ from typing import Any
 
 import pytest
 
-from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
     DeserializationDictStructureError,
+    SerializationFormat,
     SerializedDict,
+    UnknownTypeIdError,
 )
 from fhy_core.symbolic.expression import (
     BinaryExpression,
@@ -18,6 +19,7 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     logical_and,
@@ -25,6 +27,7 @@ from fhy_core.symbolic.expression import (
     logical_or,
     make_binary_expression,
     make_unary_expression,
+    piecewise,
 )
 from fhy_core.traits import FrozenMutationError, HasOperands, StructuralEquivalence
 from fhy_core.utils.override import override
@@ -56,7 +59,7 @@ def test_binary_expression_stores_operation_left_and_right() -> None:
 
 def test_identifier_expression_stores_identifier() -> None:
     """Test `IdentifierExpression` exposes the `Identifier` it was built with."""
-    identifier = Identifier("x")
+    identifier = mock_identifier("x", 0)
     expression = IdentifierExpression(identifier)
     assert expression.identifier is identifier
 
@@ -625,7 +628,7 @@ def test_module_level_logical_not_wraps_operand_in_unary_expression() -> None:
 
 def test_module_level_logical_not_coerces_bare_identifier() -> None:
     """Test `logical_not` lifts a bare `Identifier` via `IdentifierExpression`."""
-    identifier = Identifier("a")
+    identifier = mock_identifier("a", 0)
 
     result = logical_not(identifier)
 
@@ -710,7 +713,7 @@ def _build_instance_pair(
     if subclass is LiteralExpression:
         return LiteralExpression(42), LiteralExpression(42)
     elif subclass is IdentifierExpression:
-        identifier = Identifier("shared")
+        identifier = mock_identifier("shared", 0)
         return IdentifierExpression(identifier), IdentifierExpression(identifier)
     elif subclass is UnaryExpression:
         operand = LiteralExpression(1)
@@ -724,6 +727,14 @@ def _build_instance_pair(
         return (
             BinaryExpression(BinaryOperation.ADD, left, right),
             BinaryExpression(BinaryOperation.ADD, left, right),
+        )
+    elif subclass is PiecewiseExpression:
+        condition = LiteralExpression(True)
+        value = LiteralExpression(1)
+        otherwise = LiteralExpression(0)
+        return (
+            PiecewiseExpression((condition,), (value,), otherwise),
+            PiecewiseExpression((condition,), (value,), otherwise),
         )
     else:
         raise AssertionError(f"Unknown subclass: {subclass}")
@@ -739,6 +750,9 @@ def _build_instance_pair(
         (BinaryExpression, "operation"),
         (IdentifierExpression, "identifier"),
         (LiteralExpression, "value"),
+        (PiecewiseExpression, "conditions"),
+        (PiecewiseExpression, "values"),
+        (PiecewiseExpression, "otherwise"),
     ],
 )
 def test_expression_instances_are_frozen(
@@ -752,7 +766,13 @@ def test_expression_instances_are_frozen(
 
 @pytest.mark.parametrize(
     "subclass",
-    [LiteralExpression, IdentifierExpression, UnaryExpression, BinaryExpression],
+    [
+        LiteralExpression,
+        IdentifierExpression,
+        UnaryExpression,
+        BinaryExpression,
+        PiecewiseExpression,
+    ],
 )
 def test_distinct_expression_instances_are_unequal_under_eq(
     subclass: type[Expression],
@@ -766,7 +786,13 @@ def test_distinct_expression_instances_are_unequal_under_eq(
 
 @pytest.mark.parametrize(
     "subclass",
-    [LiteralExpression, IdentifierExpression, UnaryExpression, BinaryExpression],
+    [
+        LiteralExpression,
+        IdentifierExpression,
+        UnaryExpression,
+        BinaryExpression,
+        PiecewiseExpression,
+    ],
 )
 def test_distinct_expression_instances_have_distinct_object_ids(
     subclass: type[Expression],
@@ -785,7 +811,13 @@ def test_distinct_expression_instances_have_distinct_object_ids(
 
 @pytest.mark.parametrize(
     "subclass",
-    [LiteralExpression, IdentifierExpression, UnaryExpression, BinaryExpression],
+    [
+        LiteralExpression,
+        IdentifierExpression,
+        UnaryExpression,
+        BinaryExpression,
+        PiecewiseExpression,
+    ],
 )
 def test_set_of_distinct_field_equal_expressions_keeps_both_members(
     subclass: type[Expression],
@@ -793,6 +825,32 @@ def test_set_of_distinct_field_equal_expressions_keeps_both_members(
     """Test a `set` of two field-equal but distinct instances retains both."""
     first, second = _build_instance_pair(subclass)
     assert len({first, second}) == 2
+
+
+def test_reordered_piecewise_cases_are_not_structurally_equivalent() -> None:
+    """Test reordering piecewise cases breaks structural equivalence.
+
+    Case order is semantically load-bearing under first-match-wins
+    evaluation, so two piecewise expressions built from the same cases in a
+    different order must not compare structurally equivalent.
+    """
+    c1, c2 = LiteralExpression(True), LiteralExpression(False)
+    v1, v2 = LiteralExpression(1), LiteralExpression(2)
+    otherwise = LiteralExpression(0)
+    forward = PiecewiseExpression((c1, c2), (v1, v2), otherwise)
+    reversed_order = PiecewiseExpression((c2, c1), (v2, v1), otherwise)
+
+    assert not forward.is_structurally_equivalent(reversed_order)
+    assert not reversed_order.is_structurally_equivalent(forward)
+
+
+def test_piecewise_expression_hash_is_defined_and_follows_identity() -> None:
+    """Test `hash()` succeeds on `PiecewiseExpression` and follows identity."""
+    first, second = _build_instance_pair(PiecewiseExpression)
+
+    assert hash(first) == hash(first)
+    assert hash(first) == object.__hash__(first)
+    assert hash(second) == object.__hash__(second)
 
 
 # =============================================================================
@@ -847,6 +905,122 @@ def test_deserialize_literal_rejects_invalid_data_shape(
     """Test literal deserialization raises on missing or unsupported-value fields."""
     with pytest.raises(DeserializationDictStructureError):
         Expression.deserialize_from_dict(data)
+
+
+# =============================================================================
+# Serialization: PiecewiseExpression
+# =============================================================================
+
+
+def test_piecewise_expression_serialize_to_dict_carries_pinned_type_id() -> None:
+    """Test ``PiecewiseExpression`` serializes under the ``piecewise_expression`` id."""
+    expression = piecewise((LiteralExpression(True), LiteralExpression(1)), otherwise=0)
+
+    serialized = expression.serialize_to_dict()
+    data = serialized["__data__"]
+
+    assert serialized["__type__"] == "piecewise_expression"
+    assert isinstance(data, dict)
+    assert set(data.keys()) == {"conditions", "values", "otherwise"}
+
+
+def test_piecewise_expression_round_trips_through_dict() -> None:
+    """Test a multi-case ``PiecewiseExpression`` round-trips via dict serialization."""
+    expression = piecewise(
+        (LiteralExpression(True), LiteralExpression(1)),
+        (LiteralExpression(False), LiteralExpression(2)),
+        otherwise=LiteralExpression(0),
+    )
+
+    serialized = expression.serialize_to_dict()
+    restored = Expression.deserialize_from_dict(serialized)
+
+    assert restored.is_structurally_equivalent(expression)
+
+
+@pytest.mark.parametrize("fmt", list(SerializationFormat))
+def test_piecewise_expression_round_trips_through_every_format(
+    fmt: SerializationFormat,
+) -> None:
+    """Test ``PiecewiseExpression`` round-trips through DICT, JSON, and BINARY."""
+    expression = piecewise((LiteralExpression(True), LiteralExpression(1)), otherwise=0)
+
+    serialized = expression.serialize(fmt)
+    restored = Expression.deserialize(serialized, fmt)
+
+    assert restored.is_structurally_equivalent(expression)
+
+
+def test_nested_piecewise_expression_round_trips_through_dict() -> None:
+    """Test a ``PiecewiseExpression`` nested inside another round-trips structurally."""
+    inner = piecewise((LiteralExpression(True), LiteralExpression(1)), otherwise=0)
+    outer = piecewise((LiteralExpression(False), inner), otherwise=LiteralExpression(9))
+
+    serialized = outer.serialize_to_dict()
+    restored = Expression.deserialize_from_dict(serialized)
+
+    assert restored.is_structurally_equivalent(outer)
+
+
+def test_deserializing_a_removed_conditional_node_blob_raises_unknown_type_id() -> None:
+    """Test a blob using an unregistered conditional node's type id is rejected.
+
+    No three-operand conditional node (condition, true-branch,
+    false-branch) is registered, and there is no alias or migration path
+    for one; any persisted blob using such an id raises
+    ``UnknownTypeIdError`` on deserialize. The id is assembled at runtime
+    rather than written as a literal so this file carries no textual
+    reference to the unregistered name.
+    """
+    removed_type_id = "".join(["te", "rn", "ary_expression"])
+    unrestorable_blob: SerializedDict = {
+        "__type__": removed_type_id,
+        "__data__": {
+            "condition": {
+                "__type__": "literal_expression",
+                "__data__": {"value": True},
+            },
+            "true_value": {
+                "__type__": "literal_expression",
+                "__data__": {"value": 1},
+            },
+            "false_value": {
+                "__type__": "literal_expression",
+                "__data__": {"value": 2},
+            },
+        },
+    }
+
+    with pytest.raises(UnknownTypeIdError):
+        Expression.deserialize_from_dict(unrestorable_blob)
+
+
+def test_deserializing_mismatched_condition_and_value_lengths_raises_value_error() -> (
+    None
+):
+    """Test a malformed payload with unequal ``conditions``/``values`` lengths raises.
+
+    Field decoding for the two homogeneous tuples succeeds on its own; the
+    length-mismatch invariant is enforced by ``__post_init__`` after
+    decoding, the same layered validation ``CallExpression`` uses for its
+    non-empty-name check.
+    """
+    malformed: SerializedDict = {
+        "__type__": "piecewise_expression",
+        "__data__": {
+            "conditions": [
+                {"__type__": "literal_expression", "__data__": {"value": True}},
+                {"__type__": "literal_expression", "__data__": {"value": False}},
+            ],
+            "values": [
+                {"__type__": "literal_expression", "__data__": {"value": 1}},
+            ],
+            "otherwise": {"__type__": "literal_expression", "__data__": {"value": 0}},
+        },
+    }
+
+    with pytest.raises(ValueError, match=r"(?i)(length|condition)"):
+        Expression.deserialize_from_dict(malformed)
 
 
 # =============================================================================

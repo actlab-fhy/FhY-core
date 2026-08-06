@@ -46,8 +46,8 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    does_expression_imply,
 )
+from fhy_core.symbolic.solver import does_expression_imply
 from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.traits import FrozenMixin, StructuralEquivalence
 from fhy_core.utils import format_comma_separated_list, is_strict_int

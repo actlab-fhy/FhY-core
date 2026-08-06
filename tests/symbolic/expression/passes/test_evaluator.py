@@ -9,7 +9,7 @@ substitutions:
 2. ``IdentifierExpression`` whose identifier name matches a registered
    ``NativeConstant`` becomes ``LiteralExpression(constant.value)``.
 
-Every other node kind (arithmetic, comparison, logical, ternary,
+Every other node kind (arithmetic, comparison, logical, piecewise,
 non-native calls, calls with at least one non-literal argument,
 identifier references that do not match a constant) is reconstructed
 with its evaluated children but otherwise left as-is. The evaluator
@@ -22,7 +22,6 @@ from collections.abc import Callable
 
 import pytest
 
-from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
 from fhy_core.symbolic.expression import (
     BinaryExpression,
@@ -32,7 +31,7 @@ from fhy_core.symbolic.expression import (
     IdentifierExpression,
     LiteralExpression,
     NativeFunction,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     call,
@@ -41,6 +40,8 @@ from fhy_core.symbolic.expression import (
     register_native_constant,
     register_native_function,
 )
+
+from ..conftest import mock_identifier
 
 
 def register_real_unary_native(
@@ -143,7 +144,7 @@ def test_evaluate_leaves_native_call_with_identifier_argument_alone(
 ) -> None:
     """Test a native call whose argument is an identifier is not folded."""
     register_real_unary_native("test_eval_keep_symbolic", math.exp)
-    x = Identifier("x")
+    x = mock_identifier("x", 0)
     expression = call("test_eval_keep_symbolic", x)
 
     result = evaluate_expression(expression)
@@ -167,7 +168,7 @@ def test_evaluate_leaves_native_call_with_mixed_arguments_alone(
         result_sort=FunctionSort.REAL,
         implementation=_add,
     )
-    x = Identifier("x")
+    x = mock_identifier("x", 0)
     expression = call("test_eval_mixed_args", LiteralExpression(1.0), x)
 
     result = evaluate_expression(expression)
@@ -189,7 +190,7 @@ def test_evaluate_leaves_expression_bodied_call_alone_even_with_literal_args(
     Expression-bodied registrations are inlined by ``inline_functions``,
     not the evaluator.
     """
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     register_function(
         "test_eval_expression_bodied",
         parameters=[parameter],
@@ -215,7 +216,7 @@ def test_evaluate_substitutes_identifier_reference_with_native_constant_value(
 ) -> None:
     """Test an identifier whose name matches a registered constant is substituted."""
     register_native_constant("test_eval_const", sort=FunctionSort.REAL, value=2.5)
-    expression = IdentifierExpression(Identifier("test_eval_const"))
+    expression = IdentifierExpression(mock_identifier("test_eval_const", 0))
 
     result = evaluate_expression(expression)
 
@@ -227,7 +228,7 @@ def test_evaluate_leaves_identifier_alone_when_name_not_a_constant(
     function_registry_snapshot: None,
 ) -> None:
     """Test an identifier whose name is not in the registry is unchanged."""
-    x = Identifier("test_eval_unbound")
+    x = mock_identifier("test_eval_unbound", 0)
     expression = IdentifierExpression(x)
 
     result = evaluate_expression(expression)
@@ -270,7 +271,9 @@ def test_evaluate_folds_native_call_with_constant_argument(
     register_native_constant("test_eval_const_arg", sort=FunctionSort.REAL, value=0.0)
     register_real_unary_native("test_eval_const_native", math.exp)
 
-    expression = call("test_eval_const_native", Identifier("test_eval_const_arg"))
+    expression = call(
+        "test_eval_const_native", mock_identifier("test_eval_const_arg", 0)
+    )
     result = evaluate_expression(expression)
 
     assert isinstance(result, LiteralExpression)
@@ -304,17 +307,17 @@ def test_evaluate_does_not_fold_unary_negation_of_literal() -> None:
     assert result.operation == UnaryOperation.NEGATE
 
 
-def test_evaluate_does_not_fold_literal_only_ternary() -> None:
-    """Test ``True ? 1 : 2`` is left intact."""
-    expression = TernaryExpression(
-        LiteralExpression(True),
-        LiteralExpression(1),
+def test_evaluate_does_not_fold_literal_only_piecewise() -> None:
+    """Test ``{1 if True; 2 otherwise}`` is left intact."""
+    expression = PiecewiseExpression(
+        (LiteralExpression(True),),
+        (LiteralExpression(1),),
         LiteralExpression(2),
     )
 
     result = evaluate_expression(expression)
 
-    assert isinstance(result, TernaryExpression)
+    assert isinstance(result, PiecewiseExpression)
 
 
 # =============================================================================
@@ -341,23 +344,23 @@ def test_evaluate_recurses_into_binary_expression_children(
     assert result.right.is_structurally_equivalent(LiteralExpression(1))
 
 
-def test_evaluate_recurses_into_ternary_branches(
+def test_evaluate_recurses_into_piecewise_branches(
     function_registry_snapshot: None,
 ) -> None:
-    """Test the evaluator folds native calls within the ternary's branches."""
-    register_real_unary_native("test_eval_into_ternary", math.exp)
-    x = Identifier("x")
+    """Test the evaluator folds native calls within the piecewise's branches."""
+    register_real_unary_native("test_eval_into_piecewise", math.exp)
+    x = mock_identifier("x", 0)
 
-    expression = TernaryExpression(
-        IdentifierExpression(x) > 0,
-        call("test_eval_into_ternary", LiteralExpression(0.0)),
+    expression = PiecewiseExpression(
+        (IdentifierExpression(x) > 0,),
+        (call("test_eval_into_piecewise", LiteralExpression(0.0)),),
         LiteralExpression(0),
     )
     result = evaluate_expression(expression)
 
-    assert isinstance(result, TernaryExpression)
-    assert isinstance(result.true_value, LiteralExpression)
-    assert result.true_value.value == 1.0
+    assert isinstance(result, PiecewiseExpression)
+    assert isinstance(result.values[0], LiteralExpression)
+    assert result.values[0].value == 1.0
 
 
 # =============================================================================
@@ -409,7 +412,7 @@ def test_evaluate_returns_literal_unchanged() -> None:
 
 def test_evaluate_returns_identifier_unchanged_when_not_a_constant() -> None:
     """Test a bare ``IdentifierExpression`` (not a constant) is returned unchanged."""
-    x = Identifier("test_eval_passthrough")
+    x = mock_identifier("test_eval_passthrough", 0)
     original = IdentifierExpression(x)
 
     result = evaluate_expression(original)
@@ -519,7 +522,7 @@ def test_evaluate_preserves_call_to_registered_function_unchanged(
     The evaluator emits a diagnostic recommending ``inline_functions``
     and leaves the call node unchanged.
     """
-    parameter = Identifier("x")
+    parameter = mock_identifier("x", 0)
     register_function(
         "test_eval_unfolded_call",
         parameters=[parameter],

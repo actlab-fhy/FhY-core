@@ -12,7 +12,7 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
 )
@@ -25,8 +25,8 @@ from fhy_core.symbolic.expression.pattern import (
     LiteralPattern,
     MatchBindings,
     Pattern,
+    PiecewiseExpressionPattern,
     PredicatePattern,
-    TernaryExpressionPattern,
     UnaryExpressionPattern,
     WildcardPattern,
     does_pattern_match,
@@ -598,85 +598,265 @@ def test_binary_expression_pattern_propagates_right_failure() -> None:
 
 
 # ===========================================================================
-# TernaryExpressionPattern
+# PiecewiseExpressionPattern
 # ===========================================================================
 
 
-def test_ternary_expression_pattern_matches_ternary() -> None:
-    """Test ``TernaryExpressionPattern`` matches a ternary expression."""
-    pattern = TernaryExpressionPattern(
-        WildcardPattern(), WildcardPattern(), WildcardPattern()
+def test_piecewise_expression_pattern_rejects_empty_cases_tuple() -> None:
+    """Test ``PiecewiseExpressionPattern`` rejects an empty (non-``None``) cases tuple.
+
+    A real ``PiecewiseExpression`` always has at least one case, so an empty
+    ``cases`` tuple could never match anything; ``None`` is the correct
+    spelling for "match any case count."
+    """
+    with pytest.raises(ValueError, match="cases"):
+        PiecewiseExpressionPattern((), WildcardPattern())
+
+
+def test_piecewise_expression_pattern_matches_single_case_piecewise() -> None:
+    """Test ``PiecewiseExpressionPattern`` matches a one-case piecewise expression."""
+    pattern = PiecewiseExpressionPattern(
+        ((WildcardPattern(), WildcardPattern()),), WildcardPattern()
     )
-    expression = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+    expression = PiecewiseExpression(
+        (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
     )
 
     assert pattern.match(expression) is not None
 
 
-def test_ternary_expression_pattern_rejects_non_ternary_expression() -> None:
-    """Test ``TernaryExpressionPattern`` rejects a non-ternary expression."""
-    pattern = TernaryExpressionPattern(
-        WildcardPattern(), WildcardPattern(), WildcardPattern()
-    )
+def test_piecewise_expression_pattern_rejects_non_piecewise_expression() -> None:
+    """Test ``PiecewiseExpressionPattern`` rejects a non-piecewise expression."""
+    pattern = PiecewiseExpressionPattern(None, WildcardPattern())
 
     assert pattern.match(LiteralExpression(5)) is None
 
 
-def test_ternary_expression_pattern_threads_bindings_through_branches() -> None:
-    """Test bindings from each ternary branch combine."""
-    pattern = TernaryExpressionPattern(
-        CapturePattern("c", WildcardPattern()),
-        CapturePattern("t", WildcardPattern()),
-        CapturePattern("f", WildcardPattern()),
+def test_piecewise_expression_pattern_with_none_cases_matches_any_case_count() -> None:
+    """Test ``cases=None`` matches piecewise expressions of any case count."""
+    pattern = PiecewiseExpressionPattern(None, WildcardPattern())
+    single_case = PiecewiseExpression(
+        (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
+    )
+    multi_case = PiecewiseExpression(
+        (LiteralExpression(True), LiteralExpression(False)),
+        (LiteralExpression(1), LiteralExpression(2)),
+        LiteralExpression(3),
+    )
+
+    assert pattern.match(single_case) is not None
+    assert pattern.match(multi_case) is not None
+
+
+def test_piecewise_expression_pattern_rejects_case_count_mismatch() -> None:
+    """Test a non-``None`` ``cases`` tuple requires an exact case-count match."""
+    pattern = PiecewiseExpressionPattern(
+        ((WildcardPattern(), WildcardPattern()),), WildcardPattern()
+    )
+    two_case_expression = PiecewiseExpression(
+        (LiteralExpression(True), LiteralExpression(False)),
+        (LiteralExpression(1), LiteralExpression(2)),
+        LiteralExpression(3),
+    )
+
+    assert pattern.match(two_case_expression) is None
+
+
+def test_piecewise_expression_pattern_threads_bindings_through_case_and_otherwise() -> (
+    None
+):
+    """Test bindings from the case condition, case value, and otherwise combine."""
+    pattern = PiecewiseExpressionPattern(
+        (
+            (
+                CapturePattern("c", WildcardPattern()),
+                CapturePattern("v", WildcardPattern()),
+            ),
+        ),
+        CapturePattern("o", WildcardPattern()),
     )
     condition = LiteralExpression(True)
-    true_value = LiteralExpression(1)
-    false_value = LiteralExpression(2)
-    expression = TernaryExpression(condition, true_value, false_value)
+    value = LiteralExpression(1)
+    otherwise = LiteralExpression(2)
+    expression = PiecewiseExpression((condition,), (value,), otherwise)
 
     result = pattern.match(expression)
 
     assert result is not None
     assert result.get("c") is condition
-    assert result.get("t") is true_value
-    assert result.get("f") is false_value
+    assert result.get("v") is value
+    assert result.get("o") is otherwise
 
 
-def test_ternary_expression_pattern_propagates_branch_failure() -> None:
-    """Test ``TernaryExpressionPattern`` fails when any branch sub-pattern fails."""
-    pattern = TernaryExpressionPattern(
-        WildcardPattern(), LiteralPattern(value=99), WildcardPattern()
+def test_piecewise_expression_pattern_threads_bindings_across_cases_in_order() -> None:
+    """Test bindings from every case thread through in evaluation order."""
+    pattern = PiecewiseExpressionPattern(
+        (
+            (
+                CapturePattern("c1", WildcardPattern()),
+                CapturePattern("v1", WildcardPattern()),
+            ),
+            (
+                CapturePattern("c2", WildcardPattern()),
+                CapturePattern("v2", WildcardPattern()),
+            ),
+        ),
+        WildcardPattern(),
     )
-    expression = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+    c1, c2 = LiteralExpression(True), LiteralExpression(False)
+    v1, v2 = LiteralExpression(1), LiteralExpression(2)
+    expression = PiecewiseExpression((c1, c2), (v1, v2), LiteralExpression(0))
+
+    result = pattern.match(expression)
+
+    assert result is not None
+    assert result.get("c1") is c1
+    assert result.get("v1") is v1
+    assert result.get("c2") is c2
+    assert result.get("v2") is v2
+
+
+def test_piecewise_expression_pattern_propagates_condition_failure_within_a_case() -> (
+    None
+):
+    """Test a failing condition sub-pattern in any case fails the whole match."""
+    pattern = PiecewiseExpressionPattern(
+        ((LiteralPattern(value=99), WildcardPattern()),), WildcardPattern()
+    )
+    expression = PiecewiseExpression(
+        (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
     )
 
     assert pattern.match(expression) is None
 
 
-def test_ternary_expression_pattern_propagates_false_branch_failure() -> None:
-    """Test ``TernaryExpressionPattern`` fails when only the false-branch fails."""
-    pattern = TernaryExpressionPattern(
-        WildcardPattern(), WildcardPattern(), LiteralPattern(value=99)
+def test_piecewise_expression_pattern_propagates_value_failure_within_a_case() -> None:
+    """Test a failing value sub-pattern in any case fails the whole match."""
+    pattern = PiecewiseExpressionPattern(
+        ((WildcardPattern(), LiteralPattern(value=99)),), WildcardPattern()
     )
-    expression = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+    expression = PiecewiseExpression(
+        (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
+    )
+
+    assert pattern.match(expression) is None
+
+
+def test_piecewise_expression_pattern_propagates_otherwise_failure() -> None:
+    """Test a failing ``otherwise`` sub-pattern fails the match even if cases match."""
+    pattern = PiecewiseExpressionPattern(
+        ((WildcardPattern(), WildcardPattern()),), LiteralPattern(value=99)
+    )
+    expression = PiecewiseExpression(
+        (LiteralExpression(True),), (LiteralExpression(1),), LiteralExpression(2)
     )
 
     assert pattern.match(expression) is None
 
 
-def test_ternary_expression_pattern_propagates_condition_failure() -> None:
-    """Test ``TernaryExpressionPattern`` fails when the condition sub-pattern fails."""
-    pattern = TernaryExpressionPattern(
-        LiteralPattern(value=99), WildcardPattern(), WildcardPattern()
-    )
-    expression = TernaryExpression(
-        LiteralExpression(True), LiteralExpression(1), LiteralExpression(2)
+# ===========================================================================
+# PiecewiseExpressionPattern: __post_init__ coercion and validation
+# ===========================================================================
+
+
+def test_piecewise_expression_pattern_none_cases_remains_none() -> None:
+    """Test constructing with ``cases=None`` leaves the field as ``None``."""
+    pattern = PiecewiseExpressionPattern(None, WildcardPattern())
+
+    assert pattern.cases is None
+
+
+def test_piecewise_expression_pattern_coerces_list_cases_to_tuple_of_tuples() -> None:
+    """Test constructing with list ``cases`` (and list pairs) coerces to tuples.
+
+    ``cases`` is declared as ``tuple[tuple[Pattern, Pattern], ...] | None``, but
+    nothing at the language level stops a caller from passing a list of lists
+    instead; ``__post_init__`` normalizes both levels to real tuples.
+    """
+    condition_pattern = WildcardPattern()
+    value_pattern = LiteralPattern(value=1)
+
+    pattern = PiecewiseExpressionPattern(
+        [[condition_pattern, value_pattern]],  # type: ignore[arg-type]
+        WildcardPattern(),
     )
 
-    assert pattern.match(expression) is None
+    assert type(pattern.cases) is tuple
+    assert pattern.cases is not None
+    assert type(pattern.cases[0]) is tuple
+    assert pattern.cases == ((condition_pattern, value_pattern),)
+
+
+def test_piecewise_expression_pattern_cases_unaffected_by_later_list_mutation() -> None:
+    """Test mutating the list passed as ``cases`` after construction has no effect."""
+    condition_pattern = WildcardPattern()
+    value_pattern = LiteralPattern(value=1)
+    cases_list: list[tuple[Pattern, Pattern]] = [(condition_pattern, value_pattern)]
+
+    pattern = PiecewiseExpressionPattern(cases_list, WildcardPattern())  # type: ignore[arg-type]
+    cases_list.append((LiteralPattern(value=2), LiteralPattern(value=3)))
+
+    assert pattern.cases == ((condition_pattern, value_pattern),)
+
+
+def test_piecewise_expression_pattern_case_pair_unaffected_by_later_list_mutation() -> (
+    None
+):
+    """Test mutating a case-pair list passed inside ``cases`` has no effect.
+
+    Each case pair may itself be supplied as a list rather than a tuple;
+    ``__post_init__`` must coerce that inner sequence too, or a caller
+    mutating the pair in place after construction would silently change
+    the pattern's matching behavior.
+    """
+    original_condition = WildcardPattern()
+    value_pattern = LiteralPattern(value=1)
+    pair = [original_condition, value_pattern]
+
+    pattern = PiecewiseExpressionPattern([pair], WildcardPattern())  # type: ignore[arg-type]
+    pair[0] = LiteralPattern(value=99)
+
+    assert pattern.cases == ((original_condition, value_pattern),)
+
+
+def test_piecewise_expression_pattern_rejects_non_pattern_condition_in_case() -> None:
+    """Test a non-``Pattern`` condition inside a case raises ``ValueError``."""
+    with pytest.raises(
+        ValueError, match="condition pattern must be a Pattern instance"
+    ):
+        PiecewiseExpressionPattern(
+            (("not a pattern", WildcardPattern()),),  # type: ignore[arg-type]
+            WildcardPattern(),
+        )
+
+
+def test_piecewise_expression_pattern_rejects_non_pattern_value_in_case() -> None:
+    """Test a non-``Pattern`` value inside a case raises ``ValueError``."""
+    with pytest.raises(ValueError, match="value pattern must be a Pattern instance"):
+        PiecewiseExpressionPattern(
+            ((WildcardPattern(), "not a pattern"),),  # type: ignore[arg-type]
+            WildcardPattern(),
+        )
+
+
+def test_piecewise_expression_pattern_rejects_non_pattern_otherwise() -> None:
+    """Test a non-``Pattern`` ``otherwise`` raises ``ValueError``."""
+    with pytest.raises(ValueError, match="otherwise must be a Pattern instance"):
+        PiecewiseExpressionPattern(
+            ((WildcardPattern(), WildcardPattern()),),
+            "not a pattern",  # type: ignore[arg-type]
+        )
+
+
+def test_piecewise_expression_pattern_rejects_case_with_wrong_pair_length() -> None:
+    """Test a case that is not a two-element pair raises ``ValueError``."""
+    with pytest.raises(ValueError, match="pairs"):
+        PiecewiseExpressionPattern(
+            (  # type: ignore[arg-type]
+                (WildcardPattern(), WildcardPattern(), WildcardPattern()),
+            ),
+            WildcardPattern(),
+        )
 
 
 # ===========================================================================
@@ -763,6 +943,68 @@ def test_call_expression_pattern_matches_empty_argument_call() -> None:
 
     assert pattern.match(CallExpression("f", ())) is not None
     assert pattern.match(CallExpression("f", (LiteralExpression(1),))) is None
+
+
+# ===========================================================================
+# CallExpressionPattern: __post_init__ coercion and validation
+# ===========================================================================
+
+
+def test_call_expression_pattern_none_arguments_remains_none() -> None:
+    """Test constructing with ``arguments=None`` leaves the field as ``None``."""
+    pattern = CallExpressionPattern(function_name="f", arguments=None)
+
+    assert pattern.arguments is None
+
+
+def test_call_expression_pattern_empty_tuple_arguments_remains_empty_tuple() -> None:
+    """Test constructing with ``arguments=()`` leaves the field as an empty tuple."""
+    pattern = CallExpressionPattern(function_name="f", arguments=())
+
+    assert pattern.arguments == ()
+
+
+def test_call_expression_pattern_coerces_list_arguments_to_tuple() -> None:
+    """Test constructing with a list ``arguments`` coerces it to a tuple.
+
+    ``arguments`` is declared as ``tuple[Pattern, ...] | None``, but nothing
+    at the language level stops a caller from passing a list instead;
+    ``__post_init__`` normalizes it to a real tuple.
+    """
+    argument_pattern = WildcardPattern()
+
+    pattern = CallExpressionPattern(
+        function_name="f",
+        arguments=[argument_pattern],  # type: ignore[arg-type]
+    )
+
+    assert type(pattern.arguments) is tuple
+    assert pattern.arguments == (argument_pattern,)
+
+
+def test_call_expression_pattern_arguments_unaffected_by_later_list_mutation() -> None:
+    """Test post-construction mutation of the ``arguments`` list has no effect."""
+    argument_pattern = WildcardPattern()
+    arguments_list: list[Pattern] = [argument_pattern]
+
+    pattern = CallExpressionPattern(
+        function_name="f",
+        arguments=arguments_list,  # type: ignore[arg-type]
+    )
+    arguments_list.append(LiteralPattern(value=1))
+
+    assert pattern.arguments == (argument_pattern,)
+
+
+def test_call_expression_pattern_rejects_non_pattern_argument() -> None:
+    """Test a non-``Pattern`` element in ``arguments`` raises ``ValueError``."""
+    with pytest.raises(
+        ValueError, match="arguments element must be a Pattern instance"
+    ):
+        CallExpressionPattern(
+            function_name="f",
+            arguments=(WildcardPattern(), "not a pattern"),  # type: ignore[arg-type]
+        )
 
 
 # ===========================================================================
@@ -928,6 +1170,46 @@ def test_alternatives_pattern_discards_captures_from_failed_alternative() -> Non
     assert result is not None
     assert not result.has("captured_in_failed")
     assert result.has("captured_in_successful")
+
+
+# ===========================================================================
+# AlternativesPattern: __post_init__ coercion and validation
+# ===========================================================================
+
+
+def test_alternatives_pattern_coerces_list_alternatives_to_tuple() -> None:
+    """Test constructing with a list ``alternatives`` coerces it to a tuple.
+
+    ``alternatives`` is declared as ``tuple[Pattern, ...]``, but nothing at
+    the language level stops a caller from passing a list instead;
+    ``__post_init__`` normalizes it to a real tuple.
+    """
+    first = LiteralPattern(value=1)
+    second = LiteralPattern(value=2)
+
+    pattern = AlternativesPattern([first, second])  # type: ignore[arg-type]
+
+    assert type(pattern.alternatives) is tuple
+    assert pattern.alternatives == (first, second)
+
+
+def test_alternatives_pattern_unaffected_by_later_list_mutation() -> None:
+    """Test post-construction mutation of the ``alternatives`` list has no effect."""
+    first = LiteralPattern(value=1)
+    alternatives_list = [first]
+
+    pattern = AlternativesPattern(alternatives_list)  # type: ignore[arg-type]
+    alternatives_list.append(LiteralPattern(value=2))
+
+    assert pattern.alternatives == (first,)
+
+
+def test_alternatives_pattern_rejects_non_pattern_alternative() -> None:
+    """Test a non-``Pattern`` element in ``alternatives`` raises ``ValueError``."""
+    with pytest.raises(
+        ValueError, match="alternatives element must be a Pattern instance"
+    ):
+        AlternativesPattern((LiteralPattern(value=1), "not a pattern"))  # type: ignore[arg-type]
 
 
 # ===========================================================================
