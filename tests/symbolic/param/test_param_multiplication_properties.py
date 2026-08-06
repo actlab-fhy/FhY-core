@@ -10,7 +10,7 @@ import pytest
 
 pytest.importorskip("hypothesis")
 
-from hypothesis import given  # type: ignore[import-not-found]
+from hypothesis import given
 from hypothesis import strategies as st
 
 from fhy_core.symbolic.param import create_interval_integer_param_between
@@ -23,7 +23,7 @@ pytestmark = pytest.mark.property
 # =============================================================================
 
 
-@given(  # type: ignore[untyped-decorator]
+@given(
     bound_1=st.integers(min_value=-25, max_value=25),
     bound_2=st.integers(min_value=-25, max_value=25),
     bound_3=st.integers(min_value=-25, max_value=25),

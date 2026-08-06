@@ -10,7 +10,7 @@ import pytest
 
 pytest.importorskip("hypothesis")
 
-from hypothesis import assume, given  # type: ignore[import-not-found]
+from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from fhy_core.symbolic.param import create_intersection_param, create_ordinal_param
@@ -23,7 +23,7 @@ pytestmark = pytest.mark.property
 # =============================================================================
 
 
-@given(  # type: ignore[untyped-decorator]
+@given(
     left_values=st.sets(st.integers(min_value=0, max_value=12), min_size=1, max_size=6),
     right_values=st.sets(
         st.integers(min_value=0, max_value=12), min_size=1, max_size=6

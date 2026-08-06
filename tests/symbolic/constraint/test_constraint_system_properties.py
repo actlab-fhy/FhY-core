@@ -9,7 +9,7 @@ skips the whole module before the `hypothesis` import is attempted.
 import pytest
 
 pytest.importorskip("hypothesis")
-from hypothesis import given  # type: ignore[import-not-found]
+from hypothesis import given
 from hypothesis import strategies as st
 
 from fhy_core.symbolic.constraint import (
@@ -27,7 +27,7 @@ from .conftest import mock_identifier
 pytestmark = pytest.mark.property
 
 
-@given(  # type: ignore[untyped-decorator]
+@given(
     x_value=st.integers(min_value=-5, max_value=10),
     y_value=st.integers(min_value=-5, max_value=10),
 )
@@ -58,7 +58,7 @@ def test_evaluate_with_bindings_matches_fold_of_member_outcomes(
 
 
 @pytest.mark.z3
-@given(threshold=st.integers(min_value=0, max_value=10))  # type: ignore[untyped-decorator]
+@given(threshold=st.integers(min_value=0, max_value=10))
 def test_check_satisfiability_matches_brute_force_enumeration(threshold: int) -> None:
     """Test z3-backed satisfiability agrees with brute-force enumeration."""
     x = mock_identifier("x", 0)

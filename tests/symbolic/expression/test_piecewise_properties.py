@@ -15,7 +15,7 @@ import pytest
 # module must be import-skippable there instead of failing collection.
 pytest.importorskip("hypothesis")
 
-from hypothesis import given, settings  # type: ignore[import-not-found]
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fhy_core.symbolic.expression import (
@@ -80,8 +80,8 @@ def _random_piecewise_expressions() -> st.SearchStrategy[PiecewiseExpression]:
 # =============================================================================
 
 
-@settings(max_examples=50, deadline=None)  # type: ignore[untyped-decorator]
-@given(_random_piecewise_expressions())  # type: ignore[untyped-decorator]
+@settings(max_examples=50, deadline=None)
+@given(_random_piecewise_expressions())
 def test_random_piecewise_tree_round_trips_through_dict_serialization(
     expression: PiecewiseExpression,
 ) -> None:
@@ -96,26 +96,25 @@ def test_random_piecewise_tree_round_trips_through_dict_serialization(
 # =============================================================================
 
 
-_FLOAT_KWARGS = {
-    "min_value": -1000.0,
-    "max_value": 1000.0,
-    "allow_nan": False,
-    "allow_infinity": False,
-}
+def _create_bounded_float_strategy() -> st.SearchStrategy[float]:
+    """Return a strategy for finite floats bounded to [-1000.0, 1000.0]."""
+    return st.floats(
+        min_value=-1000.0, max_value=1000.0, allow_nan=False, allow_infinity=False
+    )
 
 
-@settings(max_examples=50, deadline=None)  # type: ignore[untyped-decorator]
-@given(  # type: ignore[untyped-decorator]
+@settings(max_examples=50, deadline=None)
+@given(
     cases=st.lists(
         st.tuples(
-            st.floats(**_FLOAT_KWARGS),
+            _create_bounded_float_strategy(),
             st.integers(min_value=-1000, max_value=1000),
         ),
         min_size=1,
         max_size=4,
     ),
     otherwise_value=st.integers(min_value=-1000, max_value=1000),
-    sample_values=st.lists(st.floats(**_FLOAT_KWARGS), min_size=1, max_size=20),
+    sample_values=st.lists(_create_bounded_float_strategy(), min_size=1, max_size=20),
 )
 def test_numpy_evaluation_matches_pointwise_first_match_fold(
     cases: list[tuple[float, int]],
@@ -153,8 +152,8 @@ def test_numpy_evaluation_matches_pointwise_first_match_fold(
 # =============================================================================
 
 
-@settings(max_examples=50, deadline=None)  # type: ignore[untyped-decorator]
-@given(  # type: ignore[untyped-decorator]
+@settings(max_examples=50, deadline=None)
+@given(
     num_cases=st.integers(min_value=1, max_value=4),
     values=st.lists(
         st.integers(min_value=-1000, max_value=1000), min_size=1, max_size=4
