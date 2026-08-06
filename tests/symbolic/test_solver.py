@@ -19,7 +19,13 @@ from fhy_core.symbolic.expression.errors import UndecidableError
 from fhy_core.symbolic.expression.passes.sympy import (
     simplify_expression as _bridge_simplify_expression,
 )
+
+# White-box import: no public accessor enumerates every backend's capability
+# entry at once (`get_backend_capabilities` only looks up one backend at a
+# time), so this drift guard reads the table directly, matching the
+# convention in test_numpy_evaluator.py's lowering-table coverage tests.
 from fhy_core.symbolic.solver import (
+    _BACKEND_CAPABILITIES,
     SolverBackend,
     SolverCapabilityError,
     SolverQueryKind,
@@ -38,6 +44,17 @@ from .conftest import mock_identifier
 # =============================================================================
 # Capability table
 # =============================================================================
+
+
+def test_every_solver_backend_has_a_capability_table_entry() -> None:
+    """Test every `SolverBackend` member has an entry in the capability table.
+
+    `get_backend_capabilities` subscripts the table directly, so a member
+    added without an entry would otherwise raise a raw `KeyError` only when
+    that backend is first queried; this makes the drift a deterministic
+    failure instead.
+    """
+    assert set(_BACKEND_CAPABILITIES) == set(SolverBackend)
 
 
 def test_get_backend_capabilities_sympy_supports_only_simplification() -> None:
@@ -133,6 +150,24 @@ def test_simplify_expression_with_environment_folds_to_a_literal() -> None:
 
     assert isinstance(result, LiteralExpression)
     assert result.value == 5
+
+
+def test_simplify_expression_with_residual_variable_reduces_to_the_identifier() -> None:
+    """Test an open ``x + 0`` simplifies to the bare identifier expression.
+
+    With no environment binding ``x``, simplification cannot fold to a
+    literal; it still algebraically reduces the additive identity away,
+    leaving exactly the identifier operand rather than a residual
+    ``x + 0`` tree.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(x), LiteralExpression(0)
+    )
+
+    result = simplify_expression(expression)
+
+    assert result.is_structurally_equivalent(IdentifierExpression(x))
 
 
 # =============================================================================
@@ -321,11 +356,39 @@ def test_assert_holds_for_all_free_assignments_returns_true_without_raising() ->
 
 
 @pytest.mark.z3
+def test_assert_holds_for_all_free_assignments_returns_false_without_raising() -> None:
+    """Test the strict variant returns a decided `False` without raising.
+
+    ``x < N and x > N`` has no witness ``x`` for any free ``N``, so the
+    universal-validity query is decided ``False`` rather than unknown.
+    """
+    x = mock_identifier("x", 0)
+    n = mock_identifier("N", 1)
+    expression = BinaryExpression(
+        BinaryOperation.LOGICAL_AND,
+        BinaryExpression(
+            BinaryOperation.LESS, IdentifierExpression(x), IdentifierExpression(n)
+        ),
+        BinaryExpression(
+            BinaryOperation.GREATER, IdentifierExpression(x), IdentifierExpression(n)
+        ),
+    )
+
+    assert (
+        assert_holds_for_all_free_assignments(
+            {x}, expression, {x: SymbolType.INT, n: SymbolType.INT}
+        )
+        is False
+    )
+
+
+@pytest.mark.z3
 def test_assert_expression_implies_raises_undecidable_error_on_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test the strict variant raises `UndecidableError` instead of returning `None`."""
+    """Test the strict variant raises `UndecidableError` naming Z3's stated reason."""
     monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+    monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
     x = mock_identifier("x", 0)
     antecedent = BinaryExpression(
         BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
@@ -334,7 +397,7 @@ def test_assert_expression_implies_raises_undecidable_error_on_unknown(
         BinaryOperation.GREATER_EQUAL, IdentifierExpression(x), LiteralExpression(0)
     )
 
-    with pytest.raises(UndecidableError):
+    with pytest.raises(UndecidableError, match="timeout"):
         assert_expression_implies(antecedent, consequent, {x: SymbolType.INT})
 
 
@@ -342,8 +405,9 @@ def test_assert_expression_implies_raises_undecidable_error_on_unknown(
 def test_assert_holds_for_all_free_assignments_raises_undecidable_error_on_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test the strict variant raises `UndecidableError` instead of returning `None`."""
+    """Test the strict variant raises `UndecidableError` naming Z3's stated reason."""
     monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+    monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
     x = mock_identifier("x", 0)
     expression = UnaryExpression(
         UnaryOperation.LOGICAL_NOT,
@@ -352,7 +416,7 @@ def test_assert_holds_for_all_free_assignments_raises_undecidable_error_on_unkno
         ),
     )
 
-    with pytest.raises(UndecidableError):
+    with pytest.raises(UndecidableError, match="timeout"):
         assert_holds_for_all_free_assignments(
             frozenset(), expression, {x: SymbolType.INT}
         )

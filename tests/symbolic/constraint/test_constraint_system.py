@@ -185,6 +185,31 @@ def test_constraint_system_structural_equivalence_false_for_different_members() 
     assert not left.is_structurally_equivalent(right)
 
 
+def test_constraint_system_canonicalizes_alike_for_independent_identifiers() -> None:
+    """Test independently constructed, content-identical systems canonicalize alike.
+
+    Two separate ``mock_identifier`` calls with the same name and id are
+    distinct ``Mock`` objects, but ``ConstraintSystem`` orders its members
+    by ``repr``. A deterministic, content-based mock ``repr`` is required
+    for two independently built systems over "the same" identifiers, given
+    in different construction order, to canonicalize to the same member
+    order.
+    """
+    x1, y1 = mock_identifier("x", 0), mock_identifier("y", 1)
+    x2, y2 = mock_identifier("x", 0), mock_identifier("y", 1)
+    left = create_constraint_system(
+        InSetConstraint(x1, {1, 2}), InSetConstraint(y1, {3, 4})
+    )
+    right = create_constraint_system(
+        InSetConstraint(y2, {3, 4}), InSetConstraint(x2, {1, 2})
+    )
+
+    assert [repr(c) for c in left.constraints] == [repr(c) for c in right.constraints]
+    assert left.convert_to_expression().is_structurally_equivalent(
+        right.convert_to_expression()
+    )
+
+
 # =============================================================================
 # Frozen contract
 # =============================================================================
@@ -724,6 +749,46 @@ def test_check_satisfiability_with_closed_conjunction_needs_no_symbol_types() ->
     assert outcome is ConstraintOutcome.SATISFIED
 
 
+def test_check_satisfiability_with_bindings_empty_system_does_not_invoke_the_solver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test the empty system short-circuits to SATISFIED without calling z3.
+
+    Mirrors ``test_check_satisfiability_empty_system_does_not_invoke_the_solver``
+    for the bindings-aware entry point.
+    """
+
+    def _fail_if_called(*args: object, **kwargs: object) -> bool | None:
+        raise AssertionError("check_expression_satisfiability must not be called")
+
+    monkeypatch.setattr(
+        "fhy_core.symbolic.constraint.check_expression_satisfiability", _fail_if_called
+    )
+    system = create_constraint_system()
+
+    outcome = system.check_satisfiability_with_bindings({}, {})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+
+
+@pytest.mark.z3
+def test_check_satisfiability_with_bindings_constants_only_needs_no_symbol_types() -> (
+    None
+):
+    """Test a constants-only system needs no symbol types with empty bindings.
+
+    Mirrors ``test_check_satisfiability_with_closed_conjunction_needs_no_symbol_types``
+    for the bindings-aware entry point: with no bindings supplied, the
+    residual is the same closed expression, which needs no symbol types.
+    """
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(EquationConstraint(x, LiteralExpression(True)))
+
+    outcome = system.check_satisfiability_with_bindings({}, {})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+
+
 # =============================================================================
 # `evaluate_with_bindings` / `check_satisfiability_with_bindings` cross-path
 # agreement (z3-backed)
@@ -782,7 +847,7 @@ def test_check_satisfiability_bool_member_ambiguity_is_undecided_not_violated() 
     assert system.evaluate_with_bindings({x: 1}) is ConstraintOutcome.SATISFIED
     outcome = system.check_satisfiability({x: SymbolType.INT})
 
-    assert outcome is not ConstraintOutcome.VIOLATED
+    assert outcome is ConstraintOutcome.UNDECIDED
 
 
 @pytest.mark.z3

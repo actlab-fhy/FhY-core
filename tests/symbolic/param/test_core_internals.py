@@ -10,9 +10,10 @@ from typing import Any
 
 import pytest
 
-from fhy_core.identifier import Identifier
 from fhy_core.symbolic.param.core import _constraint_structural_ordering_key
 from fhy_core.symbolic.param.values import ParamError, serialize_wrapped_leaf_value
+
+from .conftest import SerializableEqualHashable
 
 # =============================================================================
 # `serialize_wrapped_leaf_value`
@@ -26,7 +27,7 @@ from fhy_core.symbolic.param.values import ParamError, serialize_wrapped_leaf_va
         pytest.param(1, id="int"),
         pytest.param(1.5, id="float"),
         pytest.param("text", id="str"),
-        pytest.param(Identifier("x"), id="serializable"),
+        pytest.param(SerializableEqualHashable(1), id="serializable"),
     ],
 )
 def test_serialize_wrapped_leaf_value_accepts_each_supported_type(

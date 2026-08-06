@@ -7,7 +7,7 @@ tricky part is the sign matrix and unbounded-end propagation, which these
 tests pin down against hand-computed extended-integer products.
 """
 
-from typing import Any
+import inspect
 
 import pytest
 
@@ -563,12 +563,25 @@ def test_multiplication_matches_brute_force_corner_products_over_bounded_interva
 
 
 def test_signature_accepts_no_keyword_only_params_for_mul() -> None:
-    """Test ``__mul__``/``__rmul__`` take a single positional operand (dunder shape)."""
-    x = create_interval_integer_param_between(1, 2)
-    y: Any = create_interval_integer_param_between(1, 2)
+    """Test ``__mul__``/``__rmul__`` declare no keyword-only parameters.
 
-    assert isinstance(x.__mul__(y), Param)
-    assert isinstance(x.__rmul__(2), Param)
+    Python's operator protocol always calls a dunder with its operand
+    positionally, so a keyword-only ``other`` parameter would silently
+    break ``*``/reflected ``*`` dispatch; this inspects the actual
+    signature rather than merely calling the methods, which would pass
+    even if ``other`` were mistakenly marked keyword-only.
+    """
+    mul_parameters = inspect.signature(Param.__mul__).parameters.values()
+    rmul_parameters = inspect.signature(Param.__rmul__).parameters.values()
+
+    assert all(
+        parameter.kind is not inspect.Parameter.KEYWORD_ONLY
+        for parameter in mul_parameters
+    )
+    assert all(
+        parameter.kind is not inspect.Parameter.KEYWORD_ONLY
+        for parameter in rmul_parameters
+    )
 
 
 # =============================================================================

@@ -13,7 +13,6 @@ from typing import Any
 import pytest
 from _pytest.mark.structures import ParameterSet
 
-from fhy_core.identifier import Identifier
 from fhy_core.symbolic.param import (
     create_categorical_param,
     create_integer_param,
@@ -30,6 +29,8 @@ from fhy_core.symbolic.param import (
     create_single_valid_value_param,
     create_union_param,
 )
+
+from .conftest import mock_identifier
 
 # =============================================================================
 # Constructors taking ``name`` as a keyword-only argument
@@ -97,7 +98,7 @@ def test_callable_accepts_name_as_keyword(
     callable_: Callable[..., Any], positional_args: tuple[Any, ...]
 ) -> None:
     """Test the public callable accepts ``name`` as a keyword argument."""
-    callable_(*positional_args, name=Identifier("x"))
+    callable_(*positional_args, name=mock_identifier("x", 0))
 
 
 @pytest.mark.parametrize("callable_, positional_args", _KEYWORD_ONLY_NAME_CALLABLES)
@@ -106,7 +107,7 @@ def test_callable_rejects_name_passed_positionally(
 ) -> None:
     """Test the public callable rejects ``name`` passed positionally."""
     with pytest.raises(TypeError, match="positional argument"):
-        callable_(*positional_args, Identifier("x"))
+        callable_(*positional_args, mock_identifier("x", 0))
 
 
 # =============================================================================

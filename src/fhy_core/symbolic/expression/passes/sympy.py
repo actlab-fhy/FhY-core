@@ -729,7 +729,8 @@ def convert_sympy_expression_to_expression(
         Expression.
 
     Raises:
-        PartialPiecewiseError: If ``sympy_expression`` contains a
+        PassExecutionError: Wrapping :class:`PartialPiecewiseError` as
+            ``__cause__`` if ``sympy_expression`` contains a
             ``sympy.Piecewise`` whose final branch condition is not
             ``sympy.true``.
 
@@ -751,9 +752,9 @@ def simplify_expression(
         Simplified expression.
 
     Raises:
-        PartialPiecewiseError: If simplification yields a
-            ``sympy.Piecewise`` whose final branch condition is not
-            ``sympy.true``.
+        PassExecutionError: Wrapping :class:`PartialPiecewiseError` as
+            ``__cause__`` if simplification yields a ``sympy.Piecewise``
+            whose final branch condition is not ``sympy.true``.
 
     """
     sympy_expression = convert_expression_to_sympy_expression(expression)

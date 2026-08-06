@@ -216,9 +216,9 @@ def test_piecewise_expression_constructed_from_lists_rejects_in_place_mutation()
         LiteralExpression(0),
     )
 
-    with pytest.raises(AttributeError):
+    with pytest.raises(AttributeError, match="append"):
         expression.conditions.append(LiteralExpression(False))  # type: ignore[attr-defined]
-    with pytest.raises(AttributeError):
+    with pytest.raises(AttributeError, match="append"):
         expression.values.append(LiteralExpression(2))  # type: ignore[attr-defined]
 
 
@@ -460,7 +460,7 @@ def test_piecewise_helper_rejects_non_two_tuple_case() -> None:
 
 def test_piecewise_helper_rejects_unsupported_operand_type() -> None:
     """Test ``piecewise(...)`` raises ``ValueError`` for an unsupported operand type."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Unable to cast"):
         piecewise((LiteralExpression(True), object()), otherwise=0)  # type: ignore[arg-type]
 
 
@@ -533,7 +533,7 @@ def test_piecewise_expression_direct_construction_with_literal_condition_is_lega
 
 def test_piecewise_helper_requires_otherwise_as_keyword() -> None:
     """Test omitting ``otherwise`` raises ``TypeError`` (keyword-only, required)."""
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="otherwise"):
         piecewise((LiteralExpression(True), LiteralExpression(1)))  # type: ignore[call-arg]
 
 
@@ -739,5 +739,5 @@ def test_call_helper_coerces_python_literal_to_literal_expression() -> None:
 
 def test_call_helper_rejects_unsupported_argument_type() -> None:
     """Test ``call(...)`` raises ``ValueError`` for unsupported argument types."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Unable to cast"):
         call("f", object())  # type: ignore[arg-type]

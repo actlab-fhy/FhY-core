@@ -13,12 +13,13 @@ from typing import Any
 
 import pytest
 
-from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
 )
 from fhy_core.symbolic.param import Param, create_integer_param, create_ordinal_param
+
+from .conftest import mock_identifier
 
 _PARAM_STRUCTURE_ERROR_MATCH = 'deserializing to "Param"'
 
@@ -26,7 +27,7 @@ _PARAM_STRUCTURE_ERROR_MATCH = 'deserializing to "Param"'
 @pytest.fixture
 def valid_param_payload() -> dict[str, Any]:
     """Return a well-formed derived-format integer-param payload."""
-    return create_integer_param(name=Identifier("x")).serialize_to_dict()
+    return create_integer_param(name=mock_identifier("x", 0)).serialize_to_dict()
 
 
 def _drop_domain_field(payload: dict[str, Any]) -> None:

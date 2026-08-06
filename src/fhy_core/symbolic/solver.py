@@ -142,6 +142,12 @@ def simplify_expression(
     Raises:
         SolverCapabilityError: If ``backend`` is not SIMPLIFICATION-capable
             (currently: any backend other than SYMPY).
+        PassExecutionError: If the SymPy bridge's lowering or lifting pass
+            fails internally, for example when simplification yields a
+            ``sympy.Piecewise`` whose final branch condition is not
+            ``sympy.true``. The pass infrastructure wraps the originating
+            error (e.g. ``PartialPiecewiseError``) as ``__cause__`` rather
+            than letting it propagate directly.
 
     """
     _validate_backend_capability(backend, SolverQueryKind.SIMPLIFICATION)

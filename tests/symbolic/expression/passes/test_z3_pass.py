@@ -681,7 +681,7 @@ def test_does_expression_imply_raises_on_missing_symbol_type() -> None:
 
 
 def test_convert_single_case_piecewise_expression_to_z3_if() -> None:
-    """Test a one-case ``PiecewiseExpression`` lowers to ``z3.If``."""
+    """Test a one-case ``PiecewiseExpression`` lowers to the matching ``z3.If``."""
     x = mock_identifier("x", 0)
     expression = PiecewiseExpression(
         (
@@ -699,11 +699,12 @@ def test_convert_single_case_piecewise_expression_to_z3_if() -> None:
         expression, {x: SymbolType.INT}
     )
 
-    assert isinstance(z3_expression, z3.ExprRef)
+    expected = z3.If(z3.Int("x_0") > z3.IntVal(0), z3.Int("x_0"), -z3.Int("x_0"))
+    assert z3_expression.eq(expected)
 
 
 def test_convert_piecewise_with_boolean_literal_branches_to_z3_if() -> None:
-    """Test ``{True if cond; False otherwise}`` lowers cleanly with bool symbols."""
+    """Test ``{True if cond; False otherwise}`` lowers to the matching ``z3.If``."""
     flag = mock_identifier("flag", 0)
     expression = PiecewiseExpression(
         (IdentifierExpression(flag),),
@@ -715,7 +716,8 @@ def test_convert_piecewise_with_boolean_literal_branches_to_z3_if() -> None:
         expression, {flag: SymbolType.BOOL}
     )
 
-    assert isinstance(z3_expression, z3.ExprRef)
+    expected = z3.If(z3.Bool("flag_0"), z3.BoolVal(True), z3.BoolVal(False))
+    assert z3_expression.eq(expected)
 
 
 def test_multi_case_piecewise_z3_lowering_matches_hand_nested_encoding() -> None:
