@@ -11,9 +11,11 @@ domain.
 """
 
 import json
+import math
 import operator
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Any, Generic, TypeVar, cast
 
 from fhy_core.identifier import Identifier
@@ -635,6 +637,58 @@ def _validate_natural_upper_bound(
         )
 
 
+def _compute_exact_bound_value(
+    bound: int | float | str, *, is_lower: bool
+) -> int | Decimal | None:
+    """Return ``bound`` as an exact ``int`` or ``Decimal``.
+
+    Returns ``None`` if ``bound`` is a value the literal grammar will reject.
+
+    Raises:
+        ParamError: If ``bound`` is a non-finite float.
+
+    """
+    if isinstance(bound, int):
+        return int(bound)
+    elif isinstance(bound, float):
+        if not math.isfinite(bound):
+            raise ParamError(
+                f"{'Lower' if is_lower else 'Upper'} bound must be finite; got {bound}."
+            )
+        # Decimal keeps the float's exact value, so the floor/ceiling taken
+        # from it matches the literal that ends up stored.
+        return Decimal(bound)
+    elif isinstance(bound, str):
+        try:
+            decimal_bound = Decimal(bound)
+        except InvalidOperation:
+            return None
+        return decimal_bound if decimal_bound.is_finite() else None
+    else:
+        return None
+
+
+def _normalize_natural_bound(
+    bound: int | float | str, *, is_lower: bool, is_inclusive: bool
+) -> tuple[int, bool] | None:
+    """Return ``bound`` as the equivalent ``(integer bound, inclusive)`` pair.
+
+    Returns ``None`` if ``bound`` is a value the literal grammar will reject.
+    """
+    exact_bound = _compute_exact_bound_value(bound, is_lower=is_lower)
+    if exact_bound is None:
+        return None
+    if isinstance(exact_bound, int):
+        return exact_bound, is_inclusive
+    elif exact_bound == exact_bound.to_integral_value():
+        return int(exact_bound), is_inclusive
+    else:
+        # A fractional bound admits exactly what an inclusive bound at its
+        # ceiling (lower) or floor (upper) admits.
+        rounded_bound = math.ceil(exact_bound) if is_lower else math.floor(exact_bound)
+        return rounded_bound, True
+
+
 def _validate_natural_bound(
     domain: ParamDomain,
     bound: int | float | str,
@@ -647,16 +701,20 @@ def _validate_natural_bound(
         return
     if not domain.non_negative:
         return
-    if not isinstance(bound, int):
+    normalized = _normalize_natural_bound(
+        bound, is_lower=is_lower, is_inclusive=is_inclusive
+    )
+    if normalized is None:
         return
+    integer_bound, is_inclusive_bound = normalized
     zero_included = domain.zero_included
     if is_lower:
         _validate_natural_lower_bound(
-            bound, zero_included=zero_included, is_inclusive=is_inclusive
+            integer_bound, zero_included=zero_included, is_inclusive=is_inclusive_bound
         )
     else:
         _validate_natural_upper_bound(
-            bound, zero_included=zero_included, is_inclusive=is_inclusive
+            integer_bound, zero_included=zero_included, is_inclusive=is_inclusive_bound
         )
 
 
