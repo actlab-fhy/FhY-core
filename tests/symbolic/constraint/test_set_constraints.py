@@ -348,3 +348,64 @@ def test_set_constraint_rejects_bare_string_like_members(
     """Test a bare str/bytes/bytearray is rejected, not split into elements."""
     with pytest.raises(ConstraintError):
         factory(mock_identifier("x", 0), members)
+
+
+# =============================================================================
+# Public field encapsulation (`valid_values` / `invalid_values`)
+# =============================================================================
+
+_SET_KINDS_WITH_FIELD = [
+    pytest.param(InSetConstraint, "valid_values", id="in_set"),
+    pytest.param(NotInSetConstraint, "invalid_values", id="not_in_set"),
+]
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_public_field_holds_the_raw_members(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test the constructor-keyword field holds the raw member values."""
+    constraint = factory(mock_identifier("x", 0), {1, 2})
+
+    assert set(getattr(constraint, field_name)) == {1, 2}
+
+
+# Regression guard for a field that used to store the internal type-strict
+# wrapper directly: reading it gave a silently wrong membership answer
+# (`1 in constraint.valid_values` was `False` for an actual member `1`,
+# because the wrapper's `__eq__`/`__hash__` never matched a raw `1`). Direct
+# membership on the field reflects the constructed member set regardless of
+# in-set/not-in-set polarity; `is_satisfied` (exercised elsewhere) is what
+# differs by kind.
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_public_field_direct_membership_reflects_true_membership(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test membership on the public field matches what was constructed."""
+    constraint = factory(mock_identifier("x", 0), {1, 2})
+
+    assert 1 in getattr(constraint, field_name)
+    assert 2 in getattr(constraint, field_name)
+    assert 99 not in getattr(constraint, field_name)
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_public_field_never_yields_internal_wrapper_type(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test every element of the public field is a plain member type, not a wrapper."""
+    constraint = factory(mock_identifier("x", 0), {1, 2})
+
+    for member in getattr(constraint, field_name):
+        assert type(member) in (int, float, str, bool)
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_public_field_matches_members_property(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test the public field and the `members` property agree on content."""
+    constraint = factory(mock_identifier("x", 0), {1, 2, 3})
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+
+    assert set(getattr(constraint, field_name)) == set(constraint.members)

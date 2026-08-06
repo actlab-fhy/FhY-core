@@ -56,6 +56,7 @@ __all__ = [
     "ConstraintSystem",
     "EquationConstraint",
     "InSetConstraint",
+    "MissingSymbolTypeError",
     "NotInSetConstraint",
     "create_constraint_system",
 ]
@@ -72,7 +73,6 @@ from typing import (
     TypedDict,
     TypeGuard,
     TypeVar,
-    cast,
     runtime_checkable,
 )
 
@@ -138,6 +138,20 @@ class ConstraintError(ValueError):
     """Domain error for constraint construction, validation, and conversion."""
 
 
+@register_error
+class MissingSymbolTypeError(ValueError):
+    """Raised when ``symbol_types`` lacks an entry for a free identifier being lowered.
+
+    ``ConstraintSystem.check_satisfiability`` and
+    ``check_satisfiability_with_bindings`` require a Z3 sort for every free
+    identifier of the expression they lower. A missing entry is a caller
+    precondition violation, not a dictionary lookup miss, so this is a
+    ``ValueError`` rather than a ``KeyError``: the missing-identifier
+    message must render cleanly in a traceback, and a bare ``except
+    KeyError`` elsewhere in a caller's code must not silently swallow it.
+    """
+
+
 class ConstraintOutcome(Enum):
     """Tri-state result of checking a value against a constraint.
 
@@ -184,8 +198,8 @@ class MemberCollection(Protocol[_MemberT_co]):
     A structural, immutable-by-contract collection: any ``set``, ``list``,
     ``tuple``, or ``frozenset`` of members satisfies it. Used as the
     constructor-input type for the set constraints so callers can pass any of
-    those literals while the stored field is a normalized
-    ``frozenset[_TypedMember]``. The collection is only iterated during
+    those literals while the stored field is normalized to a deduplicated
+    tuple of raw values. The collection is only iterated during
     construction; the constraint never mutates or retains the caller's
     collection.
     """
@@ -331,6 +345,20 @@ def _normalize_constraint_member_collection(
     return frozenset(wrapped_values)
 
 
+def _wrap_member_collection(
+    values: Collection[ConstraintMember],
+) -> frozenset[_TypedMember]:
+    """Wrap an already-validated raw member collection for type-strict comparison.
+
+    Unlike ``_normalize_constraint_member_collection``, this performs no
+    validation or hashability check: it re-derives the type-strict view of
+    a collection that has already passed through construction once (the
+    post-``__post_init__`` ``valid_values``/``invalid_values`` field).
+
+    """
+    return frozenset(_wrap_member(value) for value in values)
+
+
 def _lift_member_to_literal_expression(value: ConstraintMember) -> LiteralExpression:
     """Lift a constraint member to a ``LiteralExpression``.
 
@@ -385,10 +413,10 @@ class _MemberSetData(TypedDict):
     members: list[SerializedDict]
 
 
-def _encode_member_set(members: frozenset[_TypedMember]) -> SerializedValue:
-    """Encode a wrapped-member set as a ``repr``-sorted list of wrapped dicts."""
+def _encode_member_set(members: Collection[ConstraintMember]) -> SerializedValue:
+    """Encode a raw member collection as a ``repr``-sorted list of wrapped dicts."""
     return sorted(
-        [_serialize_constraint_member(_unwrap_member(member)) for member in members],
+        [_serialize_constraint_member(member) for member in members],
         key=repr,
     )
 
@@ -742,36 +770,36 @@ class InSetConstraint(Constraint):
 
     variable: Identifier = field(metadata=compared_as_reference())
     # Declared as the constructor-input type. ``__post_init__`` normalizes this
-    # in place to a ``frozenset[_TypedMember]``; read the members through the
-    # ``members`` property (raw values) or ``_members`` (internal wrappers)
-    # rather than this field directly.
+    # in place to a deduplicated tuple of raw, unwrapped values (the same
+    # content the ``members`` property exposes) so no public attribute ever
+    # yields the internal ``_TypedMember`` wrapper. Comparison uses
+    # ``compared_as_value(key=_wrap_member_collection)`` rather than the
+    # default ``==`` so structural/alpha equivalence stays type-strict and
+    # order-independent despite the field itself being a plain tuple.
     valid_values: MemberCollection[ConstraintMember] = field(
         metadata={
-            **compared_as_value(),
+            **compared_as_value(key=_wrap_member_collection),
             "serialize_codec": _VALID_VALUES_CODEC,
         },
     )
 
     def __post_init__(self) -> None:
+        wrapped = _normalize_constraint_member_collection(self.valid_values)
         object.__setattr__(
             self,
             "valid_values",
-            _normalize_constraint_member_collection(self.valid_values),
+            tuple(_unwrap_member(member) for member in wrapped),
         )
 
     @property
     def members(self) -> tuple[ConstraintMember, ...]:
-        """Return the permitted members as raw values.
-
-        The ``valid_values`` field stores internal type-strict wrappers; this
-        accessor returns the unwrapped members in no particular order.
-        """
-        return tuple(_unwrap_member(member) for member in self._members)
+        """Return the permitted members as raw values, in no particular order."""
+        return tuple(self.valid_values)
 
     @property
     def _members(self) -> frozenset[_TypedMember]:
-        """Return the normalized, type-strict member set stored after init."""
-        return cast(frozenset[_TypedMember], self.valid_values)
+        """Return the type-strict member set, re-derived from the raw view."""
+        return _wrap_member_collection(self.valid_values)
 
     @classmethod
     @override
@@ -837,36 +865,36 @@ class NotInSetConstraint(Constraint):
 
     variable: Identifier = field(metadata=compared_as_reference())
     # Declared as the constructor-input type. ``__post_init__`` normalizes this
-    # in place to a ``frozenset[_TypedMember]``; read the members through the
-    # ``members`` property (raw values) or ``_members`` (internal wrappers)
-    # rather than this field directly.
+    # in place to a deduplicated tuple of raw, unwrapped values (the same
+    # content the ``members`` property exposes) so no public attribute ever
+    # yields the internal ``_TypedMember`` wrapper. Comparison uses
+    # ``compared_as_value(key=_wrap_member_collection)`` rather than the
+    # default ``==`` so structural/alpha equivalence stays type-strict and
+    # order-independent despite the field itself being a plain tuple.
     invalid_values: MemberCollection[ConstraintMember] = field(
         metadata={
-            **compared_as_value(),
+            **compared_as_value(key=_wrap_member_collection),
             "serialize_codec": _INVALID_VALUES_CODEC,
         },
     )
 
     def __post_init__(self) -> None:
+        wrapped = _normalize_constraint_member_collection(self.invalid_values)
         object.__setattr__(
             self,
             "invalid_values",
-            _normalize_constraint_member_collection(self.invalid_values),
+            tuple(_unwrap_member(member) for member in wrapped),
         )
 
     @property
     def members(self) -> tuple[ConstraintMember, ...]:
-        """Return the forbidden members as raw values.
-
-        The ``invalid_values`` field stores internal type-strict wrappers; this
-        accessor returns the unwrapped members in no particular order.
-        """
-        return tuple(_unwrap_member(member) for member in self._members)
+        """Return the forbidden members as raw values, in no particular order."""
+        return tuple(self.invalid_values)
 
     @property
     def _members(self) -> frozenset[_TypedMember]:
-        """Return the normalized, type-strict member set stored after init."""
-        return cast(frozenset[_TypedMember], self.invalid_values)
+        """Return the type-strict member set, re-derived from the raw view."""
+        return _wrap_member_collection(self.invalid_values)
 
     @classmethod
     @override
@@ -913,13 +941,39 @@ class NotInSetConstraint(Constraint):
         return f"{self.variable} not in {_render_member_set_str(self._members)}"
 
 
+def _validate_symbol_types_cover_free_identifiers(
+    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
+) -> None:
+    """Raise if ``symbol_types`` lacks an entry for a free identifier of ``expression``.
+
+    Raises:
+        MissingSymbolTypeError: If one or more free identifiers of
+            ``expression`` have no corresponding ``symbol_types`` entry.
+
+    """
+    missing = expression.get_free_identifiers() - set(symbol_types)
+    if not missing:
+        return
+    missing_names = ", ".join(sorted(identifier.name_hint for identifier in missing))
+    raise MissingSymbolTypeError(
+        f"symbol_types is missing an entry for free identifier(s): {missing_names}."
+    )
+
+
 def _decide_satisfiability(
     expression: Expression,
     symbol_types: Mapping[Identifier, SymbolType],
     *,
     timeout_milliseconds: int | None = None,
 ) -> ConstraintOutcome:
-    """Classify satisfiability of ``expression`` via the solver seam."""
+    """Classify satisfiability of ``expression`` via the solver seam.
+
+    Raises:
+        MissingSymbolTypeError: If ``symbol_types`` lacks an entry for a
+            free identifier of ``expression``.
+
+    """
+    _validate_symbol_types_cover_free_identifiers(expression, symbol_types)
     satisfiable = check_expression_satisfiability(
         expression,
         dict(symbol_types),
@@ -1149,9 +1203,14 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
                 leaves the solver unbounded.
 
         Raises:
-            KeyError: If ``symbol_types`` lacks an entry for a free
-                identifier of the lowered conjunction (propagated from the
-                z3 bridge).
+            MissingSymbolTypeError: If ``symbol_types`` lacks an entry for
+                a free identifier of the lowered conjunction. This is a
+                raise, not the ``ConstraintOutcome.UNDECIDED`` degradation
+                ``evaluate_with_bindings`` uses for a missing *value*
+                binding: a missing symbol type is a caller precondition
+                violation the Z3 bridge cannot proceed without, while a
+                missing value binding is an ordinary partial assignment
+                the symbolic evaluator can report as undecided.
             ConstraintError: If a member cannot be converted to an
                 expression.
             ValueError: If ``timeout_milliseconds`` is not None and not
@@ -1202,6 +1261,17 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
                 leaves the solver unbounded.
 
         Raises:
+            MissingSymbolTypeError: If ``symbol_types`` lacks an entry for
+                a free identifier of the residual expression left after
+                substitution. Contrast a missing entry in ``bindings``
+                itself: an identifier ``bindings`` does not cover is left
+                free in the residual rather than raising, so it only
+                raises here if ``symbol_types`` also fails to cover it. A
+                missing *value* binding degrades to
+                ``ConstraintOutcome.UNDECIDED`` on ``evaluate_with_bindings``;
+                a missing symbol type here always raises, since the Z3
+                bridge cannot proceed without a sort for every free
+                identifier.
             ValueError: If ``timeout_milliseconds`` is not None and not
                 positive.
 

@@ -121,6 +121,36 @@ def test_set_constraint_inequivalent_for_strict_subset_values(
 
 
 # =============================================================================
+# Alpha equivalence (set-kind member-collection comparisons)
+# =============================================================================
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_alpha_equivalence_matches_structural_for_same_variable(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test alpha equivalence agrees with structural equivalence for one variable."""
+    x = mock_identifier("x", 0)
+    left = factory(x, [1, 2])
+    right = factory(x, [2, 1])
+
+    assert left.is_alpha_equivalent(right) == left.is_structurally_equivalent(right)
+    assert left.is_alpha_equivalent(right) is True
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_alpha_inequivalent_for_different_values(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test alpha equivalence is `False` when the member sets differ."""
+    x = mock_identifier("x", 0)
+    left = factory(x, {1, 2})
+    right = factory(x, {1, 3})
+
+    assert not left.is_alpha_equivalent(right)
+
+
+# =============================================================================
 # Cross-kind / non-Constraint comparisons
 # =============================================================================
 

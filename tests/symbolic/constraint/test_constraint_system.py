@@ -23,6 +23,7 @@ from fhy_core.symbolic.constraint import (
     ConstraintSystem,
     EquationConstraint,
     InSetConstraint,
+    MissingSymbolTypeError,
     NotInSetConstraint,
     create_constraint_system,
 )
@@ -615,16 +616,53 @@ def test_check_satisfiability_mixed_set_and_equation_system_is_unsatisfiable() -
 
 
 @pytest.mark.z3
-def test_check_satisfiability_raises_key_error_for_missing_symbol_type() -> None:
-    """Test a missing `symbol_types` entry propagates `KeyError`."""
+def test_check_satisfiability_raises_missing_symbol_type_error() -> None:
+    """Test a missing `symbol_types` entry raises `MissingSymbolTypeError` naming it."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
     system = create_constraint_system(
         EquationConstraint(x, make_binary_expression(BinaryOperation.LESS, x, y))
     )
 
-    with pytest.raises(KeyError):
+    with pytest.raises(MissingSymbolTypeError, match=y.name_hint):
         system.check_satisfiability({x: SymbolType.INT})
+
+
+@pytest.mark.z3
+def test_check_satisfiability_with_bindings_raises_missing_symbol_type_error() -> None:
+    """Test a missing `symbol_types` entry for a residual free identifier raises.
+
+    Mirrors ``test_check_satisfiability_raises_missing_symbol_type_error``
+    for the bindings-aware entry point: the entry is missing for an
+    identifier left free after substitution, not for a bound one.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    system = create_constraint_system(
+        EquationConstraint(x, make_binary_expression(BinaryOperation.LESS, x, y))
+    )
+
+    with pytest.raises(MissingSymbolTypeError, match=y.name_hint):
+        system.check_satisfiability_with_bindings({x: 5}, {})
+
+
+def test_evaluate_with_bindings_missing_value_binding_degrades_to_undecided() -> None:
+    """Test a missing value binding is UNDECIDED, contrasting a missing symbol type.
+
+    Uses the same system and missing identifier as
+    ``test_check_satisfiability_raises_missing_symbol_type_error``: a
+    missing VALUE binding here degrades gracefully to UNDECIDED, unlike a
+    missing SYMBOL TYPE on the Z3-backed satisfiability methods, which raises.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    system = create_constraint_system(
+        EquationConstraint(x, make_binary_expression(BinaryOperation.LESS, x, y))
+    )
+
+    outcome = system.evaluate_with_bindings({x: 1})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
 
 
 def test_check_satisfiability_empty_system_does_not_invoke_the_solver(
