@@ -6,9 +6,9 @@ subclass against the dispatchers without modifying ``fhy_core``.
 
 import pytest
 
-from fhy_core.expression import IdentifierExpression, LiteralExpression
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import SerializedDict
+from fhy_core.symbolic.expression import IdentifierExpression, LiteralExpression
 from fhy_core.traits import VerificationError
 from fhy_core.types import (
     CoreDataType,
