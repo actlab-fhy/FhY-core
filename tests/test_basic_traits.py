@@ -1,11 +1,13 @@
 # mypy: disable-error-code="misc"
 """Tests the basic compiler traits."""
 
+import copy
 import datetime
 import decimal
 import enum
 import fractions
 import pathlib
+import pickle
 import re
 from abc import abstractmethod
 from collections.abc import Callable
@@ -172,6 +174,18 @@ class _OptOutAutoFreeze(FrozenMixin, freeze_on_init=False):
 class _AutoFrozenPoint(FrozenMixin):
     x: int
     y: int
+
+
+class _AutoFrozenBox(FrozenMixin):
+    """Auto-frozen fixture with a hand-written ``__init__``.
+
+    Both bookkeeping slots (the frozen flag and the construction depth)
+    are set on every instance, so pickling captures them and restoration
+    must succeed regardless of the order the slots come back in.
+    """
+
+    def __init__(self, value: int) -> None:
+        self.value = value
 
 
 class _InternedValue(InternedMixin[str]):
@@ -1391,3 +1405,45 @@ def test_freeze_on_init_false_blocks_inherit_default_when_child_does_not_overrid
 
     instance = _ChildInheritsOptOut(1)
     assert instance.is_frozen is False
+
+
+# =============================================================================
+# FrozenMixin: pickle & deepcopy round-trips
+# =============================================================================
+
+
+def test_pickle_round_trip_restores_value_and_frozen_state() -> None:
+    """Test pickling an auto-frozen instance restores its state still frozen."""
+    box = _AutoFrozenBox(7)
+
+    restored = pickle.loads(pickle.dumps(box))
+
+    assert restored.value == 7
+    assert restored.is_frozen
+    with pytest.raises(FrozenMutationError):
+        restored.value = 8
+
+
+def test_deepcopy_restores_value_and_frozen_state() -> None:
+    """Test deep-copying an auto-frozen instance restores its state still frozen."""
+    box = _AutoFrozenBox(7)
+
+    duplicate = copy.deepcopy(box)
+
+    assert duplicate is not box
+    assert duplicate.value == 7
+    assert duplicate.is_frozen
+    with pytest.raises(FrozenMutationError):
+        duplicate.value = 8
+
+
+def test_pickle_round_trip_restores_native_frozen_dataclass() -> None:
+    """Test pickling a dataclass-frozen instance keeps its dataclass freezing."""
+    point = _AutoFrozenPoint(1, 2)
+
+    restored = pickle.loads(pickle.dumps(point))
+
+    assert (restored.x, restored.y) == (1, 2)
+    assert restored.is_frozen
+    with pytest.raises(FrozenMutationError):
+        restored.x = 4

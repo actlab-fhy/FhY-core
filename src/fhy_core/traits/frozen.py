@@ -593,3 +593,25 @@ class FrozenMixin(ABC):
                 f'Cannot delete "{name}" on frozen {type(self).__name__}.'
             )
         object.__delattr__(self, name)
+
+    def __setstate__(self, state: Any) -> None:
+        # Pickle/deepcopy reconstruction is not mutation: the default
+        # slot-state restoration assigns through `setattr`, which the
+        # mutation guard rejects as soon as the frozen flag itself has been
+        # restored. Every entry -- instance `__dict__` content and slot
+        # values, bookkeeping flags included -- is therefore written via
+        # `object.__setattr__`, making restoration order irrelevant and
+        # returning the instance exactly as frozen as it was when captured.
+        # Restoration trusts the captured state; `__init__`/`__post_init__`
+        # validation is not re-run.
+        dict_state: Any
+        slots_state: Any
+        if isinstance(state, tuple) and len(state) == 2:  # noqa: PLR2004
+            dict_state, slots_state = state
+        else:
+            dict_state, slots_state = state, None
+        for source in (dict_state, slots_state):
+            if not source:
+                continue
+            for name, value in source.items():
+                object.__setattr__(self, name, value)

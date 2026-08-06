@@ -105,19 +105,35 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
         identifier = cls.__new__(cls)
         identifier._id = data["id"]
         identifier._name_hint = data["name_hint"]
+        cls._advance_next_id_past(identifier._id, identifier._name_hint)
+        identifier.freeze()
+        return identifier
+
+    @classmethod
+    def _advance_next_id_past(cls, identifier_id: int, name_hint: str) -> None:
+        """Advance the global counter so ``identifier_id`` is never re-issued.
+
+        No-op when the counter is already past ``identifier_id``. Thread-safe:
+        the check-and-advance runs under the id lock shared with construction.
+        """
         advanced = False
-        with Identifier._id_lock:
-            if identifier._id >= Identifier._next_id:
-                Identifier._next_id = identifier._id + 1
+        with cls._id_lock:
+            if identifier_id >= cls._next_id:
+                cls._next_id = identifier_id + 1
                 advanced = True
         if advanced:
             _LOGGER.debug(
-                "advanced _next_id past %d (name_hint=%r)",
-                identifier._id,
-                identifier._name_hint,
+                "advanced _next_id past %d (name_hint=%r)", identifier_id, name_hint
             )
-        identifier.freeze()
-        return identifier
+
+    @override
+    def __setstate__(self, state: Any) -> None:
+        # Mirrors `deserialize_from_dict`: an id restored in a process whose
+        # counter has not yet reached it must never be re-issued to a later
+        # construction, so unpickling advances the counter the same way
+        # deserialization does.
+        super().__setstate__(state)
+        Identifier._advance_next_id_past(self._id, self._name_hint)
 
     @override
     def __eq__(self, other: Any) -> bool:
