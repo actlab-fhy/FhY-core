@@ -56,7 +56,7 @@ def test_check_accepts_body_with_matching_result_sort(
 ) -> None:
     """Test a scalar-numerical body matching the declared result sort passes."""
     x = mock_identifier("x", 0)
-    check_registered_function_body(
+    missing_name = check_registered_function_body(
         name="identity",
         parameters=(x,),
         parameter_sorts=(FunctionSort.INT,),
@@ -64,6 +64,8 @@ def test_check_accepts_body_with_matching_result_sort(
         body=IdentifierExpression(x),
         resolve_call_target=get_registered_entry,
     )
+
+    assert missing_name is None
 
 
 def test_check_rejects_body_whose_synthesized_type_clashes_with_result_sort(
@@ -113,9 +115,12 @@ def test_check_rejects_body_referencing_undeclared_identifier(
 def test_check_tolerates_forward_reference_to_unregistered_function(
     function_registry_snapshot: None,
 ) -> None:
-    """Test calls to as-yet-unregistered functions inside the body are accepted."""
+    """Test a call to an as-yet-unregistered function defers instead of raising.
+
+    The deferral reports the unresolved name rather than discarding it.
+    """
     x = mock_identifier("x", 0)
-    check_registered_function_body(
+    missing_name = check_registered_function_body(
         name="uses_forward",
         parameters=(x,),
         parameter_sorts=(FunctionSort.INT,),
@@ -127,12 +132,65 @@ def test_check_tolerates_forward_reference_to_unregistered_function(
         resolve_call_target=get_registered_entry,
     )
 
+    assert missing_name == "not_yet_registered"
+
+
+def test_check_method_reports_the_deferred_call_name_directly(
+    function_registry_snapshot: None,
+) -> None:
+    """Test calling ``.check`` directly also reports the deferred call name.
+
+    ``check_registered_function_body`` invokes the pass through the
+    ``__call__`` / ``execute`` framework path; this pins that the raw
+    ``.check`` method returns the same value.
+    """
+    x = mock_identifier("x", 0)
+    checker = RegisteredFunctionBodyTypeChecker(
+        name="uses_forward_direct",
+        parameters=(x,),
+        parameter_sorts=(FunctionSort.INT,),
+        result_sort=FunctionSort.INT,
+        resolve_call_target=get_registered_entry,
+    )
+
+    missing_name = checker.check(
+        CallExpression(
+            function_name="still_not_registered",
+            arguments=(IdentifierExpression(x),),
+        )
+    )
+
+    assert missing_name == "still_not_registered"
+
+
+def test_check_does_not_leak_a_stale_deferred_name_across_calls(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a later fully-validating call does not report a stale deferred name."""
+    x = mock_identifier("x", 0)
+    checker = RegisteredFunctionBodyTypeChecker(
+        name="reused_checker",
+        parameters=(x,),
+        parameter_sorts=(FunctionSort.INT,),
+        result_sort=FunctionSort.INT,
+        resolve_call_target=get_registered_entry,
+    )
+    checker.check(
+        CallExpression(
+            function_name="missing_once", arguments=(IdentifierExpression(x),)
+        )
+    )
+
+    missing_name = checker.check(IdentifierExpression(x))
+
+    assert missing_name is None
+
 
 def test_check_accepts_literal_body_when_sort_compatible(
     function_registry_snapshot: None,
 ) -> None:
     """Test a literal body whose value's type matches the result sort passes."""
-    check_registered_function_body(
+    missing_name = check_registered_function_body(
         name="const_zero",
         parameters=(),
         parameter_sorts=(),
@@ -141,24 +199,27 @@ def test_check_accepts_literal_body_when_sort_compatible(
         resolve_call_target=get_registered_entry,
     )
 
+    assert missing_name is None
+
 
 def test_get_noop_output_returns_none(function_registry_snapshot: None) -> None:
     """Test ``get_noop_output`` is ``None``; the pass is validation-only."""
     checker = _make_int_pass()
 
-    # ``get_noop_output`` is typed to return ``None``; calling it once is
-    # sufficient to assert it does not raise. mypy rejects equality
-    # comparisons against ``None`` for ``-> None`` callables, so no
-    # ``assert ... is None`` is needed here.
-    checker.get_noop_output(LiteralExpression(0))
+    assert checker.get_noop_output(LiteralExpression(0)) is None
 
 
-def test_did_change_is_always_false(function_registry_snapshot: None) -> None:
+@pytest.mark.parametrize(
+    "output", [None, "some_pending_name"], ids=["no-deferral", "deferred-name"]
+)
+def test_did_change_is_always_false(
+    function_registry_snapshot: None, output: str | None
+) -> None:
     """Test ``did_change`` is always ``False``; the pass never rewrites the input."""
     checker = _make_int_pass()
     body = LiteralExpression(0)
 
-    assert checker.did_change(body, None) is False
+    assert checker.did_change(body, output) is False
 
 
 def test_pass_is_registered_under_canonical_name(

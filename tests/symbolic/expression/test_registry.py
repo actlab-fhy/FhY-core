@@ -21,6 +21,7 @@ import pytest
 
 from fhy_core.symbolic.expression import (
     BUILTIN_CONSTANTS,
+    CallExpression,
     EntryLookupError,
     EntryRegistrationError,
     FunctionSort,
@@ -115,6 +116,29 @@ def test_register_function_with_multiple_parameters_records_order(
     )
 
     assert registered.parameters == (a, b, c)
+
+
+def test_register_function_accepts_self_recursive_body(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a body that calls its own registered name registers successfully.
+
+    A self-reference is by name (``CallExpression.function_name`` is a
+    plain string, not an ``Identifier``), so it never appears in the
+    body's free identifiers and never trips the closure check.
+    """
+    parameter = mock_identifier("x", 0)
+
+    registered = register_function(
+        "test_self_recursive",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=CallExpression("test_self_recursive", (IdentifierExpression(parameter),)),
+    )
+
+    assert registered.name == "test_self_recursive"
+    assert is_entry_registered("test_self_recursive") is True
 
 
 def test_registered_function_dataclass_is_frozen(
@@ -452,6 +476,48 @@ def test_function_registry_snapshot_restores_state_after_test_b(
 
 
 # =============================================================================
+# RegisteredFunction dataclass: direct construction invariants
+#
+# register_function's closure check (free identifiers must be a subset of
+# the declared parameters) lives on RegisteredFunction.__post_init__, so
+# it is enforced on direct construction too, not just through the
+# registry API.
+# =============================================================================
+
+
+def test_registered_function_direct_construction_rejects_captured_identifier() -> None:
+    """Test constructing ``RegisteredFunction`` directly rejects an unclosed body."""
+    parameter = mock_identifier("x", 0)
+    captured = mock_identifier("y", 1)
+
+    with pytest.raises(ValueError, match="y"):
+        RegisteredFunction(
+            name="test_direct_captured",
+            parameters=(parameter,),
+            parameter_sorts=(FunctionSort.REAL,),
+            result_sort=FunctionSort.REAL,
+            body=IdentifierExpression(parameter) + captured,
+        )
+
+
+def test_registered_function_direct_construction_accepts_self_recursive_call() -> None:
+    """Test a self-referential ``CallExpression`` body passes the closure check."""
+    parameter = mock_identifier("x", 0)
+
+    registered = RegisteredFunction(
+        name="test_direct_self_recursive",
+        parameters=(parameter,),
+        parameter_sorts=(FunctionSort.REAL,),
+        result_sort=FunctionSort.REAL,
+        body=CallExpression(
+            "test_direct_self_recursive", (IdentifierExpression(parameter),)
+        ),
+    )
+
+    assert registered.body.get_free_identifiers() == {parameter}
+
+
+# =============================================================================
 # NativeFunction dataclass
 # =============================================================================
 
@@ -469,6 +535,34 @@ def test_native_function_constructs_with_declared_sorts_and_implementation() -> 
     assert native.parameter_sorts == (FunctionSort.REAL,)
     assert native.result_sort == FunctionSort.REAL
     assert native.implementation is math.sqrt
+
+
+def test_native_function_direct_construction_rejects_arity_mismatch() -> None:
+    """Test constructing ``NativeFunction`` directly rejects an arity mismatch."""
+    with pytest.raises(ValueError, match="test_direct_arity_mismatch"):
+        NativeFunction(
+            name="test_direct_arity_mismatch",
+            parameter_sorts=(FunctionSort.REAL, FunctionSort.REAL),
+            result_sort=FunctionSort.REAL,
+            implementation=math.sqrt,
+        )
+
+
+def test_native_function_direct_construction_accepts_signature_less_callable() -> None:
+    """Test a callable with no inspectable signature skips the arity check.
+
+    ``builtins.max`` is a C builtin with no signature ``inspect`` can
+    introspect, which is exactly the escape hatch the arity check
+    documents.
+    """
+    native = NativeFunction(
+        name="test_direct_signatureless",
+        parameter_sorts=(FunctionSort.REAL, FunctionSort.REAL),
+        result_sort=FunctionSort.REAL,
+        implementation=max,
+    )
+
+    assert native.implementation is max
 
 
 def test_native_function_dataclass_is_frozen() -> None:
@@ -594,6 +688,19 @@ def test_register_native_function_returns_native_function_instance(
     )
 
     assert isinstance(registered, NativeFunction)
+
+
+def test_register_native_function_rejects_arity_mismatch(
+    function_registry_snapshot: None,
+) -> None:
+    """Test registering a native function through the registry rejects bad arity."""
+    with pytest.raises(EntryRegistrationError, match="test_native_arity_mismatch"):
+        register_native_function(
+            "test_native_arity_mismatch",
+            parameter_sorts=[FunctionSort.REAL, FunctionSort.REAL],
+            result_sort=FunctionSort.REAL,
+            implementation=math.sqrt,
+        )
 
 
 def test_register_native_function_rejects_duplicate_name(
@@ -814,6 +921,285 @@ def test_get_registered_entries_snapshot_includes_all_entry_kinds(
     assert snapshot.get("test_snapshot_function") == expression_function
     assert snapshot.get("test_snapshot_native") == native_function
     assert snapshot.get("test_snapshot_const") == constant
+
+
+# =============================================================================
+# Deferred body-check revalidation
+#
+# A body that forward-references a not-yet-registered function defers its
+# result-sort check instead of failing. Registering the missing name
+# re-runs the check for every entry deferred on it.
+# =============================================================================
+
+
+def test_register_function_defers_body_check_for_forward_referenced_call(
+    function_registry_snapshot: None,
+) -> None:
+    """Test registering a function that calls an unregistered name still succeeds."""
+    x = mock_identifier("x", 0)
+
+    registered = register_function(
+        "test_defers_on_missing",
+        parameters=[x],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=CallExpression("test_missing_dependency", (IdentifierExpression(x),)),
+    )
+
+    assert registered.name == "test_defers_on_missing"
+    assert is_entry_registered("test_defers_on_missing") is True
+
+
+def test_register_function_revalidates_deferred_entry_when_dependency_is_compatible(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a compatible deferred body becomes callable once its dependency exists."""
+    x = mock_identifier("x", 0)
+    register_function(
+        "test_dependent_compatible",
+        parameters=[x],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=CallExpression("test_dependency_compatible", (IdentifierExpression(x),)),
+    )
+
+    y = mock_identifier("y", 1)
+    register_function(
+        "test_dependency_compatible",
+        parameters=[y],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=IdentifierExpression(y),
+    )
+
+    assert is_entry_registered("test_dependent_compatible") is True
+    assert is_entry_registered("test_dependency_compatible") is True
+
+
+def test_register_function_raises_when_dependency_reveals_incompatible_deferred_body(
+    function_registry_snapshot: None,
+) -> None:
+    """Test an incompatible deferred body raises once its dependency registers.
+
+    ``test_dependent_incompatible`` declares an INT result sort, but its
+    body compares the (INT) call result against a literal, which
+    synthesizes BOOL. The mismatch cannot be caught at registration
+    time because the callee does not exist yet; it surfaces only once
+    ``test_dependency_incompatible`` registers and the deferred check
+    re-runs.
+    """
+    x = mock_identifier("x", 0)
+    register_function(
+        "test_dependent_incompatible",
+        parameters=[x],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=CallExpression("test_dependency_incompatible", (IdentifierExpression(x),))
+        < 5,
+    )
+
+    y = mock_identifier("y", 1)
+    with pytest.raises(EntryRegistrationError, match="test_dependent_incompatible"):
+        register_function(
+            "test_dependency_incompatible",
+            parameters=[y],
+            parameter_sorts=[FunctionSort.INT],
+            result_sort=FunctionSort.INT,
+            body=IdentifierExpression(y),
+        )
+
+    assert is_entry_registered("test_dependency_incompatible") is True
+    assert is_entry_registered("test_dependent_incompatible") is False
+
+
+def test_register_function_re_defers_on_a_different_missing_name(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a body with two forward references is re-filed, not dropped.
+
+    ``test_double_forward_ref`` calls two not-yet-registered functions.
+    Registering the first dependency resolves the first reference but
+    exposes the second, still-missing one: the entry must be re-filed
+    under that second name rather than treated as fully checked.
+    Registering the second dependency then reveals the true
+    incompatibility (a comparison result cannot satisfy the declared
+    INT result sort), which only a correctly re-filed deferral can
+    still catch.
+    """
+    x = mock_identifier("x", 0)
+    register_function(
+        "test_double_forward_ref",
+        parameters=[x],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=CallExpression("test_first_missing", (IdentifierExpression(x),))
+        < CallExpression("test_second_missing", (IdentifierExpression(x),)),
+    )
+
+    a = mock_identifier("a", 1)
+    register_function(
+        "test_first_missing",
+        parameters=[a],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=IdentifierExpression(a),
+    )
+
+    assert is_entry_registered("test_double_forward_ref") is True
+
+    b = mock_identifier("b", 2)
+    with pytest.raises(EntryRegistrationError, match="test_double_forward_ref"):
+        register_function(
+            "test_second_missing",
+            parameters=[b],
+            parameter_sorts=[FunctionSort.INT],
+            result_sort=FunctionSort.INT,
+            body=IdentifierExpression(b),
+        )
+
+    assert is_entry_registered("test_second_missing") is True
+    assert is_entry_registered("test_double_forward_ref") is False
+
+
+def test_register_function_revalidates_every_sibling_deferred_on_the_same_name(
+    function_registry_snapshot: None,
+) -> None:
+    """Test one incompatible sibling does not hide another sharing the dependency.
+
+    Two entries both defer on ``test_shared_dependency`` and both turn
+    out incompatible once it registers. The first one's exception must
+    not stop the second one from being revalidated (and rejected) too.
+    """
+    x = mock_identifier("x", 0)
+    register_function(
+        "test_sibling_incompatible_first",
+        parameters=[x],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=CallExpression("test_shared_dependency", (IdentifierExpression(x),)) < 5,
+    )
+
+    y = mock_identifier("y", 1)
+    register_function(
+        "test_sibling_incompatible_second",
+        parameters=[y],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=CallExpression("test_shared_dependency", (IdentifierExpression(y),)) < 5,
+    )
+
+    z = mock_identifier("z", 2)
+    with pytest.raises(EntryRegistrationError):
+        register_function(
+            "test_shared_dependency",
+            parameters=[z],
+            parameter_sorts=[FunctionSort.INT],
+            result_sort=FunctionSort.INT,
+            body=IdentifierExpression(z),
+        )
+
+    assert is_entry_registered("test_shared_dependency") is True
+    assert is_entry_registered("test_sibling_incompatible_first") is False
+    assert is_entry_registered("test_sibling_incompatible_second") is False
+
+
+def test_register_function_failed_dependency_attempt_does_not_break_later_cascade(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a failed registration attempt for a dependency does not poison retries."""
+    x = mock_identifier("x", 0)
+    register_function(
+        "test_rollback_dependent",
+        parameters=[x],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=CallExpression("test_rollback_dependency", (IdentifierExpression(x),)),
+    )
+
+    a = mock_identifier("a", 1)
+    b = mock_identifier("b", 2)
+    with pytest.raises(EntryRegistrationError):
+        register_function(
+            "test_rollback_dependency",
+            parameters=[a, b],
+            parameter_sorts=[FunctionSort.REAL, FunctionSort.REAL],
+            result_sort=FunctionSort.REAL,
+            body=IdentifierExpression(a) < b,
+        )
+    assert is_entry_registered("test_rollback_dependency") is False
+
+    c = mock_identifier("c", 3)
+    register_function(
+        "test_rollback_dependency",
+        parameters=[c],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=IdentifierExpression(c),
+    )
+
+    assert is_entry_registered("test_rollback_dependent") is True
+    assert is_entry_registered("test_rollback_dependency") is True
+
+
+def test_register_native_function_revalidates_deferred_entries(
+    function_registry_snapshot: None,
+) -> None:
+    """Test registering a native function triggers revalidation of dependents."""
+    x = mock_identifier("x", 0)
+    register_function(
+        "test_dependent_on_native",
+        parameters=[x],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=CallExpression("test_native_dependency", (IdentifierExpression(x),)),
+    )
+
+    register_native_function(
+        "test_native_dependency",
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        implementation=math.sqrt,
+    )
+
+    assert is_entry_registered("test_dependent_on_native") is True
+
+
+def test_deferred_body_check_state_does_not_leak_across_tests_a(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a deferred entry from this test does not persist into the next test."""
+    x = mock_identifier("x", 0)
+    register_function(
+        "test_leak_marker",
+        parameters=[x],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=CallExpression("test_leak_marker_dependency", (IdentifierExpression(x),)),
+    )
+
+    assert is_entry_registered("test_leak_marker") is True
+
+
+def test_deferred_body_check_state_does_not_leak_across_tests_b(
+    function_registry_snapshot: None,
+) -> None:
+    """Test registering the prior test's dependency name triggers no stale cascade.
+
+    If the deferred-state were not cleared by the isolation fixture,
+    this registration would try to revalidate the previous test's
+    (now-gone) marker entry.
+    """
+    y = mock_identifier("y", 0)
+    register_function(
+        "test_leak_marker_dependency",
+        parameters=[y],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=IdentifierExpression(y),
+    )
+
+    assert is_entry_registered("test_leak_marker") is False
+    assert is_entry_registered("test_leak_marker_dependency") is True
 
 
 # =============================================================================

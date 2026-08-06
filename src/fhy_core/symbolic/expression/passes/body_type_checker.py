@@ -12,9 +12,13 @@ Forward-declared calls inside the body (calls to functions not yet
 registered) are tolerated: the body checker constructs its
 :class:`ExpressionTypeChecker` with ``defer_on_unknown_call=True`` so
 that an unresolved call name raises :class:`EntryLookupError` directly
-instead of being framed as a type error. The body checker catches the
-raw lookup error and returns ``None``: "trust the declared target sort;
-the call-site check enforces the actual signature at use time."
+instead of being framed as a type error. When this happens,
+:meth:`RegisteredFunctionBodyTypeChecker.check` reports the unresolved
+name to its caller instead of raising: "trust the declared target
+sort; the call-site check enforces the actual signature at use time."
+The registry records the reported name and re-runs this check once a
+function is registered under it, so a forward-referenced body that
+turns out to be incompatible is still caught, just later.
 """
 
 from fhy_core.utils.override import override
@@ -37,6 +41,7 @@ from fhy_core.types import (
 
 from ..core import Expression
 from ..errors import EntryLookupError, EntryRegistrationError
+from ..registry.entries import RegisteredEntry
 from ..sort import FunctionSort, is_core_data_type_compatible_with_sort
 from .type_checker import CallTargetResolver, ExpressionTypeChecker
 
@@ -59,20 +64,23 @@ _BODY_CHECK_CONCRETE_TYPES: immutabledict[FunctionSort, CoreDataType] = immutabl
     "Validate that a registered function's body synthesizes a type "
     "compatible with its declared result sort.",
 )
-class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
+class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, str | None]):
     """Pass that checks a registered function's body against its result sort.
 
     Construct the pass with the function's registration context (name,
     parameters, parameter sorts, declared result sort), then call it on
-    the body expression. The pass either returns ``None`` (validation
-    succeeded, or the body forward-references an unregistered function)
-    or raises :class:`EntryRegistrationError`.
+    the body expression. The pass returns ``None`` when validation
+    succeeds, returns the name of an unresolved call target when
+    validation is deferred pending that name's registration, or raises
+    :class:`EntryRegistrationError`.
 
-    Invoke the pass either via :meth:`check` (raises
-    ``EntryRegistrationError`` directly) or via the standard
-    pass-framework path ``__call__`` / ``execute`` (which wraps the
-    domain error in ``PassExecutionError``). The registry uses
-    :meth:`check`.
+    Invoke the pass either via :meth:`check` (returns the deferred name
+    or ``None``; raises ``EntryRegistrationError`` directly on failure)
+    or via the standard pass-framework path ``__call__`` / ``execute``
+    (same return value; failures arrive wrapped in
+    ``PassExecutionError``). The registry calls
+    :func:`check_registered_function_body`, which uses the
+    ``__call__`` path.
 
     Raises:
         EntryRegistrationError: When the body synthesizes a non-scalar
@@ -86,9 +94,11 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
 
     Notes:
         Forward-referenced calls inside the body (calls to functions
-        not yet registered) are tolerated: the pass returns ``None``
-        without raising. The call-site type checker enforces the
-        actual signature when the body is later evaluated.
+        not yet registered) are tolerated at this layer: :meth:`check`
+        reports the unresolved name instead of raising. The registry
+        records the deferral and re-runs the check once that name is
+        registered, so an incompatible forward-referenced body is
+        eventually caught rather than silently accepted forever.
 
     """
 
@@ -97,6 +107,7 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
     _parameter_sorts: tuple[FunctionSort, ...]
     _result_sort: FunctionSort
     _resolve_call_target: CallTargetResolver
+    _deferred_call_name: str | None
 
     def __init__(
         self,
@@ -112,35 +123,44 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
         self._parameter_sorts = tuple(parameter_sorts)
         self._result_sort = result_sort
         self._resolve_call_target = resolve_call_target
+        self._deferred_call_name = None
 
-    def check(self, body: Expression) -> None:
+    def check(self, body: Expression) -> str | None:
         """Validate ``body`` against the declared parameter and result sorts.
 
         Args:
             body: Body expression to check.
+
+        Returns:
+            ``None`` if the body fully validates. The name of the call
+            target that could not yet be resolved, if validation was
+            deferred pending that name's registration.
 
         Raises:
             EntryRegistrationError: When the body does not satisfy
                 the result-sort contract; see the class docstring.
 
         """
+        self._deferred_call_name = None
         parameter_to_type = self._make_parameter_lookup_table()
         checker = self._make_body_type_checker(parameter_to_type)
         body_type = self._synthesize_body_type(checker, body)
         if body_type is None:
-            return
+            return self._deferred_call_name
         self._check_body_core_data_type_against_sort(body_type)
+        return None
 
     @override
-    def run_pass(self, ir: Expression) -> None:
-        self.check(ir)
+    def run_pass(self, ir: Expression) -> str | None:
+        return self.check(ir)
 
     @override
-    def get_noop_output(self, ir: Expression) -> None:
+    def get_noop_output(self, ir: Expression) -> str | None:
         _ = ir
+        return None
 
     @override
-    def did_change(self, input_ir: Expression, output: None) -> bool:
+    def did_change(self, input_ir: Expression, output: str | None) -> bool:
         _ = (input_ir, output)
         return False
 
@@ -170,9 +190,23 @@ class RegisteredFunctionBodyTypeChecker(CompilerPass[Expression, None]):
                 return parameter_to_type[identifier]
             raise KeyError(identifier.name_hint)
 
+        def resolve_call_target(name: str) -> RegisteredEntry:
+            # The exception's message does not expose the missing name
+            # structurally, so this wrapper is the only way to learn
+            # which lookup failed. `defer_on_unknown_call=True` makes the
+            # checker re-raise this exact exception unchanged the moment
+            # it is about to escape `synthesize` below, so whatever name
+            # this wrapper last saw is the one `_synthesize_body_type`
+            # is about to catch.
+            try:
+                return self._resolve_call_target(name)
+            except EntryLookupError:
+                self._deferred_call_name = name
+                raise
+
         return ExpressionTypeChecker(
             lookup,
-            resolve_call_target=self._resolve_call_target,
+            resolve_call_target=resolve_call_target,
             defer_on_unknown_call=True,
         )
 
@@ -220,7 +254,7 @@ def check_registered_function_body(
     result_sort: FunctionSort,
     body: Expression,
     resolve_call_target: CallTargetResolver,
-) -> None:
+) -> str | None:
     """Validate a registered function's body against its declared result sort.
 
     Args:
@@ -231,6 +265,13 @@ def check_registered_function_body(
         body: Body expression to check.
         resolve_call_target: Lookup for call-site name resolution.
 
+    Returns:
+        ``None`` if the body fully validates. The name of the call
+        target that could not yet be resolved, if validation was
+        deferred pending that name's registration; the caller is
+        responsible for re-running the check once that name is
+        registered.
+
     Raises:
         PassExecutionError: When the body does not satisfy the declared
             result-sort contract. The underlying
@@ -239,7 +280,7 @@ def check_registered_function_body(
             list of failure conditions.
 
     """
-    RegisteredFunctionBodyTypeChecker(
+    return RegisteredFunctionBodyTypeChecker(
         name=name,
         parameters=parameters,
         parameter_sorts=parameter_sorts,

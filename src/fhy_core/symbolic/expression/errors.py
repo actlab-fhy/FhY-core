@@ -33,7 +33,12 @@ class EntryRegistrationError(RuntimeError):
       as parameters and do not match a registered constant.
     - ``parameter_sorts`` length does not equal ``parameters`` length.
     - A function body synthesizes a type whose core data type is not
-      compatible with the declared ``result_sort``.
+      compatible with the declared ``result_sort``. When the body
+      forward-references a call target that is not yet registered, this
+      check is deferred and re-run once that target is registered; the
+      error then names the deferred function whose body is
+      incompatible, not the function whose registration triggered the
+      re-check.
     - A constant value is not compatible with its declared sort per
       :func:`is_python_value_compatible_with_sort`.
     - The implementation of a ``NativeFunction`` has an arity that

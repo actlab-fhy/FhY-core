@@ -4,6 +4,13 @@ Exposes ``register_function`` / ``register_native_function`` /
 ``register_native_constant``: the write-side surface that mutates the
 process-wide registry. Read-side accessors and the underlying storage
 live in :mod:`fhy_core.symbolic.expression.registry.storage`.
+
+A function body may forward-reference a name that is not yet
+registered; :func:`register_function` accepts this and defers the
+body's result-sort check. Registering a function or native function
+re-runs the deferred check for every entry waiting on that name, so an
+incompatible forward-referenced body is eventually rejected rather
+than silently tolerated forever.
 """
 
 __all__ = [
@@ -12,9 +19,7 @@ __all__ = [
     "register_native_function",
 ]
 
-import inspect
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
@@ -25,115 +30,106 @@ from ..passes.body_type_checker import check_registered_function_body
 from ..sort import FunctionSort
 from .entries import NativeConstant, NativeFunction, RegisteredFunction
 from .storage import (
+    _clear_deferred_body_check,
     _insert_unique_entry,
-    _registered_constant_names,
+    _pop_entries_deferred_on,
+    _record_deferred_body_check,
     _remove_entry,
     get_registered_entry,
 )
 
-_POSITIONAL_PARAMETER_KINDS = frozenset(
-    {
-        inspect.Parameter.POSITIONAL_ONLY,
-        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-    }
-)
 
+def _unwrap_body_check_failure(exc: PassExecutionError) -> EntryRegistrationError:
+    """Return the ``EntryRegistrationError`` cause of a body-check failure.
 
-@dataclass(frozen=True)
-class _PositionalArityRange:
-    """Inferred positional-argument arity range of a native implementation."""
+    Args:
+        exc: The ``PassExecutionError`` raised by
+            :func:`check_registered_function_body`.
 
-    minimum: int
-    maximum: int
-    accepts_unbounded: bool
+    Returns:
+        The underlying ``EntryRegistrationError``.
 
-    def admits(self, count: int) -> bool:
-        if self.accepts_unbounded:
-            return count >= self.minimum
-        return self.minimum <= count <= self.maximum
+    Raises:
+        PassExecutionError: ``exc`` itself, unchanged, if its cause is
+            not an ``EntryRegistrationError`` (an unexpected internal
+            failure that callers should not try to reinterpret).
 
-
-def _infer_positional_arity_range(
-    signature: inspect.Signature,
-) -> _PositionalArityRange:
-    """Return the positional-argument arity range admitted by ``signature``."""
-    positional = [
-        parameter
-        for parameter in signature.parameters.values()
-        if parameter.kind in _POSITIONAL_PARAMETER_KINDS
-    ]
-    required_count = sum(
-        1 for parameter in positional if parameter.default is inspect.Parameter.empty
-    )
-    accepts_unbounded = any(
-        parameter.kind is inspect.Parameter.VAR_POSITIONAL
-        for parameter in signature.parameters.values()
-    )
-    return _PositionalArityRange(
-        minimum=required_count,
-        maximum=len(positional),
-        accepts_unbounded=accepts_unbounded,
-    )
-
-
-def _check_native_implementation_arity(
-    name: str,
-    parameter_sort_count: int,
-    implementation: Callable[..., bool | int | float],
-) -> None:
-    """Best-effort check that ``implementation`` accepts the declared arity.
-
-    Uses :func:`inspect.signature` to count positional parameters. When
-    the implementation is a C builtin that does not expose an
-    inspectable signature, no check is performed.
     """
-    try:
-        signature = inspect.signature(implementation)
-    except (ValueError, TypeError):
-        return
-    arity = _infer_positional_arity_range(signature)
-    if arity.admits(parameter_sort_count):
-        return
-    if arity.accepts_unbounded:
-        raise EntryRegistrationError(
-            f"NativeFunction {name!r}: implementation requires at least "
-            f"{arity.minimum} positional argument(s), but parameter_sorts "
-            f"has {parameter_sort_count}."
+    body_check_error = exc.__cause__
+    if isinstance(body_check_error, EntryRegistrationError):
+        return body_check_error
+    raise exc
+
+
+def _revalidate_entries_deferred_on(missing_name: str) -> None:
+    """Re-run the deferred body check for every entry waiting on ``missing_name``.
+
+    Called after ``missing_name`` is successfully registered. Recurses
+    when a revalidated entry itself becomes fully checked, so a chain
+    of forward references resolves within a single registration call.
+    Every entry deferred on ``missing_name`` is revalidated even if an
+    earlier one in the batch is incompatible, so one bad entry cannot
+    hide a sibling's incompatibility from ever being checked again;
+    the first failure encountered is the one raised.
+
+    Raises:
+        EntryRegistrationError: If a deferred entry's body is
+            incompatible with its declared result sort now that
+            ``missing_name`` is available. The message names that
+            entry, not ``missing_name``.
+
+    """
+    first_error: EntryRegistrationError | None = None
+    for entry_name in _pop_entries_deferred_on(missing_name):
+        try:
+            _revalidate_deferred_entry(entry_name, triggered_by=missing_name)
+        except EntryRegistrationError as exc:
+            if first_error is None:
+                first_error = exc
+    if first_error is not None:
+        raise first_error
+
+
+def _revalidate_deferred_entry(entry_name: str, *, triggered_by: str) -> None:
+    """Re-run the body check for one entry previously deferred on ``triggered_by``.
+
+    On failure, ``entry_name`` is removed from the registry: its body
+    never validly type-checked, so the earlier registration that
+    tolerated the forward reference is undone.
+
+    Raises:
+        EntryRegistrationError: If the body is incompatible with its
+            declared result sort.
+
+    """
+    entry = get_registered_entry(entry_name)
+    if not isinstance(entry, RegisteredFunction):
+        raise RuntimeError(  # pragma: no cover
+            "Internal invariant violated: only RegisteredFunction entries "
+            f"can have a deferred body check, but {entry_name!r} is a "
+            f"{type(entry).__name__}."
         )
-    raise EntryRegistrationError(
-        f"NativeFunction {name!r}: parameter_sorts arity "
-        f"{parameter_sort_count} does not match the implementation's "
-        f"accepted positional-argument range "
-        f"[{arity.minimum}, {arity.maximum}]."
-    )
-
-
-def _reject_captured_free_identifiers(
-    name: str,
-    parameters: tuple[Identifier, ...],
-    body: Expression,
-) -> None:
-    declared = set(parameters)
-    captured = body.get_free_identifiers() - declared
-    if not captured:
-        return
-    # Any captured identifier whose name matches a registered constant
-    # is permitted: it resolves to the constant at type-check / eval time.
-    constant_names = _registered_constant_names()
-    truly_captured = {
-        identifier
-        for identifier in captured
-        if identifier.name_hint not in constant_names
-    }
-    if not truly_captured:
-        return
-    captured_names = ", ".join(
-        sorted(identifier.name_hint for identifier in truly_captured)
-    )
-    raise EntryRegistrationError(
-        f"Function {name!r} body references identifiers not in its "
-        f"parameters: {captured_names}."
-    )
+    try:
+        missing_name = check_registered_function_body(
+            name=entry.name,
+            parameters=entry.parameters,
+            parameter_sorts=entry.parameter_sorts,
+            result_sort=entry.result_sort,
+            body=entry.body,
+            resolve_call_target=get_registered_entry,
+        )
+    except PassExecutionError as exc:
+        _remove_entry(entry_name)
+        body_check_error = _unwrap_body_check_failure(exc)
+        raise EntryRegistrationError(
+            f"Function {entry_name!r} deferred its body check pending "
+            f"{triggered_by!r}; now that {triggered_by!r} is registered, "
+            f"{entry_name!r}'s body fails to type-check: {body_check_error}"
+        ) from body_check_error
+    if missing_name is not None:
+        _record_deferred_body_check(entry_name, missing_name)
+    else:
+        _revalidate_entries_deferred_on(entry_name)
 
 
 def register_function(
@@ -149,6 +145,14 @@ def register_function(
     is type-checked, so a self-recursive body can resolve its own call
     site against the declared sorts. If the body type-check fails, the
     placeholder is removed.
+
+    A body that calls a function not yet registered defers its result-
+    sort check rather than failing: the call is accepted on the
+    strength of the eventual callee's declared sorts alone. Registering
+    ``name`` also re-runs the deferred check for every entry that was
+    itself waiting on ``name``; if such an entry's body turns out to be
+    incompatible, this call raises ``EntryRegistrationError`` naming
+    that entry, even though ``name`` registers successfully.
 
     Args:
         name: Unique registry key.
@@ -166,7 +170,10 @@ def register_function(
     Raises:
         EntryRegistrationError: On duplicate name, sort-arity
             mismatch, captured free identifier, or body-result sort
-            mismatch.
+            mismatch. Also raised when registering ``name`` unblocks a
+            previously-deferred function whose body turns out to be
+            incompatible; the message names that deferred function,
+            not ``name``.
 
     """
     parameter_tuple = tuple(parameters)
@@ -181,10 +188,9 @@ def register_function(
         )
     except ValueError as exc:
         raise EntryRegistrationError(str(exc)) from exc
-    _reject_captured_free_identifiers(name, parameter_tuple, body)
     _insert_unique_entry(name, registered)
     try:
-        check_registered_function_body(
+        missing_name = check_registered_function_body(
             name=name,
             parameters=parameter_tuple,
             parameter_sorts=parameter_sort_tuple,
@@ -194,11 +200,12 @@ def register_function(
         )
     except PassExecutionError as exc:
         _remove_entry(name)
-        body_check_error = exc.__cause__
-        if isinstance(body_check_error, EntryRegistrationError):
-            # pylint: disable-next=raising-non-exception
-            raise body_check_error from body_check_error.__cause__
-        raise
+        _clear_deferred_body_check(name)
+        body_check_error = _unwrap_body_check_failure(exc)
+        raise body_check_error from body_check_error.__cause__
+    if missing_name is not None:
+        _record_deferred_body_check(name, missing_name)
+    _revalidate_entries_deferred_on(name)
     return registered
 
 
@@ -216,6 +223,10 @@ def register_native_function(
     ``parameter_sorts`` / ``result_sort``; the implementation is not
     consulted at type-check time.
 
+    Registering ``name`` also re-runs the deferred body check for
+    every entry that was waiting on ``name``; see
+    :func:`register_function` for that contract.
+
     Args:
         name: Unique registry key.
         parameter_sorts: Per-parameter declared sort. Arity is
@@ -232,7 +243,10 @@ def register_native_function(
             ``len(parameter_sorts)`` positional arguments. Some
             C-implemented callables (e.g. some ``math`` builtins) do
             not expose an inspectable signature; arity is not checked
-            in that case.
+            in that case. Also raised when registering ``name``
+            unblocks a previously-deferred function whose body turns
+            out to be incompatible; the message names that deferred
+            function, not ``name``.
 
     Notes:
         Standard-library ``math`` implementations are backed by the
@@ -241,7 +255,6 @@ def register_native_function(
 
     """
     parameter_sort_tuple = tuple(parameter_sorts)
-    _check_native_implementation_arity(name, len(parameter_sort_tuple), implementation)
     try:
         registered = NativeFunction(
             name=name,
@@ -252,6 +265,7 @@ def register_native_function(
     except ValueError as exc:
         raise EntryRegistrationError(str(exc)) from exc
     _insert_unique_entry(name, registered)
+    _revalidate_entries_deferred_on(name)
     return registered
 
 
@@ -279,7 +293,11 @@ def register_native_constant(
 
     Notes:
         Constants seeded from ``math`` carry the same platform-bit
-        caveat as native function results.
+        caveat as native function results. Unlike a forward-referenced
+        call, a body identifier that names an unregistered constant is
+        never deferred: it is indistinguishable from an unbound
+        identifier until the constant is registered, so it fails
+        immediately rather than waiting.
 
     """
     try:
