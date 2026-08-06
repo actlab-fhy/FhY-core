@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from fhy_core.identifier import Identifier
-from fhy_core.traits import (
+from fhy_core.term import (
     AlphaEquivalence,
     AlphaEquivalenceMixin,
     AlphaRenaming,

@@ -29,9 +29,8 @@ from fhy_core.diagnostic import (
     Note,
     ValidationReport,
 )
-from fhy_core.identifier import Identifier
+from fhy_core.identifier import HasIdentifier, Identifier
 from fhy_core.logger import get_logger
-from fhy_core.traits import HasIdentifier
 
 from .core import (
     CompilerPass,

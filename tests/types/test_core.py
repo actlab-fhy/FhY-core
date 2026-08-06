@@ -3,13 +3,9 @@
 import pytest
 from immutabledict import immutabledict
 
-from fhy_core.expression import IdentifierExpression, LiteralExpression
 from fhy_core.identifier import Identifier
-from fhy_core.traits import (
-    Frozen,
-    FrozenMutationError,
-    StructuralEquivalence,
-)
+from fhy_core.symbolic.expression import IdentifierExpression, LiteralExpression
+from fhy_core.traits import Frozen, FrozenMutationError, StructuralEquivalence
 from fhy_core.types import (
     CoreDataType,
     FhYCoreTypeError,

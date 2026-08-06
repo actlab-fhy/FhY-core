@@ -20,8 +20,8 @@ from typing import Any
 import pytest
 
 from fhy_core.identifier import Identifier
-from fhy_core.traits import AlphaEquivalence, AlphaRenaming, StructuralEquivalence
-from fhy_core.traits.derived_equivalence import (
+from fhy_core.term import AlphaEquivalence, AlphaRenaming
+from fhy_core.term.derived_equivalence import (
     EQUIVALENCE_METADATA_KEY,
     DerivedEquivalenceMixin,
     EquivalenceDerivationError,
@@ -32,6 +32,7 @@ from fhy_core.traits.derived_equivalence import (
     compared_with,
     excluded_from_equivalence,
 )
+from fhy_core.traits import StructuralEquivalence
 from fhy_core.utils.override import override
 
 from .conftest import mock_identifier

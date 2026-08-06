@@ -2,10 +2,18 @@
 
 from fhy_core.utils.override import override
 
-__all__ = ["Identifier"]
+__all__ = ["HasIdentifier", "Identifier"]
 
 from threading import Lock
-from typing import Any, ClassVar, TypedDict, TypeGuard, final
+from typing import (
+    Any,
+    ClassVar,
+    Protocol,
+    TypedDict,
+    TypeGuard,
+    final,
+    runtime_checkable,
+)
 
 from fhy_core.utils import is_strict_int
 
@@ -150,3 +158,17 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     @override
     def __repr__(self) -> str:
         return f"{self._name_hint}::{self._id}"
+
+
+@runtime_checkable
+class HasIdentifier(Protocol):
+    """Protocol for objects that have a stable identifier.
+
+    The protocol lives beside :class:`Identifier` rather than in
+    :mod:`fhy_core.traits` because its signature names an identifier,
+    which makes it vocabulary of this module rather than a generic
+    structural contract.
+    """
+
+    def get_identifier(self) -> Identifier:
+        """Return the object's stable identifier."""

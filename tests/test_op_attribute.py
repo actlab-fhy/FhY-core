@@ -13,7 +13,7 @@ Covers the public surface of the open `OpAttribute` registry:
 
 import pytest
 
-from fhy_core.identifier import Identifier
+from fhy_core.identifier import HasIdentifier, Identifier
 from fhy_core.op_attribute import (
     ASSOCIATIVE,
     COMMUTATIVE,
@@ -25,13 +25,7 @@ from fhy_core.serialization import (
     Serializable,
     SerializedDict,
 )
-from fhy_core.traits import (
-    Frozen,
-    FrozenMutationError,
-    HasIdentifier,
-    Interned,
-    StructuralEquivalence,
-)
+from fhy_core.traits import Frozen, FrozenMutationError, Interned, StructuralEquivalence
 
 # =============================================================================
 # Construction & traits

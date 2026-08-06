@@ -2,8 +2,8 @@
 
 import pytest
 
-from fhy_core.expression.core import LiteralExpression
 from fhy_core.identifier import Identifier
+from fhy_core.symbolic.expression.core import LiteralExpression
 from fhy_core.testing_patches import (
     deterministic_identifiers_by_name_hint,
     fail_fast_structural_equivalence,

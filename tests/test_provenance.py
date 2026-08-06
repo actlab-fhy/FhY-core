@@ -8,6 +8,7 @@ from fhy_core.provenance import (
     CallSiteProvenance,
     FileProvenance,
     FusedProvenance,
+    HasProvenance,
     NamedProvenance,
     Position,
     Provenance,
@@ -17,13 +18,7 @@ from fhy_core.provenance import (
 from fhy_core.serialization import (
     SerializationError,
 )
-from fhy_core.traits import (
-    Equal,
-    HasProvenance,
-    Orderable,
-    PartialEqual,
-    PartialOrderable,
-)
+from fhy_core.traits import Equal, Orderable, PartialEqual, PartialOrderable
 
 # ============================================================================
 # Position

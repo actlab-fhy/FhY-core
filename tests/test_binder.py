@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from fhy_core.identifier import Identifier
-from fhy_core.traits import (
+from fhy_core.term import (
     AlphaEquivalenceMixin,
     AlphaRenaming,
     BinderMixin,

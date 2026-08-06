@@ -26,6 +26,7 @@ __all__ = [
     "CallSiteProvenance",
     "FileProvenance",
     "FusedProvenance",
+    "HasProvenance",
     "NamedProvenance",
     "Position",
     "Provenance",
@@ -36,6 +37,7 @@ __all__ = [
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 from fhy_core.logger import get_logger
 from fhy_core.serialization import (
@@ -274,3 +276,18 @@ class FusedProvenance(Provenance):
         label = self.metadata if self.metadata is not None else "fused"
         rendered_sources = ", ".join(str(source) for source in self.sources)
         return f"{label}[{rendered_sources}]"
+
+
+@runtime_checkable
+class HasProvenance(Protocol):
+    """Protocol for objects that carry provenance information.
+
+    Provenance records an object's origin: source span, lowering steps,
+    original node, etc. The protocol lives beside :class:`Provenance`
+    rather than in :mod:`fhy_core.traits` because its signature names a
+    provenance value, which makes it vocabulary of this module rather
+    than a generic structural contract.
+    """
+
+    def get_provenance(self) -> Provenance:
+        """Return the object's provenance information."""
