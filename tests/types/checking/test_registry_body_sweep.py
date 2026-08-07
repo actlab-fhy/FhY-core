@@ -3,9 +3,10 @@
 `check_all_registered_function_bodies` is where a function body is
 finally held to its declared result sort. Registration never inspects a
 body, so a body may name a call target that does not exist yet; the
-per-function checker skips such a body rather than guessing. The sweep
+per-function checker defers such a body rather than guessing. The sweep
 closes that gap by running after registration is complete, when every
-name a body uses is resolvable.
+name a body uses is resolvable -- so it turns deferral off, and a name
+that still does not resolve is an error rather than a skip.
 
 The sweep aggregates: it checks every entry and reports one ERROR
 diagnostic per offender rather than stopping at the first. These tests
@@ -22,6 +23,7 @@ from fhy_core.symbolic.expression import (
     CallExpression,
     FunctionSort,
     IdentifierExpression,
+    LiteralExpression,
     register_function,
     register_native_function,
 )
@@ -218,15 +220,15 @@ def test_sweep_accepts_a_body_forward_referencing_a_native_function(
     assert report.has_errors() is False, report.format()
 
 
-def test_sweep_skips_a_body_whose_call_target_is_never_registered(
+def test_sweep_reports_a_body_whose_call_target_is_never_registered(
     function_registry_snapshot: None,
 ) -> None:
-    """Test an unresolvable call target leaves the body unjudged, not condemned.
+    """Test an unresolvable call target is an error, naming the missing callee.
 
-    The sweep cannot decide a body it cannot type, and a missing call
-    target is a caller error the call site reports on its own terms.
-    Reporting it here would turn every partially-populated registry
-    into a failure.
+    Deferral exists so registration order does not matter, and the sweep
+    runs once registration is complete. A name that has still not
+    resolved by then will never resolve, so abandoning the check would
+    leave the body permanently unjudged.
     """
     x = mock_identifier("x", 0)
     register_function(
@@ -240,7 +242,41 @@ def test_sweep_skips_a_body_whose_call_target_is_never_registered(
 
     report = check_all_registered_function_bodies()
 
-    assert report.has_errors() is False, report.format()
+    assert report.has_errors() is True
+    messages = [str(diagnostic.message) for diagnostic in report.diagnostics]
+    assert any(
+        "test_sweep_dangling" in message and "test_sweep_never_registered" in message
+        for message in messages
+    ), report.format()
+
+
+def test_sweep_does_not_let_an_unresolvable_call_hide_a_type_error(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a body's type error is still reported alongside a missing callee.
+
+    Synthesis short-circuits on the first raise, so abandoning the body
+    on an unresolvable call would suppress every other error in it. The
+    same ill-typed body must be reported whether or not a dangling call
+    precedes the mistake.
+    """
+    x = mock_identifier("x", 0)
+    register_function(
+        "test_sweep_masked",
+        parameters=[x],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=CallExpression("test_sweep_absent", (IdentifierExpression(x),))
+        + LiteralExpression(True).logical_and(LiteralExpression(1)),
+    )
+
+    report = check_all_registered_function_bodies()
+
+    assert report.has_errors() is True
+    assert any(
+        "test_sweep_masked" in str(diagnostic.message)
+        for diagnostic in report.diagnostics
+    ), report.format()
 
 
 def test_sweep_diagnostics_are_error_level_and_name_the_sweep_as_their_source(

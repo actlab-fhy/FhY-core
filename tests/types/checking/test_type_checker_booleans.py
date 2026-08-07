@@ -459,6 +459,37 @@ def test_synthesize_piecewise_qualifier_promotes_across_all_operands() -> None:
     assert qualifier is TypeQualifier.TEMP
 
 
+def test_synthesize_piecewise_qualifier_promotes_from_a_condition_alone() -> None:
+    """Test a non-PARAM qualifier on a *condition* alone still promotes.
+
+    The companion tests all carry the non-PARAM qualifier on a value, so
+    the expected result is fully determined by the value fold and a
+    version that dropped conditions from qualifier promotion entirely
+    would still pass them. Here every value and ``otherwise`` is PARAM
+    and only the condition is INPUT, so the result depends on the
+    conditions being folded in.
+    """
+    cond = mock_identifier("c", 0)
+    value = mock_identifier("v", 1)
+    otherwise_id = mock_identifier("o", 2)
+    checker = make_identifier_checker(
+        {
+            cond: (_BOOL_TYPE, TypeQualifier.INPUT),
+            value: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM),
+            otherwise_id: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM),
+        }
+    )
+    expression = PiecewiseExpression(
+        (IdentifierExpression(cond),),
+        (IdentifierExpression(value),),
+        IdentifierExpression(otherwise_id),
+    )
+
+    _, qualifier = checker.synthesize(expression)
+
+    assert qualifier is TypeQualifier.TEMP
+
+
 def test_synthesize_piecewise_qualifier_promotes_across_multiple_cases() -> None:
     """Test the qualifier fold considers every case, not just the first one."""
     cond1 = mock_identifier("c1", 0)

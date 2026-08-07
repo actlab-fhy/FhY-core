@@ -47,7 +47,10 @@ from fhy_core.symbolic.expression import (
     IdentifierExpression,
     LiteralExpression,
 )
-from fhy_core.symbolic.solver import does_expression_imply
+from fhy_core.symbolic.solver import (
+    check_expression_satisfiability,
+    does_expression_imply,
+)
 from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.traits import FrozenMixin, StructuralEquivalence
 from fhy_core.utils import format_comma_separated_list, is_strict_int
@@ -295,14 +298,12 @@ def _numeric_has_feasible_value(
     if expression is None:
         # No constraints: the (non-empty) numeric domain is feasible.
         return True
-    implies_false = does_expression_imply(
-        expression, LiteralExpression(False), {common_variable: symbol_type}
+    is_satisfiable = check_expression_satisfiability(
+        expression, {common_variable: symbol_type}
     )
-    # ``implies_false is True``  => constraints unsatisfiable => infeasible.
-    # ``implies_false is False`` => satisfiable => feasible.
-    # ``implies_false is None`` (Z3 unknown) => assume feasible, matching this
+    # ``is_satisfiable is None`` (Z3 unknown) => assume feasible, matching this
     # module's optimistic convention in ``compute_constraint_implication_subset``.
-    return implies_false is not True
+    return is_satisfiable is not False
 
 
 @register_serializable(type_id="integer_domain")

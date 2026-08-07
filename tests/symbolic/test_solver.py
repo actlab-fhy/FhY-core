@@ -6,6 +6,7 @@ from collections.abc import Callable
 import pytest
 import z3  # type: ignore[import-untyped]
 
+from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -102,6 +103,21 @@ def test_get_backend_capabilities_z3_supports_satisfiability_and_logic() -> None
                 frozenset(), LiteralExpression(True), {}, backend=SolverBackend.SYMPY
             ),
             id="universal_validity_with_sympy",
+        ),
+        pytest.param(
+            lambda: assert_holds_for_all_free_assignments(
+                frozenset(), LiteralExpression(True), {}, backend=SolverBackend.SYMPY
+            ),
+            id="assert_universal_validity_with_sympy",
+        ),
+        pytest.param(
+            lambda: assert_expression_implies(
+                LiteralExpression(True),
+                LiteralExpression(True),
+                {},
+                backend=SolverBackend.SYMPY,
+            ),
+            id="assert_implication_with_sympy",
         ),
     ],
 )
@@ -433,15 +449,112 @@ def test_simplify_expression_signature_has_no_timeout_parameter() -> None:
     assert "timeout_milliseconds" not in parameters
 
 
+# Every seam function that accepts `timeout_milliseconds`, as a callable
+# taking the timeout to pass. Each is exercised for both halves of the
+# contract: a non-positive value is rejected, and a positive value reaches
+# the underlying `z3.Solver`. Validating or forwarding in only some of them
+# is the failure these parametrizations exist to catch.
+TIMEOUT_ACCEPTING_SEAM_CALLS = [
+    (
+        "check_expression_satisfiability",
+        lambda identifier, expression, timeout: check_expression_satisfiability(
+            expression, {identifier: SymbolType.INT}, timeout_milliseconds=timeout
+        ),
+    ),
+    (
+        "does_expression_imply",
+        lambda identifier, expression, timeout: does_expression_imply(
+            expression,
+            expression,
+            {identifier: SymbolType.INT},
+            timeout_milliseconds=timeout,
+        ),
+    ),
+    (
+        "holds_for_all_free_assignments",
+        lambda identifier, expression, timeout: holds_for_all_free_assignments(
+            frozenset(),
+            expression,
+            {identifier: SymbolType.INT},
+            timeout_milliseconds=timeout,
+        ),
+    ),
+    (
+        "assert_holds_for_all_free_assignments",
+        lambda identifier, expression, timeout: assert_holds_for_all_free_assignments(
+            frozenset(),
+            expression,
+            {identifier: SymbolType.INT},
+            timeout_milliseconds=timeout,
+        ),
+    ),
+    (
+        "assert_expression_implies",
+        lambda identifier, expression, timeout: assert_expression_implies(
+            expression,
+            expression,
+            {identifier: SymbolType.INT},
+            timeout_milliseconds=timeout,
+        ),
+    ),
+]
+
+
 @pytest.mark.parametrize("bad_timeout", [0, -1, -1000])
-def test_check_expression_satisfiability_rejects_non_positive_timeout(
-    bad_timeout: int,
+@pytest.mark.parametrize(
+    "invoke",
+    [invoke for _, invoke in TIMEOUT_ACCEPTING_SEAM_CALLS],
+    ids=[name for name, _ in TIMEOUT_ACCEPTING_SEAM_CALLS],
+)
+def test_seam_functions_reject_a_non_positive_timeout(
+    invoke: Callable[[Identifier, Expression, int], object], bad_timeout: int
 ) -> None:
-    """Test a zero or negative `timeout_milliseconds` raises `ValueError`."""
+    """Test every timeout-accepting seam function rejects a non-positive bound.
+
+    Z3 reads ``timeout=0`` as *no* timeout, so a zero that slips through
+    silently inverts the caller's intent.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL, IdentifierExpression(x), IdentifierExpression(x)
+    )
+
     with pytest.raises(ValueError, match=r"positive"):
-        check_expression_satisfiability(
-            LiteralExpression(True), {}, timeout_milliseconds=bad_timeout
-        )
+        invoke(x, expression, bad_timeout)
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "invoke",
+    [invoke for _, invoke in TIMEOUT_ACCEPTING_SEAM_CALLS],
+    ids=[name for name, _ in TIMEOUT_ACCEPTING_SEAM_CALLS],
+)
+def test_seam_functions_thread_the_timeout_to_the_z3_solver(
+    invoke: Callable[[Identifier, Expression, int], object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test every timeout-accepting seam function forwards the bound to Z3.
+
+    A dropped ``timeout_milliseconds=`` keyword leaves the solver
+    unbounded, so a query the caller expected to give up on becomes a
+    hang and ``UndecidableError`` never fires.
+    """
+    recorded: dict[str, object] = {}
+    original_set = z3.Solver.set
+
+    def _recording_set(self: z3.Solver, *args: object, **kwargs: object) -> None:
+        recorded.update(kwargs)
+        original_set(self, *args, **kwargs)
+
+    monkeypatch.setattr(z3.Solver, "set", _recording_set)
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL, IdentifierExpression(x), IdentifierExpression(x)
+    )
+
+    invoke(x, expression, 2500)
+
+    assert recorded.get("timeout") == 2500
 
 
 @pytest.mark.z3

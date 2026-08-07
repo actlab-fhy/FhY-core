@@ -7,10 +7,9 @@ answer raises ``SolverCapabilityError``. Each query kind currently has
 exactly one capable backend.
 
 Known divergences: the Z3 and SymPy bridges disagree with each other
-and with the type checker on logical-not, ``Rational`` lifting, integer
-division, floor-division/modulo Euclidean semantics, and inf/nan
-lifting. This module routes to each bridge unchanged; it does not
-reconcile that math.
+and with the type checker on ``Rational`` lifting, integer division,
+floor-division/modulo Euclidean semantics, and inf/nan lifting. This
+module routes to each bridge unchanged; it does not reconcile that math.
 """
 
 __all__ = [
@@ -89,12 +88,17 @@ _BACKEND_CAPABILITIES: immutabledict[SolverBackend, frozenset[SolverQueryKind]] 
 def get_backend_capabilities(backend: SolverBackend) -> frozenset[SolverQueryKind]:
     """Return the query kinds the given backend can answer.
 
+    Args:
+        backend: Backend to look up.
+
     Returns:
-        ``{SIMPLIFICATION}`` for SYMPY; ``{SATISFIABILITY, IMPLICATION,
-        UNIVERSAL_VALIDITY}`` for Z3.
+        The backend's supported query kinds, or an empty set for a
+        backend with no capability table entry -- so an unrecognized
+        backend is reported by the caller's capability check as a
+        ``SolverCapabilityError`` rather than escaping as a ``KeyError``.
 
     """
-    return _BACKEND_CAPABILITIES[backend]
+    return _BACKEND_CAPABILITIES.get(backend, frozenset())
 
 
 def _validate_backend_capability(
@@ -169,9 +173,8 @@ def check_expression_satisfiability(
 
     True if a satisfying assignment provably exists; False if provably
     none exists; None if the solver returns unknown. Implemented as the
-    inversion of ``does_expression_imply(expression, false)``; callers
-    such as ``param.domains`` and ``constraint.ConstraintSystem`` route
-    their satisfiability checks through this one construction.
+    inversion of ``does_expression_imply(expression, false)``: an
+    expression implies false exactly when nothing satisfies it.
 
     Args:
         expression: Expression to check.
@@ -191,6 +194,8 @@ def check_expression_satisfiability(
         SolverCapabilityError: If ``backend`` is not SATISFIABILITY-capable.
         KeyError: If ``symbol_types`` lacks an entry for a free identifier.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
+        RuntimeError: If the underlying solver returns an unrecognized
+            result.
 
     """
     _validate_backend_capability(backend, SolverQueryKind.SATISFIABILITY)
@@ -243,6 +248,8 @@ def does_expression_imply(
         SolverCapabilityError: If ``backend`` is not IMPLICATION-capable.
         KeyError: If ``symbol_types`` lacks an entry for a free identifier.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
+        RuntimeError: If the underlying solver returns an unrecognized
+            result.
 
     """
     _validate_backend_capability(backend, SolverQueryKind.IMPLICATION)
@@ -290,7 +297,11 @@ def holds_for_all_free_assignments(
 
     Raises:
         SolverCapabilityError: If ``backend`` is not UNIVERSAL_VALIDITY-capable.
+        KeyError: If ``symbol_types`` lacks an entry for a free or
+            considered identifier.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
+        RuntimeError: If the underlying solver returns an unrecognized
+            result.
 
     """
     _validate_backend_capability(backend, SolverQueryKind.UNIVERSAL_VALIDITY)
@@ -331,7 +342,11 @@ def assert_holds_for_all_free_assignments(
     Raises:
         SolverCapabilityError: If ``backend`` is not UNIVERSAL_VALIDITY-capable.
         UndecidableError: When the solver returns unknown.
+        KeyError: If ``symbol_types`` lacks an entry for a free or
+            considered identifier.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
+        RuntimeError: If the underlying solver returns an unrecognized
+            result.
 
     """
     _validate_backend_capability(backend, SolverQueryKind.UNIVERSAL_VALIDITY)
@@ -374,7 +389,10 @@ def assert_expression_implies(
     Raises:
         SolverCapabilityError: If ``backend`` is not IMPLICATION-capable.
         UndecidableError: When the solver returns unknown.
+        KeyError: If ``symbol_types`` lacks an entry for a free identifier.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
+        RuntimeError: If the underlying solver returns an unrecognized
+            result.
 
     """
     _validate_backend_capability(backend, SolverQueryKind.IMPLICATION)

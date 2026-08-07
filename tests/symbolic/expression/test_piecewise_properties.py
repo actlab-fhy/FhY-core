@@ -173,23 +173,34 @@ def test_numpy_evaluation_matches_pointwise_first_match_fold(
 
 
 # =============================================================================
-# SymPy round trip: case count is preserved
+# SymPy round trip: the whole node is preserved
 # =============================================================================
 
 
 @settings(max_examples=50, deadline=None)
-@given(
-    num_cases=st.integers(min_value=1, max_value=4),
-    values=st.lists(
-        st.integers(min_value=-1000, max_value=1000), min_size=1, max_size=4
-    ),
-    otherwise_value=st.integers(min_value=-1000, max_value=1000),
-)
-def test_sympy_round_trip_preserves_case_count(
-    num_cases: int, values: list[int], otherwise_value: int
+@given(data=st.data(), num_cases=st.integers(min_value=1, max_value=4))
+def test_sympy_round_trip_preserves_the_whole_piecewise(
+    data: st.DataObject, num_cases: int
 ) -> None:
-    """Test lowering then lifting through SymPy preserves the original case count."""
-    values = (values * num_cases)[:num_cases]
+    """Test lowering then lifting through SymPy reconstructs an equivalent node.
+
+    Asserting only the case count would pass for a bridge that reordered
+    the cases or paired a value with the wrong condition, so the values
+    are drawn distinct and the restored node is compared structurally.
+    """
+    values = data.draw(
+        st.lists(
+            st.integers(min_value=-1000, max_value=1000),
+            min_size=num_cases,
+            max_size=num_cases,
+            unique=True,
+        )
+    )
+    otherwise_value = data.draw(
+        st.integers(min_value=-1000, max_value=1000).filter(
+            lambda candidate: candidate not in values
+        )
+    )
     conditions = tuple(
         IdentifierExpression(mock_identifier(f"property_case_{i}", i))
         for i in range(num_cases)
@@ -204,3 +215,4 @@ def test_sympy_round_trip_preserves_case_count(
 
     assert isinstance(restored, PiecewiseExpression)
     assert len(restored.conditions) == num_cases
+    assert restored.is_structurally_equivalent(expression)

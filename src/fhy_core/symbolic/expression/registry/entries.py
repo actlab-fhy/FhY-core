@@ -44,12 +44,22 @@ def _reject_captured_free_identifiers(
 
     An identifier whose name matches a registered ``NativeConstant`` is
     exempt: it resolves to the constant at type-check / evaluation time
-    rather than being treated as captured.
+    rather than being treated as captured. The match is on ``name_hint``,
+    not identifier identity, because that is how every resolution path
+    keys native constants -- a constant is registered under a ``str`` and
+    has no canonical ``Identifier``. An unrelated identifier sharing a
+    constant's name therefore resolves to that constant downstream, so
+    exempting it here agrees with what evaluation will do.
+
+    The exemption is read from the registry as it stands right now, so
+    this check is order-dependent: the same body is rejected before the
+    constant it names is registered and accepted afterwards. Register
+    constants before the functions whose bodies reference them.
 
     Raises:
         ValueError: If ``body`` references a free identifier that is
-            neither a declared parameter nor a registered constant
-            name.
+            neither a declared parameter nor the name of a constant
+            registered so far.
 
     """
     # Deferred import: `storage` imports this module for its entry types,
@@ -104,13 +114,17 @@ class RegisteredFunction(DerivedEquivalenceMixin):
         body: Expression tree using the parameter identifiers. Free
             identifiers are a subset of ``parameters`` plus any
             identifiers whose name matches a registered
-            ``NativeConstant``.
+            ``NativeConstant``. Because that second set is read from the
+            registry at construction time, validity depends on how much
+            of the registry is populated: a body naming a constant that
+            has not been registered yet is rejected, and the same body
+            is accepted once it has been.
 
     Raises:
         ValueError: If ``name`` is empty; if ``parameter_sorts`` and
             ``parameters`` differ in length; or if ``body`` references
             a free identifier that is neither a declared parameter nor
-            a registered constant name.
+            the name of a constant registered so far.
 
     """
 

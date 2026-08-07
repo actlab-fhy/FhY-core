@@ -859,6 +859,74 @@ def test_piecewise_expression_pattern_rejects_case_with_wrong_pair_length() -> N
         )
 
 
+NON_PATTERN_SUB_PATTERN_CASES = [
+    (
+        "unary_operand",
+        lambda: UnaryExpressionPattern(None, "not a pattern"),  # type: ignore[arg-type]
+        "UnaryExpressionPattern operand",
+    ),
+    (
+        "binary_left",
+        lambda: BinaryExpressionPattern(
+            None,
+            "not a pattern",  # type: ignore[arg-type]
+            WildcardPattern(),
+        ),
+        "BinaryExpressionPattern left",
+    ),
+    (
+        "binary_right",
+        lambda: BinaryExpressionPattern(
+            None,
+            WildcardPattern(),
+            "not a pattern",  # type: ignore[arg-type]
+        ),
+        "BinaryExpressionPattern right",
+    ),
+    (
+        "capture_sub_pattern",
+        lambda: CapturePattern("x", "not a pattern"),  # type: ignore[arg-type]
+        "CapturePattern sub_pattern",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "construct, expected_context",
+    [(construct, context) for _, construct, context in NON_PATTERN_SUB_PATTERN_CASES],
+    ids=[identifier for identifier, _, _ in NON_PATTERN_SUB_PATTERN_CASES],
+)
+def test_composite_patterns_reject_a_non_pattern_sub_pattern(
+    construct: Callable[[], Pattern], expected_context: str
+) -> None:
+    """Test every composite rejects a non-``Pattern`` child at construction.
+
+    A child that is not a ``Pattern`` has no ``match_under``, so leaving
+    it unvalidated defers the failure to match time as an
+    ``AttributeError`` naming an internal protocol method the caller
+    never wrote. Validation is uniform across the composites so that
+    rejecting one shape does not imply the others are checked too.
+    """
+    with pytest.raises(ValueError, match=expected_context):
+        construct()
+
+
+def test_capture_pattern_rejects_a_non_string_name() -> None:
+    """Test a non-``str`` capture name raises at construction.
+
+    Left unchecked it surfaces from ``MatchBindings`` at match time,
+    naming a type the caller never touched.
+    """
+    with pytest.raises(ValueError, match="CapturePattern name must be a str"):
+        CapturePattern(99, WildcardPattern())  # type: ignore[arg-type]
+
+
+def test_capture_pattern_rejects_an_empty_name() -> None:
+    """Test an empty capture name raises rather than binding under ``""``."""
+    with pytest.raises(ValueError, match="must not be empty"):
+        CapturePattern("", WildcardPattern())
+
+
 # ===========================================================================
 # CallExpressionPattern
 # ===========================================================================

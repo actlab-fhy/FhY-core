@@ -912,11 +912,14 @@ class PiecewiseExpression(Expression, HasOperands[Expression]):
         self, new_children: Sequence["Expression"]
     ) -> "PiecewiseExpression":
         flat = tuple(new_children)
-        if len(flat) < 3 or len(flat) % 2 == 0:  # noqa: PLR2004
+        expected = 2 * len(self.conditions) + 1
+        if len(flat) != expected:
             raise ValueError(
-                "PiecewiseExpression.rebuild_with_visit_children requires an "
-                f"odd child count of at least 3 (conditions/values pairs plus "
-                f"otherwise), but got {len(flat)}."
+                "PiecewiseExpression.rebuild_with_visit_children requires one "
+                f"child per condition and value plus otherwise ({expected} for "
+                f"{len(self.conditions)} cases), but got {len(flat)}. Accepting "
+                "any odd count would silently rebuild the node with a different "
+                "number of cases."
             )
         case_children = flat[:-1]
         conditions = case_children[0::2]

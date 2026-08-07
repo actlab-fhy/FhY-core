@@ -66,7 +66,7 @@ from ..conftest import mock_identifier
                 UnaryOperation.LOGICAL_NOT,
                 IdentifierExpression(mock_identifier("x", 0)),
             ),
-            not sympy.Symbol("x_0"),
+            sympy.Not(sympy.Symbol("x_0")),
         ),
         (
             BinaryExpression(
@@ -974,6 +974,61 @@ def test_sympy_to_expression_convert_nand_lowers_to_not_and() -> None:
             IdentifierExpression(mock_identifier("x", 0)),
             IdentifierExpression(mock_identifier("y", 1)),
         ),
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
+@pytest.mark.parametrize(
+    "binding, expected",
+    [(False, True), (True, False)],
+    ids=["not_false_is_true", "not_true_is_false"],
+)
+def test_simplify_expression_negates_a_bound_boolean(
+    binding: bool, expected: bool
+) -> None:
+    """Test ``!b`` under a binding evaluates to the negation of that binding.
+
+    Lowering logical-not with Python's ``operator.not_`` would call
+    ``bool()`` on the SymPy operand, which is truthy for a ``Symbol``, and
+    decide the negation as ``False`` before substitution ran -- so both
+    bindings would produce ``False`` and one of them would be wrong.
+    """
+    b = mock_identifier("b", 0)
+    expression = UnaryExpression(UnaryOperation.LOGICAL_NOT, IdentifierExpression(b))
+
+    result = simplify_expression(expression, {b: LiteralExpression(binding)})
+
+    assert result.is_structurally_equivalent(LiteralExpression(expected))
+
+
+def test_simplify_expression_keeps_an_unbound_negation_symbolic() -> None:
+    """Test ``!b`` with nothing bound round-trips back to ``!b``.
+
+    The negation has no decidable value, so it must survive lowering and
+    lifting rather than collapsing to a literal.
+    """
+    b = mock_identifier("b", 0)
+    expression = UnaryExpression(UnaryOperation.LOGICAL_NOT, IdentifierExpression(b))
+
+    result = simplify_expression(expression)
+
+    assert result.is_structurally_equivalent(expression)
+
+
+def test_simplify_expression_negates_a_comparison_by_inverting_it() -> None:
+    """Test ``!(x > 5)`` simplifies to the inverted comparison ``x <= 5``."""
+    x = mock_identifier("x", 0)
+    expression = UnaryExpression(
+        UnaryOperation.LOGICAL_NOT,
+        BinaryExpression(
+            BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(5)
+        ),
+    )
+
+    result = simplify_expression(expression)
+
+    expected = BinaryExpression(
+        BinaryOperation.LESS_EQUAL, IdentifierExpression(x), LiteralExpression(5)
     )
     assert result.is_structurally_equivalent(expected)
 

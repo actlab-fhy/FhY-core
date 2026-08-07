@@ -8,12 +8,14 @@ from typing import Any
 
 import pytest
 
+from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
     CallExpression,
     EntryLookupError,
+    Expression,
     FunctionArityError,
     FunctionSort,
     IdentifierExpression,
@@ -445,6 +447,117 @@ def test_round_of_reciprocal_at_zero_raises_non_finite_cast_error() -> None:
     assert isinstance(exception_info.value.__cause__, NonFiniteCastError)
 
 
+def test_piecewise_condition_guards_the_non_finite_cast_of_its_own_branch() -> None:
+    """Test a condition guarding a domain error suppresses the non-finite cast.
+
+    ``floor(sqrt(x))`` is ``nan`` for negative ``x`` and integer-sorted,
+    so evaluating it unguarded raises. Guarding it with ``x >= 0`` is the
+    idiomatic way to express the partial function, and must yield the
+    fallback for the negative elements rather than raising: the branch
+    ``numpy.where`` discards, cannot poison the result.
+    """
+    x = mock_identifier("x", 0)
+    expression = piecewise(
+        (
+            IdentifierExpression(x) >= LiteralExpression(0.0),
+            call("floor", call("sqrt", x)),
+        ),
+        otherwise=LiteralExpression(0),
+    )
+
+    with np.errstate(all="ignore"):
+        result = evaluate_expression_with_numpy(
+            expression, {x: np.array([-1.0, 4.0, 9.0])}
+        )
+
+    np.testing.assert_array_equal(result, np.array([0, 2, 3]))
+
+
+def test_piecewise_raises_when_the_selected_branch_is_non_finite() -> None:
+    """Test the non-finite guard still fires for an element the branch does return.
+
+    The companion to the guarded case: here the condition selects the
+    ``floor(sqrt(x))`` branch for a negative element, so the ``nan`` is
+    not discarded and casting it to ``int64`` would produce a platform
+    sentinel. Deferring the check must not weaken it.
+    """
+    x = mock_identifier("x", 0)
+    expression = piecewise(
+        (
+            IdentifierExpression(x) < LiteralExpression(100.0),
+            call("floor", call("sqrt", x)),
+        ),
+        otherwise=LiteralExpression(0),
+    )
+
+    with np.errstate(all="ignore"):
+        with pytest.raises(PassExecutionError) as exception_info:
+            evaluate_expression_with_numpy(expression, {x: np.array([-1.0, 4.0])})
+
+    assert isinstance(exception_info.value.__cause__, NonFiniteCastError)
+
+
+def _make_unguarded_sqrt_piecewise(x: Identifier) -> Expression:
+    """Build a piecewise that returns ``floor(sqrt(x))`` for every input.
+
+    Its own condition excludes nothing in the ranges used below, so the
+    node's selected value is non-finite wherever ``x`` is negative.
+    """
+    return piecewise(
+        (
+            IdentifierExpression(x) < LiteralExpression(100.0),
+            call("floor", call("sqrt", x)),
+        ),
+        otherwise=LiteralExpression(0),
+    )
+
+
+def test_outer_piecewise_condition_guards_a_nested_piecewise() -> None:
+    """Test an enclosing condition suppresses a nested piecewise's non-finite value.
+
+    The inner node's own selection is poisoned for the negative element,
+    but the outer condition discards that element entirely, so nothing
+    should raise. Deciding at the inner node would report an error about
+    a value the caller never receives.
+    """
+    x = mock_identifier("x", 0)
+    expression = piecewise(
+        (
+            IdentifierExpression(x) >= LiteralExpression(0.0),
+            _make_unguarded_sqrt_piecewise(x),
+        ),
+        otherwise=LiteralExpression(-1),
+    )
+
+    with np.errstate(all="ignore"):
+        result = evaluate_expression_with_numpy(expression, {x: np.array([-1.0, 4.0])})
+
+    np.testing.assert_array_equal(result, np.array([-1, 2]))
+
+
+def test_nested_piecewise_still_raises_when_the_outer_branch_selects_it() -> None:
+    """Test propagating the nested mask upward does not lose the error.
+
+    Companion to the guarded nesting case: here the outer condition
+    selects the inner node for the negative element too, so the
+    non-finite value does reach the caller and must raise.
+    """
+    x = mock_identifier("x", 0)
+    expression = piecewise(
+        (
+            IdentifierExpression(x) < LiteralExpression(1000.0),
+            _make_unguarded_sqrt_piecewise(x),
+        ),
+        otherwise=LiteralExpression(-1),
+    )
+
+    with np.errstate(all="ignore"):
+        with pytest.raises(PassExecutionError) as exception_info:
+            evaluate_expression_with_numpy(expression, {x: np.array([-1.0, 4.0])})
+
+    assert isinstance(exception_info.value.__cause__, NonFiniteCastError)
+
+
 # =============================================================================
 # Floating-point domain conditions (nan/inf, not exceptions)
 # =============================================================================
@@ -782,6 +895,32 @@ def test_piecewise_with_boolean_condition_array_is_unaffected() -> None:
     result = evaluate_expression_with_numpy(expression, {condition: mask})
 
     assert np.array_equal(result, [1, 0, 1])
+
+
+@pytest.mark.parametrize(
+    "condition, expected",
+    [(True, 1), (False, 0)],
+    ids=["true_selects_case", "false_selects_otherwise"],
+)
+def test_piecewise_accepts_a_boolean_literal_condition(
+    condition: bool, expected: int
+) -> None:
+    """Test a boolean ``LiteralExpression`` condition is accepted by the dtype guard.
+
+    Such a condition lowers to a raw Python ``bool``, which has no
+    ``dtype`` at all, so the boolean-dtype guard has to admit it
+    explicitly. Every other piecewise test supplies a condition derived
+    from a comparison or a bound array, leaving this branch unexercised
+    even though ``PiecewiseExpression`` accepts a boolean literal.
+    """
+    expression = piecewise(
+        (LiteralExpression(condition), LiteralExpression(1)),
+        otherwise=LiteralExpression(0),
+    )
+
+    result = evaluate_expression_with_numpy(expression, {})
+
+    assert result == expected
 
 
 # =============================================================================

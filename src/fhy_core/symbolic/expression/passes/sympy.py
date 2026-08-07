@@ -164,7 +164,11 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
         {
             UnaryOperation.NEGATE: operator.neg,
             UnaryOperation.POSITIVE: operator.pos,
-            UnaryOperation.LOGICAL_NOT: operator.not_,
+            # ``sympy.Not``, not ``operator.not_``: the latter calls ``bool()``,
+            # and every SymPy object other than a ``Relational`` is truthy, so
+            # it would decide the negation at lowering time and emit the
+            # constant ``False`` -- discarding the operand entirely.
+            UnaryOperation.LOGICAL_NOT: sympy.Not,
         }
     )
     _BINARY_OPERATION_SYMPY_OPERATORS: immutabledict[

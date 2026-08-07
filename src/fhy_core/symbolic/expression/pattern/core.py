@@ -231,6 +231,25 @@ class Pattern(FrozenMixin, ABC):
         """
 
 
+def _validate_pattern_instance(value: object, context: str) -> None:
+    """Validate that ``value`` is a `Pattern` instance.
+
+    Args:
+        value: Candidate to check.
+        context: Description of the field or position being validated,
+            used verbatim at the front of the error message.
+
+    Raises:
+        ValueError: If ``value`` is not a `Pattern` instance.
+
+    """
+    if not isinstance(value, Pattern):
+        raise ValueError(
+            f"{context} must be a Pattern instance, but got value {value!r} "
+            f"of type {type(value).__name__}."
+        )
+
+
 @final
 @dataclass(frozen=True)
 class WildcardPattern(Pattern):
@@ -268,6 +287,16 @@ class CapturePattern(Pattern):
 
     name: str
     sub_pattern: Pattern
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str):
+            raise ValueError(
+                f"CapturePattern name must be a str, but got value {self.name!r} "
+                f"of type {type(self.name).__name__}."
+            )
+        if not self.name:
+            raise ValueError("CapturePattern name must not be empty.")
+        _validate_pattern_instance(self.sub_pattern, "CapturePattern sub_pattern")
 
     @override
     def match_under(
@@ -359,6 +388,9 @@ class UnaryExpressionPattern(Pattern):
     operation: UnaryOperation | None
     operand: Pattern
 
+    def __post_init__(self) -> None:
+        _validate_pattern_instance(self.operand, "UnaryExpressionPattern operand")
+
     @override
     def match_under(
         self, expression: Expression, bindings: MatchBindings
@@ -388,6 +420,10 @@ class BinaryExpressionPattern(Pattern):
     left: Pattern
     right: Pattern
 
+    def __post_init__(self) -> None:
+        _validate_pattern_instance(self.left, "BinaryExpressionPattern left")
+        _validate_pattern_instance(self.right, "BinaryExpressionPattern right")
+
     @override
     def match_under(
         self, expression: Expression, bindings: MatchBindings
@@ -401,25 +437,6 @@ class BinaryExpressionPattern(Pattern):
             return None
         else:
             return self.right.match_under(expression.right, after_left)
-
-
-def _validate_pattern_instance(value: object, context: str) -> None:
-    """Validate that ``value`` is a `Pattern` instance.
-
-    Args:
-        value: Candidate to check.
-        context: Description of the field or position being validated,
-            used verbatim at the front of the error message.
-
-    Raises:
-        ValueError: If ``value`` is not a `Pattern` instance.
-
-    """
-    if not isinstance(value, Pattern):
-        raise ValueError(
-            f"{context} must be a Pattern instance, but got value {value!r} "
-            f"of type {type(value).__name__}."
-        )
 
 
 @final
