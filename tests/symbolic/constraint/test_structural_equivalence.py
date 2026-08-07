@@ -12,6 +12,7 @@ from fhy_core.symbolic.constraint import (
     ConstraintOutcome,
     EquationConstraint,
     InSetConstraint,
+    NotInSetConstraint,
 )
 from fhy_core.symbolic.expression import Expression, LiteralExpression
 from fhy_core.term.derived_equivalence import EquivalenceDerivationError
@@ -21,6 +22,7 @@ from fhy_core.utils.override import override
 from .conftest import (
     ALL_KINDS,
     SET_KINDS,
+    HashCollidingMember,
     build_equation_constraint,
     build_in_set_constraint,
     build_not_in_set_constraint,
@@ -29,6 +31,12 @@ from .conftest import (
 
 ConstraintFactory = Callable[[Identifier], Constraint]
 SetConstraintFactory = Callable[[Identifier, Any], Constraint]
+
+_SET_KINDS_WITH_FIELD = [
+    pytest.param(InSetConstraint, "valid_values", id="in_set"),
+    pytest.param(NotInSetConstraint, "invalid_values", id="not_in_set"),
+]
+"""Parametrize list pairing each set-constraint kind with its member field."""
 
 
 # =============================================================================
@@ -95,16 +103,28 @@ def test_set_constraint_inequivalent_for_different_values(
     assert not left.is_structurally_equivalent(right)
 
 
-@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
 def test_set_constraint_uses_value_equality_not_identity(
-    factory: SetConstraintFactory,
+    factory: SetConstraintFactory, field_name: str
 ) -> None:
-    """Test independent collections with equal contents are equivalent."""
-    x = mock_identifier("x", 0)
-    left = factory(x, [1, 2])
-    right = factory(x, [2, 1])
+    """Test independent collections with equal contents are equivalent.
 
+    The two constraints are built from the same members in opposite
+    orders and store them in genuinely different orders, so equivalence
+    has to normalize rather than lean on the stored tuples comparing
+    equal by accident.
+    """
+    x = mock_identifier("x", 0)
+    members = [HashCollidingMember(1), HashCollidingMember(2)]
+    left = factory(x, list(members))
+    right = factory(x, list(reversed(members)))
+
+    assert getattr(left, field_name) != getattr(right, field_name), (
+        "the two constraints must store their members in different orders "
+        "for this test to say anything about order independence"
+    )
     assert left.is_structurally_equivalent(right)
+    assert right.is_structurally_equivalent(left)
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
@@ -125,15 +145,25 @@ def test_set_constraint_inequivalent_for_strict_subset_values(
 # =============================================================================
 
 
-@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
 def test_set_constraint_alpha_equivalence_matches_structural_for_same_variable(
-    factory: SetConstraintFactory,
+    factory: SetConstraintFactory, field_name: str
 ) -> None:
-    """Test alpha equivalence agrees with structural equivalence for one variable."""
-    x = mock_identifier("x", 0)
-    left = factory(x, [1, 2])
-    right = factory(x, [2, 1])
+    """Test alpha equivalence agrees with structural equivalence for one variable.
 
+    As for the structural case, the two constraints genuinely store their
+    members in different orders, so the agreement is not an artifact of
+    the stored tuples being identical.
+    """
+    x = mock_identifier("x", 0)
+    members = [HashCollidingMember(1), HashCollidingMember(2)]
+    left = factory(x, list(members))
+    right = factory(x, list(reversed(members)))
+
+    assert getattr(left, field_name) != getattr(right, field_name), (
+        "the two constraints must store their members in different orders "
+        "for this test to say anything about order independence"
+    )
     assert left.is_alpha_equivalent(right) == left.is_structurally_equivalent(right)
     assert left.is_alpha_equivalent(right) is True
 
@@ -148,6 +178,77 @@ def test_set_constraint_alpha_inequivalent_for_different_values(
     right = factory(x, {1, 3})
 
     assert not left.is_alpha_equivalent(right)
+
+
+# =============================================================================
+# Type-strict member comparison
+# =============================================================================
+
+_TYPE_STRICT_MEMBER_PAIRS = [
+    pytest.param([1], [True], id="int_vs_bool"),
+    pytest.param([1], [1.0], id="int_vs_float"),
+]
+"""Member pairs that plain ``==`` on the stored tuples cannot tell apart.
+
+``(1,) == (True,)`` and ``(1,) == (1.0,)`` are both ``True`` in Python,
+yet membership is type-strict: ``InSetConstraint(x, [1]).evaluate(True)``
+reports ``VIOLATED``. Equivalence has to agree with evaluation, so the
+member field is compared through the type-strict normalizer rather than
+by the stored tuples' own equality.
+"""
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize("left_members, right_members", _TYPE_STRICT_MEMBER_PAIRS)
+def test_set_constraint_inequivalent_for_members_differing_only_in_type(
+    factory: SetConstraintFactory,
+    left_members: list[Any],
+    right_members: list[Any],
+) -> None:
+    """Test members that are ``==``-equal but differently typed are inequivalent."""
+    x = mock_identifier("x", 0)
+    left = factory(x, left_members)
+    right = factory(x, right_members)
+
+    assert not left.is_structurally_equivalent(right)
+    assert not right.is_structurally_equivalent(left)
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize("left_members, right_members", _TYPE_STRICT_MEMBER_PAIRS)
+def test_set_constraint_alpha_inequivalent_for_members_differing_only_in_type(
+    factory: SetConstraintFactory,
+    left_members: list[Any],
+    right_members: list[Any],
+) -> None:
+    """Test alpha equivalence is also type-strict about member types."""
+    x = mock_identifier("x", 0)
+    left = factory(x, left_members)
+    right = factory(x, right_members)
+
+    assert not left.is_alpha_equivalent(right)
+    assert not right.is_alpha_equivalent(left)
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize("left_members, right_members", _TYPE_STRICT_MEMBER_PAIRS)
+def test_set_constraint_equivalence_agrees_with_evaluation_on_member_types(
+    factory: SetConstraintFactory,
+    left_members: list[Any],
+    right_members: list[Any],
+) -> None:
+    """Test two constraints called equivalent never disagree on a member probe.
+
+    This is the invariant the type-strict comparison exists to protect:
+    were the two treated as equivalent, one would report the other's
+    member as a member and the other would not.
+    """
+    x = mock_identifier("x", 0)
+    left = factory(x, left_members)
+    right = factory(x, right_members)
+
+    assert left.evaluate(right_members[0]) is not left.evaluate(left_members[0])
+    assert not left.is_structurally_equivalent(right)
 
 
 # =============================================================================

@@ -23,6 +23,7 @@ __all__ = [
     "get_backend_capabilities",
     "holds_for_all_free_assignments",
     "simplify_expression",
+    "validate_timeout_milliseconds",
 ]
 
 from collections.abc import Set as AbstractSet
@@ -111,7 +112,20 @@ def _validate_backend_capability(
         )
 
 
-def _validate_timeout_milliseconds(timeout_milliseconds: int | None) -> None:
+def validate_timeout_milliseconds(timeout_milliseconds: int | None) -> None:
+    """Raise unless ``timeout_milliseconds`` is ``None`` or a positive integer.
+
+    Public so a caller that decides an outcome without reaching the solver
+    -- and therefore never passes the value on -- can still hold up the
+    same precondition the solver entry points enforce.
+
+    Args:
+        timeout_milliseconds: Candidate bound, in milliseconds.
+
+    Raises:
+        ValueError: If the value is not ``None`` and not positive.
+
+    """
     if timeout_milliseconds is not None and timeout_milliseconds <= 0:
         raise ValueError(
             "timeout_milliseconds must be None or a positive integer, but got "
@@ -199,7 +213,7 @@ def check_expression_satisfiability(
 
     """
     _validate_backend_capability(backend, SolverQueryKind.SATISFIABILITY)
-    _validate_timeout_milliseconds(timeout_milliseconds)
+    validate_timeout_milliseconds(timeout_milliseconds)
     # INVARIANT: _BACKEND_CAPABILITIES grants SATISFIABILITY to exactly one
     # backend (Z3), so delegating straight to the Z3 bridge is valid without
     # dispatching on `backend`. Adding a second SATISFIABILITY-capable
@@ -253,7 +267,7 @@ def does_expression_imply(
 
     """
     _validate_backend_capability(backend, SolverQueryKind.IMPLICATION)
-    _validate_timeout_milliseconds(timeout_milliseconds)
+    validate_timeout_milliseconds(timeout_milliseconds)
     # INVARIANT: _BACKEND_CAPABILITIES grants IMPLICATION to exactly one
     # backend (Z3), so delegating straight to the Z3 bridge is valid without
     # dispatching on `backend`. Adding a second IMPLICATION-capable backend
@@ -305,7 +319,7 @@ def holds_for_all_free_assignments(
 
     """
     _validate_backend_capability(backend, SolverQueryKind.UNIVERSAL_VALIDITY)
-    _validate_timeout_milliseconds(timeout_milliseconds)
+    validate_timeout_milliseconds(timeout_milliseconds)
     # INVARIANT: _BACKEND_CAPABILITIES grants UNIVERSAL_VALIDITY to exactly
     # one backend (Z3), so delegating straight to the Z3 bridge is valid
     # without dispatching on `backend`. Adding a second
@@ -350,7 +364,7 @@ def assert_holds_for_all_free_assignments(
 
     """
     _validate_backend_capability(backend, SolverQueryKind.UNIVERSAL_VALIDITY)
-    _validate_timeout_milliseconds(timeout_milliseconds)
+    validate_timeout_milliseconds(timeout_milliseconds)
     # INVARIANT: _BACKEND_CAPABILITIES grants UNIVERSAL_VALIDITY to exactly
     # one backend (Z3), so delegating straight to the Z3 bridge is valid
     # without dispatching on `backend`. Adding a second
@@ -396,7 +410,7 @@ def assert_expression_implies(
 
     """
     _validate_backend_capability(backend, SolverQueryKind.IMPLICATION)
-    _validate_timeout_milliseconds(timeout_milliseconds)
+    validate_timeout_milliseconds(timeout_milliseconds)
     # INVARIANT: _BACKEND_CAPABILITIES grants IMPLICATION to exactly one
     # backend (Z3), so delegating straight to the Z3 bridge is valid without
     # dispatching on `backend`. Adding a second IMPLICATION-capable backend

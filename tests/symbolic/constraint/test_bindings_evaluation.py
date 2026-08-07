@@ -518,3 +518,98 @@ def test_equation_constraint_free_identifiers_include_absent_variable() -> None:
     constraint = EquationConstraint(x, LiteralExpression(True))
 
     assert constraint.get_free_identifiers() == frozenset({x})
+
+
+# =============================================================================
+# Base-default bindings evaluation: reporting the cause of UNDECIDED
+# =============================================================================
+
+_CONSTRAINT_LOGGER = "fhy_core.symbolic.constraint"
+
+
+def _find_records(
+    caplog: pytest.LogCaptureFixture, level: int
+) -> list[logging.LogRecord]:
+    """Return the constraint module's records emitted at exactly ``level``."""
+    return [
+        record
+        for record in caplog.records
+        if record.levelno == level and record.name == _CONSTRAINT_LOGGER
+    ]
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_bindings_logs_debug_when_the_variable_is_unbound(
+    caplog: pytest.LogCaptureFixture, factory: SetConstraintFactory
+) -> None:
+    """Test a lookup miss on the constrained variable is reported at DEBUG.
+
+    A set constraint's ``evaluate`` never reports UNDECIDED, so under
+    bindings the only way to reach it is a missing entry for the
+    constrained variable. The record has to name the variable and the keys
+    that were supplied, which is what distinguishes a genuine partial
+    assignment from an identifier that fails to compare equal to the one
+    the constraint holds.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    constraint = factory(x, {1, 2})
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = constraint.evaluate_with_bindings({y: 1})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    debug_records = _find_records(caplog, logging.DEBUG)
+    assert debug_records, "expected a DEBUG record naming the unbound variable"
+    message = debug_records[0].getMessage()
+    assert repr(x) in message
+    assert repr(y) in message
+    assert not _find_records(caplog, logging.WARNING), (
+        "an unbound variable is an ordinary partial assignment, not an anomaly"
+    )
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_bindings_logs_debug_for_a_non_literal_expression_binding(
+    caplog: pytest.LogCaptureFixture, factory: SetConstraintFactory
+) -> None:
+    """Test a symbolic binding value the leaf cannot consume is reported at DEBUG.
+
+    ``ConstraintBindings`` admits any ``Expression`` value, but a
+    set-membership leaf can only decide against a concrete value. The
+    record has to name both the identifier and the expression that was
+    turned away, since nothing else distinguishes this from a missing
+    binding.
+    """
+    x = mock_identifier("x", 0)
+    w = mock_identifier("w", 1)
+    constraint = factory(x, {1, 2})
+    binding = IdentifierExpression(w)
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = constraint.evaluate_with_bindings({x: binding})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    debug_records = _find_records(caplog, logging.DEBUG)
+    assert debug_records, "expected a DEBUG record naming the rejected expression"
+    message = debug_records[0].getMessage()
+    assert repr(x) in message
+    assert repr(binding) in message
+    assert not _find_records(caplog, logging.WARNING), (
+        "a symbolic binding value is a structural limitation, not an anomaly"
+    )
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_bindings_logs_nothing_when_decidable(
+    caplog: pytest.LogCaptureFixture, factory: SetConstraintFactory
+) -> None:
+    """Test a decided outcome under bindings emits no record at any level."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1, 2})
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        constraint.evaluate_with_bindings({x: 1})
+
+    assert not _find_records(caplog, logging.DEBUG)
+    assert not _find_records(caplog, logging.WARNING)

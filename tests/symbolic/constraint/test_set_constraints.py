@@ -5,11 +5,16 @@ delegation, ``variable`` property, repr/str rendering, member shapes),
 so the tests are parametrized over the constraint factory.
 """
 
+import copy
+import dataclasses
+import io
+import pickle
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
+import fhy_core.symbolic.constraint as constraint_module
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.constraint import (
     Constraint,
@@ -18,6 +23,8 @@ from fhy_core.symbolic.constraint import (
     InSetConstraint,
     NotInSetConstraint,
 )
+from fhy_core.traits import FrozenMutationError
+from fhy_core.utils.override import override
 
 from .conftest import SET_KINDS, SerializableEqualHashable, mock_identifier
 
@@ -427,3 +434,227 @@ def test_set_constraint_public_field_matches_members_property(
     assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
 
     assert set(getattr(constraint, field_name)) == set(constraint.members)
+
+
+# =============================================================================
+# Type-strict member-set storage
+# =============================================================================
+
+_MEMBERS = (1, 2, 3)
+"""Members shared by the member-set storage tests."""
+
+_ABSENT_PROBE = 99
+"""Value deliberately outside `_MEMBERS`, used to probe the negative outcome."""
+
+_READERS: list[Any] = [
+    pytest.param(lambda constraint: constraint.evaluate(1), id="evaluate"),
+    pytest.param(lambda constraint: constraint.is_satisfied(1), id="is_satisfied"),
+    pytest.param(
+        lambda constraint: constraint.convert_to_expression(),
+        id="convert_to_expression",
+    ),
+    pytest.param(repr, id="repr"),
+    pytest.param(str, id="str"),
+]
+"""Every reader of the type-strict member set, as a single-argument callable."""
+
+
+class _IdentifierByReferencePickler(pickle.Pickler):
+    """Pickler that emits identifiers as external references.
+
+    A test constraint's variable is a ``Mock(spec=Identifier)``, which
+    pickle refuses to serialize. Handing every identifier to the pickler
+    as a persistent reference keeps the constraint itself -- including
+    whatever derived state it stores alongside its fields -- on the real
+    ``dumps``/``loads`` path.
+    """
+
+    referenced: dict[str, Identifier]
+
+    def __init__(self, file: Any, referenced: dict[str, Identifier]) -> None:
+        super().__init__(file)
+        self.referenced = referenced
+
+    @override
+    def persistent_id(self, obj: Any) -> str | None:
+        if isinstance(obj, Identifier):
+            key = str(id(obj))
+            self.referenced[key] = obj
+            return key
+        return None
+
+
+class _IdentifierByReferenceUnpickler(pickle.Unpickler):
+    """Unpickler resolving the external identifier references by key."""
+
+    referenced: dict[str, Identifier]
+
+    def __init__(self, file: Any, referenced: dict[str, Identifier]) -> None:
+        super().__init__(file)
+        self.referenced = referenced
+
+    @override
+    def persistent_load(self, pid: Any) -> Identifier:
+        return self.referenced[pid]
+
+
+def _round_trip_through_pickle(constraint: Constraint) -> Constraint:
+    """Return the constraint after a ``pickle.dumps``/``loads`` round trip."""
+    referenced: dict[str, Identifier] = {}
+    buffer = io.BytesIO()
+    _IdentifierByReferencePickler(buffer, referenced).dump(constraint)
+    buffer.seek(0)
+    restored = _IdentifierByReferenceUnpickler(buffer, referenced).load()
+    assert isinstance(restored, Constraint)
+    return restored
+
+
+def _assert_membership_agrees_with_public_field(
+    constraint: Constraint, field_name: str
+) -> None:
+    """Assert the constraint decides exactly as a fresh one over its public field.
+
+    The type-strict member set is derived state; the public
+    ``valid_values``/``invalid_values`` tuple is the source of truth. Any
+    drift between the two shows up as a disagreement with a constraint
+    built from that tuple alone.
+    """
+    public_members = tuple(getattr(constraint, field_name))
+    reference = type(constraint)(constraint.variable, public_members)  # type: ignore[call-arg]
+
+    for probe in (*public_members, _ABSENT_PROBE):
+        assert constraint.evaluate(probe) is reference.evaluate(probe), (
+            f"member set disagrees with {field_name} for probe {probe!r}"
+        )
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize("read", _READERS)
+def test_set_constraint_reader_does_not_rebuild_the_type_strict_member_set(
+    monkeypatch: pytest.MonkeyPatch,
+    factory: SetConstraintFactory,
+    read: Callable[[Constraint], object],
+) -> None:
+    """Test no reader re-derives the type-strict member set from the raw field.
+
+    The set is built once during construction. Re-deriving it on every
+    read turns a constant-time membership check into a full rebuild --
+    one wrapper allocation and one hash per stored member, per call --
+    and ``__repr__`` additionally feeds the ``ConstraintSystem`` ordering
+    key, so the cost multiplies across a system.
+    """
+    constraint = factory(mock_identifier("x", 0), _MEMBERS)
+    rebuild_count = 0
+    build_member_set = constraint_module._wrap_member_collection
+
+    def counting_build_member_set(values: Any) -> Any:
+        nonlocal rebuild_count
+        rebuild_count += 1
+        return build_member_set(values)
+
+    monkeypatch.setattr(
+        constraint_module, "_wrap_member_collection", counting_build_member_set
+    )
+
+    read(constraint)
+
+    assert rebuild_count == 0
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_pickle_round_trip_preserves_evaluation(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test a pickled-and-restored set constraint still evaluates correctly."""
+    constraint = factory(mock_identifier("x", 0), _MEMBERS)
+
+    restored = _round_trip_through_pickle(constraint)
+
+    assert tuple(getattr(restored, field_name)) == tuple(
+        getattr(constraint, field_name)
+    )
+    _assert_membership_agrees_with_public_field(restored, field_name)
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+@pytest.mark.parametrize(
+    "duplicate",
+    [pytest.param(copy.copy, id="copy"), pytest.param(copy.deepcopy, id="deepcopy")],
+)
+def test_set_constraint_copy_preserves_evaluation(
+    factory: SetConstraintFactory,
+    field_name: str,
+    duplicate: Callable[[Constraint], Constraint],
+) -> None:
+    """Test shallow and deep copies still evaluate against their own member set."""
+    constraint = factory(mock_identifier("x", 0), _MEMBERS)
+
+    duplicated = duplicate(constraint)
+
+    assert tuple(getattr(duplicated, field_name)) == tuple(
+        getattr(constraint, field_name)
+    )
+    _assert_membership_agrees_with_public_field(duplicated, field_name)
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_replace_rederives_the_member_set_from_the_new_values(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test ``dataclasses.replace`` decides against the replacement members.
+
+    The derived member set must not survive from the source instance; a
+    stale set would keep answering for the members that were replaced.
+    """
+    constraint = factory(mock_identifier("x", 0), _MEMBERS)
+
+    replaced = cast(
+        Constraint, dataclasses.replace(cast(Any, constraint), **{field_name: (7, 8)})
+    )
+
+    assert set(getattr(replaced, field_name)) == {7, 8}
+    _assert_membership_agrees_with_public_field(replaced, field_name)
+    assert replaced.evaluate(7) is not replaced.evaluate(_ABSENT_PROBE)
+    assert replaced.evaluate(1) is replaced.evaluate(_ABSENT_PROBE)
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_member_set_cannot_drift_from_the_public_field(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test the public field stays the sole source of truth for membership.
+
+    Neither the public field nor the derived member set is writable, so
+    the two cannot be driven apart after construction.
+    """
+    constraint = factory(mock_identifier("x", 0), _MEMBERS)
+
+    with pytest.raises(FrozenMutationError):
+        setattr(constraint, field_name, (7, 8))
+    with pytest.raises(FrozenMutationError):
+        cast(Any, constraint)._members = frozenset()
+
+    _assert_membership_agrees_with_public_field(constraint, field_name)
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize(
+    "duplicate",
+    [
+        pytest.param(_round_trip_through_pickle, id="pickle"),
+        pytest.param(copy.copy, id="copy"),
+        pytest.param(copy.deepcopy, id="deepcopy"),
+    ],
+)
+def test_set_constraint_equivalence_survives_duplication(
+    factory: SetConstraintFactory,
+    duplicate: Callable[[Constraint], Constraint],
+) -> None:
+    """Test structural and alpha equivalence hold between a constraint and its copy."""
+    constraint = factory(mock_identifier("x", 0), _MEMBERS)
+
+    duplicated = duplicate(constraint)
+
+    assert constraint.is_structurally_equivalent(duplicated)
+    assert duplicated.is_structurally_equivalent(constraint)
+    assert constraint.is_alpha_equivalent(duplicated)

@@ -8,6 +8,7 @@ import pytest
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
+    SerializationFormat,
     SerializedDict,
 )
 from fhy_core.symbolic.constraint import (
@@ -22,7 +23,12 @@ from fhy_core.symbolic.expression import (
     make_binary_expression,
 )
 
-from .conftest import SET_KINDS, SerializableEqualHashable, mock_identifier
+from .conftest import (
+    SET_KINDS,
+    HashCollidingMember,
+    SerializableEqualHashable,
+    mock_identifier,
+)
 
 SetConstraintType = type[Constraint]
 
@@ -143,14 +149,53 @@ def test_set_constraint_serialization_keeps_bool_int_and_float_distinct(
     assert len(serialized) == 3
 
 
-def test_in_set_constraint_serialized_values_are_repr_sorted() -> None:
-    """Test serialized members are emitted in repr-sorted order for determinism."""
-    constraint = InSetConstraint(mock_identifier("x", 0), {3, 1, 2})
-
+def _read_wire_members(constraint: Constraint, field: str) -> list[Any]:
+    """Return the serialized member list a set constraint puts on the wire."""
     payload_data = cast(dict[str, Any], constraint.serialize_to_dict()["__data__"])
-    serialized_values: list[Any] = payload_data["valid_values"]
+    members: list[Any] = payload_data[field]
+    return members
 
+
+@pytest.mark.parametrize("factory, field", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_serialized_values_are_repr_sorted(
+    factory: SetConstraintType, field: str
+) -> None:
+    """Test serialized members are emitted in repr-sorted order for determinism.
+
+    The members are chosen so repr-sorted order (``10, 2, 33, 4`` --
+    lexicographic on the rendered digits) is not the numeric order and is
+    not the order the normalized member set iterates in, so emitting the
+    set as it happens to iterate would produce a different list.
+    """
+    constraint = factory(mock_identifier("x", 0), {10, 2, 33, 4})  # type: ignore[call-arg]
+
+    serialized_values = _read_wire_members(constraint, field)
+
+    assert [member["__data__"] for member in serialized_values] == [10, 2, 33, 4]
     assert serialized_values == sorted(serialized_values, key=repr)
+
+
+@pytest.mark.parametrize("factory, field", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_wire_order_is_independent_of_construction_order(
+    factory: SetConstraintType, field: str
+) -> None:
+    """Test two constraints over the same members serialize to one byte-identical list.
+
+    The members collide on hash, so the two constraints provably store
+    them in different orders. Determinism of the wire form therefore has
+    to come from sorting at encode time rather than from the stored order
+    happening to agree.
+    """
+    x = mock_identifier("x", 0)
+    members = [HashCollidingMember(1), HashCollidingMember(2)]
+    left = factory(x, list(members))  # type: ignore[call-arg]
+    right = factory(x, list(reversed(members)))  # type: ignore[call-arg]
+
+    assert getattr(left, field) != getattr(right, field), (
+        "the two constraints must store their members in different orders "
+        "for this test to say anything about encode-time ordering"
+    )
+    assert _read_wire_members(left, field) == _read_wire_members(right, field)
 
 
 # =============================================================================
@@ -310,3 +355,24 @@ def test_set_member_deserializer_rejects_none_after_deserialization(
 
     with pytest.raises((DeserializationValueError, ValueError)):
         factory.deserialize_data_from_dict(bad_payload)
+
+
+@pytest.mark.parametrize("factory, field", _SET_KINDS_WITH_FIELD)
+@pytest.mark.parametrize("fmt", list(SerializationFormat))
+def test_set_constraint_round_trips_through_every_format(
+    factory: SetConstraintType, field: str, fmt: SerializationFormat
+) -> None:
+    """Test a set constraint round-trips through DICT, JSON, and BINARY.
+
+    The type-strict member set is derived from the public member field
+    rather than carried on the wire, so a restored constraint has to
+    re-derive it and decide exactly as the original does.
+    """
+    constraint = factory(mock_identifier("x", 0), {1, 2, 3})  # type: ignore[call-arg]
+
+    payload = constraint.serialize(fmt)
+    restored = type(constraint).deserialize(payload, fmt)
+
+    assert set(getattr(restored, field)) == {1, 2, 3}
+    for probe in (1, 2, 3, 99):
+        assert restored.is_satisfied(probe) == constraint.is_satisfied(probe)

@@ -23,6 +23,7 @@ from ..conftest import (  # re-exported below
 __all__ = [
     "ALL_KINDS",
     "SET_KINDS",
+    "HashCollidingMember",
     "HashableNotSerializable",
     "SerializableEqualHashable",
     "SerializableHashRaises",
@@ -131,6 +132,55 @@ class HashableNotSerializable:
         return (
             isinstance(other, HashableNotSerializable) and self._value == other._value
         )
+
+
+@register_serializable(type_id="tests.constraint.hash_colliding_member")
+class HashCollidingMember(Serializable):
+    """Serializable member whose instances all share one hash value.
+
+    Every instance hashes to the same number, so any two distinct
+    instances collide inside the ``frozenset`` that normalizes a set
+    constraint's members. Collisions are the only thing that makes a
+    ``frozenset``'s iteration order depend on insertion order, so a pair
+    of these members is what lets a test pin down that two constraints
+    built from differently ordered inputs really do store their members
+    in different orders -- and stay equivalent anyway. Members that do
+    not collide land in insertion-independent slots, which canonicalizes
+    the stored order and makes such a test unable to fail.
+
+    Distinct ``value``s stay unequal, so both survive normalization.
+    """
+
+    _value: int
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    @property
+    def value(self) -> int:
+        """Return the value distinguishing this member from its peers."""
+        return self._value
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, HashCollidingMember) and self._value == other._value
+
+    @override
+    def __hash__(self) -> int:
+        return 0
+
+    @override
+    def __repr__(self) -> str:
+        return f"HashCollidingMember({self._value})"
+
+    @override
+    def serialize_to_dict(self) -> dict[str, Any]:
+        return {"value": self._value}
+
+    @classmethod
+    @override
+    def deserialize_from_dict(cls, data: dict[str, Any]) -> "HashCollidingMember":
+        return cls(value=int(data["value"]))
 
 
 def make_serializable_dict(type_id: str, data: Any) -> SerializedDict:

@@ -1,5 +1,6 @@
 """Tests for `ConstraintSystem` and `create_constraint_system`."""
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -1496,3 +1497,208 @@ def test_check_satisfiability_with_bindings_solver_unknown_result_is_undecided(
     outcome = system.check_satisfiability_with_bindings({x: 1}, {y: SymbolType.INT})
 
     assert outcome is ConstraintOutcome.UNDECIDED
+
+
+# =============================================================================
+# Reporting the cause of an undecided outcome
+# =============================================================================
+
+_CONSTRAINT_LOGGER = "fhy_core.symbolic.constraint"
+
+
+def _find_records(
+    caplog: pytest.LogCaptureFixture, level: int
+) -> list[logging.LogRecord]:
+    """Return the constraint module's records emitted at exactly ``level``."""
+    return [
+        record
+        for record in caplog.records
+        if record.levelno == level and record.name == _CONSTRAINT_LOGGER
+    ]
+
+
+def test_check_satisfiability_logs_warning_for_the_bool_coercion_hazard(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test the bool sort-hazard screen reports what it refused to lower.
+
+    Returning UNDECIDED here is a capability gap in the Z3 bridge, not
+    ordinary partial evaluation, so it warns -- and it names the offending
+    node and the identifier sort involved, because a caller who cannot see
+    either has no way to tell this apart from a solver timeout and will
+    reach for ``timeout_milliseconds``, which cannot help.
+    """
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(InSetConstraint(x, {True}))
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = system.check_satisfiability({x: SymbolType.INT})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    warnings = _find_records(caplog, logging.WARNING)
+    assert warnings, "expected a WARNING naming the hazardous node"
+    message = warnings[0].getMessage()
+    assert "check_satisfiability" in message
+    assert repr(x) in message
+    assert SymbolType.INT.name in message
+
+
+def test_check_satisfiability_with_bindings_logs_warning_for_the_bool_coercion_hazard(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test the residual screened after substitution reports the same way."""
+    y = mock_identifier("y", 0)
+    system = create_constraint_system(NotInSetConstraint(y, {1}))
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = system.check_satisfiability_with_bindings({y: True}, {})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    warnings = _find_records(caplog, logging.WARNING)
+    assert warnings, "expected a WARNING naming the hazardous node"
+    message = warnings[0].getMessage()
+    assert "check_satisfiability_with_bindings" in message
+
+
+@pytest.mark.z3
+def test_check_satisfiability_logs_nothing_when_the_solver_decides(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a decided satisfiability check emits no record at any level."""
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(InSetConstraint(x, {1, 2}))
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = system.check_satisfiability({x: SymbolType.INT})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+    assert not _find_records(caplog, logging.WARNING)
+    assert not _find_records(caplog, logging.DEBUG)
+
+
+def test_system_evaluate_with_bindings_logs_debug_naming_the_undecided_member(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test the system reports which member left the conjunction undecided.
+
+    A system-level UNDECIDED that names no member forces the caller to
+    re-check every constraint by hand to find the one that could not be
+    decided.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    undecided_member = InSetConstraint(y, {1, 2})
+    system = create_constraint_system(InSetConstraint(x, {1, 2}), undecided_member)
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = system.evaluate_with_bindings({x: 1})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    messages = [record.getMessage() for record in _find_records(caplog, logging.DEBUG)]
+    assert any(
+        "ConstraintSystem" in message and repr(undecided_member) in message
+        for message in messages
+    ), "expected a DEBUG record from the system naming the undecided member"
+
+
+def test_system_evaluate_with_bindings_logs_nothing_when_every_member_decides(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a fully decided system emits no record at any level."""
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(InSetConstraint(x, {1, 2}))
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = system.evaluate_with_bindings({x: 1})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+    assert not _find_records(caplog, logging.DEBUG)
+    assert not _find_records(caplog, logging.WARNING)
+
+
+# =============================================================================
+# `timeout_milliseconds` validation on the paths that skip the solver
+# =============================================================================
+
+_INVALID_TIMEOUTS = [
+    pytest.param(-5, id="negative"),
+    pytest.param(0, id="zero"),
+]
+"""Values ``timeout_milliseconds`` must reject; only ``None`` or positive pass."""
+
+
+def _build_bool_hazard_system(variable: Identifier) -> ConstraintSystem:
+    """Return a system whose lowering trips the Boolean-coercion screen."""
+    return create_constraint_system(InSetConstraint(variable, {True}))
+
+
+@pytest.mark.parametrize("timeout_milliseconds", _INVALID_TIMEOUTS)
+def test_check_satisfiability_rejects_invalid_timeout_for_an_empty_system(
+    timeout_milliseconds: int,
+) -> None:
+    """Test the empty system validates ``timeout_milliseconds`` before returning.
+
+    The empty system is vacuously satisfiable and never reaches the
+    solver, but the documented contract promises the raise
+    unconditionally, so the argument cannot be accepted here while the
+    ordinary path rejects it.
+    """
+    system = create_constraint_system()
+
+    with pytest.raises(ValueError):
+        system.check_satisfiability({}, timeout_milliseconds=timeout_milliseconds)
+
+
+@pytest.mark.parametrize("timeout_milliseconds", _INVALID_TIMEOUTS)
+def test_check_satisfiability_rejects_invalid_timeout_for_a_hazardous_system(
+    timeout_milliseconds: int,
+) -> None:
+    """Test the bool-coercion early return still validates ``timeout_milliseconds``."""
+    x = mock_identifier("x", 0)
+    system = _build_bool_hazard_system(x)
+
+    with pytest.raises(ValueError):
+        system.check_satisfiability(
+            {x: SymbolType.INT}, timeout_milliseconds=timeout_milliseconds
+        )
+
+
+@pytest.mark.parametrize("timeout_milliseconds", _INVALID_TIMEOUTS)
+def test_check_satisfiability_with_bindings_rejects_invalid_timeout_when_empty(
+    timeout_milliseconds: int,
+) -> None:
+    """Test the empty-system early return validates ``timeout_milliseconds``."""
+    system = create_constraint_system()
+
+    with pytest.raises(ValueError):
+        system.check_satisfiability_with_bindings(
+            {}, {}, timeout_milliseconds=timeout_milliseconds
+        )
+
+
+@pytest.mark.parametrize("timeout_milliseconds", _INVALID_TIMEOUTS)
+def test_check_satisfiability_with_bindings_rejects_invalid_timeout_when_hazardous(
+    timeout_milliseconds: int,
+) -> None:
+    """Test the bool-coercion early return validates ``timeout_milliseconds``."""
+    y = mock_identifier("y", 0)
+    system = create_constraint_system(NotInSetConstraint(y, {1}))
+
+    with pytest.raises(ValueError):
+        system.check_satisfiability_with_bindings(
+            {y: True}, {}, timeout_milliseconds=timeout_milliseconds
+        )
+
+
+@pytest.mark.parametrize(
+    "timeout_milliseconds", [pytest.param(None, id="none"), pytest.param(1, id="one")]
+)
+def test_check_satisfiability_accepts_a_valid_timeout_for_an_empty_system(
+    timeout_milliseconds: int | None,
+) -> None:
+    """Test validation does not disturb the vacuous outcome for accepted values."""
+    system = create_constraint_system()
+
+    outcome = system.check_satisfiability({}, timeout_milliseconds=timeout_milliseconds)
+
+    assert outcome is ConstraintOutcome.SATISFIED

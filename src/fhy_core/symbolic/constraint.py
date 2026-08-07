@@ -66,6 +66,7 @@ from collections.abc import Collection, Hashable, Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum, auto
+from functools import cached_property
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -117,7 +118,11 @@ from .expression import (
     make_binary_expression,
     pformat_expression,
 )
-from .solver import check_expression_satisfiability, simplify_expression
+from .solver import (
+    check_expression_satisfiability,
+    simplify_expression,
+    validate_timeout_milliseconds,
+)
 from .symbol_type import SymbolType
 
 _LOGGER = get_logger(__name__)
@@ -572,6 +577,19 @@ class Constraint(
         are ignored. ``EquationConstraint`` overrides this to substitute
         every bound identifier simultaneously.
 
+        A non-literal ``Expression`` binding is a structural limitation of
+        the leaves that use this implementation, not a per-call outcome:
+        ``InSetConstraint`` and ``NotInSetConstraint`` decide membership
+        against a concrete value, so no symbolic expression is decidable
+        against them and supplying a different one will not help. That
+        makes ``ConstraintBindings`` wider than these leaves consume --
+        only ``EquationConstraint``, which substitutes into an expression,
+        uses the full range. Both this case and a missing binding are
+        logged at ``DEBUG`` through the module logger, naming the
+        identifier responsible, since a set constraint's ``evaluate``
+        never reports ``UNDECIDED`` and so gives no other clue which of
+        the two occurred.
+
         Args:
             bindings: Mapping from identifiers to candidate values. Raw
                 ``LiteralType`` values and ``Expression`` values are both
@@ -590,10 +608,26 @@ class Constraint(
         """
         snapshot = dict(bindings)
         if self.variable not in snapshot:
+            _LOGGER.debug(
+                "%s.evaluate_with_bindings: no binding for variable %r; the "
+                "bindings supplied %s; reporting UNDECIDED",
+                type(self).__name__,
+                self.variable,
+                format_comma_separated_list(tuple(snapshot)) or "no identifiers",
+            )
             return ConstraintOutcome.UNDECIDED
         value = snapshot[self.variable]
         if isinstance(value, Expression):
             if not isinstance(value, LiteralExpression):
+                _LOGGER.debug(
+                    "%s.evaluate_with_bindings: the binding for %r is the "
+                    "non-literal expression %r; this leaf decides against a "
+                    "concrete value and cannot consume a symbolic one; "
+                    "reporting UNDECIDED",
+                    type(self).__name__,
+                    self.variable,
+                    value,
+                )
                 return ConstraintOutcome.UNDECIDED
             value = value.value
         return self.evaluate(value)
@@ -820,15 +854,27 @@ class InSetConstraint(Constraint):
             "valid_values",
             tuple(_unwrap_member(member) for member in wrapped),
         )
+        # Seed the ``_members`` cache with the set this normalization pass has
+        # already built, so no reader has to derive it a second time.
+        object.__setattr__(self, "_members", wrapped)
 
     @property
     def members(self) -> tuple[ConstraintMember, ...]:
         """Return the permitted members as raw values, in no particular order."""
         return tuple(self.valid_values)
 
-    @property
+    @cached_property
     def _members(self) -> frozenset[_TypedMember]:
-        """Return the type-strict member set, re-derived from the raw view."""
+        """Return the type-strict member set membership is decided against.
+
+        Held as a stored set rather than re-derived per read: ``evaluate``
+        is then a constant-time frozenset lookup, and ``__repr__`` -- which
+        feeds the ``ConstraintSystem`` ordering key -- costs no wrapper
+        allocations. ``__post_init__`` seeds it with the set built during
+        normalization; this body re-derives it from ``valid_values`` for an
+        instance that reaches a reader unseeded, so the public field stays
+        the single source of truth.
+        """
         return _wrap_member_collection(self.valid_values)
 
     @classmethod
@@ -915,15 +961,27 @@ class NotInSetConstraint(Constraint):
             "invalid_values",
             tuple(_unwrap_member(member) for member in wrapped),
         )
+        # Seed the ``_members`` cache with the set this normalization pass has
+        # already built, so no reader has to derive it a second time.
+        object.__setattr__(self, "_members", wrapped)
 
     @property
     def members(self) -> tuple[ConstraintMember, ...]:
         """Return the forbidden members as raw values, in no particular order."""
         return tuple(self.invalid_values)
 
-    @property
+    @cached_property
     def _members(self) -> frozenset[_TypedMember]:
-        """Return the type-strict member set, re-derived from the raw view."""
+        """Return the type-strict member set membership is decided against.
+
+        Held as a stored set rather than re-derived per read: ``evaluate``
+        is then a constant-time frozenset lookup, and ``__repr__`` -- which
+        feeds the ``ConstraintSystem`` ordering key -- costs no wrapper
+        allocations. ``__post_init__`` seeds it with the set built during
+        normalization; this body re-derives it from ``invalid_values`` for
+        an instance that reaches a reader unseeded, so the public field
+        stays the single source of truth.
+        """
         return _wrap_member_collection(self.invalid_values)
 
     @classmethod
@@ -1153,8 +1211,8 @@ def _does_node_coerce_a_bool_operand(
 
 def _find_bool_sort_hazard(
     expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
-) -> bool:
-    """Return whether any node of ``expression`` coerces a Boolean operand.
+) -> Expression | None:
+    """Return the first node of ``expression`` that coerces a Boolean operand.
 
     Screens the tree that is actually handed to the solver, so the check
     covers every way a ``BoolVal`` can reach a numeric context: a ``bool``
@@ -1169,22 +1227,54 @@ def _find_bool_sort_hazard(
         symbol_types: Z3 sort for each free identifier of ``expression``.
 
     Returns:
-        True if some node would lower through a Boolean-to-integer
-        coercion.
+        The offending node, or ``None`` when every node lowers faithfully.
+        The node is returned rather than a flag so the caller can name the
+        site it refused to lower.
 
     """
     if _does_node_coerce_a_bool_operand(expression, symbol_types):
-        return True
-    return any(
-        _find_bool_sort_hazard(child, symbol_types)
-        for child in expression.get_visit_children()
+        return expression
+    for child in expression.get_visit_children():
+        hazard = _find_bool_sort_hazard(child, symbol_types)
+        if hazard is not None:
+            return hazard
+    return None
+
+
+def _render_identifier_sorts(
+    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
+) -> str:
+    """Return each free identifier of ``expression`` paired with its declared sort.
+
+    Args:
+        expression: Node whose free identifiers are described.
+        symbol_types: Z3 sort for each free identifier.
+
+    Returns:
+        A comma-separated ``identifier: SORT`` listing, ordered by
+        identifier id; ``"none"`` when the node has no free identifier,
+        and ``"unknown"`` in place of a sort ``symbol_types`` does not
+        carry.
+
+    """
+    identifiers = sorted(
+        expression.get_free_identifiers(), key=lambda identifier: identifier.id
     )
+    if not identifiers:
+        return "none"
+    rendered: list[str] = []
+    for identifier in identifiers:
+        symbol_type = symbol_types.get(identifier)
+        sort_name = "unknown" if symbol_type is None else symbol_type.name
+        rendered.append(f"{identifier!r}: {sort_name}")
+    return format_comma_separated_list(rendered)
 
 
 def _decide_satisfiability(
     expression: Expression,
     symbol_types: Mapping[Identifier, SymbolType],
     *,
+    context: str,
     timeout_milliseconds: int | None = None,
 ) -> ConstraintOutcome:
     """Classify satisfiability of ``expression`` via the solver seam.
@@ -1193,11 +1283,17 @@ def _decide_satisfiability(
     for the Z3 Boolean-coercion hazard, and only then consults the solver.
     The precondition therefore raises whether or not the expression is
     hazardous, and a hazardous expression reports ``UNDECIDED`` instead of
-    a decided outcome the lowering cannot support.
+    a decided outcome the lowering cannot support. A hazard is logged at
+    ``WARNING`` through the module logger: it is a gap in what the Z3
+    bridge can express, not the routine partial evaluation that
+    ``evaluate_with_bindings`` reports at ``DEBUG``, and no solver setting
+    the caller can reach will turn it into a decided answer.
 
     Args:
         expression: Expression to decide.
         symbol_types: Z3 sort for each free identifier of ``expression``.
+        context: Public method name the outcome is reported under, used to
+            attribute the warning.
         timeout_milliseconds: Optional bound, in milliseconds, on the
             solver invocation.
 
@@ -1211,7 +1307,19 @@ def _decide_satisfiability(
 
     """
     _validate_symbol_types_cover_free_identifiers(expression, symbol_types)
-    if _find_bool_sort_hazard(expression, symbol_types):
+    hazard = _find_bool_sort_hazard(expression, symbol_types)
+    if hazard is not None:
+        _LOGGER.warning(
+            "%s: node %r lowers a Boolean operand into a numeric context, where "
+            "the Z3 bindings rewrite it to If(b, 1, 0) and collapse this "
+            "package's type-strict semantics; identifier sorts at that node: "
+            "%s. The expression is not handed to the solver and the check "
+            "reports UNDECIDED; bounding timeout_milliseconds cannot change "
+            "this outcome.",
+            context,
+            hazard,
+            _render_identifier_sorts(hazard, symbol_types),
+        )
         return ConstraintOutcome.UNDECIDED
     satisfiable = check_expression_satisfiability(
         expression,
@@ -1437,8 +1545,10 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
         ``VIOLATED`` if any member is ``VIOLATED`` (a definite violation
         dominates indeterminacy; members are checked in canonical order and
         checking stops at the first violation); ``SATISFIED`` if every
-        member is ``SATISFIED``; ``UNDECIDED`` otherwise. The empty system
-        is vacuously ``SATISFIED``.
+        member is ``SATISFIED``; ``UNDECIDED`` otherwise. Each undecided
+        member is logged at ``DEBUG`` through the module logger, so a
+        system-level ``UNDECIDED`` identifies the members it came from
+        rather than leaving the caller to re-check each one by hand.
 
         """
         resolved_bindings = dict(bindings)
@@ -1448,6 +1558,12 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
             if outcome is ConstraintOutcome.VIOLATED:
                 return ConstraintOutcome.VIOLATED
             if outcome is ConstraintOutcome.UNDECIDED:
+                _LOGGER.debug(
+                    "ConstraintSystem.evaluate_with_bindings: member %r is "
+                    "undecided under the given bindings; the conjunction "
+                    "reports UNDECIDED unless a later member is violated",
+                    constraint,
+                )
                 saw_undecided = True
         return (
             ConstraintOutcome.UNDECIDED
@@ -1530,14 +1646,18 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
             ConstraintError: If a member cannot be converted to an
                 expression.
             ValueError: If ``timeout_milliseconds`` is not None and not
-                positive.
+                positive. Checked before the empty-system and hazard
+                early returns, so an inadmissible bound is rejected even
+                when the outcome is decided without the solver.
 
         """
+        validate_timeout_milliseconds(timeout_milliseconds)
         if not self.constraints:
             return ConstraintOutcome.SATISFIED
         return _decide_satisfiability(
             self.convert_to_expression(),
             symbol_types,
+            context="ConstraintSystem.check_satisfiability",
             timeout_milliseconds=timeout_milliseconds,
         )
 
@@ -1588,15 +1708,21 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
                 bridge cannot proceed without a sort for every free
                 identifier.
             ValueError: If ``timeout_milliseconds`` is not None and not
-                positive.
+                positive. Checked before the empty-system and hazard
+                early returns, so an inadmissible bound is rejected even
+                when the outcome is decided without the solver.
 
         """
+        validate_timeout_milliseconds(timeout_milliseconds)
         if not self.constraints:
             return ConstraintOutcome.SATISFIED
         environment = _coerce_bindings_to_environment(bindings)
         residual = self.convert_to_expression().substitute(environment)
         return _decide_satisfiability(
-            residual, symbol_types, timeout_milliseconds=timeout_milliseconds
+            residual,
+            symbol_types,
+            context="ConstraintSystem.check_satisfiability_with_bindings",
+            timeout_milliseconds=timeout_milliseconds,
         )
 
     @classmethod
