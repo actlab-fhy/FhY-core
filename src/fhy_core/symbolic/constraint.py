@@ -64,6 +64,7 @@ __all__ = [
 from abc import ABC, abstractmethod
 from collections.abc import Collection, Hashable, Iterator, Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal
 from enum import Enum, auto
 from typing import (
     TYPE_CHECKING,
@@ -103,10 +104,16 @@ from fhy_core.traits import FrozenMixin
 from fhy_core.utils import format_comma_separated_list
 
 from .expression import (
+    BinaryExpression,
     BinaryOperation,
+    CallExpression,
     Expression,
+    IdentifierExpression,
     LiteralExpression,
     LiteralType,
+    PiecewiseExpression,
+    UnaryExpression,
+    UnaryOperation,
     make_binary_expression,
     pformat_expression,
 )
@@ -738,15 +745,34 @@ class EquationConstraint(Constraint):
 
 
 def _render_member_set(members: frozenset[_TypedMember]) -> str:
-    rendered_members = format_comma_separated_list(
-        sorted((_unwrap_member(member) for member in members), key=repr),
+    """Render the members in ``repr`` form, sorted, inside set braces.
+
+    ``repr`` is applied to every member including a ``str`` member, so the
+    string ``"5"`` renders as ``'5'`` while the integer ``5`` renders as
+    ``5``. Membership is type-strict, so the two are different members and
+    the textual form has to keep them apart.
+
+    """
+    rendered_members = ", ".join(
+        sorted(repr(_unwrap_member(member)) for member in members)
     )
     return f"{{{rendered_members}}}"
 
 
 def _render_member_set_str(members: frozenset[_TypedMember]) -> str:
-    rendered_members = format_comma_separated_list(
-        (_unwrap_member(member) for member in members), str_func=str
+    """Render the members in human-readable form, sorted, inside set braces.
+
+    A ``str`` member is quoted so it stays distinguishable from the
+    numeric member carrying the same digits, matching the type-strict
+    membership semantics. Rendering is sorted so the textual form does not
+    depend on set iteration order.
+
+    """
+    rendered_members = ", ".join(
+        sorted(
+            repr(value) if isinstance(value, str) else str(value)
+            for value in (_unwrap_member(member) for member in members)
+        )
     )
     return f"{{{rendered_members}}}"
 
@@ -964,6 +990,197 @@ def _validate_symbol_types_cover_free_identifiers(
     )
 
 
+class _LoweredSort(Enum):
+    """Z3 sort an expression node lowers to, as far as it can be determined.
+
+    ``UNDETERMINED`` covers the nodes whose lowered sort this module
+    cannot read off the tree: an identifier with no ``symbol_types``
+    entry, a call (which the Z3 bridge refuses outright), an unrecognized
+    ``Expression`` subclass, and a piecewise whose branches disagree.
+    """
+
+    BOOLEAN = auto()
+    NUMERIC = auto()
+    UNDETERMINED = auto()
+
+
+_NUMERIC_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
+    {
+        BinaryOperation.ADD,
+        BinaryOperation.SUBTRACT,
+        BinaryOperation.MULTIPLY,
+        BinaryOperation.DIVIDE,
+        BinaryOperation.FLOOR_DIVIDE,
+        BinaryOperation.MODULO,
+        BinaryOperation.POWER,
+    }
+)
+"""Binary operations the Z3 bridge lowers to arithmetic on a numeric sort."""
+
+_COMPARISON_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
+    {
+        BinaryOperation.EQUAL,
+        BinaryOperation.NOT_EQUAL,
+        BinaryOperation.LESS,
+        BinaryOperation.LESS_EQUAL,
+        BinaryOperation.GREATER,
+        BinaryOperation.GREATER_EQUAL,
+    }
+)
+"""Binary operations the Z3 bridge lowers to a comparison of two operands."""
+
+_LOGICAL_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
+    {BinaryOperation.LOGICAL_AND, BinaryOperation.LOGICAL_OR}
+)
+"""Binary operations the Z3 bridge lowers to ``z3.And``/``z3.Or``."""
+
+
+# One early return per node kind reads clearest here; the alternative is a
+# lookup table that would have to be threaded through `symbol_types` anyway.
+def _classify_lowered_sort(  # noqa: PLR0911
+    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
+) -> _LoweredSort:
+    """Return the Z3 sort ``expression`` lowers to, per ``passes.z3``.
+
+    Mirrors ``ExpressionToZ3Converter``: a ``bool``-valued literal becomes
+    a ``BoolVal`` and every other literal an ``IntVal``/``RealVal``; an
+    identifier takes the sort named by its ``symbol_types`` entry; a
+    comparison, a logical operation, and a logical negation are Boolean;
+    arithmetic is numeric; a piecewise takes the sort its branches agree
+    on.
+
+    Args:
+        expression: Node whose lowered sort is wanted.
+        symbol_types: Z3 sort for each identifier of the enclosing
+            expression.
+
+    Returns:
+        The node's ``_LoweredSort``.
+
+    """
+    if isinstance(expression, LiteralExpression):
+        if type(expression.value) is bool:
+            return _LoweredSort.BOOLEAN
+        return _LoweredSort.NUMERIC
+    elif isinstance(expression, IdentifierExpression):
+        symbol_type = symbol_types.get(expression.identifier)
+        if symbol_type is SymbolType.BOOL:
+            return _LoweredSort.BOOLEAN
+        elif symbol_type is None:
+            return _LoweredSort.UNDETERMINED
+        return _LoweredSort.NUMERIC
+    elif isinstance(expression, BinaryExpression):
+        if expression.operation in _NUMERIC_BINARY_OPERATIONS:
+            return _LoweredSort.NUMERIC
+        elif expression.operation in (
+            _COMPARISON_BINARY_OPERATIONS | _LOGICAL_BINARY_OPERATIONS
+        ):
+            return _LoweredSort.BOOLEAN
+        return _LoweredSort.UNDETERMINED
+    elif isinstance(expression, UnaryExpression):
+        if expression.operation is UnaryOperation.LOGICAL_NOT:
+            return _LoweredSort.BOOLEAN
+        return _LoweredSort.NUMERIC
+    elif isinstance(expression, PiecewiseExpression):
+        return _join_lowered_sorts(
+            _classify_lowered_sort(branch, symbol_types)
+            for branch in (*expression.values, expression.otherwise)
+        )
+    elif isinstance(expression, CallExpression):
+        return _LoweredSort.UNDETERMINED
+    return _LoweredSort.UNDETERMINED
+
+
+def _join_lowered_sorts(sorts: Iterator[_LoweredSort]) -> _LoweredSort:
+    """Return the sort every input agrees on, or ``UNDETERMINED`` if they differ."""
+    distinct = set(sorts)
+    if len(distinct) == 1:
+        return distinct.pop()
+    return _LoweredSort.UNDETERMINED
+
+
+def _does_node_coerce_a_bool_operand(
+    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
+) -> bool:
+    """Return whether this one node makes Z3 coerce a Boolean operand to an integer.
+
+    The Z3 Python bindings rewrite a Boolean operand of a numeric context
+    into ``If(b, 1, 0)``: ``True`` becomes ``1`` and ``False`` becomes
+    ``0``. That collapses the type-strict distinction this module's
+    ``evaluate``/``evaluate_with_bindings`` preserve, so a decided outcome
+    read back through such a lowering can be provably wrong.
+
+    Three contexts coerce:
+
+    - An arithmetic operation with any Boolean operand.
+    - A comparison whose two operands mix a Boolean and a numeric sort. A
+      comparison of two Booleans lowers faithfully and is not flagged.
+    - A piecewise whose branch values mix a Boolean and a numeric sort,
+      since ``z3.If`` forces its two arms to a single sort.
+
+    ``z3.And``/``z3.Or``/``z3.Not`` and unary arithmetic negation do not
+    coerce: they raise on an operand of the wrong sort rather than
+    silently reinterpreting it, so a Boolean there is either correct or
+    already an error.
+
+    Args:
+        expression: Node to screen. Children are not visited.
+        symbol_types: Z3 sort for each identifier of the enclosing
+            expression.
+
+    Returns:
+        True if this node's own lowering coerces a Boolean operand.
+
+    """
+    if isinstance(expression, BinaryExpression):
+        operand_sorts = {
+            _classify_lowered_sort(operand, symbol_types)
+            for operand in expression.get_operands()
+        }
+        if expression.operation in _NUMERIC_BINARY_OPERATIONS:
+            return _LoweredSort.BOOLEAN in operand_sorts
+        elif expression.operation in _COMPARISON_BINARY_OPERATIONS:
+            return operand_sorts >= {_LoweredSort.BOOLEAN, _LoweredSort.NUMERIC}
+        return False
+    elif isinstance(expression, PiecewiseExpression):
+        branch_sorts = {
+            _classify_lowered_sort(branch, symbol_types)
+            for branch in (*expression.values, expression.otherwise)
+        }
+        return branch_sorts >= {_LoweredSort.BOOLEAN, _LoweredSort.NUMERIC}
+    return False
+
+
+def _find_bool_sort_hazard(
+    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
+) -> bool:
+    """Return whether any node of ``expression`` coerces a Boolean operand.
+
+    Screens the tree that is actually handed to the solver, so the check
+    covers every way a ``BoolVal`` can reach a numeric context: a ``bool``
+    set member, a ``bool`` literal written into an equation, and a
+    ``bool`` binding value substituted in before the check. The screen is
+    per-site: a Boolean literal consumed by a logical operation leaves the
+    rest of the tree decidable.
+
+    Args:
+        expression: Lowered conjunction, or the residual left after
+            substituting bindings into it.
+        symbol_types: Z3 sort for each free identifier of ``expression``.
+
+    Returns:
+        True if some node would lower through a Boolean-to-integer
+        coercion.
+
+    """
+    if _does_node_coerce_a_bool_operand(expression, symbol_types):
+        return True
+    return any(
+        _find_bool_sort_hazard(child, symbol_types)
+        for child in expression.get_visit_children()
+    )
+
+
 def _decide_satisfiability(
     expression: Expression,
     symbol_types: Mapping[Identifier, SymbolType],
@@ -972,12 +1189,30 @@ def _decide_satisfiability(
 ) -> ConstraintOutcome:
     """Classify satisfiability of ``expression`` via the solver seam.
 
+    Validates the caller's symbol types first, then screens the expression
+    for the Z3 Boolean-coercion hazard, and only then consults the solver.
+    The precondition therefore raises whether or not the expression is
+    hazardous, and a hazardous expression reports ``UNDECIDED`` instead of
+    a decided outcome the lowering cannot support.
+
+    Args:
+        expression: Expression to decide.
+        symbol_types: Z3 sort for each free identifier of ``expression``.
+        timeout_milliseconds: Optional bound, in milliseconds, on the
+            solver invocation.
+
+    Returns:
+        ``SATISFIED``/``VIOLATED`` when the solver decides,
+        ``UNDECIDED`` on a hazardous lowering or an inconclusive solver.
+
     Raises:
         MissingSymbolTypeError: If ``symbol_types`` lacks an entry for a
             free identifier of ``expression``.
 
     """
     _validate_symbol_types_cover_free_identifiers(expression, symbol_types)
+    if _find_bool_sort_hazard(expression, symbol_types):
+        return ConstraintOutcome.UNDECIDED
     satisfiable = check_expression_satisfiability(
         expression,
         dict(symbol_types),
@@ -990,78 +1225,140 @@ def _decide_satisfiability(
     return ConstraintOutcome.VIOLATED
 
 
-def _contains_bool_literal(expression: Expression) -> bool:
-    """Return whether ``expression``'s tree contains a `bool`-valued literal.
+def _build_literal_ordering_key(value: LiteralType) -> str:
+    """Return an ordering key constant on ``LiteralExpression`` equivalence.
 
-    Recurses via ``get_visit_children``, the same traversal
-    ``Expression.get_free_identifiers`` uses, so a nested
-    ``LiteralExpression`` is found regardless of depth. Checks
-    ``type(value) is bool`` rather than ``isinstance(value, bool)``,
-    matching ``LiteralExpression.__post_init__``'s own discrimination
-    between a ``bool`` value and a plain ``int`` value (``bool`` is an
-    ``int`` subclass).
+    ``LiteralExpression`` compares literals by bucket and canonical form
+    rather than by stored Python type, so the key has to collapse the same
+    forms: the integer-grammar strings ``"5"`` and ``"05"`` key alike with
+    the integer ``5``, the float-grammar strings ``"1.5"`` and ``"1.50"``
+    key alike as one exact decimal, and ``-0.0`` keys alike with ``0.0``.
+    A ``bool`` keys apart from every integer, and an exact-decimal string
+    apart from the binary ``float`` carrying the same digits.
+
+    Args:
+        value: Stored value of a ``LiteralExpression``.
+
+    Returns:
+        Bucket-prefixed textual key.
 
     """
-    if isinstance(expression, LiteralExpression) and type(expression.value) is bool:
-        return True
-    return any(
-        _contains_bool_literal(child) for child in expression.get_visit_children()
+    if isinstance(value, bool):
+        return f"bool:{value}"
+    elif isinstance(value, int):
+        return f"int:{value}"
+    elif isinstance(value, float):
+        # Adding zero maps -0.0 to 0.0; the two are equal and so must key alike.
+        return f"float-binary:{value + 0.0!r}"
+    # A string-form literal matches the integer grammar or the float grammar,
+    # and only the latter carries a decimal point.
+    elif "." in value:
+        return f"float-decimal:{Decimal(value).normalize()}"
+    return f"int:{int(value)}"
+
+
+def _build_member_ordering_key(value: Any) -> str:
+    """Return an ordering key constant on type-strict member equality.
+
+    Members compare by ``(type(value), value)``, so the key carries the
+    type name: the string ``"1"``, the integer ``1``, the float ``1.0``,
+    and ``True`` are four distinct members and get four distinct keys.
+    Containers recurse, and a ``frozenset``'s element keys are sorted so
+    the container key does not depend on iteration order. A
+    ``Serializable`` member keys on its serialized data, which is stable
+    across processes where its ``repr`` need not be.
+
+    Args:
+        value: Raw (unwrapped) constraint member.
+
+    Returns:
+        Type-tagged textual key.
+
+    """
+    if isinstance(value, tuple):
+        elements = ",".join(_build_member_ordering_key(item) for item in value)
+        return f"tuple({elements})"
+    elif isinstance(value, frozenset):
+        elements = ",".join(sorted(_build_member_ordering_key(item) for item in value))
+        return f"frozenset({elements})"
+    elif isinstance(value, (bool, int, float, str)):
+        return f"{type(value).__name__}:{value!r}"
+    qualified_name = f"{type(value).__module__}.{type(value).__qualname__}"
+    if isinstance(value, Serializable):
+        return f"{qualified_name}:{value.serialize_to_dict()!r}"
+    return f"{qualified_name}:{value!r}"
+
+
+def _build_expression_ordering_key(expression: Expression) -> str:
+    """Return an ordering key constant on expression structural equivalence.
+
+    Renders the tree as ``NodeType[node data](child keys)``. Node data is
+    whatever the node compares by beyond its children: a literal's bucket
+    and canonical form, an identifier's ``id``, an operation's name, or a
+    call's function name. A ``PiecewiseExpression`` needs none, since its
+    children already encode the cases and the fallback.
+
+    Args:
+        expression: Expression to key.
+
+    Returns:
+        Textual key for the whole subtree.
+
+    """
+    children = ",".join(
+        _build_expression_ordering_key(child)
+        for child in expression.get_visit_children()
     )
+    node_data = _render_expression_node_ordering_data(expression)
+    return f"{type(expression).__name__}[{node_data}]({children})"
 
 
-def _find_bool_member_type_ambiguity(
-    constraints: tuple[Constraint, ...],
-    symbol_types: Mapping[Identifier, SymbolType],
-) -> bool:
-    """Return whether a `bool` literal among ``constraints`` is sort-ambiguous.
+def _render_expression_node_ordering_data(expression: Expression) -> str:
+    """Return one node's own ordering data, excluding its children."""
+    if isinstance(expression, LiteralExpression):
+        return _build_literal_ordering_key(expression.value)
+    elif isinstance(expression, IdentifierExpression):
+        return f"id:{expression.identifier.id}"
+    elif isinstance(expression, (BinaryExpression, UnaryExpression)):
+        return expression.operation.value
+    elif isinstance(expression, CallExpression):
+        return f"call:{expression.function_name}"
+    return ""
 
-    Two constructs hit the same Z3 coercion hazard:
 
-    - A ``bool`` member of an ``InSetConstraint``/``NotInSetConstraint``
-      lowers to a Z3 ``BoolVal``.
-    - A ``bool``-valued ``LiteralExpression`` anywhere in an
-      ``EquationConstraint``'s expression tree also lowers to a Z3
-      ``BoolVal``.
+def _build_constraint_ordering_key(constraint: Constraint) -> str:
+    """Return the canonical sort key ``ConstraintSystem`` orders its members by.
 
-    Compared against an ``IntVal``/``RealVal`` (whether that literal comes
-    from a free variable or from a bound identifier substituted to a
-    concrete value), the Z3 Python bindings silently coerce the
-    ``BoolVal`` into an integer via an implicit ``If`` (``True`` becomes
-    ``1``, ``False`` becomes ``0``). This collapses the type-strict
-    distinction the constraint's own ``evaluate``/``evaluate_with_bindings``
-    preserve whenever the bound value happens to be ``0`` or ``1``, so this
-    check does not special-case already-bound identifiers: only a variable
-    whose ``symbol_types`` entry is confirmed ``SymbolType.BOOL`` is
-    exempt -- for an ``EquationConstraint``, every free identifier of its
-    *expression* (not necessarily including its declared ``variable``,
-    which ``convert_to_expression`` does not add back in when the
-    expression does not itself reference it) must be confirmed
-    ``SymbolType.BOOL``, since the bool literal's position within the
-    expression tree is not tracked.
+    The key is constant on structural-equivalence classes: two
+    structurally equivalent constraints always key alike, so a system's
+    member order does not depend on construction order. It is keyed on
+    the same things equivalence compares -- the concrete kind, the
+    variable's ``Identifier.id``, and either the expression tree or the
+    type-strict member set -- rather than on ``repr``, which neither
+    separates every distinct constraint nor agrees on every equivalent
+    pair.
 
-    This is deliberately conservative: an ``EquationConstraint`` can hold a
-    ``bool`` literal that is never actually compared against a non-bool
-    identifier, in which case this still reports ambiguity. Over-triggering
-    only costs a spurious ``UNDECIDED``; the alternative -- a provably
-    wrong decided outcome -- is not acceptable.
+    A ``Constraint`` subclass declared outside this module falls back to
+    its ``repr``, which the subclassing contract requires to identify the
+    kind and the variable.
+
+    Args:
+        constraint: Member to key.
+
+    Returns:
+        Textual key ordering the member within its system.
 
     """
-    for constraint in constraints:
-        if isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
-            if symbol_types.get(constraint.variable) is SymbolType.BOOL:
-                continue
-            if any(isinstance(member, bool) for member in constraint.members):
-                return True
-        elif isinstance(constraint, EquationConstraint):
-            if not _contains_bool_literal(constraint.expression):
-                continue
-            if all(
-                symbol_types.get(identifier) is SymbolType.BOOL
-                for identifier in constraint.expression.get_free_identifiers()
-            ):
-                continue
-            return True
-    return False
+    kind = type(constraint).__name__
+    if isinstance(constraint, EquationConstraint):
+        expression_key = _build_expression_ordering_key(constraint.expression)
+        return f"{kind}|{constraint.variable.id}|{expression_key}"
+    elif isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
+        members = ",".join(
+            sorted(_build_member_ordering_key(member) for member in constraint.members)
+        )
+        return f"{kind}|{constraint.variable.id}|{{{members}}}"
+    return f"{kind}|{constraint!r}"
 
 
 def create_constraint_system(*constraints: Constraint) -> "ConstraintSystem":
@@ -1073,7 +1370,7 @@ def create_constraint_system(*constraints: Constraint) -> "ConstraintSystem":
 
     Returns:
         A frozen ``ConstraintSystem`` holding the constraints in canonical
-        (repr-sorted) order.
+        order.
 
     Raises:
         ConstraintError: If any argument is not a ``Constraint``.
@@ -1087,8 +1384,11 @@ def create_constraint_system(*constraints: Constraint) -> "ConstraintSystem":
 class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenceMixin):
     """An ordered conjunction of constraints over shared identifiers.
 
-    Semantically the logical AND of its member constraints. Constraints
-    are normalized into canonical (repr-sorted) order at construction, so
+    Semantically the logical AND of its member constraints. The
+    ``constraints`` argument is materialized once before it is traversed,
+    so a single-pass iterable is retained in full rather than consumed
+    into an empty system. Constraints are then normalized into canonical
+    order, keyed on the same things structural equivalence compares, so
     structurally equivalent systems built from differently ordered inputs
     are structurally equivalent and serialize identically. Duplicate
     constraints are retained (conjunction is idempotent). Instances are
@@ -1107,7 +1407,11 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
     constraints: tuple[Constraint, ...]
 
     def __post_init__(self) -> None:
-        for constraint in self.constraints:
+        # Materialize before anything else: validation and canonical ordering
+        # each traverse the members, and a one-shot iterator would be empty by
+        # the second pass.
+        constraints = tuple(self.constraints)
+        for constraint in constraints:
             if not isinstance(constraint, Constraint):
                 raise ConstraintError(
                     "ConstraintSystem members must be Constraint instances, "
@@ -1115,7 +1419,9 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
                     f"{type(constraint).__name__}."
                 )
         object.__setattr__(
-            self, "constraints", tuple(sorted(self.constraints, key=repr))
+            self,
+            "constraints",
+            tuple(sorted(constraints, key=_build_constraint_ordering_key)),
         )
 
     def get_free_identifiers(self) -> frozenset[Identifier]:
@@ -1188,17 +1494,20 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
         The empty system returns ``SATISFIED`` without invoking the
         solver.
 
-        Limitation: a ``bool`` member of an ``InSetConstraint`` or
-        ``NotInSetConstraint`` whose variable's sort is not
-        ``SymbolType.BOOL``, or a ``bool``-valued literal anywhere in an
-        ``EquationConstraint``'s expression whose free identifiers are not
-        all ``SymbolType.BOOL``, cannot be lowered soundly through the
-        current Z3 bridge -- the Z3 Python bindings coerce a ``BoolVal``
-        compared against a non-bool sort into an integer (``True`` becomes
-        ``1``), collapsing the package's type-strict membership (and, for
-        an equation, literal-comparison) semantics. This method detects
-        both cases and returns ``UNDECIDED`` rather than a provably-wrong
-        decided outcome.
+        Limitation: the lowered conjunction is screened for the Z3
+        Boolean-coercion hazard before the solver is consulted, and a
+        hazardous conjunction returns ``UNDECIDED`` rather than a
+        provably-wrong decided outcome. The hazard is a ``BoolVal``
+        reaching a numeric context -- an arithmetic operand, one side of a
+        comparison whose other side is numeric, or a piecewise branch
+        facing a numeric sibling -- where the Z3 Python bindings silently
+        rewrite it to ``If(b, 1, 0)`` and collapse this package's
+        type-strict semantics. That covers a ``bool`` set member, a
+        ``bool`` literal written into an equation, and a
+        ``SymbolType.BOOL`` variable compared against a numeric literal.
+        The screen is per-site: a ``bool`` literal consumed by
+        ``logical_and``/``logical_or``/``logical_not``, or standing alone
+        as the whole expression, lowers faithfully and stays decidable.
 
         Args:
             symbol_types: Z3 sort for each free identifier of the system.
@@ -1208,8 +1517,11 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
 
         Raises:
             MissingSymbolTypeError: If ``symbol_types`` lacks an entry for
-                a free identifier of the lowered conjunction. This is a
-                raise, not the ``ConstraintOutcome.UNDECIDED`` degradation
+                a free identifier of the lowered conjunction. Checked
+                ahead of the hazard screen, so the precondition raises
+                even for a conjunction that would otherwise be reported
+                ``UNDECIDED``. This is a raise, not the
+                ``ConstraintOutcome.UNDECIDED`` degradation
                 ``evaluate_with_bindings`` uses for a missing *value*
                 binding: a missing symbol type is a caller precondition
                 violation the Z3 bridge cannot proceed without, while a
@@ -1223,8 +1535,6 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
         """
         if not self.constraints:
             return ConstraintOutcome.SATISFIED
-        if _find_bool_member_type_ambiguity(self.constraints, symbol_types):
-            return ConstraintOutcome.UNDECIDED
         return _decide_satisfiability(
             self.convert_to_expression(),
             symbol_types,
@@ -1246,14 +1556,13 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
         identifiers left free after substitution. Answers questions of the
         form "given x = 4, can y and z still be chosen?".
 
-        Limitation: the same ``bool`` sort ambiguity documented on
-        ``check_satisfiability`` applies here, covering both the
-        set-membership case and the equation-constraint bool-literal case:
-        a system with a ``bool`` set member, or an ``EquationConstraint``
-        with a ``bool``-valued literal, whose relevant identifier(s) are
-        not confirmed ``SymbolType.BOOL`` returns ``UNDECIDED``, even when
-        ``bindings`` assigns those variables concrete values (Z3's sort
-        coercion can still misclassify a bound value of ``0`` or ``1``).
+        Limitation: the same Boolean-coercion hazard documented on
+        ``check_satisfiability`` applies here, screened against the
+        residual rather than the original conjunction. Substitution is
+        therefore part of the screen: a ``bool`` binding value lands in
+        the residual exactly as a ``bool`` set member does and is screened
+        the same way, while binding a variable to a value of the matching
+        sort can retire a hazard the unsubstituted conjunction had.
 
         Args:
             bindings: Partial assignment substituted into the conjunction
@@ -1267,11 +1576,13 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
         Raises:
             MissingSymbolTypeError: If ``symbol_types`` lacks an entry for
                 a free identifier of the residual expression left after
-                substitution. Contrast a missing entry in ``bindings``
-                itself: an identifier ``bindings`` does not cover is left
-                free in the residual rather than raising, so it only
-                raises here if ``symbol_types`` also fails to cover it. A
-                missing *value* binding degrades to
+                substitution. Checked ahead of the hazard screen, so the
+                precondition raises even for a residual that would
+                otherwise be reported ``UNDECIDED``. Contrast a missing
+                entry in ``bindings`` itself: an identifier ``bindings``
+                does not cover is left free in the residual rather than
+                raising, so it only raises here if ``symbol_types`` also
+                fails to cover it. A missing *value* binding degrades to
                 ``ConstraintOutcome.UNDECIDED`` on ``evaluate_with_bindings``;
                 a missing symbol type here always raises, since the Z3
                 bridge cannot proceed without a sort for every free
@@ -1282,8 +1593,6 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
         """
         if not self.constraints:
             return ConstraintOutcome.SATISFIED
-        if _find_bool_member_type_ambiguity(self.constraints, symbol_types):
-            return ConstraintOutcome.UNDECIDED
         environment = _coerce_bindings_to_environment(bindings)
         residual = self.convert_to_expression().substitute(environment)
         return _decide_satisfiability(

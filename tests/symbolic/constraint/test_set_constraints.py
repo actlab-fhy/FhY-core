@@ -167,6 +167,24 @@ def test_set_constraint_repr_includes_variable(
     assert repr(x) in rendered
 
 
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_repr_distinguishes_string_from_numeric_members(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test ``repr`` renders a ``str`` member distinguishably from an ``int`` member.
+
+    Membership is type-strict, so ``{"5"}`` and ``{5}`` are different
+    constraints; rendering both members bare would make the two textual
+    forms indistinguishable.
+    """
+    x = mock_identifier("x", 0)
+
+    string_member = repr(factory(x, {"5"}))
+    integer_member = repr(factory(x, {5}))
+
+    assert string_member != integer_member
+
+
 @pytest.mark.parametrize("factory, str_marker", _KINDS_WITH_STR_MARKER)
 def test_set_constraint_str_renders_membership_marker(
     factory: SetConstraintFactory,
