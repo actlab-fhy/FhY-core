@@ -8,7 +8,10 @@ live in :mod:`fhy_core.symbolic.expression.registry.storage`.
 Registration records an entry; it does not type-check it. Checking a
 function body against its declared sorts needs the IR type system, which
 sits above this package in the dependency graph, so callers who want that
-answer ask the type-checking layer for it explicitly.
+answer ask the type-checking layer for it explicitly. A body is therefore
+free to call a function registered later: nothing here inspects the call
+target, and the sweep in the type-checking layer runs once registration
+is complete.
 """
 
 __all__ = [
@@ -17,9 +20,7 @@ __all__ = [
     "register_native_function",
 ]
 
-import inspect
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 
 from fhy_core.identifier import Identifier
 
@@ -27,111 +28,7 @@ from ..core import Expression
 from ..errors import EntryRegistrationError
 from ..sort import FunctionSort
 from .entries import NativeConstant, NativeFunction, RegisteredFunction
-from .storage import _insert_unique_entry, _registered_constant_names
-
-_POSITIONAL_PARAMETER_KINDS = frozenset(
-    {
-        inspect.Parameter.POSITIONAL_ONLY,
-        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-    }
-)
-
-
-@dataclass(frozen=True)
-class _PositionalArityRange:
-    """Inferred positional-argument arity range of a native implementation."""
-
-    minimum: int
-    maximum: int
-    accepts_unbounded: bool
-
-    def admits(self, count: int) -> bool:
-        if self.accepts_unbounded:
-            return count >= self.minimum
-        return self.minimum <= count <= self.maximum
-
-
-def _infer_positional_arity_range(
-    signature: inspect.Signature,
-) -> _PositionalArityRange:
-    """Return the positional-argument arity range admitted by ``signature``."""
-    positional = [
-        parameter
-        for parameter in signature.parameters.values()
-        if parameter.kind in _POSITIONAL_PARAMETER_KINDS
-    ]
-    required_count = sum(
-        1 for parameter in positional if parameter.default is inspect.Parameter.empty
-    )
-    accepts_unbounded = any(
-        parameter.kind is inspect.Parameter.VAR_POSITIONAL
-        for parameter in signature.parameters.values()
-    )
-    return _PositionalArityRange(
-        minimum=required_count,
-        maximum=len(positional),
-        accepts_unbounded=accepts_unbounded,
-    )
-
-
-def _check_native_implementation_arity(
-    name: str,
-    parameter_sort_count: int,
-    implementation: Callable[..., bool | int | float],
-) -> None:
-    """Best-effort check that ``implementation`` accepts the declared arity.
-
-    Uses :func:`inspect.signature` to count positional parameters. When
-    the implementation is a C builtin that does not expose an
-    inspectable signature, no check is performed.
-    """
-    try:
-        signature = inspect.signature(implementation)
-    except (ValueError, TypeError):
-        return
-    arity = _infer_positional_arity_range(signature)
-    if arity.admits(parameter_sort_count):
-        return
-    if arity.accepts_unbounded:
-        raise EntryRegistrationError(
-            f"NativeFunction {name!r}: implementation requires at least "
-            f"{arity.minimum} positional argument(s), but parameter_sorts "
-            f"has {parameter_sort_count}."
-        )
-    raise EntryRegistrationError(
-        f"NativeFunction {name!r}: parameter_sorts arity "
-        f"{parameter_sort_count} does not match the implementation's "
-        f"accepted positional-argument range "
-        f"[{arity.minimum}, {arity.maximum}]."
-    )
-
-
-def _reject_captured_free_identifiers(
-    name: str,
-    parameters: tuple[Identifier, ...],
-    body: Expression,
-) -> None:
-    declared = set(parameters)
-    captured = body.get_free_identifiers() - declared
-    if not captured:
-        return
-    # Any captured identifier whose name matches a registered constant
-    # is permitted: it resolves to the constant at type-check / eval time.
-    constant_names = _registered_constant_names()
-    truly_captured = {
-        identifier
-        for identifier in captured
-        if identifier.name_hint not in constant_names
-    }
-    if not truly_captured:
-        return
-    captured_names = ", ".join(
-        sorted(identifier.name_hint for identifier in truly_captured)
-    )
-    raise EntryRegistrationError(
-        f"Function {name!r} body references identifiers not in its "
-        f"parameters: {captured_names}."
-    )
+from .storage import _insert_unique_entry
 
 
 def register_function(
@@ -145,7 +42,9 @@ def register_function(
 
     The body is stored as given. Whether it synthesizes a type
     compatible with ``result_sort`` is a separate question, answered on
-    demand by the body checker in the type-checking layer above.
+    demand by the body checker in the type-checking layer above. A body
+    that calls a function not yet registered is accepted unconditionally
+    here, on the strength of the eventual callee's declared sorts alone.
 
     Args:
         name: Unique registry key.
@@ -165,19 +64,16 @@ def register_function(
             or captured free identifier.
 
     """
-    parameter_tuple = tuple(parameters)
-    parameter_sort_tuple = tuple(parameter_sorts)
     try:
         registered = RegisteredFunction(
             name=name,
-            parameters=parameter_tuple,
-            parameter_sorts=parameter_sort_tuple,
+            parameters=tuple(parameters),
+            parameter_sorts=tuple(parameter_sorts),
             result_sort=result_sort,
             body=body,
         )
     except ValueError as exc:
         raise EntryRegistrationError(str(exc)) from exc
-    _reject_captured_free_identifiers(name, parameter_tuple, body)
     _insert_unique_entry(name, registered)
     return registered
 
@@ -220,12 +116,10 @@ def register_native_function(
         bits across operating systems and CPU families.
 
     """
-    parameter_sort_tuple = tuple(parameter_sorts)
-    _check_native_implementation_arity(name, len(parameter_sort_tuple), implementation)
     try:
         registered = NativeFunction(
             name=name,
-            parameter_sorts=parameter_sort_tuple,
+            parameter_sorts=tuple(parameter_sorts),
             result_sort=result_sort,
             implementation=implementation,
         )

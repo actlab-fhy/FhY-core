@@ -1,5 +1,6 @@
 """Tests for `fhy_core.symbolic.expression.passes.sympy`."""
 
+import logging
 from unittest.mock import Mock
 
 import pytest
@@ -14,12 +15,12 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-    TernaryExpression,
+    PartialPiecewiseError,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     convert_expression_to_sympy_expression,
     convert_sympy_expression_to_expression,
-    simplify_expression,
     substitute_sympy_expression_variables,
 )
 from fhy_core.symbolic.expression.core import LiteralType
@@ -27,6 +28,7 @@ from fhy_core.symbolic.expression.passes.sympy import (
     ExpressionToSympyConverter,
     SymPyToExpressionConverter,
 )
+from fhy_core.symbolic.solver import simplify_expression
 
 from ..conftest import mock_identifier
 
@@ -64,7 +66,7 @@ from ..conftest import mock_identifier
                 UnaryOperation.LOGICAL_NOT,
                 IdentifierExpression(mock_identifier("x", 0)),
             ),
-            not sympy.Symbol("x_0"),
+            sympy.Not(sympy.Symbol("x_0")),
         ),
         (
             BinaryExpression(
@@ -230,6 +232,49 @@ def test_substitute_sympy_expression_variables_folds_to_concrete_value() -> None
 def test_substitute_sympy_variables_on_raw_bool_is_identity(value: bool) -> None:
     """Test `substitute_sympy_expression_variables` short-circuits raw Python bools."""
     assert substitute_sympy_expression_variables(value, {}) is value
+
+
+def test_substitute_sympy_expression_variables_is_simultaneous_not_chained() -> None:
+    """Test chained bindings substitute simultaneously rather than sequentially.
+
+    A sequential ``dict``-based ``.subs`` would chain ``x_0 -> y_1 -> 5``,
+    collapsing ``x_0 < 5`` to the literal ``False`` (``5 < 5``).
+    Simultaneous substitution must instead leave the residual ``y_1 < 5``,
+    since ``y_1``'s replacement value is never itself re-substituted by
+    the ``y_1: 5`` binding.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    sympy_expression = sympy.Symbol("x_0") < 5
+    substitutions: dict[Identifier, Expression] = {
+        x: IdentifierExpression(y),
+        y: LiteralExpression(5),
+    }
+
+    result = substitute_sympy_expression_variables(sympy_expression, substitutions)
+
+    assert result == (sympy.Symbol("y_1") < 5)
+
+
+def test_substitute_sympy_variables_replaces_piecewise_condition_symbol() -> None:
+    """Test substituting a ``Piecewise`` condition symbol with a relational.
+
+    The substitution must succeed and preserve the branch structure.
+    """
+    flag = mock_identifier("flag", 0)
+    y = mock_identifier("y", 1)
+    sympy_expression = sympy.Piecewise(
+        (sympy.Integer(1), sympy.Symbol("flag_0")), (sympy.Integer(2), True)
+    )
+    substitutions: dict[Identifier, Expression] = {
+        flag: IdentifierExpression(y) > 0,
+    }
+
+    result = substitute_sympy_expression_variables(sympy_expression, substitutions)
+
+    assert isinstance(result, sympy.Piecewise)
+    assert result.args[0] == (sympy.Integer(1), sympy.Symbol("y_1") > 0)
+    assert result.args[1] == (sympy.Integer(2), True)
 
 
 # =============================================================================
@@ -592,8 +637,8 @@ def test_simplify_preserves_integer_bucket_for_int_grammar_string(
 
 def test_simplify_variable_expression_with_environment_folds_to_scalar() -> None:
     """Test `simplify_expression` with an environment folds identifiers plus ops."""
-    x_1 = Identifier("x")
-    x_2 = Identifier("x")
+    x_1 = mock_identifier("x", 0)
+    x_2 = mock_identifier("x", 1)
     expression = BinaryExpression(
         BinaryOperation.ADD,
         IdentifierExpression(x_1),
@@ -610,6 +655,164 @@ def test_simplify_variable_expression_with_environment_folds_to_scalar() -> None
 
     assert isinstance(result, LiteralExpression)
     assert result.value == 35
+
+
+def test_simplify_expression_chained_bindings_leave_a_residual_not_a_literal() -> None:
+    """Test chained bindings `{x: y, y: 3}` on `x + y` yield the residual `y + 3`.
+
+    Sequential substitution would chain ``x -> y -> 3``, folding the sum to
+    the literal ``6``. Simultaneous substitution must instead leave ``y``
+    unresolved past its own binding, yielding the residual ``y + 3``.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.ADD,
+        IdentifierExpression(x),
+        IdentifierExpression(y),
+    )
+
+    result = simplify_expression(
+        expression, {x: IdentifierExpression(y), y: LiteralExpression(3)}
+    )
+
+    expected = BinaryExpression(
+        BinaryOperation.ADD,
+        LiteralExpression(3),
+        IdentifierExpression(y),
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_simplify_expression_chained_bindings_on_inequality_leave_a_residual() -> None:
+    """Test chained bindings `{x: y, y: 5}` on `x < 5` leave the residual `y < 5`.
+
+    Sequential substitution would chain ``x -> y -> 5``, folding the
+    comparison to the literal ``False`` (``5 < 5``). Simultaneous
+    substitution must instead leave the residual ``y < 5``.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.LESS,
+        IdentifierExpression(x),
+        LiteralExpression(5),
+    )
+
+    result = simplify_expression(
+        expression, {x: IdentifierExpression(y), y: LiteralExpression(5)}
+    )
+
+    expected = BinaryExpression(
+        BinaryOperation.LESS,
+        IdentifierExpression(y),
+        LiteralExpression(5),
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
+def test_simplify_expression_swap_bindings_on_equality_stays_undecided() -> None:
+    """Test swap bindings `{x: y, y: x}` on `x - y == 0` do not fold to a literal.
+
+    Sequential substitution would chain the first binding's replacement
+    through the second, resolving `x - y == 0` to `y - y == 0` and folding
+    it to the literal `True`. Simultaneous substitution instead swaps the
+    identifiers, leaving an undecided residual comparing two distinct
+    identifiers.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        BinaryExpression(
+            BinaryOperation.SUBTRACT, IdentifierExpression(x), IdentifierExpression(y)
+        ),
+        LiteralExpression(0),
+    )
+
+    result = simplify_expression(
+        expression, {x: IdentifierExpression(y), y: IdentifierExpression(x)}
+    )
+
+    assert not isinstance(result, LiteralExpression)
+
+
+def test_simplify_expression_swap_bindings_on_inequality_stays_undecided() -> None:
+    """Test swap bindings `{x: y, y: x}` on `x < y` do not fold to a literal.
+
+    Sequential substitution would chain the first binding's replacement
+    through the second, resolving `x < y` to `y < y` and folding it to the
+    literal `False`. Simultaneous substitution instead swaps the
+    identifiers, leaving an undecided residual comparing two distinct
+    identifiers.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.LESS,
+        IdentifierExpression(x),
+        IdentifierExpression(y),
+    )
+
+    result = simplify_expression(
+        expression, {x: IdentifierExpression(y), y: IdentifierExpression(x)}
+    )
+
+    assert not isinstance(result, LiteralExpression)
+
+
+@pytest.mark.filterwarnings("error::DeprecationWarning")
+def test_simplify_expression_bool_binding_value_avoids_sympy_deprecation() -> None:
+    """Test a bare `bool` binding value does not hit SymPy's simultaneous-subs warning.
+
+    SymPy's own ``.subs(..., simultaneous=True)`` masks every replacement
+    behind a synthetic ``Dummy() * Dummy()`` product before unmasking it
+    with a final ``xreplace``. When the replacement is a SymPy ``Boolean``
+    (here, ``sympy.true`` from a ``LiteralExpression(True)`` binding),
+    that unmasking step reconstructs a ``Mul`` with a non-``Expr``
+    argument, which SymPy has deprecated since 1.7
+    (``SymPyDeprecationWarning``, escalated to an error by this test's
+    marker). Without the ``xreplace``-based fix in
+    ``substitute_sympy_expression_variables``, this test fails on that
+    warning.
+    """
+    x = mock_identifier("x", 0)
+    expression = IdentifierExpression(x)
+
+    result = simplify_expression(expression, {x: LiteralExpression(True)})
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value is True
+
+
+@pytest.mark.filterwarnings("error::DeprecationWarning")
+def test_simplify_expression_boolean_expression_binding_avoids_sympy_deprecation() -> (
+    None
+):
+    """Test a boolean-*valued expression* binding does not raise or warn.
+
+    Binding ``x`` to a comparison (``y > 0``, a SymPy ``Relational``,
+    itself a ``Boolean``) hits the same masking path as a bare ``bool``
+    binding value, but harder: SymPy's simultaneous ``.subs`` does not
+    merely warn here, it raises ``TypeError: Relational cannot be used in
+    Mul`` outright, because the mask-unmask trick literally tries to
+    build ``Mul(<Relational>, 1)``. Without the ``xreplace``-based fix,
+    this test fails with that ``TypeError`` regardless of any warnings
+    filter.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = IdentifierExpression(x)
+    binding = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(y), LiteralExpression(0)
+    )
+
+    result = simplify_expression(expression, {x: binding})
+
+    expected = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(y), LiteralExpression(0)
+    )
+    assert result.is_structurally_equivalent(expected)
 
 
 # =============================================================================
@@ -775,6 +978,61 @@ def test_sympy_to_expression_convert_nand_lowers_to_not_and() -> None:
     assert result.is_structurally_equivalent(expected)
 
 
+@pytest.mark.parametrize(
+    "binding, expected",
+    [(False, True), (True, False)],
+    ids=["not_false_is_true", "not_true_is_false"],
+)
+def test_simplify_expression_negates_a_bound_boolean(
+    binding: bool, expected: bool
+) -> None:
+    """Test ``!b`` under a binding evaluates to the negation of that binding.
+
+    Lowering logical-not with Python's ``operator.not_`` would call
+    ``bool()`` on the SymPy operand, which is truthy for a ``Symbol``, and
+    decide the negation as ``False`` before substitution ran -- so both
+    bindings would produce ``False`` and one of them would be wrong.
+    """
+    b = mock_identifier("b", 0)
+    expression = UnaryExpression(UnaryOperation.LOGICAL_NOT, IdentifierExpression(b))
+
+    result = simplify_expression(expression, {b: LiteralExpression(binding)})
+
+    assert result.is_structurally_equivalent(LiteralExpression(expected))
+
+
+def test_simplify_expression_keeps_an_unbound_negation_symbolic() -> None:
+    """Test ``!b`` with nothing bound round-trips back to ``!b``.
+
+    The negation has no decidable value, so it must survive lowering and
+    lifting rather than collapsing to a literal.
+    """
+    b = mock_identifier("b", 0)
+    expression = UnaryExpression(UnaryOperation.LOGICAL_NOT, IdentifierExpression(b))
+
+    result = simplify_expression(expression)
+
+    assert result.is_structurally_equivalent(expression)
+
+
+def test_simplify_expression_negates_a_comparison_by_inverting_it() -> None:
+    """Test ``!(x > 5)`` simplifies to the inverted comparison ``x <= 5``."""
+    x = mock_identifier("x", 0)
+    expression = UnaryExpression(
+        UnaryOperation.LOGICAL_NOT,
+        BinaryExpression(
+            BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(5)
+        ),
+    )
+
+    result = simplify_expression(expression)
+
+    expected = BinaryExpression(
+        BinaryOperation.LESS_EQUAL, IdentifierExpression(x), LiteralExpression(5)
+    )
+    assert result.is_structurally_equivalent(expected)
+
+
 def test_sympy_to_expression_convert_implies_raises_not_implemented() -> None:
     """Test `convert_Implies` surfaces a `NotImplementedError` cause through the pass.
 
@@ -811,24 +1069,26 @@ def test_sympy_two_argument_helper_rejects_wrong_arg_count() -> None:
 
 
 # =============================================================================
-# TernaryExpression <-> SymPy.Piecewise
+# PiecewiseExpression <-> SymPy.Piecewise
 # =============================================================================
 
 
-def test_convert_ternary_expression_to_sympy_piecewise() -> None:
-    """Test ``TernaryExpression`` lowers to a ``sympy.Piecewise`` two-branch form.
+def test_convert_single_case_piecewise_expression_to_sympy_piecewise() -> None:
+    """Test a one-case ``PiecewiseExpression`` lowers to a two-branch ``Piecewise``.
 
     The condition is symbolic so sympy does not fold the ``Piecewise``
     at construction time.
     """
     x_identifier = mock_identifier("x", 0)
-    expression = TernaryExpression(
-        BinaryExpression(
-            BinaryOperation.GREATER,
-            IdentifierExpression(x_identifier),
-            LiteralExpression(0),
+    expression = PiecewiseExpression(
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER,
+                IdentifierExpression(x_identifier),
+                LiteralExpression(0),
+            ),
         ),
-        LiteralExpression(1),
+        (LiteralExpression(1),),
         LiteralExpression(2),
     )
 
@@ -837,8 +1097,113 @@ def test_convert_ternary_expression_to_sympy_piecewise() -> None:
     assert isinstance(result, sympy.Piecewise)
 
 
-def test_sympy_piecewise_lifts_to_ternary_expression() -> None:
-    """Test a two-branch ``sympy.Piecewise`` lifts back to a ``TernaryExpression``.
+def test_convert_piecewise_expression_emits_true_guarded_otherwise_branch() -> None:
+    """Test the lowered ``sympy.Piecewise`` trailing branch is guarded by ``True``.
+
+    Every case becomes a ``(value, condition)`` pair (SymPy's pair order
+    is reversed from ours); the final branch pairs ``otherwise`` with an
+    unconditional ``True`` guard so the result is total.
+    """
+    x_identifier = mock_identifier("x", 0)
+    expression = PiecewiseExpression(
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER,
+                IdentifierExpression(x_identifier),
+                LiteralExpression(0),
+            ),
+        ),
+        (LiteralExpression(1),),
+        LiteralExpression(2),
+    )
+
+    result = convert_expression_to_sympy_expression(expression)
+
+    assert isinstance(result, sympy.Piecewise)
+    last_value, last_condition = result.args[-1]
+    assert last_value == sympy.Integer(2)
+    assert last_condition == sympy.true
+
+
+def test_convert_multi_case_piecewise_expression_to_sympy_emits_every_case() -> None:
+    """Test a multi-case ``PiecewiseExpression`` lowers with one branch per case."""
+    x_identifier = mock_identifier("x", 0)
+    x_symbol = IdentifierExpression(x_identifier)
+    expression = PiecewiseExpression(
+        (x_symbol > 0, x_symbol < 0),
+        (LiteralExpression(1), LiteralExpression(-1)),
+        LiteralExpression(0),
+    )
+
+    result = convert_expression_to_sympy_expression(expression)
+
+    assert isinstance(result, sympy.Piecewise)
+    NUM_EXPECTED_BRANCHES = 3
+    assert len(result.args) == NUM_EXPECTED_BRANCHES
+
+
+def test_convert_multi_case_piecewise_preserves_branch_order_and_content() -> None:
+    """Test lowering a 4-case ``PiecewiseExpression`` pairs each branch correctly.
+
+    Uses distinguishable literal values (10/20/30/99) so a bug that
+    reordered branches, or paired a value with the wrong condition,
+    would be caught -- unlike
+    ``test_convert_multi_case_piecewise_expression_to_sympy_emits_every_case``
+    above, which only checks the branch count.
+    """
+    x_identifier = mock_identifier("x", 0)
+    x_symbol = IdentifierExpression(x_identifier)
+    expression = PiecewiseExpression(
+        (x_symbol > 0, x_symbol > 10, x_symbol > 20),
+        (LiteralExpression(10), LiteralExpression(20), LiteralExpression(30)),
+        LiteralExpression(99),
+    )
+
+    result = convert_expression_to_sympy_expression(expression)
+
+    assert isinstance(result, sympy.Piecewise)
+    x = sympy.Symbol("x_0")
+    expected_branches = (
+        (sympy.Integer(10), x > 0),
+        (sympy.Integer(20), x > 10),
+        (sympy.Integer(30), x > 20),
+        (sympy.Integer(99), sympy.true),
+    )
+    NUM_EXPECTED_BRANCHES = 4
+    assert len(result.args) == NUM_EXPECTED_BRANCHES
+    for index, expected_branch in enumerate(expected_branches):
+        assert result.args[index] == expected_branch, (
+            f"branch {index}: expected {expected_branch}, got {result.args[index]}"
+        )
+
+
+def test_single_branch_sympy_piecewise_with_non_true_condition_raises() -> None:
+    """Test a single-branch ``sympy.Piecewise`` with a non-``True`` condition raises.
+
+    A ``True``-condition single branch collapses to a bare SymPy value
+    before it ever reaches the lifter, so the only single-branch
+    ``Piecewise`` object that survives construction has a symbolic
+    condition. ``PiecewiseExpression`` is a total function, so this
+    partial shape has no faithful IR representation: the lifter raises
+    rather than degenerating to the branch's bare value.
+    ``SymPyToExpressionConverter`` is a registered ``CompilerPass``, so
+    the underlying ``PartialPiecewiseError`` is wrapped in
+    ``PassExecutionError`` with the original error attached as
+    ``__cause__``.
+    """
+    sympy_expression = sympy.Piecewise(
+        (sympy.Integer(5), sympy.Symbol("flag_0")), evaluate=False
+    )
+
+    with pytest.raises(PassExecutionError, match=r"PartialPiecewiseError") as exc_info:
+        convert_sympy_expression_to_expression(sympy_expression)
+
+    assert isinstance(exc_info.value.__cause__, PartialPiecewiseError)
+    assert "flag_0" in str(exc_info.value.__cause__)
+
+
+def test_two_branch_sympy_piecewise_lifts_to_single_case_piecewise_expression() -> None:
+    """Test a two-branch ``sympy.Piecewise`` lifts back to a one-case ``Piecewise``.
 
     The first branch's condition is symbolic so sympy does not fold the
     ``Piecewise`` at construction.
@@ -849,24 +1214,120 @@ def test_sympy_piecewise_lifts_to_ternary_expression() -> None:
 
     result = convert_sympy_expression_to_expression(sympy_expression)
 
-    assert isinstance(result, TernaryExpression)
+    assert isinstance(result, PiecewiseExpression)
+    assert len(result.conditions) == 1
+    assert result.values[0].is_structurally_equivalent(LiteralExpression(1))
+    assert result.otherwise.is_structurally_equivalent(LiteralExpression(2))
 
 
-def test_ternary_expression_round_trips_through_sympy() -> None:
-    """Test ``TernaryExpression`` round-trips structurally through SymPy.
+def test_multi_branch_sympy_piecewise_lifts_to_one_flat_piecewise_expression(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a multi-branch ``sympy.Piecewise`` lifts to a single flat node.
 
-    Both branches are leaves whose sympy lowerings preserve their shape;
-    unary-negate branches do not round-trip because sympy represents
+    A three-branch ``sympy.Piecewise`` produces exactly one
+    ``PiecewiseExpression`` with two cases and one ``otherwise`` --
+    not a tree of nested one-case nodes. The final condition here is
+    ``True`` (a total ``Piecewise``), so this normal round-trip shape
+    logs no warning, contrasting with a genuinely partial final
+    condition (see
+    ``test_multi_branch_sympy_piecewise_with_non_true_final_condition_raises``),
+    which raises ``PartialPiecewiseError`` instead.
+    """
+    sympy_expression = sympy.Piecewise(
+        (sympy.Integer(1), sympy.Symbol("flag_0")),
+        (sympy.Integer(2), sympy.Symbol("flag_1")),
+        (sympy.Integer(3), True),
+    )
+
+    with caplog.at_level(
+        logging.WARNING, logger="fhy_core.symbolic.expression.passes.sympy"
+    ):
+        result = convert_sympy_expression_to_expression(sympy_expression)
+
+    assert isinstance(result, PiecewiseExpression)
+    NUM_EXPECTED_CASES = 2
+    assert len(result.conditions) == NUM_EXPECTED_CASES
+    assert not isinstance(result.otherwise, PiecewiseExpression)
+    assert result.values[0].is_structurally_equivalent(LiteralExpression(1))
+    assert result.values[1].is_structurally_equivalent(LiteralExpression(2))
+    assert result.otherwise.is_structurally_equivalent(LiteralExpression(3))
+    assert not any(record.levelno == logging.WARNING for record in caplog.records), (
+        "a total (True-terminated) multi-branch lift must not warn"
+    )
+
+
+def test_multi_branch_sympy_piecewise_with_non_true_final_condition_raises() -> None:
+    """Test a multi-branch ``sympy.Piecewise`` whose final condition is not ``True``.
+
+    A final branch condition that is not ``sympy.true`` means the
+    ``Piecewise`` does not cover its domain. Treating the final
+    branch's value as ``otherwise`` would silently cover the region the
+    original condition excluded, so the lifter raises
+    ``PartialPiecewiseError`` naming the offending condition instead of
+    totalizing the result, wrapped in ``PassExecutionError`` per
+    ``SymPyToExpressionConverter``'s pass contract.
+    """
+    sympy_expression = sympy.Piecewise(
+        (sympy.Integer(1), sympy.Symbol("flag_0")),
+        (sympy.Integer(2), sympy.Symbol("flag_1")),
+    )
+
+    with pytest.raises(PassExecutionError, match=r"PartialPiecewiseError") as exc_info:
+        convert_sympy_expression_to_expression(sympy_expression)
+
+    assert isinstance(exc_info.value.__cause__, PartialPiecewiseError)
+    assert "flag_1" in str(exc_info.value.__cause__)
+
+
+def test_single_case_piecewise_expression_round_trips_through_sympy() -> None:
+    """Test a one-case ``PiecewiseExpression`` round-trips structurally through SymPy.
+
+    Both operands are leaves whose sympy lowerings preserve their shape;
+    unary-negate values do not round-trip because sympy represents
     ``-x`` as ``Mul(-1, x)``.
     """
-    original = TernaryExpression(
-        BinaryExpression(
-            BinaryOperation.GREATER,
-            IdentifierExpression(mock_identifier("x", 0)),
-            LiteralExpression(0),
+    x_identifier = mock_identifier("x", 0)
+    original = PiecewiseExpression(
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER,
+                IdentifierExpression(x_identifier),
+                LiteralExpression(0),
+            ),
         ),
-        IdentifierExpression(mock_identifier("x", 0)),
+        (IdentifierExpression(x_identifier),),
         LiteralExpression(0),
+    )
+
+    intermediate = convert_expression_to_sympy_expression(original)
+    restored = convert_sympy_expression_to_expression(intermediate)
+
+    assert restored.is_structurally_equivalent(original)
+
+
+def test_multi_case_piecewise_expression_round_trips_with_full_order_and_content() -> (
+    None
+):
+    """Test a 3-case ``PiecewiseExpression`` round-trips with every case intact.
+
+    Uses distinguishable literal values (10/20/30/99), and checks the
+    *entire* round-tripped tree against the original via
+    ``is_structurally_equivalent`` rather than comparing lengths or
+    individual fields, so a lowering/lifting bug that reordered cases or
+    paired a value with the wrong condition -- not just dropped one --
+    would be caught. ``PiecewiseExpression.conditions`` cannot be
+    compared with plain ``==`` here: each round-tripped
+    ``IdentifierExpression`` wraps a freshly reconstructed ``Identifier``
+    (see ``SymPyToExpressionConverter._convert_symbol``), so only
+    ``is_structurally_equivalent`` recognizes it as the same variable.
+    """
+    x_identifier = mock_identifier("x", 0)
+    x_symbol = IdentifierExpression(x_identifier)
+    original = PiecewiseExpression(
+        (x_symbol > 0, x_symbol > 10, x_symbol > 20),
+        (LiteralExpression(10), LiteralExpression(20), LiteralExpression(30)),
+        LiteralExpression(99),
     )
 
     intermediate = convert_expression_to_sympy_expression(original)

@@ -1,22 +1,20 @@
 """Sympy lowering / lifting tests for native functions and constants.
 
-The sympy bridge gains a per-name mapping that lowers each seeded
-``NativeFunction`` (``exp``, ``log``, ``sin``, ...) to its sympy
-counterpart and lifts the same sympy operators back to a
-``CallExpression`` with the seeded name. Native constants (``pi``,
-``e``) lower to ``sympy.pi`` / ``sympy.E`` and lift back to an
-``IdentifierExpression`` whose identifier name matches the seeded
-constant.
+The sympy bridge maps each seeded ``NativeFunction`` (``exp``, ``log``,
+``sin``, ...) to its sympy counterpart when lowering, and lifts the
+same sympy operators back to a ``CallExpression`` with the seeded
+name. Native constants (``pi``, ``e``) lower to ``sympy.pi`` /
+``sympy.E`` and lift back to an ``IdentifierExpression`` whose
+identifier name matches the seeded constant.
 
 Unmapped native calls raise ``TypeError`` from the lowering pass.
-Expression-bodied calls still require the caller to ``inline_functions``
-first; that rejection stays.
+Expression-bodied calls require the caller to ``inline_functions``
+first.
 """
 
 import pytest
 import sympy  # type: ignore[import-untyped]
 
-from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
 from fhy_core.symbolic.expression import (
     CallExpression,
@@ -188,7 +186,7 @@ def test_expression_bodied_call_lowering_still_raises(
     The caller must inline expression-bodied calls before lowering;
     only native calls are handled by the new mapping.
     """
-    parameter = Identifier("p")
+    parameter = mock_identifier("p", 0)
     register_function(
         "test_sympy_expr_bodied",
         parameters=[parameter],
@@ -208,8 +206,8 @@ def test_expression_bodied_call_lowering_still_raises(
 
 
 def test_pi_constant_reference_lowers_to_sympy_pi() -> None:
-    """Test an `IdentifierExpression(Identifier("pi"))` lowers to `sympy.pi`."""
-    expression = IdentifierExpression(Identifier("pi"))
+    """Test an `IdentifierExpression(mock_identifier("pi", 0))` lowers to `sympy.pi`."""
+    expression = IdentifierExpression(mock_identifier("pi", 1))
 
     lowered = convert_expression_to_sympy_expression(expression)
 
@@ -217,8 +215,8 @@ def test_pi_constant_reference_lowers_to_sympy_pi() -> None:
 
 
 def test_e_constant_reference_lowers_to_sympy_e() -> None:
-    """Test an `IdentifierExpression(Identifier("e"))` lowers to `sympy.E`."""
-    expression = IdentifierExpression(Identifier("e"))
+    """Test an `IdentifierExpression(mock_identifier("e", 0))` lowers to `sympy.E`."""
+    expression = IdentifierExpression(mock_identifier("e", 1))
 
     lowered = convert_expression_to_sympy_expression(expression)
 
@@ -247,7 +245,7 @@ def test_native_call_with_constant_argument_round_trips_through_sympy() -> None:
     Sympy simplifies ``sin(pi)`` to ``0``; the lifted expression is the
     integer literal ``0`` (not a constant reference any more).
     """
-    expression = call("sin", Identifier("pi"))
+    expression = call("sin", mock_identifier("pi", 0))
 
     lowered = convert_expression_to_sympy_expression(expression)
     simplified = sympy.simplify(lowered)

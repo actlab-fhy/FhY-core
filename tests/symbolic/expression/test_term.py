@@ -2,7 +2,7 @@
 
 The expression IR has no internal binders, so every referenced identifier is
 free and substitution is always capture-free; these tests pin that behavior on
-the trait methods now exposed directly on expression nodes.
+the trait methods exposed directly on expression nodes.
 """
 
 import pytest

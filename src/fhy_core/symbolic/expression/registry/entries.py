@@ -19,6 +19,7 @@ __all__ = [
     "RegisteredFunction",
 ]
 
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TypeAlias
@@ -34,6 +35,58 @@ from ..core import Expression
 from ..sort import FunctionSort, is_python_value_compatible_with_sort
 
 
+def _reject_captured_free_identifiers(
+    name: str,
+    parameters: tuple[Identifier, ...],
+    body: Expression,
+) -> None:
+    """Raise if ``body`` references a free identifier outside ``parameters``.
+
+    An identifier whose name matches a registered ``NativeConstant`` is
+    exempt: it resolves to the constant at type-check / evaluation time
+    rather than being treated as captured. The match is on ``name_hint``,
+    not identifier identity, because that is how every resolution path
+    keys native constants -- a constant is registered under a ``str`` and
+    has no canonical ``Identifier``. An unrelated identifier sharing a
+    constant's name therefore resolves to that constant downstream, so
+    exempting it here agrees with what evaluation will do.
+
+    The exemption is read from the registry as it stands right now, so
+    this check is order-dependent: the same body is rejected before the
+    constant it names is registered and accepted afterwards. Register
+    constants before the functions whose bodies reference them.
+
+    Raises:
+        ValueError: If ``body`` references a free identifier that is
+            neither a declared parameter nor the name of a constant
+            registered so far.
+
+    """
+    # Deferred import: `storage` imports this module for its entry types,
+    # so importing `storage` at module scope here would form a cycle.
+    from .storage import _registered_constant_names  # noqa: PLC0415
+
+    declared = set(parameters)
+    captured = body.get_free_identifiers() - declared
+    if not captured:
+        return
+    constant_names = _registered_constant_names()
+    truly_captured = {
+        identifier
+        for identifier in captured
+        if identifier.name_hint not in constant_names
+    }
+    if not truly_captured:
+        return
+    captured_names = ", ".join(
+        sorted(identifier.name_hint for identifier in truly_captured)
+    )
+    raise ValueError(
+        f"RegisteredFunction {name!r}: body references identifiers not in "
+        f"its parameters: {captured_names}."
+    )
+
+
 @dataclass(frozen=True)
 class RegisteredFunction(DerivedEquivalenceMixin):
     """A named pure function over the expression IR.
@@ -43,6 +96,12 @@ class RegisteredFunction(DerivedEquivalenceMixin):
     bound identifiers scope over ``body`` (so two functions identical up to
     a consistent parameter rename are alpha-equivalent); ``parameter_sorts``
     and ``result_sort`` compare by value; ``body`` recurses.
+
+    A call to another function is a reference by name
+    (``CallExpression.function_name`` is a plain string, not an
+    ``Identifier``), so a self-recursive or mutually-recursive body
+    never appears in its own free identifiers and never trips the
+    closure check below.
 
     Attributes:
         name: Registry key. Used at call sites and in error messages.
@@ -55,7 +114,17 @@ class RegisteredFunction(DerivedEquivalenceMixin):
         body: Expression tree using the parameter identifiers. Free
             identifiers are a subset of ``parameters`` plus any
             identifiers whose name matches a registered
-            ``NativeConstant``.
+            ``NativeConstant``. Because that second set is read from the
+            registry at construction time, validity depends on how much
+            of the registry is populated: a body naming a constant that
+            has not been registered yet is rejected, and the same body
+            is accepted once it has been.
+
+    Raises:
+        ValueError: If ``name`` is empty; if ``parameter_sorts`` and
+            ``parameters`` differ in length; or if ``body`` references
+            a free identifier that is neither a declared parameter nor
+            the name of a constant registered so far.
 
     """
 
@@ -76,6 +145,90 @@ class RegisteredFunction(DerivedEquivalenceMixin):
                 f"({len(self.parameter_sorts)}) does not match parameters "
                 f"length ({len(self.parameters)})."
             )
+        _reject_captured_free_identifiers(self.name, self.parameters, self.body)
+
+
+_POSITIONAL_PARAMETER_KINDS = frozenset(
+    {
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    }
+)
+
+
+@dataclass(frozen=True)
+class _PositionalArityRange:
+    """Inferred positional-argument arity range of a native implementation."""
+
+    minimum: int
+    maximum: int
+    accepts_unbounded: bool
+
+    def admits(self, count: int) -> bool:
+        if self.accepts_unbounded:
+            return count >= self.minimum
+        return self.minimum <= count <= self.maximum
+
+
+def _infer_positional_arity_range(
+    signature: inspect.Signature,
+) -> _PositionalArityRange:
+    """Return the positional-argument arity range admitted by ``signature``."""
+    positional = [
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.kind in _POSITIONAL_PARAMETER_KINDS
+    ]
+    required_count = sum(
+        1 for parameter in positional if parameter.default is inspect.Parameter.empty
+    )
+    accepts_unbounded = any(
+        parameter.kind is inspect.Parameter.VAR_POSITIONAL
+        for parameter in signature.parameters.values()
+    )
+    return _PositionalArityRange(
+        minimum=required_count,
+        maximum=len(positional),
+        accepts_unbounded=accepts_unbounded,
+    )
+
+
+def _check_native_implementation_arity(
+    name: str,
+    parameter_sort_count: int,
+    implementation: Callable[..., bool | int | float],
+) -> None:
+    """Raise if ``implementation`` cannot accept the declared arity.
+
+    Uses :func:`inspect.signature` to count positional parameters. When
+    the implementation is a C builtin that does not expose an
+    inspectable signature, no check is performed.
+
+    Raises:
+        ValueError: If the implementation's inspectable signature
+            cannot accept ``parameter_sort_count`` positional
+            arguments.
+
+    """
+    try:
+        signature = inspect.signature(implementation)
+    except (ValueError, TypeError):
+        return
+    arity = _infer_positional_arity_range(signature)
+    if arity.admits(parameter_sort_count):
+        return
+    if arity.accepts_unbounded:
+        raise ValueError(
+            f"NativeFunction {name!r}: implementation requires at least "
+            f"{arity.minimum} positional argument(s), but parameter_sorts "
+            f"has {parameter_sort_count}."
+        )
+    raise ValueError(
+        f"NativeFunction {name!r}: parameter_sorts arity "
+        f"{parameter_sort_count} does not match the implementation's "
+        f"accepted positional-argument range "
+        f"[{arity.minimum}, {arity.maximum}]."
+    )
 
 
 @dataclass(frozen=True)
@@ -99,6 +252,14 @@ class NativeFunction:
             or ``float`` whose runtime type is compatible with
             ``result_sort``.
 
+    Raises:
+        ValueError: If ``name`` is empty, or if ``implementation``'s
+            inspectable signature cannot accept
+            ``len(parameter_sorts)`` positional arguments. Some
+            C-implemented callables (e.g. some ``math`` builtins) do
+            not expose an inspectable signature; arity is not checked
+            in that case.
+
     Notes:
         Numerical results from ``math``-backed implementations follow
         the platform's C math library and may differ in their final
@@ -115,6 +276,9 @@ class NativeFunction:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("NativeFunction.name must be non-empty.")
+        _check_native_implementation_arity(
+            self.name, len(self.parameter_sorts), self.implementation
+        )
 
 
 @dataclass(frozen=True)

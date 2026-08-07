@@ -93,8 +93,8 @@ from .expression import (
     LiteralType,
     make_binary_expression,
     pformat_expression,
-    simplify_expression,
 )
+from .solver import simplify_expression
 
 _LOGGER = get_logger(__name__)
 

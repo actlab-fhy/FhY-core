@@ -4,7 +4,6 @@ from unittest.mock import patch
 
 import pytest
 
-from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import CompilerPass, PassExecutionError
 from fhy_core.symbolic.expression import (
     BinaryExpression,
@@ -26,10 +25,12 @@ from fhy_core.types.checking.body_type_checker import (
     check_registered_function_body,
 )
 
+from ..conftest import mock_identifier
+
 
 def _make_int_pass(name: str = "f") -> RegisteredFunctionBodyTypeChecker:
     """Build a pass with one INT parameter ``x`` and INT result."""
-    x = Identifier("x")
+    x = mock_identifier("x", 0)
     return RegisteredFunctionBodyTypeChecker(
         name=name,
         parameters=(x,),
@@ -41,8 +42,8 @@ def _make_int_pass(name: str = "f") -> RegisteredFunctionBodyTypeChecker:
 
 def _make_less_than_body() -> BinaryExpression:
     """Build a body expression ``x < y`` over fresh INT parameters."""
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
     return BinaryExpression(
         BinaryOperation.LESS,
         IdentifierExpression(x),
@@ -54,7 +55,7 @@ def test_check_accepts_body_with_matching_result_sort(
     function_registry_snapshot: None,
 ) -> None:
     """Test a scalar-numerical body matching the declared result sort passes."""
-    x = Identifier("x")
+    x = mock_identifier("x", 0)
     check_registered_function_body(
         name="identity",
         parameters=(x,),
@@ -69,8 +70,8 @@ def test_check_rejects_body_whose_synthesized_type_clashes_with_result_sort(
     function_registry_snapshot: None,
 ) -> None:
     """Test a boolean body cannot satisfy an INT result sort."""
-    x = Identifier("x")
-    y = Identifier("y")
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
     with pytest.raises(PassExecutionError) as exc_info:
         check_registered_function_body(
             name="lt_as_int",
@@ -92,8 +93,8 @@ def test_check_rejects_body_referencing_undeclared_identifier(
     """Test identifiers outside parameter list and not a registered constant fail."""
     import re  # noqa: PLC0415
 
-    declared = Identifier("x")
-    stray = Identifier("y")
+    declared = mock_identifier("x", 0)
+    stray = mock_identifier("y", 1)
     with pytest.raises(PassExecutionError) as exc_info:
         check_registered_function_body(
             name="captures",
@@ -112,8 +113,15 @@ def test_check_rejects_body_referencing_undeclared_identifier(
 def test_check_tolerates_forward_reference_to_unregistered_function(
     function_registry_snapshot: None,
 ) -> None:
-    """Test calls to as-yet-unregistered functions inside the body are accepted."""
-    x = Identifier("x")
+    """Test a call to an as-yet-unregistered function is accepted, not judged.
+
+    The body checker cannot type a call it cannot resolve, so it
+    declines to rule on the body at all. Holding such a body to its
+    declared result sort is
+    :func:`check_all_registered_function_bodies`'s job, once the target
+    exists.
+    """
+    x = mock_identifier("x", 0)
     check_registered_function_body(
         name="uses_forward",
         parameters=(x,),
@@ -124,6 +132,32 @@ def test_check_tolerates_forward_reference_to_unregistered_function(
             arguments=(IdentifierExpression(x),),
         ),
         resolve_call_target=get_registered_entry,
+    )
+
+
+def test_check_method_tolerates_a_forward_reference_directly(
+    function_registry_snapshot: None,
+) -> None:
+    """Test calling ``.check`` directly also tolerates an unresolved call target.
+
+    ``check_registered_function_body`` invokes the pass through the
+    ``__call__`` / ``execute`` framework path; this pins that the raw
+    ``.check`` method behaves the same way.
+    """
+    x = mock_identifier("x", 0)
+    checker = RegisteredFunctionBodyTypeChecker(
+        name="uses_forward_direct",
+        parameters=(x,),
+        parameter_sorts=(FunctionSort.INT,),
+        result_sort=FunctionSort.INT,
+        resolve_call_target=get_registered_entry,
+    )
+
+    checker.check(
+        CallExpression(
+            function_name="still_not_registered",
+            arguments=(IdentifierExpression(x),),
+        )
     )
 
 
@@ -183,7 +217,7 @@ def test_check_rejects_body_synthesizing_non_numerical_type(
     plain scalar arithmetic) so the test injects the synthesized type
     via patching the type-checker's ``synthesize`` method.
     """
-    x = Identifier("x")
+    x = mock_identifier("x", 0)
     index_type = IndexType(LiteralExpression(0), LiteralExpression(1))
 
     with patch(
@@ -217,7 +251,7 @@ def test_check_rejects_body_synthesizing_non_primitive_data_type(
     """
     from unittest.mock import MagicMock  # noqa: PLC0415
 
-    x = Identifier("x")
+    x = mock_identifier("x", 0)
     fake_numerical = MagicMock(spec=NumericalType)
     fake_numerical.data_type = MagicMock()  # not a PrimitiveDataType
 

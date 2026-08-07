@@ -8,7 +8,7 @@ helpers centralize that lowering so the two passes share one contract --
 in particular, the refusal to coerce a float-grammar string literal to a
 lossy binary ``float``.
 
-The SymPy bridge (:mod:`fhy_core.symbolic.expression.passes.sympy`) is deliberately
+The SymPy bridge (:mod:`fhy_core.symbolic.expression.passes.sympy`) is
 exempt from this contract: SymPy operates on binary floats, so it converts
 a float-grammar string with ``sympy.Float`` -- accepting the precision loss
 -- rather than routing through these helpers.

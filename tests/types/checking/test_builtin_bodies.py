@@ -7,21 +7,15 @@ its declared result sort.
 
 Those bodies are this repository's own source, so the agreement is a
 self-consistency property of the package rather than a property of
-caller input, and it is checked here. This module sits in
-`tests/types/checking` because it is a test of
-`check_registered_function_body` -- the layer that owns the question --
-applied to the built-ins, and this is the only test package that already
-sees both the seeded registry and the checker.
+caller input, and it is checked here.
+`check_all_registered_function_bodies` answers exactly that question for
+every entry at once, so the check is a single sweep over the seeded
+registry rather than a per-built-in loop; the report names every
+offender when it fails.
 """
 
-import pytest
-
-from fhy_core.symbolic.expression import (
-    BUILTIN_FUNCTIONS,
-    RegisteredFunction,
-    get_registered_entry,
-)
-from fhy_core.types.checking import check_registered_function_body
+from fhy_core.symbolic.expression import BUILTIN_FUNCTIONS, RegisteredFunction
+from fhy_core.types.checking import check_all_registered_function_bodies
 
 # The composed built-ins: every entry in ``BUILTIN_FUNCTIONS`` whose body
 # is an expression in the IR rather than a Python callable.
@@ -56,9 +50,9 @@ _EXPRESSION_BODIED_BUILTINS: dict[str, RegisteredFunction] = {
 def test_expression_bodied_builtins_are_exactly_the_documented_set() -> None:
     """Test the discovered composed built-ins match the documented names.
 
-    Guards the parametrization below: if the discovery predicate ever
-    stopped matching, the per-body tests would silently shrink to
-    nothing instead of failing.
+    Guards the sweep below: the sweep asserts that nothing in the
+    registry is broken, which a registry holding no expression-bodied
+    entries would satisfy vacuously.
     """
     assert (
         frozenset(_EXPRESSION_BODIED_BUILTINS) == _EXPECTED_EXPRESSION_BODIED_BUILTINS
@@ -66,21 +60,13 @@ def test_expression_bodied_builtins_are_exactly_the_documented_set() -> None:
     assert len(_EXPRESSION_BODIED_BUILTINS) == 16
 
 
-@pytest.mark.parametrize("name", sorted(_EXPRESSION_BODIED_BUILTINS))
-def test_builtin_body_type_checks_against_its_declared_result_sort(name: str) -> None:
-    """Test the built-in's body synthesizes a type compatible with its sort.
+def test_every_builtin_body_type_checks_against_its_declared_result_sort() -> None:
+    """Test the seeded registry sweeps clean.
 
-    `check_registered_function_body` raises `PassExecutionError` when the
-    body does not satisfy the declared parameter and result sorts, so
-    completing the call is what this test asserts.
+    Each built-in body must synthesize a type compatible with its
+    declared result sort. A failure names the offending built-in in the
+    report, so the single assertion still points at the culprit.
     """
-    entry = _EXPRESSION_BODIED_BUILTINS[name]
+    report = check_all_registered_function_bodies()
 
-    check_registered_function_body(
-        name=entry.name,
-        parameters=entry.parameters,
-        parameter_sorts=entry.parameter_sorts,
-        result_sort=entry.result_sort,
-        body=entry.body,
-        resolve_call_target=get_registered_entry,
-    )
+    assert report.has_errors() is False, report.format()

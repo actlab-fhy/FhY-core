@@ -9,10 +9,13 @@ registry and dispatches by entry kind:
   parameter identifiers in the body. Self-recursive and mutually
   recursive calls are detected via a per-pass ``_in_progress`` set and
   raise :class:`RecursionError`.
-- :class:`NativeFunction`: Python-backed. Native calls pass through
-  the inliner unchanged; folding to a literal is handled later by
-  :class:`ExpressionEvaluator`. The inliner still validates declared
-  arity against the call site's argument count.
+- :class:`NativeFunction`: Python-backed. The call node itself is
+  opaque to the inliner and passes through with its arguments
+  inlined (each argument is a subtree the bottom-up traversal has
+  already rewritten by the time this node is reached); folding to a
+  literal is handled later by :class:`ExpressionEvaluator`. The
+  inliner still validates declared arity against the call site's
+  argument count.
 - :class:`NativeConstant`: not callable. Reaching a call site whose
   target resolves to a constant raises :class:`FunctionArityError`.
 
@@ -42,7 +45,12 @@ from ..registry import (
 
 @register_error
 class FunctionArityError(ValueError):
-    """Argument count does not match the registered function's parameters."""
+    """A call's argument count is wrong, or its target is not callable at all.
+
+    Raised both when a call's argument count does not match the
+    registered function's parameters, and when the call target resolves
+    to a registered constant, which cannot be called at any arity.
+    """
 
 
 def _check_call_arity(

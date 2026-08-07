@@ -1,10 +1,9 @@
-"""End-to-end user-story and integration tests for the native-functions feature.
+"""End-to-end user-story and integration tests for native functions.
 
 Each test mirrors a real caller path through the public surface
-(registry, inliner, evaluator, type-checker, sympy bridge) for the
-native-function / native-constant / sort additions. The cases above
-unit-test boundaries individually; the cases here exercise them in
-combination.
+(registry, inliner, evaluator, type-checker, sympy bridge) for native
+functions, native constants, and sorts. The cases above unit-test
+boundaries individually; the cases here exercise them in combination.
 """
 
 import math
@@ -25,8 +24,8 @@ from fhy_core.symbolic.expression import (
     evaluate_expression,
     inline_functions,
     register_native_function,
-    simplify_expression,
 )
+from fhy_core.symbolic.solver import simplify_expression
 from fhy_core.types import (
     CoreDataType,
     FhYCoreTypeError,
@@ -36,6 +35,8 @@ from fhy_core.types import (
     TypeQualifier,
 )
 from fhy_core.types.checking import synthesize_expression_type
+
+from .conftest import mock_identifier
 
 pytestmark = pytest.mark.integration
 
@@ -104,7 +105,7 @@ def test_user_story_evaluate_clamp_of_exp_under_literal_bounds() -> None:
 
 def test_user_story_symbolic_exp_stays_symbolic_under_evaluation() -> None:
     """Test ``exp(x)`` evaluates unchanged when ``x`` is a free identifier."""
-    x = Identifier("x")
+    x = mock_identifier("x", 0)
     expression = call("exp", x)
 
     evaluated = evaluate_expression(expression)
@@ -134,7 +135,7 @@ def test_user_story_real_native_rejects_boolean_argument() -> None:
 
 def test_user_story_sin_of_pi_round_trips_through_sympy_to_zero() -> None:
     """Test ``sin(pi)`` lowers + simplifies through sympy and lifts back to ``0``."""
-    expression = call("sin", Identifier("pi"))
+    expression = call("sin", mock_identifier("pi", 0))
 
     simplified = simplify_expression(expression)
 
@@ -239,7 +240,7 @@ def test_user_story_outer_arithmetic_preserved_around_folded_native_call() -> No
 
 def test_user_story_native_call_with_constant_round_trips_through_sympy() -> None:
     """Test ``cos(pi)`` round-trips through sympy lower / lift and folds to ``-1``."""
-    expression = call("cos", Identifier("pi"))
+    expression = call("cos", mock_identifier("pi", 0))
 
     lowered = convert_expression_to_sympy_expression(expression)
     lifted = convert_sympy_expression_to_expression(lowered)
