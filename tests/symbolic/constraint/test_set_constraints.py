@@ -26,7 +26,12 @@ from fhy_core.symbolic.constraint import (
 from fhy_core.traits import FrozenMutationError
 from fhy_core.utils.override import override
 
-from .conftest import SET_KINDS, SerializableEqualHashable, mock_identifier
+from .conftest import (
+    SET_KINDS,
+    HashCollidingMember,
+    SerializableEqualHashable,
+    mock_identifier,
+)
 
 SetConstraintFactory = Callable[[Identifier, Any], Constraint]
 
@@ -434,6 +439,33 @@ def test_set_constraint_public_field_matches_members_property(
     assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
 
     assert set(getattr(constraint, field_name)) == set(constraint.members)
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_members_order_is_independent_of_construction_order(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test `members` orders alike for two constraints built in opposite orders.
+
+    Normalization stores members in `frozenset` iteration order, which
+    depends on insertion order once members collide on hash (and, for
+    `str` members, on the per-process hash seed). The members here
+    collide, so the two constraints provably store them in different
+    orders and the accessor has to impose the ordering itself rather
+    than inherit one that happens to agree.
+    """
+    x = mock_identifier("x", 0)
+    members = [HashCollidingMember(1), HashCollidingMember(2)]
+    left = factory(x, list(members))
+    right = factory(x, list(reversed(members)))
+    assert isinstance(left, (InSetConstraint, NotInSetConstraint))
+    assert isinstance(right, (InSetConstraint, NotInSetConstraint))
+
+    assert getattr(left, field_name) != getattr(right, field_name), (
+        "the two constraints must store their members in different orders "
+        "for this test to say anything about the accessor's ordering"
+    )
+    assert left.members == right.members
 
 
 # =============================================================================

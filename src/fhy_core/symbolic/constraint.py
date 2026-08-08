@@ -375,6 +375,30 @@ def _wrap_member_collection(
     return frozenset(_wrap_member(value) for value in values)
 
 
+def _order_members_canonically(
+    members: Collection[ConstraintMember],
+) -> tuple[ConstraintMember, ...]:
+    """Order raw members the same way in every process.
+
+    Normalization stores its result in ``frozenset`` iteration order,
+    which is hash-table slot order and therefore depends on the
+    per-process hash seed for ``str`` members. Ordering by
+    ``_build_member_ordering_key`` gives the accessor a sequence a caller
+    can iterate for reproducible output, and keeps type-strict members
+    apart, since the key is type-tagged and resolves a ``Serializable``
+    member through its serialized form rather than its address-based
+    ``repr``.
+
+    Args:
+        members: Raw members held by a set constraint.
+
+    Returns:
+        The same members in canonical order.
+
+    """
+    return tuple(sorted(members, key=_build_member_ordering_key))
+
+
 def _lift_member_to_literal_expression(value: ConstraintMember) -> LiteralExpression:
     """Lift a constraint member to a ``LiteralExpression``.
 
@@ -860,8 +884,14 @@ class InSetConstraint(Constraint):
 
     @property
     def members(self) -> tuple[ConstraintMember, ...]:
-        """Return the permitted members as raw values, in no particular order."""
-        return tuple(self.valid_values)
+        """Return the permitted members as raw values, in canonical order.
+
+        Ordering is reproducible across processes, so a caller may iterate
+        this to produce deterministic output. The ``valid_values`` field
+        holds the same members in an unspecified order.
+
+        """
+        return _order_members_canonically(self.valid_values)
 
     @cached_property
     def _members(self) -> frozenset[_TypedMember]:
@@ -967,8 +997,14 @@ class NotInSetConstraint(Constraint):
 
     @property
     def members(self) -> tuple[ConstraintMember, ...]:
-        """Return the forbidden members as raw values, in no particular order."""
-        return tuple(self.invalid_values)
+        """Return the forbidden members as raw values, in canonical order.
+
+        Ordering is reproducible across processes, so a caller may iterate
+        this to produce deterministic output. The ``invalid_values`` field
+        holds the same members in an unspecified order.
+
+        """
+        return _order_members_canonically(self.invalid_values)
 
     @cached_property
     def _members(self) -> frozenset[_TypedMember]:
