@@ -36,8 +36,13 @@ Every constraint additionally supports a *bindings* evaluation API --
 the constraint against a ``Mapping[Identifier, value]`` instead of a single
 positional value. This makes multi-variable (dependent) constraints
 usable: an ``EquationConstraint`` whose expression mentions identifiers
-beyond ``self.variable`` is decided once every identifier it references
-is bound. ``ConstraintSystem`` is the companion set-level value object: a
+beyond ``self.variable`` becomes decidable once every identifier it
+references is bound to a literal. Decidable is not decided: binding an
+identifier to a non-literal, symbolic ``Expression`` leaves a residual
+over the identifiers that expression introduces, and even a fully
+literal assignment can leave a residual the simplifier cannot reduce to
+a literal. Either case reports ``UNDECIDED``.
+``ConstraintSystem`` is the companion set-level value object: a
 canonically ordered conjunction of constraints, possibly spanning several
 variables, with joint-satisfiability checking backed by
 ``fhy_core.symbolic.solver.check_expression_satisfiability``. It is not a
@@ -131,22 +136,64 @@ ConstraintBindings: TypeAlias = Mapping[Identifier, "Expression | LiteralType"]
 """Assignment of candidate values (literals or expressions) to identifiers."""
 
 
+def _validate_binding_value(identifier: Identifier, value: object) -> None:
+    """Reject a binding value ``ConstraintBindings`` does not admit.
+
+    ``ConstraintBindings`` is public and declares ``Expression |
+    LiteralType``. A value in neither arm cannot be lifted into a
+    substitution environment, and handing it to the expression passes
+    anyway surfaces as an internal pass failure that names no identifier.
+    Rejecting it here reports the caller's mistake as a domain error
+    instead.
+
+    Args:
+        identifier: Identifier the value is bound to.
+        value: Candidate binding value.
+
+    Raises:
+        ConstraintError: If ``value`` is neither an ``Expression`` nor a
+            ``LiteralType``. The message names the identifier, the value,
+            and the value's type.
+
+    """
+    if isinstance(value, (Expression, LiteralType)):
+        return
+    raise ConstraintError(
+        f"Binding for identifier {identifier!r} must be an `Expression` or a "
+        f"literal (`str`, `float`, `int`, `bool`), but got value {value!r} of "
+        f"type {type(value).__name__}."
+    )
+
+
 def _coerce_bindings_to_environment(
     bindings: ConstraintBindings,
 ) -> dict[Identifier, Expression]:
-    """Coerce every raw ``LiteralType`` binding value to a ``LiteralExpression``.
+    """Coerce every binding value to the ``Expression`` a substitution consumes.
 
-    ``Expression`` values (including a non-literal, symbolic ``Expression``)
-    pass through unchanged.
+    A raw ``LiteralType`` value is wrapped in a ``LiteralExpression``. An
+    ``Expression`` value passes through unchanged, including a non-literal,
+    symbolic one: substituting a symbolic value is supported, and the
+    residual it leaves behind is what the caller's outcome is read from.
+
+    Args:
+        bindings: Mapping from identifiers to candidate values.
+
+    Returns:
+        Substitution environment binding each identifier to an
+        ``Expression``.
+
+    Raises:
+        ConstraintError: If a value falls outside ``Expression |
+            LiteralType``.
+
     """
-    return {
-        identifier: (
-            LiteralExpression(value)
-            if isinstance(value, (str, float, int, bool))
-            else value
+    environment: dict[Identifier, Expression] = {}
+    for identifier, value in bindings.items():
+        _validate_binding_value(identifier, value)
+        environment[identifier] = (
+            value if isinstance(value, Expression) else LiteralExpression(value)
         )
-        for identifier, value in bindings.items()
-    }
+    return environment
 
 
 @register_error
@@ -614,6 +661,18 @@ class Constraint(
         never reports ``UNDECIDED`` and so gives no other clue which of
         the two occurred.
 
+        A value outside the declared ``Expression | LiteralType`` union
+        reaches ``evaluate`` unchanged rather than being turned away: this
+        implementation has no expression to lift the value into, and
+        ``evaluate`` accepts ``Any``, so a hashable off-union value is
+        simply not a member and the check stays decided, while an
+        unhashable one raises the ``TypeError`` below.
+        ``EquationConstraint.evaluate_with_bindings`` cannot forward a
+        value -- it has to build a substitution environment out of it --
+        and rejects an off-union value with ``ConstraintError``. The two
+        paths agree on what matters: neither lets a failure from the
+        expression passes escape as the caller's answer.
+
         Args:
             bindings: Mapping from identifiers to candidate values. Raw
                 ``LiteralType`` values and ``Expression`` values are both
@@ -625,9 +684,11 @@ class Constraint(
             (possibly partial) bindings; ``UNDECIDED`` otherwise.
 
         Raises:
-            TypeError: Propagated from ``evaluate`` for leaves that reject
-                the bound value's type (e.g. an unhashable value against a
-                set constraint).
+            TypeError: Propagated from this implementation's call to
+                ``evaluate`` for leaves that reject the bound value's type
+                (e.g. an unhashable value against a set constraint). An
+                override that never calls ``evaluate`` documents its own
+                failure modes instead.
 
         """
         snapshot = dict(bindings)
@@ -763,6 +824,19 @@ class EquationConstraint(Constraint):
         WARNING when the residual has none -- every free identifier was
         bound yet the simplifier still failed to reduce it to a literal
         (matches ``evaluate``'s anomaly contract).
+
+        This override never calls ``evaluate``, so the base's ``TypeError``
+        does not apply; its own failure modes are below.
+
+        Raises:
+            ConstraintError: If a binding value falls outside
+                ``Expression | LiteralType`` and so cannot be lifted into
+                the substitution environment.
+            ValueError: From ``LiteralExpression`` when a ``str`` binding
+                value matches neither the integer nor the float grammar.
+            PassExecutionError: Propagated from ``simplify_expression``
+                when the SymPy bridge fails to lower or lift the
+                substituted expression.
 
         """
         environment = _coerce_bindings_to_environment(bindings)
@@ -1662,7 +1736,13 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
         as the whole expression, lowers faithfully and stays decidable.
 
         Args:
-            symbol_types: Z3 sort for each free identifier of the system.
+            symbol_types: Z3 sort for each free identifier of the lowered
+                conjunction. That set can be strictly smaller than
+                ``get_free_identifiers()``: an ``EquationConstraint``
+                reports its ``variable`` as free whether or not its
+                expression references it, while ``convert_to_expression``
+                emits only the expression, so an unreferenced ``variable``
+                needs no entry.
             timeout_milliseconds: Optional bound, in milliseconds, on the
                 underlying Z3 solver invocation. ``None`` (the default)
                 leaves the solver unbounded.
@@ -1722,7 +1802,9 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
 
         Args:
             bindings: Partial assignment substituted into the conjunction
-                before the satisfiability check.
+                before the satisfiability check. Values must be
+                ``Expression`` or ``LiteralType``, as
+                ``ConstraintBindings`` declares.
             symbol_types: Z3 sort for each identifier left free after
                 substitution.
             timeout_milliseconds: Optional bound, in milliseconds, on the
@@ -1743,6 +1825,9 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
                 a missing symbol type here always raises, since the Z3
                 bridge cannot proceed without a sort for every free
                 identifier.
+            ConstraintError: If a member cannot be converted to an
+                expression, or if a ``bindings`` value falls outside
+                ``Expression | LiteralType``.
             ValueError: If ``timeout_milliseconds`` is not None and not
                 positive. Checked before the empty-system and hazard
                 early returns, so an inadmissible bound is rejected even

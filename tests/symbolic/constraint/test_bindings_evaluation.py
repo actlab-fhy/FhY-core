@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Callable, Iterator, Mapping
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.constraint import (
     Constraint,
+    ConstraintError,
     ConstraintOutcome,
     EquationConstraint,
     InSetConstraint,
@@ -330,6 +332,104 @@ def test_equation_constraint_bindings_ignores_extraneous_keys() -> None:
     outcome = constraint.evaluate_with_bindings({z: 999})
 
     assert outcome is ConstraintOutcome.SATISFIED
+
+
+# =============================================================================
+# Binding-value construction boundary
+# =============================================================================
+
+OFF_UNION_BINDING_VALUES = [
+    pytest.param(None, id="none"),
+    pytest.param(Decimal("1"), id="decimal"),
+    pytest.param([1, 2], id="list"),
+    pytest.param(object(), id="object"),
+]
+"""Parametrize list of values outside ``Expression | LiteralType``.
+
+``ConstraintBindings`` admits none of these; each reaches the API only
+from code the type checker has not seen or has been silenced on, which is
+exactly the case the runtime boundary has to answer for.
+"""
+
+
+@pytest.mark.parametrize("value", OFF_UNION_BINDING_VALUES)
+def test_equation_constraint_bindings_rejects_a_value_outside_the_declared_union(
+    value: Any,
+) -> None:
+    """Test a binding value outside `Expression | LiteralType` raises.
+
+    ``ConstraintBindings`` declares ``Expression | LiteralType``. A value
+    in neither arm cannot be lifted into the substitution environment, so
+    the override rejects it at the boundary with a domain error naming the
+    identifier, the value, and its type, rather than letting it reach the
+    expression passes as an internal error.
+    """
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(
+        x, make_binary_expression(BinaryOperation.LESS, x, 10)
+    )
+
+    with pytest.raises(ConstraintError) as exception_info:
+        constraint.evaluate_with_bindings({x: value})
+
+    message = str(exception_info.value)
+    assert repr(x) in message
+    assert repr(value) in message
+    assert type(value).__name__ in message
+
+
+def test_equation_constraint_bindings_names_the_offending_identifier_only() -> None:
+    """Test the boundary error names the bad binding, not an acceptable one."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    constraint = _build_sum_less_than_ten(x, y)
+
+    with pytest.raises(ConstraintError) as exception_info:
+        constraint.evaluate_with_bindings({x: 3, y: None})  # type: ignore[dict-item]
+
+    message = str(exception_info.value)
+    assert repr(y) in message
+    assert repr(x) not in message
+
+
+def test_equation_constraint_bindings_admits_a_non_literal_expression_value() -> None:
+    """Test a symbolic `Expression` binding crosses the boundary unchanged.
+
+    A non-literal expression is supported input, not a boundary
+    violation: the residual it leaves behind is reported UNDECIDED rather
+    than rejected.
+    """
+    x = mock_identifier("x", 0)
+    w = mock_identifier("w", 1)
+    constraint = EquationConstraint(
+        x, make_binary_expression(BinaryOperation.LESS, x, 10)
+    )
+
+    outcome = constraint.evaluate_with_bindings({x: IdentifierExpression(w)})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize(
+    "value",
+    [pytest.param(None, id="none"), pytest.param(Decimal("1"), id="decimal")],
+)
+def test_set_constraint_bindings_forwards_a_value_outside_the_declared_union(
+    factory: SetConstraintFactory, value: Any
+) -> None:
+    """Test the base default forwards an off-union value to `evaluate`.
+
+    The base default has no expression to lift the value into, so it hands
+    the value to ``evaluate``, whose ``Any`` contract governs: a hashable
+    value outside the declared union is simply not a member and the check
+    stays decided. Nothing internal escapes, which is what makes this path
+    coherent with the ``EquationConstraint`` override's rejection.
+    """
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1, 2, 3})
+
+    assert constraint.evaluate_with_bindings({x: value}) == constraint.evaluate(value)
 
 
 # =============================================================================

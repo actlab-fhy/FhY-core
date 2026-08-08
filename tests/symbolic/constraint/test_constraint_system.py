@@ -318,6 +318,36 @@ def test_constraint_system_rejects_arbitrary_attribute_assignment() -> None:
 
 
 # =============================================================================
+# Identity equality
+# =============================================================================
+
+
+def test_constraint_system_equality_is_identity_not_structure() -> None:
+    """Test two structurally equivalent systems stay distinct values.
+
+    The class documents identity equality as a caller-visible contract:
+    equivalent systems are distinct dict keys and distinct set members, and
+    ``is_structurally_equivalent`` is the value-equality operation. Both
+    systems are built from the same two member instances in opposite
+    order, so canonical ordering makes their ``constraints`` tuples
+    identical -- structural equality would collapse them, and only
+    identity equality keeps them apart.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    first_member = InSetConstraint(x, {1, 2})
+    second_member = InSetConstraint(y, {3, 4})
+    first = create_constraint_system(first_member, second_member)
+    second = create_constraint_system(second_member, first_member)
+
+    assert first.is_structurally_equivalent(second)
+    assert first.constraints == second.constraints
+    assert first != second
+    assert len({first, second}) == 2
+    assert len({first: "first", second: "second"}) == 2
+
+
+# =============================================================================
 # repr / str
 # =============================================================================
 
@@ -341,6 +371,22 @@ def test_constraint_system_str_includes_member_str_forms() -> None:
     system = create_constraint_system(member)
 
     assert str(member) in str(system)
+
+
+def test_constraint_system_str_joins_multiple_members_as_a_conjunction() -> None:
+    """Test `str` separates members with the conjunction the system denotes.
+
+    A system is the logical AND of its members, so the separator is part
+    of the rendered meaning; a single-member system never shows it.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    first_member = InSetConstraint(x, {1, 2})
+    second_member = InSetConstraint(y, {3, 4})
+    system = create_constraint_system(first_member, second_member)
+
+    assert system.constraints == (first_member, second_member)
+    assert str(system) == f"{first_member} and {second_member}"
 
 
 def test_constraint_system_str_empty_system_denotes_trivially_true() -> None:
@@ -491,6 +537,24 @@ def test_is_satisfied_with_bindings_true_when_all_members_satisfied() -> None:
     system = create_constraint_system(InSetConstraint(x, {1, 2}))
 
     assert system.is_satisfied_with_bindings({x: 1}) is True
+
+
+def test_evaluate_with_bindings_rejects_a_value_outside_the_declared_union() -> None:
+    """Test an off-union binding value surfaces as a `ConstraintError`.
+
+    ``ConstraintBindings`` declares ``Expression | LiteralType``; a value
+    in neither arm must be reported as a domain error naming the
+    identifier rather than escaping as an expression-pass failure.
+    """
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(
+        EquationConstraint(x, make_binary_expression(BinaryOperation.LESS, x, 10))
+    )
+
+    with pytest.raises(ConstraintError) as exception_info:
+        system.evaluate_with_bindings({x: None})  # type: ignore[dict-item]
+
+    assert repr(x) in str(exception_info.value)
 
 
 def test_evaluate_with_bindings_propagates_type_error_for_unhashable_value() -> None:
@@ -727,6 +791,39 @@ def test_check_satisfiability_mixed_set_and_equation_system_is_unsatisfiable() -
 
 
 @pytest.mark.z3
+def test_check_satisfiability_needs_sorts_only_for_the_lowered_conjunction() -> None:
+    """Test `symbol_types` need not cover an identifier the lowering drops.
+
+    ``EquationConstraint.get_free_identifiers`` always reports its
+    ``variable``, but ``convert_to_expression`` emits only the expression,
+    so a ``variable`` the expression never references is absent from the
+    lowered conjunction. ``symbol_types`` is keyed on what is lowered, not
+    on ``get_free_identifiers()``, which is a strict superset here.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    system = create_constraint_system(EquationConstraint(x, IdentifierExpression(y)))
+
+    assert system.get_free_identifiers() == frozenset({x, y})
+    assert system.convert_to_expression().get_free_identifiers() == frozenset({y})
+    assert system.check_satisfiability({y: SymbolType.BOOL}) is (
+        ConstraintOutcome.SATISFIED
+    )
+
+
+def _extract_reported_missing_names(error: MissingSymbolTypeError) -> str:
+    """Return the identifier listing a `MissingSymbolTypeError` message carries.
+
+    The listing is everything after the message's final ``": "``. Reading
+    it out separately keeps an assertion off the fixed prefix, which
+    already contains several of the single-character name hints the tests
+    use and would otherwise satisfy a substring match no matter which
+    identifier the error actually reported.
+    """
+    return str(error).rpartition(": ")[2].rstrip(".")
+
+
+@pytest.mark.z3
 def test_check_satisfiability_raises_missing_symbol_type_error() -> None:
     """Test a missing `symbol_types` entry raises `MissingSymbolTypeError` naming it."""
     x = mock_identifier("x", 0)
@@ -735,8 +832,10 @@ def test_check_satisfiability_raises_missing_symbol_type_error() -> None:
         EquationConstraint(x, make_binary_expression(BinaryOperation.LESS, x, y))
     )
 
-    with pytest.raises(MissingSymbolTypeError, match=y.name_hint):
+    with pytest.raises(MissingSymbolTypeError) as exception_info:
         system.check_satisfiability({x: SymbolType.INT})
+
+    assert _extract_reported_missing_names(exception_info.value) == y.name_hint
 
 
 @pytest.mark.z3
@@ -753,8 +852,35 @@ def test_check_satisfiability_with_bindings_raises_missing_symbol_type_error() -
         EquationConstraint(x, make_binary_expression(BinaryOperation.LESS, x, y))
     )
 
-    with pytest.raises(MissingSymbolTypeError, match=y.name_hint):
+    with pytest.raises(MissingSymbolTypeError) as exception_info:
         system.check_satisfiability_with_bindings({x: 5}, {})
+
+    assert _extract_reported_missing_names(exception_info.value) == y.name_hint
+
+
+@pytest.mark.z3
+def test_check_satisfiability_reports_every_missing_identifier_in_sorted_order() -> (
+    None
+):
+    """Test two missing entries are both reported, ordered by name hint.
+
+    The identifiers are declared so that their ``id`` order (which drives
+    the free-identifier set's iteration order) is the reverse of their
+    name-hint order, so a listing that skipped the sort would come out
+    ``b, a``.
+    """
+    b = mock_identifier("b", 0)
+    a = mock_identifier("a", 1)
+    system = create_constraint_system(
+        EquationConstraint(b, make_binary_expression(BinaryOperation.LESS, b, a))
+    )
+
+    with pytest.raises(MissingSymbolTypeError) as exception_info:
+        system.check_satisfiability({})
+
+    assert _extract_reported_missing_names(exception_info.value) == (
+        f"{a.name_hint}, {b.name_hint}"
+    )
 
 
 def test_evaluate_with_bindings_missing_value_binding_degrades_to_undecided() -> None:
@@ -774,6 +900,63 @@ def test_evaluate_with_bindings_missing_value_binding_degrades_to_undecided() ->
     outcome = system.evaluate_with_bindings({x: 1})
 
     assert outcome is ConstraintOutcome.UNDECIDED
+
+
+def test_check_satisfiability_with_bindings_rejects_an_off_union_binding_value() -> (
+    None
+):
+    """Test an off-union binding value raises before the conjunction is lowered.
+
+    The bindings are coerced into a substitution environment ahead of the
+    solver, so a value in neither arm of ``Expression | LiteralType`` has
+    to be reported as a domain error naming the identifier rather than
+    escaping as an expression-pass failure.
+    """
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(
+        EquationConstraint(x, make_binary_expression(BinaryOperation.LESS, x, 10))
+    )
+
+    with pytest.raises(ConstraintError) as exception_info:
+        system.check_satisfiability_with_bindings(
+            {x: None},  # type: ignore[dict-item]
+            {x: SymbolType.INT},
+        )
+
+    assert repr(x) in str(exception_info.value)
+
+
+def test_check_satisfiability_propagates_constraint_error_from_a_member() -> None:
+    """Test a member that cannot be lowered raises `ConstraintError`.
+
+    ``check_satisfiability`` reaches the member through
+    ``convert_to_expression``, so a member whose value set holds a
+    non-literal must surface the documented ``ConstraintError`` rather
+    than an outcome.
+    """
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(
+        InSetConstraint(x, {SerializableEqualHashable(1)})
+    )
+
+    with pytest.raises(ConstraintError):
+        system.check_satisfiability({x: SymbolType.INT})
+
+
+def test_check_satisfiability_with_bindings_propagates_constraint_error() -> None:
+    """Test the bindings entry point raises `ConstraintError` for the same member.
+
+    ``check_satisfiability_with_bindings`` calls ``convert_to_expression``
+    exactly as ``check_satisfiability`` does, so it shares the documented
+    ``ConstraintError`` failure mode.
+    """
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(
+        InSetConstraint(x, {SerializableEqualHashable(1)})
+    )
+
+    with pytest.raises(ConstraintError):
+        system.check_satisfiability_with_bindings({}, {x: SymbolType.INT})
 
 
 def test_check_satisfiability_empty_system_does_not_invoke_the_solver(
