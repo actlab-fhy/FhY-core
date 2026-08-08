@@ -1364,11 +1364,10 @@ def test_check_satisfiability_with_bindings_missing_symbol_type_raises_on_hazard
 
 
 # =============================================================================
-# `timeout_milliseconds` passthrough (z3-backed)
+# `timeout_milliseconds` passthrough (solver seam replaced)
 # =============================================================================
 
 
-@pytest.mark.z3
 def test_check_satisfiability_forwards_timeout_milliseconds_to_the_solver_seam(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1398,7 +1397,6 @@ def test_check_satisfiability_forwards_timeout_milliseconds_to_the_solver_seam(
     assert captured["timeout_milliseconds"] == 2500
 
 
-@pytest.mark.z3
 def test_check_satisfiability_with_bindings_forwards_timeout_milliseconds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1436,7 +1434,6 @@ def test_check_satisfiability_with_bindings_forwards_timeout_milliseconds(
 # =============================================================================
 
 
-@pytest.mark.z3
 def test_check_satisfiability_solver_unknown_result_is_undecided(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1467,7 +1464,6 @@ def test_check_satisfiability_solver_unknown_result_is_undecided(
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.z3
 def test_check_satisfiability_with_bindings_solver_unknown_result_is_undecided(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

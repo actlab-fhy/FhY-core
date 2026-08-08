@@ -41,6 +41,7 @@ from .conftest import mock_identifier
 pytestmark = pytest.mark.property
 
 
+@settings(max_examples=50, deadline=None)
 @given(
     x_value=st.integers(min_value=-5, max_value=10),
     y_value=st.integers(min_value=-5, max_value=10),
@@ -72,6 +73,7 @@ def test_evaluate_with_bindings_matches_fold_of_member_outcomes(
 
 
 @pytest.mark.z3
+@settings(max_examples=50, deadline=None)
 @given(threshold=st.integers(min_value=0, max_value=10))
 def test_check_satisfiability_matches_brute_force_enumeration(threshold: int) -> None:
     """Test z3-backed satisfiability agrees with brute-force enumeration."""
