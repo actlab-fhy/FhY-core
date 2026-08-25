@@ -61,14 +61,9 @@ def test_int_param_add_constraint_combines_with_existing_constraints(
 ) -> None:
     """Test sequential `add_constraint` calls produce a combined feasibility set."""
     param = default_int_param.add_constraint(
-        EquationConstraint(
-            default_int_param.variable,
-            (default_int_param.variable_expression % 5).equals(0),
-        )
+        EquationConstraint((default_int_param.variable_expression % 5).equals(0))
     )
-    param = param.add_constraint(
-        EquationConstraint(param.variable, param.variable_expression > 10)
-    )
+    param = param.add_constraint(EquationConstraint(param.variable_expression > 10))
 
     assert param.is_constraints_satisfied(15)
     with pytest.raises(ParamError):
@@ -293,12 +288,8 @@ def test_int_param_between_equal_bounds_with_any_exclusive_raises(
 def test_int_param_serialization_round_trip_preserves_constraints() -> None:
     """Test integer param round-trips through dict serialization with constraints."""
     param = create_integer_param()
-    param = param.add_constraint(
-        EquationConstraint(param.variable, param.variable_expression > 0)
-    )
-    param = param.add_constraint(
-        EquationConstraint(param.variable, param.variable_expression < 10)
-    )
+    param = param.add_constraint(EquationConstraint(param.variable_expression > 0))
+    param = param.add_constraint(EquationConstraint(param.variable_expression < 10))
 
     dictionary = param.serialize_to_dict()
     restored: Param[int] = Param.deserialize_from_dict(dictionary)

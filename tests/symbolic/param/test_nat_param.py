@@ -336,21 +336,17 @@ def test_integer_domain_canonicalizes_zero_included_when_not_non_negative() -> N
 def test_nat_param_serialization_round_trip_preserves_constraints() -> None:
     """Test natural param round-trips through dict serialization with constraints."""
     param = create_natural_param(zero_included=False)
-    param = param.add_constraint(
-        EquationConstraint(param.variable, param.variable_expression >= 1)
-    )
-    param = param.add_constraint(
-        EquationConstraint(param.variable, param.variable_expression <= 10)
-    )
+    param = param.add_constraint(EquationConstraint(param.variable_expression >= 1))
+    param = param.add_constraint(EquationConstraint(param.variable_expression <= 10))
 
-    dictionary = param.serialize_to_dict()
+    dictionary: dict[str, Any] = param.serialize_to_dict()
     restored: Param[int] = Param.deserialize_from_dict(dictionary)
-    redictionary = restored.serialize_to_dict()
+    redictionary: dict[str, Any] = restored.serialize_to_dict()
 
-    assert len(dictionary["constraints"]) == 3  # type: ignore[arg-type]  # test: dict shape known
+    assert len(dictionary["constraint_system"]["__data__"]["constraints"]) == 3
     assert_all_satisfied(restored, [1, 5, 10])
     assert_none_satisfied(restored, [0, 11])
-    assert len(redictionary["constraints"]) == 3  # type: ignore[arg-type]  # test: dict shape known
+    assert len(redictionary["constraint_system"]["__data__"]["constraints"]) == 3
 
 
 def test_nat_param_deserialize_round_trip_preserves_zero_inclusion_flag() -> None:
@@ -375,8 +371,10 @@ def test_nat_param_deserialize_recovers_zero_exclusion_without_stored_constraint
     inferred from a stored bound. A payload whose ``constraints`` list is emptied
     still round-trips to a param that rejects ``0``.
     """
-    payload = create_natural_param(zero_included=False).serialize_to_dict()
-    payload["constraints"] = []  # test: modify serialized
+    payload: dict[str, Any] = create_natural_param(
+        zero_included=False
+    ).serialize_to_dict()
+    payload["constraint_system"]["__data__"]["constraints"] = []
 
     restored: Param[int] = Param.deserialize_from_dict(payload)
 

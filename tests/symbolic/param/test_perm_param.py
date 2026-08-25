@@ -174,9 +174,7 @@ def test_perm_param_rejects_non_set_constraint(
     """
     with pytest.raises(ParamError):
         perm_param_nchw.add_constraint(
-            EquationConstraint(
-                perm_param_nchw.variable, perm_param_nchw.variable_expression > 1
-            )
+            EquationConstraint(perm_param_nchw.variable_expression > 1)
         )
 
 

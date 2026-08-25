@@ -1,11 +1,12 @@
 """Tests for structural rejection of malformed param serialization payloads.
 
 Under the schema-derived format a parameter serializes as
-``{"domain": {...}, "variable": {...}, "constraints": [...]}`` where ``domain``
-is a wrapped family envelope. The derived ``deserialize_from_dict`` validates the
-exact top-level key set and each field's coarse structure before decoding. Each
-test below feeds a payload with exactly one structural fault and asserts the
-shape-level rejection surfaces as `DeserializationDictStructureError`.
+``{"domain": {...}, "variable": {...}, "constraint_system": {...}}`` where
+``domain`` and ``constraint_system`` are each a wrapped family envelope. The
+derived ``deserialize_from_dict`` validates the exact top-level key set and
+each field's coarse structure before decoding. Each test below feeds a
+payload with exactly one structural fault and asserts the shape-level
+rejection surfaces as `DeserializationDictStructureError`.
 """
 
 from collections.abc import Callable
@@ -38,9 +39,9 @@ def _drop_variable_field(payload: dict[str, Any]) -> None:
     del payload["variable"]
 
 
-def _drop_constraints_field(payload: dict[str, Any]) -> None:
-    """Remove the ``constraints`` field from a param payload."""
-    del payload["constraints"]
+def _drop_constraint_system_field(payload: dict[str, Any]) -> None:
+    """Remove the ``constraint_system`` field from a param payload."""
+    del payload["constraint_system"]
 
 
 def _add_unexpected_field(payload: dict[str, Any]) -> None:
@@ -53,9 +54,9 @@ def _set_variable_to_non_dict(payload: dict[str, Any]) -> None:
     payload["variable"] = "not-a-dict"
 
 
-def _set_constraints_to_non_list(payload: dict[str, Any]) -> None:
-    """Replace the ``constraints`` field with a non-list value."""
-    payload["constraints"] = "not-a-list"
+def _set_constraint_system_to_non_dict(payload: dict[str, Any]) -> None:
+    """Replace the ``constraint_system`` field with a non-dict value."""
+    payload["constraint_system"] = "not-a-dict"
 
 
 def _set_domain_to_non_dict(payload: dict[str, Any]) -> None:
@@ -73,10 +74,14 @@ def _set_domain_to_non_dict(payload: dict[str, Any]) -> None:
     [
         pytest.param(_drop_domain_field, id="missing-domain-field"),
         pytest.param(_drop_variable_field, id="missing-variable-field"),
-        pytest.param(_drop_constraints_field, id="missing-constraints-field"),
+        pytest.param(
+            _drop_constraint_system_field, id="missing-constraint-system-field"
+        ),
         pytest.param(_add_unexpected_field, id="unexpected-extra-field"),
         pytest.param(_set_variable_to_non_dict, id="variable-not-a-dict"),
-        pytest.param(_set_constraints_to_non_list, id="constraints-not-a-list"),
+        pytest.param(
+            _set_constraint_system_to_non_dict, id="constraint-system-not-a-dict"
+        ),
         pytest.param(_set_domain_to_non_dict, id="domain-not-a-dict"),
     ],
 )

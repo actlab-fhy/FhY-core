@@ -807,3 +807,72 @@ def test_convert_call_expression_to_z3_rejects_unresolved_call() -> None:
 
     with pytest.raises(PassExecutionError, match="TypeError"):
         convert_expression_to_z3_expression(expression, {})
+
+
+# =============================================================================
+# Third-party characterization: Z3's Boolean-to-integer coercion
+# =============================================================================
+#
+# The two tests below characterize the Z3 Python bindings themselves, not this
+# package. `fhy_core.symbolic.constraint`'s bool sort-hazard screen exists only
+# because Z3 silently coerces a Boolean operand in a numeric context instead of
+# refusing the mixed-sort expression. Nothing else in the suite reaches that
+# coercion: the screen short-circuits before the solver, so the tests around it
+# never let Z3 see a hazardous expression. If either test fails, Z3's behavior
+# changed and the screen's premise needs revisiting -- along with the
+# docstrings on `ConstraintSystem.check_satisfiability`,
+# `check_satisfiability_with_bindings`, and `_does_node_coerce_a_bool_operand`.
+# That is the reading; it is not a broken test.
+
+
+def test_z3_rewrites_a_bool_operand_compared_against_an_integer() -> None:
+    """Test Z3 rewrites a lowered `BoolVal` in a numeric comparison to `If(b, 1, 0)`.
+
+    A ``bool``-valued literal lowers to ``z3.BoolVal`` and an ``int``
+    literal to ``z3.IntVal``. Comparing the two does not raise: the
+    bindings insert the ``If(..., 1, 0)`` rewrite and report the
+    comparison satisfiable, identifying ``True`` with ``1``. This
+    package's literal semantics hold the two apart, so the lowering
+    cannot be trusted to answer for it.
+    """
+    comparison = BinaryExpression(
+        BinaryOperation.EQUAL, LiteralExpression(True), LiteralExpression(1)
+    )
+
+    lowered, _ = convert_expression_to_z3_expression(comparison, {})
+
+    coerced_operand = lowered.children()[0]
+    assert z3.is_app_of(coerced_operand, z3.Z3_OP_ITE)
+    assert str(coerced_operand) == "If(True, 1, 0)"
+    solver = z3.Solver()
+    solver.add(lowered)
+    assert solver.check() == z3.sat
+    assert not LiteralExpression(True).is_structurally_equivalent(LiteralExpression(1))
+
+
+def test_z3_bool_coercion_yields_a_model_this_package_rejects() -> None:
+    """Test the coercion produces a satisfying assignment equating `True` with `1`.
+
+    A ``SymbolType.BOOL`` identifier compared against an integer literal
+    is satisfiable under Z3, and the witness assigns the identifier
+    ``True`` -- Z3's answer to "can this Boolean equal 1?" is yes. Under
+    this package's type-strict literal semantics ``True`` and ``1`` are
+    distinct values, so a decided outcome read back from this lowering
+    would contradict the semantics the constraint layer promises.
+    """
+    variable = mock_identifier("b", 0)
+    comparison = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(variable), LiteralExpression(1)
+    )
+
+    lowered, identifier_to_z3_expression = convert_expression_to_z3_expression(
+        comparison, {variable: SymbolType.BOOL}
+    )
+
+    z3_variable = identifier_to_z3_expression[variable]
+    assert str(lowered.children()[0]) == f"If({z3_variable}, 1, 0)"
+    solver = z3.Solver()
+    solver.add(lowered)
+    assert solver.check() == z3.sat
+    assert z3.is_true(solver.model()[z3_variable])
+    assert not LiteralExpression(True).is_structurally_equivalent(LiteralExpression(1))

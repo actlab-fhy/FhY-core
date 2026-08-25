@@ -85,10 +85,15 @@ def test_set_constraint_supports_deeply_nested_collection_members(
     factory: SetConstraintFactory,
 ) -> None:
     """Test the recursive validator accepts deeply nested tuple/frozenset members."""
+    x = mock_identifier("x", 0)
     nested_member = (1, (2, 3), frozenset({4, 5}))
-    constraint = factory(mock_identifier("x", 0), [nested_member])
+    constraint = factory(x, [nested_member])
 
-    assert constraint.is_satisfied(nested_member) is (factory is InSetConstraint)
+    outcome = constraint.is_satisfied_with_bindings(
+        {x: nested_member}  # type: ignore[dict-item]  # test: nested tuple/frozenset member off-union
+    )
+
+    assert outcome is (factory is InSetConstraint)
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)

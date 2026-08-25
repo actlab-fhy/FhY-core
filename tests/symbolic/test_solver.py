@@ -1,6 +1,7 @@
 """Tests for the backend-agnostic solver seam `fhy_core.symbolic.solver`."""
 
 import inspect
+import logging
 from collections.abc import Callable
 
 import pytest
@@ -436,6 +437,193 @@ def test_assert_holds_for_all_free_assignments_raises_undecidable_error_on_unkno
         assert_holds_for_all_free_assignments(
             frozenset(), expression, {x: SymbolType.INT}
         )
+
+
+# =============================================================================
+# Lowering hazard screens
+# =============================================================================
+
+_SOLVER_LOGGER_NAME = "fhy_core.symbolic.solver"
+
+
+def _solver_warning_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the solver module's WARNING-level messages captured by ``caplog``."""
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING and record.name == _SOLVER_LOGGER_NAME
+    ]
+
+
+def test_check_expression_satisfiability_bool_coercion_hazard_returns_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a bool literal compared against an INT-sorted identifier is screened.
+
+    Mirrors the ``InSetConstraint``-style shape ``x in {True}``: the Z3
+    bindings would coerce the ``True`` literal to ``1`` in a numeric
+    context, so the seam refuses to lower the comparison and reports
+    None instead of a decided-but-wrong outcome.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(True)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = check_expression_satisfiability(expression, {x: SymbolType.INT})
+
+    assert result is None
+    messages = _solver_warning_messages(caplog)
+    assert messages, "expected a WARNING naming the hazardous node"
+    assert "check_expression_satisfiability" in messages[0]
+    assert repr(x) in messages[0]
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_bool_literal_under_bool_sort_decided() -> None:
+    """Test the same comparison under a BOOL-sorted identifier is not screened.
+
+    Contrasts the hazard: a BOOL-sorted ``x`` lowers ``x == True``
+    faithfully, so the comparison reaches the solver and decides
+    normally.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(True)
+    )
+
+    assert check_expression_satisfiability(expression, {x: SymbolType.BOOL}) is True
+
+
+def test_check_expression_satisfiability_division_hazard_returns_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test DIVIDE by a non-literal divisor is screened (audit finding C1).
+
+    ``x / x != 1`` is the shape that previously decided False through
+    the Z3 bridge's unsound division-by-possibly-zero encoding; the seam
+    now refuses to lower it and reports None.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.NOT_EQUAL,
+        BinaryExpression(
+            BinaryOperation.DIVIDE, IdentifierExpression(x), IdentifierExpression(x)
+        ),
+        LiteralExpression(1),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = check_expression_satisfiability(expression, {x: SymbolType.REAL})
+
+    assert result is None
+    messages = _solver_warning_messages(caplog)
+    assert messages, "expected a WARNING naming the hazardous division node"
+    assert "check_expression_satisfiability" in messages[0]
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_modulo_by_nonzero_literal_stays_decided() -> (
+    None
+):
+    """Test MODULO by a nonzero literal divisor is not screened.
+
+    Contrasts the hazard: ``x % 2 == 0``'s divisor is a provably nonzero
+    literal, so the comparison reaches the solver and decides normally.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        BinaryExpression(
+            BinaryOperation.MODULO, IdentifierExpression(x), LiteralExpression(2)
+        ),
+        LiteralExpression(0),
+    )
+
+    assert check_expression_satisfiability(expression, {x: SymbolType.INT}) is True
+
+
+def test_check_expression_satisfiability_int_float_equality_hazard_returns_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test EQUAL mixing an INT-sorted identifier and a float literal is screened.
+
+    Z3's ``ToReal`` rationalization of the INT-sorted operand collapses
+    the type-strict int/float distinction (audit finding C5/C6), so the
+    seam refuses to lower ``x == 1.5`` for an INT-sorted ``x``.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(1.5)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = check_expression_satisfiability(expression, {x: SymbolType.INT})
+
+    assert result is None
+    messages = _solver_warning_messages(caplog)
+    assert messages, "expected a WARNING naming the hazardous node"
+    assert "check_expression_satisfiability" in messages[0]
+    assert repr(x) in messages[0]
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_real_identifier_eq_float_stays_decided() -> (
+    None
+):
+    """Test EQUAL between a REAL-sorted identifier and a float literal is not screened.
+
+    Contrasts the hazard: the identifier is not INT-sorted, so no
+    sort-mixing hazard exists.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(1.5)
+    )
+
+    assert check_expression_satisfiability(expression, {x: SymbolType.REAL}) is True
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_int_identifier_lt_float_not_screened() -> None:
+    """Test `<` between an INT-sorted identifier and a float literal is not screened.
+
+    Ordering comparisons stay mathematically meaningful across a mixed
+    int/float sort, so only EQUAL/NOT_EQUAL is screened.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.LESS, IdentifierExpression(x), LiteralExpression(1.5)
+    )
+
+    assert check_expression_satisfiability(expression, {x: SymbolType.INT}) is True
+
+
+def test_does_expression_imply_hazardous_premise_returns_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a hazardous antecedent is screened before the solver is consulted.
+
+    Mirrors ``ConstraintSystem.check_implication``'s antecedent-side
+    hazard: the bool-coercion screen applies equally to
+    ``does_expression_imply``.
+    """
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(True)
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = does_expression_imply(antecedent, consequent, {x: SymbolType.INT})
+
+    assert result is None
+    messages = _solver_warning_messages(caplog)
+    assert messages, "expected a WARNING naming the hazardous node"
+    assert "does_expression_imply" in messages[0]
 
 
 # =============================================================================

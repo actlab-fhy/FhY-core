@@ -11,7 +11,6 @@ from typing import Any
 import pytest
 
 from fhy_core.identifier import Identifier
-from fhy_core.symbolic.param.core import _constraint_structural_ordering_key
 from fhy_core.symbolic.param.values import ParamError, serialize_wrapped_leaf_value
 
 # =============================================================================
@@ -53,42 +52,15 @@ def test_serialize_wrapped_leaf_value_rejects_unsupported_type(
 
 
 # =============================================================================
-# `_constraint_structural_ordering_key`
+# `_constraint_structural_ordering_key` (design: D3)
 #
-# FLAGGED: tests a module-private helper directly. Kept per convention (the
-# public `Param.is_structurally_equivalent` path cannot easily reach the
-# key-order-independence behavior pinned here). Promote the helper if it needs
-# standalone coverage long-term.
+# This private helper is deleted: `param/core.py` no longer builds its own
+# JSON-based constraint ordering key. Constraint ordering now goes through
+# the constraint module's public `build_constraint_ordering_key`, which is a
+# structural key (not a serialized-dict key), so the dict-key-order-
+# independence property this section used to pin via a duck-typed stub no
+# longer applies to anything in this module. `build_constraint_ordering_key`
+# has its own coverage in `tests/symbolic/constraint/**`, and
+# `test_scope_attachment.py::test_param_constraint_tuple_matches_build_constraint_ordering_key_order`  # noqa: E501
+# pins the same property at the `Param` level.
 # =============================================================================
-
-
-class _StubConstraintWithOrderedDict:
-    """Minimal stub whose ``serialize_to_dict`` yields a configured key order."""
-
-    def __init__(self, items: tuple[tuple[str, Any], ...]) -> None:
-        self._items = items
-
-    def serialize_to_dict(self) -> dict[str, Any]:
-        return dict(self._items)
-
-
-def test_constraint_structural_ordering_key_is_stable_across_dict_key_orders() -> None:
-    """Test the helper returns the same key regardless of serialized-dict key order.
-
-    Two stub constraints whose serialized dicts contain the same items in
-    opposite insertion order must produce identical ordering keys. Otherwise
-    `Param.is_structurally_equivalent` can pair constraints incorrectly when
-    constraint serialization rearranges keys.
-    """
-    forward = _StubConstraintWithOrderedDict(
-        (("variable", {"name": "x"}), ("operation", "GE"), ("value", 0))
-    )
-    reverse = _StubConstraintWithOrderedDict(
-        (("value", 0), ("operation", "GE"), ("variable", {"name": "x"}))
-    )
-
-    # The structural stubs satisfy the duck-typed contract the helper consumes.
-    forward_key = _constraint_structural_ordering_key(forward)  # type: ignore[arg-type]
-    reverse_key = _constraint_structural_ordering_key(reverse)  # type: ignore[arg-type]
-
-    assert forward_key == reverse_key

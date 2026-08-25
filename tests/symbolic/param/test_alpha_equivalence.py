@@ -87,10 +87,10 @@ def test_alpha_equivalent_across_variable_rename_with_one_constraint() -> None:
     x = mock_identifier("x", 1)
     y = mock_identifier("y", 2)
     left = _build_integer_param_with_bounds(
-        x, [lambda p: EquationConstraint(p.variable, p.variable_expression > 0)]
+        x, [lambda p: EquationConstraint(p.variable_expression > 0)]
     )
     right = _build_integer_param_with_bounds(
-        y, [lambda p: EquationConstraint(p.variable, p.variable_expression > 0)]
+        y, [lambda p: EquationConstraint(p.variable_expression > 0)]
     )
 
     assert left.is_alpha_equivalent(right)
@@ -149,9 +149,9 @@ def test_alpha_equivalent_with_multiple_constraints_in_different_orders(
     insertion order. Renaming then aligns the constraints element-wise.
     """
     builders: list[Callable[[Param[int]], EquationConstraint]] = [
-        lambda p: EquationConstraint(p.variable, p.variable_expression > 0),
-        lambda p: EquationConstraint(p.variable, p.variable_expression < 100),
-        lambda p: EquationConstraint(p.variable, p.variable_expression >= 3),
+        lambda p: EquationConstraint(p.variable_expression > 0),
+        lambda p: EquationConstraint(p.variable_expression < 100),
+        lambda p: EquationConstraint(p.variable_expression >= 3),
     ]
     x = mock_identifier("x", 1)
     y = mock_identifier("y", 2)
@@ -217,10 +217,10 @@ def test_not_alpha_equivalent_for_different_constraint_sets() -> None:
     x = mock_identifier("x", 1)
     y = mock_identifier("y", 2)
     left = _build_integer_param_with_bounds(
-        x, [lambda p: EquationConstraint(p.variable, p.variable_expression > 0)]
+        x, [lambda p: EquationConstraint(p.variable_expression > 0)]
     )
     right = _build_integer_param_with_bounds(
-        y, [lambda p: EquationConstraint(p.variable, p.variable_expression > 5)]
+        y, [lambda p: EquationConstraint(p.variable_expression > 5)]
     )
 
     assert not left.is_alpha_equivalent(right)
@@ -233,12 +233,12 @@ def test_not_alpha_equivalent_for_different_constraint_counts() -> None:
     left = _build_integer_param_with_bounds(
         x,
         [
-            lambda p: EquationConstraint(p.variable, p.variable_expression > 0),
-            lambda p: EquationConstraint(p.variable, p.variable_expression < 100),
+            lambda p: EquationConstraint(p.variable_expression > 0),
+            lambda p: EquationConstraint(p.variable_expression < 100),
         ],
     )
     right = _build_integer_param_with_bounds(
-        y, [lambda p: EquationConstraint(p.variable, p.variable_expression > 0)]
+        y, [lambda p: EquationConstraint(p.variable_expression > 0)]
     )
 
     assert not left.is_alpha_equivalent(right)
@@ -343,11 +343,11 @@ def test_structural_equivalence_implies_alpha_equivalence() -> None:
     """
     left = _build_integer_param_with_bounds(
         mock_identifier("x", 1),
-        [lambda p: EquationConstraint(p.variable, p.variable_expression > 0)],
+        [lambda p: EquationConstraint(p.variable_expression > 0)],
     )
     right = _build_integer_param_with_bounds(
         mock_identifier("x", 1),
-        [lambda p: EquationConstraint(p.variable, p.variable_expression > 0)],
+        [lambda p: EquationConstraint(p.variable_expression > 0)],
     )
 
     assert left.is_structurally_equivalent(right)
@@ -368,11 +368,11 @@ def test_param_assignments_alpha_equivalent_for_alpha_equivalent_params() -> Non
     """
     left_param = _build_integer_param_with_bounds(
         mock_identifier("x", 1),
-        [lambda p: EquationConstraint(p.variable, p.variable_expression > 0)],
+        [lambda p: EquationConstraint(p.variable_expression > 0)],
     )
     right_param = _build_integer_param_with_bounds(
         mock_identifier("y", 2),
-        [lambda p: EquationConstraint(p.variable, p.variable_expression > 0)],
+        [lambda p: EquationConstraint(p.variable_expression > 0)],
     )
     left = left_param.assign(5)
     right = right_param.assign(5)
@@ -389,11 +389,11 @@ def test_param_assignments_not_alpha_equivalent_for_different_values() -> None:
     """
     left_param = _build_integer_param_with_bounds(
         mock_identifier("x", 1),
-        [lambda p: EquationConstraint(p.variable, p.variable_expression > 0)],
+        [lambda p: EquationConstraint(p.variable_expression > 0)],
     )
     right_param = _build_integer_param_with_bounds(
         mock_identifier("y", 2),
-        [lambda p: EquationConstraint(p.variable, p.variable_expression > 0)],
+        [lambda p: EquationConstraint(p.variable_expression > 0)],
     )
     left = left_param.assign(5)
     right = right_param.assign(7)
