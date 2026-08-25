@@ -93,6 +93,7 @@ def test_set_constraint_round_trip_dict_serialization(
     rebuilt = type(constraint).deserialize_from_dict(constraint.serialize_to_dict())
 
     assert isinstance(rebuilt, factory)
+    assert isinstance(rebuilt, (InSetConstraint, NotInSetConstraint))
     assert rebuilt.variable == x
     for member in (1, 2, 99):
         assert rebuilt.is_satisfied_with_bindings(
@@ -131,12 +132,16 @@ def test_set_constraint_round_trip_with_serializable_member(
     rebuilt = type(constraint).deserialize_from_dict(constraint.serialize_to_dict())
 
     assert rebuilt.is_satisfied_with_bindings(
-        {x: member}
-    ) == constraint.is_satisfied_with_bindings({x: member})
+        {x: member}  # type: ignore[dict-item]  # test: bespoke `Serializable` value
+    ) == constraint.is_satisfied_with_bindings(
+        {x: member}  # type: ignore[dict-item]  # test: bespoke `Serializable` value
+    )
     other = SerializableEqualHashable(8)
     assert rebuilt.is_satisfied_with_bindings(
-        {x: other}
-    ) == constraint.is_satisfied_with_bindings({x: other})
+        {x: other}  # type: ignore[dict-item]  # test: bespoke `Serializable` value
+    ) == constraint.is_satisfied_with_bindings(
+        {x: other}  # type: ignore[dict-item]  # test: bespoke `Serializable` value
+    )
 
 
 @pytest.mark.parametrize("factory, _field", _SET_KINDS_WITH_FIELD)
@@ -151,8 +156,10 @@ def test_set_constraint_round_trip_with_nested_collection_member(
     rebuilt = type(constraint).deserialize_from_dict(constraint.serialize_to_dict())
 
     assert rebuilt.is_satisfied_with_bindings(
-        {x: nested_member}
-    ) == constraint.is_satisfied_with_bindings({x: nested_member})
+        {x: nested_member}  # type: ignore[dict-item]  # test: nested tuple/frozenset member off-union
+    ) == constraint.is_satisfied_with_bindings(
+        {x: nested_member}  # type: ignore[dict-item]  # test: nested tuple/frozenset member off-union
+    )
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
@@ -287,7 +294,7 @@ def test_equation_constraint_rejects_a_payload_carrying_the_old_variable_field()
     a silently-ignored extra key.
     """
     x = mock_identifier("x", 0)
-    payload = {
+    payload: SerializedDict = {
         "variable": x.serialize_to_dict(),
         "expression": LiteralExpression(True).serialize_to_dict(),
     }

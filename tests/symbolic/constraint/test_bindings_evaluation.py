@@ -11,7 +11,7 @@ plus cross-cutting bindings-API contracts shared by every kind.
 import logging
 from collections.abc import Iterator, Mapping
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -176,7 +176,7 @@ def test_set_constraint_bindings_propagates_type_error_for_unhashable_value(
     constraint = factory(x, {1, 2, 3})
 
     with pytest.raises(TypeError):
-        constraint.evaluate_with_bindings({x: [1, 2]})  # type: ignore[dict-item]
+        constraint.evaluate_with_bindings({x: [1, 2]})
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
@@ -394,7 +394,9 @@ _KIND_SATISFYING_AND_VIOLATING_BINDINGS = [
 ]
 """(kind id, a value satisfying that kind's default constraint, a violator)."""
 
-_ALL_KINDS_BY_ID = {param.id: param.values[0] for param in ALL_KINDS}
+_ALL_KINDS_BY_ID: dict[str, Any] = {
+    cast(str, param.id): param.values[0] for param in ALL_KINDS
+}
 
 
 @pytest.mark.parametrize(

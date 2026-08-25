@@ -25,7 +25,7 @@ def test_equation_constraint_rejects_the_old_two_argument_signature() -> None:
     x = mock_identifier("x", 0)
 
     with pytest.raises(TypeError):
-        EquationConstraint(x, LiteralExpression(True))  # type: ignore[call-arg]
+        EquationConstraint(x, LiteralExpression(True))  # type: ignore[arg-type, call-arg]  # test: old two-argument signature
 
 
 def test_equation_constraint_accepts_exactly_one_positional_argument() -> None:

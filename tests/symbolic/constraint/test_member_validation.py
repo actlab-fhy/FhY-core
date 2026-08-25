@@ -89,7 +89,9 @@ def test_set_constraint_supports_deeply_nested_collection_members(
     nested_member = (1, (2, 3), frozenset({4, 5}))
     constraint = factory(x, [nested_member])
 
-    outcome = constraint.is_satisfied_with_bindings({x: nested_member})
+    outcome = constraint.is_satisfied_with_bindings(
+        {x: nested_member}  # type: ignore[dict-item]  # test: nested tuple/frozenset member off-union
+    )
 
     assert outcome is (factory is InSetConstraint)
 

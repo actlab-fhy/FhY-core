@@ -141,6 +141,7 @@ def test_set_constraint_variable_property_returns_constructor_argument(
     x = mock_identifier("x", 0)
     constraint = factory(x, {1, 2})
 
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
     assert constraint.variable is x
 
 
@@ -313,9 +314,9 @@ def test_set_constraint_with_nested_tuple_uses_strict_inner_equality(
     in_set = factory is InSetConstraint
     constraint = factory(x, [(True, 1)])
 
-    assert constraint.is_satisfied_with_bindings({x: (True, 1)}) is in_set
-    assert constraint.is_satisfied_with_bindings({x: (1, 1)}) is not in_set
-    assert constraint.is_satisfied_with_bindings({x: (1, True)}) is not in_set
+    assert constraint.is_satisfied_with_bindings({x: (True, 1)}) is in_set  # type: ignore[dict-item]  # test: type-strict tuple member off-union
+    assert constraint.is_satisfied_with_bindings({x: (1, 1)}) is not in_set  # type: ignore[dict-item]  # test: type-strict tuple member off-union
+    assert constraint.is_satisfied_with_bindings({x: (1, True)}) is not in_set  # type: ignore[dict-item]  # test: type-strict tuple member off-union
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
@@ -327,8 +328,8 @@ def test_set_constraint_with_nested_frozenset_uses_strict_inner_equality(
     in_set = factory is InSetConstraint
     constraint = factory(x, [frozenset({True})])
 
-    assert constraint.is_satisfied_with_bindings({x: frozenset({True})}) is in_set
-    assert constraint.is_satisfied_with_bindings({x: frozenset({1})}) is not in_set
+    assert constraint.is_satisfied_with_bindings({x: frozenset({True})}) is in_set  # type: ignore[dict-item]  # test: type-strict frozenset member off-union
+    assert constraint.is_satisfied_with_bindings({x: frozenset({1})}) is not in_set  # type: ignore[dict-item]  # test: type-strict frozenset member off-union
 
 
 def test_in_set_constraint_with_nan_member_does_not_satisfy_distinct_nan_instance() -> (
@@ -357,7 +358,7 @@ def test_set_constraint_accepts_empty_collection_as_member(
     in_set = factory is InSetConstraint
     constraint = factory(x, [empty_member])
 
-    assert constraint.is_satisfied_with_bindings({x: empty_member}) is in_set
+    assert constraint.is_satisfied_with_bindings({x: empty_member}) is in_set  # type: ignore[dict-item]  # test: off-union collection member
 
 
 def test_in_set_constraint_isolates_from_post_construction_mutation() -> None:
@@ -380,7 +381,7 @@ def test_set_constraint_is_satisfied_with_bindings_unhashable_value_raises_type_
     constraint = factory(x, {1, 2})
 
     with pytest.raises(TypeError):
-        constraint.is_satisfied_with_bindings({x: {"a": 1}})
+        constraint.is_satisfied_with_bindings({x: {"a": 1}})  # type: ignore[dict-item]  # test: unhashable off-union value
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
@@ -608,7 +609,7 @@ def _assert_membership_agrees_with_public_field(
     """
     assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
     public_members = tuple(getattr(constraint, field_name))
-    reference = type(constraint)(constraint.variable, public_members)  # type: ignore[call-arg]
+    reference = type(constraint)(constraint.variable, public_members)
 
     for probe in (*public_members, _ABSENT_PROBE):
         assert _evaluate_bound(constraint, probe) is _evaluate_bound(
@@ -633,7 +634,7 @@ def test_set_constraint_reader_does_not_rebuild_the_type_strict_member_set(
     """
     constraint = factory(mock_identifier("x", 0), _MEMBERS)
     rebuild_count = 0
-    build_member_set = constraint_core_module._wrap_member_collection
+    build_member_set = constraint_core_module._wrap_member_collection  # type: ignore[attr-defined]  # test: patches core's own import-by-value binding
 
     def counting_build_member_set(values: Any) -> Any:
         nonlocal rebuild_count

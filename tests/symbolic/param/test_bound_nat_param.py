@@ -1,5 +1,7 @@
 """Tests for interval-natural parameters."""
 
+from typing import Any
+
 import pytest
 
 from fhy_core.serialization import (
@@ -83,14 +85,14 @@ def test_bound_nat_param_serialization_round_trip_preserves_constraints() -> Non
     """Test interval-natural param round-trips through dict serialization."""
     p = create_interval_natural_param().add_lower_bound_constraint(2, is_inclusive=True)
 
-    dictionary = p.serialize_to_dict()
+    dictionary: dict[str, Any] = p.serialize_to_dict()
     restored: Param[int] = Param.deserialize_from_dict(dictionary)
-    redictionary = restored.serialize_to_dict()
+    redictionary: dict[str, Any] = restored.serialize_to_dict()
 
-    assert len(dictionary["constraint_system"]["__data__"]["constraints"]) == 2  # type: ignore[index]  # test: dict shape known
+    assert len(dictionary["constraint_system"]["__data__"]["constraints"]) == 2
     assert_all_satisfied(restored, [2, 5, 100])
     assert_none_satisfied(restored, [0, 1])
-    assert len(redictionary["constraint_system"]["__data__"]["constraints"]) == 2  # type: ignore[index]  # test: dict shape known
+    assert len(redictionary["constraint_system"]["__data__"]["constraints"]) == 2
 
 
 def test_bound_nat_param_deserialize_round_trip_preserves_zero_excluded_flag() -> None:
@@ -130,8 +132,10 @@ def test_bound_nat_param_deserialize_recovers_zero_exclusion_without_constraint(
     ``constraints`` list still round-trips to a param that rejects ``0`` (the
     implied ``> 0`` constraint is re-derived on construction).
     """
-    payload = create_interval_natural_param(zero_included=False).serialize_to_dict()
-    payload["constraint_system"]["__data__"]["constraints"] = []  # type: ignore[index]  # test: modify serialized
+    payload: dict[str, Any] = create_interval_natural_param(
+        zero_included=False
+    ).serialize_to_dict()
+    payload["constraint_system"]["__data__"]["constraints"] = []
 
     restored: Param[int] = Param.deserialize_from_dict(payload)
 
