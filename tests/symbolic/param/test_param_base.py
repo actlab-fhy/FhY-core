@@ -6,7 +6,11 @@ from typing import Any
 import pytest
 
 from fhy_core.error import _COMPILER_ERRORS
-from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
+from fhy_core.symbolic.constraint import (
+    ConstraintSystem,
+    EquationConstraint,
+    InSetConstraint,
+)
 from fhy_core.symbolic.expression import IdentifierExpression
 from fhy_core.symbolic.param import (
     CategoricalDomain,
@@ -407,6 +411,42 @@ def test_constraints_property_returns_constraint_tuple() -> None:
     assert isinstance(param.constraints, tuple)
 
 
+def test_constraint_system_property_is_a_constraint_system_matching_constraints() -> (
+    None
+):
+    """Test ``constraint_system`` is a ``ConstraintSystem`` matching ``constraints``."""
+    variable = mock_identifier("x", 1)
+    constraint = EquationConstraint(
+        create_integer_param(name=variable).variable_expression >= 0
+    )
+
+    param = create_integer_param(name=variable, constraints=(constraint,))
+
+    assert isinstance(param.constraint_system, ConstraintSystem)
+    assert param.constraint_system.constraints == param.constraints
+
+
+def test_reordered_equal_constraints_yield_equivalent_constraint_systems() -> None:
+    """Test params built from differently-ordered equal constraints share a system.
+
+    Two parameters built from the same constraints in different insertion
+    orders converge on the same canonical order, so their
+    ``constraint_system``s -- not just their ``constraints`` tuples -- are
+    structurally equivalent.
+    """
+    shared_name = mock_identifier("x", 1)
+    shared_name_copy = mock_identifier("x", 1)
+    lower = EquationConstraint(IdentifierExpression(shared_name) >= 0)
+    upper = EquationConstraint(IdentifierExpression(shared_name) <= 10)
+
+    forward = create_integer_param(name=shared_name, constraints=(lower, upper))
+    reverse = create_integer_param(name=shared_name_copy, constraints=(upper, lower))
+
+    assert forward.constraint_system.is_structurally_equivalent(
+        reverse.constraint_system
+    )
+
+
 def test_replace_constraints_replaces_constraints_keeping_definition() -> None:
     """Test ``replace_constraints`` replaces constraints without changing shape."""
     param = create_ordinal_param([3, 1, 2])
@@ -598,7 +638,9 @@ def test_repr_inserts_param_set_separator_when_param_set_repr_is_non_empty() -> 
 # =============================================================================
 
 
-def test_serialize_to_dict_includes_domain_variable_and_constraints_keys() -> None:
+def test_serialize_to_dict_includes_domain_variable_and_constraint_system_keys() -> (
+    None
+):
     """Test `Param.serialize_to_dict` exposes the derived top-level keys."""
     param = create_integer_param_with_lower_bound(0)
 
@@ -606,7 +648,7 @@ def test_serialize_to_dict_includes_domain_variable_and_constraints_keys() -> No
 
     assert "domain" in data
     assert "variable" in data
-    assert "constraints" in data
+    assert "constraint_system" in data
 
 
 # =============================================================================

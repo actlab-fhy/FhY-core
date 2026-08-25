@@ -30,8 +30,9 @@ from fhy_core.symbolic.constraint import (
     Constraint,
     ConstraintBindings,
     ConstraintOutcome,
+    ConstraintSystem,
     EquationConstraint,
-    build_constraint_ordering_key,
+    create_constraint_system,
 )
 from fhy_core.symbolic.expression import (
     BinaryExpression,
@@ -109,6 +110,12 @@ _WRAPPED_VALUE_CODEC: FieldCodec = make_field_codec(
     serialize_registry_wrapped_value, deserialize_registry_wrapped_value
 )
 
+# ``constraint_system`` is annotated ``ConstraintSystem``, a concrete
+# ``Serializable`` the engine could infer automatically, but the codec is
+# supplied explicitly (mirroring ``_PARAM_CODEC`` below) so the wire shape is
+# declared in this module rather than left to inference.
+_CONSTRAINT_SYSTEM_CODEC: FieldCodec = _SerializableFieldCodec(ConstraintSystem)
+
 
 # ---------------------------------------------------------------------------
 # Param container
@@ -132,20 +139,34 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
     Two parameters are structurally equivalent when they have the same variable,
     domain, and constraints; under alpha comparison they are equivalent up to
     renaming of the bound variable. Construction validates and de-duplicates the
-    constraints, appends the domain's implied constraints, and sorts them into a
-    canonical order so that constraint-set order does not affect equivalence.
+    constraints, appends the domain's implied constraints, and stores the result
+    as a :class:`~fhy_core.symbolic.constraint.ConstraintSystem`, which orders its
+    members canonically by construction, so that constraint-set order does not
+    affect equivalence.
     """
 
     domain: ParamDomain
     variable: Identifier = field(
         default_factory=lambda: Identifier("param"),
-        metadata=compared_as_binder(scopes_over=("constraints",)),
+        metadata=compared_as_binder(scopes_over=("constraint_system",)),
     )
-    constraints: tuple[Constraint, ...] = ()
+    constraint_system: ConstraintSystem = field(
+        default_factory=create_constraint_system,
+        metadata={"serialize_codec": _CONSTRAINT_SYSTEM_CODEC},
+    )
 
     def __post_init__(self) -> None:
-        canonical = self._build_canonical_constraints(self.constraints)
-        object.__setattr__(self, "constraints", canonical)
+        canonical = self._build_canonical_constraints(
+            self.constraint_system.constraints
+        )
+        object.__setattr__(
+            self, "constraint_system", create_constraint_system(*canonical)
+        )
+
+    @property
+    def constraints(self) -> tuple[Constraint, ...]:
+        """Return this parameter's constraints in canonical order."""
+        return self.constraint_system.constraints
 
     def _build_canonical_constraints(
         self, constraints: Sequence[Constraint]
@@ -156,7 +177,7 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
                 existing.is_structurally_equivalent(implied) for existing in accumulated
             ):
                 accumulated = (*accumulated, implied)
-        return tuple(sorted(accumulated, key=build_constraint_ordering_key))
+        return accumulated
 
     def _validate_and_deduplicate_constraints(
         self, constraints: Sequence[Constraint]
@@ -197,7 +218,9 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
 
         """
         return Param(
-            self.domain, variable=self.variable, constraints=tuple(constraints)
+            self.domain,
+            variable=self.variable,
+            constraint_system=create_constraint_system(*constraints),
         )
 
     def is_value_valid(
@@ -948,7 +971,7 @@ def _coerce_to_interval_param(template: "Param[Any]", other: Any) -> "Param[int]
         return Param(
             IntervalIntegerDomain(prefer_inclusive=template_domain.prefer_inclusive),
             variable=other.variable,
-            constraints=other.constraints,
+            constraint_system=create_constraint_system(*other.constraints),
         )
     raise TypeError(f"Unsupported operand type: {type(other)}")
 
@@ -965,7 +988,7 @@ def create_integer_param(
     return Param(
         IntegerDomain(),
         variable=name or Identifier("param"),
-        constraints=tuple(constraints),
+        constraint_system=create_constraint_system(*constraints),
     )
 
 
@@ -979,7 +1002,7 @@ def create_natural_param(
     return Param(
         IntegerDomain(non_negative=True, zero_included=zero_included),
         variable=name or Identifier("param"),
-        constraints=tuple(constraints),
+        constraint_system=create_constraint_system(*constraints),
     )
 
 
@@ -990,7 +1013,7 @@ def create_real_param(
     return Param(
         RealDomain(),
         variable=name or Identifier("param"),
-        constraints=tuple(constraints),
+        constraint_system=create_constraint_system(*constraints),
     )
 
 

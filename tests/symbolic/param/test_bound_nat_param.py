@@ -87,10 +87,10 @@ def test_bound_nat_param_serialization_round_trip_preserves_constraints() -> Non
     restored: Param[int] = Param.deserialize_from_dict(dictionary)
     redictionary = restored.serialize_to_dict()
 
-    assert len(dictionary["constraints"]) == 2  # type: ignore[arg-type]  # test: dict shape known
+    assert len(dictionary["constraint_system"]["__data__"]["constraints"]) == 2  # type: ignore[index]  # test: dict shape known
     assert_all_satisfied(restored, [2, 5, 100])
     assert_none_satisfied(restored, [0, 1])
-    assert len(redictionary["constraints"]) == 2  # type: ignore[arg-type]  # test: dict shape known
+    assert len(redictionary["constraint_system"]["__data__"]["constraints"]) == 2  # type: ignore[index]  # test: dict shape known
 
 
 def test_bound_nat_param_deserialize_round_trip_preserves_zero_excluded_flag() -> None:
@@ -131,7 +131,7 @@ def test_bound_nat_param_deserialize_recovers_zero_exclusion_without_constraint(
     implied ``> 0`` constraint is re-derived on construction).
     """
     payload = create_interval_natural_param(zero_included=False).serialize_to_dict()
-    payload["constraints"] = []  # test: modify serialized
+    payload["constraint_system"]["__data__"]["constraints"] = []  # type: ignore[index]  # test: modify serialized
 
     restored: Param[int] = Param.deserialize_from_dict(payload)
 

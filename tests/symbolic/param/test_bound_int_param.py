@@ -945,10 +945,10 @@ def _valid_bound_int_payload() -> dict[str, Any]:
             ),
             id="prefer-inclusive-not-bool",
         ),
-        # Top-level ``constraints`` field missing.
+        # Top-level ``constraint_system`` field missing.
         pytest.param(
-            lambda payload: payload.__delitem__("constraints"),
-            id="missing-constraints",
+            lambda payload: payload.__delitem__("constraint_system"),
+            id="missing-constraint-system",
         ),
     ],
 )
