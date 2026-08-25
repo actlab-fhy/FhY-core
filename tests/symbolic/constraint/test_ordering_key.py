@@ -48,7 +48,7 @@ def test_equal_keys_for_in_set_constraints_built_in_different_member_orders() ->
     left = InSetConstraint(x, list(members))
     right = InSetConstraint(x, list(reversed(members)))
 
-    assert left.valid_values != right.valid_values, (
+    assert left.values != right.values, (
         "the two constraints must store their members in different orders "
         "for this test to say anything about order independence"
     )

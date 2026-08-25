@@ -81,13 +81,14 @@ __all__ = [
 ]
 
 from abc import ABC, abstractmethod
-from collections.abc import Collection, Hashable, Iterator, Mapping
+from collections.abc import Collection, Hashable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum, auto
 from functools import cached_property
 from typing import (
     Any,
+    ClassVar,
     Protocol,
     TypeAlias,
     TypedDict,
@@ -120,7 +121,7 @@ from fhy_core.term import (
     compared_as_value,
 )
 from fhy_core.traits import FrozenMixin
-from fhy_core.utils import format_comma_separated_list
+from fhy_core.utils import Self, format_comma_separated_list
 
 from .expression import (
     BinaryExpression,
@@ -428,7 +429,7 @@ def _wrap_member_collection(
     Unlike ``_normalize_constraint_member_collection``, this performs no
     validation or hashability check: it re-derives the type-strict view of
     a collection that has already passed through construction once (the
-    post-``__post_init__`` ``valid_values``/``invalid_values`` field).
+    post-``__post_init__`` ``values`` field).
 
     """
     return frozenset(_wrap_member(value) for value in values)
@@ -554,8 +555,7 @@ def _make_member_set_codec(field_name: str) -> FieldCodec:
     return make_field_codec(_encode_member_set, _decode)
 
 
-_VALID_VALUES_CODEC: FieldCodec = _make_member_set_codec("valid_values")
-_INVALID_VALUES_CODEC: FieldCodec = _make_member_set_codec("invalid_values")
+_VALUES_CODEC: FieldCodec = _make_member_set_codec("values")
 
 
 @runtime_checkable
@@ -937,25 +937,44 @@ def _evaluate_set_membership_with_bindings(
     return ConstraintOutcome.VIOLATED
 
 
-@register_serializable(type_id="in_set_constraint")
 @dataclass(frozen=True, eq=False)
-class InSetConstraint(Constraint):
-    """Permitted-set membership predicate over one identifier.
+class _SetConstraint(Constraint):
+    """Shared unary-membership predicate over one identifier.
 
-    Scope is ``frozenset((variable,))``. ``evaluate_with_bindings``
-    reports ``SATISFIED`` iff the bound value is in the constraint's
-    value set and ``VIOLATED`` otherwise, comparing by type-strict
-    equality (so ``True`` and ``1`` are distinct members, and ``1`` and
-    ``1.0`` are distinct members, including inside nested ``tuple`` or
-    ``frozenset`` members). A membership check against a concrete value
-    is always decidable, so it never reports ``UNDECIDED`` once
-    ``variable`` is bound to a literal.
+    Module-private implementing base for ``InSetConstraint`` and
+    ``NotInSetConstraint``. Both kinds decide the same question --
+    whether the bound value of ``variable`` is a member of ``values`` --
+    and differ only in polarity, so every field, normalization step,
+    cached derived state, and evaluation/conversion/rendering behavior
+    lives here. A leaf contributes only:
+
+    - ``_satisfied_when_member``: ``True`` if membership satisfies the
+      constraint (``InSetConstraint``), ``False`` if it violates the
+      constraint (``NotInSetConstraint``).
+    - ``_comparison_operation``: the ``BinaryOperation`` comparing
+      ``variable`` against one member literal (``EQUAL``/``NOT_EQUAL``).
+    - ``_empty_set_literal``: the ``bool`` ``convert_to_expression``
+      returns for an empty ``values`` (``False``/``True``).
+    - ``_render_connective``: the word ``__str__`` renders between the
+      variable and the member set (``"in"``/``"not in"``).
+    - ``_combine_expressions``: folds one per-member comparison
+      expression into the whole (``logical_or``/``logical_and``).
+
+    Scope is always ``frozenset((variable,))``: both kinds are inherently
+    unary. ``evaluate_with_bindings`` resolves ``variable`` from the
+    bindings and decides by type-strict membership; a missing binding or
+    a non-literal ``Expression`` binding is ``UNDECIDED`` (DEBUG-logged),
+    while a literal binding is always decidable.
 
     Determinism:
         ``convert_to_expression`` emits its leaves in ``repr``-sorted
         order so structurally equivalent constraints produce
         structurally equivalent expressions. Member serialization is
         also ``repr``-sorted to match.
+
+    Not itself ``@register_serializable``: each leaf registers its own
+    type_id, and ``construct_from_fields`` here builds whichever concrete
+    leaf ``cls`` names.
 
     """
 
@@ -967,18 +986,23 @@ class InSetConstraint(Constraint):
     # ``compared_as_value(key=_wrap_member_collection)`` rather than the
     # default ``==`` so structural/alpha equivalence stays type-strict and
     # order-independent despite the field itself being a plain tuple.
-    valid_values: MemberCollection[ConstraintMember] = field(
+    values: MemberCollection[ConstraintMember] = field(
         metadata={
             **compared_as_value(key=_wrap_member_collection),
-            "serialize_codec": _VALID_VALUES_CODEC,
+            "serialize_codec": _VALUES_CODEC,
         },
     )
 
+    _satisfied_when_member: ClassVar[bool]
+    _comparison_operation: ClassVar[BinaryOperation]
+    _empty_set_literal: ClassVar[bool]
+    _render_connective: ClassVar[str]
+
     def __post_init__(self) -> None:
-        wrapped = _normalize_constraint_member_collection(self.valid_values)
+        wrapped = _normalize_constraint_member_collection(self.values)
         object.__setattr__(
             self,
-            "valid_values",
+            "values",
             tuple(_unwrap_member(member) for member in wrapped),
         )
         # Seed the ``_members`` cache with the set this normalization pass has
@@ -987,14 +1011,14 @@ class InSetConstraint(Constraint):
 
     @property
     def members(self) -> tuple[ConstraintMember, ...]:
-        """Return the permitted members as raw values, in canonical order.
+        """Return the members as raw values, in canonical order.
 
         Ordering is reproducible across processes, so a caller may iterate
-        this to produce deterministic output. The ``valid_values`` field
-        holds the same members in an unspecified order.
+        this to produce deterministic output. The ``values`` field holds
+        the same members in an unspecified order.
 
         """
-        return _order_members_canonically(self.valid_values)
+        return _order_members_canonically(self.values)
 
     @cached_property
     def _members(self) -> frozenset[_TypedMember]:
@@ -1004,16 +1028,16 @@ class InSetConstraint(Constraint):
         is then a constant-time frozenset lookup, and ``__repr__`` -- which
         feeds the ``ConstraintSystem`` ordering key -- costs no wrapper
         allocations. ``__post_init__`` seeds it with the set built during
-        normalization; this body re-derives it from ``valid_values`` for an
+        normalization; this body re-derives it from ``values`` for an
         instance that reaches a reader unseeded, so the public field stays
         the single source of truth.
         """
-        return _wrap_member_collection(self.valid_values)
+        return _wrap_member_collection(self.values)
 
     @classmethod
     @override
-    def construct_from_fields(cls, fields: dict[str, Any]) -> "InSetConstraint":
-        return cls(fields["variable"], fields["valid_values"])
+    def construct_from_fields(cls, fields: dict[str, Any]) -> Self:
+        return cls(fields["variable"], fields["values"])
 
     @override
     def get_free_identifiers(self) -> frozenset[Identifier]:
@@ -1026,8 +1050,9 @@ class InSetConstraint(Constraint):
 
         Missing binding or non-literal ``Expression`` binding ->
         ``UNDECIDED`` (DEBUG-logged, naming the identifier). A literal
-        binding decides by type-strict membership; never ``UNDECIDED``
-        once bound to a literal.
+        binding decides by type-strict membership, polarity given by
+        ``_satisfied_when_member``; never ``UNDECIDED`` once bound to a
+        literal.
 
         Raises:
             TypeError: If the bound value is unhashable.
@@ -1038,163 +1063,94 @@ class InSetConstraint(Constraint):
             self.variable,
             self._members,
             bindings,
-            satisfied_when_member=True,
+            satisfied_when_member=self._satisfied_when_member,
         )
 
     @override
     def convert_to_expression(self) -> Expression:
         members = self._members
         if len(members) == 0:
-            return LiteralExpression(False)
+            return LiteralExpression(self._empty_set_literal)
         sorted_values = sorted(members, key=repr)
         if len(sorted_values) == 1:
             return self._build_leaf_expression(sorted_values[0])
-        return Expression.logical_or(
-            *(self._build_leaf_expression(member) for member in sorted_values)
+        return self._combine_expressions(
+            self._build_leaf_expression(member) for member in sorted_values
         )
+
+    @abstractmethod
+    def _combine_expressions(self, expressions: Iterable[Expression]) -> Expression:
+        """Fold one per-member leaf comparison expression into the whole."""
 
     def _build_leaf_expression(self, wrapped: _TypedMember) -> Expression:
         literal = _lift_member_to_literal_expression(_unwrap_member(wrapped))
-        return make_binary_expression(BinaryOperation.EQUAL, self.variable, literal)
+        return make_binary_expression(
+            self._comparison_operation, self.variable, literal
+        )
 
     @override
     def __repr__(self) -> str:
         return (
-            f"InSetConstraint({self.variable!r}, "
+            f"{type(self).__name__}({self.variable!r}, "
             f"values={_render_member_set(self._members)})"
         )
 
     @override
     def __str__(self) -> str:
-        return f"{self.variable} in {_render_member_set_str(self._members)}"
+        return (
+            f"{self.variable} {self._render_connective} "
+            f"{_render_member_set_str(self._members)}"
+        )
+
+
+@register_serializable(type_id="in_set_constraint")
+@dataclass(frozen=True, eq=False)
+class InSetConstraint(_SetConstraint):
+    """Permitted-set membership predicate over one identifier.
+
+    Scope is ``frozenset((variable,))``. ``evaluate_with_bindings``
+    reports ``SATISFIED`` iff the bound value is in ``values`` and
+    ``VIOLATED`` otherwise, comparing by type-strict equality (so
+    ``True`` and ``1`` are distinct members, and ``1`` and ``1.0`` are
+    distinct members, including inside nested ``tuple`` or ``frozenset``
+    members). A membership check against a concrete value is always
+    decidable, so it never reports ``UNDECIDED`` once ``variable`` is
+    bound to a literal.
+
+    """
+
+    _satisfied_when_member = True
+    _comparison_operation = BinaryOperation.EQUAL
+    _empty_set_literal = False
+    _render_connective = "in"
+
+    @override
+    def _combine_expressions(self, expressions: Iterable[Expression]) -> Expression:
+        return Expression.logical_or(*expressions)
 
 
 @register_serializable(type_id="not_in_set_constraint")
 @dataclass(frozen=True, eq=False)
-class NotInSetConstraint(Constraint):
+class NotInSetConstraint(_SetConstraint):
     """Forbidden-set membership predicate over one identifier.
 
     Symmetric to ``InSetConstraint``: scope is ``frozenset((variable,))``,
     and ``evaluate_with_bindings`` reports ``SATISFIED`` iff the bound
-    value is NOT in the constraint's value set and ``VIOLATED``
-    otherwise, comparing by type-strict equality. A membership check
-    against a concrete value is always decidable, so it never reports
-    ``UNDECIDED`` once ``variable`` is bound to a literal.
-
-    Determinism:
-        ``convert_to_expression`` emits its leaves in ``repr``-sorted
-        order to match the deterministic serialization contract.
+    value is NOT in ``values`` and ``VIOLATED`` otherwise, comparing by
+    type-strict equality. A membership check against a concrete value is
+    always decidable, so it never reports ``UNDECIDED`` once ``variable``
+    is bound to a literal.
 
     """
 
-    variable: Identifier = field(metadata=compared_as_reference())
-    # Declared as the constructor-input type. ``__post_init__`` normalizes this
-    # in place to a deduplicated tuple of raw, unwrapped values (the same
-    # content the ``members`` property exposes) so no public attribute ever
-    # yields the internal ``_TypedMember`` wrapper. Comparison uses
-    # ``compared_as_value(key=_wrap_member_collection)`` rather than the
-    # default ``==`` so structural/alpha equivalence stays type-strict and
-    # order-independent despite the field itself being a plain tuple.
-    invalid_values: MemberCollection[ConstraintMember] = field(
-        metadata={
-            **compared_as_value(key=_wrap_member_collection),
-            "serialize_codec": _INVALID_VALUES_CODEC,
-        },
-    )
-
-    def __post_init__(self) -> None:
-        wrapped = _normalize_constraint_member_collection(self.invalid_values)
-        object.__setattr__(
-            self,
-            "invalid_values",
-            tuple(_unwrap_member(member) for member in wrapped),
-        )
-        # Seed the ``_members`` cache with the set this normalization pass has
-        # already built, so no reader has to derive it a second time.
-        object.__setattr__(self, "_members", wrapped)
-
-    @property
-    def members(self) -> tuple[ConstraintMember, ...]:
-        """Return the forbidden members as raw values, in canonical order.
-
-        Ordering is reproducible across processes, so a caller may iterate
-        this to produce deterministic output. The ``invalid_values`` field
-        holds the same members in an unspecified order.
-
-        """
-        return _order_members_canonically(self.invalid_values)
-
-    @cached_property
-    def _members(self) -> frozenset[_TypedMember]:
-        """Return the type-strict member set membership is decided against.
-
-        Held as a stored set rather than re-derived per read: ``evaluate``
-        is then a constant-time frozenset lookup, and ``__repr__`` -- which
-        feeds the ``ConstraintSystem`` ordering key -- costs no wrapper
-        allocations. ``__post_init__`` seeds it with the set built during
-        normalization; this body re-derives it from ``invalid_values`` for
-        an instance that reaches a reader unseeded, so the public field
-        stays the single source of truth.
-        """
-        return _wrap_member_collection(self.invalid_values)
-
-    @classmethod
-    @override
-    def construct_from_fields(cls, fields: dict[str, Any]) -> "NotInSetConstraint":
-        return cls(fields["variable"], fields["invalid_values"])
+    _satisfied_when_member = False
+    _comparison_operation = BinaryOperation.NOT_EQUAL
+    _empty_set_literal = True
+    _render_connective = "not in"
 
     @override
-    def get_free_identifiers(self) -> frozenset[Identifier]:
-        """Return the single-identifier scope."""
-        return frozenset((self.variable,))
-
-    @override
-    def evaluate_with_bindings(self, bindings: ConstraintBindings) -> ConstraintOutcome:
-        """Decide non-membership for the bound value of ``variable``.
-
-        Missing binding or non-literal ``Expression`` binding ->
-        ``UNDECIDED`` (DEBUG-logged, naming the identifier). A literal
-        binding decides by type-strict non-membership; never
-        ``UNDECIDED`` once bound to a literal.
-
-        Raises:
-            TypeError: If the bound value is unhashable.
-
-        """
-        return _evaluate_set_membership_with_bindings(
-            type(self).__name__,
-            self.variable,
-            self._members,
-            bindings,
-            satisfied_when_member=False,
-        )
-
-    @override
-    def convert_to_expression(self) -> Expression:
-        members = self._members
-        if len(members) == 0:
-            return LiteralExpression(True)
-        sorted_values = sorted(members, key=repr)
-        if len(sorted_values) == 1:
-            return self._build_leaf_expression(sorted_values[0])
-        return Expression.logical_and(
-            *(self._build_leaf_expression(member) for member in sorted_values)
-        )
-
-    def _build_leaf_expression(self, wrapped: _TypedMember) -> Expression:
-        literal = _lift_member_to_literal_expression(_unwrap_member(wrapped))
-        return make_binary_expression(BinaryOperation.NOT_EQUAL, self.variable, literal)
-
-    @override
-    def __repr__(self) -> str:
-        return (
-            f"NotInSetConstraint({self.variable!r}, "
-            f"values={_render_member_set(self._members)})"
-        )
-
-    @override
-    def __str__(self) -> str:
-        return f"{self.variable} not in {_render_member_set_str(self._members)}"
+    def _combine_expressions(self, expressions: Iterable[Expression]) -> Expression:
+        return Expression.logical_and(*expressions)
 
 
 def _raise_if_missing_symbol_types(missing: frozenset[Identifier]) -> None:
@@ -1415,7 +1371,7 @@ def build_constraint_ordering_key(constraint: Constraint) -> str:
     if isinstance(constraint, EquationConstraint):
         expression_key = _build_expression_ordering_key(constraint.expression)
         return f"{kind}|{expression_key}"
-    elif isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
+    elif isinstance(constraint, _SetConstraint):
         members = ",".join(
             sorted(_build_member_ordering_key(member) for member in constraint.members)
         )

@@ -241,7 +241,7 @@ def _rename_constraint_variable(
             )
         )
     if isinstance(constraint, NotInSetConstraint):
-        return NotInSetConstraint(new_variable, constraint.invalid_values)
+        return NotInSetConstraint(new_variable, constraint.values)
     raise ConstraintError(  # pragma: no cover
         f"Cannot rename an unexpected constraint kind: {type(constraint).__name__}."
     )

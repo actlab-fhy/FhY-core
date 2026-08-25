@@ -407,12 +407,12 @@ def test_set_constraint_rejects_bare_string_like_members(
 
 
 # =============================================================================
-# Public field encapsulation (`valid_values` / `invalid_values`)
+# Public field encapsulation (`values`)
 # =============================================================================
 
 _SET_KINDS_WITH_FIELD = [
-    pytest.param(InSetConstraint, "valid_values", id="in_set"),
-    pytest.param(NotInSetConstraint, "invalid_values", id="not_in_set"),
+    pytest.param(InSetConstraint, "values", id="in_set"),
+    pytest.param(NotInSetConstraint, "values", id="not_in_set"),
 ]
 
 
@@ -426,9 +426,27 @@ def test_set_constraint_public_field_holds_the_raw_members(
     assert set(getattr(constraint, field_name)) == {1, 2}
 
 
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_accepts_the_unified_values_keyword(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test both kinds share one constructor field name: `values`.
+
+    ``InSetConstraint`` and ``NotInSetConstraint`` are implemented by one
+    shared base holding a single ``values`` field, so both accept the
+    same keyword regardless of kind (the retired ``valid_values``/
+    ``invalid_values`` split no longer exists).
+    """
+    x = mock_identifier("x", 0)
+
+    constraint = factory(variable=x, values={1, 2})  # type: ignore[call-arg]
+
+    assert set(constraint.values) == {1, 2}  # type: ignore[attr-defined]
+
+
 # Regression guard for a field that used to store the internal type-strict
 # wrapper directly: reading it gave a silently wrong membership answer
-# (`1 in constraint.valid_values` was `False` for an actual member `1`,
+# (`1 in constraint.values` was `False` for an actual member `1`,
 # because the wrapper's `__eq__`/`__hash__` never matched a raw `1`). Direct
 # membership on the field reflects the constructed member set regardless of
 # in-set/not-in-set polarity; `is_satisfied_with_bindings` (exercised
@@ -584,10 +602,9 @@ def _assert_membership_agrees_with_public_field(
 ) -> None:
     """Assert the constraint decides exactly as a fresh one over its public field.
 
-    The type-strict member set is derived state; the public
-    ``valid_values``/``invalid_values`` tuple is the source of truth. Any
-    drift between the two shows up as a disagreement with a constraint
-    built from that tuple alone.
+    The type-strict member set is derived state; the public ``values``
+    tuple is the source of truth. Any drift between the two shows up as
+    a disagreement with a constraint built from that tuple alone.
     """
     assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
     public_members = tuple(getattr(constraint, field_name))

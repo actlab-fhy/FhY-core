@@ -34,8 +34,8 @@ ConstraintFactory = Callable[[Identifier], Constraint]
 SetConstraintFactory = Callable[[Identifier, Any], Constraint]
 
 _SET_KINDS_WITH_FIELD = [
-    pytest.param(InSetConstraint, "valid_values", id="in_set"),
-    pytest.param(NotInSetConstraint, "invalid_values", id="not_in_set"),
+    pytest.param(InSetConstraint, "values", id="in_set"),
+    pytest.param(NotInSetConstraint, "values", id="not_in_set"),
 ]
 """Parametrize list pairing each set-constraint kind with its member field."""
 

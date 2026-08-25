@@ -77,8 +77,8 @@ def test_equation_constraint_round_trip_preserves_structural_equivalence() -> No
 
 
 _SET_KINDS_WITH_FIELD = [
-    pytest.param(InSetConstraint, "valid_values", id="in_set"),
-    pytest.param(NotInSetConstraint, "invalid_values", id="not_in_set"),
+    pytest.param(InSetConstraint, "values", id="in_set"),
+    pytest.param(NotInSetConstraint, "values", id="not_in_set"),
 ]
 
 
@@ -98,6 +98,25 @@ def test_set_constraint_round_trip_dict_serialization(
         assert rebuilt.is_satisfied_with_bindings(
             {x: member}
         ) == constraint.is_satisfied_with_bindings({x: member})
+
+
+@pytest.mark.parametrize("factory, _field", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_serialized_payload_uses_the_unified_values_key(
+    factory: SetConstraintType, _field: str
+) -> None:
+    """Test the wire payload carries exactly `variable` and `values`.
+
+    Both set-constraint kinds are implemented by one shared base with a
+    single ``values`` field, so the serialized shape has to reflect that
+    for both kinds rather than the retired ``valid_values``/
+    ``invalid_values`` split.
+    """
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1, 2})  # type: ignore[call-arg]
+
+    payload = cast(dict[str, Any], constraint.serialize_to_dict()["__data__"])
+
+    assert set(payload) == {"variable", "values"}
 
 
 @pytest.mark.parametrize("factory, _field", _SET_KINDS_WITH_FIELD)
@@ -279,8 +298,8 @@ def test_equation_constraint_rejects_a_payload_carrying_the_old_variable_field()
 
 @pytest.fixture(
     params=[
-        pytest.param((InSetConstraint, "valid_values"), id="in_set"),
-        pytest.param((NotInSetConstraint, "invalid_values"), id="not_in_set"),
+        pytest.param((InSetConstraint, "values"), id="in_set"),
+        pytest.param((NotInSetConstraint, "values"), id="not_in_set"),
     ]
 )
 def set_payload_with_field(
