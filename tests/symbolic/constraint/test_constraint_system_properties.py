@@ -21,10 +21,7 @@ from fhy_core.symbolic.constraint import (
     EquationConstraint,
     InSetConstraint,
     NotInSetConstraint,
-    # The canonical ordering key is private to the constraint module. The
-    # property below is the invariant that makes `ConstraintSystem`'s member
-    # order well defined, so it is asserted against the key itself.
-    _build_constraint_ordering_key,
+    build_constraint_ordering_key,
     create_constraint_system,
 )
 from fhy_core.symbolic.expression import (
@@ -55,7 +52,7 @@ def test_evaluate_with_bindings_matches_fold_of_member_outcomes(
     members: tuple[Constraint, ...] = (
         InSetConstraint(x, {1, 2, 3, 4}),
         InSetConstraint(y, {0, 1, 2}),
-        EquationConstraint(x, make_binary_expression(BinaryOperation.LESS, x, y)),
+        EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, y)),
     )
     system = create_constraint_system(*members)
     bindings = {x: x_value, y: y_value}
@@ -88,7 +85,7 @@ def test_check_satisfiability_matches_brute_force_enumeration(threshold: int) ->
     system = create_constraint_system(
         InSetConstraint(x, set(domain)),
         InSetConstraint(y, set(domain)),
-        EquationConstraint(x, link_expression),
+        EquationConstraint(link_expression),
     )
 
     brute_force_satisfiable = any(a + threshold == b for a in domain for b in domain)
@@ -144,7 +141,7 @@ def _build_literal_equation(
     expression: Expression = LiteralExpression(form)
     if wrap_in_comparison:
         expression = make_binary_expression(BinaryOperation.EQUAL, variable, expression)
-    return EquationConstraint(variable, expression)
+    return EquationConstraint(expression)
 
 
 @st.composite
@@ -192,4 +189,4 @@ def test_ordering_key_is_constant_on_structural_equivalence_classes(
     left, right = pair
     if not left.is_structurally_equivalent(right):
         return
-    assert _build_constraint_ordering_key(left) == _build_constraint_ordering_key(right)
+    assert build_constraint_ordering_key(left) == build_constraint_ordering_key(right)

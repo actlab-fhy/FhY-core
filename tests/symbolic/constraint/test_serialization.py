@@ -39,14 +39,17 @@ SetConstraintType = type[Constraint]
 
 
 def test_equation_constraint_round_trip_dict_serialization() -> None:
-    """Test an `EquationConstraint` round-trips through dict serialization."""
+    """Test an `EquationConstraint` round-trips through dict serialization.
+
+    The serialized shape drops the ``variable`` field the old API carried:
+    an ``EquationConstraint``'s only data is its wrapped expression.
+    """
     x = mock_identifier("x", 0)
     expression = make_binary_expression(BinaryOperation.EQUAL, x, True)
-    constraint = EquationConstraint(x, expression)
+    constraint = EquationConstraint(expression)
     expected = {
         "__type__": "equation_constraint",
         "__data__": {
-            "variable": x.serialize_to_dict(),
             "expression": expression.serialize_to_dict(),
         },
     }
@@ -54,8 +57,18 @@ def test_equation_constraint_round_trip_dict_serialization() -> None:
     assert constraint.serialize_to_dict() == expected
     rebuilt = EquationConstraint.deserialize_from_dict(constraint.serialize_to_dict())
     assert isinstance(rebuilt, EquationConstraint)
-    assert rebuilt.variable == x
+    assert rebuilt.get_free_identifiers() == frozenset({x})
     assert rebuilt.convert_to_expression().is_structurally_equivalent(expression)
+
+
+def test_equation_constraint_round_trip_preserves_structural_equivalence() -> None:
+    """Test a round-tripped `EquationConstraint` stays structurally equivalent."""
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 10))
+
+    rebuilt = EquationConstraint.deserialize_from_dict(constraint.serialize_to_dict())
+
+    assert rebuilt.is_structurally_equivalent(constraint)
 
 
 # =============================================================================
@@ -81,9 +94,10 @@ def test_set_constraint_round_trip_dict_serialization(
 
     assert isinstance(rebuilt, factory)
     assert rebuilt.variable == x
-    for member in (1, 2):
-        assert rebuilt.is_satisfied(member) == constraint.is_satisfied(member)
-    assert rebuilt.is_satisfied(99) == constraint.is_satisfied(99)
+    for member in (1, 2, 99):
+        assert rebuilt.is_satisfied_with_bindings(
+            {x: member}
+        ) == constraint.is_satisfied_with_bindings({x: member})
 
 
 @pytest.mark.parametrize("factory, _field", _SET_KINDS_WITH_FIELD)
@@ -97,10 +111,13 @@ def test_set_constraint_round_trip_with_serializable_member(
 
     rebuilt = type(constraint).deserialize_from_dict(constraint.serialize_to_dict())
 
-    assert rebuilt.is_satisfied(member) == constraint.is_satisfied(member)
-    assert rebuilt.is_satisfied(
-        SerializableEqualHashable(8)
-    ) == constraint.is_satisfied(SerializableEqualHashable(8))
+    assert rebuilt.is_satisfied_with_bindings(
+        {x: member}
+    ) == constraint.is_satisfied_with_bindings({x: member})
+    other = SerializableEqualHashable(8)
+    assert rebuilt.is_satisfied_with_bindings(
+        {x: other}
+    ) == constraint.is_satisfied_with_bindings({x: other})
 
 
 @pytest.mark.parametrize("factory, _field", _SET_KINDS_WITH_FIELD)
@@ -114,7 +131,9 @@ def test_set_constraint_round_trip_with_nested_collection_member(
 
     rebuilt = type(constraint).deserialize_from_dict(constraint.serialize_to_dict())
 
-    assert rebuilt.is_satisfied(nested_member) == constraint.is_satisfied(nested_member)
+    assert rebuilt.is_satisfied_with_bindings(
+        {x: nested_member}
+    ) == constraint.is_satisfied_with_bindings({x: nested_member})
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
@@ -128,9 +147,9 @@ def test_set_constraint_round_trip_preserves_type_strict_distinct_members(
     rebuilt = type(constraint).deserialize_from_dict(constraint.serialize_to_dict())
 
     in_set = factory is InSetConstraint
-    assert rebuilt.is_satisfied(True) is in_set
-    assert rebuilt.is_satisfied(1) is in_set
-    assert rebuilt.is_satisfied(1.0) is in_set
+    assert rebuilt.is_satisfied_with_bindings({x: True}) is in_set
+    assert rebuilt.is_satisfied_with_bindings({x: 1}) is in_set
+    assert rebuilt.is_satisfied_with_bindings({x: 1.0}) is in_set
 
 
 @pytest.mark.parametrize("factory, field", _SET_KINDS_WITH_FIELD)
@@ -213,10 +232,12 @@ def _replace(key: str, value: Any) -> Callable[[dict[str, Any]], dict[str, Any]]
 
 @pytest.fixture
 def equation_payload() -> dict[str, Any]:
-    """Return a well-formed serialized `EquationConstraint` data payload."""
-    x = mock_identifier("x", 0)
+    """Return a well-formed serialized `EquationConstraint` data payload.
+
+    The payload carries only ``expression``: the old ``variable`` field is
+    gone from the shape entirely.
+    """
     return {
-        "variable": x.serialize_to_dict(),
         "expression": LiteralExpression(True).serialize_to_dict(),
     }
 
@@ -224,8 +245,6 @@ def equation_payload() -> dict[str, Any]:
 @pytest.mark.parametrize(
     "mutate",
     [
-        pytest.param(_drop("variable"), id="missing_variable"),
-        pytest.param(_replace("variable", 42), id="variable_not_a_dict"),
         pytest.param(_drop("expression"), id="missing_expression"),
         pytest.param(_replace("expression", [1, 2, 3]), id="expression_not_a_dict"),
     ],
@@ -237,6 +256,25 @@ def test_equation_constraint_rejects_malformed_payload(
     """Test malformed `EquationConstraint` payloads raise structure errors."""
     with pytest.raises(DeserializationDictStructureError):
         EquationConstraint.deserialize_data_from_dict(mutate(equation_payload))
+
+
+def test_equation_constraint_rejects_a_payload_carrying_the_old_variable_field() -> (
+    None
+):
+    """Test a payload carrying the retired `variable` field is rejected.
+
+    The derived deserialization path enforces an exact key set, so a
+    payload shaped like the old two-field form is a structure error, not
+    a silently-ignored extra key.
+    """
+    x = mock_identifier("x", 0)
+    payload = {
+        "variable": x.serialize_to_dict(),
+        "expression": LiteralExpression(True).serialize_to_dict(),
+    }
+
+    with pytest.raises(DeserializationDictStructureError):
+        EquationConstraint.deserialize_data_from_dict(payload)
 
 
 @pytest.fixture(
@@ -368,11 +406,14 @@ def test_set_constraint_round_trips_through_every_format(
     rather than carried on the wire, so a restored constraint has to
     re-derive it and decide exactly as the original does.
     """
-    constraint = factory(mock_identifier("x", 0), {1, 2, 3})  # type: ignore[call-arg]
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1, 2, 3})  # type: ignore[call-arg]
 
     payload = constraint.serialize(fmt)
     restored = type(constraint).deserialize(payload, fmt)
 
     assert set(getattr(restored, field)) == {1, 2, 3}
     for probe in (1, 2, 3, 99):
-        assert restored.is_satisfied(probe) == constraint.is_satisfied(probe)
+        assert restored.is_satisfied_with_bindings(
+            {x: probe}
+        ) == constraint.is_satisfied_with_bindings({x: probe})

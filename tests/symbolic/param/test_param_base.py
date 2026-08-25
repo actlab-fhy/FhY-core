@@ -7,6 +7,7 @@ import pytest
 
 from fhy_core.error import _COMPILER_ERRORS
 from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
+from fhy_core.symbolic.expression import IdentifierExpression
 from fhy_core.symbolic.param import (
     CategoricalDomain,
     IntegerDomain,
@@ -67,18 +68,14 @@ def test_structural_equivalence_is_true_for_constraint_reordering() -> None:
 
     left = left_base.add_constraints(
         [
-            EquationConstraint(left_base.variable, left_base.variable_expression >= 0),
-            EquationConstraint(left_base.variable, left_base.variable_expression <= 10),
+            EquationConstraint(left_base.variable_expression >= 0),
+            EquationConstraint(left_base.variable_expression <= 10),
         ]
     )
     right = right_base.add_constraints(
         [
-            EquationConstraint(
-                right_base.variable, right_base.variable_expression <= 10
-            ),
-            EquationConstraint(
-                right_base.variable, right_base.variable_expression >= 0
-            ),
+            EquationConstraint(right_base.variable_expression <= 10),
+            EquationConstraint(right_base.variable_expression >= 0),
         ]
     )
 
@@ -97,18 +94,14 @@ def test_structural_equivalence_is_false_when_constraints_differ() -> None:
 
     left = left_base.add_constraints(
         [
-            EquationConstraint(left_base.variable, left_base.variable_expression >= 0),
-            EquationConstraint(left_base.variable, left_base.variable_expression <= 10),
+            EquationConstraint(left_base.variable_expression >= 0),
+            EquationConstraint(left_base.variable_expression <= 10),
         ]
     )
     right = right_base.add_constraints(
         [
-            EquationConstraint(
-                right_base.variable, right_base.variable_expression >= 1
-            ),
-            EquationConstraint(
-                right_base.variable, right_base.variable_expression <= 10
-            ),
+            EquationConstraint(right_base.variable_expression >= 1),
+            EquationConstraint(right_base.variable_expression <= 10),
         ]
     )
 
@@ -168,8 +161,8 @@ def test_structural_equivalence_is_false_when_constraint_counts_differ(
     # standing in for a serialize/deserialize round-tripped copy.
     shared_name_copy = mock_identifier("x", 1)
     bound_builders: list[Callable[[Param[int]], EquationConstraint]] = [
-        lambda p: EquationConstraint(p.variable, p.variable_expression >= 0),
-        lambda p: EquationConstraint(p.variable, p.variable_expression <= 10),
+        lambda p: EquationConstraint(p.variable_expression >= 0),
+        lambda p: EquationConstraint(p.variable_expression <= 10),
     ]
     left_base = create_integer_param(name=shared_name)
     right_base = create_integer_param(name=shared_name_copy)
@@ -246,8 +239,8 @@ def test_add_constraints_applies_multiple_constraints_in_one_call() -> None:
     """Test `add_constraints` adds multiple constraints in a single call."""
     param = create_real_param()
     constraints = [
-        EquationConstraint(param.variable, param.variable_expression >= 1.0),
-        EquationConstraint(param.variable, param.variable_expression <= 3.0),
+        EquationConstraint(param.variable_expression >= 1.0),
+        EquationConstraint(param.variable_expression <= 3.0),
     ]
 
     param = param.add_constraints(constraints)
@@ -287,17 +280,23 @@ def test_add_constraints_validates_each_domain_constraint_rule() -> None:
         param.add_constraints(
             [
                 InSetConstraint(param.variable, {1, 2}),
-                EquationConstraint(param.variable, param.variable_expression > 1),
+                EquationConstraint(param.variable_expression > 1),
             ]
         )
 
 
-def test_add_constraint_rejects_constraint_with_mismatched_variable() -> None:
-    """Test `add_constraint` rejects a constraint built on a different variable."""
+def test_add_constraint_rejects_constraint_with_foreign_only_scope() -> None:
+    """Test `add_constraint` rejects a constraint whose scope excludes the variable.
+
+    Under the scope-based attachment rule, a constraint attaches by
+    `get_free_identifiers()` membership rather than a designated `variable`
+    field; this retargets the old variable-mismatch rejection test to that
+    rule (a constraint referencing only a foreign identifier is rejected).
+    """
     param = create_integer_param(name=mock_identifier("x", 1))
     other = mock_identifier("y", 2)
     with pytest.raises(ParamError):
-        param.add_constraint(EquationConstraint(other, param.variable_expression >= 0))
+        param.add_constraint(EquationConstraint(IdentifierExpression(other) >= 0))
 
 
 def test_add_constraint_deduplicates_structurally_equivalent_constraints() -> None:
@@ -307,7 +306,7 @@ def test_add_constraint_deduplicates_structurally_equivalent_constraints() -> No
     constraint tuple. Returning ``self`` is the explicit "no-op" signal.
     """
     param = create_integer_param(name=mock_identifier("x", 1))
-    constraint = EquationConstraint(param.variable, param.variable_expression >= 0)
+    constraint = EquationConstraint(param.variable_expression >= 0)
 
     once = param.add_constraint(constraint)
     twice = once.add_constraint(constraint)
@@ -325,7 +324,7 @@ def test_add_constraints_deduplicates_within_input_and_against_existing() -> Non
     present, no new entry is added.
     """
     param = create_integer_param(name=mock_identifier("x", 1))
-    constraint = EquationConstraint(param.variable, param.variable_expression >= 0)
+    constraint = EquationConstraint(param.variable_expression >= 0)
 
     bulk = param.add_constraints([constraint, constraint, constraint])
     assert len(bulk.constraints) == 1
@@ -339,10 +338,10 @@ def test_constructor_constraints_kwarg_stores_validated_constraints() -> None:
     """Test `Param.__init__` accepts and stores a ``constraints`` sequence."""
     variable = mock_identifier("x", 1)
     lower = EquationConstraint(
-        variable, create_integer_param(name=variable).variable_expression >= 0
+        create_integer_param(name=variable).variable_expression >= 0
     )
     upper = EquationConstraint(
-        variable, create_integer_param(name=variable).variable_expression <= 9
+        create_integer_param(name=variable).variable_expression <= 9
     )
 
     param = create_integer_param(name=variable, constraints=(lower, upper))
@@ -350,13 +349,16 @@ def test_constructor_constraints_kwarg_stores_validated_constraints() -> None:
     assert len(param.constraints) == 2
 
 
-def test_constructor_constraints_kwarg_rejects_mismatched_variable() -> None:
-    """Test `Param.__init__` validates each constraint against its variable."""
+def test_constructor_constraints_kwarg_rejects_foreign_only_scope() -> None:
+    """Test `Param.__init__` validates each constraint's scope against its variable.
+
+    Retargets the old variable-mismatch rejection test to the scope-based
+    attachment rule: a constraint referencing only a foreign identifier is
+    rejected.
+    """
     variable = mock_identifier("x", 1)
     other = mock_identifier("y", 2)
-    bad = EquationConstraint(
-        other, create_integer_param(name=variable).variable_expression >= 0
-    )
+    bad = EquationConstraint(IdentifierExpression(other) >= 0)
 
     with pytest.raises(ParamError):
         create_integer_param(name=variable, constraints=(bad,))
@@ -366,7 +368,7 @@ def test_constructor_constraints_kwarg_deduplicates_structurally_equivalent() ->
     """Test `Param.__init__` dedups structurally-equivalent incoming constraints."""
     variable = mock_identifier("x", 1)
     constraint = EquationConstraint(
-        variable, create_integer_param(name=variable).variable_expression >= 0
+        create_integer_param(name=variable).variable_expression >= 0
     )
 
     param = create_integer_param(name=variable, constraints=(constraint, constraint))
@@ -377,7 +379,7 @@ def test_constructor_constraints_kwarg_deduplicates_structurally_equivalent() ->
 def test_add_constraint_returns_frozen_immutable_param() -> None:
     """Test `add_constraint` returns a frozen parameter that rejects mutation."""
     param = create_integer_param(name=mock_identifier("x", 1))
-    constraint = EquationConstraint(param.variable, param.variable_expression >= 0)
+    constraint = EquationConstraint(param.variable_expression >= 0)
 
     updated = param.add_constraint(constraint)
 
@@ -396,7 +398,7 @@ def test_constraints_property_returns_constraint_tuple() -> None:
     """Test the public ``constraints`` property exposes the constraint tuple."""
     variable = mock_identifier("x", 1)
     constraint = EquationConstraint(
-        variable, create_integer_param(name=variable).variable_expression >= 0
+        create_integer_param(name=variable).variable_expression >= 0
     )
 
     param = create_integer_param(name=variable, constraints=(constraint,))
@@ -424,19 +426,22 @@ def test_replace_constraints_replaces_constraints_keeping_definition() -> None:
 def test_replace_constraints_deduplicates_structurally_equivalent_constraints() -> None:
     """Test ``replace_constraints`` drops structurally-equivalent duplicates."""
     param = create_integer_param(name=mock_identifier("x", 1))
-    constraint = EquationConstraint(param.variable, param.variable_expression >= 0)
+    constraint = EquationConstraint(param.variable_expression >= 0)
 
     deduped = param.replace_constraints((constraint, constraint))
 
     assert len(deduped.constraints) == 1
 
 
-def test_replace_constraints_rejects_constraint_with_mismatched_variable() -> None:
-    """Test ``replace_constraints`` validates each constraint against the variable."""
+def test_replace_constraints_rejects_constraint_with_foreign_only_scope() -> None:
+    """Test ``replace_constraints`` validates each constraint's scope.
+
+    Retargets the old variable-mismatch rejection test to the scope-based
+    attachment rule: a constraint referencing only a foreign identifier is
+    rejected.
+    """
     param = create_integer_param(name=mock_identifier("x", 1))
-    mismatched = EquationConstraint(
-        mock_identifier("y", 2), param.variable_expression >= 0
-    )
+    mismatched = EquationConstraint(IdentifierExpression(mock_identifier("y", 2)) >= 0)
 
     with pytest.raises(ParamError):
         param.replace_constraints((mismatched,))

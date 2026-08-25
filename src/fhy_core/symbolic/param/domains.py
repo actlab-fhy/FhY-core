@@ -26,7 +26,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from fhy_core.identifier import Identifier
-from fhy_core.logger import get_logger
 from fhy_core.serialization import (
     FieldCodec,
     SerializedValue,
@@ -36,9 +35,13 @@ from fhy_core.serialization import (
 )
 from fhy_core.symbolic.constraint import (
     Constraint,
+    ConstraintError,
+    ConstraintOutcome,
+    ConstraintSystem,
     EquationConstraint,
     InSetConstraint,
     NotInSetConstraint,
+    create_constraint_system,
 )
 from fhy_core.symbolic.expression import (
     BinaryExpression,
@@ -46,10 +49,6 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
-)
-from fhy_core.symbolic.solver import (
-    check_expression_satisfiability,
-    does_expression_imply,
 )
 from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.traits import FrozenMixin, StructuralEquivalence
@@ -82,82 +81,245 @@ __all__ = [
     "compute_constraint_implication_subset",
 ]
 
-_LOGGER = get_logger(__name__)
-
 
 def are_all_constraints_satisfied(
-    constraints: Sequence[Constraint], value: Any
+    constraints: Sequence[Constraint], variable: Identifier, value: Any
 ) -> bool:
-    """Return whether ``value`` satisfies every constraint in ``constraints``."""
-    return all(constraint.is_satisfied(value) for constraint in constraints)
+    """Return whether ``value`` bound to ``variable`` satisfies every constraint."""
+    return all(
+        constraint.is_satisfied_with_bindings({variable: value})
+        for constraint in constraints
+    )
 
 
 def _is_value_valid_for(
-    domain: "ParamDomain", constraints: Sequence[Constraint], value: Any
+    domain: "ParamDomain",
+    constraints: Sequence[Constraint],
+    variable: Identifier,
+    value: Any,
 ) -> bool:
     return domain.is_value_admissible(value) and are_all_constraints_satisfied(
-        constraints, value
+        constraints, variable, value
     )
 
 
-def _convert_constraints_to_implication_expression(
-    constraints: Sequence[Constraint], common_variable: Identifier
-) -> Expression | None:
-    constraint_expressions: list[Expression] = []
+def _numeric_in_set_candidates(constraints: Sequence[Constraint]) -> list[Any]:
+    """Return the type-strict intersection of every ``InSetConstraint``'s members.
+
+    Assumes ``constraints`` contains at least one ``InSetConstraint``. Starts
+    from the first one's members, intersects with every subsequent
+    ``InSetConstraint``'s members, then removes every ``NotInSetConstraint``'s
+    members, all under type-strict equality.
+    """
+    in_set_constraints = [c for c in constraints if isinstance(c, InSetConstraint)]
+    not_in_set_constraints = [
+        c for c in constraints if isinstance(c, NotInSetConstraint)
+    ]
+    candidates = list(in_set_constraints[0].members)
+    for in_set_constraint in in_set_constraints[1:]:
+        candidates = [
+            candidate
+            for candidate in candidates
+            if does_collection_contain_param_value(in_set_constraint.members, candidate)
+        ]
+    for not_in_set_constraint in not_in_set_constraints:
+        candidates = [
+            candidate
+            for candidate in candidates
+            if not does_collection_contain_param_value(
+                not_in_set_constraint.members, candidate
+            )
+        ]
+    return candidates
+
+
+def _build_equation_constraint_system(
+    constraints: Sequence[Constraint],
+) -> ConstraintSystem:
+    """Build a system from every ``EquationConstraint`` member of ``constraints``."""
+    return create_constraint_system(
+        *(c for c in constraints if isinstance(c, EquationConstraint))
+    )
+
+
+def _enumerate_feasible_in_set_candidates(
+    domain: "ParamDomain", constraints: Sequence[Constraint], variable: Identifier
+) -> list[Any]:
+    """Return the in-set candidates not disproven by the domain or equation constraints.
+
+    A candidate is included when it is domain-admissible and its outcome
+    against the conjunction of ``constraints``'s equation constraints is
+    ``SATISFIED`` or ``UNDECIDED`` (the documented optimistic default for
+    an undecided candidate, e.g. one a dependent constraint leaves
+    unresolved); a ``VIOLATED`` candidate is excluded. Assumes
+    ``constraints`` contains at least one ``InSetConstraint``.
+
+    """
+    equation_system = _build_equation_constraint_system(constraints)
+    feasible: list[Any] = []
+    for candidate in _numeric_in_set_candidates(constraints):
+        if not domain.is_value_admissible(candidate):
+            continue
+        outcome = equation_system.evaluate_with_bindings({variable: candidate})
+        if outcome is not ConstraintOutcome.VIOLATED:
+            feasible.append(candidate)
+    return feasible
+
+
+def _is_candidate_accepted_by_other_side(
+    other_domain: "ParamDomain",
+    other_constraints: Sequence[Constraint],
+    other_variable: Identifier,
+    candidate: Any,
+) -> bool:
+    """Return whether ``other``'s domain and constraints admit ``candidate``.
+
+    Set-constraint membership checks are type-strict. A ``VIOLATED``
+    equation-constraint outcome rejects the candidate; ``UNDECIDED``
+    follows this module's optimistic convention and is treated as
+    accepted.
+
+    """
+    if not other_domain.is_value_admissible(candidate):
+        return False
+    for constraint in other_constraints:
+        if isinstance(constraint, InSetConstraint):
+            if not does_collection_contain_param_value(constraint.members, candidate):
+                return False
+        elif isinstance(constraint, NotInSetConstraint):
+            if does_collection_contain_param_value(constraint.members, candidate):
+                return False
+    equation_system = _build_equation_constraint_system(other_constraints)
+    outcome = equation_system.evaluate_with_bindings({other_variable: candidate})
+    return outcome is not ConstraintOutcome.VIOLATED
+
+
+def _build_screened_constraint_system(
+    constraints: Sequence[Constraint], variable: Identifier
+) -> ConstraintSystem:
+    """Build the decidable-without-enumeration constraint system for ``variable``.
+
+    Includes every equation constraint whose scope is exactly
+    ``{variable}`` and every ``NotInSetConstraint`` whose
+    ``convert_to_expression`` succeeds (one that cannot lift, e.g. over
+    string members, is dropped rather than raising; dropping a constraint
+    only enlarges the feasible set, matching this module's optimistic
+    convention). Any constraint whose scope reaches outside ``{variable}``
+    -- including a dependent ``EquationConstraint`` and any
+    ``InSetConstraint``, which the caller enumerates separately -- is
+    excluded, so the caller degrades to the optimistic default instead of
+    crashing on a foreign identifier.
+
+    """
+    members: list[Constraint] = []
     for constraint in constraints:
-        constraint_expression = constraint.convert_to_expression()
-        constraint_expression = constraint_expression.substitute(
-            {constraint.variable: IdentifierExpression(common_variable)}
+        if isinstance(constraint, EquationConstraint):
+            if constraint.get_free_identifiers() == frozenset((variable,)):
+                members.append(constraint)
+        elif isinstance(constraint, NotInSetConstraint):
+            try:
+                constraint.convert_to_expression()
+            except ConstraintError:
+                continue
+            members.append(constraint)
+    return create_constraint_system(*members)
+
+
+def _rename_constraint_variable(
+    constraint: Constraint, old_variable: Identifier, new_variable: Identifier
+) -> Constraint:
+    """Return ``constraint`` with ``old_variable`` renamed to ``new_variable``.
+
+    Handles the two constraint kinds ``_build_screened_constraint_system``
+    produces: an ``EquationConstraint``'s expression is substituted, and a
+    ``NotInSetConstraint``'s ``variable`` field is replaced directly.
+    """
+    if isinstance(constraint, EquationConstraint):
+        return EquationConstraint(
+            constraint.expression.substitute(
+                {old_variable: IdentifierExpression(new_variable)}
+            )
         )
-        constraint_expressions.append(constraint_expression)
-    if len(constraint_expressions) == 0:
-        return None
-    if len(constraint_expressions) == 1:
-        return constraint_expressions[0]
-    return Expression.logical_and(*constraint_expressions)
+    if isinstance(constraint, NotInSetConstraint):
+        return NotInSetConstraint(new_variable, constraint.invalid_values)
+    raise ConstraintError(  # pragma: no cover
+        f"Cannot rename an unexpected constraint kind: {type(constraint).__name__}."
+    )
+
+
+def _rename_constraint_system_variable(
+    system: ConstraintSystem, old_variable: Identifier, new_variable: Identifier
+) -> ConstraintSystem:
+    """Return a system equivalent to ``system`` with its variable renamed."""
+    return create_constraint_system(
+        *(
+            _rename_constraint_variable(constraint, old_variable, new_variable)
+            for constraint in system.constraints
+        )
+    )
 
 
 def compute_constraint_implication_subset(
+    own_domain: "ParamDomain",
     own_constraints: Sequence[Constraint],
+    own_variable: Identifier,
+    other_domain: "ParamDomain",
     other_constraints: Sequence[Constraint],
+    other_variable: Identifier,
     symbol_type: SymbolType,
 ) -> bool:
-    """Return whether ``own_constraints`` imply ``other_constraints`` over a sort.
+    """Return whether ``own_constraints``'s admissible set is a subset of ``other``'s.
 
-    Every value admitted by ``own_constraints`` must also satisfy
-    ``other_constraints``, decided by Z3 over ``symbol_type``. An ``unknown``
-    result from the solver is treated as "not a counterexample", so the subset
-    relation holds.
+    When ``own_constraints`` contains an ``InSetConstraint``, the
+    admissible values are finite: every surviving candidate (see
+    ``_enumerate_feasible_in_set_candidates``) must be accepted by
+    ``other_domain``/``other_constraints`` (type-strict set membership,
+    domain admissibility, and equation constraints decided per candidate).
+    Otherwise the two sides' variable-only constraint systems (see
+    ``_build_screened_constraint_system``) are renamed onto one shared
+    identifier and decided via ``ConstraintSystem.check_implication`` over
+    ``symbol_type``. In both branches, an outcome the checks cannot
+    disprove -- a solver ``UNDECIDED`` result, or a constraint excluded for
+    reaching outside either parameter's own variable -- is treated as
+    "not a counterexample", so the subset relation holds; a ``True``
+    result therefore means "not disproven", not "proven".
 
     Args:
+        own_domain: Domain of the candidate subset parameter.
         own_constraints: Constraints of the candidate subset parameter.
+        own_variable: Variable of the candidate subset parameter.
+        other_domain: Domain of the candidate superset parameter.
         other_constraints: Constraints of the candidate superset parameter.
+        other_variable: Variable of the candidate superset parameter.
         symbol_type: The Z3 sort used to reason about the shared variable.
 
     Returns:
-        Whether the implication holds.
+        Whether the subset relation holds.
 
     """
-    common_variable = Identifier("var")
-    own_expression = _convert_constraints_to_implication_expression(
-        own_constraints, common_variable
-    )
-    other_expression = _convert_constraints_to_implication_expression(
-        other_constraints, common_variable
-    )
-
-    if own_expression is not None and other_expression is not None:
-        implies = does_expression_imply(
-            own_expression, other_expression, {common_variable: symbol_type}
+    if any(isinstance(c, InSetConstraint) for c in own_constraints):
+        own_candidates = _enumerate_feasible_in_set_candidates(
+            own_domain, own_constraints, own_variable
         )
-        if implies is None:
-            _LOGGER.warning("Z3 returned unknown; treating as subset=True")
-        return implies is None or implies
-    if own_expression is not None and other_expression is None:
-        return True
-    if own_expression is None and other_expression is not None:
-        return False
-    return True
+        return all(
+            _is_candidate_accepted_by_other_side(
+                other_domain, other_constraints, other_variable, candidate
+            )
+            for candidate in own_candidates
+        )
+    common_variable = Identifier("var")
+    own_system = _rename_constraint_system_variable(
+        _build_screened_constraint_system(own_constraints, own_variable),
+        own_variable,
+        common_variable,
+    )
+    other_system = _rename_constraint_system_variable(
+        _build_screened_constraint_system(other_constraints, other_variable),
+        other_variable,
+        common_variable,
+    )
+    outcome = own_system.check_implication(other_system, {common_variable: symbol_type})
+    return outcome is not ConstraintOutcome.VIOLATED
 
 
 class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence, ABC):
@@ -203,13 +365,17 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
     def compute_feasibility_subset(
         self,
         own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
         other: "ParamDomain",
         other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
     ) -> bool:
         """Return whether this domain's constrained set is a subset of ``other``'s."""
 
     @abstractmethod
-    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
+    def has_feasible_value(
+        self, constraints: Sequence[Constraint], variable: Identifier
+    ) -> bool:
         """Return whether some admissible value satisfies every constraint."""
 
     @abstractmethod
@@ -276,34 +442,51 @@ def _is_numeric_value_set_subset(
 
 
 def _compute_numeric_feasibility_subset(
-    own_symbol_type: SymbolType | None,
+    own: ParamDomain,
     own_constraints: Sequence[Constraint],
+    own_variable: Identifier,
     other: ParamDomain,
     other_constraints: Sequence[Constraint],
+    other_variable: Identifier,
 ) -> bool:
-    if own_symbol_type is None or other.symbol_type != own_symbol_type:
+    if own.symbol_type is None or other.symbol_type != own.symbol_type:
         return False
     return compute_constraint_implication_subset(
-        own_constraints, other_constraints, own_symbol_type
+        own,
+        own_constraints,
+        own_variable,
+        other,
+        other_constraints,
+        other_variable,
+        own.symbol_type,
     )
 
 
 def _numeric_has_feasible_value(
-    symbol_type: SymbolType, constraints: Sequence[Constraint]
+    domain: ParamDomain,
+    symbol_type: SymbolType,
+    constraints: Sequence[Constraint],
+    variable: Identifier,
 ) -> bool:
-    common_variable = Identifier("var")
-    expression = _convert_constraints_to_implication_expression(
-        constraints, common_variable
-    )
-    if expression is None:
-        # No constraints: the (non-empty) numeric domain is feasible.
-        return True
-    is_satisfiable = check_expression_satisfiability(
-        expression, {common_variable: symbol_type}
-    )
-    # ``is_satisfiable is None`` (Z3 unknown) => assume feasible, matching this
-    # module's optimistic convention in ``compute_constraint_implication_subset``.
-    return is_satisfiable is not False
+    """Return whether some domain-admissible value satisfies every constraint.
+
+    Routes through enumeration when an ``InSetConstraint`` makes the
+    admissible values finite (see
+    ``_enumerate_feasible_in_set_candidates``); otherwise decides the
+    screened ``ConstraintSystem`` built from ``variable``-only equation
+    constraints and liftable ``NotInSetConstraint``s (see
+    ``_build_screened_constraint_system``), with dependent and
+    foreign-identifier constraints degrading to the documented optimistic
+    default (``UNDECIDED`` -> ``True``).
+
+    """
+    if any(isinstance(c, InSetConstraint) for c in constraints):
+        return bool(
+            _enumerate_feasible_in_set_candidates(domain, constraints, variable)
+        )
+    system = _build_screened_constraint_system(constraints, variable)
+    outcome = system.check_satisfiability({variable: symbol_type})
+    return outcome is not ConstraintOutcome.VIOLATED
 
 
 @register_serializable(type_id="integer_domain")
@@ -350,8 +533,8 @@ class IntegerDomain(ParamDomain):
             return ()
         variable_expression = IdentifierExpression(variable)
         if self.zero_included:
-            return (EquationConstraint(variable, variable_expression >= 0),)
-        return (EquationConstraint(variable, variable_expression > 0),)
+            return (EquationConstraint(variable_expression >= 0),)
+        return (EquationConstraint(variable_expression > 0),)
 
     @override
     def is_value_set_subset(self, other: ParamDomain) -> bool:
@@ -361,16 +544,25 @@ class IntegerDomain(ParamDomain):
     def compute_feasibility_subset(
         self,
         own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
     ) -> bool:
         return _compute_numeric_feasibility_subset(
-            self.symbol_type, own_constraints, other, other_constraints
+            self,
+            own_constraints,
+            own_variable,
+            other,
+            other_constraints,
+            other_variable,
         )
 
     @override
-    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
-        return _numeric_has_feasible_value(SymbolType.INT, constraints)
+    def has_feasible_value(
+        self, constraints: Sequence[Constraint], variable: Identifier
+    ) -> bool:
+        return _numeric_has_feasible_value(self, SymbolType.INT, constraints, variable)
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:
@@ -434,16 +626,25 @@ class RealDomain(ParamDomain):
     def compute_feasibility_subset(
         self,
         own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
     ) -> bool:
         return _compute_numeric_feasibility_subset(
-            self.symbol_type, own_constraints, other, other_constraints
+            self,
+            own_constraints,
+            own_variable,
+            other,
+            other_constraints,
+            other_variable,
         )
 
     @override
-    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
-        return _numeric_has_feasible_value(SymbolType.REAL, constraints)
+    def has_feasible_value(
+        self, constraints: Sequence[Constraint], variable: Identifier
+    ) -> bool:
+        return _numeric_has_feasible_value(self, SymbolType.REAL, constraints, variable)
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:
@@ -547,8 +748,8 @@ class IntervalIntegerDomain(ParamDomain):
             return ()
         variable_expression = IdentifierExpression(variable)
         if self.zero_included:
-            return (EquationConstraint(variable, variable_expression >= 0),)
-        return (EquationConstraint(variable, variable_expression > 0),)
+            return (EquationConstraint(variable_expression >= 0),)
+        return (EquationConstraint(variable_expression > 0),)
 
     @override
     def is_value_set_subset(self, other: ParamDomain) -> bool:
@@ -558,16 +759,25 @@ class IntervalIntegerDomain(ParamDomain):
     def compute_feasibility_subset(
         self,
         own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
     ) -> bool:
         return _compute_numeric_feasibility_subset(
-            self.symbol_type, own_constraints, other, other_constraints
+            self,
+            own_constraints,
+            own_variable,
+            other,
+            other_constraints,
+            other_variable,
         )
 
     @override
-    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
-        return _numeric_has_feasible_value(SymbolType.INT, constraints)
+    def has_feasible_value(
+        self, constraints: Sequence[Constraint], variable: Identifier
+    ) -> bool:
+        return _numeric_has_feasible_value(self, SymbolType.INT, constraints, variable)
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:
@@ -666,22 +876,26 @@ class OrdinalDomain(ParamDomain):
     def compute_feasibility_subset(
         self,
         own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
     ) -> bool:
         if not isinstance(other, OrdinalDomain):
             return False
         for value in self.sorted_values:
-            if not _is_value_valid_for(self, own_constraints, value):
+            if not _is_value_valid_for(self, own_constraints, own_variable, value):
                 continue
-            if not _is_value_valid_for(other, other_constraints, value):
+            if not _is_value_valid_for(other, other_constraints, other_variable, value):
                 return False
         return True
 
     @override
-    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
+    def has_feasible_value(
+        self, constraints: Sequence[Constraint], variable: Identifier
+    ) -> bool:
         return any(
-            _is_value_valid_for(self, constraints, value)
+            _is_value_valid_for(self, constraints, variable, value)
             for value in self.sorted_values
         )
 
@@ -776,22 +990,28 @@ class CategoricalDomain(ParamDomain):
     def compute_feasibility_subset(
         self,
         own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
     ) -> bool:
         if not isinstance(other, CategoricalDomain):
             return False
         for category in self.categories:
-            if not _is_value_valid_for(self, own_constraints, category):
+            if not _is_value_valid_for(self, own_constraints, own_variable, category):
                 continue
-            if not _is_value_valid_for(other, other_constraints, category):
+            if not _is_value_valid_for(
+                other, other_constraints, other_variable, category
+            ):
                 return False
         return True
 
     @override
-    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
+    def has_feasible_value(
+        self, constraints: Sequence[Constraint], variable: Identifier
+    ) -> bool:
         return any(
-            _is_value_valid_for(self, constraints, category)
+            _is_value_valid_for(self, constraints, variable, category)
             for category in self.categories
         )
 
@@ -899,24 +1119,32 @@ class PermutationDomain(ParamDomain):
     def compute_feasibility_subset(
         self,
         own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
     ) -> bool:
         if not isinstance(other, PermutationDomain):
             return False
         if len(self.ordered_members) != len(other.ordered_members):
             return False
         for permutation in itertools.permutations(self.ordered_members):
-            if not _is_value_valid_for(self, own_constraints, permutation):
+            if not _is_value_valid_for(
+                self, own_constraints, own_variable, permutation
+            ):
                 continue
-            if not _is_value_valid_for(other, other_constraints, permutation):
+            if not _is_value_valid_for(
+                other, other_constraints, other_variable, permutation
+            ):
                 return False
         return True
 
     @override
-    def has_feasible_value(self, constraints: Sequence[Constraint]) -> bool:
+    def has_feasible_value(
+        self, constraints: Sequence[Constraint], variable: Identifier
+    ) -> bool:
         return any(
-            _is_value_valid_for(self, constraints, permutation)
+            _is_value_valid_for(self, constraints, variable, permutation)
             for permutation in itertools.permutations(self.ordered_members)
         )
 

@@ -1,26 +1,43 @@
-"""Named-variable constraints over expressions and value sets.
+"""Scope-based constraints over expressions and value sets.
 
 This module provides the three constraint kinds used by the parameter
 infrastructure in ``fhy_core.symbolic.param.*``:
 
-- ``EquationConstraint``: a Boolean expression that must hold when the
-  variable is bound to a candidate value.
-- ``InSetConstraint``: the variable must take a value from a permitted
+- ``EquationConstraint``: a Boolean expression that must hold under an
+  assignment to its free identifiers.
+- ``InSetConstraint``: an identifier must take a value from a permitted
   set.
-- ``NotInSetConstraint``: the variable must NOT take a value from a
+- ``NotInSetConstraint``: an identifier must NOT take a value from a
   forbidden set.
+
+A constraint's semantic identity is its *scope* -- the set of identifiers
+it references (``get_free_identifiers``) -- rather than a single
+designated variable. ``EquationConstraint`` is inherently multi-variable
+(a dependent constraint like ``x < y`` is a first-class citizen with no
+privileged side); ``InSetConstraint`` and ``NotInSetConstraint`` are
+inherently unary, so their scope is always a single identifier. The one
+evaluation contract is assignment-based:
+``evaluate_with_bindings`` / ``is_satisfied_with_bindings`` check a
+constraint against a ``Mapping[Identifier, value]``. A constraint becomes
+decidable once every identifier its evaluation depends on is bound to a
+literal; decidable is not decided -- binding an identifier to a
+non-literal, symbolic ``Expression`` leaves a residual over the
+identifiers that expression introduces, and even a fully literal
+assignment can leave a residual the simplifier cannot reduce to a
+literal. Either case reports ``UNDECIDED``.
 
 ``Constraint`` is a sum-type family base. Each concrete constraint is a
 ``@register_serializable @dataclass(frozen=True, eq=False)`` leaf whose
 wrapped serialization and structural equivalence are derived from its
-fields rather than hand-written. The base holds no shared state; every
-constraint keeps its own ``variable`` field. Instances are frozen on
-construction via ``FrozenMixin``.
-
-Each constraint is callable as a predicate: ``constraint(value)`` is the
-same as ``constraint.is_satisfied(value)``. Each can be converted to an
-equivalent ``Expression`` over its variable through
+fields rather than hand-written. The base holds no shared state.
+Instances are frozen on construction via ``FrozenMixin``. Each can be
+converted to an equivalent ``Expression`` through
 ``Constraint.convert_to_expression``.
+
+``SymbolicPredicate`` is the structural protocol shared by ``Constraint``
+and ``ConstraintSystem``: both expose the same four-method scope/bindings
+surface, so a caller can be written once against the protocol and accept
+either shape.
 
 Set-constraint members are stored with type-strict equality: ``int``,
 ``float``, and ``bool`` are not interchangeable, including inside nested
@@ -31,23 +48,17 @@ Set-constraint serialization is deterministic: members are emitted in
 ``repr``-sorted order, and the corresponding ``convert_to_expression``
 leaves are emitted in the same order.
 
-Every constraint additionally supports a *bindings* evaluation API --
-``evaluate_with_bindings`` / ``is_satisfied_with_bindings`` -- that checks
-the constraint against a ``Mapping[Identifier, value]`` instead of a single
-positional value. This makes multi-variable (dependent) constraints
-usable: an ``EquationConstraint`` whose expression mentions identifiers
-beyond ``self.variable`` becomes decidable once every identifier it
-references is bound to a literal. Decidable is not decided: binding an
-identifier to a non-literal, symbolic ``Expression`` leaves a residual
-over the identifiers that expression introduces, and even a fully
-literal assignment can leave a residual the simplifier cannot reduce to
-a literal. Either case reports ``UNDECIDED``.
 ``ConstraintSystem`` is the companion set-level value object: a
 canonically ordered conjunction of constraints, possibly spanning several
-variables, with joint-satisfiability checking backed by
-``fhy_core.symbolic.solver.check_expression_satisfiability``. It is not a
-``Constraint`` subclass -- joint satisfiability is a property of a
-collection, not of any single predicate.
+identifiers, with joint-satisfiability and entailment checking backed by
+``fhy_core.symbolic.solver``. It is not a ``Constraint`` subclass -- joint
+satisfiability is a property of a collection, not of any single
+predicate. Its solver-backed entry points screen the lowered expression
+for three hazard classes the Z3 bridge cannot lower soundly -- Boolean
+operands in a numeric context, division/floor-division/modulo by a
+possibly-zero divisor, and an ``EQUAL``/``NOT_EQUAL`` comparison mixing
+an INT-sorted operand with a float-valued literal -- reporting
+``UNDECIDED`` instead of a decided outcome the lowering cannot support.
 """
 
 from fhy_core.utils.override import override
@@ -63,6 +74,8 @@ __all__ = [
     "InSetConstraint",
     "MissingSymbolTypeError",
     "NotInSetConstraint",
+    "SymbolicPredicate",
+    "build_constraint_ordering_key",
     "create_constraint_system",
 ]
 
@@ -73,7 +86,6 @@ from decimal import Decimal
 from enum import Enum, auto
 from functools import cached_property
 from typing import (
-    TYPE_CHECKING,
     Any,
     Protocol,
     TypeAlias,
@@ -107,7 +119,7 @@ from fhy_core.term import (
     compared_as_value,
 )
 from fhy_core.traits import FrozenMixin
-from fhy_core.utils import format_comma_separated_list
+from fhy_core.utils import format_comma_separated_list, is_strict_int
 
 from .expression import (
     BinaryExpression,
@@ -125,6 +137,7 @@ from .expression import (
 )
 from .solver import (
     check_expression_satisfiability,
+    does_expression_imply,
     simplify_expression,
     validate_timeout_milliseconds,
 )
@@ -546,194 +559,144 @@ _VALID_VALUES_CODEC: FieldCodec = _make_member_set_codec("valid_values")
 _INVALID_VALUES_CODEC: FieldCodec = _make_member_set_codec("invalid_values")
 
 
+@runtime_checkable
+class SymbolicPredicate(Protocol):
+    """Predicate over identifiers, evaluable under a partial assignment.
+
+    The structural contract shared by ``Constraint`` and
+    ``ConstraintSystem``. Both inherit this protocol as an explicit base;
+    a third-party predicate may satisfy it purely structurally.
+    Implementations are immutable value objects.
+    """
+
+    def get_free_identifiers(self) -> frozenset[Identifier]:
+        """Return the scope: every identifier the predicate references.
+
+        Returns:
+            Frozen set of identifiers; empty for a ground predicate.
+
+        """
+
+    def evaluate_with_bindings(self, bindings: ConstraintBindings) -> ConstraintOutcome:
+        """Return the tri-state outcome of the predicate under the bindings.
+
+        Args:
+            bindings: Mapping from identifiers to candidate values. Raw
+                literal values and ``Expression`` values are both
+                accepted; identifiers outside the scope are ignored.
+
+        Returns:
+            ``SATISFIED``/``VIOLATED`` when decidable under the given
+            (possibly partial) bindings; ``UNDECIDED`` otherwise.
+
+        """
+
+    def is_satisfied_with_bindings(self, bindings: ConstraintBindings) -> bool:
+        """Return whether the bindings provably satisfy the predicate.
+
+        Both ``VIOLATED`` and ``UNDECIDED`` map to ``False`` (conservative
+        rejection).
+
+        """
+
+    def convert_to_expression(self) -> Expression:
+        """Return an ``Expression`` whose truth value matches the predicate.
+
+        Raises:
+            ConstraintError: If the predicate cannot be expressed.
+
+        """
+
+
 class Constraint(
+    SymbolicPredicate,
     WrappedFamilySerializable,
     FrozenMixin,
     DerivedEquivalenceMixin,
     ABC,
 ):
-    """A named-variable predicate.
+    """A predicate over a scope of identifiers.
 
-    Subclasses model the three concrete constraint kinds in this module
-    (``EquationConstraint``, ``InSetConstraint``, ``NotInSetConstraint``).
-    Each concrete constraint is a ``@register_serializable @dataclass(
-    frozen=True, eq=False)`` leaf of this family; serialization and
-    structural equivalence are derived from its fields. The base holds no
-    shared state; each leaf provides its own ``variable`` field.
-    Instances are frozen at the end of construction; subsequent attribute
-    mutation raises ``FrozenMutationError``. Instances are callable;
-    ``constraint(value)`` is an alias for ``constraint.is_satisfied(value)``.
+    Sum-type family base for the three concrete constraint kinds in this
+    module (``EquationConstraint``, ``InSetConstraint``,
+    ``NotInSetConstraint``). Each concrete constraint is a
+    ``@register_serializable @dataclass(frozen=True, eq=False)`` leaf of
+    this family; serialization and structural equivalence are derived
+    from its fields. The base holds no state and designates no variable:
+    a constraint's semantic identity is its scope
+    (``get_free_identifiers``), and the only evaluation contract is
+    assignment-based (``evaluate_with_bindings``). Instances are frozen
+    at the end of construction; subsequent attribute mutation raises
+    ``FrozenMutationError``.
 
     Subclassing contract:
-        - Declare a ``@dataclass(frozen=True, eq=False)`` with a
-          ``variable: Identifier`` field tagged
-          ``compared_as_reference()`` plus the kind's own fields.
-        - Override ``evaluate`` to define the tri-state predicate; the
-          concrete ``is_satisfied`` derives from it.
+        - Declare a ``@dataclass(frozen=True, eq=False)`` leaf.
+        - Override ``get_free_identifiers`` to return the scope.
+        - Override ``evaluate_with_bindings`` to define the tri-state
+          predicate; the concrete ``is_satisfied_with_bindings`` derives
+          from it.
         - Override ``convert_to_expression`` to produce an equivalent
-          ``Expression`` over the variable.
+          ``Expression``.
         - Override ``__repr__`` and ``__str__`` so the textual form
-          identifies the kind and the variable.
+          identifies the kind and the scope.
 
     """
 
-    if TYPE_CHECKING:
-        # Every concrete constraint declares a ``variable`` dataclass field;
-        # this declaration (no stored state on the base) lets callers that
-        # iterate over ``Constraint`` values read ``.variable`` with a known
-        # type. Guarded so it does not become a class attribute that would
-        # shadow the leaves' dataclass fields at runtime.
-        variable: Identifier
+    @abstractmethod
+    @override
+    def get_free_identifiers(self) -> frozenset[Identifier]:
+        """Return every identifier this constraint references.
 
-    def __call__(self, value: Any) -> bool:
-        """Return whether the value satisfies the constraint."""
-        return self.is_satisfied(value)
+        Returns:
+            Frozen set of identifiers; empty for a ground constraint.
+
+        """
 
     @abstractmethod
-    def evaluate(self, value: Any) -> ConstraintOutcome:
-        """Return the tri-state outcome of checking the value.
-
-        Args:
-            value: Candidate value to check.
-
-        Returns:
-            ``ConstraintOutcome.SATISFIED`` if the value provably
-            satisfies the constraint, ``ConstraintOutcome.VIOLATED`` if
-            it provably violates it, and ``ConstraintOutcome.UNDECIDED``
-            if the checker cannot decide. Subclasses document their
-            predicate semantics and which outcomes they can produce.
-
-        """
-
-    def is_satisfied(self, value: Any) -> bool:
-        """Return whether the value satisfies the constraint.
-
-        A value is treated as satisfying the constraint only when
-        ``evaluate`` decides ``SATISFIED``; both ``VIOLATED`` and the
-        indeterminate ``UNDECIDED`` outcome map to ``False``, so an
-        undecided check conservatively rejects the value.
-
-        Args:
-            value: Candidate value to check.
-
-        Returns:
-            True if the value satisfies the constraint; False otherwise.
-
-        """
-        return self.evaluate(value) is ConstraintOutcome.SATISFIED
-
-    def get_free_identifiers(self) -> frozenset[Identifier]:
-        """Return every identifier this constraint constrains or references.
-
-        The base implementation returns ``frozenset((self.variable,))``.
-        ``EquationConstraint`` overrides it to also include the free
-        identifiers of its expression.
-
-        Returns:
-            Non-empty frozen set of identifiers; always contains
-            ``self.variable``.
-
-        """
-        return frozenset((self.variable,))
-
+    @override
     def evaluate_with_bindings(self, bindings: ConstraintBindings) -> ConstraintOutcome:
-        """Return the tri-state outcome of checking the constraint under bindings.
-
-        The base implementation is sound for any single-variable leaf: it
-        looks up ``self.variable`` in ``bindings``, unwraps a
-        ``LiteralExpression`` binding to its raw value, and delegates to
-        ``evaluate``. A missing binding for ``self.variable`` or a
-        non-literal ``Expression`` binding yields ``UNDECIDED``.
-        Identifiers in ``bindings`` that the constraint does not reference
-        are ignored. ``EquationConstraint`` overrides this to substitute
-        every bound identifier simultaneously.
-
-        A non-literal ``Expression`` binding is a structural limitation of
-        the leaves that use this implementation, not a per-call outcome:
-        ``InSetConstraint`` and ``NotInSetConstraint`` decide membership
-        against a concrete value, so no symbolic expression is decidable
-        against them and supplying a different one will not help. That
-        makes ``ConstraintBindings`` wider than these leaves consume --
-        only ``EquationConstraint``, which substitutes into an expression,
-        uses the full range. Both this case and a missing binding are
-        logged at ``DEBUG`` through the module logger, naming the
-        identifier responsible, since a set constraint's ``evaluate``
-        never reports ``UNDECIDED`` and so gives no other clue which of
-        the two occurred.
-
-        A value outside the declared ``Expression | LiteralType`` union
-        reaches ``evaluate`` unchanged rather than being turned away: this
-        implementation has no expression to lift the value into, and
-        ``evaluate`` accepts ``Any``, so a hashable off-union value is
-        simply not a member and the check stays decided, while an
-        unhashable one raises the ``TypeError`` below.
-        ``EquationConstraint.evaluate_with_bindings`` cannot forward a
-        value -- it has to build a substitution environment out of it --
-        and rejects an off-union value with ``ConstraintError``. The two
-        paths agree on what matters: neither lets a failure from the
-        expression passes escape as the caller's answer.
+        """Return the tri-state outcome of the constraint under the bindings.
 
         Args:
             bindings: Mapping from identifiers to candidate values. Raw
                 ``LiteralType`` values and ``Expression`` values are both
-                accepted; raw values behave identically to their
-                ``LiteralExpression`` wrapping.
+                accepted; identifiers outside the scope are ignored.
 
         Returns:
             ``SATISFIED``/``VIOLATED`` when decidable under the given
             (possibly partial) bindings; ``UNDECIDED`` otherwise.
 
         Raises:
-            TypeError: Propagated from this implementation's call to
-                ``evaluate`` for leaves that reject the bound value's type
-                (e.g. an unhashable value against a set constraint). An
-                override that never calls ``evaluate`` documents its own
-                failure modes instead.
+            ConstraintError: If a binding value falls outside
+                ``Expression | LiteralType``.
 
         """
-        snapshot = dict(bindings)
-        if self.variable not in snapshot:
-            _LOGGER.debug(
-                "%s.evaluate_with_bindings: no binding for variable %r; the "
-                "bindings supplied %s; reporting UNDECIDED",
-                type(self).__name__,
-                self.variable,
-                format_comma_separated_list(tuple(snapshot)) or "no identifiers",
-            )
-            return ConstraintOutcome.UNDECIDED
-        value = snapshot[self.variable]
-        if isinstance(value, Expression):
-            if not isinstance(value, LiteralExpression):
-                _LOGGER.debug(
-                    "%s.evaluate_with_bindings: the binding for %r is the "
-                    "non-literal expression %r; this leaf decides against a "
-                    "concrete value and cannot consume a symbolic one; "
-                    "reporting UNDECIDED",
-                    type(self).__name__,
-                    self.variable,
-                    value,
-                )
-                return ConstraintOutcome.UNDECIDED
-            value = value.value
-        return self.evaluate(value)
 
+    @override
     def is_satisfied_with_bindings(self, bindings: ConstraintBindings) -> bool:
         """Return whether the bindings provably satisfy the constraint.
 
-        Derived from ``evaluate_with_bindings``; both ``VIOLATED`` and
-        ``UNDECIDED`` map to ``False`` (conservative rejection), matching
-        ``is_satisfied``.
+        Derived from ``evaluate_with_bindings``; both ``VIOLATED`` and the
+        indeterminate ``UNDECIDED`` outcome map to ``False``, so an
+        undecided check conservatively rejects the bindings.
+
+        Args:
+            bindings: Mapping from identifiers to candidate values.
+
+        Returns:
+            True if the bindings satisfy the constraint; False otherwise.
 
         """
         return self.evaluate_with_bindings(bindings) is ConstraintOutcome.SATISFIED
 
     @abstractmethod
+    @override
     def convert_to_expression(self) -> Expression:
         """Return an expression equivalent to the constraint.
 
         Returns:
-            An ``Expression`` over ``self.variable`` whose truth value
-            matches ``is_satisfied``.
+            An ``Expression`` whose truth value matches
+            ``is_satisfied_with_bindings``.
 
         Raises:
             ConstraintError: If the constraint cannot be expressed
@@ -753,14 +716,14 @@ class Constraint(
 @register_serializable(type_id="equation_constraint")
 @dataclass(frozen=True, eq=False)
 class EquationConstraint(Constraint):
-    """Boolean-expression predicate over the variable.
+    """Boolean-expression predicate over the expression's free identifiers.
 
-    The constraint wraps a Boolean ``Expression`` whose only free
-    identifier is meant to be ``self.variable``. ``evaluate``
-    substitutes the candidate value for that identifier, simplifies the
-    resulting expression, and reports ``SATISFIED`` only when the
-    simplifier reduces it to a ``LiteralExpression`` with a ``bool``
-    value of ``True``.
+    The constraint wraps a Boolean ``Expression``; its scope is exactly
+    that expression's free identifiers (empty for a ground expression).
+    ``evaluate_with_bindings`` substitutes every bound identifier
+    simultaneously, simplifies the resulting expression, and reports
+    ``SATISFIED`` only when the simplifier reduces it to the ``bool``
+    literal ``True``.
 
     Outcomes:
         - ``SATISFIED``: the substituted expression reduces to the
@@ -772,61 +735,52 @@ class EquationConstraint(Constraint):
           warning is emitted.
         - ``UNDECIDED``: the simplifier cannot reduce the substituted
           expression to a ``LiteralExpression`` at all (for example
-          because the expression references additional free identifiers,
-          or because the simplifier just cannot decide). ``evaluate``
-          logs a ``WARNING`` through the module logger in this case.
+          because a free identifier remains unbound, or because the
+          simplifier just cannot decide). Logged at ``DEBUG`` when a
+          free identifier remains in the residual (ordinary partial
+          evaluation), at ``WARNING`` when none does (every identifier
+          was bound yet the simplifier still could not decide).
 
-    ``is_satisfied`` derives from ``evaluate`` and treats both
-    ``VIOLATED`` and ``UNDECIDED`` as ``False``, so an undecided check
-    conservatively rejects the value.
+    ``is_satisfied_with_bindings`` derives from ``evaluate_with_bindings``
+    and treats both ``VIOLATED`` and ``UNDECIDED`` as ``False``, so an
+    undecided check conservatively rejects the bindings.
+
+    Attributes:
+        expression: Boolean ``Expression``; the constraint's scope is
+            exactly this expression's free identifiers.
 
     """
 
-    variable: Identifier = field(metadata=compared_as_reference())
     expression: Expression
 
-    @override
-    def evaluate(self, value: Expression | LiteralType) -> ConstraintOutcome:
-        if isinstance(value, (str, float, int, bool)):
-            value = LiteralExpression(value)
-        result = simplify_expression(self.expression, {self.variable: value})
-        if isinstance(result, LiteralExpression):
-            if isinstance(result.value, bool) and result.value:
-                return ConstraintOutcome.SATISFIED
-            return ConstraintOutcome.VIOLATED
-        _LOGGER.warning(
-            "%s.evaluate: substituted expression %r did not reduce to a "
-            "literal; reporting UNDECIDED",
-            type(self).__name__,
-            result,
-        )
-        return ConstraintOutcome.UNDECIDED
+    def __post_init__(self) -> None:
+        if not isinstance(self.expression, Expression):
+            raise ConstraintError(
+                f"EquationConstraint requires an `Expression` instance, but "
+                f"got value {self.expression!r} of type "
+                f"{type(self.expression).__name__}."
+            )
 
     @override
     def get_free_identifiers(self) -> frozenset[Identifier]:
-        """Return the expression's free identifiers united with ``variable``."""
-        return self.expression.get_free_identifiers() | {self.variable}
+        """Return the expression's free identifiers."""
+        return self.expression.get_free_identifiers()
 
     @override
     def evaluate_with_bindings(self, bindings: ConstraintBindings) -> ConstraintOutcome:
         """Substitute every bound identifier, simplify, and classify.
 
         Coerces each raw ``LiteralType`` binding value to a
-        ``LiteralExpression`` (as ``evaluate`` does), substitutes the full
-        multi-key environment through ``simplify_expression``, and reports
-        ``SATISFIED`` for the ``bool`` literal ``True``, ``VIOLATED`` for
-        any other literal, and ``UNDECIDED`` when no literal results. The
-        designated ``variable`` has no special role here; it is bound like
-        any other free identifier. Logging on ``UNDECIDED``: DEBUG when
-        the residual (substituted and simplified) expression still has
-        free identifiers (expected partial evaluation, including the
-        case where a symbolic binding introduces a new free identifier),
-        WARNING when the residual has none -- every free identifier was
-        bound yet the simplifier still failed to reduce it to a literal
-        (matches ``evaluate``'s anomaly contract).
-
-        This override never calls ``evaluate``, so the base's ``TypeError``
-        does not apply; its own failure modes are below.
+        ``LiteralExpression``, substitutes the full multi-key environment
+        through ``simplify_expression``, and reports ``SATISFIED`` for
+        the ``bool`` literal ``True``, ``VIOLATED`` for any other
+        literal, and ``UNDECIDED`` when no literal results. Logging on
+        ``UNDECIDED``: DEBUG when the residual (substituted and
+        simplified) expression still has free identifiers (expected
+        partial evaluation, including the case where a symbolic binding
+        introduces a new free identifier), WARNING when the residual has
+        none -- every free identifier was bound yet the simplifier still
+        failed to reduce it to a literal.
 
         Raises:
             ConstraintError: If a binding value falls outside
@@ -865,11 +819,12 @@ class EquationConstraint(Constraint):
 
     @override
     def convert_to_expression(self) -> Expression:
+        """Return the wrapped expression."""
         return self.expression
 
     @override
     def __repr__(self) -> str:
-        return f"EquationConstraint({self.variable!r}, expression={self.expression!r})"
+        return f"EquationConstraint(expression={self.expression!r})"
 
     @override
     def __str__(self) -> str:
@@ -909,18 +864,93 @@ def _render_member_set_str(members: frozenset[_TypedMember]) -> str:
     return f"{{{rendered_members}}}"
 
 
+def _evaluate_set_membership_with_bindings(
+    kind_name: str,
+    variable: Identifier,
+    members: frozenset[_TypedMember],
+    bindings: ConstraintBindings,
+    *,
+    satisfied_when_member: bool,
+) -> ConstraintOutcome:
+    """Decide type-strict membership for one set-constraint leaf under bindings.
+
+    Shared by ``InSetConstraint`` and ``NotInSetConstraint``: the only
+    difference between the two kinds is the outcome polarity a member
+    decides to. Looks up ``variable`` in ``bindings``, unwraps a
+    ``LiteralExpression`` binding to its raw value, and decides
+    membership by type-strict comparison against ``members``. A missing
+    binding or a non-literal ``Expression`` binding yields ``UNDECIDED``
+    (DEBUG-logged, naming the identifier); a membership check against a
+    concrete value is always decidable, so this never reports
+    ``UNDECIDED`` once ``variable`` is bound to a literal.
+
+    A value outside the declared ``Expression | LiteralType`` union
+    reaches the membership check unchanged rather than being turned
+    away: there is no expression to lift such a value into, so a
+    hashable off-union value is simply not a member and the check stays
+    decided, while an unhashable one raises ``TypeError``.
+
+    Args:
+        kind_name: Concrete leaf's class name, used to attribute the
+            DEBUG log record.
+        variable: The constrained identifier.
+        members: Type-strict wrapped member set to decide against.
+        bindings: Mapping from identifiers to candidate values.
+        satisfied_when_member: True for ``InSetConstraint`` (membership
+            satisfies the constraint), False for ``NotInSetConstraint``
+            (membership violates it).
+
+    Returns:
+        ``SATISFIED``/``VIOLATED`` when decidable; ``UNDECIDED`` when
+        ``variable`` is unbound or bound to a non-literal expression.
+
+    Raises:
+        TypeError: If the bound value is unhashable.
+
+    """
+    snapshot = dict(bindings)
+    if variable not in snapshot:
+        _LOGGER.debug(
+            "%s.evaluate_with_bindings: no binding for variable %r; the "
+            "bindings supplied %s; reporting UNDECIDED",
+            kind_name,
+            variable,
+            format_comma_separated_list(tuple(snapshot)) or "no identifiers",
+        )
+        return ConstraintOutcome.UNDECIDED
+    value = snapshot[variable]
+    if isinstance(value, Expression):
+        if not isinstance(value, LiteralExpression):
+            _LOGGER.debug(
+                "%s.evaluate_with_bindings: the binding for %r is the "
+                "non-literal expression %r; this leaf decides against a "
+                "concrete value and cannot consume a symbolic one; "
+                "reporting UNDECIDED",
+                kind_name,
+                variable,
+                value,
+            )
+            return ConstraintOutcome.UNDECIDED
+        value = value.value
+    is_member = _wrap_member(value) in members
+    if is_member is satisfied_when_member:
+        return ConstraintOutcome.SATISFIED
+    return ConstraintOutcome.VIOLATED
+
+
 @register_serializable(type_id="in_set_constraint")
 @dataclass(frozen=True, eq=False)
 class InSetConstraint(Constraint):
-    """Permitted-set membership predicate.
+    """Permitted-set membership predicate over one identifier.
 
-    ``evaluate`` reports ``SATISFIED`` iff ``value`` is in the
-    constraint's value set and ``VIOLATED`` otherwise, comparing by
-    type-strict equality (so ``True`` and ``1`` are distinct members,
-    and ``1`` and ``1.0`` are distinct members, including inside nested
-    ``tuple`` or ``frozenset`` members). A membership check against a
-    concrete value is always decidable, so ``evaluate`` never reports
-    ``UNDECIDED``.
+    Scope is ``frozenset((variable,))``. ``evaluate_with_bindings``
+    reports ``SATISFIED`` iff the bound value is in the constraint's
+    value set and ``VIOLATED`` otherwise, comparing by type-strict
+    equality (so ``True`` and ``1`` are distinct members, and ``1`` and
+    ``1.0`` are distinct members, including inside nested ``tuple`` or
+    ``frozenset`` members). A membership check against a concrete value
+    is always decidable, so it never reports ``UNDECIDED`` once
+    ``variable`` is bound to a literal.
 
     Determinism:
         ``convert_to_expression`` emits its leaves in ``repr``-sorted
@@ -987,16 +1017,30 @@ class InSetConstraint(Constraint):
         return cls(fields["variable"], fields["valid_values"])
 
     @override
-    def evaluate(self, value: Any) -> ConstraintOutcome:
-        """Return whether ``value`` is in the permitted set.
+    def get_free_identifiers(self) -> frozenset[Identifier]:
+        """Return the single-identifier scope."""
+        return frozenset((self.variable,))
+
+    @override
+    def evaluate_with_bindings(self, bindings: ConstraintBindings) -> ConstraintOutcome:
+        """Decide membership for the bound value of ``variable``.
+
+        Missing binding or non-literal ``Expression`` binding ->
+        ``UNDECIDED`` (DEBUG-logged, naming the identifier). A literal
+        binding decides by type-strict membership; never ``UNDECIDED``
+        once bound to a literal.
 
         Raises:
-            TypeError: If ``value`` is not hashable.
+            TypeError: If the bound value is unhashable.
 
         """
-        if _wrap_member(value) in self._members:
-            return ConstraintOutcome.SATISFIED
-        return ConstraintOutcome.VIOLATED
+        return _evaluate_set_membership_with_bindings(
+            type(self).__name__,
+            self.variable,
+            self._members,
+            bindings,
+            satisfied_when_member=True,
+        )
 
     @override
     def convert_to_expression(self) -> Expression:
@@ -1029,13 +1073,14 @@ class InSetConstraint(Constraint):
 @register_serializable(type_id="not_in_set_constraint")
 @dataclass(frozen=True, eq=False)
 class NotInSetConstraint(Constraint):
-    """Forbidden-set membership predicate.
+    """Forbidden-set membership predicate over one identifier.
 
-    Symmetric to ``InSetConstraint``: ``evaluate`` reports ``SATISFIED``
-    iff ``value`` is NOT in the constraint's value set and ``VIOLATED``
+    Symmetric to ``InSetConstraint``: scope is ``frozenset((variable,))``,
+    and ``evaluate_with_bindings`` reports ``SATISFIED`` iff the bound
+    value is NOT in the constraint's value set and ``VIOLATED``
     otherwise, comparing by type-strict equality. A membership check
-    against a concrete value is always decidable, so ``evaluate`` never
-    reports ``UNDECIDED``.
+    against a concrete value is always decidable, so it never reports
+    ``UNDECIDED`` once ``variable`` is bound to a literal.
 
     Determinism:
         ``convert_to_expression`` emits its leaves in ``repr``-sorted
@@ -1100,16 +1145,30 @@ class NotInSetConstraint(Constraint):
         return cls(fields["variable"], fields["invalid_values"])
 
     @override
-    def evaluate(self, value: Any) -> ConstraintOutcome:
-        """Return whether ``value`` is NOT in the forbidden set.
+    def get_free_identifiers(self) -> frozenset[Identifier]:
+        """Return the single-identifier scope."""
+        return frozenset((self.variable,))
+
+    @override
+    def evaluate_with_bindings(self, bindings: ConstraintBindings) -> ConstraintOutcome:
+        """Decide non-membership for the bound value of ``variable``.
+
+        Missing binding or non-literal ``Expression`` binding ->
+        ``UNDECIDED`` (DEBUG-logged, naming the identifier). A literal
+        binding decides by type-strict non-membership; never
+        ``UNDECIDED`` once bound to a literal.
 
         Raises:
-            TypeError: If ``value`` is not hashable.
+            TypeError: If the bound value is unhashable.
 
         """
-        if _wrap_member(value) not in self._members:
-            return ConstraintOutcome.SATISFIED
-        return ConstraintOutcome.VIOLATED
+        return _evaluate_set_membership_with_bindings(
+            type(self).__name__,
+            self.variable,
+            self._members,
+            bindings,
+            satisfied_when_member=False,
+        )
 
     @override
     def convert_to_expression(self) -> Expression:
@@ -1139,6 +1198,16 @@ class NotInSetConstraint(Constraint):
         return f"{self.variable} not in {_render_member_set_str(self._members)}"
 
 
+def _raise_if_missing_symbol_types(missing: frozenset[Identifier]) -> None:
+    """Raise ``MissingSymbolTypeError`` naming ``missing``, or return if it is empty."""
+    if not missing:
+        return
+    missing_names = ", ".join(sorted(identifier.name_hint for identifier in missing))
+    raise MissingSymbolTypeError(
+        f"symbol_types is missing an entry for free identifier(s): {missing_names}."
+    )
+
+
 def _validate_symbol_types_cover_free_identifiers(
     expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
 ) -> None:
@@ -1149,13 +1218,28 @@ def _validate_symbol_types_cover_free_identifiers(
             ``expression`` have no corresponding ``symbol_types`` entry.
 
     """
-    missing = expression.get_free_identifiers() - set(symbol_types)
-    if not missing:
-        return
-    missing_names = ", ".join(sorted(identifier.name_hint for identifier in missing))
-    raise MissingSymbolTypeError(
-        f"symbol_types is missing an entry for free identifier(s): {missing_names}."
+    _raise_if_missing_symbol_types(
+        expression.get_free_identifiers() - set(symbol_types)
     )
+
+
+def _validate_symbol_types_cover_both_sides(
+    antecedent: Expression,
+    consequent: Expression,
+    symbol_types: Mapping[Identifier, SymbolType],
+) -> None:
+    """Raise if ``symbol_types`` lacks an entry for a free identifier of either side.
+
+    Raises:
+        MissingSymbolTypeError: If one or more free identifiers of
+            ``antecedent`` or ``consequent`` have no corresponding
+            ``symbol_types`` entry.
+
+    """
+    free_identifiers = (
+        antecedent.get_free_identifiers() | consequent.get_free_identifiers()
+    )
+    _raise_if_missing_symbol_types(free_identifiers - set(symbol_types))
 
 
 class _LoweredSort(Enum):
@@ -1380,6 +1464,229 @@ def _render_identifier_sorts(
     return format_comma_separated_list(rendered)
 
 
+_DIVISION_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
+    {BinaryOperation.DIVIDE, BinaryOperation.FLOOR_DIVIDE, BinaryOperation.MODULO}
+)
+"""Binary operations whose right operand is a divisor that can be zero."""
+
+
+def _is_safe_divisor(node: Expression) -> bool:
+    """Return whether ``node`` is provably a nonzero strict-int-or-float literal.
+
+    A ``bool`` value and a string-form literal are not safe divisors:
+    neither carries the provably-nonzero, strict-int-or-float guarantee
+    the division hazard screen requires, even when the string is
+    numeric-looking (e.g. ``"5"``).
+
+    """
+    if not isinstance(node, LiteralExpression):
+        return False
+    value = node.value
+    if is_strict_int(value) or isinstance(value, float):
+        return value != 0
+    return False
+
+
+def _does_node_divide_by_a_possibly_zero_operand(expression: Expression) -> bool:
+    """Return whether this one node divides by an operand that could be zero."""
+    return (
+        isinstance(expression, BinaryExpression)
+        and expression.operation in _DIVISION_BINARY_OPERATIONS
+        and not _is_safe_divisor(expression.right)
+    )
+
+
+def _find_division_hazard(expression: Expression) -> Expression | None:
+    """Return the first node of ``expression`` that divides by a possibly-zero operand.
+
+    Screens the whole tree, mirroring ``_find_bool_sort_hazard``: a
+    ``DIVIDE``/``FLOOR_DIVIDE``/``MODULO`` node whose divisor is not
+    provably a nonzero literal is refused, since the solver seam's
+    satisfiability encoding for division around a zero divisor is
+    unsound.
+
+    Args:
+        expression: Lowered conjunction, or the residual left after
+            substituting bindings into it.
+
+    Returns:
+        The offending node, or ``None`` when every division in the tree
+        divides by a provably nonzero literal.
+
+    """
+    if _does_node_divide_by_a_possibly_zero_operand(expression):
+        return expression
+    for child in expression.get_visit_children():
+        hazard = _find_division_hazard(child)
+        if hazard is not None:
+            return hazard
+    return None
+
+
+def _is_float_valued_literal(node: Expression) -> bool:
+    """Return whether ``node`` is a ``LiteralExpression`` in the float bucket.
+
+    Covers a Python ``float`` value and a float-grammar string-form
+    literal (e.g. ``"1.5"``); a ``bool``/``int`` value and an
+    integer-grammar string are not in the float bucket.
+
+    """
+    if not isinstance(node, LiteralExpression):
+        return False
+    value = node.value
+    if isinstance(value, float):
+        return True
+    return isinstance(value, str) and "." in value
+
+
+def _is_int_sorted_operand(
+    node: Expression, symbol_types: Mapping[Identifier, SymbolType]
+) -> bool:
+    """Return whether ``node`` is an INT-typed identifier or a strict-int literal."""
+    if isinstance(node, IdentifierExpression):
+        return symbol_types.get(node.identifier) is SymbolType.INT
+    return isinstance(node, LiteralExpression) and is_strict_int(node.value)
+
+
+def _does_node_mix_int_and_float_equality(
+    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
+) -> bool:
+    """Return whether this node's ``EQUAL``/``NOT_EQUAL`` mixes INT and float sorts."""
+    if not (
+        isinstance(expression, BinaryExpression)
+        and expression.operation in (BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL)
+    ):
+        return False
+    left, right = expression.left, expression.right
+    return (
+        _is_float_valued_literal(left) and _is_int_sorted_operand(right, symbol_types)
+    ) or (
+        _is_float_valued_literal(right) and _is_int_sorted_operand(left, symbol_types)
+    )
+
+
+def _find_int_float_equality_hazard(
+    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
+) -> Expression | None:
+    """Return the first node comparing an INT-sorted operand to a float literal.
+
+    Z3's ``ToReal`` rationalization of the INT-sorted operand collapses
+    this package's type-strict int/float distinction, so an ``EQUAL``/
+    ``NOT_EQUAL`` node mixing the two is refused. Ordering comparisons
+    (``<``, ``<=``, ``>``, ``>=``) are not screened: mixed-sort ordering
+    stays mathematically meaningful.
+
+    Args:
+        expression: Lowered conjunction, or the residual left after
+            substituting bindings into it.
+        symbol_types: Z3 sort for each free identifier of ``expression``.
+
+    Returns:
+        The offending node, or ``None`` when no ``EQUAL``/``NOT_EQUAL``
+        node mixes an INT-sorted operand with a float-valued literal.
+
+    """
+    if _does_node_mix_int_and_float_equality(expression, symbol_types):
+        return expression
+    for child in expression.get_visit_children():
+        hazard = _find_int_float_equality_hazard(child, symbol_types)
+        if hazard is not None:
+            return hazard
+    return None
+
+
+def _log_bool_coercion_hazard(
+    hazard: Expression,
+    symbol_types: Mapping[Identifier, SymbolType],
+    *,
+    context: str,
+) -> None:
+    _LOGGER.warning(
+        "%s: node %r lowers a Boolean operand into a numeric context, where "
+        "the Z3 bindings rewrite it to If(b, 1, 0) and collapse this "
+        "package's type-strict semantics; identifier sorts at that node: "
+        "%s. The expression is not handed to the solver and the check "
+        "reports UNDECIDED; bounding timeout_milliseconds cannot change "
+        "this outcome.",
+        context,
+        hazard,
+        _render_identifier_sorts(hazard, symbol_types),
+    )
+
+
+def _log_division_hazard(hazard: Expression, *, context: str) -> None:
+    _LOGGER.warning(
+        "%s: node %r divides by an operand that is not provably a nonzero "
+        "literal, and the solver seam's satisfiability encoding for "
+        "division around a possibly-zero divisor is unsound. The "
+        "expression is not handed to the solver and the check reports "
+        "UNDECIDED; bounding timeout_milliseconds cannot change this "
+        "outcome.",
+        context,
+        hazard,
+    )
+
+
+def _log_int_float_equality_hazard(
+    hazard: Expression,
+    symbol_types: Mapping[Identifier, SymbolType],
+    *,
+    context: str,
+) -> None:
+    _LOGGER.warning(
+        "%s: node %r compares an INT-sorted operand against a float-valued "
+        "literal with EQUAL/NOT_EQUAL, where the Z3 bridge's ToReal "
+        "rationalization of the INT-sorted side collapses this package's "
+        "type-strict int/float distinction; identifier sorts at that "
+        "node: %s. The expression is not handed to the solver and the "
+        "check reports UNDECIDED; bounding timeout_milliseconds cannot "
+        "change this outcome.",
+        context,
+        hazard,
+        _render_identifier_sorts(hazard, symbol_types),
+    )
+
+
+def _find_and_log_hazard(
+    expression: Expression,
+    symbol_types: Mapping[Identifier, SymbolType],
+    *,
+    context: str,
+) -> bool:
+    """Screen ``expression`` for a hazard the solver seam cannot lower soundly.
+
+    Checks, in order, the Boolean-coercion hazard, the
+    division-by-possibly-zero hazard, and the int/float ``EQUAL``/
+    ``NOT_EQUAL`` sort-mixing hazard; the first one found is logged at
+    ``WARNING`` and short-circuits the remaining checks.
+
+    Args:
+        expression: Lowered conjunction, or the residual left after
+            substituting bindings into it.
+        symbol_types: Z3 sort for each free identifier of ``expression``.
+        context: Public method name the outcome is reported under, used
+            to attribute the warning.
+
+    Returns:
+        True if a hazard was found (and logged); False if ``expression``
+        lowers soundly.
+
+    """
+    hazard = _find_bool_sort_hazard(expression, symbol_types)
+    if hazard is not None:
+        _log_bool_coercion_hazard(hazard, symbol_types, context=context)
+        return True
+    hazard = _find_division_hazard(expression)
+    if hazard is not None:
+        _log_division_hazard(hazard, context=context)
+        return True
+    hazard = _find_int_float_equality_hazard(expression, symbol_types)
+    if hazard is not None:
+        _log_int_float_equality_hazard(hazard, symbol_types, context=context)
+        return True
+    return False
+
+
 def _decide_satisfiability(
     expression: Expression,
     symbol_types: Mapping[Identifier, SymbolType],
@@ -1389,9 +1696,10 @@ def _decide_satisfiability(
 ) -> ConstraintOutcome:
     """Classify satisfiability of ``expression`` via the solver seam.
 
-    Validates the caller's symbol types first, then screens the expression
-    for the Z3 Boolean-coercion hazard, and only then consults the solver.
-    The precondition therefore raises whether or not the expression is
+    Validates the caller's symbol types first, then screens the
+    expression for the three hazard classes documented on
+    ``ConstraintSystem``, and only then consults the solver. The
+    precondition therefore raises whether or not the expression is
     hazardous, and a hazardous expression reports ``UNDECIDED`` instead of
     a decided outcome the lowering cannot support. A hazard is logged at
     ``WARNING`` through the module logger: it is a gap in what the Z3
@@ -1417,19 +1725,7 @@ def _decide_satisfiability(
 
     """
     _validate_symbol_types_cover_free_identifiers(expression, symbol_types)
-    hazard = _find_bool_sort_hazard(expression, symbol_types)
-    if hazard is not None:
-        _LOGGER.warning(
-            "%s: node %r lowers a Boolean operand into a numeric context, where "
-            "the Z3 bindings rewrite it to If(b, 1, 0) and collapse this "
-            "package's type-strict semantics; identifier sorts at that node: "
-            "%s. The expression is not handed to the solver and the check "
-            "reports UNDECIDED; bounding timeout_milliseconds cannot change "
-            "this outcome.",
-            context,
-            hazard,
-            _render_identifier_sorts(hazard, symbol_types),
-        )
+    if _find_and_log_hazard(expression, symbol_types, context=context):
         return ConstraintOutcome.UNDECIDED
     satisfiable = check_expression_satisfiability(
         expression,
@@ -1544,21 +1840,23 @@ def _render_expression_node_ordering_data(expression: Expression) -> str:
     return ""
 
 
-def _build_constraint_ordering_key(constraint: Constraint) -> str:
-    """Return the canonical sort key ``ConstraintSystem`` orders its members by.
+def build_constraint_ordering_key(constraint: Constraint) -> str:
+    """Return the canonical ordering key for a constraint.
 
-    The key is constant on structural-equivalence classes: two
-    structurally equivalent constraints always key alike, so a system's
-    member order does not depend on construction order. It is keyed on
-    the same things equivalence compares -- the concrete kind, the
-    variable's ``Identifier.id``, and either the expression tree or the
+    Constant on structural-equivalence classes: two structurally
+    equivalent constraints always key alike, so a system's member order
+    does not depend on construction order. It is keyed on the same
+    things equivalence compares -- the concrete kind, and either the
+    expression tree or the variable's ``Identifier.id`` and the
     type-strict member set -- rather than on ``repr``, which neither
     separates every distinct constraint nor agrees on every equivalent
-    pair.
+    pair. ``ConstraintSystem`` orders its members by this key, and the
+    param layer orders each parameter's constraint tuple by it, so the
+    two layers agree on canonical order.
 
     A ``Constraint`` subclass declared outside this module falls back to
     its ``repr``, which the subclassing contract requires to identify the
-    kind and the variable.
+    kind and the scope.
 
     Args:
         constraint: Member to key.
@@ -1570,7 +1868,7 @@ def _build_constraint_ordering_key(constraint: Constraint) -> str:
     kind = type(constraint).__name__
     if isinstance(constraint, EquationConstraint):
         expression_key = _build_expression_ordering_key(constraint.expression)
-        return f"{kind}|{constraint.variable.id}|{expression_key}"
+        return f"{kind}|{expression_key}"
     elif isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
         members = ",".join(
             sorted(_build_member_ordering_key(member) for member in constraint.members)
@@ -1599,7 +1897,9 @@ def create_constraint_system(*constraints: Constraint) -> "ConstraintSystem":
 
 @register_serializable(type_id="constraint_system")
 @dataclass(frozen=True, eq=False)
-class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenceMixin):
+class ConstraintSystem(
+    SymbolicPredicate, WrappedFamilySerializable, FrozenMixin, DerivedEquivalenceMixin
+):
     """An ordered conjunction of constraints over shared identifiers.
 
     Semantically the logical AND of its member constraints. The
@@ -1620,6 +1920,14 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
     semantics, and avoid using ``ConstraintSystem`` instances as dict keys
     when you expect value-based lookups.
 
+    All satisfiability and implication entry points screen the lowered
+    expression for three hazard classes before consulting the solver,
+    reporting ``UNDECIDED`` (with a ``WARNING`` log) instead of a decided
+    outcome the lowering cannot support: Boolean operands in numeric
+    contexts; division/floor-division/modulo whose divisor is not a
+    nonzero literal; and ``EQUAL``/``NOT_EQUAL`` mixing an INT-sorted
+    operand with a float-valued literal.
+
     """
 
     constraints: tuple[Constraint, ...]
@@ -1639,9 +1947,10 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
         object.__setattr__(
             self,
             "constraints",
-            tuple(sorted(constraints, key=_build_constraint_ordering_key)),
+            tuple(sorted(constraints, key=build_constraint_ordering_key)),
         )
 
+    @override
     def get_free_identifiers(self) -> frozenset[Identifier]:
         """Return the union of every member constraint's free identifiers."""
         free: frozenset[Identifier] = frozenset()
@@ -1649,6 +1958,7 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
             free |= constraint.get_free_identifiers()
         return free
 
+    @override
     def evaluate_with_bindings(self, bindings: ConstraintBindings) -> ConstraintOutcome:
         """Return the conjunction outcome of all members under the bindings.
 
@@ -1681,10 +1991,12 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
             else ConstraintOutcome.SATISFIED
         )
 
+    @override
     def is_satisfied_with_bindings(self, bindings: ConstraintBindings) -> bool:
         """Return whether the bindings provably satisfy every constraint."""
         return self.evaluate_with_bindings(bindings) is ConstraintOutcome.SATISFIED
 
+    @override
     def convert_to_expression(self) -> Expression:
         """Return the conjunction of every member's expression form.
 
@@ -1720,29 +2032,30 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
         The empty system returns ``SATISFIED`` without invoking the
         solver.
 
-        Limitation: the lowered conjunction is screened for the Z3
-        Boolean-coercion hazard before the solver is consulted, and a
-        hazardous conjunction returns ``UNDECIDED`` rather than a
-        provably-wrong decided outcome. The hazard is a ``BoolVal``
-        reaching a numeric context -- an arithmetic operand, one side of a
-        comparison whose other side is numeric, or a piecewise branch
-        facing a numeric sibling -- where the Z3 Python bindings silently
-        rewrite it to ``If(b, 1, 0)`` and collapse this package's
-        type-strict semantics. That covers a ``bool`` set member, a
-        ``bool`` literal written into an equation, and a
-        ``SymbolType.BOOL`` variable compared against a numeric literal.
-        The screen is per-site: a ``bool`` literal consumed by
+        Limitation: the lowered conjunction is screened for the three
+        hazard classes documented on this class before the solver is
+        consulted, and a hazardous conjunction returns ``UNDECIDED``
+        rather than a provably-wrong decided outcome. The Boolean-coercion
+        hazard is a ``BoolVal`` reaching a numeric context -- an
+        arithmetic operand, one side of a comparison whose other side is
+        numeric, or a piecewise branch facing a numeric sibling -- where
+        the Z3 Python bindings silently rewrite it to ``If(b, 1, 0)`` and
+        collapse this package's type-strict semantics. That covers a
+        ``bool`` set member, a ``bool`` literal written into an equation,
+        and a ``SymbolType.BOOL`` variable compared against a numeric
+        literal. The screen is per-site: a ``bool`` literal consumed by
         ``logical_and``/``logical_or``/``logical_not``, or standing alone
         as the whole expression, lowers faithfully and stays decidable.
 
         Args:
             symbol_types: Z3 sort for each free identifier of the lowered
                 conjunction. That set can be strictly smaller than
-                ``get_free_identifiers()``: an ``EquationConstraint``
-                reports its ``variable`` as free whether or not its
-                expression references it, while ``convert_to_expression``
-                emits only the expression, so an unreferenced ``variable``
-                needs no entry.
+                ``get_free_identifiers()``: an empty-member
+                ``InSetConstraint``/``NotInSetConstraint`` still reports
+                its ``variable`` as part of the system's scope, but
+                lowers to a bare ``LiteralExpression`` with no free
+                identifier at all, so an unreferenced ``variable`` needs
+                no entry.
             timeout_milliseconds: Optional bound, in milliseconds, on the
                 underlying Z3 solver invocation. ``None`` (the default)
                 leaves the solver unbounded.
@@ -1792,13 +2105,13 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
         identifiers left free after substitution. Answers questions of the
         form "given x = 4, can y and z still be chosen?".
 
-        Limitation: the same Boolean-coercion hazard documented on
-        ``check_satisfiability`` applies here, screened against the
-        residual rather than the original conjunction. Substitution is
-        therefore part of the screen: a ``bool`` binding value lands in
-        the residual exactly as a ``bool`` set member does and is screened
-        the same way, while binding a variable to a value of the matching
-        sort can retire a hazard the unsubstituted conjunction had.
+        Limitation: the same three hazard classes documented on this class
+        apply here, screened against the residual rather than the
+        original conjunction. Substitution is therefore part of the
+        screen: a ``bool`` binding value lands in the residual exactly as
+        a ``bool`` set member does and is screened the same way, while
+        binding a variable to a value of the matching sort can retire a
+        hazard the unsubstituted conjunction had.
 
         Args:
             bindings: Partial assignment substituted into the conjunction
@@ -1845,6 +2158,71 @@ class ConstraintSystem(WrappedFamilySerializable, FrozenMixin, DerivedEquivalenc
             context="ConstraintSystem.check_satisfiability_with_bindings",
             timeout_milliseconds=timeout_milliseconds,
         )
+
+    def check_implication(
+        self,
+        other: "ConstraintSystem",
+        symbol_types: Mapping[Identifier, SymbolType],
+        *,
+        timeout_milliseconds: int | None = None,
+    ) -> ConstraintOutcome:
+        """Return whether every assignment satisfying ``self`` satisfies ``other``.
+
+        The system-level entailment seam: both sides are lowered via
+        ``convert_to_expression``, the three hazard classes documented on
+        this class are screened against both lowered sides, and only then
+        is the solver consulted through
+        ``fhy_core.symbolic.solver.does_expression_imply``. ``SATISFIED``
+        when entailment is proven, ``VIOLATED`` when a counterexample
+        assignment provably exists, ``UNDECIDED`` on a screened hazard or
+        an inconclusive solver.
+
+        Args:
+            other: Candidate consequence system.
+            symbol_types: Z3 sort for each free identifier of either
+                side's lowered expression.
+            timeout_milliseconds: Optional bound, in milliseconds, on the
+                underlying Z3 solver invocation. ``None`` (the default)
+                leaves the solver unbounded.
+
+        Returns:
+            ``SATISFIED``/``VIOLATED`` when the solver decides,
+            ``UNDECIDED`` on a hazardous lowering on either side or an
+            inconclusive solver.
+
+        Raises:
+            MissingSymbolTypeError: If ``symbol_types`` lacks an entry for
+                a free identifier of either side's lowered expression.
+                Checked ahead of the hazard screens, so the precondition
+                raises even for a pair that would otherwise be reported
+                ``UNDECIDED``.
+            ConstraintError: If a member of either side cannot be
+                converted to an expression.
+            ValueError: If ``timeout_milliseconds`` is not None and not
+                positive. Checked before every other early return, so an
+                inadmissible bound is rejected even for a hazardous pair.
+
+        """
+        validate_timeout_milliseconds(timeout_milliseconds)
+        antecedent = self.convert_to_expression()
+        consequent = other.convert_to_expression()
+        _validate_symbol_types_cover_both_sides(antecedent, consequent, symbol_types)
+        context = "ConstraintSystem.check_implication"
+        if _find_and_log_hazard(
+            antecedent, symbol_types, context=context
+        ) or _find_and_log_hazard(consequent, symbol_types, context=context):
+            return ConstraintOutcome.UNDECIDED
+        holds = does_expression_imply(
+            antecedent,
+            consequent,
+            dict(symbol_types),
+            timeout_milliseconds=timeout_milliseconds,
+        )
+        if holds is None:
+            return ConstraintOutcome.UNDECIDED
+        if holds:
+            return ConstraintOutcome.SATISFIED
+        return ConstraintOutcome.VIOLATED
 
     @classmethod
     @override

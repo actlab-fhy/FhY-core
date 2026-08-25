@@ -119,8 +119,7 @@ def test_bound_int_param_iter_bounds_rejects_non_equation_constraint_in_state() 
 
 def test_bound_int_param_iter_bounds_rejects_non_bound_expression_in_state() -> None:
     """Test ``_iter_interval_bounds`` raises for a non-bound expression in state."""
-    var = mock_identifier("x", 1)
-    bad = EquationConstraint(var, LiteralExpression(0))
+    bad = EquationConstraint(LiteralExpression(0))
     param = _build_interval_param_with_injected_constraints((bad,))
 
     with pytest.raises(RuntimeError, match="non-bound"):

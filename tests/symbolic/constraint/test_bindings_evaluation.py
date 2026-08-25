@@ -1,7 +1,15 @@
-"""Tests for the multi-variable bindings evaluation API on `Constraint`."""
+"""Tests for the `evaluate_with_bindings` contract on the set-constraint leaves.
+
+`EquationConstraint`'s own bindings behavior (tri-state evaluation,
+chained/swap substitution semantics, DEBUG-vs-WARNING logging) lives in
+`test_equation_constraint.py`. This module covers `InSetConstraint` /
+`NotInSetConstraint`'s bindings behavior -- which each implement directly
+(there is no more base-class default keyed on a designated `variable`) --
+plus cross-cutting bindings-API contracts shared by every kind.
+"""
 
 import logging
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from decimal import Decimal
 from typing import Any
 
@@ -9,7 +17,6 @@ import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.constraint import (
-    Constraint,
     ConstraintError,
     ConstraintOutcome,
     EquationConstraint,
@@ -20,36 +27,78 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     IdentifierExpression,
     LiteralExpression,
-    LiteralType,
-    call,
     make_binary_expression,
 )
 from fhy_core.utils.override import override
 
 from .conftest import ALL_KINDS, SET_KINDS, mock_identifier
 
-SetConstraintFactory = Callable[[Identifier, object], Constraint]
-ConstraintFactory = Callable[[Identifier], Constraint]
+_CONSTRAINT_LOGGER = "fhy_core.symbolic.constraint"
+
+SET_KINDS_WITH_MEMBER_OUTCOMES = [
+    pytest.param(
+        InSetConstraint,
+        ConstraintOutcome.SATISFIED,
+        ConstraintOutcome.VIOLATED,
+        id="in_set",
+    ),
+    pytest.param(
+        NotInSetConstraint,
+        ConstraintOutcome.VIOLATED,
+        ConstraintOutcome.SATISFIED,
+        id="not_in_set",
+    ),
+]
+"""Each set-constraint kind with its decided outcome for a member and a non-member.
+
+Membership polarity is inverted between the two kinds: a bound value that is
+a member SATISFIES `InSetConstraint` but VIOLATES `NotInSetConstraint`, and
+vice versa for a non-member.
+"""
+
+SET_KINDS_WITH_MEMBER_OUTCOME = [
+    pytest.param(InSetConstraint, ConstraintOutcome.SATISFIED, id="in_set"),
+    pytest.param(NotInSetConstraint, ConstraintOutcome.VIOLATED, id="not_in_set"),
+]
+"""Each set-constraint kind with its decided outcome for a bound member value."""
+
+
+def _find_records(
+    caplog: pytest.LogCaptureFixture, level: int
+) -> list[logging.LogRecord]:
+    """Return the constraint module's records emitted at exactly ``level``."""
+    return [
+        record
+        for record in caplog.records
+        if record.levelno == level and record.name == _CONSTRAINT_LOGGER
+    ]
+
 
 # =============================================================================
-# Base-default bindings evaluation (set constraints)
+# Set-constraint bindings evaluation
 # =============================================================================
 
 
-@pytest.mark.parametrize("factory", SET_KINDS)
-def test_set_constraint_bindings_bound_value_matches_evaluate(
-    factory: SetConstraintFactory,
+@pytest.mark.parametrize(
+    ("factory", "member_outcome", "non_member_outcome"),
+    SET_KINDS_WITH_MEMBER_OUTCOMES,
+)
+def test_set_constraint_bindings_bound_value_decides_membership(
+    factory: Any,
+    member_outcome: ConstraintOutcome,
+    non_member_outcome: ConstraintOutcome,
 ) -> None:
-    """Test a bound value under the constrained variable matches `evaluate`."""
+    """Test a bound value under the constrained variable decides membership."""
     x = mock_identifier("x", 0)
     constraint = factory(x, {1, 2, 3})
 
-    assert constraint.evaluate_with_bindings({x: 2}) == constraint.evaluate(2)
+    assert constraint.evaluate_with_bindings({x: 2}) is member_outcome
+    assert constraint.evaluate_with_bindings({x: 4}) is non_member_outcome
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
 def test_set_constraint_bindings_missing_variable_is_undecided(
-    factory: SetConstraintFactory,
+    factory: Any,
 ) -> None:
     """Test a bindings mapping missing the constrained variable is UNDECIDED."""
     x = mock_identifier("x", 0)
@@ -59,24 +108,25 @@ def test_set_constraint_bindings_missing_variable_is_undecided(
     assert constraint.evaluate_with_bindings({y: 2}) is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize(("factory", "member_outcome"), SET_KINDS_WITH_MEMBER_OUTCOME)
 def test_set_constraint_bindings_unwraps_literal_expression_binding(
-    factory: SetConstraintFactory,
+    factory: Any,
+    member_outcome: ConstraintOutcome,
 ) -> None:
-    """Test a `LiteralExpression`-valued binding unwraps to match `evaluate`."""
+    """Test a `LiteralExpression`-valued binding unwraps and decides membership."""
     x = mock_identifier("x", 0)
     constraint = factory(x, {1, 2, 3})
 
-    assert constraint.evaluate_with_bindings(
-        {x: LiteralExpression(2)}
-    ) == constraint.evaluate(2)
+    outcome = constraint.evaluate_with_bindings({x: LiteralExpression(2)})
+
+    assert outcome is member_outcome
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
 def test_set_constraint_bindings_symbolic_expression_binding_is_undecided(
-    factory: SetConstraintFactory,
+    factory: Any,
 ) -> None:
-    """Test a non-literal `Expression` binding cannot be decided by the default."""
+    """Test a non-literal `Expression` binding cannot be decided."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
     constraint = factory(x, {1, 2, 3})
@@ -86,16 +136,19 @@ def test_set_constraint_bindings_symbolic_expression_binding_is_undecided(
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize(("factory", "member_outcome"), SET_KINDS_WITH_MEMBER_OUTCOME)
 def test_set_constraint_bindings_ignores_extraneous_keys(
-    factory: SetConstraintFactory,
+    factory: Any,
+    member_outcome: ConstraintOutcome,
 ) -> None:
     """Test identifiers the constraint does not reference are ignored."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
     constraint = factory(x, {1, 2, 3})
 
-    assert constraint.evaluate_with_bindings({x: 2, y: 999}) == constraint.evaluate(2)
+    outcome = constraint.evaluate_with_bindings({x: 2, y: 999})
+
+    assert outcome is member_outcome
 
 
 def test_in_set_constraint_bindings_are_type_strict_for_bool_vs_int() -> None:
@@ -116,9 +169,9 @@ def test_not_in_set_constraint_bindings_are_type_strict_for_bool_vs_int() -> Non
 
 @pytest.mark.parametrize("factory", SET_KINDS)
 def test_set_constraint_bindings_propagates_type_error_for_unhashable_value(
-    factory: SetConstraintFactory,
+    factory: Any,
 ) -> None:
-    """Test an unhashable bound value propagates `TypeError`, matching `evaluate`."""
+    """Test an unhashable bound value propagates `TypeError`."""
     x = mock_identifier("x", 0)
     constraint = factory(x, {1, 2, 3})
 
@@ -126,18 +179,42 @@ def test_set_constraint_bindings_propagates_type_error_for_unhashable_value(
         constraint.evaluate_with_bindings({x: [1, 2]})  # type: ignore[dict-item]
 
 
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize(
+    "value",
+    [pytest.param(None, id="none"), pytest.param(Decimal("1"), id="decimal")],
+)
+def test_set_constraint_bindings_forwards_an_off_union_value_to_membership(
+    factory: Any, value: Any
+) -> None:
+    """Test a value outside `Expression | LiteralType` is forwarded, not rejected.
+
+    A set constraint has no expression to lift the value into, so it hands
+    the value straight to the type-strict membership check: a hashable
+    value outside the declared union is simply not a member and the check
+    stays decided rather than raising.
+    """
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1, 2, 3})
+
+    in_set = factory is InSetConstraint
+    assert constraint.evaluate_with_bindings({x: value}) is (
+        ConstraintOutcome.VIOLATED if in_set else ConstraintOutcome.SATISFIED
+    )
+
+
 # =============================================================================
-# Base-default `evaluate_with_bindings` reads the mapping once (snapshot)
+# `evaluate_with_bindings` reads the mapping once (snapshot)
 # =============================================================================
 
 
 class _SingleReadMapping(Mapping[Identifier, Any]):
     """A mapping that raises if any key is read from it more than once.
 
-    Used to prove the base ``evaluate_with_bindings`` default takes a
-    single snapshot of the caller's mapping rather than performing a
-    membership check and a separate lookup against the live mapping
-    (which would read the same key twice).
+    Used to prove `evaluate_with_bindings` takes a single snapshot of the
+    caller's mapping rather than performing a membership check and a
+    separate lookup against the live mapping (which would read the same
+    key twice).
     """
 
     def __init__(self, data: dict[Identifier, Any]) -> None:
@@ -160,182 +237,95 @@ class _SingleReadMapping(Mapping[Identifier, Any]):
         return self._data[key]
 
 
-@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize(("factory", "member_outcome"), SET_KINDS_WITH_MEMBER_OUTCOME)
 def test_set_constraint_bindings_reads_the_mapping_only_once(
-    factory: SetConstraintFactory,
+    factory: Any,
+    member_outcome: ConstraintOutcome,
 ) -> None:
-    """Test the base default snapshots the mapping instead of re-reading it."""
+    """Test evaluation snapshots the mapping instead of re-reading it."""
     x = mock_identifier("x", 0)
     constraint = factory(x, {1, 2, 3})
     bindings = _SingleReadMapping({x: 2})
 
     outcome = constraint.evaluate_with_bindings(bindings)
 
-    assert outcome == constraint.evaluate(2)
+    assert outcome is member_outcome
 
 
 # =============================================================================
-# `EquationConstraint.evaluate_with_bindings` override
+# DEBUG-vs-WARNING logging split: reporting the cause of UNDECIDED
 # =============================================================================
 
 
-def _build_sum_less_than_ten(x: Identifier, y: Identifier) -> EquationConstraint:
-    expression = make_binary_expression(
-        BinaryOperation.LESS,
-        make_binary_expression(BinaryOperation.ADD, x, y),
-        10,
-    )
-    return EquationConstraint(x, expression)
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_bindings_logs_debug_when_the_variable_is_unbound(
+    caplog: pytest.LogCaptureFixture, factory: Any
+) -> None:
+    """Test a lookup miss on the constrained variable is reported at DEBUG.
 
-
-def test_equation_constraint_bindings_full_assignment_satisfied() -> None:
-    """Test a full multi-variable assignment that holds reports SATISFIED."""
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    constraint = _build_sum_less_than_ten(x, y)
-
-    outcome = constraint.evaluate_with_bindings({x: 3, y: 5})
-
-    assert outcome is ConstraintOutcome.SATISFIED
-
-
-def test_equation_constraint_bindings_full_assignment_violated() -> None:
-    """Test a full multi-variable assignment that fails reports VIOLATED."""
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    constraint = _build_sum_less_than_ten(x, y)
-
-    outcome = constraint.evaluate_with_bindings({x: 20, y: 1})
-
-    assert outcome is ConstraintOutcome.VIOLATED
-
-
-def test_equation_constraint_bindings_partial_assignment_is_undecided() -> None:
-    """Test binding only one of two free identifiers is UNDECIDED."""
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    constraint = _build_sum_less_than_ten(x, y)
-
-    outcome = constraint.evaluate_with_bindings({x: 3})
-
-    assert outcome is ConstraintOutcome.UNDECIDED
-
-
-def test_equation_constraint_bindings_empty_undecided_for_open_expression() -> None:
-    """Test an empty bindings mapping is UNDECIDED for an open expression."""
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    constraint = _build_sum_less_than_ten(x, y)
-
-    outcome = constraint.evaluate_with_bindings({})
-
-    assert outcome is ConstraintOutcome.UNDECIDED
-
-
-def test_equation_constraint_bindings_empty_satisfied_for_closed_expression() -> None:
-    """Test an empty bindings mapping decides a closed (variable-free) expression."""
-    x = mock_identifier("x", 0)
-    constraint = EquationConstraint(x, LiteralExpression(True))
-
-    outcome = constraint.evaluate_with_bindings({})
-
-    assert outcome is ConstraintOutcome.SATISFIED
-
-
-def test_equation_constraint_bindings_symbolic_binding_can_decide() -> None:
-    """Test a symbolic (non-literal) binding can still decide the outcome."""
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    expression = make_binary_expression(BinaryOperation.GREATER, x, y)
-    constraint = EquationConstraint(x, expression)
-    successor_of_y = make_binary_expression(
-        BinaryOperation.ADD, IdentifierExpression(y), 1
-    )
-
-    outcome = constraint.evaluate_with_bindings({x: successor_of_y})
-
-    assert outcome is ConstraintOutcome.SATISFIED
-
-
-def test_equation_constraint_bindings_chained_assignment_is_undecided() -> None:
-    """Test a chained binding leaves a residual instead of folding through it.
-
-    ``{x: y, y: 5}`` must not be applied sequentially (``x -> y -> 5``,
-    folding ``x < 5`` to the literal ``False``/VIOLATED); simultaneous
-    substitution leaves the residual ``y < 5``, which is UNDECIDED because
-    ``y`` remains free.
+    A set constraint's bindings evaluation never reports UNDECIDED for a
+    reason other than "variable unbound" or "non-literal binding", so the
+    record has to name the variable and the keys that were supplied.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
-    constraint = EquationConstraint(
-        x, make_binary_expression(BinaryOperation.LESS, x, 5)
-    )
+    constraint = factory(x, {1, 2})
 
-    outcome = constraint.evaluate_with_bindings({x: IdentifierExpression(y), y: 5})
-
-    assert outcome is ConstraintOutcome.UNDECIDED
-
-
-def test_equation_constraint_bindings_swap_assignment_on_equality_is_undecided() -> (
-    None
-):
-    """Test a swap binding on `x - y == 0` is UNDECIDED, not SATISFIED.
-
-    Sequential substitution would resolve `x - y == 0` to `y - y == 0`
-    (SATISFIED); simultaneous substitution swaps the identifiers instead,
-    leaving an undecided residual comparing two distinct identifiers.
-    """
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    expression = make_binary_expression(
-        BinaryOperation.EQUAL,
-        make_binary_expression(BinaryOperation.SUBTRACT, x, y),
-        0,
-    )
-    constraint = EquationConstraint(x, expression)
-
-    outcome = constraint.evaluate_with_bindings(
-        {x: IdentifierExpression(y), y: IdentifierExpression(x)}
-    )
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = constraint.evaluate_with_bindings({y: 1})
 
     assert outcome is ConstraintOutcome.UNDECIDED
+    debug_records = _find_records(caplog, logging.DEBUG)
+    assert debug_records, "expected a DEBUG record naming the unbound variable"
+    message = debug_records[0].getMessage()
+    assert repr(x) in message
+    assert repr(y) in message
+    assert not _find_records(caplog, logging.WARNING), (
+        "an unbound variable is an ordinary partial assignment, not an anomaly"
+    )
 
 
-def test_equation_constraint_bindings_swap_assignment_on_inequality_is_undecided() -> (
-    None
-):
-    """Test a swap binding on `x < y` is UNDECIDED, not VIOLATED.
-
-    Sequential substitution would resolve `x < y` to `y < y` (VIOLATED);
-    simultaneous substitution swaps the identifiers instead, leaving an
-    undecided residual comparing two distinct identifiers.
-    """
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_bindings_logs_debug_for_a_non_literal_expression_binding(
+    caplog: pytest.LogCaptureFixture, factory: Any
+) -> None:
+    """Test a symbolic binding value the leaf cannot consume is reported at DEBUG."""
     x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    constraint = EquationConstraint(
-        x, make_binary_expression(BinaryOperation.LESS, x, y)
-    )
+    w = mock_identifier("w", 1)
+    constraint = factory(x, {1, 2})
+    binding = IdentifierExpression(w)
 
-    outcome = constraint.evaluate_with_bindings(
-        {x: IdentifierExpression(y), y: IdentifierExpression(x)}
-    )
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = constraint.evaluate_with_bindings({x: binding})
 
     assert outcome is ConstraintOutcome.UNDECIDED
+    debug_records = _find_records(caplog, logging.DEBUG)
+    assert debug_records, "expected a DEBUG record naming the rejected expression"
+    message = debug_records[0].getMessage()
+    assert repr(x) in message
+    assert repr(binding) in message
+    assert not _find_records(caplog, logging.WARNING), (
+        "a symbolic binding value is a structural limitation, not an anomaly"
+    )
 
 
-def test_equation_constraint_bindings_ignores_extraneous_keys() -> None:
-    """Test bindings for identifiers outside the expression do not affect the result."""
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_bindings_logs_nothing_when_decidable(
+    caplog: pytest.LogCaptureFixture, factory: Any
+) -> None:
+    """Test a decided outcome under bindings emits no record at any level."""
     x = mock_identifier("x", 0)
-    z = mock_identifier("z", 2)
-    constraint = EquationConstraint(x, LiteralExpression(True))
+    constraint = factory(x, {1, 2})
 
-    outcome = constraint.evaluate_with_bindings({z: 999})
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        constraint.evaluate_with_bindings({x: 1})
 
-    assert outcome is ConstraintOutcome.SATISFIED
+    assert not _find_records(caplog, logging.DEBUG)
+    assert not _find_records(caplog, logging.WARNING)
 
 
 # =============================================================================
-# Binding-value construction boundary
+# Binding-value construction boundary (equation-specific rejection)
 # =============================================================================
 
 OFF_UNION_BINDING_VALUES = [
@@ -365,9 +355,7 @@ def test_equation_constraint_bindings_rejects_a_value_outside_the_declared_union
     expression passes as an internal error.
     """
     x = mock_identifier("x", 0)
-    constraint = EquationConstraint(
-        x, make_binary_expression(BinaryOperation.LESS, x, 10)
-    )
+    constraint = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 10))
 
     with pytest.raises(ConstraintError) as exception_info:
         constraint.evaluate_with_bindings({x: value})
@@ -382,7 +370,10 @@ def test_equation_constraint_bindings_names_the_offending_identifier_only() -> N
     """Test the boundary error names the bad binding, not an acceptable one."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
-    constraint = _build_sum_less_than_ten(x, y)
+    expression = make_binary_expression(
+        BinaryOperation.LESS, make_binary_expression(BinaryOperation.ADD, x, y), 10
+    )
+    constraint = EquationConstraint(expression)
 
     with pytest.raises(ConstraintError) as exception_info:
         constraint.evaluate_with_bindings({x: 3, y: None})  # type: ignore[dict-item]
@@ -392,324 +383,47 @@ def test_equation_constraint_bindings_names_the_offending_identifier_only() -> N
     assert repr(x) not in message
 
 
-def test_equation_constraint_bindings_admits_a_non_literal_expression_value() -> None:
-    """Test a symbolic `Expression` binding crosses the boundary unchanged.
+# =============================================================================
+# `is_satisfied_with_bindings` cross-cutting contract (every kind)
+# =============================================================================
 
-    A non-literal expression is supported input, not a boundary
-    violation: the residual it leaves behind is reported UNDECIDED rather
-    than rejected.
-    """
-    x = mock_identifier("x", 0)
-    w = mock_identifier("w", 1)
-    constraint = EquationConstraint(
-        x, make_binary_expression(BinaryOperation.LESS, x, 10)
-    )
+_KIND_SATISFYING_AND_VIOLATING_BINDINGS = [
+    pytest.param("equation", True, False, id="equation"),
+    pytest.param("in_set", 1, 99, id="in_set"),
+    pytest.param("not_in_set", 99, 1, id="not_in_set"),
+]
+"""(kind id, a value satisfying that kind's default constraint, a violator)."""
 
-    outcome = constraint.evaluate_with_bindings({x: IdentifierExpression(w)})
-
-    assert outcome is ConstraintOutcome.UNDECIDED
+_ALL_KINDS_BY_ID = {param.id: param.values[0] for param in ALL_KINDS}
 
 
-@pytest.mark.parametrize("factory", SET_KINDS)
 @pytest.mark.parametrize(
-    "value",
-    [pytest.param(None, id="none"), pytest.param(Decimal("1"), id="decimal")],
+    "kind_id, satisfying_value, violating_value",
+    _KIND_SATISFYING_AND_VIOLATING_BINDINGS,
 )
-def test_set_constraint_bindings_forwards_a_value_outside_the_declared_union(
-    factory: SetConstraintFactory, value: Any
+def test_is_satisfied_with_bindings_matches_the_documented_true_false_split(
+    kind_id: str, satisfying_value: Any, violating_value: Any
 ) -> None:
-    """Test the base default forwards an off-union value to `evaluate`.
+    """Test `is_satisfied_with_bindings` is `True` only for the satisfying value.
 
-    The base default has no expression to lift the value into, so it hands
-    the value to ``evaluate``, whose ``Any`` contract governs: a hashable
-    value outside the declared union is simply not a member and the check
-    stays decided. Nothing internal escapes, which is what makes this path
-    coherent with the ``EquationConstraint`` override's rejection.
+    Every kind's default constraint, one concrete value that satisfies it,
+    and one that violates it -- the expected booleans are literal, not
+    derived from `evaluate_with_bindings` itself.
     """
     x = mock_identifier("x", 0)
-    constraint = factory(x, {1, 2, 3})
+    constraint = _ALL_KINDS_BY_ID[kind_id](x)
 
-    assert constraint.evaluate_with_bindings({x: value}) == constraint.evaluate(value)
-
-
-# =============================================================================
-# DEBUG-vs-WARNING logging split
-# =============================================================================
-
-
-def test_equation_constraint_bindings_logs_debug_when_free_identifiers_unbound(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Test partial bindings log at DEBUG, not WARNING."""
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    constraint = _build_sum_less_than_ten(x, y)
-
-    with caplog.at_level(logging.DEBUG, logger="fhy_core.symbolic.constraint"):
-        outcome = constraint.evaluate_with_bindings({x: 3})
-
-    assert outcome is ConstraintOutcome.UNDECIDED
-    assert any(
-        record.levelno == logging.DEBUG
-        and record.name == "fhy_core.symbolic.constraint"
-        for record in caplog.records
-    ), "expected a DEBUG-level log record from fhy_core.symbolic.constraint"
-    assert not any(record.levelno == logging.WARNING for record in caplog.records), (
-        "a partial (expected) UNDECIDED case must not log a warning"
-    )
-
-
-def test_equation_constraint_bindings_logs_debug_for_symbolic_residual(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Test a symbolic binding that leaves the residual open logs at DEBUG.
-
-    Every free identifier of the *original* expression is bound here, but
-    the bound value is itself a symbolic ``Expression`` referencing a new
-    identifier, so the substituted-and-simplified residual still has a
-    free identifier. This is classified the same as an ordinary partial
-    assignment (DEBUG), not the fully-grounded anomaly case (WARNING).
-    """
-    x = mock_identifier("x", 0)
-    w = mock_identifier("w", 1)
-    constraint = EquationConstraint(
-        x, make_binary_expression(BinaryOperation.LESS, x, 10)
-    )
-
-    with caplog.at_level(logging.DEBUG, logger="fhy_core.symbolic.constraint"):
-        outcome = constraint.evaluate_with_bindings({x: IdentifierExpression(w)})
-
-    assert outcome is ConstraintOutcome.UNDECIDED
-    assert any(
-        record.levelno == logging.DEBUG
-        and record.name == "fhy_core.symbolic.constraint"
-        for record in caplog.records
-    ), "expected a DEBUG-level log record from fhy_core.symbolic.constraint"
-    assert not any(record.levelno == logging.WARNING for record in caplog.records), (
-        "a residual that still has a free identifier must not log a warning"
-    )
-
-
-def test_equation_constraint_bindings_logs_warning_when_fully_bound_but_irreducible(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Test a fully bound, fully closed, yet irreducible residual logs at WARNING.
-
-    ``arcsin`` is not registered as a native-constant-foldable function
-    for an out-of-domain argument, so ``simplify_expression`` returns an
-    unevaluated ``CallExpression`` with no free identifiers at all: every
-    free identifier was bound, but the simplifier still failed to reduce
-    the residual to a literal -- the genuine anomaly case.
-    """
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    constraint = EquationConstraint(x, call("arcsin", IdentifierExpression(y)))
-
-    with caplog.at_level(logging.DEBUG, logger="fhy_core.symbolic.constraint"):
-        outcome = constraint.evaluate_with_bindings({y: 2})
-
-    assert outcome is ConstraintOutcome.UNDECIDED
-    assert any(
-        record.levelno == logging.WARNING
-        and record.name == "fhy_core.symbolic.constraint"
-        for record in caplog.records
-    ), "expected a WARNING-level log record from fhy_core.symbolic.constraint"
-    assert not any(record.levelno == logging.DEBUG for record in caplog.records), (
-        "a fully-bound, fully-closed irreducible residual must not log at debug"
-    )
-
-
-# =============================================================================
-# `evaluate` / `evaluate_with_bindings` equivalence
-# =============================================================================
+    assert constraint.is_satisfied_with_bindings({x: satisfying_value}) is True
+    assert constraint.is_satisfied_with_bindings({x: violating_value}) is False
 
 
 @pytest.mark.parametrize("factory", ALL_KINDS)
-@pytest.mark.parametrize("value", [1, True, 2.5])
-def test_evaluate_matches_evaluate_with_bindings_for_raw_value(
-    factory: ConstraintFactory, value: LiteralType
+def test_is_satisfied_with_bindings_folds_undecided_to_false(
+    factory: Any,
 ) -> None:
-    """Test `evaluate(v)` matches `evaluate_with_bindings({variable: v})`."""
+    """Test an UNDECIDED outcome maps `is_satisfied_with_bindings` to `False`."""
     x = mock_identifier("x", 0)
     constraint = factory(x)
 
-    assert constraint.evaluate(value) == constraint.evaluate_with_bindings({x: value})
-
-
-def test_equation_constraint_evaluate_matches_bindings_for_expression_value() -> None:
-    """Test the equivalence also holds when the single binding is an `Expression`."""
-    x = mock_identifier("x", 0)
-    constraint = EquationConstraint(x, IdentifierExpression(x))
-    value = LiteralExpression(True)
-
-    assert constraint.evaluate(value) == constraint.evaluate_with_bindings({x: value})
-
-
-# =============================================================================
-# `is_satisfied_with_bindings`
-# =============================================================================
-
-
-@pytest.mark.parametrize("factory", SET_KINDS)
-def test_set_constraint_is_satisfied_with_bindings_folds_undecided_to_false(
-    factory: SetConstraintFactory,
-) -> None:
-    """Test an UNDECIDED bindings outcome maps to `False`."""
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    constraint = factory(x, {1, 2, 3})
-
-    assert constraint.evaluate_with_bindings({y: 2}) is ConstraintOutcome.UNDECIDED
-    assert constraint.is_satisfied_with_bindings({y: 2}) is False
-
-
-def test_equation_constraint_is_satisfied_with_bindings_folds_undecided_to_false() -> (
-    None
-):
-    """Test an UNDECIDED bindings outcome maps to `False` for an equation."""
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    constraint = EquationConstraint(x, IdentifierExpression(y))
-
     assert constraint.evaluate_with_bindings({}) is ConstraintOutcome.UNDECIDED
     assert constraint.is_satisfied_with_bindings({}) is False
-
-
-@pytest.mark.parametrize("factory", SET_KINDS)
-def test_set_constraint_is_satisfied_with_bindings_true_when_satisfied(
-    factory: SetConstraintFactory,
-) -> None:
-    """Test a decided SATISFIED bindings outcome maps to `True`."""
-    x = mock_identifier("x", 0)
-    constraint = factory(x, {1, 2, 3})
-
-    assert constraint.evaluate_with_bindings({x: 2}) == constraint.evaluate(2)
-    assert constraint.is_satisfied_with_bindings({x: 2}) == constraint.is_satisfied(2)
-
-
-# =============================================================================
-# `get_free_identifiers`
-# =============================================================================
-
-
-@pytest.mark.parametrize("factory", SET_KINDS)
-def test_set_constraint_free_identifiers_is_just_the_variable(
-    factory: SetConstraintFactory,
-) -> None:
-    """Test a set constraint's free identifiers is exactly its variable."""
-    x = mock_identifier("x", 0)
-    constraint = factory(x, {1, 2})
-
-    assert constraint.get_free_identifiers() == frozenset({x})
-
-
-def test_equation_constraint_free_identifiers_unions_variable_and_expression() -> None:
-    """Test an equation's free identifiers include the variable and the expression."""
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    constraint = EquationConstraint(x, IdentifierExpression(y))
-
-    assert constraint.get_free_identifiers() == frozenset({x, y})
-
-
-def test_equation_constraint_free_identifiers_include_absent_variable() -> None:
-    """Test the variable is always included even when absent from the expression."""
-    x = mock_identifier("x", 0)
-    constraint = EquationConstraint(x, LiteralExpression(True))
-
-    assert constraint.get_free_identifiers() == frozenset({x})
-
-
-# =============================================================================
-# Base-default bindings evaluation: reporting the cause of UNDECIDED
-# =============================================================================
-
-_CONSTRAINT_LOGGER = "fhy_core.symbolic.constraint"
-
-
-def _find_records(
-    caplog: pytest.LogCaptureFixture, level: int
-) -> list[logging.LogRecord]:
-    """Return the constraint module's records emitted at exactly ``level``."""
-    return [
-        record
-        for record in caplog.records
-        if record.levelno == level and record.name == _CONSTRAINT_LOGGER
-    ]
-
-
-@pytest.mark.parametrize("factory", SET_KINDS)
-def test_set_constraint_bindings_logs_debug_when_the_variable_is_unbound(
-    caplog: pytest.LogCaptureFixture, factory: SetConstraintFactory
-) -> None:
-    """Test a lookup miss on the constrained variable is reported at DEBUG.
-
-    A set constraint's ``evaluate`` never reports UNDECIDED, so under
-    bindings the only way to reach it is a missing entry for the
-    constrained variable. The record has to name the variable and the keys
-    that were supplied, which is what distinguishes a genuine partial
-    assignment from an identifier that fails to compare equal to the one
-    the constraint holds.
-    """
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    constraint = factory(x, {1, 2})
-
-    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
-        outcome = constraint.evaluate_with_bindings({y: 1})
-
-    assert outcome is ConstraintOutcome.UNDECIDED
-    debug_records = _find_records(caplog, logging.DEBUG)
-    assert debug_records, "expected a DEBUG record naming the unbound variable"
-    message = debug_records[0].getMessage()
-    assert repr(x) in message
-    assert repr(y) in message
-    assert not _find_records(caplog, logging.WARNING), (
-        "an unbound variable is an ordinary partial assignment, not an anomaly"
-    )
-
-
-@pytest.mark.parametrize("factory", SET_KINDS)
-def test_set_constraint_bindings_logs_debug_for_a_non_literal_expression_binding(
-    caplog: pytest.LogCaptureFixture, factory: SetConstraintFactory
-) -> None:
-    """Test a symbolic binding value the leaf cannot consume is reported at DEBUG.
-
-    ``ConstraintBindings`` admits any ``Expression`` value, but a
-    set-membership leaf can only decide against a concrete value. The
-    record has to name both the identifier and the expression that was
-    turned away, since nothing else distinguishes this from a missing
-    binding.
-    """
-    x = mock_identifier("x", 0)
-    w = mock_identifier("w", 1)
-    constraint = factory(x, {1, 2})
-    binding = IdentifierExpression(w)
-
-    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
-        outcome = constraint.evaluate_with_bindings({x: binding})
-
-    assert outcome is ConstraintOutcome.UNDECIDED
-    debug_records = _find_records(caplog, logging.DEBUG)
-    assert debug_records, "expected a DEBUG record naming the rejected expression"
-    message = debug_records[0].getMessage()
-    assert repr(x) in message
-    assert repr(binding) in message
-    assert not _find_records(caplog, logging.WARNING), (
-        "a symbolic binding value is a structural limitation, not an anomaly"
-    )
-
-
-@pytest.mark.parametrize("factory", SET_KINDS)
-def test_set_constraint_bindings_logs_nothing_when_decidable(
-    caplog: pytest.LogCaptureFixture, factory: SetConstraintFactory
-) -> None:
-    """Test a decided outcome under bindings emits no record at any level."""
-    x = mock_identifier("x", 0)
-    constraint = factory(x, {1, 2})
-
-    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
-        constraint.evaluate_with_bindings({x: 1})
-
-    assert not _find_records(caplog, logging.DEBUG)
-    assert not _find_records(caplog, logging.WARNING)

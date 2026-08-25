@@ -1,10 +1,15 @@
 """Behavioral tests for `EquationConstraint`."""
 
 import logging
+from typing import Any
 
 import pytest
 
-from fhy_core.symbolic.constraint import ConstraintOutcome, EquationConstraint
+from fhy_core.symbolic.constraint import (
+    ConstraintError,
+    ConstraintOutcome,
+    EquationConstraint,
+)
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -12,6 +17,7 @@ from fhy_core.symbolic.expression import (
     LiteralExpression,
     UnaryExpression,
     UnaryOperation,
+    call,
     logical_and,
     make_binary_expression,
     pformat_expression,
@@ -19,55 +25,402 @@ from fhy_core.symbolic.expression import (
 
 from .conftest import mock_identifier
 
+_CONSTRAINT_LOGGER = "fhy_core.symbolic.constraint"
+
+
+def _find_records(
+    caplog: pytest.LogCaptureFixture, level: int
+) -> list[logging.LogRecord]:
+    """Return the constraint module's records emitted at exactly ``level``."""
+    return [
+        record
+        for record in caplog.records
+        if record.levelno == level and record.name == _CONSTRAINT_LOGGER
+    ]
+
+
+# =============================================================================
+# Constructor: `expression` attribute and rejection of non-`Expression` input
+# =============================================================================
+
+
+def test_constructor_stores_the_expression() -> None:
+    """Test the constructor argument is reflected on the `expression` attribute."""
+    expression = LiteralExpression(True)
+
+    constraint = EquationConstraint(expression)
+
+    assert constraint.expression is expression
+
 
 @pytest.mark.parametrize(
-    "expression, value, expected_outcome",
+    "non_expression",
+    [
+        pytest.param(True, id="bool"),
+        pytest.param(1, id="int"),
+        pytest.param(1.5, id="float"),
+        pytest.param("x == 1", id="str"),
+        pytest.param(None, id="none"),
+        pytest.param([LiteralExpression(True)], id="list_of_expression"),
+    ],
+)
+def test_constructor_rejects_non_expression_input(non_expression: Any) -> None:
+    """Test a non-`Expression` constructor argument raises `ConstraintError`."""
+    with pytest.raises(ConstraintError):
+        EquationConstraint(non_expression)
+
+
+def test_constructor_rejects_the_equality_operator_footgun() -> None:
+    """Test `IdentifierExpression(x) == IdentifierExpression(y)` is rejected.
+
+    `Expression` deliberately does not override `__eq__`: comparison
+    dunders return `BinaryExpression` IR nodes for `<`/`<=`/`>`/`>=`, but
+    `==` falls back to identity comparison (`eq=False` dataclasses) and
+    evaluates to a plain `bool`. A caller who reaches for `==` expecting
+    to build an equality constraint gets a `bool` that the constructor
+    must catch here, at the source, rather than silently accepting.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    footgun_result = IdentifierExpression(x) == IdentifierExpression(y)
+    assert isinstance(footgun_result, bool)
+
+    with pytest.raises(ConstraintError):
+        EquationConstraint(footgun_result)  # type: ignore[arg-type]
+
+
+# =============================================================================
+# `get_free_identifiers`: the scope is exactly the expression's free identifiers
+# =============================================================================
+
+
+def test_get_free_identifiers_ground_expression_is_empty() -> None:
+    """Test a ground (variable-free) expression has an empty scope."""
+    constraint = EquationConstraint(LiteralExpression(True))
+
+    assert constraint.get_free_identifiers() == frozenset()
+
+
+def test_get_free_identifiers_single_identifier() -> None:
+    """Test the scope is exactly the expression's one free identifier."""
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(IdentifierExpression(x))
+
+    assert constraint.get_free_identifiers() == frozenset({x})
+
+
+def test_get_free_identifiers_multiple_identifiers() -> None:
+    """Test the scope unions every free identifier of a multi-variable expression."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    constraint = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, y))
+
+    assert constraint.get_free_identifiers() == frozenset({x, y})
+
+
+# =============================================================================
+# `convert_to_expression`
+# =============================================================================
+
+
+def test_convert_to_expression_returns_the_wrapped_expression_unchanged() -> None:
+    """Test `convert_to_expression` returns the constructor's expression unchanged."""
+    expression = make_binary_expression(
+        BinaryOperation.EQUAL, mock_identifier("x", 0), 1
+    )
+    constraint = EquationConstraint(expression)
+
+    assert constraint.convert_to_expression() is expression
+
+
+# =============================================================================
+# Tri-state `evaluate_with_bindings`
+# =============================================================================
+
+
+def test_evaluate_with_bindings_ground_expression_decidable_under_empty_bindings() -> (
+    None
+):
+    """Test a ground expression is decidable with no bindings at all."""
+    constraint = EquationConstraint(LiteralExpression(True))
+
+    assert constraint.evaluate_with_bindings({}) is ConstraintOutcome.SATISFIED
+
+
+def test_evaluate_with_bindings_ground_false_expression_is_violated() -> None:
+    """Test a ground `False`-valued expression is decidably VIOLATED."""
+    constraint = EquationConstraint(LiteralExpression(False))
+
+    assert constraint.evaluate_with_bindings({}) is ConstraintOutcome.VIOLATED
+
+
+def test_evaluate_with_bindings_full_assignment_satisfied() -> None:
+    """Test a full multi-variable assignment that holds reports SATISFIED."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = make_binary_expression(
+        BinaryOperation.LESS, make_binary_expression(BinaryOperation.ADD, x, y), 10
+    )
+    constraint = EquationConstraint(expression)
+
+    outcome = constraint.evaluate_with_bindings({x: 3, y: 5})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+
+
+def test_evaluate_with_bindings_full_assignment_violated() -> None:
+    """Test a full multi-variable assignment that fails reports VIOLATED."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = make_binary_expression(
+        BinaryOperation.LESS, make_binary_expression(BinaryOperation.ADD, x, y), 10
+    )
+    constraint = EquationConstraint(expression)
+
+    outcome = constraint.evaluate_with_bindings({x: 20, y: 1})
+
+    assert outcome is ConstraintOutcome.VIOLATED
+
+
+def test_evaluate_with_bindings_partial_assignment_is_undecided() -> None:
+    """Test binding only one of two free identifiers is UNDECIDED."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = make_binary_expression(
+        BinaryOperation.LESS, make_binary_expression(BinaryOperation.ADD, x, y), 10
+    )
+    constraint = EquationConstraint(expression)
+
+    outcome = constraint.evaluate_with_bindings({x: 3})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+def test_evaluate_with_bindings_empty_bindings_undecided_for_open_expression() -> None:
+    """Test empty bindings is UNDECIDED for an expression with free identifiers."""
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(IdentifierExpression(x))
+
+    outcome = constraint.evaluate_with_bindings({})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+def test_evaluate_with_bindings_non_bool_literal_reduction_is_violated() -> None:
+    """Test a substituted expression reducing to a non-bool literal is VIOLATED."""
+    constraint = EquationConstraint(LiteralExpression(1))
+
+    assert constraint.evaluate_with_bindings({}) is ConstraintOutcome.VIOLATED
+
+
+def test_evaluate_with_bindings_symbolic_binding_can_decide() -> None:
+    """Test a symbolic (non-literal) binding can still decide the outcome."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = make_binary_expression(BinaryOperation.GREATER, x, y)
+    constraint = EquationConstraint(expression)
+    successor_of_y = make_binary_expression(
+        BinaryOperation.ADD, IdentifierExpression(y), 1
+    )
+
+    outcome = constraint.evaluate_with_bindings({x: successor_of_y})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+
+
+def test_evaluate_with_bindings_chained_assignment_is_undecided() -> None:
+    """Test a chained binding leaves a residual instead of folding through it.
+
+    ``{x: y, y: 5}`` must not be applied sequentially (``x -> y -> 5``,
+    folding ``x < 5`` to the literal ``False``/VIOLATED); simultaneous
+    substitution leaves the residual ``y < 5``, which is UNDECIDED because
+    ``y`` remains free.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    constraint = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 5))
+
+    outcome = constraint.evaluate_with_bindings({x: IdentifierExpression(y), y: 5})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+def test_evaluate_with_bindings_swap_assignment_is_undecided_not_violated() -> None:
+    """Test a swap binding on `x < y` is UNDECIDED, not VIOLATED.
+
+    Sequential substitution would resolve `x < y` to `y < y` (VIOLATED);
+    simultaneous substitution swaps the identifiers instead, leaving an
+    undecided residual comparing two distinct identifiers.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    constraint = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, y))
+
+    outcome = constraint.evaluate_with_bindings(
+        {x: IdentifierExpression(y), y: IdentifierExpression(x)}
+    )
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+def test_evaluate_with_bindings_ignores_extraneous_keys() -> None:
+    """Test bindings for identifiers outside the expression do not affect the result."""
+    z = mock_identifier("z", 2)
+    constraint = EquationConstraint(LiteralExpression(True))
+
+    outcome = constraint.evaluate_with_bindings({z: 999})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+
+
+# =============================================================================
+# DEBUG-vs-WARNING logging split
+# =============================================================================
+
+
+def test_evaluate_with_bindings_logs_debug_when_free_identifiers_unbound(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a partial (expected) UNDECIDED case logs at DEBUG, not WARNING."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = make_binary_expression(
+        BinaryOperation.LESS, make_binary_expression(BinaryOperation.ADD, x, y), 10
+    )
+    constraint = EquationConstraint(expression)
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = constraint.evaluate_with_bindings({x: 3})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    assert _find_records(caplog, logging.DEBUG)
+    assert not _find_records(caplog, logging.WARNING)
+
+
+def test_evaluate_with_bindings_logs_debug_for_symbolic_residual(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a symbolic binding that leaves the residual open logs at DEBUG.
+
+    Every free identifier of the *original* expression is bound here, but
+    the bound value is itself a symbolic `Expression` referencing a new
+    identifier, so the substituted-and-simplified residual still has a
+    free identifier. This is ordinary partial evaluation (DEBUG), not the
+    fully-grounded anomaly case (WARNING).
+    """
+    x = mock_identifier("x", 0)
+    w = mock_identifier("w", 1)
+    constraint = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 10))
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = constraint.evaluate_with_bindings({x: IdentifierExpression(w)})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    assert _find_records(caplog, logging.DEBUG)
+    assert not _find_records(caplog, logging.WARNING)
+
+
+def test_evaluate_with_bindings_logs_warning_when_fully_bound_but_irreducible(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a fully bound, fully closed, yet irreducible residual logs at WARNING.
+
+    ``arcsin`` is not registered as a native-constant-foldable function for
+    an out-of-domain argument, so the simplifier returns an unevaluated
+    `CallExpression` with no free identifiers at all: every free identifier
+    was bound, but the simplifier still failed to reduce the residual to a
+    literal -- the genuine anomaly case.
+    """
+    y = mock_identifier("y", 1)
+    constraint = EquationConstraint(call("arcsin", IdentifierExpression(y)))
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = constraint.evaluate_with_bindings({y: 2})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    assert _find_records(caplog, logging.WARNING)
+    assert not _find_records(caplog, logging.DEBUG)
+
+
+def test_evaluate_with_bindings_logs_nothing_when_decided(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a decided outcome emits no record at any level."""
+    constraint = EquationConstraint(LiteralExpression(True))
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = constraint.evaluate_with_bindings({})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+    assert not _find_records(caplog, logging.DEBUG)
+    assert not _find_records(caplog, logging.WARNING)
+
+
+# =============================================================================
+# `is_satisfied_with_bindings`
+# =============================================================================
+
+
+def test_is_satisfied_with_bindings_folds_undecided_to_false() -> None:
+    """Test an UNDECIDED bindings outcome maps to `False`."""
+    y = mock_identifier("y", 1)
+    constraint = EquationConstraint(IdentifierExpression(y))
+
+    assert constraint.evaluate_with_bindings({}) is ConstraintOutcome.UNDECIDED
+    assert constraint.is_satisfied_with_bindings({}) is False
+
+
+def test_is_satisfied_with_bindings_true_when_satisfied() -> None:
+    """Test a SATISFIED bindings outcome maps to `True`."""
+    constraint = EquationConstraint(LiteralExpression(True))
+
+    assert constraint.is_satisfied_with_bindings({}) is True
+
+
+def test_is_satisfied_with_bindings_false_when_violated() -> None:
+    """Test a VIOLATED bindings outcome maps to `False`."""
+    constraint = EquationConstraint(LiteralExpression(False))
+
+    assert constraint.is_satisfied_with_bindings({}) is False
+
+
+# =============================================================================
+# `repr` / `str`
+# =============================================================================
+
+
+def test_repr_includes_class_name_and_expression() -> None:
+    """Test `repr` includes the class name and the wrapped expression."""
+    expression = LiteralExpression(True)
+    constraint = EquationConstraint(expression)
+
+    rendered = repr(constraint)
+
+    assert "EquationConstraint" in rendered
+    assert repr(expression) in rendered
+
+
+def test_str_matches_expression_pformat() -> None:
+    """Test `str(constraint)` matches `pformat_expression` of the expression."""
+    expression = LiteralExpression(True)
+    constraint = EquationConstraint(expression)
+
+    assert str(constraint) == pformat_expression(expression)
+
+
+# =============================================================================
+# Extra shapes carried over from the retired unary contract
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "expression, bindings, expected_outcome",
     [
         pytest.param(
-            LiteralExpression(True),
-            LiteralExpression(0),
-            True,
-            id="literal_true",
-        ),
-        pytest.param(
-            LiteralExpression(False),
-            LiteralExpression(0),
-            False,
-            id="literal_false",
-        ),
-        pytest.param(
-            IdentifierExpression(mock_identifier("x", 0)),
-            LiteralExpression(True),
-            True,
-            id="variable_substituted_true",
-        ),
-        pytest.param(
-            IdentifierExpression(mock_identifier("x", 0)),
-            LiteralExpression(False),
-            False,
-            id="variable_substituted_false",
-        ),
-        pytest.param(
             UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(True)),
-            LiteralExpression(True),
-            False,
+            {},
+            ConstraintOutcome.VIOLATED,
             id="not_true",
-        ),
-        pytest.param(
-            UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(False)),
-            LiteralExpression(True),
-            True,
-            id="not_false",
-        ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.LOGICAL_AND,
-                LiteralExpression(True),
-                LiteralExpression(True),
-            ),
-            LiteralExpression(True),
-            True,
-            id="and_true_true",
         ),
         pytest.param(
             BinaryExpression(
@@ -75,8 +428,8 @@ from .conftest import mock_identifier
                 LiteralExpression(True),
                 LiteralExpression(False),
             ),
-            LiteralExpression(True),
-            False,
+            {},
+            ConstraintOutcome.VIOLATED,
             id="and_true_false",
         ),
         pytest.param(
@@ -85,29 +438,9 @@ from .conftest import mock_identifier
                 LiteralExpression(True),
                 LiteralExpression(False),
             ),
-            LiteralExpression(0),
-            True,
+            {},
+            ConstraintOutcome.SATISFIED,
             id="or_true_false",
-        ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.LOGICAL_OR,
-                LiteralExpression(False),
-                LiteralExpression(False),
-            ),
-            LiteralExpression(0),
-            False,
-            id="or_false_false",
-        ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.EQUAL,
-                LiteralExpression(True),
-                LiteralExpression(True),
-            ),
-            LiteralExpression(0),
-            True,
-            id="equal_true",
         ),
         pytest.param(
             BinaryExpression(
@@ -115,251 +448,32 @@ from .conftest import mock_identifier
                 LiteralExpression(True),
                 LiteralExpression(False),
             ),
-            LiteralExpression(0),
-            True,
+            {},
+            ConstraintOutcome.SATISFIED,
             id="not_equal_true",
         ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.LESS, LiteralExpression(5), LiteralExpression(10)
-            ),
-            LiteralExpression(0),
-            True,
-            id="less_true",
-        ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.LESS_EQUAL,
-                LiteralExpression(10),
-                LiteralExpression(10),
-            ),
-            LiteralExpression(0),
-            True,
-            id="less_equal_true",
-        ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.GREATER, LiteralExpression(10), LiteralExpression(5)
-            ),
-            LiteralExpression(0),
-            True,
-            id="greater_true",
-        ),
-        pytest.param(
-            BinaryExpression(
-                BinaryOperation.GREATER_EQUAL,
-                LiteralExpression(10),
-                LiteralExpression(10),
-            ),
-            LiteralExpression(0),
-            True,
-            id="greater_equal_true",
-        ),
     ],
 )
-def test_equation_constraint_is_satisfied(
-    expression: object, value: LiteralExpression, expected_outcome: bool
+def test_evaluate_with_bindings_decides_a_variety_of_ground_shapes(
+    expression: Any, bindings: Any, expected_outcome: ConstraintOutcome
 ) -> None:
-    """Test `is_satisfied` evaluates the expression against the substituted value."""
-    x = mock_identifier("x", 0)
-    constraint = EquationConstraint(x, expression)  # type: ignore[arg-type]
+    """Test a variety of ground Boolean-combinator shapes decide correctly."""
+    constraint = EquationConstraint(expression)
 
-    assert constraint.is_satisfied(value) is expected_outcome
-
-
-@pytest.mark.parametrize(
-    "primitive",
-    [
-        pytest.param(0, id="int_zero"),
-        pytest.param(1, id="int_one"),
-        pytest.param(True, id="bool_true"),
-        pytest.param(False, id="bool_false"),
-        pytest.param(1.5, id="float"),
-    ],
-)
-def test_equation_constraint_is_satisfied_accepts_literal_primitive(
-    primitive: int | float | bool,
-) -> None:
-    """Test primitive scalars are auto-wrapped in a `LiteralExpression`."""
-    x = mock_identifier("x", 0)
-    expression = IdentifierExpression(x)
-    constraint = EquationConstraint(x, expression)
-
-    assert constraint.is_satisfied(primitive) == constraint.is_satisfied(
-        LiteralExpression(primitive)
-    )
+    assert constraint.evaluate_with_bindings(bindings) is expected_outcome
 
 
-def test_equation_constraint_call_delegates_to_is_satisfied() -> None:
-    """Test ``constraint(value)`` matches ``constraint.is_satisfied(value)``."""
-    x = mock_identifier("x", 0)
-    constraint = EquationConstraint(x, IdentifierExpression(x))
-    value = LiteralExpression(True)
-
-    assert constraint(value) == constraint.is_satisfied(value)
-
-
-def test_equation_constraint_variable_property_returns_constructor_argument() -> None:
-    """Test the ``variable`` property returns the identifier passed to ``__init__``."""
-    x = mock_identifier("x", 0)
-    constraint = EquationConstraint(x, LiteralExpression(True))
-
-    assert constraint.variable is x
-
-
-def test_equation_constraint_convert_to_expression_returns_inner_expression() -> None:
-    """Test ``convert_to_expression`` returns the wrapped expression unchanged."""
-    x = mock_identifier("x", 0)
-    expression = make_binary_expression(BinaryOperation.EQUAL, x, True)
-    constraint = EquationConstraint(x, expression)
-
-    assert constraint.convert_to_expression().is_structurally_equivalent(expression)
-
-
-def test_equation_constraint_repr_includes_class_name_and_variable() -> None:
-    """Test ``repr`` includes the class name and the constrained variable."""
-    x = mock_identifier("x", 0)
-    expression = LiteralExpression(True)
-    constraint = EquationConstraint(x, expression)
-
-    rendered = repr(constraint)
-
-    assert "EquationConstraint" in rendered
-    assert repr(x) in rendered
-
-
-def test_equation_constraint_str_matches_expression_pformat() -> None:
-    """Test ``str(constraint)`` matches ``pformat_expression`` of the expression."""
-    x = mock_identifier("x", 0)
-    expression = LiteralExpression(True)
-    constraint = EquationConstraint(x, expression)
-
-    assert str(constraint) == pformat_expression(expression)
-
-
-# =============================================================================
-# Adversarial / edge cases
-# =============================================================================
-
-
-def test_equation_constraint_returns_false_for_non_bool_literal_result() -> None:
-    """Test `is_satisfied` rejects numeric-truthy literals as the reduction."""
-    x = mock_identifier("x", 0)
-    constraint = EquationConstraint(x, LiteralExpression(1))
-
-    assert constraint.is_satisfied(LiteralExpression(0)) is False
-
-
-def test_equation_constraint_returns_false_and_logs_when_free_variable_remains(
+def test_evaluate_with_bindings_two_free_identifiers_undecided_when_unbound(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test the indeterminate case returns False and logs a warning."""
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    constraint = EquationConstraint(x, IdentifierExpression(y))
-
-    with caplog.at_level(logging.WARNING, logger="fhy_core.symbolic.constraint"):
-        result = constraint.is_satisfied(LiteralExpression(True))
-
-    assert result is False
-    assert any(record.levelno == logging.WARNING for record in caplog.records), (
-        "expected a WARNING-level log record from fhy_core.symbolic.constraint"
-    )
-
-
-def test_equation_constraint_returns_false_and_logs_when_simplifier_yields_non_literal(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Test a non-reducible expression returns False and emits a single warning."""
-    x = mock_identifier("x", 0)
+    """Test an expression over two free identifiers stays UNDECIDED when unbound."""
     y = mock_identifier("y", 1)
     z = mock_identifier("z", 2)
     expression = logical_and(y, z)
-    constraint = EquationConstraint(x, expression)
+    constraint = EquationConstraint(expression)
 
-    with caplog.at_level(logging.WARNING, logger="fhy_core.symbolic.constraint"):
-        result = constraint.is_satisfied(LiteralExpression(True))
-
-    assert result is False
-    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert warning_records, "expected at least one WARNING log record"
-
-
-def test_equation_constraint_returns_false_without_warning_for_non_bool_literal(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Test a non-bool literal reduction returns False without warning."""
-    x = mock_identifier("x", 0)
-    constraint = EquationConstraint(x, LiteralExpression(1))
-
-    with caplog.at_level(logging.WARNING, logger="fhy_core.symbolic.constraint"):
-        result = constraint.is_satisfied(LiteralExpression(0))
-
-    assert result is False
-    assert not [r for r in caplog.records if r.levelno == logging.WARNING], (
-        "non-bool literal reduction should not emit a warning"
-    )
-
-
-def test_equation_constraint_ignores_value_when_variable_absent_from_expression() -> (
-    None
-):
-    """Test `is_satisfied` ignores the value when the variable is absent."""
-    x = mock_identifier("x", 0)
-    constraint = EquationConstraint(x, LiteralExpression(True))
-
-    assert constraint.is_satisfied(LiteralExpression(0)) is True
-    assert constraint.is_satisfied(LiteralExpression(False)) is True
-
-
-# =============================================================================
-# Tri-state `evaluate` outcomes
-# =============================================================================
-
-
-def test_equation_constraint_evaluate_reports_satisfied_for_bool_true() -> None:
-    """Test `evaluate` reports SATISFIED when the reduction is bool ``True``."""
-    x = mock_identifier("x", 0)
-    constraint = EquationConstraint(x, IdentifierExpression(x))
-
-    assert constraint.evaluate(LiteralExpression(True)) is ConstraintOutcome.SATISFIED
-
-
-def test_equation_constraint_evaluate_reports_violated_for_bool_false() -> None:
-    """Test `evaluate` reports VIOLATED when the reduction is bool ``False``."""
-    x = mock_identifier("x", 0)
-    constraint = EquationConstraint(x, IdentifierExpression(x))
-
-    assert constraint.evaluate(LiteralExpression(False)) is ConstraintOutcome.VIOLATED
-
-
-def test_equation_constraint_evaluate_reports_violated_for_non_bool_literal() -> None:
-    """Test `evaluate` reports VIOLATED when the reduction is a non-bool literal."""
-    x = mock_identifier("x", 0)
-    constraint = EquationConstraint(x, LiteralExpression(1))
-
-    assert constraint.evaluate(LiteralExpression(0)) is ConstraintOutcome.VIOLATED
-
-
-def test_equation_constraint_evaluate_reports_undecided_when_free_variable_remains(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Test the indeterminate case reports UNDECIDED, logs, and rejects.
-
-    The expression references a second free identifier the substitution
-    cannot bind, so the simplifier cannot reduce it to a literal.
-    `evaluate` must report UNDECIDED (and log a warning), while the
-    conservative `is_satisfied` still returns ``False``.
-    """
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    constraint = EquationConstraint(x, IdentifierExpression(y))
-
-    with caplog.at_level(logging.WARNING, logger="fhy_core.symbolic.constraint"):
-        outcome = constraint.evaluate(LiteralExpression(True))
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = constraint.evaluate_with_bindings({})
 
     assert outcome is ConstraintOutcome.UNDECIDED
-    assert constraint.is_satisfied(LiteralExpression(True)) is False
-    assert any(record.levelno == logging.WARNING for record in caplog.records), (
-        "expected a WARNING-level log record from fhy_core.symbolic.constraint"
-    )
+    assert _find_records(caplog, logging.DEBUG)

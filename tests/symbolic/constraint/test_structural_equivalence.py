@@ -9,6 +9,7 @@ from fhy_core.identifier import Identifier
 from fhy_core.serialization import SerializedDict
 from fhy_core.symbolic.constraint import (
     Constraint,
+    ConstraintBindings,
     ConstraintOutcome,
     EquationConstraint,
     InSetConstraint,
@@ -79,11 +80,22 @@ def test_constraint_inequivalent_for_different_variables(
 
 def test_equation_constraint_inequivalent_for_different_expressions() -> None:
     """Test equation constraints with different expressions are inequivalent."""
-    x = mock_identifier("x", 0)
-    left = EquationConstraint(x, LiteralExpression(True))
-    right = EquationConstraint(x, LiteralExpression(False))
+    left = EquationConstraint(LiteralExpression(True))
+    right = EquationConstraint(LiteralExpression(False))
 
     assert not left.is_structurally_equivalent(right)
+
+
+def test_equation_constraint_equivalent_for_ground_expressions_with_no_scope() -> None:
+    """Test two ground equation constraints over the same literal are equivalent.
+
+    Ground constraints have an empty scope; equivalence still has to
+    agree, since they carry no variable to distinguish them by.
+    """
+    left = EquationConstraint(LiteralExpression(True))
+    right = EquationConstraint(LiteralExpression(True))
+
+    assert left.is_structurally_equivalent(right)
 
 
 # =============================================================================
@@ -191,10 +203,11 @@ _TYPE_STRICT_MEMBER_PAIRS = [
 """Member pairs that plain ``==`` on the stored tuples cannot tell apart.
 
 ``(1,) == (True,)`` and ``(1,) == (1.0,)`` are both ``True`` in Python,
-yet membership is type-strict: ``InSetConstraint(x, [1]).evaluate(True)``
-reports ``VIOLATED``. Equivalence has to agree with evaluation, so the
-member field is compared through the type-strict normalizer rather than
-by the stored tuples' own equality.
+yet membership is type-strict:
+``InSetConstraint(x, [1]).evaluate_with_bindings({x: True})`` reports
+``VIOLATED``. Equivalence has to agree with evaluation, so the member
+field is compared through the type-strict normalizer rather than by the
+stored tuples' own equality.
 """
 
 
@@ -247,7 +260,9 @@ def test_set_constraint_equivalence_agrees_with_evaluation_on_member_types(
     left = factory(x, left_members)
     right = factory(x, right_members)
 
-    assert left.evaluate(right_members[0]) is not left.evaluate(left_members[0])
+    assert left.evaluate_with_bindings(
+        {x: right_members[0]}
+    ) is not left.evaluate_with_bindings({x: left_members[0]})
     assert not left.is_structurally_equivalent(right)
 
 
@@ -298,7 +313,7 @@ def test_constraint_inequivalent_across_kinds(
 )
 def test_constraint_inequivalent_against_arbitrary_object(other: object) -> None:
     """Test equivalence against non-`Constraint` objects always returns ``False``."""
-    constraint = EquationConstraint(mock_identifier("x", 0), LiteralExpression(True))
+    constraint = EquationConstraint(LiteralExpression(True))
 
     assert not constraint.is_structurally_equivalent(other)
 
@@ -329,7 +344,13 @@ def test_equivalence_requires_dataclass_constraint_subclass() -> None:
             object.__setattr__(self, "_variable", variable)
 
         @override
-        def evaluate(self, value: object) -> ConstraintOutcome:
+        def get_free_identifiers(self) -> frozenset[Identifier]:
+            return frozenset({self._variable})  # type: ignore[attr-defined]
+
+        @override
+        def evaluate_with_bindings(
+            self, bindings: ConstraintBindings
+        ) -> ConstraintOutcome:
             return ConstraintOutcome.SATISFIED
 
         @override

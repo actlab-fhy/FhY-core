@@ -336,12 +336,8 @@ def test_integer_domain_canonicalizes_zero_included_when_not_non_negative() -> N
 def test_nat_param_serialization_round_trip_preserves_constraints() -> None:
     """Test natural param round-trips through dict serialization with constraints."""
     param = create_natural_param(zero_included=False)
-    param = param.add_constraint(
-        EquationConstraint(param.variable, param.variable_expression >= 1)
-    )
-    param = param.add_constraint(
-        EquationConstraint(param.variable, param.variable_expression <= 10)
-    )
+    param = param.add_constraint(EquationConstraint(param.variable_expression >= 1))
+    param = param.add_constraint(EquationConstraint(param.variable_expression <= 10))
 
     dictionary = param.serialize_to_dict()
     restored: Param[int] = Param.deserialize_from_dict(dictionary)

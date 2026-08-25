@@ -12,7 +12,7 @@ from fhy_core.symbolic.constraint import (
     InSetConstraint,
     NotInSetConstraint,
 )
-from fhy_core.symbolic.expression import LiteralExpression
+from fhy_core.symbolic.expression import IdentifierExpression
 from fhy_core.utils.override import override
 
 from ..conftest import (  # re-exported below
@@ -37,8 +37,8 @@ __all__ = [
 
 
 def build_equation_constraint(variable: Identifier) -> Constraint:
-    """Return a default `EquationConstraint` over ``variable``."""
-    return EquationConstraint(variable, LiteralExpression(True))
+    """Return a default `EquationConstraint` whose scope is ``variable``."""
+    return EquationConstraint(IdentifierExpression(variable))
 
 
 def build_in_set_constraint(variable: Identifier) -> Constraint:
@@ -67,7 +67,13 @@ ALL_KINDS = [
     pytest.param(build_in_set_constraint, id="in_set"),
     pytest.param(build_not_in_set_constraint, id="not_in_set"),
 ]
-"""Parametrize list of single-argument factories for every constraint kind."""
+"""Parametrize list of single-argument factories for every constraint kind.
+
+Each factory takes one identifier and returns a `Constraint` whose scope
+(`get_free_identifiers()`) is exactly that identifier -- for the equation
+factory, by wrapping it in a bare `IdentifierExpression`; for the set
+factories, because a set constraint's variable is always its scope.
+"""
 
 
 class UnhashableTuple(tuple):  # type: ignore[type-arg]
