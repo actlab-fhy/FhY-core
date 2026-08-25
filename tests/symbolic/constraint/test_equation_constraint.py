@@ -25,7 +25,7 @@ from fhy_core.symbolic.expression import (
 
 from .conftest import mock_identifier
 
-_CONSTRAINT_LOGGER = "fhy_core.symbolic.constraint"
+_CONSTRAINT_LOGGER = "fhy_core.symbolic.constraint.core"
 
 
 def _find_records(

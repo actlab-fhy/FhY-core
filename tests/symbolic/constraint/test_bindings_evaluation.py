@@ -33,7 +33,7 @@ from fhy_core.utils.override import override
 
 from .conftest import ALL_KINDS, SET_KINDS, mock_identifier
 
-_CONSTRAINT_LOGGER = "fhy_core.symbolic.constraint"
+_CONSTRAINT_LOGGER = "fhy_core.symbolic.constraint.core"
 
 SET_KINDS_WITH_MEMBER_OUTCOMES = [
     pytest.param(

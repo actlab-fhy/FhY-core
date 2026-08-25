@@ -975,7 +975,8 @@ def test_check_satisfiability_empty_system_does_not_invoke_the_solver(
         raise AssertionError("check_expression_satisfiability must not be called")
 
     monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.check_expression_satisfiability", _fail_if_called
+        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
+        _fail_if_called,
     )
     system = create_constraint_system()
 
@@ -1038,7 +1039,8 @@ def test_check_satisfiability_with_bindings_empty_system_does_not_invoke_the_sol
         raise AssertionError("check_expression_satisfiability must not be called")
 
     monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.check_expression_satisfiability", _fail_if_called
+        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
+        _fail_if_called,
     )
     system = create_constraint_system()
 
@@ -1569,7 +1571,8 @@ def test_check_satisfiability_forwards_timeout_milliseconds_to_the_solver_seam(
         return True
 
     monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.check_expression_satisfiability", _fake_check
+        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
+        _fake_check,
     )
 
     outcome = system.check_satisfiability(
@@ -1601,7 +1604,8 @@ def test_check_satisfiability_with_bindings_forwards_timeout_milliseconds(
         return True
 
     monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.check_expression_satisfiability", _fake_check
+        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
+        _fake_check,
     )
 
     outcome = system.check_satisfiability_with_bindings(
@@ -1639,7 +1643,8 @@ def test_check_satisfiability_solver_unknown_result_is_undecided(
         return None
 
     monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.check_expression_satisfiability", _fake_check
+        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
+        _fake_check,
     )
 
     outcome = system.check_satisfiability({x: SymbolType.INT})
@@ -1670,7 +1675,8 @@ def test_check_satisfiability_with_bindings_solver_unknown_result_is_undecided(
         return None
 
     monkeypatch.setattr(
-        "fhy_core.symbolic.constraint.check_expression_satisfiability", _fake_check
+        "fhy_core.symbolic.constraint.system.check_expression_satisfiability",
+        _fake_check,
     )
 
     outcome = system.check_satisfiability_with_bindings({x: 1}, {y: SymbolType.INT})
@@ -1682,7 +1688,7 @@ def test_check_satisfiability_with_bindings_solver_unknown_result_is_undecided(
 # Reporting the cause of an undecided outcome
 # =============================================================================
 
-_CONSTRAINT_LOGGER = "fhy_core.symbolic.constraint"
+_CONSTRAINT_LOGGER = "fhy_core.symbolic.constraint.system"
 _SOLVER_LOGGER = "fhy_core.symbolic.solver"
 
 

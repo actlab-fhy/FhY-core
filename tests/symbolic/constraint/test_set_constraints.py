@@ -14,7 +14,6 @@ from typing import Any, cast
 
 import pytest
 
-import fhy_core.symbolic.constraint as constraint_module
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.constraint import (
     Constraint,
@@ -23,6 +22,7 @@ from fhy_core.symbolic.constraint import (
     InSetConstraint,
     NotInSetConstraint,
 )
+from fhy_core.symbolic.constraint import core as constraint_core_module
 from fhy_core.traits import FrozenMutationError
 from fhy_core.utils.override import override
 
@@ -633,7 +633,7 @@ def test_set_constraint_reader_does_not_rebuild_the_type_strict_member_set(
     """
     constraint = factory(mock_identifier("x", 0), _MEMBERS)
     rebuild_count = 0
-    build_member_set = constraint_module._wrap_member_collection
+    build_member_set = constraint_core_module._wrap_member_collection
 
     def counting_build_member_set(values: Any) -> Any:
         nonlocal rebuild_count
@@ -641,7 +641,7 @@ def test_set_constraint_reader_does_not_rebuild_the_type_strict_member_set(
         return build_member_set(values)
 
     monkeypatch.setattr(
-        constraint_module, "_wrap_member_collection", counting_build_member_set
+        constraint_core_module, "_wrap_member_collection", counting_build_member_set
     )
 
     read(constraint)
