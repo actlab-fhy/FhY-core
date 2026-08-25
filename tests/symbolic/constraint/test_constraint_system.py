@@ -1683,6 +1683,7 @@ def test_check_satisfiability_with_bindings_solver_unknown_result_is_undecided(
 # =============================================================================
 
 _CONSTRAINT_LOGGER = "fhy_core.symbolic.constraint"
+_SOLVER_LOGGER = "fhy_core.symbolic.solver"
 
 
 def _find_records(
@@ -1693,6 +1694,23 @@ def _find_records(
         record
         for record in caplog.records
         if record.levelno == level and record.name == _CONSTRAINT_LOGGER
+    ]
+
+
+def _find_solver_records(
+    caplog: pytest.LogCaptureFixture, level: int
+) -> list[logging.LogRecord]:
+    """Return the solver seam's records emitted at exactly ``level``.
+
+    The three lowering hazard screens live in ``fhy_core.symbolic.solver``
+    (the seam every satisfiability/implication entry point lowers
+    through), not in this module, so their WARNING is attributed to the
+    solver module's logger rather than the constraint module's.
+    """
+    return [
+        record
+        for record in caplog.records
+        if record.levelno == level and record.name == _SOLVER_LOGGER
     ]
 
 
@@ -1710,14 +1728,14 @@ def test_check_satisfiability_logs_warning_for_the_bool_coercion_hazard(
     x = mock_identifier("x", 0)
     system = create_constraint_system(InSetConstraint(x, {True}))
 
-    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+    with caplog.at_level(logging.DEBUG, logger=_SOLVER_LOGGER):
         outcome = system.check_satisfiability({x: SymbolType.INT})
 
     assert outcome is ConstraintOutcome.UNDECIDED
-    warnings = _find_records(caplog, logging.WARNING)
+    warnings = _find_solver_records(caplog, logging.WARNING)
     assert warnings, "expected a WARNING naming the hazardous node"
     message = warnings[0].getMessage()
-    assert "check_satisfiability" in message
+    assert "check_expression_satisfiability" in message
     assert repr(x) in message
     assert SymbolType.INT.name in message
 
@@ -1729,14 +1747,14 @@ def test_check_satisfiability_with_bindings_logs_warning_for_the_bool_coercion_h
     y = mock_identifier("y", 0)
     system = create_constraint_system(NotInSetConstraint(y, {1}))
 
-    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+    with caplog.at_level(logging.DEBUG, logger=_SOLVER_LOGGER):
         outcome = system.check_satisfiability_with_bindings({y: True}, {})
 
     assert outcome is ConstraintOutcome.UNDECIDED
-    warnings = _find_records(caplog, logging.WARNING)
+    warnings = _find_solver_records(caplog, logging.WARNING)
     assert warnings, "expected a WARNING naming the hazardous node"
     message = warnings[0].getMessage()
-    assert "check_satisfiability_with_bindings" in message
+    assert "check_expression_satisfiability" in message
 
 
 @pytest.mark.z3
@@ -1976,13 +1994,13 @@ def test_check_satisfiability_logs_warning_for_the_division_hazard(
         )
     )
 
-    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+    with caplog.at_level(logging.DEBUG, logger=_SOLVER_LOGGER):
         outcome = system.check_satisfiability({x: SymbolType.REAL})
 
     assert outcome is ConstraintOutcome.UNDECIDED
-    warnings = _find_records(caplog, logging.WARNING)
+    warnings = _find_solver_records(caplog, logging.WARNING)
     assert warnings, "expected a WARNING naming the hazardous division node"
-    assert "check_satisfiability" in warnings[0].getMessage()
+    assert "check_expression_satisfiability" in warnings[0].getMessage()
 
 
 @pytest.mark.z3
@@ -2067,14 +2085,14 @@ def test_check_satisfiability_logs_warning_for_the_int_float_equality_hazard(
         EquationConstraint(make_binary_expression(BinaryOperation.EQUAL, x, 1.5))
     )
 
-    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+    with caplog.at_level(logging.DEBUG, logger=_SOLVER_LOGGER):
         outcome = system.check_satisfiability({x: SymbolType.INT})
 
     assert outcome is ConstraintOutcome.UNDECIDED
-    warnings = _find_records(caplog, logging.WARNING)
+    warnings = _find_solver_records(caplog, logging.WARNING)
     assert warnings, "expected a WARNING naming the hazardous node"
     message = warnings[0].getMessage()
-    assert "check_satisfiability" in message
+    assert "check_expression_satisfiability" in message
     assert repr(x) in message
 
 
@@ -2238,13 +2256,13 @@ def test_check_implication_logs_warning_for_a_hazardous_side(
     antecedent = create_constraint_system(InSetConstraint(x, {True}))
     consequent = create_constraint_system(InSetConstraint(x, {1}))
 
-    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+    with caplog.at_level(logging.DEBUG, logger=_SOLVER_LOGGER):
         outcome = antecedent.check_implication(consequent, {x: SymbolType.INT})
 
     assert outcome is ConstraintOutcome.UNDECIDED
-    warnings = _find_records(caplog, logging.WARNING)
+    warnings = _find_solver_records(caplog, logging.WARNING)
     assert warnings, "expected a WARNING naming the hazardous node"
-    assert "check_implication" in warnings[0].getMessage()
+    assert "does_expression_imply" in warnings[0].getMessage()
 
 
 @pytest.mark.z3

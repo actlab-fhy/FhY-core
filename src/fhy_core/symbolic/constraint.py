@@ -53,12 +53,13 @@ canonically ordered conjunction of constraints, possibly spanning several
 identifiers, with joint-satisfiability and entailment checking backed by
 ``fhy_core.symbolic.solver``. It is not a ``Constraint`` subclass -- joint
 satisfiability is a property of a collection, not of any single
-predicate. Its solver-backed entry points screen the lowered expression
-for three hazard classes the Z3 bridge cannot lower soundly -- Boolean
-operands in a numeric context, division/floor-division/modulo by a
-possibly-zero divisor, and an ``EQUAL``/``NOT_EQUAL`` comparison mixing
-an INT-sorted operand with a float-valued literal -- reporting
-``UNDECIDED`` instead of a decided outcome the lowering cannot support.
+predicate. Its solver-backed entry points report ``UNDECIDED`` instead of
+a decided outcome for three hazard classes the Z3 bridge cannot lower
+soundly -- Boolean operands in a numeric context,
+division/floor-division/modulo by a possibly-zero divisor, and an
+``EQUAL``/``NOT_EQUAL`` comparison mixing an INT-sorted operand with a
+float-valued literal -- because ``fhy_core.symbolic.solver`` screens the
+lowered expression for those shapes before it ever reaches Z3.
 """
 
 from fhy_core.utils.override import override
@@ -119,7 +120,7 @@ from fhy_core.term import (
     compared_as_value,
 )
 from fhy_core.traits import FrozenMixin
-from fhy_core.utils import format_comma_separated_list, is_strict_int
+from fhy_core.utils import format_comma_separated_list
 
 from .expression import (
     BinaryExpression,
@@ -129,9 +130,7 @@ from .expression import (
     IdentifierExpression,
     LiteralExpression,
     LiteralType,
-    PiecewiseExpression,
     UnaryExpression,
-    UnaryOperation,
     make_binary_expression,
     pformat_expression,
 )
@@ -1242,482 +1241,31 @@ def _validate_symbol_types_cover_both_sides(
     _raise_if_missing_symbol_types(free_identifiers - set(symbol_types))
 
 
-class _LoweredSort(Enum):
-    """Z3 sort an expression node lowers to, as far as it can be determined.
-
-    ``UNDETERMINED`` covers the nodes whose lowered sort this module
-    cannot read off the tree: an identifier with no ``symbol_types``
-    entry, a call (which the Z3 bridge refuses outright), an unrecognized
-    ``Expression`` subclass, and a piecewise whose branches disagree.
-    """
-
-    BOOLEAN = auto()
-    NUMERIC = auto()
-    UNDETERMINED = auto()
-
-
-_NUMERIC_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
-    {
-        BinaryOperation.ADD,
-        BinaryOperation.SUBTRACT,
-        BinaryOperation.MULTIPLY,
-        BinaryOperation.DIVIDE,
-        BinaryOperation.FLOOR_DIVIDE,
-        BinaryOperation.MODULO,
-        BinaryOperation.POWER,
-    }
-)
-"""Binary operations the Z3 bridge lowers to arithmetic on a numeric sort."""
-
-_COMPARISON_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
-    {
-        BinaryOperation.EQUAL,
-        BinaryOperation.NOT_EQUAL,
-        BinaryOperation.LESS,
-        BinaryOperation.LESS_EQUAL,
-        BinaryOperation.GREATER,
-        BinaryOperation.GREATER_EQUAL,
-    }
-)
-"""Binary operations the Z3 bridge lowers to a comparison of two operands."""
-
-_LOGICAL_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
-    {BinaryOperation.LOGICAL_AND, BinaryOperation.LOGICAL_OR}
-)
-"""Binary operations the Z3 bridge lowers to ``z3.And``/``z3.Or``."""
-
-
-# One early return per node kind reads clearest here; the alternative is a
-# lookup table that would have to be threaded through `symbol_types` anyway.
-def _classify_lowered_sort(  # noqa: PLR0911
-    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
-) -> _LoweredSort:
-    """Return the Z3 sort ``expression`` lowers to, per ``passes.z3``.
-
-    Mirrors ``ExpressionToZ3Converter``: a ``bool``-valued literal becomes
-    a ``BoolVal`` and every other literal an ``IntVal``/``RealVal``; an
-    identifier takes the sort named by its ``symbol_types`` entry; a
-    comparison, a logical operation, and a logical negation are Boolean;
-    arithmetic is numeric; a piecewise takes the sort its branches agree
-    on.
-
-    Args:
-        expression: Node whose lowered sort is wanted.
-        symbol_types: Z3 sort for each identifier of the enclosing
-            expression.
-
-    Returns:
-        The node's ``_LoweredSort``.
-
-    """
-    if isinstance(expression, LiteralExpression):
-        if type(expression.value) is bool:
-            return _LoweredSort.BOOLEAN
-        return _LoweredSort.NUMERIC
-    elif isinstance(expression, IdentifierExpression):
-        symbol_type = symbol_types.get(expression.identifier)
-        if symbol_type is SymbolType.BOOL:
-            return _LoweredSort.BOOLEAN
-        elif symbol_type is None:
-            return _LoweredSort.UNDETERMINED
-        return _LoweredSort.NUMERIC
-    elif isinstance(expression, BinaryExpression):
-        if expression.operation in _NUMERIC_BINARY_OPERATIONS:
-            return _LoweredSort.NUMERIC
-        elif expression.operation in (
-            _COMPARISON_BINARY_OPERATIONS | _LOGICAL_BINARY_OPERATIONS
-        ):
-            return _LoweredSort.BOOLEAN
-        return _LoweredSort.UNDETERMINED
-    elif isinstance(expression, UnaryExpression):
-        if expression.operation is UnaryOperation.LOGICAL_NOT:
-            return _LoweredSort.BOOLEAN
-        return _LoweredSort.NUMERIC
-    elif isinstance(expression, PiecewiseExpression):
-        return _join_lowered_sorts(
-            _classify_lowered_sort(branch, symbol_types)
-            for branch in (*expression.values, expression.otherwise)
-        )
-    elif isinstance(expression, CallExpression):
-        return _LoweredSort.UNDETERMINED
-    return _LoweredSort.UNDETERMINED
-
-
-def _join_lowered_sorts(sorts: Iterator[_LoweredSort]) -> _LoweredSort:
-    """Return the sort every input agrees on, or ``UNDETERMINED`` if they differ."""
-    distinct = set(sorts)
-    if len(distinct) == 1:
-        return distinct.pop()
-    return _LoweredSort.UNDETERMINED
-
-
-def _does_node_coerce_a_bool_operand(
-    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
-) -> bool:
-    """Return whether this one node makes Z3 coerce a Boolean operand to an integer.
-
-    The Z3 Python bindings rewrite a Boolean operand of a numeric context
-    into ``If(b, 1, 0)``: ``True`` becomes ``1`` and ``False`` becomes
-    ``0``. That collapses the type-strict distinction this module's
-    ``evaluate``/``evaluate_with_bindings`` preserve, so a decided outcome
-    read back through such a lowering can be provably wrong.
-
-    Three contexts coerce:
-
-    - An arithmetic operation with any Boolean operand.
-    - A comparison whose two operands mix a Boolean and a numeric sort. A
-      comparison of two Booleans lowers faithfully and is not flagged.
-    - A piecewise whose branch values mix a Boolean and a numeric sort,
-      since ``z3.If`` forces its two arms to a single sort.
-
-    ``z3.And``/``z3.Or``/``z3.Not`` and unary arithmetic negation do not
-    coerce: they raise on an operand of the wrong sort rather than
-    silently reinterpreting it, so a Boolean there is either correct or
-    already an error.
-
-    Args:
-        expression: Node to screen. Children are not visited.
-        symbol_types: Z3 sort for each identifier of the enclosing
-            expression.
-
-    Returns:
-        True if this node's own lowering coerces a Boolean operand.
-
-    """
-    if isinstance(expression, BinaryExpression):
-        operand_sorts = {
-            _classify_lowered_sort(operand, symbol_types)
-            for operand in expression.get_operands()
-        }
-        if expression.operation in _NUMERIC_BINARY_OPERATIONS:
-            return _LoweredSort.BOOLEAN in operand_sorts
-        elif expression.operation in _COMPARISON_BINARY_OPERATIONS:
-            return operand_sorts >= {_LoweredSort.BOOLEAN, _LoweredSort.NUMERIC}
-        return False
-    elif isinstance(expression, PiecewiseExpression):
-        branch_sorts = {
-            _classify_lowered_sort(branch, symbol_types)
-            for branch in (*expression.values, expression.otherwise)
-        }
-        return branch_sorts >= {_LoweredSort.BOOLEAN, _LoweredSort.NUMERIC}
-    return False
-
-
-def _find_bool_sort_hazard(
-    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
-) -> Expression | None:
-    """Return the first node of ``expression`` that coerces a Boolean operand.
-
-    Screens the tree that is actually handed to the solver, so the check
-    covers every way a ``BoolVal`` can reach a numeric context: a ``bool``
-    set member, a ``bool`` literal written into an equation, and a
-    ``bool`` binding value substituted in before the check. The screen is
-    per-site: a Boolean literal consumed by a logical operation leaves the
-    rest of the tree decidable.
-
-    Args:
-        expression: Lowered conjunction, or the residual left after
-            substituting bindings into it.
-        symbol_types: Z3 sort for each free identifier of ``expression``.
-
-    Returns:
-        The offending node, or ``None`` when every node lowers faithfully.
-        The node is returned rather than a flag so the caller can name the
-        site it refused to lower.
-
-    """
-    if _does_node_coerce_a_bool_operand(expression, symbol_types):
-        return expression
-    for child in expression.get_visit_children():
-        hazard = _find_bool_sort_hazard(child, symbol_types)
-        if hazard is not None:
-            return hazard
-    return None
-
-
-def _render_identifier_sorts(
-    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
-) -> str:
-    """Return each free identifier of ``expression`` paired with its declared sort.
-
-    Args:
-        expression: Node whose free identifiers are described.
-        symbol_types: Z3 sort for each free identifier.
-
-    Returns:
-        A comma-separated ``identifier: SORT`` listing, ordered by
-        identifier id; ``"none"`` when the node has no free identifier,
-        and ``"unknown"`` in place of a sort ``symbol_types`` does not
-        carry.
-
-    """
-    identifiers = sorted(
-        expression.get_free_identifiers(), key=lambda identifier: identifier.id
-    )
-    if not identifiers:
-        return "none"
-    rendered: list[str] = []
-    for identifier in identifiers:
-        symbol_type = symbol_types.get(identifier)
-        sort_name = "unknown" if symbol_type is None else symbol_type.name
-        rendered.append(f"{identifier!r}: {sort_name}")
-    return format_comma_separated_list(rendered)
-
-
-_DIVISION_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
-    {BinaryOperation.DIVIDE, BinaryOperation.FLOOR_DIVIDE, BinaryOperation.MODULO}
-)
-"""Binary operations whose right operand is a divisor that can be zero."""
-
-
-def _is_safe_divisor(node: Expression) -> bool:
-    """Return whether ``node`` is provably a nonzero strict-int-or-float literal.
-
-    A ``bool`` value and a string-form literal are not safe divisors:
-    neither carries the provably-nonzero, strict-int-or-float guarantee
-    the division hazard screen requires, even when the string is
-    numeric-looking (e.g. ``"5"``).
-
-    """
-    if not isinstance(node, LiteralExpression):
-        return False
-    value = node.value
-    if is_strict_int(value) or isinstance(value, float):
-        return value != 0
-    return False
-
-
-def _does_node_divide_by_a_possibly_zero_operand(expression: Expression) -> bool:
-    """Return whether this one node divides by an operand that could be zero."""
-    return (
-        isinstance(expression, BinaryExpression)
-        and expression.operation in _DIVISION_BINARY_OPERATIONS
-        and not _is_safe_divisor(expression.right)
-    )
-
-
-def _find_division_hazard(expression: Expression) -> Expression | None:
-    """Return the first node of ``expression`` that divides by a possibly-zero operand.
-
-    Screens the whole tree, mirroring ``_find_bool_sort_hazard``: a
-    ``DIVIDE``/``FLOOR_DIVIDE``/``MODULO`` node whose divisor is not
-    provably a nonzero literal is refused, since the solver seam's
-    satisfiability encoding for division around a zero divisor is
-    unsound.
-
-    Args:
-        expression: Lowered conjunction, or the residual left after
-            substituting bindings into it.
-
-    Returns:
-        The offending node, or ``None`` when every division in the tree
-        divides by a provably nonzero literal.
-
-    """
-    if _does_node_divide_by_a_possibly_zero_operand(expression):
-        return expression
-    for child in expression.get_visit_children():
-        hazard = _find_division_hazard(child)
-        if hazard is not None:
-            return hazard
-    return None
-
-
-def _is_float_valued_literal(node: Expression) -> bool:
-    """Return whether ``node`` is a ``LiteralExpression`` in the float bucket.
-
-    Covers a Python ``float`` value and a float-grammar string-form
-    literal (e.g. ``"1.5"``); a ``bool``/``int`` value and an
-    integer-grammar string are not in the float bucket.
-
-    """
-    if not isinstance(node, LiteralExpression):
-        return False
-    value = node.value
-    if isinstance(value, float):
-        return True
-    return isinstance(value, str) and "." in value
-
-
-def _is_int_sorted_operand(
-    node: Expression, symbol_types: Mapping[Identifier, SymbolType]
-) -> bool:
-    """Return whether ``node`` is an INT-typed identifier or a strict-int literal."""
-    if isinstance(node, IdentifierExpression):
-        return symbol_types.get(node.identifier) is SymbolType.INT
-    return isinstance(node, LiteralExpression) and is_strict_int(node.value)
-
-
-def _does_node_mix_int_and_float_equality(
-    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
-) -> bool:
-    """Return whether this node's ``EQUAL``/``NOT_EQUAL`` mixes INT and float sorts."""
-    if not (
-        isinstance(expression, BinaryExpression)
-        and expression.operation in (BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL)
-    ):
-        return False
-    left, right = expression.left, expression.right
-    return (
-        _is_float_valued_literal(left) and _is_int_sorted_operand(right, symbol_types)
-    ) or (
-        _is_float_valued_literal(right) and _is_int_sorted_operand(left, symbol_types)
-    )
-
-
-def _find_int_float_equality_hazard(
-    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
-) -> Expression | None:
-    """Return the first node comparing an INT-sorted operand to a float literal.
-
-    Z3's ``ToReal`` rationalization of the INT-sorted operand collapses
-    this package's type-strict int/float distinction, so an ``EQUAL``/
-    ``NOT_EQUAL`` node mixing the two is refused. Ordering comparisons
-    (``<``, ``<=``, ``>``, ``>=``) are not screened: mixed-sort ordering
-    stays mathematically meaningful.
-
-    Args:
-        expression: Lowered conjunction, or the residual left after
-            substituting bindings into it.
-        symbol_types: Z3 sort for each free identifier of ``expression``.
-
-    Returns:
-        The offending node, or ``None`` when no ``EQUAL``/``NOT_EQUAL``
-        node mixes an INT-sorted operand with a float-valued literal.
-
-    """
-    if _does_node_mix_int_and_float_equality(expression, symbol_types):
-        return expression
-    for child in expression.get_visit_children():
-        hazard = _find_int_float_equality_hazard(child, symbol_types)
-        if hazard is not None:
-            return hazard
-    return None
-
-
-def _log_bool_coercion_hazard(
-    hazard: Expression,
-    symbol_types: Mapping[Identifier, SymbolType],
-    *,
-    context: str,
-) -> None:
-    _LOGGER.warning(
-        "%s: node %r lowers a Boolean operand into a numeric context, where "
-        "the Z3 bindings rewrite it to If(b, 1, 0) and collapse this "
-        "package's type-strict semantics; identifier sorts at that node: "
-        "%s. The expression is not handed to the solver and the check "
-        "reports UNDECIDED; bounding timeout_milliseconds cannot change "
-        "this outcome.",
-        context,
-        hazard,
-        _render_identifier_sorts(hazard, symbol_types),
-    )
-
-
-def _log_division_hazard(hazard: Expression, *, context: str) -> None:
-    _LOGGER.warning(
-        "%s: node %r divides by an operand that is not provably a nonzero "
-        "literal, and the solver seam's satisfiability encoding for "
-        "division around a possibly-zero divisor is unsound. The "
-        "expression is not handed to the solver and the check reports "
-        "UNDECIDED; bounding timeout_milliseconds cannot change this "
-        "outcome.",
-        context,
-        hazard,
-    )
-
-
-def _log_int_float_equality_hazard(
-    hazard: Expression,
-    symbol_types: Mapping[Identifier, SymbolType],
-    *,
-    context: str,
-) -> None:
-    _LOGGER.warning(
-        "%s: node %r compares an INT-sorted operand against a float-valued "
-        "literal with EQUAL/NOT_EQUAL, where the Z3 bridge's ToReal "
-        "rationalization of the INT-sorted side collapses this package's "
-        "type-strict int/float distinction; identifier sorts at that "
-        "node: %s. The expression is not handed to the solver and the "
-        "check reports UNDECIDED; bounding timeout_milliseconds cannot "
-        "change this outcome.",
-        context,
-        hazard,
-        _render_identifier_sorts(hazard, symbol_types),
-    )
-
-
-def _find_and_log_hazard(
-    expression: Expression,
-    symbol_types: Mapping[Identifier, SymbolType],
-    *,
-    context: str,
-) -> bool:
-    """Screen ``expression`` for a hazard the solver seam cannot lower soundly.
-
-    Checks, in order, the Boolean-coercion hazard, the
-    division-by-possibly-zero hazard, and the int/float ``EQUAL``/
-    ``NOT_EQUAL`` sort-mixing hazard; the first one found is logged at
-    ``WARNING`` and short-circuits the remaining checks.
-
-    Args:
-        expression: Lowered conjunction, or the residual left after
-            substituting bindings into it.
-        symbol_types: Z3 sort for each free identifier of ``expression``.
-        context: Public method name the outcome is reported under, used
-            to attribute the warning.
-
-    Returns:
-        True if a hazard was found (and logged); False if ``expression``
-        lowers soundly.
-
-    """
-    hazard = _find_bool_sort_hazard(expression, symbol_types)
-    if hazard is not None:
-        _log_bool_coercion_hazard(hazard, symbol_types, context=context)
-        return True
-    hazard = _find_division_hazard(expression)
-    if hazard is not None:
-        _log_division_hazard(hazard, context=context)
-        return True
-    hazard = _find_int_float_equality_hazard(expression, symbol_types)
-    if hazard is not None:
-        _log_int_float_equality_hazard(hazard, symbol_types, context=context)
-        return True
-    return False
-
-
 def _decide_satisfiability(
     expression: Expression,
     symbol_types: Mapping[Identifier, SymbolType],
     *,
-    context: str,
     timeout_milliseconds: int | None = None,
 ) -> ConstraintOutcome:
     """Classify satisfiability of ``expression`` via the solver seam.
 
-    Validates the caller's symbol types first, then screens the
-    expression for the three hazard classes documented on
-    ``ConstraintSystem``, and only then consults the solver. The
-    precondition therefore raises whether or not the expression is
-    hazardous, and a hazardous expression reports ``UNDECIDED`` instead of
-    a decided outcome the lowering cannot support. A hazard is logged at
-    ``WARNING`` through the module logger: it is a gap in what the Z3
-    bridge can express, not the routine partial evaluation that
-    ``evaluate_with_bindings`` reports at ``DEBUG``, and no solver setting
-    the caller can reach will turn it into a decided answer.
+    Validates the caller's symbol types, then consults
+    ``fhy_core.symbolic.solver.check_expression_satisfiability``. That
+    seam function screens the expression for the three hazard classes
+    documented on ``ConstraintSystem`` before it ever reaches Z3, so
+    ``None`` from the seam -- whether from a screened hazard or an
+    inconclusive solver -- maps here to ``UNDECIDED``.
 
     Args:
         expression: Expression to decide.
         symbol_types: Z3 sort for each free identifier of ``expression``.
-        context: Public method name the outcome is reported under, used to
-            attribute the warning.
         timeout_milliseconds: Optional bound, in milliseconds, on the
             solver invocation.
 
     Returns:
-        ``SATISFIED``/``VIOLATED`` when the solver decides,
-        ``UNDECIDED`` on a hazardous lowering or an inconclusive solver.
+        ``SATISFIED``/``VIOLATED`` when the solver decides, ``UNDECIDED``
+        when the seam screens the expression as hazardous or the solver
+        is inconclusive.
 
     Raises:
         MissingSymbolTypeError: If ``symbol_types`` lacks an entry for a
@@ -1725,8 +1273,6 @@ def _decide_satisfiability(
 
     """
     _validate_symbol_types_cover_free_identifiers(expression, symbol_types)
-    if _find_and_log_hazard(expression, symbol_types, context=context):
-        return ConstraintOutcome.UNDECIDED
     satisfiable = check_expression_satisfiability(
         expression,
         dict(symbol_types),
@@ -1920,13 +1466,15 @@ class ConstraintSystem(
     semantics, and avoid using ``ConstraintSystem`` instances as dict keys
     when you expect value-based lookups.
 
-    All satisfiability and implication entry points screen the lowered
-    expression for three hazard classes before consulting the solver,
-    reporting ``UNDECIDED`` (with a ``WARNING`` log) instead of a decided
-    outcome the lowering cannot support: Boolean operands in numeric
-    contexts; division/floor-division/modulo whose divisor is not a
-    nonzero literal; and ``EQUAL``/``NOT_EQUAL`` mixing an INT-sorted
-    operand with a float-valued literal.
+    All satisfiability and implication entry points report ``UNDECIDED``
+    instead of a decided outcome for three hazard classes: Boolean
+    operands in numeric contexts; division/floor-division/modulo whose
+    divisor is not a nonzero literal; and ``EQUAL``/``NOT_EQUAL`` mixing
+    an INT-sorted operand with a float-valued literal. The screen for
+    these hazards lives in ``fhy_core.symbolic.solver``, the seam every
+    entry point below lowers through, and it logs a ``WARNING`` (naming
+    the seam function and the offending node) before the outcome is
+    reported as undecided.
 
     """
 
@@ -2032,18 +1580,19 @@ class ConstraintSystem(
         The empty system returns ``SATISFIED`` without invoking the
         solver.
 
-        Limitation: the lowered conjunction is screened for the three
-        hazard classes documented on this class before the solver is
-        consulted, and a hazardous conjunction returns ``UNDECIDED``
-        rather than a provably-wrong decided outcome. The Boolean-coercion
-        hazard is a ``BoolVal`` reaching a numeric context -- an
-        arithmetic operand, one side of a comparison whose other side is
-        numeric, or a piecewise branch facing a numeric sibling -- where
-        the Z3 Python bindings silently rewrite it to ``If(b, 1, 0)`` and
-        collapse this package's type-strict semantics. That covers a
-        ``bool`` set member, a ``bool`` literal written into an equation,
-        and a ``SymbolType.BOOL`` variable compared against a numeric
-        literal. The screen is per-site: a ``bool`` literal consumed by
+        Limitation: ``fhy_core.symbolic.solver`` screens the lowered
+        conjunction for the three hazard classes documented on this class
+        before the solver is consulted, and a hazardous conjunction
+        returns ``UNDECIDED`` rather than a provably-wrong decided
+        outcome. The Boolean-coercion hazard is a ``BoolVal`` reaching a
+        numeric context -- an arithmetic operand, one side of a
+        comparison whose other side is numeric, or a piecewise branch
+        facing a numeric sibling -- where the Z3 Python bindings silently
+        rewrite it to ``If(b, 1, 0)`` and collapse this package's
+        type-strict semantics. That covers a ``bool`` set member, a
+        ``bool`` literal written into an equation, and a
+        ``SymbolType.BOOL`` variable compared against a numeric literal.
+        The screen is per-site: a ``bool`` literal consumed by
         ``logical_and``/``logical_or``/``logical_not``, or standing alone
         as the whole expression, lowers faithfully and stays decidable.
 
@@ -2063,9 +1612,9 @@ class ConstraintSystem(
         Raises:
             MissingSymbolTypeError: If ``symbol_types`` lacks an entry for
                 a free identifier of the lowered conjunction. Checked
-                ahead of the hazard screen, so the precondition raises
-                even for a conjunction that would otherwise be reported
-                ``UNDECIDED``. This is a raise, not the
+                ahead of the seam's hazard screen, so the precondition
+                raises even for a conjunction that would otherwise be
+                reported ``UNDECIDED``. This is a raise, not the
                 ``ConstraintOutcome.UNDECIDED`` degradation
                 ``evaluate_with_bindings`` uses for a missing *value*
                 binding: a missing symbol type is a caller precondition
@@ -2086,7 +1635,6 @@ class ConstraintSystem(
         return _decide_satisfiability(
             self.convert_to_expression(),
             symbol_types,
-            context="ConstraintSystem.check_satisfiability",
             timeout_milliseconds=timeout_milliseconds,
         )
 
@@ -2106,12 +1654,12 @@ class ConstraintSystem(
         form "given x = 4, can y and z still be chosen?".
 
         Limitation: the same three hazard classes documented on this class
-        apply here, screened against the residual rather than the
-        original conjunction. Substitution is therefore part of the
-        screen: a ``bool`` binding value lands in the residual exactly as
-        a ``bool`` set member does and is screened the same way, while
-        binding a variable to a value of the matching sort can retire a
-        hazard the unsubstituted conjunction had.
+        apply here; ``fhy_core.symbolic.solver`` screens the residual
+        rather than the original conjunction. Substitution is therefore
+        part of the screen: a ``bool`` binding value lands in the
+        residual exactly as a ``bool`` set member does and is screened
+        the same way, while binding a variable to a value of the matching
+        sort can retire a hazard the unsubstituted conjunction had.
 
         Args:
             bindings: Partial assignment substituted into the conjunction
@@ -2127,8 +1675,8 @@ class ConstraintSystem(
         Raises:
             MissingSymbolTypeError: If ``symbol_types`` lacks an entry for
                 a free identifier of the residual expression left after
-                substitution. Checked ahead of the hazard screen, so the
-                precondition raises even for a residual that would
+                substitution. Checked ahead of the seam's hazard screen,
+                so the precondition raises even for a residual that would
                 otherwise be reported ``UNDECIDED``. Contrast a missing
                 entry in ``bindings`` itself: an identifier ``bindings``
                 does not cover is left free in the residual rather than
@@ -2155,7 +1703,6 @@ class ConstraintSystem(
         return _decide_satisfiability(
             residual,
             symbol_types,
-            context="ConstraintSystem.check_satisfiability_with_bindings",
             timeout_milliseconds=timeout_milliseconds,
         )
 
@@ -2169,13 +1716,13 @@ class ConstraintSystem(
         """Return whether every assignment satisfying ``self`` satisfies ``other``.
 
         The system-level entailment seam: both sides are lowered via
-        ``convert_to_expression``, the three hazard classes documented on
-        this class are screened against both lowered sides, and only then
-        is the solver consulted through
-        ``fhy_core.symbolic.solver.does_expression_imply``. ``SATISFIED``
-        when entailment is proven, ``VIOLATED`` when a counterexample
-        assignment provably exists, ``UNDECIDED`` on a screened hazard or
-        an inconclusive solver.
+        ``convert_to_expression`` and passed to
+        ``fhy_core.symbolic.solver.does_expression_imply``, which screens
+        both lowered sides for the three hazard classes documented on
+        this class before consulting the solver. ``SATISFIED`` when
+        entailment is proven, ``VIOLATED`` when a counterexample
+        assignment provably exists, ``UNDECIDED`` on a screened hazard on
+        either side or an inconclusive solver.
 
         Args:
             other: Candidate consequence system.
@@ -2193,9 +1740,9 @@ class ConstraintSystem(
         Raises:
             MissingSymbolTypeError: If ``symbol_types`` lacks an entry for
                 a free identifier of either side's lowered expression.
-                Checked ahead of the hazard screens, so the precondition
-                raises even for a pair that would otherwise be reported
-                ``UNDECIDED``.
+                Checked ahead of the seam's hazard screens, so the
+                precondition raises even for a pair that would otherwise
+                be reported ``UNDECIDED``.
             ConstraintError: If a member of either side cannot be
                 converted to an expression.
             ValueError: If ``timeout_milliseconds`` is not None and not
@@ -2207,11 +1754,6 @@ class ConstraintSystem(
         antecedent = self.convert_to_expression()
         consequent = other.convert_to_expression()
         _validate_symbol_types_cover_both_sides(antecedent, consequent, symbol_types)
-        context = "ConstraintSystem.check_implication"
-        if _find_and_log_hazard(
-            antecedent, symbol_types, context=context
-        ) or _find_and_log_hazard(consequent, symbol_types, context=context):
-            return ConstraintOutcome.UNDECIDED
         holds = does_expression_imply(
             antecedent,
             consequent,
