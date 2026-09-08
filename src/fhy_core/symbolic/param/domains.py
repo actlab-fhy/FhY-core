@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from fhy_core.identifier import Identifier
+from fhy_core.logger import get_logger
 from fhy_core.serialization import (
     FieldCodec,
     SerializedValue,
@@ -81,6 +82,8 @@ __all__ = [
     "compute_constraint_implication_subset",
 ]
 
+_LOGGER = get_logger(__name__)
+
 
 def are_all_constraints_satisfied(
     constraints: Sequence[Constraint], variable: Identifier, value: Any
@@ -103,7 +106,7 @@ def _is_value_valid_for(
     )
 
 
-def _numeric_in_set_candidates(constraints: Sequence[Constraint]) -> list[Any]:
+def _compute_numeric_in_set_candidates(constraints: Sequence[Constraint]) -> list[Any]:
     """Return the type-strict intersection of every ``InSetConstraint``'s members.
 
     Assumes ``constraints`` contains at least one ``InSetConstraint``. Starts
@@ -151,18 +154,28 @@ def _enumerate_feasible_in_set_candidates(
     against the conjunction of ``constraints``'s equation constraints is
     ``SATISFIED`` or ``UNDECIDED`` (the documented optimistic default for
     an undecided candidate, e.g. one a dependent constraint leaves
-    unresolved); a ``VIOLATED`` candidate is excluded. Assumes
-    ``constraints`` contains at least one ``InSetConstraint``.
+    unresolved, logged at ``WARNING``); a ``VIOLATED`` candidate is
+    excluded. Assumes ``constraints`` contains at least one
+    ``InSetConstraint``.
 
     """
     equation_system = _build_equation_constraint_system(constraints)
     feasible: list[Any] = []
-    for candidate in _numeric_in_set_candidates(constraints):
+    for candidate in _compute_numeric_in_set_candidates(constraints):
         if not domain.is_value_admissible(candidate):
             continue
         outcome = equation_system.evaluate_with_bindings({variable: candidate})
-        if outcome is not ConstraintOutcome.VIOLATED:
-            feasible.append(candidate)
+        if outcome is ConstraintOutcome.VIOLATED:
+            continue
+        if outcome is ConstraintOutcome.UNDECIDED:
+            _LOGGER.warning(
+                "_enumerate_feasible_in_set_candidates: equation constraints "
+                "could not decide candidate %r for variable %r; optimistically "
+                "treating it as feasible.",
+                candidate,
+                variable,
+            )
+        feasible.append(candidate)
     return feasible
 
 
@@ -177,7 +190,7 @@ def _is_candidate_accepted_by_other_side(
     Set-constraint membership checks are type-strict. A ``VIOLATED``
     equation-constraint outcome rejects the candidate; ``UNDECIDED``
     follows this module's optimistic convention and is treated as
-    accepted.
+    accepted (logged at ``WARNING``).
 
     """
     if not other_domain.is_value_admissible(candidate):
@@ -191,7 +204,149 @@ def _is_candidate_accepted_by_other_side(
                 return False
     equation_system = _build_equation_constraint_system(other_constraints)
     outcome = equation_system.evaluate_with_bindings({other_variable: candidate})
+    if outcome is ConstraintOutcome.UNDECIDED:
+        _LOGGER.warning(
+            "_is_candidate_accepted_by_other_side: equation constraints could "
+            "not decide candidate %r for variable %r; optimistically treating "
+            "it as accepted.",
+            candidate,
+            other_variable,
+        )
     return outcome is not ConstraintOutcome.VIOLATED
+
+
+def _split_not_in_set_members_by_liftability(
+    constraint: NotInSetConstraint,
+) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+    """Split ``constraint``'s members into liftable and non-liftable groups.
+
+    A member is liftable when a singleton ``NotInSetConstraint`` built
+    from it alone converts to an expression without raising.
+
+    Args:
+        constraint: The not-in-set constraint whose members to split.
+
+    Returns:
+        A ``(liftable, excluded)`` pair of member tuples, in the order
+        ``constraint.members`` iterates them.
+
+    """
+    liftable: list[Any] = []
+    excluded: list[Any] = []
+    for member in constraint.members:
+        try:
+            NotInSetConstraint(constraint.variable, {member}).convert_to_expression()
+        except ConstraintError:
+            excluded.append(member)
+        else:
+            liftable.append(member)
+    return tuple(liftable), tuple(excluded)
+
+
+def _log_set_constraint_scope_exclusion(
+    constraint: InSetConstraint | NotInSetConstraint, variable: Identifier
+) -> None:
+    """Log a WARNING that constraint is excluded for being scoped elsewhere."""
+    _LOGGER.warning(
+        "_build_screened_constraint_system: excluding %r from the "
+        "screened system for variable %r; it is scoped to %r "
+        "instead.",
+        constraint,
+        variable,
+        constraint.variable,
+    )
+
+
+def _screen_equation_constraint(
+    constraint: EquationConstraint, variable: Identifier
+) -> EquationConstraint | None:
+    """Return constraint if its scope is exactly ``{variable}``, else None.
+
+    A dependent constraint whose scope reaches beyond ``variable`` is
+    excluded (logged at ``WARNING``) rather than raising, so the caller
+    degrades to the optimistic default instead of crashing on a foreign
+    identifier.
+
+    """
+    if constraint.get_free_identifiers() == frozenset((variable,)):
+        return constraint
+    _LOGGER.warning(
+        "_build_screened_constraint_system: excluding dependent "
+        "constraint %r from the screened system for variable %r; "
+        "its scope %r reaches beyond %r.",
+        constraint,
+        variable,
+        constraint.get_free_identifiers(),
+        variable,
+    )
+    return None
+
+
+def _screen_in_set_constraint(
+    constraint: InSetConstraint, variable: Identifier
+) -> InSetConstraint | None:
+    """Return constraint if it is scoped to ``variable`` and every member lifts.
+
+    An ``InSetConstraint``'s members combine with ``OR``, so narrowing
+    around a member that cannot lift (``convert_to_expression`` raises
+    ``ConstraintError``, e.g. for a string or container member) would
+    only shrink the admissible set; the whole constraint is excluded
+    instead (logged at ``WARNING``) whenever it is scoped elsewhere or
+    any member fails to lift.
+
+    """
+    if constraint.variable != variable:
+        _log_set_constraint_scope_exclusion(constraint, variable)
+        return None
+    try:
+        constraint.convert_to_expression()
+    except ConstraintError as error:
+        _LOGGER.warning(
+            "_build_screened_constraint_system: excluding %r for "
+            "variable %r; it does not lift to an expression (%s).",
+            constraint,
+            variable,
+            error,
+        )
+        return None
+    return constraint
+
+
+def _screen_not_in_set_constraint(
+    constraint: NotInSetConstraint, variable: Identifier
+) -> NotInSetConstraint | None:
+    """Return constraint narrowed to its liftable members, or None.
+
+    A ``NotInSetConstraint``'s members combine with ``AND``, so dropping
+    a non-liftable member only widens the admissible set: the constraint
+    is narrowed to its liftable members (logged at ``WARNING`` when any
+    member is excluded), and dropped entirely (also logged at
+    ``WARNING``) when it is scoped elsewhere or no member lifts.
+
+    """
+    if constraint.variable != variable:
+        _log_set_constraint_scope_exclusion(constraint, variable)
+        return None
+    liftable, excluded = _split_not_in_set_members_by_liftability(constraint)
+    if not liftable:
+        _LOGGER.warning(
+            "_build_screened_constraint_system: excluding %r for "
+            "variable %r; none of its members lift to an expression.",
+            constraint,
+            variable,
+        )
+        return None
+    if excluded:
+        _LOGGER.warning(
+            "_build_screened_constraint_system: narrowing %r for "
+            "variable %r to its liftable member(s) %r; excluded "
+            "non-liftable member(s) %r.",
+            constraint,
+            variable,
+            liftable,
+            excluded,
+        )
+    return NotInSetConstraint(variable, liftable)
 
 
 def _build_screened_constraint_system(
@@ -199,29 +354,30 @@ def _build_screened_constraint_system(
 ) -> ConstraintSystem:
     """Build the decidable-without-enumeration constraint system for ``variable``.
 
-    Includes every equation constraint whose scope is exactly
-    ``{variable}`` and every ``NotInSetConstraint`` whose
-    ``convert_to_expression`` succeeds (one that cannot lift, e.g. over
-    string members, is dropped rather than raising; dropping a constraint
-    only enlarges the feasible set, matching this module's optimistic
-    convention). Any constraint whose scope reaches outside ``{variable}``
-    -- including a dependent ``EquationConstraint`` and any
-    ``InSetConstraint``, which the caller enumerates separately -- is
-    excluded, so the caller degrades to the optimistic default instead of
-    crashing on a foreign identifier.
+    Keeps an ``EquationConstraint`` scoped to exactly ``{variable}`` (see
+    ``_screen_equation_constraint``), an ``InSetConstraint`` scoped to
+    ``variable`` with every member liftable (see
+    ``_screen_in_set_constraint``), and a ``NotInSetConstraint`` scoped
+    to ``variable`` with at least one liftable member, narrowed to those
+    members (see ``_screen_not_in_set_constraint``). Every exclusion and
+    narrowing is logged at ``WARNING``, so the caller degrades to the
+    documented optimistic default instead of crashing or silently losing
+    constraints.
 
     """
     members: list[Constraint] = []
     for constraint in constraints:
+        screened: Constraint | None
         if isinstance(constraint, EquationConstraint):
-            if constraint.get_free_identifiers() == frozenset((variable,)):
-                members.append(constraint)
+            screened = _screen_equation_constraint(constraint, variable)
+        elif isinstance(constraint, InSetConstraint):
+            screened = _screen_in_set_constraint(constraint, variable)
         elif isinstance(constraint, NotInSetConstraint):
-            try:
-                constraint.convert_to_expression()
-            except ConstraintError:
-                continue
-            members.append(constraint)
+            screened = _screen_not_in_set_constraint(constraint, variable)
+        else:
+            screened = None
+        if screened is not None:
+            members.append(screened)
     return create_constraint_system(*members)
 
 
@@ -230,9 +386,28 @@ def _rename_constraint_variable(
 ) -> Constraint:
     """Return ``constraint`` with ``old_variable`` renamed to ``new_variable``.
 
-    Handles the two constraint kinds ``_build_screened_constraint_system``
-    produces: an ``EquationConstraint``'s expression is substituted, and a
-    ``NotInSetConstraint``'s ``variable`` field is replaced directly.
+    Handles the two constraint shapes ``_build_screened_constraint_system``
+    produces: an ``EquationConstraint``'s expression is substituted (a
+    no-op wherever ``old_variable`` is not actually free in it), and an
+    ``InSetConstraint``/``NotInSetConstraint``'s ``variable`` field is
+    replaced after confirming it is actually ``old_variable``, since
+    unlike substitution, replacing that field is not self-correcting.
+
+    Args:
+        constraint: The constraint to rename.
+        old_variable: The identifier expected to be renamed.
+        new_variable: The identifier to rename it to.
+
+    Returns:
+        An equivalent constraint scoped to ``new_variable`` in place of
+        ``old_variable``.
+
+    Raises:
+        ConstraintError: If ``constraint`` is an ``InSetConstraint``/
+            ``NotInSetConstraint`` not scoped to ``old_variable``, or if
+            ``constraint`` is neither an ``EquationConstraint`` nor a set
+            constraint.
+
     """
     if isinstance(constraint, EquationConstraint):
         return EquationConstraint(
@@ -240,8 +415,14 @@ def _rename_constraint_variable(
                 {old_variable: IdentifierExpression(new_variable)}
             )
         )
-    if isinstance(constraint, NotInSetConstraint):
-        return NotInSetConstraint(new_variable, constraint.values)
+    if isinstance(constraint, (InSetConstraint, NotInSetConstraint)):
+        if constraint.variable != old_variable:
+            raise ConstraintError(
+                f"Cannot rename {constraint!r} from {old_variable!r} to "
+                f"{new_variable!r}: it is scoped to {constraint.variable!r}, "
+                f"not {old_variable!r}."
+            )
+        return type(constraint)(new_variable, constraint.values)
     raise ConstraintError(  # pragma: no cover
         f"Cannot rename an unexpected constraint kind: {type(constraint).__name__}."
     )
@@ -281,8 +462,9 @@ def compute_constraint_implication_subset(
     ``symbol_type``. In both branches, an outcome the checks cannot
     disprove -- a solver ``UNDECIDED`` result, or a constraint excluded for
     reaching outside either parameter's own variable -- is treated as
-    "not a counterexample", so the subset relation holds; a ``True``
-    result therefore means "not disproven", not "proven".
+    "not a counterexample" (each logged at ``WARNING``), so the subset
+    relation holds; a ``True`` result therefore means "not disproven", not
+    "proven".
 
     Args:
         own_domain: Domain of the candidate subset parameter.
@@ -319,6 +501,16 @@ def compute_constraint_implication_subset(
         common_variable,
     )
     outcome = own_system.check_implication(other_system, {common_variable: symbol_type})
+    if outcome is ConstraintOutcome.UNDECIDED:
+        _LOGGER.warning(
+            "compute_constraint_implication_subset: the solver could not "
+            "decide whether %r implies %r; optimistically treating %r as a "
+            "subset of %r.",
+            own_variable,
+            other_variable,
+            own_variable,
+            other_variable,
+        )
     return outcome is not ConstraintOutcome.VIOLATED
 
 
@@ -474,10 +666,11 @@ def _numeric_has_feasible_value(
     admissible values finite (see
     ``_enumerate_feasible_in_set_candidates``); otherwise decides the
     screened ``ConstraintSystem`` built from ``variable``-only equation
-    constraints and liftable ``NotInSetConstraint``s (see
-    ``_build_screened_constraint_system``), with dependent and
-    foreign-identifier constraints degrading to the documented optimistic
-    default (``UNDECIDED`` -> ``True``).
+    constraints and ``NotInSetConstraint``s narrowed to their liftable
+    members (see ``_build_screened_constraint_system``), with dependent
+    constraints, foreign-scoped constraints, and a solver ``UNDECIDED``
+    result all degrading to the documented optimistic default (``True``,
+    logged at ``WARNING``).
 
     """
     if any(isinstance(c, InSetConstraint) for c in constraints):
@@ -486,6 +679,13 @@ def _numeric_has_feasible_value(
         )
     system = _build_screened_constraint_system(constraints, variable)
     outcome = system.check_satisfiability({variable: symbol_type})
+    if outcome is ConstraintOutcome.UNDECIDED:
+        _LOGGER.warning(
+            "_numeric_has_feasible_value: the solver could not decide "
+            "satisfiability for variable %r; optimistically treating it as "
+            "feasible.",
+            variable,
+        )
     return outcome is not ConstraintOutcome.VIOLATED
 
 

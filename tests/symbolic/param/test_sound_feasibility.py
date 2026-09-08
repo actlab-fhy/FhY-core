@@ -1,24 +1,29 @@
 """Integration tests for sound `Param` feasibility, emptiness, and subset decisions.
 
-Covers the audit-C6 reproductions (feasibility/subset for type-strict set
-members that Python's `==` conflates but this package's domains do not),
-screened equation-constraint feasibility, and foreign-identifier
-degradation for dependent constraints. `Param.is_feasible`/`is_empty`/
-`is_subset` stay boolean; what changes is that the boolean answer is now
-provably correct, or an honestly documented optimistic default, instead of
-a provably wrong decided answer.
+Covers feasibility/subset decisions for type-strict set members that
+Python's `==` conflates but this package's domains do not, screened
+equation-constraint feasibility, foreign-identifier degradation for
+dependent constraints, one-sided in-set subset screening, and partial
+not-in-set member liftability. `Param.is_feasible`/`is_empty`/`is_subset`
+stay boolean; what changes is that the boolean answer is provably
+correct, or an honestly documented optimistic default, rather than a
+provably wrong decided answer.
 """
 
 import pytest
 
-from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
+from fhy_core.symbolic.constraint import (
+    EquationConstraint,
+    InSetConstraint,
+    NotInSetConstraint,
+)
 from fhy_core.symbolic.expression import IdentifierExpression
 from fhy_core.symbolic.param import create_integer_param, create_integer_param_between
 
 from .conftest import mock_identifier
 
 # =============================================================================
-# C6: type-strict set-constraint feasibility, decided by enumeration
+# Type-strict set-constraint feasibility, decided by enumeration
 # =============================================================================
 
 
@@ -109,6 +114,91 @@ def test_integer_in_set_subset_sanity_checks(
 
 
 # =============================================================================
+# is_subset: an in-set constraint on only one side must still narrow that side
+# =============================================================================
+
+
+def test_bounded_integer_param_is_not_subset_of_disjoint_in_set_param() -> None:
+    """Test a bounded integer param is not a subset of a disjoint in-set param.
+
+    The in-set constraint lives on the `other` side only, so the
+    comparison falls through to the screened-system branch (`own` has no
+    in-set constraint of its own). That branch must still fold `other`'s
+    in-set constraint into `other`'s screened system instead of silently
+    dropping it.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    own = create_integer_param_between(1, 10, name=x)
+    other = create_integer_param(name=y, constraints=[InSetConstraint(y, {100, 200})])
+
+    assert not own.is_subset(other)
+
+
+def test_bounded_integer_param_is_not_subset_of_partly_covering_in_set_param() -> None:
+    """Test a bounded integer param is not a subset of a partly-covering in-set param.
+
+    `{1..10}` is not a subset of `{1, 2, 3}`: most of the interval falls
+    outside the in-set constraint's three members.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    own = create_integer_param_between(1, 10, name=x)
+    other = create_integer_param(name=y, constraints=[InSetConstraint(y, {1, 2, 3})])
+
+    assert not own.is_subset(other)
+
+
+def test_bounded_integer_param_is_subset_of_in_set_param_covering_its_range() -> None:
+    """Test a bounded integer param is a subset of a fully-covering in-set param."""
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    own = create_integer_param_between(1, 10, name=x)
+    other = create_integer_param(
+        name=y, constraints=[InSetConstraint(y, set(range(20)))]
+    )
+
+    assert own.is_subset(other)
+
+
+def test_in_set_param_is_subset_of_bounded_integer_param_covering_it() -> None:
+    """Test an in-set param is a subset of a bounded integer param covering it.
+
+    Here the in-set constraint is on `own`, so this takes the enumeration
+    branch rather than the screened-system branch, unlike the one-sided
+    cases above.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    own = create_integer_param(name=x, constraints=[InSetConstraint(x, {1, 2, 3})])
+    other = create_integer_param_between(1, 10, name=y)
+
+    assert own.is_subset(other)
+
+
+def test_unconstrained_integer_param_is_not_subset_of_singleton_in_set_param() -> None:
+    """Test an unconstrained integer param is not a subset of a singleton in-set one."""
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    own = create_integer_param(name=x)
+    other = create_integer_param(name=y, constraints=[InSetConstraint(y, {7})])
+
+    assert not own.is_subset(other)
+
+
+def test_lower_bounded_integer_param_is_not_subset_of_in_set_param() -> None:
+    """Test a lower-bounded integer param is not a subset of a small in-set param."""
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    own = create_integer_param(
+        name=x, constraints=[EquationConstraint(IdentifierExpression(x) >= 0)]
+    )
+    other = create_integer_param(name=y, constraints=[InSetConstraint(y, {1, 2})])
+
+    assert not own.is_subset(other)
+
+
+# =============================================================================
 # Screened equation-constraint feasibility
 # =============================================================================
 
@@ -162,15 +252,82 @@ def test_integer_param_with_division_by_variable_stays_optimistically_feasible()
 
 
 # =============================================================================
-# Bound-constraint round trip through the new `EquationConstraint` shape
+# A single unliftable not-in-set member must narrow, not erase, the constraint
+# =============================================================================
+
+
+def test_integer_param_with_conflicting_not_in_set_string_member_is_infeasible() -> (
+    None
+):
+    """Test a not-in-set constraint with a string member still narrows correctly.
+
+    `NotInSetConstraint(x, {5, "a"})` alone would leave every integer but
+    `5` admissible; combined with `x == 5` the two are contradictory. The
+    unliftable string member `"a"` must not cause the whole not-in-set
+    constraint to be dropped and the contradiction missed.
+    """
+    x = mock_identifier("x", 1)
+    equals_five = EquationConstraint(IdentifierExpression(x).equals(5))
+    excludes_five_and_a = NotInSetConstraint(x, {5, "a"})
+    param = create_integer_param(name=x, constraints=[equals_five, excludes_five_and_a])
+
+    assert not param.is_feasible()
+    assert param.is_empty()
+
+
+def test_integer_param_with_conflicting_not_in_set_container_member_is_infeasible() -> (
+    None
+):
+    """Test a not-in-set constraint with a container member still narrows correctly."""
+    x = mock_identifier("x", 1)
+    equals_five = EquationConstraint(IdentifierExpression(x).equals(5))
+    excludes_five_and_pair = NotInSetConstraint(x, {5, (1, 2)})
+    param = create_integer_param(
+        name=x, constraints=[equals_five, excludes_five_and_pair]
+    )
+
+    assert not param.is_feasible()
+    assert param.is_empty()
+
+
+def test_integer_param_with_unliftable_not_in_set_member_stays_otherwise_feasible() -> (
+    None
+):
+    """Test a not-in-set constraint with one unliftable member still allows others.
+
+    Narrowing `NotInSetConstraint(x, {5, "a"})` to its liftable member
+    `{5}` only widens the admissible set relative to the full two-member
+    constraint, so with no other constraint present the parameter stays
+    feasible through any integer other than `5`.
+    """
+    x = mock_identifier("x", 1)
+    param = create_integer_param(name=x, constraints=[NotInSetConstraint(x, {5, "a"})])
+
+    assert param.is_feasible()
+    assert not param.is_empty()
+
+
+def test_integer_param_with_only_unliftable_not_in_set_members_stays_feasible() -> None:
+    """Test a not-in-set constraint with no liftable members is dropped, not fatal."""
+    x = mock_identifier("x", 1)
+    param = create_integer_param(
+        name=x, constraints=[NotInSetConstraint(x, {"a", "b"})]
+    )
+
+    assert param.is_feasible()
+    assert not param.is_empty()
+
+
+# =============================================================================
+# Bound-constraint round trip through `EquationConstraint`
 # =============================================================================
 
 
 def test_bounded_integer_param_round_trip_stays_feasible() -> None:
-    """Test `create_integer_param_between` stays feasible through the new shape.
+    """Test `create_integer_param_between` produces a feasible, non-empty param.
 
-    Anchors the bound-constraint round trip against the same healthy case
-    the pre-rewrite suite pins in `test_feasibility.py`.
+    Anchors the same healthy bound-constraint case covered in
+    `test_feasibility.py`.
     """
     param = create_integer_param_between(0, 10, name=mock_identifier("x", 1))
 
@@ -182,8 +339,7 @@ def test_bounded_integer_param_round_trip_stays_feasible() -> None:
 def test_integer_param_with_contradictory_bounds_is_still_empty() -> None:
     """Test added lower/upper bound constraints can be jointly empty.
 
-    Anchors the same case `test_feasibility.py` pins for the pre-rewrite
-    constructor.
+    Anchors the same case covered in `test_feasibility.py`.
     """
     param = create_integer_param(name=mock_identifier("x", 1))
     narrowed = param.add_lower_bound_constraint(10).add_upper_bound_constraint(5)
@@ -195,8 +351,7 @@ def test_integer_param_with_contradictory_bounds_is_still_empty() -> None:
 def test_narrower_bounded_param_is_subset_of_wider_bounded_param() -> None:
     """Test a narrower bound-constrained param is a subset of a wider one.
 
-    Anchors the same relation `test_subset_relations.py` pins for the
-    pre-rewrite constructor.
+    Anchors the same relation covered in `test_subset_relations.py`.
     """
     wider = create_integer_param_between(0, 10, name=mock_identifier("x", 1))
     narrower = create_integer_param_between(2, 8, name=mock_identifier("x", 1))
