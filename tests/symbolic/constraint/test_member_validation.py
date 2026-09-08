@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+import fhy_core.symbolic.constraint as constraint_package
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.constraint import (
     Constraint,
@@ -42,27 +43,37 @@ def test_set_constraint_rejects_none_member(
     factory: SetConstraintFactory, values: Any
 ) -> None:
     """Test ``None``, bare or nested, is rejected by member validation."""
-    with pytest.raises(ConstraintError):
+    with pytest.raises(ConstraintError, match=r"cannot be `None`"):
         factory(mock_identifier("x", 0), values)
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
 @pytest.mark.parametrize(
-    "values",
+    "values, expected_match",
     [
-        pytest.param({HashableNotSerializable(1)}, id="hashable_but_not_serializable"),
-        pytest.param([{"a": 1}], id="unhashable_dict"),
-        pytest.param([UnhashableTuple((1, 2))], id="tuple_subclass_with_disabled_hash"),
         pytest.param(
-            [SerializableHashRaises()], id="serializable_with_hash_that_raises"
+            {HashableNotSerializable(1)},
+            r"primitive literal",
+            id="hashable_but_not_serializable",
+        ),
+        pytest.param([{"a": 1}], r"primitive literal", id="unhashable_dict"),
+        pytest.param(
+            [UnhashableTuple((1, 2))],
+            r"containers must be hashable",
+            id="tuple_subclass_with_disabled_hash",
+        ),
+        pytest.param(
+            [SerializableHashRaises()],
+            r"unhashable after validation",
+            id="serializable_with_hash_that_raises",
         ),
     ],
 )
 def test_set_constraint_rejects_unsupported_member(
-    factory: SetConstraintFactory, values: Any
+    factory: SetConstraintFactory, values: Any, expected_match: str
 ) -> None:
     """Test member must be a primitive, hashable serializable, or container."""
-    with pytest.raises(ConstraintError):
+    with pytest.raises(ConstraintError, match=expected_match):
         factory(mock_identifier("x", 0), values)
 
 
@@ -110,7 +121,7 @@ def test_set_constraint_rejects_non_primitive_builtin_types(
     factory: SetConstraintFactory, value: Any
 ) -> None:
     """Test non-allow-listed builtin types are rejected as members."""
-    with pytest.raises(ConstraintError):
+    with pytest.raises(ConstraintError, match=r"primitive literal"):
         factory(mock_identifier("x", 0), [value])
 
 
@@ -121,9 +132,43 @@ def test_set_constraint_unhashable_after_validation_error_names_offending_value(
     """Test the post-validation hash error embeds the offending value."""
     bad = SerializableHashRaises()
 
-    with pytest.raises(ConstraintError) as exc_info:
+    with pytest.raises(ConstraintError, match="SerializableHashRaises"):
         factory(mock_identifier("x", 0), [bad])
 
-    assert "SerializableHashRaises" in str(exc_info.value) or repr(bad) in str(
-        exc_info.value
-    )
+
+# =============================================================================
+# `MemberCollection` rejects `Mapping` (a one-character typo away from a set)
+# =============================================================================
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize(
+    "values",
+    [
+        pytest.param({1: "a", 2: "b"}, id="dict"),
+        pytest.param({}, id="empty_dict"),
+    ],
+)
+def test_set_constraint_rejects_mapping_as_member_collection(
+    factory: SetConstraintFactory, values: Any
+) -> None:
+    """Test a `Mapping` is rejected instead of silently keeping only its keys.
+
+    ``dict`` structurally satisfies ``MemberCollection`` (``__iter__``,
+    ``__len__``, ``__contains__``), so ``{1: 2}`` and ``{1, 2}`` both
+    type-check for the same constructor argument despite meaning
+    something entirely different: iterating a dict yields only its keys,
+    silently discarding its values.
+    """
+    with pytest.raises(ConstraintError, match=r"(?i)discard"):
+        factory(mock_identifier("x", 0), values)
+
+
+# =============================================================================
+# `MemberCollection` public export
+# =============================================================================
+
+
+def test_member_collection_is_exported_from_the_package() -> None:
+    """Test `MemberCollection` is part of the constraint package's public API."""
+    assert "MemberCollection" in constraint_package.__all__

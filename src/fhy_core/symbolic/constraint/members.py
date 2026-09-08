@@ -20,7 +20,7 @@ __all__ = [
     "MemberCollection",
 ]
 
-from collections.abc import Collection, Hashable, Iterator
+from collections.abc import Collection, Hashable, Iterator, Mapping
 from typing import (
     Any,
     Protocol,
@@ -199,8 +199,9 @@ def _normalize_constraint_member_collection(
 
     Raises:
         ConstraintError: If ``values`` is itself a ``str``/``bytes``/
-            ``bytearray`` (which would silently split into its elements), or
-            if any member fails validation or is unhashable after validation.
+            ``bytearray`` (which would silently split into its elements), a
+            ``Mapping`` (which would silently keep only its keys), or if
+            any member fails validation or is unhashable after validation.
 
     """
     if isinstance(values, (str, bytes, bytearray)):
@@ -209,6 +210,13 @@ def _normalize_constraint_member_collection(
             f"a bare {type(values).__name__}, which would be split into its "
             "elements. Wrap a single member in a container, e.g. "
             f"{{{values!r}}}."
+        )
+    elif isinstance(values, Mapping):
+        raise ConstraintError(
+            "Constraint members must be given as a collection of members, not "
+            f"a {type(values).__name__}, whose values would be silently "
+            "discarded and only its keys kept as members. Pass the intended "
+            "members directly, e.g. as a set or tuple."
         )
     wrapped_values: list[_TypedMember] = []
     for value in values:

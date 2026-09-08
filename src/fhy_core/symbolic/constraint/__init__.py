@@ -39,6 +39,7 @@ __all__ = [
     "ConstraintSystem",
     "EquationConstraint",
     "InSetConstraint",
+    "MemberCollection",
     "MissingSymbolTypeError",
     "NotInSetConstraint",
     "SymbolicPredicate",

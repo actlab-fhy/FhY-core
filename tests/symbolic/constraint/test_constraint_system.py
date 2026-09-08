@@ -1,6 +1,7 @@
 """Tests for `ConstraintSystem` and `create_constraint_system`."""
 
 import logging
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -122,7 +123,7 @@ def test_create_constraint_system_with_no_arguments_is_empty() -> None:
 
 def test_create_constraint_system_rejects_non_constraint_element() -> None:
     """Test a non-`Constraint` argument raises `ConstraintError`."""
-    with pytest.raises(ConstraintError):
+    with pytest.raises(ConstraintError, match="must be Constraint instances"):
         create_constraint_system("not-a-constraint")  # type: ignore[arg-type]
 
 
@@ -131,7 +132,7 @@ def test_create_constraint_system_rejects_nested_constraint_system() -> None:
     x = mock_identifier("x", 0)
     inner = create_constraint_system(InSetConstraint(x, {1, 2}))
 
-    with pytest.raises(ConstraintError):
+    with pytest.raises(ConstraintError, match="must be Constraint instances"):
         create_constraint_system(inner)  # type: ignore[arg-type]
 
 
@@ -313,7 +314,7 @@ def test_constraint_system_rejects_arbitrary_attribute_assignment() -> None:
     """Test setattr on a frozen system raises `FrozenMutationError`."""
     system = create_constraint_system()
 
-    with pytest.raises(FrozenMutationError):
+    with pytest.raises(FrozenMutationError, match='"arbitrary_probe"'):
         system.arbitrary_probe = "mutation"
 
 
@@ -554,18 +555,22 @@ def test_evaluate_with_bindings_rejects_a_value_outside_the_declared_union() -> 
         EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 10))
     )
 
-    with pytest.raises(ConstraintError) as exception_info:
+    with pytest.raises(ConstraintError, match=re.escape(repr(x))):
         system.evaluate_with_bindings({x: None})  # type: ignore[dict-item]
 
-    assert repr(x) in str(exception_info.value)
 
+def test_evaluate_with_bindings_rejects_an_off_union_value_from_a_set_member() -> None:
+    """Test a `ConstraintSystem` reports the same domain error for a set member.
 
-def test_evaluate_with_bindings_propagates_type_error_for_unhashable_value() -> None:
-    """Test an unhashable bound value propagates `TypeError` from a member."""
+    A `list` could never be a `ConstraintMember`, so `InSetConstraint`
+    rejects it before it ever reaches `hash`; the error surfaces through
+    `ConstraintSystem` exactly as it would from the member directly,
+    regardless of which member in the system decided it.
+    """
     x = mock_identifier("x", 0)
     system = create_constraint_system(InSetConstraint(x, {1, 2}))
 
-    with pytest.raises(TypeError):
+    with pytest.raises(ConstraintError, match=re.escape(repr(x))):
         system.evaluate_with_bindings({x: [1, 2]})  # type: ignore[dict-item]
 
 
@@ -615,7 +620,9 @@ def test_convert_to_expression_propagates_constraint_error_from_a_member() -> No
     member = InSetConstraint(x, {SerializableEqualHashable(1)})
     system = create_constraint_system(member)
 
-    with pytest.raises(ConstraintError):
+    with pytest.raises(
+        ConstraintError, match="Conversion of type SerializableEqualHashable"
+    ):
         system.convert_to_expression()
 
 
@@ -699,19 +706,28 @@ def test_wire_members_are_emitted_in_canonical_order() -> None:
 
 def test_deserialize_data_from_dict_rejects_missing_constraints_field() -> None:
     """Test a missing `constraints` field raises a structure error."""
-    with pytest.raises(DeserializationDictStructureError):
+    with pytest.raises(
+        DeserializationDictStructureError,
+        match='Invalid dictionary structure for deserializing to "ConstraintSystem"',
+    ):
         ConstraintSystem.deserialize_data_from_dict({})
 
 
 def test_deserialize_data_from_dict_rejects_non_list_constraints_field() -> None:
     """Test a non-list `constraints` field raises a structure error."""
-    with pytest.raises(DeserializationDictStructureError):
+    with pytest.raises(
+        DeserializationDictStructureError,
+        match='Invalid dictionary structure for deserializing to "ConstraintSystem"',
+    ):
         ConstraintSystem.deserialize_data_from_dict({"constraints": "not-a-list"})
 
 
 def test_deserialize_data_from_dict_rejects_malformed_member_entry() -> None:
     """Test a malformed member entry raises a deserialization error."""
-    with pytest.raises((DeserializationValueError, DeserializationDictStructureError)):
+    with pytest.raises(
+        (DeserializationValueError, DeserializationDictStructureError),
+        match='Invalid dictionary structure for deserializing to "Constraint"',
+    ):
         ConstraintSystem.deserialize_data_from_dict(
             {"constraints": [{"not_a_wrapped_value": "value"}]}
         )
@@ -722,7 +738,7 @@ def test_json_serialization_rejects_a_nan_member() -> None:
     x = mock_identifier("x", 0)
     system = create_constraint_system(InSetConstraint(x, {float("nan")}))
 
-    with pytest.raises(SerializationValueError):
+    with pytest.raises(SerializationValueError, match="JSON-finite numeric payload"):
         system.to_json()
 
 
@@ -839,7 +855,9 @@ def test_check_satisfiability_raises_missing_symbol_type_error() -> None:
         EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, y))
     )
 
-    with pytest.raises(MissingSymbolTypeError) as exception_info:
+    with pytest.raises(
+        MissingSymbolTypeError, match="symbol_types is missing an entry"
+    ) as exception_info:
         system.check_satisfiability({x: SymbolType.INT})
 
     assert _extract_reported_missing_names(exception_info.value) == y.name_hint
@@ -859,7 +877,9 @@ def test_check_satisfiability_with_bindings_raises_missing_symbol_type_error() -
         EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, y))
     )
 
-    with pytest.raises(MissingSymbolTypeError) as exception_info:
+    with pytest.raises(
+        MissingSymbolTypeError, match="symbol_types is missing an entry"
+    ) as exception_info:
         system.check_satisfiability_with_bindings({x: 5}, {})
 
     assert _extract_reported_missing_names(exception_info.value) == y.name_hint
@@ -882,7 +902,9 @@ def test_check_satisfiability_reports_every_missing_identifier_in_sorted_order()
         EquationConstraint(make_binary_expression(BinaryOperation.LESS, b, a))
     )
 
-    with pytest.raises(MissingSymbolTypeError) as exception_info:
+    with pytest.raises(
+        MissingSymbolTypeError, match="symbol_types is missing an entry"
+    ) as exception_info:
         system.check_satisfiability({})
 
     assert _extract_reported_missing_names(exception_info.value) == (
@@ -924,13 +946,11 @@ def test_check_satisfiability_with_bindings_rejects_an_off_union_binding_value()
         EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 10))
     )
 
-    with pytest.raises(ConstraintError) as exception_info:
+    with pytest.raises(ConstraintError, match=re.escape(repr(x))):
         system.check_satisfiability_with_bindings(
             {x: None},  # type: ignore[dict-item]
             {x: SymbolType.INT},
         )
-
-    assert repr(x) in str(exception_info.value)
 
 
 def test_check_satisfiability_propagates_constraint_error_from_a_member() -> None:
@@ -946,7 +966,9 @@ def test_check_satisfiability_propagates_constraint_error_from_a_member() -> Non
         InSetConstraint(x, {SerializableEqualHashable(1)})
     )
 
-    with pytest.raises(ConstraintError):
+    with pytest.raises(
+        ConstraintError, match="Conversion of type SerializableEqualHashable"
+    ):
         system.check_satisfiability({x: SymbolType.INT})
 
 
@@ -962,7 +984,9 @@ def test_check_satisfiability_with_bindings_propagates_constraint_error() -> Non
         InSetConstraint(x, {SerializableEqualHashable(1)})
     )
 
-    with pytest.raises(ConstraintError):
+    with pytest.raises(
+        ConstraintError, match="Conversion of type SerializableEqualHashable"
+    ):
         system.check_satisfiability_with_bindings({}, {x: SymbolType.INT})
 
 
@@ -1335,13 +1359,13 @@ def test_check_satisfiability_with_bindings_bool_value_against_int_membership() 
 
 @pytest.mark.z3
 def test_check_satisfiability_set_ambiguity_survives_equation_branch() -> None:
-    """Test the pre-existing set-constraint bool-ambiguity guard still fires.
+    """Test a bool-ambiguous set constraint stays UNDECIDED alongside an equation.
 
-    Guards against a regression where extending the ambiguity check to
-    ``EquationConstraint`` could shadow or short-circuit the original
-    ``InSetConstraint``/``NotInSetConstraint`` branch: a bool-ambiguous set
-    constraint alongside an ordinary (non-bool-literal) equation
-    constraint must still be reported UNDECIDED.
+    The set-constraint bool-ambiguity guard and the equation-literal
+    ambiguity guard operate independently: a bool-ambiguous
+    ``InSetConstraint``/``NotInSetConstraint`` combined with an ordinary
+    (non-bool-literal) equation constraint must still be reported
+    UNDECIDED.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
@@ -1549,7 +1573,7 @@ def test_check_satisfiability_with_bindings_missing_symbol_type_raises_on_hazard
 
 
 # =============================================================================
-# `timeout_milliseconds` passthrough (solver seam replaced)
+# `timeout_milliseconds` passthrough to the solver seam
 # =============================================================================
 
 
@@ -1848,7 +1872,7 @@ def test_check_satisfiability_rejects_invalid_timeout_for_an_empty_system(
     """
     system = create_constraint_system()
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="timeout_milliseconds must be"):
         system.check_satisfiability({}, timeout_milliseconds=timeout_milliseconds)
 
 
@@ -1860,7 +1884,7 @@ def test_check_satisfiability_rejects_invalid_timeout_for_a_hazardous_system(
     x = mock_identifier("x", 0)
     system = _build_bool_hazard_system(x)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="timeout_milliseconds must be"):
         system.check_satisfiability(
             {x: SymbolType.INT}, timeout_milliseconds=timeout_milliseconds
         )
@@ -1873,7 +1897,7 @@ def test_check_satisfiability_with_bindings_rejects_invalid_timeout_when_empty(
     """Test the empty-system early return validates ``timeout_milliseconds``."""
     system = create_constraint_system()
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="timeout_milliseconds must be"):
         system.check_satisfiability_with_bindings(
             {}, {}, timeout_milliseconds=timeout_milliseconds
         )
@@ -1887,7 +1911,7 @@ def test_check_satisfiability_with_bindings_rejects_invalid_timeout_when_hazardo
     y = mock_identifier("y", 0)
     system = create_constraint_system(NotInSetConstraint(y, {1}))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="timeout_milliseconds must be"):
         system.check_satisfiability_with_bindings(
             {y: True}, {}, timeout_milliseconds=timeout_milliseconds
         )
@@ -1908,7 +1932,7 @@ def test_check_satisfiability_accepts_a_valid_timeout_for_an_empty_system(
 
 
 # =============================================================================
-# Division-by-possibly-zero hazard screen (new; contains audit finding C1)
+# Division-by-possibly-zero hazard screen
 # =============================================================================
 
 
@@ -1924,9 +1948,8 @@ def test_check_satisfiability_division_by_non_literal_divisor_is_undecided(
 
     The divisor `x` could be zero for some assignment, and the solver
     seam's satisfiability encoding for division is unsound around a zero
-    divisor (audit finding C1); the screen refuses to hand such an
-    expression to the solver rather than report a decided outcome the
-    lowering cannot support.
+    divisor; the screen refuses to hand such an expression to the solver
+    rather than report a decided outcome the lowering cannot support.
     """
     x = mock_identifier("x", 0)
     system = create_constraint_system(
@@ -2053,7 +2076,7 @@ def test_check_satisfiability_divide_by_nonzero_literal_stays_decided() -> None:
 
 
 # =============================================================================
-# Int/float `EQUAL`/`NOT_EQUAL` sort-mixing hazard screen (new; closes C6's float arm)
+# Int/float `EQUAL`/`NOT_EQUAL` sort-mixing hazard screen
 # =============================================================================
 
 
@@ -2174,7 +2197,7 @@ def test_check_satisfiability_int_identifier_lt_float_literal_not_screened() -> 
 
 
 # =============================================================================
-# `check_implication` (new; system-level entailment seam)
+# `check_implication`: system-level entailment seam
 # =============================================================================
 
 
@@ -2295,7 +2318,9 @@ def test_check_implication_propagates_constraint_error_from_a_member() -> None:
         InSetConstraint(x, {SerializableEqualHashable(1)})
     )
 
-    with pytest.raises(ConstraintError):
+    with pytest.raises(
+        ConstraintError, match="Conversion of type SerializableEqualHashable"
+    ):
         antecedent.check_implication(consequent, {x: SymbolType.INT})
 
 
@@ -2313,7 +2338,7 @@ def test_check_implication_rejects_invalid_timeout_even_for_a_hazardous_pair(
     antecedent = create_constraint_system(InSetConstraint(x, {True}))
     consequent = create_constraint_system(InSetConstraint(x, {1}))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="timeout_milliseconds must be"):
         antecedent.check_implication(
             consequent, {x: SymbolType.INT}, timeout_milliseconds=timeout_milliseconds
         )

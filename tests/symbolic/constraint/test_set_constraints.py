@@ -94,17 +94,23 @@ def test_set_constraint_is_satisfied_with_bindings(
     "factory, member_outcome, non_member_outcome", _KINDS_WITH_OUTCOMES
 )
 @pytest.mark.parametrize(
-    "values, member",
+    "values, member, non_member",
     [
-        pytest.param({1, "a", 2.5}, "a", id="mixed_primitives"),
+        pytest.param({1, "a", 2.5}, "a", "z", id="mixed_primitives"),
         pytest.param(
             {SerializableEqualHashable(7)},
             SerializableEqualHashable(7),
+            SerializableEqualHashable(8),
             id="serializable_hashable",
         ),
-        pytest.param([(1, "a", True)], (1, "a", True), id="tuple_member"),
         pytest.param(
-            [frozenset({1, 2, 3})], frozenset({1, 2, 3}), id="frozenset_member"
+            [(1, "a", True)], (1, "a", True), (2, "b", False), id="tuple_member"
+        ),
+        pytest.param(
+            [frozenset({1, 2, 3})],
+            frozenset({1, 2, 3}),
+            frozenset({4, 5, 6}),
+            id="frozenset_member",
         ),
     ],
 )
@@ -114,12 +120,14 @@ def test_set_constraint_supports_member_shapes(
     non_member_outcome: bool,
     values: Any,
     member: Any,
+    non_member: Any,
 ) -> None:
     """Test set constraints accept the full range of supported member shapes."""
     x = mock_identifier("x", 0)
     constraint = factory(x, values)
 
     assert constraint.is_satisfied_with_bindings({x: member}) is member_outcome
+    assert constraint.is_satisfied_with_bindings({x: non_member}) is non_member_outcome
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
@@ -157,41 +165,54 @@ def test_set_constraint_get_free_identifiers_is_just_the_variable(
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
-def test_set_constraint_repr_lists_values(
+def test_set_constraint_repr_matches_the_exact_expected_format(
     factory: SetConstraintFactory,
 ) -> None:
-    """Test ``repr`` includes each member's textual form."""
-    constraint = factory(mock_identifier("x", 0), {1, 2})
+    """Test ``repr`` matches the exact class-name/variable/values format.
 
-    rendered = repr(constraint)
-
-    assert "1" in rendered
-    assert "2" in rendered
-
-
-@pytest.mark.parametrize("factory", SET_KINDS)
-def test_set_constraint_repr_includes_class_name(
-    factory: SetConstraintFactory,
-) -> None:
-    """Test ``repr`` includes the concrete constraint class name."""
-    constraint = factory(mock_identifier("x", 0), {1, 2})
-
-    rendered = repr(constraint)
-
-    assert type(constraint).__name__ in rendered
-
-
-@pytest.mark.parametrize("factory", SET_KINDS)
-def test_set_constraint_repr_includes_variable(
-    factory: SetConstraintFactory,
-) -> None:
-    """Test ``repr`` includes a representation of the constrained variable."""
+    A substring check on the class name, the variable, and each member
+    would also pass a ``@dataclass``-generated ``repr`` that shows every
+    field by keyword and the raw, unsorted ``values`` tuple; only an
+    exact match on the whole string pins the hand-written format.
+    """
     x = mock_identifier("x", 0)
     constraint = factory(x, {1, 2})
 
     rendered = repr(constraint)
 
-    assert repr(x) in rendered
+    assert rendered == f"{type(constraint).__name__}({x!r}, values={{1, 2}})"
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_repr_renders_empty_values_as_empty_braces(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test ``repr`` renders an empty member set as an empty pair of braces."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, set())
+
+    rendered = repr(constraint)
+
+    assert rendered == f"{type(constraint).__name__}({x!r}, values={{}})"
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_repr_places_the_variable_positionally(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test ``repr`` takes the variable positionally rather than by keyword.
+
+    A ``@dataclass``-generated ``__repr__`` would show every field by
+    keyword (``variable=...``); the hand-written form takes the variable
+    as the first positional argument instead.
+    """
+    x = mock_identifier("count", 7)
+    constraint = factory(x, {1, 2})
+
+    rendered = repr(constraint)
+
+    assert rendered.startswith(f"{type(constraint).__name__}({x!r}, ")
+    assert "variable=" not in rendered
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
@@ -205,11 +226,41 @@ def test_set_constraint_repr_distinguishes_string_from_numeric_members(
     forms indistinguishable.
     """
     x = mock_identifier("x", 0)
+    string_constraint = factory(x, {"5"})
+    integer_constraint = factory(x, {5})
 
-    string_member = repr(factory(x, {"5"}))
-    integer_member = repr(factory(x, {5}))
+    assert repr(string_constraint) == (
+        f"{type(string_constraint).__name__}({x!r}, values={{'5'}})"
+    )
+    assert repr(integer_constraint) == (
+        f"{type(integer_constraint).__name__}({x!r}, values={{5}})"
+    )
 
-    assert string_member != integer_member
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_repr_is_stable_across_construction_order(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test ``repr`` renders alike for two constraints built in opposite orders.
+
+    The stored ``values`` tuple order depends on ``frozenset`` iteration
+    order, which depends on insertion order once members collide on
+    hash. ``repr`` has to canonicalize past that rather than expose it,
+    or the same logical constraint would print two different ways
+    depending on nothing but construction history.
+    """
+    x = mock_identifier("x", 0)
+    members = [HashCollidingMember(1), HashCollidingMember(2)]
+    left = factory(x, list(members))
+    right = factory(x, list(reversed(members)))
+    assert isinstance(left, (InSetConstraint, NotInSetConstraint))
+    assert isinstance(right, (InSetConstraint, NotInSetConstraint))
+
+    assert left.values != right.values, (
+        "the two constraints must store their members in different orders "
+        "for this test to say anything about repr's ordering"
+    )
+    assert repr(left) == repr(right)
 
 
 @pytest.mark.parametrize("factory, str_marker", _KINDS_WITH_STR_MARKER)
@@ -373,14 +424,19 @@ def test_in_set_constraint_isolates_from_post_construction_mutation() -> None:
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
-def test_set_constraint_is_satisfied_with_bindings_unhashable_value_raises_type_error(
+def test_set_constraint_is_satisfied_with_bindings_rejects_an_off_union_value(
     factory: SetConstraintFactory,
 ) -> None:
-    """Test an unhashable bound value propagates `TypeError`."""
+    """Test an unhashable off-union bound value raises `ConstraintError`.
+
+    A ``dict`` could never be a ``ConstraintMember``, so it is rejected
+    before it ever reaches the type-strict membership check; an
+    unhashable off-union value never reaches ``hash`` at all.
+    """
     x = mock_identifier("x", 0)
     constraint = factory(x, {1, 2})
 
-    with pytest.raises(TypeError):
+    with pytest.raises(ConstraintError, match="must be an `Expression`"):
         constraint.is_satisfied_with_bindings({x: {"a": 1}})  # type: ignore[dict-item]  # test: unhashable off-union value
 
 
@@ -403,7 +459,7 @@ def test_set_constraint_rejects_bare_string_like_members(
     factory: SetConstraintFactory, members: Any
 ) -> None:
     """Test a bare str/bytes/bytearray is rejected, not split into elements."""
-    with pytest.raises(ConstraintError):
+    with pytest.raises(ConstraintError, match=r"not a bare \w+, which would be split"):
         factory(mock_identifier("x", 0), members)
 
 
@@ -511,6 +567,29 @@ def test_set_constraint_members_order_is_independent_of_construction_order(
         "for this test to say anything about the accessor's ordering"
     )
     assert left.members == right.members
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_members_pins_the_canonical_order_across_mixed_kinds(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test `members` returns an exact tuple in type-tagged canonical order.
+
+    Mixes every kind the ordering key distinguishes: a `bool`, a `float`,
+    a `frozenset`, an `int`, a `str`, and a `tuple`. A key that happened
+    to agree with insertion order, or that collapsed any two of these to
+    the same sort position, would still pass a weaker set-equality or
+    cross-instance check; only an exact tuple pins the documented order.
+    A list literal is used at the call site because `True`, `1`, and
+    `1.0` compare equal under plain Python equality and would collapse
+    in a set literal before the constructor ever saw them.
+    """
+    x = mock_identifier("x", 0)
+    constraint = factory(x, [True, 1.0, frozenset({4, 5}), 1, "1", (2, 3)])
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+
+    assert constraint.members == (True, 1.0, frozenset({4, 5}), 1, "1", (2, 3))
+    assert isinstance(constraint.members, tuple)
 
 
 # =============================================================================
@@ -629,20 +708,20 @@ def test_set_constraint_reader_does_not_rebuild_the_type_strict_member_set(
     The set is built once during construction. Re-deriving it on every
     read turns a constant-time membership check into a full rebuild --
     one wrapper allocation and one hash per stored member, per call --
-    and ``__repr__`` additionally feeds the ``ConstraintSystem`` ordering
-    key, so the cost multiplies across a system.
+    and ``__repr__`` is exercised here too, since it reads the same
+    cache.
     """
     constraint = factory(mock_identifier("x", 0), _MEMBERS)
     rebuild_count = 0
     build_member_set = constraint_core_module._wrap_member_collection  # type: ignore[attr-defined]  # test: patches core's own import-by-value binding
 
-    def counting_build_member_set(values: Any) -> Any:
+    def count_build_member_set_calls(values: Any) -> Any:
         nonlocal rebuild_count
         rebuild_count += 1
         return build_member_set(values)
 
     monkeypatch.setattr(
-        constraint_core_module, "_wrap_member_collection", counting_build_member_set
+        constraint_core_module, "_wrap_member_collection", count_build_member_set_calls
     )
 
     read(constraint)
@@ -718,9 +797,9 @@ def test_set_constraint_member_set_cannot_drift_from_the_public_field(
     """
     constraint = factory(mock_identifier("x", 0), _MEMBERS)
 
-    with pytest.raises(FrozenMutationError):
+    with pytest.raises(FrozenMutationError, match=f'"{field_name}"'):
         setattr(constraint, field_name, (7, 8))
-    with pytest.raises(FrozenMutationError):
+    with pytest.raises(FrozenMutationError, match='"_members"'):
         cast(Any, constraint)._members = frozenset()
 
     _assert_membership_agrees_with_public_field(constraint, field_name)

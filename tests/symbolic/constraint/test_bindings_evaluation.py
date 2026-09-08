@@ -9,6 +9,7 @@ plus cross-cutting bindings-API contracts shared by every kind.
 """
 
 import logging
+import re
 from collections.abc import Iterator, Mapping
 from decimal import Decimal
 from typing import Any, cast
@@ -31,7 +32,7 @@ from fhy_core.symbolic.expression import (
 )
 from fhy_core.utils.override import override
 
-from .conftest import ALL_KINDS, SET_KINDS, mock_identifier
+from .conftest import ALL_KINDS, SET_KINDS, SerializableHashRaises, mock_identifier
 
 _CONSTRAINT_LOGGER = "fhy_core.symbolic.constraint.core"
 
@@ -167,42 +168,6 @@ def test_not_in_set_constraint_bindings_are_type_strict_for_bool_vs_int() -> Non
     assert constraint.evaluate_with_bindings({x: True}) is ConstraintOutcome.SATISFIED
 
 
-@pytest.mark.parametrize("factory", SET_KINDS)
-def test_set_constraint_bindings_propagates_type_error_for_unhashable_value(
-    factory: Any,
-) -> None:
-    """Test an unhashable bound value propagates `TypeError`."""
-    x = mock_identifier("x", 0)
-    constraint = factory(x, {1, 2, 3})
-
-    with pytest.raises(TypeError):
-        constraint.evaluate_with_bindings({x: [1, 2]})
-
-
-@pytest.mark.parametrize("factory", SET_KINDS)
-@pytest.mark.parametrize(
-    "value",
-    [pytest.param(None, id="none"), pytest.param(Decimal("1"), id="decimal")],
-)
-def test_set_constraint_bindings_forwards_an_off_union_value_to_membership(
-    factory: Any, value: Any
-) -> None:
-    """Test a value outside `Expression | LiteralType` is forwarded, not rejected.
-
-    A set constraint has no expression to lift the value into, so it hands
-    the value straight to the type-strict membership check: a hashable
-    value outside the declared union is simply not a member and the check
-    stays decided rather than raising.
-    """
-    x = mock_identifier("x", 0)
-    constraint = factory(x, {1, 2, 3})
-
-    in_set = factory is InSetConstraint
-    assert constraint.evaluate_with_bindings({x: value}) is (
-        ConstraintOutcome.VIOLATED if in_set else ConstraintOutcome.SATISFIED
-    )
-
-
 # =============================================================================
 # `evaluate_with_bindings` reads the mapping once (snapshot)
 # =============================================================================
@@ -325,7 +290,7 @@ def test_set_constraint_bindings_logs_nothing_when_decidable(
 
 
 # =============================================================================
-# Binding-value construction boundary (equation-specific rejection)
+# Binding-value construction boundary (shared across every kind)
 # =============================================================================
 
 OFF_UNION_BINDING_VALUES = [
@@ -357,13 +322,88 @@ def test_equation_constraint_bindings_rejects_a_value_outside_the_declared_union
     x = mock_identifier("x", 0)
     constraint = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 10))
 
-    with pytest.raises(ConstraintError) as exception_info:
+    with pytest.raises(ConstraintError, match=re.escape(repr(x))) as exception_info:
         constraint.evaluate_with_bindings({x: value})
 
     message = str(exception_info.value)
-    assert repr(x) in message
     assert repr(value) in message
     assert type(value).__name__ in message
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize("value", OFF_UNION_BINDING_VALUES)
+def test_set_constraint_bindings_rejects_a_value_outside_the_declared_union(
+    factory: Any, value: Any
+) -> None:
+    """Test a binding value that could never be a constraint member raises.
+
+    `InSetConstraint`/`NotInSetConstraint` decide membership against the
+    wider `ConstraintMember` union rather than `Expression |
+    LiteralType`, but each of these four values falls outside both:
+    none could ever be a member, so each raises the same domain error
+    naming the identifier, the value, and its type, rather than being
+    decided against (a hashable value) or crashing inside `hash` with no
+    identifier named (an unhashable one).
+    """
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1, 2, 3})
+
+    with pytest.raises(ConstraintError, match=re.escape(repr(x))) as exception_info:
+        constraint.evaluate_with_bindings({x: value})
+
+    message = str(exception_info.value)
+    assert repr(value) in message
+    assert type(value).__name__ in message
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param((1, 2), id="tuple"),
+        pytest.param(frozenset({1, 2}), id="frozenset"),
+    ],
+)
+def test_set_constraint_bindings_decides_a_container_shaped_off_union_value(
+    factory: Any, value: Any
+) -> None:
+    """Test a tuple/frozenset binding value is decided, not rejected.
+
+    `ConstraintBindings` declares `Expression | LiteralType`, but a set
+    constraint decides membership against the wider `ConstraintMember`
+    union, which also allows `tuple`/`frozenset`/`Serializable` values --
+    exactly the shapes a container member can take. Rejecting these
+    would break every set constraint whose members are containers.
+    """
+    x = mock_identifier("x", 0)
+    constraint = factory(x, [value])
+
+    outcome = constraint.evaluate_with_bindings({x: value})
+
+    in_set = factory is InSetConstraint
+    assert outcome is (
+        ConstraintOutcome.SATISFIED if in_set else ConstraintOutcome.VIOLATED
+    )
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_bindings_rejects_a_value_whose_hash_raises(
+    factory: Any,
+) -> None:
+    """Test a value that lies about being hashable raises `ConstraintError`.
+
+    `SerializableHashRaises` passes structural member-shape validation
+    (it is `Serializable` and nominally `Hashable`), but calling `hash`
+    on it raises `TypeError` -- the same failure mode member declaration
+    already guards against after validation, now guarded here too so it
+    never surfaces as an unattributed crash.
+    """
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1, 2, 3})
+    bad = SerializableHashRaises()
+
+    with pytest.raises(ConstraintError, match=re.escape(repr(x))):
+        constraint.evaluate_with_bindings({x: bad})
 
 
 def test_equation_constraint_bindings_names_the_offending_identifier_only() -> None:
@@ -375,12 +415,10 @@ def test_equation_constraint_bindings_names_the_offending_identifier_only() -> N
     )
     constraint = EquationConstraint(expression)
 
-    with pytest.raises(ConstraintError) as exception_info:
+    with pytest.raises(ConstraintError, match=re.escape(repr(y))) as exception_info:
         constraint.evaluate_with_bindings({x: 3, y: None})  # type: ignore[dict-item]
 
-    message = str(exception_info.value)
-    assert repr(y) in message
-    assert repr(x) not in message
+    assert repr(x) not in str(exception_info.value)
 
 
 # =============================================================================

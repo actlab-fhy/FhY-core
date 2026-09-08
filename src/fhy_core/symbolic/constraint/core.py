@@ -42,7 +42,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from functools import cached_property
-from typing import Any, ClassVar, Protocol, TypeAlias, runtime_checkable
+from typing import Any, ClassVar, NoReturn, Protocol, TypeAlias, runtime_checkable
 
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
@@ -77,6 +77,7 @@ from .members import (
     _render_member_set_str,
     _TypedMember,
     _unwrap_member,
+    _validate_constraint_member,
     _wrap_member,
     _wrap_member_collection,
 )
@@ -165,6 +166,13 @@ class ConstraintOutcome(Enum):
     UNDECIDED = auto()
 
 
+def _raise_not_implemented_error(instance: object, method_name: str) -> NoReturn:
+    """Raise NotImplementedError naming the class and the unoverridden method."""
+    raise NotImplementedError(
+        f'"{type(instance).__name__}" does not implement "{method_name}".'
+    )
+
+
 @runtime_checkable
 class SymbolicPredicate(Protocol):
     """Predicate over identifiers, evaluable under a partial assignment.
@@ -182,6 +190,7 @@ class SymbolicPredicate(Protocol):
             Frozen set of identifiers; empty for a ground predicate.
 
         """
+        _raise_not_implemented_error(self, "get_free_identifiers")
 
     def evaluate_with_bindings(self, bindings: ConstraintBindings) -> ConstraintOutcome:
         """Return the tri-state outcome of the predicate under the bindings.
@@ -196,6 +205,7 @@ class SymbolicPredicate(Protocol):
             (possibly partial) bindings; ``UNDECIDED`` otherwise.
 
         """
+        _raise_not_implemented_error(self, "evaluate_with_bindings")
 
     def is_satisfied_with_bindings(self, bindings: ConstraintBindings) -> bool:
         """Return whether the bindings provably satisfy the predicate.
@@ -204,6 +214,7 @@ class SymbolicPredicate(Protocol):
         rejection).
 
         """
+        _raise_not_implemented_error(self, "is_satisfied_with_bindings")
 
     def convert_to_expression(self) -> Expression:
         """Return an ``Expression`` whose truth value matches the predicate.
@@ -212,6 +223,7 @@ class SymbolicPredicate(Protocol):
             ConstraintError: If the predicate cannot be expressed.
 
         """
+        _raise_not_implemented_error(self, "convert_to_expression")
 
 
 class Constraint(
@@ -273,8 +285,12 @@ class Constraint(
             (possibly partial) bindings; ``UNDECIDED`` otherwise.
 
         Raises:
-            ConstraintError: If a binding value falls outside
-                ``Expression | LiteralType``.
+            ConstraintError: If a binding value is unusable by this
+                constraint's own evaluation mechanism: for
+                ``EquationConstraint``, a value that is neither an
+                ``Expression`` nor a ``LiteralType``; for a set
+                constraint, a value that is neither an ``Expression``
+                nor a valid ``ConstraintMember``.
 
         """
 
@@ -305,8 +321,9 @@ class Constraint(
             ``is_satisfied_with_bindings``.
 
         Raises:
-            ConstraintError: If the constraint cannot be expressed
-                (e.g. a set member is not a literal type).
+            ConstraintError: If the constraint cannot be expressed (for
+                example, a set member is a ``str``, or is not itself a
+                ``LiteralType``).
 
         """
 
@@ -437,6 +454,37 @@ class EquationConstraint(Constraint):
         return pformat_expression(self.expression)
 
 
+def _validate_set_binding_value(identifier: Identifier, value: object) -> None:
+    """Reject a non-``Expression`` binding value that could never be a member.
+
+    A set constraint decides membership against ``ConstraintMember``-shaped
+    values (the same union a declared member must satisfy), which is
+    wider than ``ConstraintBindings``' declared ``Expression |
+    LiteralType``: a bound value may legitimately be a ``tuple``,
+    ``frozenset``, or ``Serializable`` instance, matching one of the
+    constraint's own container-shaped or ``Serializable`` members.
+
+    Args:
+        identifier: Identifier the value is bound to.
+        value: Candidate binding value already known not to be an
+            ``Expression``.
+
+    Raises:
+        ConstraintError: If ``value`` could never be a valid
+            ``ConstraintMember``. The message names the identifier, the
+            value, and the value's type.
+
+    """
+    try:
+        _validate_constraint_member(value)
+    except ConstraintError as exc:
+        raise ConstraintError(
+            f"Binding for identifier {identifier!r} must be an `Expression` "
+            f"or a value that could be a constraint member, but got value "
+            f"{value!r} of type {type(value).__name__}: {exc}"
+        ) from exc
+
+
 def _evaluate_set_membership_with_bindings(
     kind_name: str,
     variable: Identifier,
@@ -457,12 +505,6 @@ def _evaluate_set_membership_with_bindings(
     concrete value is always decidable, so this never reports
     ``UNDECIDED`` once ``variable`` is bound to a literal.
 
-    A value outside the declared ``Expression | LiteralType`` union
-    reaches the membership check unchanged rather than being turned
-    away: there is no expression to lift such a value into, so a
-    hashable off-union value is simply not a member and the check stays
-    decided, while an unhashable one raises ``TypeError``.
-
     Args:
         kind_name: Concrete leaf's class name, used to attribute the
             DEBUG log record.
@@ -478,7 +520,9 @@ def _evaluate_set_membership_with_bindings(
         ``variable`` is unbound or bound to a non-literal expression.
 
     Raises:
-        TypeError: If the bound value is unhashable.
+        ConstraintError: If the bound value is neither an ``Expression``
+            nor a value that could be a ``ConstraintMember``, or if it is
+            one but is unhashable.
 
     """
     snapshot = dict(bindings)
@@ -505,7 +549,16 @@ def _evaluate_set_membership_with_bindings(
             )
             return ConstraintOutcome.UNDECIDED
         value = value.value
-    is_member = _wrap_member(value) in members
+    else:
+        _validate_set_binding_value(variable, value)
+    try:
+        is_member = _wrap_member(value) in members
+    except TypeError as exc:
+        raise ConstraintError(
+            f"Binding for identifier {variable!r} is unhashable: value "
+            f"{value!r} of type {type(value).__name__} cannot be checked "
+            "for membership."
+        ) from exc
     if is_member is satisfied_when_member:
         return ConstraintOutcome.SATISFIED
     return ConstraintOutcome.VIOLATED
@@ -599,12 +652,11 @@ class _SetConstraint(Constraint):
         """Return the type-strict member set membership is decided against.
 
         Held as a stored set rather than re-derived per read: ``evaluate``
-        is then a constant-time frozenset lookup, and ``__repr__`` -- which
-        feeds the ``ConstraintSystem`` ordering key -- costs no wrapper
-        allocations. ``__post_init__`` seeds it with the set built during
-        normalization; this body re-derives it from ``values`` for an
-        instance that reaches a reader unseeded, so the public field stays
-        the single source of truth.
+        is then a constant-time frozenset lookup, and ``__repr__`` costs
+        no wrapper allocations either. ``__post_init__`` seeds it with
+        the set built during normalization; this body re-derives it from
+        ``values`` for an instance that reaches a reader unseeded, so the
+        public field stays the single source of truth.
         """
         return _wrap_member_collection(self.values)
 
@@ -629,7 +681,9 @@ class _SetConstraint(Constraint):
         literal.
 
         Raises:
-            TypeError: If the bound value is unhashable.
+            ConstraintError: If the bound value is neither an
+                ``Expression`` nor a value that could be a
+                ``ConstraintMember``, or if it is one but is unhashable.
 
         """
         return _evaluate_set_membership_with_bindings(
@@ -678,7 +732,7 @@ class _SetConstraint(Constraint):
 
 
 @register_serializable(type_id="in_set_constraint")
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False, repr=False)
 class InSetConstraint(_SetConstraint):
     """Permitted-set membership predicate over one identifier.
 
@@ -704,7 +758,7 @@ class InSetConstraint(_SetConstraint):
 
 
 @register_serializable(type_id="not_in_set_constraint")
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False, repr=False)
 class NotInSetConstraint(_SetConstraint):
     """Forbidden-set membership predicate over one identifier.
 
