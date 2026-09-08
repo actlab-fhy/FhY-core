@@ -126,13 +126,13 @@ def test_incapable_backend_query_pairing_raises_solver_capability_error(
     call: Callable[[], object],
 ) -> None:
     """Test an incapable (backend, query) pairing raises `SolverCapabilityError`."""
-    with pytest.raises(SolverCapabilityError):
+    with pytest.raises(SolverCapabilityError, match="cannot answer"):
         call()
 
 
 def test_solver_capability_error_names_backend_and_query_kind() -> None:
     """Test the error message names both the offending backend and query kind."""
-    with pytest.raises(SolverCapabilityError) as exc_info:
+    with pytest.raises(SolverCapabilityError, match="cannot answer") as exc_info:
         simplify_expression(LiteralExpression(1), backend=SolverBackend.Z3)
     message = str(exc_info.value)
     assert "z3" in message.lower()
@@ -256,7 +256,7 @@ def test_check_expression_satisfiability_raises_key_error_for_missing_symbol_typ
         BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
     )
 
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError, match="symbol_types is missing"):
         check_expression_satisfiability(expression, {})
 
 
@@ -414,8 +414,10 @@ def test_assert_expression_implies_raises_undecidable_error_on_unknown(
         BinaryOperation.GREATER_EQUAL, IdentifierExpression(x), LiteralExpression(0)
     )
 
-    with pytest.raises(UndecidableError, match="timeout"):
+    with pytest.raises(UndecidableError, match="timeout") as exc_info:
         assert_expression_implies(antecedent, consequent, {x: SymbolType.INT})
+
+    assert exc_info.value.reason == "timeout"
 
 
 @pytest.mark.z3
@@ -433,10 +435,101 @@ def test_assert_holds_for_all_free_assignments_raises_undecidable_error_on_unkno
         ),
     )
 
-    with pytest.raises(UndecidableError, match="timeout"):
+    with pytest.raises(UndecidableError, match="timeout") as exc_info:
         assert_holds_for_all_free_assignments(
             frozenset(), expression, {x: SymbolType.INT}
         )
+
+    assert exc_info.value.reason == "timeout"
+
+
+# =============================================================================
+# UndecidableError.reason
+# =============================================================================
+
+
+def test_undecidable_error_reason_defaults_to_empty_string() -> None:
+    """Test `UndecidableError.reason` defaults to an empty string when omitted."""
+    error = UndecidableError("boom")
+
+    assert error.reason == ""
+
+
+def test_undecidable_error_reason_reflects_the_constructor_argument() -> None:
+    """Test `UndecidableError.reason` reflects the `reason` constructor argument."""
+    error = UndecidableError("boom", reason="timeout")
+
+    assert error.reason == "timeout"
+
+
+# =============================================================================
+# considered_identifiers validation
+# =============================================================================
+
+
+def test_holds_for_all_free_assignments_rejects_unmapped_considered_id() -> None:
+    """Test a considered identifier absent from `symbol_types` raises `KeyError`.
+
+    `ghost` does not appear in the expression at all, so only the
+    considered-identifiers side of the contract requires it to have a
+    `symbol_types` entry.
+    """
+    ghost = mock_identifier("ghost", 0)
+
+    with pytest.raises(KeyError, match="symbol_types is missing"):
+        holds_for_all_free_assignments(frozenset({ghost}), LiteralExpression(True), {})
+
+
+def test_assert_holds_for_all_free_assignments_rejects_unmapped_considered_id() -> None:
+    """Test the strict variant also raises `KeyError` for an unmapped considered id."""
+    ghost = mock_identifier("ghost", 0)
+
+    with pytest.raises(KeyError, match="symbol_types is missing"):
+        assert_holds_for_all_free_assignments(
+            frozenset({ghost}), LiteralExpression(True), {}
+        )
+
+
+@pytest.mark.z3
+def test_holds_for_all_free_assignments_accepts_a_mapped_considered_id() -> None:
+    """Test a considered identifier with a `symbol_types` entry does not raise.
+
+    An identifier that is legitimately considered (present in
+    `symbol_types`) even though it is absent from the expression must
+    not trip the same `KeyError` reserved for a genuinely unmapped
+    identifier.
+    """
+    x = mock_identifier("x", 0)
+    unused = mock_identifier("u", 1)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(5)
+    )
+
+    result = holds_for_all_free_assignments(
+        {x, unused},
+        expression,
+        {x: SymbolType.INT, unused: SymbolType.INT},
+    )
+
+    assert result is True
+
+
+@pytest.mark.z3
+def test_assert_holds_for_all_free_assignments_accepts_a_mapped_considered_id() -> None:
+    """Test the strict variant also accepts a properly-mapped considered identifier."""
+    x = mock_identifier("x", 0)
+    unused = mock_identifier("u", 1)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(5)
+    )
+
+    result = assert_holds_for_all_free_assignments(
+        {x, unused},
+        expression,
+        {x: SymbolType.INT, unused: SymbolType.INT},
+    )
+
+    assert result is True
 
 
 # =============================================================================
@@ -446,7 +539,7 @@ def test_assert_holds_for_all_free_assignments_raises_undecidable_error_on_unkno
 _SOLVER_LOGGER_NAME = "fhy_core.symbolic.solver"
 
 
-def _solver_warning_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+def _collect_solver_warning_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
     """Return the solver module's WARNING-level messages captured by ``caplog``."""
     return [
         record.getMessage()
@@ -474,7 +567,7 @@ def test_check_expression_satisfiability_bool_coercion_hazard_returns_none(
         result = check_expression_satisfiability(expression, {x: SymbolType.INT})
 
     assert result is None
-    messages = _solver_warning_messages(caplog)
+    messages = _collect_solver_warning_messages(caplog)
     assert messages, "expected a WARNING naming the hazardous node"
     assert "check_expression_satisfiability" in messages[0]
     assert repr(x) in messages[0]
@@ -499,11 +592,12 @@ def test_check_expression_satisfiability_bool_literal_under_bool_sort_decided() 
 def test_check_expression_satisfiability_division_hazard_returns_none(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test DIVIDE by a non-literal divisor is screened (audit finding C1).
+    """Test DIVIDE by a non-literal divisor is screened.
 
-    ``x / x != 1`` is the shape that previously decided False through
-    the Z3 bridge's unsound division-by-possibly-zero encoding; the seam
-    now refuses to lower it and reports None.
+    ``x / x``'s divisor could be zero for some assignment, and the Z3
+    bridge's satisfiability encoding for division is unsound around a
+    zero divisor, so the seam refuses to lower ``x / x != 1`` and
+    reports None instead.
     """
     x = mock_identifier("x", 0)
     expression = BinaryExpression(
@@ -518,7 +612,7 @@ def test_check_expression_satisfiability_division_hazard_returns_none(
         result = check_expression_satisfiability(expression, {x: SymbolType.REAL})
 
     assert result is None
-    messages = _solver_warning_messages(caplog)
+    messages = _collect_solver_warning_messages(caplog)
     assert messages, "expected a WARNING naming the hazardous division node"
     assert "check_expression_satisfiability" in messages[0]
 
@@ -544,14 +638,186 @@ def test_check_expression_satisfiability_modulo_by_nonzero_literal_stays_decided
     assert check_expression_satisfiability(expression, {x: SymbolType.INT}) is True
 
 
+@pytest.mark.parametrize(
+    "claimed_quotient",
+    [-4, -3],
+    ids=["floor_semantics_value", "euclidean_semantics_value"],
+)
+def test_check_expression_satisfiability_floor_divide_negative_divisor_is_screened(
+    claimed_quotient: int,
+) -> None:
+    """Test `7 // -2` compared against either candidate quotient is screened.
+
+    Z3 lowers `FLOOR_DIVIDE` on two integers to its `div`, which is
+    Euclidean, not floor: `7 // -2` is `-4` under this package's floor
+    semantics (and what `simplify_expression` reports), but Z3's
+    Euclidean division reports `-3` for the same inputs. The two
+    candidate quotients are mutually exclusive, so screening the
+    negative divisor must report both as undecided rather than decide
+    either one definitively.
+    """
+    floor_div = BinaryExpression(
+        BinaryOperation.FLOOR_DIVIDE, LiteralExpression(7), LiteralExpression(-2)
+    )
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, floor_div, LiteralExpression(claimed_quotient)
+    )
+
+    assert check_expression_satisfiability(expression, {}) is None
+
+
+def test_check_expression_satisfiability_floor_divide_negative_divisor_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a screened negative FLOOR_DIVIDE divisor logs a WARNING naming the node."""
+    floor_div = BinaryExpression(
+        BinaryOperation.FLOOR_DIVIDE, LiteralExpression(7), LiteralExpression(-2)
+    )
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, floor_div, LiteralExpression(-4)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = check_expression_satisfiability(expression, {})
+
+    assert result is None
+    messages = _collect_solver_warning_messages(caplog)
+    assert messages, "expected a WARNING naming the hazardous division node"
+    assert "check_expression_satisfiability" in messages[0]
+    assert repr(floor_div) in messages[0]
+
+
+def test_check_expression_satisfiability_modulo_negative_divisor_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a screened negative MODULO divisor logs a WARNING naming the node.
+
+    Z3 lowers `MODULO` on two integers to Euclidean modulo, whose result
+    always shares the divisor's sign rather than the dividend's: `7 % -2`
+    is `-1` under this package's floor semantics but Z3 reports `1` for
+    the same inputs.
+    """
+    modulo = BinaryExpression(
+        BinaryOperation.MODULO, LiteralExpression(7), LiteralExpression(-2)
+    )
+    expression = BinaryExpression(BinaryOperation.EQUAL, modulo, LiteralExpression(-1))
+
+    with caplog.at_level(logging.WARNING):
+        result = check_expression_satisfiability(expression, {})
+
+    assert result is None
+    messages = _collect_solver_warning_messages(caplog)
+    assert messages, "expected a WARNING naming the hazardous division node"
+    assert "check_expression_satisfiability" in messages[0]
+    assert repr(modulo) in messages[0]
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_floor_divide_positive_literal_decided() -> (
+    None
+):
+    """Test FLOOR_DIVIDE by a positive literal divisor is not screened.
+
+    Contrasts the hazard: a positive literal divisor lowers Z3's
+    Euclidean division faithfully to this package's floor semantics --
+    the two conventions agree whenever the divisor is positive -- so the
+    comparison reaches the solver and decides normally.
+    """
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        BinaryExpression(
+            BinaryOperation.FLOOR_DIVIDE, LiteralExpression(7), LiteralExpression(2)
+        ),
+        LiteralExpression(3),
+    )
+
+    assert check_expression_satisfiability(expression, {}) is True
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [BinaryOperation.FLOOR_DIVIDE, BinaryOperation.MODULO],
+    ids=["floor_divide", "modulo"],
+)
+def test_check_expression_satisfiability_zero_divisor_screened_for_euclidean_ops(
+    operation: BinaryOperation,
+) -> None:
+    """Test a literal-zero divisor is still screened for FLOOR_DIVIDE/MODULO.
+
+    Zero fails the screen's positive-divisor requirement the same way a
+    negative divisor does, so it is screened alongside the negative-
+    divisor cases.
+    """
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        BinaryExpression(operation, LiteralExpression(7), LiteralExpression(0)),
+        LiteralExpression(0),
+    )
+
+    assert check_expression_satisfiability(expression, {}) is None
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_divide_by_negative_literal_stays_decided() -> (
+    None
+):
+    """Test DIVIDE by a negative literal divisor is not screened.
+
+    Contrasts FLOOR_DIVIDE/MODULO: true division has no floor/Euclidean
+    divergence, so a negative (but finite, nonzero) literal divisor
+    remains safe for DIVIDE and the comparison decides normally.
+    """
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        BinaryExpression(
+            BinaryOperation.DIVIDE, LiteralExpression(7.0), LiteralExpression(-2.0)
+        ),
+        LiteralExpression(-3.5),
+    )
+
+    assert check_expression_satisfiability(expression, {}) is True
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [BinaryOperation.DIVIDE, BinaryOperation.FLOOR_DIVIDE, BinaryOperation.MODULO],
+    ids=["divide", "floor_divide", "modulo"],
+)
+@pytest.mark.parametrize(
+    "divisor_value",
+    [float("nan"), float("inf")],
+    ids=["nan", "inf"],
+)
+def test_check_expression_satisfiability_non_finite_literal_divisor_is_screened(
+    operation: BinaryOperation, divisor_value: float
+) -> None:
+    """Test a nan/inf literal divisor is screened for every division-like operation.
+
+    A `nan`/`inf` value compares unequal to 0, so a divisor screen that
+    only checked for nonzero would admit it despite carrying none of the
+    finite-value guarantee the screen requires.
+    """
+    x = mock_identifier("x", 0)
+    division = BinaryExpression(
+        operation, IdentifierExpression(x), LiteralExpression(divisor_value)
+    )
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, division, LiteralExpression(0.0)
+    )
+
+    result = check_expression_satisfiability(expression, {x: SymbolType.REAL})
+
+    assert result is None
+
+
 def test_check_expression_satisfiability_int_float_equality_hazard_returns_none(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test EQUAL mixing an INT-sorted identifier and a float literal is screened.
 
     Z3's ``ToReal`` rationalization of the INT-sorted operand collapses
-    the type-strict int/float distinction (audit finding C5/C6), so the
-    seam refuses to lower ``x == 1.5`` for an INT-sorted ``x``.
+    the type-strict int/float distinction, so the seam refuses to lower
+    ``x == 1.5`` for an INT-sorted ``x``.
     """
     x = mock_identifier("x", 0)
     expression = BinaryExpression(
@@ -562,7 +828,7 @@ def test_check_expression_satisfiability_int_float_equality_hazard_returns_none(
         result = check_expression_satisfiability(expression, {x: SymbolType.INT})
 
     assert result is None
-    messages = _solver_warning_messages(caplog)
+    messages = _collect_solver_warning_messages(caplog)
     assert messages, "expected a WARNING naming the hazardous node"
     assert "check_expression_satisfiability" in messages[0]
     assert repr(x) in messages[0]
@@ -621,9 +887,50 @@ def test_does_expression_imply_hazardous_premise_returns_none(
         result = does_expression_imply(antecedent, consequent, {x: SymbolType.INT})
 
     assert result is None
-    messages = _solver_warning_messages(caplog)
+    messages = _collect_solver_warning_messages(caplog)
     assert messages, "expected a WARNING naming the hazardous node"
     assert "does_expression_imply" in messages[0]
+
+
+def test_assert_holds_for_all_free_assignments_reason_is_hazard_screen() -> None:
+    """Test a hazard-screened expression raises with `reason` set to a hazard marker.
+
+    No Z3 solver call happens for a screened expression, so the raised
+    error's `reason` cannot be Z3's `reason_unknown()` text; it carries a
+    fixed marker instead, letting a caller tell this apart from a
+    retryable Z3 timeout.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(True)
+    )
+
+    with pytest.raises(
+        UndecidableError, match="refused by the solver seam's hazard screen"
+    ) as exc_info:
+        assert_holds_for_all_free_assignments(
+            frozenset(), expression, {x: SymbolType.INT}
+        )
+
+    assert exc_info.value.reason == "hazard_screen"
+
+
+def test_assert_expression_implies_undecidable_error_reason_is_hazard_screen() -> None:
+    """Test a hazard-screened implication raises with a hazard-marker `reason`."""
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(True)
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+    )
+
+    with pytest.raises(
+        UndecidableError, match="refused by the solver seam's hazard screen"
+    ) as exc_info:
+        assert_expression_implies(antecedent, consequent, {x: SymbolType.INT})
+
+    assert exc_info.value.reason == "hazard_screen"
 
 
 # =============================================================================
@@ -730,11 +1037,13 @@ def test_seam_functions_thread_the_timeout_to_the_z3_solver(
     recorded: dict[str, object] = {}
     original_set = z3.Solver.set
 
-    def _recording_set(self: z3.Solver, *args: object, **kwargs: object) -> None:
+    def record_solver_set_kwargs(
+        self: z3.Solver, *args: object, **kwargs: object
+    ) -> None:
         recorded.update(kwargs)
         original_set(self, *args, **kwargs)
 
-    monkeypatch.setattr(z3.Solver, "set", _recording_set)
+    monkeypatch.setattr(z3.Solver, "set", record_solver_set_kwargs)
     x = mock_identifier("x", 0)
     expression = BinaryExpression(
         BinaryOperation.GREATER_EQUAL, IdentifierExpression(x), IdentifierExpression(x)
@@ -771,11 +1080,13 @@ def test_timeout_milliseconds_is_threaded_to_the_z3_solver(
     recorded: dict[str, object] = {}
     original_set = z3.Solver.set
 
-    def _recording_set(self: z3.Solver, *args: object, **kwargs: object) -> None:
+    def record_solver_set_kwargs(
+        self: z3.Solver, *args: object, **kwargs: object
+    ) -> None:
         recorded.update(kwargs)
         original_set(self, *args, **kwargs)
 
-    monkeypatch.setattr(z3.Solver, "set", _recording_set)
+    monkeypatch.setattr(z3.Solver, "set", record_solver_set_kwargs)
     x = mock_identifier("x", 0)
     expression = BinaryExpression(
         BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)

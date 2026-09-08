@@ -20,9 +20,13 @@ the Z3 bridge cannot lower soundly: a Boolean operand reaching a
 numeric context, where the Z3 Python bindings silently rewrite it to
 ``If(b, 1, 0)`` and collapse this package's type-strict Boolean/numeric
 distinction; a ``DIVIDE``/``FLOOR_DIVIDE``/``MODULO`` node whose divisor
-is not provably a nonzero literal, since the satisfiability encoding
-around a possibly-zero divisor is unsound; and an ``EQUAL``/
-``NOT_EQUAL`` comparison mixing an INT-sorted operand with a
+is not provably safe for its operation -- a finite nonzero literal for
+``DIVIDE``, since the satisfiability encoding around a possibly-zero
+divisor is unsound, or a finite strictly positive literal for
+``FLOOR_DIVIDE``/``MODULO``, since Z3 lowers both to Euclidean
+division, which disagrees with this package's floor semantics for a
+zero, negative, or non-finite (``nan``/``inf``) divisor; and an
+``EQUAL``/``NOT_EQUAL`` comparison mixing an INT-sorted operand with a
 float-valued literal, since Z3's ``ToReal`` rationalization of the
 INT-sorted side collapses this package's type-strict int/float
 distinction. A refused expression is never lowered: the lenient entry
@@ -46,6 +50,7 @@ __all__ = [
     "validate_timeout_milliseconds",
 ]
 
+import math
 from collections.abc import Iterator, Mapping
 from collections.abc import Set as AbstractSet
 from enum import Enum, auto
@@ -450,50 +455,91 @@ _DIVISION_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
 """Binary operations whose right operand is a divisor that can be zero."""
 
 
-def _is_safe_divisor(node: Expression) -> bool:
-    """Return whether ``node`` is provably a nonzero strict-int-or-float literal.
+_EUCLIDEAN_DIVERGENT_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
+    {BinaryOperation.FLOOR_DIVIDE, BinaryOperation.MODULO}
+)
+"""Binary operations Z3 lowers to Euclidean division.
 
-    A ``bool`` value and a string-form literal are not safe divisors:
-    neither carries the provably-nonzero, strict-int-or-float guarantee
-    the division hazard screen requires, even when the string is
-    numeric-looking (e.g. ``"5"``).
+Euclidean division agrees with this package's floor semantics only
+when the divisor is positive, so these two operations need a stricter
+divisor screen than plain ``DIVIDE`` (true division has no such
+sign-dependent divergence).
+"""
+
+
+def _is_safe_nonzero_divisor(node: Expression) -> bool:
+    """Return whether ``node`` is provably a finite nonzero strict-int-or-float literal.
+
+    A ``bool`` value, a string-form literal, and a non-finite float
+    (``nan``/``inf``) are not safe divisors: none carries the
+    provably-nonzero, finite, strict-int-or-float guarantee the
+    division hazard screen requires, even when the string is
+    numeric-looking (e.g. ``"5"``) or the float is a constructible
+    ``LiteralExpression`` value.
 
     """
     if not isinstance(node, LiteralExpression):
         return False
     value = node.value
-    if is_strict_int(value) or isinstance(value, float):
+    if is_strict_int(value):
         return value != 0
+    if isinstance(value, float):
+        return math.isfinite(value) and value != 0
     return False
 
 
-def _does_node_divide_by_a_possibly_zero_operand(expression: Expression) -> bool:
-    """Return whether this one node divides by an operand that could be zero."""
-    return (
+def _is_safe_positive_divisor(node: Expression) -> bool:
+    """Return whether ``node`` is a finite positive strict-int-or-float literal.
+
+    Required for ``FLOOR_DIVIDE``/``MODULO``: a merely nonzero (but
+    possibly negative) literal is not enough for these two operations,
+    since Z3's Euclidean lowering disagrees with this package's floor
+    semantics whenever the divisor is not positive.
+
+    """
+    if not isinstance(node, LiteralExpression):
+        return False
+    value = node.value
+    if is_strict_int(value):
+        return value > 0
+    if isinstance(value, float):
+        return math.isfinite(value) and value > 0
+    return False
+
+
+def _does_node_divide_by_an_unsafe_operand(expression: Expression) -> bool:
+    """Return whether this one node divides by an operand its operation cannot trust."""
+    if not (
         isinstance(expression, BinaryExpression)
         and expression.operation in _DIVISION_BINARY_OPERATIONS
-        and not _is_safe_divisor(expression.right)
-    )
+    ):
+        return False
+    if expression.operation in _EUCLIDEAN_DIVERGENT_BINARY_OPERATIONS:
+        return not _is_safe_positive_divisor(expression.right)
+    return not _is_safe_nonzero_divisor(expression.right)
 
 
 def _find_division_hazard(expression: Expression) -> Expression | None:
-    """Return the first node of ``expression`` that divides by a possibly-zero operand.
+    """Return the first node of ``expression`` that divides by an unsafe operand.
 
     Screens the whole tree, mirroring ``_find_bool_sort_hazard``: a
-    ``DIVIDE``/``FLOOR_DIVIDE``/``MODULO`` node whose divisor is not
-    provably a nonzero literal is refused, since the solver seam's
-    satisfiability encoding for division around a zero divisor is
-    unsound.
+    ``DIVIDE`` node whose divisor is not provably a finite nonzero
+    literal is refused, since the solver seam's satisfiability encoding
+    around a zero divisor is unsound; a ``FLOOR_DIVIDE``/``MODULO`` node
+    whose divisor is not provably a finite *positive* literal is
+    refused, since Z3 lowers both to Euclidean division, which
+    disagrees with this package's floor semantics for a zero, negative,
+    or non-finite divisor.
 
     Args:
         expression: Expression about to be lowered to Z3.
 
     Returns:
         The offending node, or ``None`` when every division in the tree
-        divides by a provably nonzero literal.
+        divides by an operand safe for its operation.
 
     """
-    if _does_node_divide_by_a_possibly_zero_operand(expression):
+    if _does_node_divide_by_an_unsafe_operand(expression):
         return expression
     for child in expression.get_visit_children():
         hazard = _find_division_hazard(child)
@@ -593,11 +639,15 @@ def _log_bool_coercion_hazard(
 
 def _log_division_hazard(hazard: Expression, *, context: str) -> None:
     _LOGGER.warning(
-        "%s: node %r divides by an operand that is not provably a nonzero "
-        "literal, and the solver seam's satisfiability encoding for "
-        "division around a possibly-zero divisor is unsound. The "
-        "expression is not handed to the solver; bounding "
-        "timeout_milliseconds cannot change this outcome.",
+        "%s: node %r divides by an operand that is not a safe literal "
+        "divisor for its operation (a finite nonzero literal for DIVIDE; "
+        "a finite strictly positive literal for FLOOR_DIVIDE/MODULO, "
+        "since Z3 lowers those to Euclidean division, which disagrees "
+        "with floor semantics for a zero, negative, or non-finite "
+        "divisor), and the solver seam's satisfiability encoding around "
+        "such a divisor is unsound. The expression is not handed to the "
+        "solver; bounding timeout_milliseconds cannot change this "
+        "outcome.",
         context,
         hazard,
     )
@@ -659,6 +709,17 @@ def _find_and_log_hazard(
         _log_int_float_equality_hazard(hazard, symbol_types, context=context)
         return True
     return False
+
+
+_HAZARD_SCREEN_REASON: str = "hazard_screen"
+"""``UndecidableError.reason`` for a screen-refused expression.
+
+No Z3 solver call happens for a screened expression, so there is no
+``reason_unknown()`` text to report; this fixed marker lets a caller
+tell a hazard-screen refusal (undecidable in principle -- a larger
+``timeout_milliseconds`` will not change the outcome) apart from a
+genuine Z3 ``unknown`` result such as ``"timeout"``.
+"""
 
 
 def _validate_symbol_types_cover_free_identifiers(
@@ -869,7 +930,7 @@ def holds_for_all_free_assignments(
     _validate_backend_capability(backend, SolverQueryKind.UNIVERSAL_VALIDITY)
     validate_timeout_milliseconds(timeout_milliseconds)
     _validate_symbol_types_cover_free_identifiers(
-        expression.get_free_identifiers(), symbol_types
+        expression.get_free_identifiers() | set(considered_identifiers), symbol_types
     )
     if _find_and_log_hazard(
         expression, symbol_types, context="holds_for_all_free_assignments"
@@ -926,7 +987,7 @@ def assert_holds_for_all_free_assignments(
     _validate_backend_capability(backend, SolverQueryKind.UNIVERSAL_VALIDITY)
     validate_timeout_milliseconds(timeout_milliseconds)
     _validate_symbol_types_cover_free_identifiers(
-        expression.get_free_identifiers(), symbol_types
+        expression.get_free_identifiers() | set(considered_identifiers), symbol_types
     )
     if _find_and_log_hazard(
         expression, symbol_types, context="assert_holds_for_all_free_assignments"
@@ -936,7 +997,8 @@ def assert_holds_for_all_free_assignments(
             "refused by the solver seam's hazard screen before Z3 was "
             "consulted; see the WARNING logged just above for the "
             "offending node. The property is undecidable with the "
-            "current solver configuration."
+            "current solver configuration.",
+            reason=_HAZARD_SCREEN_REASON,
         )
     # INVARIANT: _BACKEND_CAPABILITIES grants UNIVERSAL_VALIDITY to exactly
     # one backend (Z3), so delegating straight to the Z3 bridge is valid
@@ -1005,7 +1067,8 @@ def assert_expression_implies(
             "solver seam's hazard screen before Z3 was consulted; see the "
             "WARNING logged just above for the offending node. The "
             "implication is undecidable with the current solver "
-            "configuration."
+            "configuration.",
+            reason=_HAZARD_SCREEN_REASON,
         )
     # INVARIANT: _BACKEND_CAPABILITIES grants IMPLICATION to exactly one
     # backend (Z3), so delegating straight to the Z3 bridge is valid without

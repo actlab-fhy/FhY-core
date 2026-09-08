@@ -475,7 +475,8 @@ def assert_holds_for_all_free_assignments(
         raise UndecidableError(
             "Z3 returned `unknown` for `holds_for_all_free_assignments` "
             f"({reason}); the property is undecidable with the current "
-            "solver configuration."
+            "solver configuration.",
+            reason=reason if reason is not None else "",
         )
     return result
 
@@ -516,6 +517,7 @@ def assert_expression_implies(
         raise UndecidableError(
             "Z3 returned `unknown` for `does_expression_imply` "
             f"({reason}); the implication is undecidable with the "
-            "current solver configuration."
+            "current solver configuration.",
+            reason=reason if reason is not None else "",
         )
     return result
