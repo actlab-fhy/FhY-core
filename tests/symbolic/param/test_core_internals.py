@@ -10,8 +10,9 @@ from typing import Any
 
 import pytest
 
-from fhy_core.identifier import Identifier
 from fhy_core.symbolic.param.values import ParamError, serialize_wrapped_leaf_value
+
+from .conftest import mock_identifier
 
 # =============================================================================
 # `serialize_wrapped_leaf_value`
@@ -25,7 +26,7 @@ from fhy_core.symbolic.param.values import ParamError, serialize_wrapped_leaf_va
         pytest.param(1, id="int"),
         pytest.param(1.5, id="float"),
         pytest.param("text", id="str"),
-        pytest.param(Identifier("x"), id="serializable"),
+        pytest.param(mock_identifier("x", 0), id="serializable"),
     ],
 )
 def test_serialize_wrapped_leaf_value_accepts_each_supported_type(
@@ -52,15 +53,11 @@ def test_serialize_wrapped_leaf_value_rejects_unsupported_type(
 
 
 # =============================================================================
-# `_constraint_structural_ordering_key` (design: D3)
+# Constraint ordering
 #
-# This private helper is deleted: `param/core.py` no longer builds its own
-# JSON-based constraint ordering key. Constraint ordering now goes through
-# the constraint module's public `build_constraint_ordering_key`, which is a
-# structural key (not a serialized-dict key), so the dict-key-order-
-# independence property this section used to pin via a duck-typed stub no
-# longer applies to anything in this module. `build_constraint_ordering_key`
-# has its own coverage in `tests/symbolic/constraint/**`, and
+# `Param` constraint ordering goes through the constraint module's public
+# `build_constraint_ordering_key`, covered directly under
+# `tests/symbolic/constraint/**`.
 # `test_scope_attachment.py::test_param_constraint_tuple_matches_build_constraint_ordering_key_order`  # noqa: E501
-# pins the same property at the `Param` level.
+# pins the same ordering property at the `Param` level.
 # =============================================================================

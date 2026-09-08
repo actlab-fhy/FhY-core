@@ -1,6 +1,7 @@
 """Constrained parameters built by composing a value domain.
 
-A :class:`Param` pairs a variable identifier and a set of constraints with a
+A :class:`Param` pairs a variable identifier and a
+:class:`~fhy_core.symbolic.constraint.ConstraintSystem` with a
 :class:`~fhy_core.symbolic.param.domains.ParamDomain` that supplies all kind-specific
 behavior. There is a single concrete ``Param`` class; the common kinds are built
 through the ``create_*`` factory functions.
@@ -16,7 +17,6 @@ from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar, cast
 
 from fhy_core.identifier import Identifier
-from fhy_core.logger import get_logger
 from fhy_core.serialization import (
     FieldCodec,
     Serializable,
@@ -100,8 +100,6 @@ __all__ = [
     "create_real_param_with_upper_bound",
     "create_single_valid_value_param",
 ]
-
-_LOGGER = get_logger(__name__)
 
 _T = TypeVar("_T")
 
@@ -238,6 +236,7 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
                 parameter's own variable.
 
         """
+        self._validate_bindings(bindings)
         return self.is_value_admissible(value) and self.is_constraints_satisfied(
             value, bindings=bindings
         )
@@ -265,10 +264,8 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         environment = self._build_environment(normalized, bindings)
         return self._find_failing_constraint(environment)[0]
 
-    def _build_environment(
-        self, value: Any, bindings: ConstraintBindings | None
-    ) -> ConstraintBindings:
-        """Merge ``value`` for this parameter's own variable with ``bindings``.
+    def _validate_bindings(self, bindings: ConstraintBindings | None) -> None:
+        """Raise if ``bindings`` supplies an entry for this parameter's own variable.
 
         Raises:
             ParamError: If ``bindings`` supplies an entry for this
@@ -281,6 +278,19 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
                 f"bindings must not include this parameter's own variable "
                 f"{self.variable!r}; its value is already supplied as `value`."
             )
+
+    def _build_environment(
+        self, value: Any, bindings: ConstraintBindings | None
+    ) -> ConstraintBindings:
+        """Merge ``value`` for this parameter's own variable with ``bindings``.
+
+        Raises:
+            ParamError: If ``bindings`` supplies an entry for this
+                parameter's own variable; passing it as both ``value`` and
+                ``bindings`` is an ambiguous call.
+
+        """
+        self._validate_bindings(bindings)
         environment: dict[Identifier, Any] = {self.variable: value}
         if bindings is not None:
             environment.update(bindings)
@@ -418,7 +428,7 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         """
         self.validate_value(value, bindings=bindings)
         normalized = cast(_T, self.domain.normalize_value(value))
-        return _construct_validated_assignment(self, normalized)
+        return _construct_unchecked_assignment(self, normalized)
 
     def add_constraint(self, constraint: Constraint) -> "Param[_T]":
         """Return a new parameter with an additional constraint.
@@ -587,7 +597,7 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
 _PARAM_CODEC: FieldCodec = _SerializableFieldCodec(Param)
 
 
-def _construct_validated_assignment(
+def _construct_unchecked_assignment(
     param: "Param[_T]", value: _T
 ) -> "ParamAssignment[_T]":
     """Build a ``ParamAssignment`` for a value the caller already validated.
@@ -679,7 +689,7 @@ class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generi
         param: Param[Any] = fields["param"]
         value = fields["value"]
         _raise_if_value_provably_invalid(param, value)
-        return _construct_validated_assignment(param, value)
+        return _construct_unchecked_assignment(param, value)
 
     def is_value_set(self) -> bool:
         """Return whether this assignment has a value."""
