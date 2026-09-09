@@ -8,6 +8,7 @@ the wrappers' documented optimism cannot drift away from the outcome it is
 derived from.
 """
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -231,3 +232,229 @@ def test_finite_set_check_feasibility_reports_violated_for_an_empty_narrowing() 
 
     assert narrowed.check_feasibility() is ConstraintOutcome.VIOLATED
     assert narrowed.is_empty()
+
+
+# =============================================================================
+# Numeric in-set enumeration carries each candidate's outcome
+# =============================================================================
+
+
+_DOMAINS_LOGGER = "fhy_core.symbolic.param.domains"
+
+
+def _find_domain_warnings(
+    caplog: pytest.LogCaptureFixture,
+) -> list[logging.LogRecord]:
+    """Return the domains module's records emitted at exactly `WARNING`."""
+    return [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and record.name == _DOMAINS_LOGGER
+    ]
+
+
+def _create_in_set_param_with_undecided_members() -> Param[int]:
+    """Create `x in {1, 2, 3}` with `x + y > 0`, leaving every member undecided.
+
+    `y` is foreign to the parameter, so binding any member of the set
+    leaves the equation unresolved.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    dependent = EquationConstraint(
+        IdentifierExpression(x) + IdentifierExpression(y) > 0
+    )
+    return create_integer_param(
+        name=x, constraints=[InSetConstraint(x, (1, 2, 3)), dependent]
+    )
+
+
+def _create_in_set_param_with_one_decided_member() -> Param[int]:
+    """Create `x in {0, 1}` with `x * y == 0`, deciding only the member `0`.
+
+    Binding `0` reduces the product to a literal, so that member is
+    decided; binding `1` leaves `y == 0` unresolved.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    dependent = EquationConstraint(
+        (IdentifierExpression(x) * IdentifierExpression(y)).equals(0)
+    )
+    return create_integer_param(
+        name=x, constraints=[InSetConstraint(x, (0, 1)), dependent]
+    )
+
+
+def _create_integer_param_with_bound(
+    identifier_id: int, build_bound: Callable[[IdentifierExpression], Any]
+) -> Param[int]:
+    """Create an integer parameter `z` constrained by `build_bound(z)`."""
+    z = mock_identifier("z", identifier_id)
+    return create_integer_param(
+        name=z, constraints=[EquationConstraint(build_bound(IdentifierExpression(z)))]
+    )
+
+
+def test_check_feasibility_reports_undecided_when_no_in_set_candidate_is_decided() -> (
+    None
+):
+    """Test enumeration reports `UNDECIDED` when no candidate is decided either way."""
+    param = _create_in_set_param_with_undecided_members()
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+def test_check_feasibility_reports_satisfied_when_one_in_set_candidate_is_decided() -> (
+    None
+):
+    """Test one decided-feasible candidate outweighs an undecided sibling."""
+    param = _create_in_set_param_with_one_decided_member()
+
+    assert param.check_feasibility() is ConstraintOutcome.SATISFIED
+
+
+def test_in_set_enumeration_decides_violated_when_the_solver_refuses() -> None:
+    """Test enumeration decides `VIOLATED` for a hazard the solver seam refuses.
+
+    Binding each member of `{1, 2, 3}` reduces `x / x != 1` to a false
+    literal, so the enumeration decides what the solver would not.
+    """
+    undecided = _create_undecided_param()
+    narrowed = undecided.add_constraint(InSetConstraint(undecided.variable, (1, 2, 3)))
+
+    assert narrowed.check_feasibility() is ConstraintOutcome.VIOLATED
+
+
+def test_check_subset_reports_undecided_when_the_rejected_candidate_is_undecided() -> (
+    None
+):
+    """Test a rejected candidate `own` cannot place in its own set is no counterexample.
+
+    `y <= 2` empties `own`, so the relation holds; `y >= 3` places `3` in
+    `own`, which `other` rejects. Neither is decided.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    dependent = EquationConstraint(
+        IdentifierExpression(x) + IdentifierExpression(y) > 5
+    )
+    own = create_integer_param(
+        name=x, constraints=[InSetConstraint(x, (1, 2, 3)), dependent]
+    )
+    other = _create_integer_param_with_bound(3, lambda z: z <= 2)
+
+    assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
+
+
+def test_check_subset_reports_undecided_beside_an_accepted_decided_candidate() -> None:
+    """Test an accepted decided candidate leaves an undecided rejected one open."""
+    own = _create_in_set_param_with_one_decided_member()
+    other = _create_integer_param_with_bound(3, lambda z: z <= 0)
+
+    assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
+
+
+def test_check_subset_reports_violated_when_a_decided_candidate_is_rejected() -> None:
+    """Test a candidate decided into `own` and out of `other` is a counterexample."""
+    own = _create_in_set_param_with_one_decided_member()
+    other = _create_integer_param_with_bound(3, lambda z: z >= 1)
+
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
+
+
+def test_check_subset_reports_satisfied_when_other_accepts_every_candidate() -> None:
+    """Test `other` accepting every candidate decides `SATISFIED` regardless of `own`.
+
+    A candidate `other` accepts cannot break the relation whether or not
+    it actually lies in `own`.
+    """
+    own = _create_in_set_param_with_undecided_members()
+    other = _create_integer_param_with_bound(3, lambda z: z >= 1)
+
+    assert own.check_subset(other) is ConstraintOutcome.SATISFIED
+
+
+@pytest.mark.z3
+def test_check_subset_reports_violated_when_own_exceeds_an_undecided_finite_other() -> (
+    None
+):
+    """Test an infinite `own` exceeding an undecided finite `other` is a counterexample.
+
+    `other` admits at most `{1, 2, 3}` however its dependent constraint
+    resolves, and `own` admits `4`, so the relation is decided from proof.
+    """
+    own = _create_integer_param_with_bound(3, lambda z: z >= 1)
+    other = _create_in_set_param_with_undecided_members()
+
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
+
+
+def test_is_feasible_and_is_empty_fold_an_undecided_enumeration() -> None:
+    """Test the boolean wrappers read an undecided enumeration as "not disproven"."""
+    param = _create_in_set_param_with_undecided_members()
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+    assert param.is_feasible()
+    assert not param.is_empty()
+
+
+def test_is_subset_folds_an_undecided_enumeration_to_true() -> None:
+    """Test `is_subset` reads an undecided enumeration as "not disproven"."""
+    own = _create_in_set_param_with_one_decided_member()
+    other = _create_integer_param_with_bound(3, lambda z: z <= 0)
+
+    assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
+    assert own.is_subset(other)
+
+
+def test_undecided_feasibility_enumeration_logs_one_warning_naming_the_candidates(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test an undecided feasibility enumeration logs one WARNING naming candidates."""
+    param = _create_in_set_param_with_undecided_members()
+
+    with caplog.at_level(logging.WARNING, logger=_DOMAINS_LOGGER):
+        outcome = param.check_feasibility()
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    warnings = _find_domain_warnings(caplog)
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "1, 2, 3" in message
+    assert repr(param.variable) in message
+
+
+def test_decided_feasibility_enumeration_logs_no_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a feasibility enumeration decided by one candidate logs no WARNING."""
+    param = _create_in_set_param_with_one_decided_member()
+
+    with caplog.at_level(logging.WARNING, logger=_DOMAINS_LOGGER):
+        outcome = param.check_feasibility()
+
+    assert outcome is ConstraintOutcome.SATISFIED
+    assert _find_domain_warnings(caplog) == []
+
+
+def test_undecided_subset_enumeration_logs_one_warning_naming_the_candidates(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test an undecided subset enumeration logs one WARNING naming its candidates.
+
+    `other` accepts `1` outright, so only `2` and `3`, each undecided on
+    the own side and rejected by `other`, leave the relation open.
+    """
+    own = _create_in_set_param_with_undecided_members()
+    other = _create_integer_param_with_bound(3, lambda z: z <= 1)
+
+    with caplog.at_level(logging.WARNING, logger=_DOMAINS_LOGGER):
+        outcome = own.check_subset(other)
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    warnings = _find_domain_warnings(caplog)
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "2, 3" in message
+    assert "1, 2, 3" not in message
+    assert repr(own.variable) in message

@@ -410,9 +410,21 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         within their own family. Cross-space and cross-family queries decide
         ``VIOLATED``.
 
-        A parameter whose admissible values an ``InSetConstraint`` makes
-        finite is decided by enumeration, on either side; that branch, and
-        only that branch, decides from proof.
+        A finite-set parameter (ordinal, categorical, permutation)
+        enumerates its domain and always decides; the solver, screening,
+        and ``UNDECIDED`` below apply only to numeric parameters.
+
+        A numeric parameter whose admissible values an ``InSetConstraint``
+        makes finite is decided by evaluating each candidate on both sides
+        with it bound. When this parameter is the finite one, a candidate
+        decided into it and decided out of ``other`` is a counterexample
+        (``VIOLATED``), ``other`` deciding every candidate not decided out
+        of this parameter proves the relation (``SATISFIED``), and
+        anything else, such as a candidate a dependent constraint leaves
+        undecided, reports ``UNDECIDED`` (logged at ``WARNING``). When only
+        ``other`` is finite, the relation is ``VIOLATED`` if this parameter
+        provably admits a value outside ``other``'s candidates and
+        otherwise goes to the solver.
 
         Otherwise the relation goes to the solver, and neither decided
         answer from there is a proof: a constraint reaching outside either
@@ -424,7 +436,8 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         Returns:
             ``SATISFIED`` when the subset relation is reported to hold,
             ``VIOLATED`` when a counterexample is reported, and
-            ``UNDECIDED`` when the solver could not decide.
+            ``UNDECIDED`` when neither the solver nor the enumeration
+            could decide.
 
         """
         return self.domain.compute_feasibility_subset(
@@ -452,17 +465,26 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         The constraints already include the domain's implied constraints, so the
         domain reasons only about the constraints it is given.
 
-        Set-constrained numeric parameters are decided by enumerating the
-        finite admissible members; otherwise the question goes to the
-        solver. A constraint reaching outside this parameter's own variable
-        is dropped before the question is posed (logged at ``WARNING``), so
+        A finite-set parameter (ordinal, categorical, permutation)
+        enumerates its domain and always decides; the solver, screening,
+        and ``UNDECIDED`` below apply only to numeric parameters.
+
+        A numeric parameter whose admissible values an ``InSetConstraint``
+        makes finite is decided by evaluating each candidate against the
+        constraints with it bound: one decided to satisfy them reports
+        ``SATISFIED``, all decided to violate them report ``VIOLATED``, and
+        otherwise, when a dependent constraint leaves a candidate undecided
+        and none is decided feasible, ``UNDECIDED`` (logged at
+        ``WARNING``). Otherwise the question goes to the solver. A
+        constraint reaching outside this parameter's own variable is
+        dropped before the question is posed (logged at ``WARNING``), so
         the answer rests on a weakened system; a solver that cannot decide
         satisfiability reports ``UNDECIDED``.
 
         Returns:
             ``SATISFIED`` when a satisfying value is reported to exist,
-            ``VIOLATED`` when none can exist, and ``UNDECIDED`` when the
-            solver could not decide.
+            ``VIOLATED`` when none can exist, and ``UNDECIDED`` when
+            neither the solver nor the enumeration could decide.
 
         """
         return self.domain.has_feasible_value(self.constraints, self.variable)

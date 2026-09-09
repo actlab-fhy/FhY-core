@@ -20,16 +20,16 @@ permutation domains). Cross-space and cross-family queries decide ``VIOLATED``.
 
 :meth:`compute_feasibility_subset` and :meth:`has_feasible_value` answer with
 the tri-state :class:`~fhy_core.symbolic.constraint.ConstraintOutcome`, so a
-solver that gave up is reported as ``UNDECIDED`` rather than being folded into
-either decided answer. Finite-set domains enumerate their value sets and so
-always decide.
+solver that gave up, or an enumeration a dependent constraint leaves open, is
+reported as ``UNDECIDED`` rather than being folded into either decided answer.
+Finite-set domains enumerate their value sets and so always decide.
 """
 
 import itertools
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
@@ -82,6 +82,7 @@ from .values import (
 
 __all__ = [
     "CategoricalDomain",
+    "DecidedOutcome",
     "IntegerDomain",
     "IntervalIntegerDomain",
     "OrdinalDomain",
@@ -92,6 +93,11 @@ __all__ = [
 ]
 
 _LOGGER = get_logger(__name__)
+
+# The outcomes an enumeration over a finite value set can report.
+DecidedOutcome: TypeAlias = Literal[
+    ConstraintOutcome.SATISFIED, ConstraintOutcome.VIOLATED
+]
 
 
 def are_all_constraints_satisfied(
@@ -115,13 +121,12 @@ def _is_value_valid_for(
     )
 
 
-def _decide_outcome(is_holding: bool) -> ConstraintOutcome:
-    """Return the decided outcome a proof-backed answer stands for.
+def _decide_from_enumeration(is_holding: bool) -> DecidedOutcome:
+    """Map a decided boolean onto ``SATISFIED`` or ``VIOLATED``.
 
-    Enumeration over a finite value set decides a feasibility or subset
-    question outright, leaving no room for ``UNDECIDED``; this maps such
-    an answer onto the tri-state vocabulary the solver-backed branches
-    also speak.
+    Only enumeration over a finite value set may call this: every member
+    of such a set is decided, so the boolean is a proof and leaves no
+    room for ``UNDECIDED``.
 
     Args:
         is_holding: Whether the question was decided affirmatively.
@@ -178,12 +183,10 @@ def evaluate_system_outcome(
     """Decide ``system`` under ``bindings``, degrading on an expression-pass failure.
 
     Evaluation lowers through the SymPy bridge, which is not total: a
-    constraint it cannot lower or lift raises ``PassExecutionError``.
-    That is the backend failing to answer rather than the parameter being
-    invalid, so it degrades to ``UNDECIDED`` (logged at ``WARNING``) the
-    way every other undecidable outcome here does. Every parameter-level
-    entry point returns ``bool``, so a bridge failure must not escape one
-    as an exception.
+    constraint it cannot lower or lift raises ``PassExecutionError``. A
+    bridge failure is an undecided answer, not an invalid parameter, so
+    it degrades to ``UNDECIDED`` (logged at ``WARNING``) rather than
+    escaping a parameter-level query as an exception.
 
     Args:
         system: Constraints to decide.
@@ -205,74 +208,137 @@ def evaluate_system_outcome(
         return ConstraintOutcome.UNDECIDED
 
 
-def _enumerate_feasible_in_set_candidates(
+def _evaluate_in_set_candidates(
     domain: "ParamDomain", constraints: Sequence[Constraint], variable: Identifier
-) -> list[Any]:
-    """Return the in-set candidates not disproven by the domain or equation constraints.
+) -> Iterator[tuple[Any, ConstraintOutcome]]:
+    """Yield each in-set candidate paired with its outcome under ``constraints``.
 
-    A candidate is included when it is domain-admissible and its outcome
-    against the conjunction of ``constraints``'s equation constraints is
-    ``SATISFIED`` or ``UNDECIDED`` (the documented optimistic default for
-    an undecided candidate, e.g. one a dependent constraint leaves
-    unresolved, logged at ``WARNING``); a ``VIOLATED`` candidate is
-    excluded. Assumes ``constraints`` contains at least one
-    ``InSetConstraint``.
+    A candidate the domain does not admit is ``VIOLATED`` outright.
+    Otherwise its outcome is that of the conjunction of ``constraints``'s
+    equation constraints with the candidate bound to ``variable``, so a
+    dependent constraint the binding leaves unresolved yields
+    ``UNDECIDED`` rather than a decided answer. Assumes ``constraints``
+    contains at least one ``InSetConstraint``.
 
     """
     equation_system = _build_equation_constraint_system(constraints)
-    feasible: list[Any] = []
     for candidate in _compute_numeric_in_set_candidates(constraints):
         if not domain.is_value_admissible(candidate):
+            yield candidate, ConstraintOutcome.VIOLATED
             continue
-        outcome = evaluate_system_outcome(equation_system, {variable: candidate})
-        if outcome is ConstraintOutcome.VIOLATED:
-            continue
+        yield candidate, evaluate_system_outcome(equation_system, {variable: candidate})
+
+
+def _decide_feasibility_by_enumeration(
+    domain: "ParamDomain", constraints: Sequence[Constraint], variable: Identifier
+) -> ConstraintOutcome:
+    """Decide feasibility from each in-set candidate's outcome.
+
+    ``SATISFIED`` when some candidate is decided ``SATISFIED``;
+    ``VIOLATED`` when every candidate is decided ``VIOLATED``, which
+    includes there being no candidate at all; ``UNDECIDED`` otherwise,
+    logged at ``WARNING`` naming the undecided candidates. Assumes
+    ``constraints`` contains at least one ``InSetConstraint``.
+
+    """
+    undecided: list[Any] = []
+    for candidate, outcome in _evaluate_in_set_candidates(
+        domain, constraints, variable
+    ):
+        if outcome is ConstraintOutcome.SATISFIED:
+            return ConstraintOutcome.SATISFIED
         if outcome is ConstraintOutcome.UNDECIDED:
-            _LOGGER.warning(
-                "_enumerate_feasible_in_set_candidates: equation constraints "
-                "could not decide candidate %r for variable %r; optimistically "
-                "treating it as feasible.",
-                candidate,
-                variable,
-            )
-        feasible.append(candidate)
-    return feasible
+            undecided.append(candidate)
+    if not undecided:
+        return ConstraintOutcome.VIOLATED
+    _LOGGER.warning(
+        "_decide_feasibility_by_enumeration: equation constraints could not "
+        "decide candidate(s) %s for variable %r and decided none feasible; "
+        "reporting UNDECIDED.",
+        format_comma_separated_list(undecided),
+        variable,
+    )
+    return ConstraintOutcome.UNDECIDED
 
 
-def _is_candidate_accepted_by_other_side(
+def _evaluate_candidate_against_other_side(
     other_domain: "ParamDomain",
     other_constraints: Sequence[Constraint],
     other_variable: Identifier,
     candidate: Any,
-) -> bool:
-    """Return whether ``other``'s domain and constraints admit ``candidate``.
+) -> ConstraintOutcome:
+    """Return ``other``'s outcome for ``candidate`` bound to ``other_variable``.
 
-    Set-constraint membership checks are type-strict. A ``VIOLATED``
-    equation-constraint outcome rejects the candidate; ``UNDECIDED``
-    follows this module's optimistic convention and is treated as
-    accepted (logged at ``WARNING``).
+    ``VIOLATED`` when ``other_domain`` does not admit the candidate or a
+    set constraint rejects it under type-strict membership. Otherwise the
+    outcome of ``other_constraints``'s equation constraints with the
+    candidate bound, which is ``UNDECIDED`` when a dependent constraint
+    leaves it unresolved.
 
     """
     if not other_domain.is_value_admissible(candidate):
-        return False
+        return ConstraintOutcome.VIOLATED
     for constraint in other_constraints:
         if isinstance(constraint, InSetConstraint):
             if not does_collection_contain_param_value(constraint.members, candidate):
-                return False
+                return ConstraintOutcome.VIOLATED
         elif isinstance(constraint, NotInSetConstraint):
             if does_collection_contain_param_value(constraint.members, candidate):
-                return False
+                return ConstraintOutcome.VIOLATED
     equation_system = _build_equation_constraint_system(other_constraints)
-    outcome = evaluate_system_outcome(equation_system, {other_variable: candidate})
-    if outcome is ConstraintOutcome.UNDECIDED:
-        _LOGGER.warning(
-            "_is_candidate_accepted_by_other_side: equation constraints could "
-            "not decide candidate %r for variable %r; optimistically treating "
-            "it as accepted.",
-            candidate,
-            other_variable,
+    return evaluate_system_outcome(equation_system, {other_variable: candidate})
+
+
+def _decide_subset_by_enumerating_own(
+    own_domain: "ParamDomain",
+    own_constraints: Sequence[Constraint],
+    own_variable: Identifier,
+    other_domain: "ParamDomain",
+    other_constraints: Sequence[Constraint],
+    other_variable: Identifier,
+) -> ConstraintOutcome:
+    """Decide the subset relation from ``own``'s in-set candidates.
+
+    A candidate ``own`` decides ``VIOLATED`` is skipped. ``VIOLATED`` when
+    a candidate ``own`` decides ``SATISFIED`` is decided ``VIOLATED`` by
+    ``other``: that is a counterexample. ``SATISFIED`` when ``other``
+    decides every remaining candidate ``SATISFIED``, since a candidate
+    ``other`` accepts cannot break the relation whether or not it lies in
+    ``own``. ``UNDECIDED`` otherwise, logged at ``WARNING`` naming the
+    candidates; a candidate ``own`` leaves undecided and ``other``
+    rejects is not a counterexample, since it may not lie in ``own`` at
+    all. Assumes ``own_constraints`` contains at least one
+    ``InSetConstraint``.
+
+    """
+    undecided: list[Any] = []
+    for candidate, own_outcome in _evaluate_in_set_candidates(
+        own_domain, own_constraints, own_variable
+    ):
+        if own_outcome is ConstraintOutcome.VIOLATED:
+            continue
+        other_outcome = _evaluate_candidate_against_other_side(
+            other_domain, other_constraints, other_variable, candidate
         )
-    return outcome is not ConstraintOutcome.VIOLATED
+        if other_outcome is ConstraintOutcome.SATISFIED:
+            continue
+        if (
+            own_outcome is ConstraintOutcome.SATISFIED
+            and other_outcome is ConstraintOutcome.VIOLATED
+        ):
+            return ConstraintOutcome.VIOLATED
+        undecided.append(candidate)
+    if not undecided:
+        return ConstraintOutcome.SATISFIED
+    _LOGGER.warning(
+        "_decide_subset_by_enumerating_own: candidate(s) %s of variable %r "
+        "could not be decided against variable %r on both sides; reporting "
+        "UNDECIDED.",
+        format_comma_separated_list(undecided),
+        own_variable,
+        other_variable,
+    )
+    return ConstraintOutcome.UNDECIDED
 
 
 def _split_not_in_set_members_by_liftability(
@@ -752,18 +818,21 @@ def compute_constraint_implication_subset(
     """Decide whether ``own_constraints``'s admissible set is a subset of ``other``'s.
 
     When ``own_constraints`` contains an ``InSetConstraint``, the
-    admissible values are finite: every surviving candidate (see
-    ``_enumerate_feasible_in_set_candidates``) must be accepted by
-    ``other_domain``/``other_constraints`` (type-strict set membership,
-    domain admissibility, and equation constraints decided per candidate).
-    Enumeration leaves nothing open, so this branch decides.
+    admissible values are finite and each candidate is evaluated on both
+    sides with it bound (see ``_decide_subset_by_enumerating_own``): a
+    candidate decided into ``own`` and decided out of ``other`` is a
+    counterexample and decides ``VIOLATED``; ``other`` deciding every
+    candidate not decided out of ``own`` decides ``SATISFIED``; anything
+    else, such as a candidate a dependent constraint leaves undecided on
+    either side, reports ``UNDECIDED``.
 
-    When only ``other_constraints`` is finite, its admissible values are
-    enumerated and ``own`` is asked, through the solver, whether it
-    provably admits a value outside them (see
+    When only ``other_constraints`` is finite, the candidates ``other``
+    does not decide out are enumerated and ``own`` is asked, through the
+    solver, whether it provably admits a value outside them (see
     ``_does_own_admit_a_value_outside``); such a value is a genuine
     counterexample, since the enumeration over-approximates what the
-    other side admits, and the relation is decided ``VIOLATED``.
+    other side admits, and the relation is decided ``VIOLATED``. No other
+    answer is drawn from this branch.
 
     Otherwise the two sides' variable-only constraint systems (see
     ``_build_screened_constraint_system``) are renamed onto one shared
@@ -774,8 +843,8 @@ def compute_constraint_implication_subset(
     manufactured by weakening the antecedent. A constraint excluded for
     reaching outside either parameter's own variable is likewise only
     logged at ``WARNING``, so it too leaves the outcome resting on a
-    weakened system. Only the two enumeration-backed branches decide from
-    proof.
+    weakened system. Only a decided answer from the two
+    enumeration-backed branches rests on proof.
 
     Args:
         own_domain: Domain of the candidate subset parameter.
@@ -788,28 +857,32 @@ def compute_constraint_implication_subset(
 
     Returns:
         ``SATISFIED`` when the subset relation holds, ``VIOLATED`` when a
-        counterexample is reported, and ``UNDECIDED`` when the solver
-        could not decide.
+        counterexample is reported, and ``UNDECIDED`` when neither the
+        solver nor the enumeration could decide.
 
     """
     if any(isinstance(c, InSetConstraint) for c in own_constraints):
-        own_candidates = _enumerate_feasible_in_set_candidates(
-            own_domain, own_constraints, own_variable
-        )
-        return _decide_outcome(
-            all(
-                _is_candidate_accepted_by_other_side(
-                    other_domain, other_constraints, other_variable, candidate
-                )
-                for candidate in own_candidates
-            )
+        return _decide_subset_by_enumerating_own(
+            own_domain,
+            own_constraints,
+            own_variable,
+            other_domain,
+            other_constraints,
+            other_variable,
         )
     if any(isinstance(c, InSetConstraint) for c in other_constraints):
-        other_candidates = _enumerate_feasible_in_set_candidates(
-            other_domain, other_constraints, other_variable
-        )
+        # A candidate ``other`` leaves undecided may still be admitted, so
+        # it stays permitted: over-approximating what ``other`` admits is
+        # what keeps a value found outside it a genuine counterexample.
+        permitted_values = [
+            candidate
+            for candidate, outcome in _evaluate_in_set_candidates(
+                other_domain, other_constraints, other_variable
+            )
+            if outcome is not ConstraintOutcome.VIOLATED
+        ]
         if _does_own_admit_a_value_outside(
-            own_domain, own_constraints, own_variable, other_candidates, symbol_type
+            own_domain, own_constraints, own_variable, permitted_values, symbol_type
         ):
             return ConstraintOutcome.VIOLATED
     common_variable = Identifier("var")
@@ -1115,22 +1188,23 @@ def _numeric_has_feasible_value(
     """Decide whether some domain-admissible value satisfies every constraint.
 
     Routes through enumeration when an ``InSetConstraint`` makes the
-    admissible values finite (see
-    ``_enumerate_feasible_in_set_candidates``), which decides outright;
-    otherwise decides the screened ``ConstraintSystem`` built from
-    ``variable``-only equation constraints and ``NotInSetConstraint``s
-    narrowed to their liftable members (see
-    ``_build_screened_constraint_system``) and reports that outcome as it
-    stands. A dependent or foreign-scoped constraint is dropped from the
-    screened system before the question is posed (logged at ``WARNING``),
-    so the outcome rests on a weakened system; a solver that gives up
-    reports ``UNDECIDED`` rather than being read as feasibility.
+    admissible values finite (see ``_decide_feasibility_by_enumeration``):
+    a candidate decided to satisfy every constraint decides
+    ``SATISFIED``, every candidate decided to violate one decides
+    ``VIOLATED``, and an undecided candidate with no decided-feasible
+    sibling reports ``UNDECIDED``. Otherwise decides the screened
+    ``ConstraintSystem`` built from ``variable``-only equation
+    constraints and ``NotInSetConstraint``s narrowed to their liftable
+    members (see ``_build_screened_constraint_system``) and reports that
+    outcome as it stands. A dependent or foreign-scoped constraint is
+    dropped from the screened system before the question is posed
+    (logged at ``WARNING``), so the outcome rests on a weakened system; a
+    solver that gives up reports ``UNDECIDED`` rather than being read as
+    feasibility.
 
     """
     if any(isinstance(c, InSetConstraint) for c in constraints):
-        return _decide_outcome(
-            bool(_enumerate_feasible_in_set_candidates(domain, constraints, variable))
-        )
+        return _decide_feasibility_by_enumeration(domain, constraints, variable)
     system = _build_screened_constraint_system(constraints, variable)
     outcome = system.check_satisfiability({variable: symbol_type})
     if outcome is ConstraintOutcome.UNDECIDED:
@@ -1613,7 +1687,7 @@ class OrdinalDomain(ParamDomain):
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
         other_variable: Identifier,
-    ) -> ConstraintOutcome:
+    ) -> DecidedOutcome:
         if not isinstance(other, OrdinalDomain):
             return ConstraintOutcome.VIOLATED
         for value in self.sorted_values:
@@ -1626,8 +1700,8 @@ class OrdinalDomain(ParamDomain):
     @override
     def has_feasible_value(
         self, constraints: Sequence[Constraint], variable: Identifier
-    ) -> ConstraintOutcome:
-        return _decide_outcome(
+    ) -> DecidedOutcome:
+        return _decide_from_enumeration(
             any(
                 _is_value_valid_for(self, constraints, variable, value)
                 for value in self.sorted_values
@@ -1791,7 +1865,7 @@ class CategoricalDomain(ParamDomain):
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
         other_variable: Identifier,
-    ) -> ConstraintOutcome:
+    ) -> DecidedOutcome:
         if not isinstance(other, CategoricalDomain):
             return ConstraintOutcome.VIOLATED
         for category in self.categories:
@@ -1806,8 +1880,8 @@ class CategoricalDomain(ParamDomain):
     @override
     def has_feasible_value(
         self, constraints: Sequence[Constraint], variable: Identifier
-    ) -> ConstraintOutcome:
-        return _decide_outcome(
+    ) -> DecidedOutcome:
+        return _decide_from_enumeration(
             any(
                 _is_value_valid_for(self, constraints, variable, category)
                 for category in self.categories
@@ -1984,7 +2058,7 @@ class PermutationDomain(ParamDomain):
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
         other_variable: Identifier,
-    ) -> ConstraintOutcome:
+    ) -> DecidedOutcome:
         if not isinstance(other, PermutationDomain):
             return ConstraintOutcome.VIOLATED
         if len(self.ordered_members) != len(other.ordered_members):
@@ -2003,8 +2077,8 @@ class PermutationDomain(ParamDomain):
     @override
     def has_feasible_value(
         self, constraints: Sequence[Constraint], variable: Identifier
-    ) -> ConstraintOutcome:
-        return _decide_outcome(
+    ) -> DecidedOutcome:
+        return _decide_from_enumeration(
             any(
                 _is_value_valid_for(self, constraints, variable, permutation)
                 for permutation in itertools.permutations(self.ordered_members)
