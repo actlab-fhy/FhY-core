@@ -29,6 +29,7 @@ from fhy_core.serialization import (
 from fhy_core.symbolic.constraint import (
     Constraint,
     ConstraintBindings,
+    ConstraintError,
     ConstraintOutcome,
     ConstraintSystem,
     EquationConstraint,
@@ -426,18 +427,22 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         provably admits a value outside ``other``'s candidates and
         otherwise goes to the solver.
 
-        Otherwise the relation goes to the solver, and neither decided
-        answer from there is a proof: a constraint reaching outside either
-        parameter's own variable is dropped before the question is posed
-        (logged at ``WARNING``), and screening weakens the antecedent, so a
-        ``VIOLATED`` may rest on a counterexample the unscreened
-        constraints forbid. A solver that gives up reports ``UNDECIDED``.
+        Otherwise the relation goes to the solver. A constraint reaching
+        outside either parameter's own variable is dropped before the
+        question is posed (logged at ``WARNING``), which only widens that
+        side, so a decided answer is kept exactly when the weakened
+        question still proves it: ``SATISFIED`` when ``other``'s side is
+        exact, ``VIOLATED`` when this parameter's side is exact. A
+        ``VIOLATED`` resting on a counterexample this parameter's dropped
+        constraints might forbid, and a ``SATISFIED`` into a consequent
+        ``other``'s dropped constraints might narrow, report ``UNDECIDED``
+        (logged at ``WARNING``), as does a solver that gives up.
 
         Returns:
-            ``SATISFIED`` when the subset relation is reported to hold,
-            ``VIOLATED`` when a counterexample is reported, and
+            ``SATISFIED`` when the subset relation is decided to hold,
+            ``VIOLATED`` when a counterexample is decided, and
             ``UNDECIDED`` when neither the solver nor the enumeration
-            could decide.
+            could decide, or the solver decided only a weakened question.
 
         """
         return self.domain.compute_feasibility_subset(
@@ -477,14 +482,18 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         and none is decided feasible, ``UNDECIDED`` (logged at
         ``WARNING``). Otherwise the question goes to the solver. A
         constraint reaching outside this parameter's own variable is
-        dropped before the question is posed (logged at ``WARNING``), so
-        the answer rests on a weakened system; a solver that cannot decide
+        dropped before the question is posed (logged at ``WARNING``),
+        which only widens the admissible set: a ``VIOLATED`` answer to
+        the weakened question stands, while a ``SATISFIED`` one names a
+        value the dropped constraint might forbid and is reported
+        ``UNDECIDED`` (logged at ``WARNING``). A solver that cannot decide
         satisfiability reports ``UNDECIDED``.
 
         Returns:
-            ``SATISFIED`` when a satisfying value is reported to exist,
+            ``SATISFIED`` when a satisfying value is decided to exist,
             ``VIOLATED`` when none can exist, and ``UNDECIDED`` when
-            neither the solver nor the enumeration could decide.
+            neither the solver nor the enumeration could decide, or the
+            solver decided only a weakened question.
 
         """
         return self.domain.has_feasible_value(self.constraints, self.variable)
@@ -1249,6 +1258,25 @@ def _create_class_preserved_interval_param(
     return _create_widened_interval_param(min_int, max_int, template_domain)
 
 
+def _require_bound_constraint(constraint: Constraint) -> None:
+    """Raise ``TypeError`` unless ``constraint`` lifts to a bound expression.
+
+    A constraint that does not lift to an expression at all (its
+    ``convert_to_expression`` raises ``ConstraintError``) is not a bound
+    either; that error is chained as the cause.
+    """
+    message = (
+        "Cannot coerce an integer parameter with non-bound constraints to an "
+        "interval parameter."
+    )
+    try:
+        expression = constraint.convert_to_expression()
+    except ConstraintError as error:
+        raise TypeError(message) from error
+    if not is_bound_expression(expression):
+        raise TypeError(message)
+
+
 def _coerce_to_interval_param(template: "Param[Any]", other: Any) -> "Param[int]":
     template_domain = cast(IntervalIntegerDomain, template.domain)
     if isinstance(other, bool):
@@ -1261,11 +1289,7 @@ def _coerce_to_interval_param(template: "Param[Any]", other: Any) -> "Param[int]
         return other
     if isinstance(other, Param) and isinstance(other.domain, IntegerDomain):
         for constraint in other.constraints:
-            if not is_bound_expression(constraint.convert_to_expression()):
-                raise TypeError(
-                    "Cannot coerce an integer parameter with non-bound "
-                    "constraints to an interval parameter."
-                )
+            _require_bound_constraint(constraint)
         return Param(
             IntervalIntegerDomain(prefer_inclusive=template_domain.prefer_inclusive),
             variable=other.variable,
@@ -1607,6 +1631,28 @@ def _coerce_intersection_operands(
     return left, right
 
 
+def _is_intersection_provably_empty(
+    result: "Param[Any]", left: "Param[Any]", right: "Param[Any]"
+) -> bool:
+    """Return whether the intersection ``result`` of two operands is proven empty.
+
+    A ``VIOLATED`` conjunction is empty outright. An ``UNDECIDED`` one is
+    empty when either operand is itself proven infeasible, since an
+    intersection with an empty set is empty; the operands are not
+    consulted for a ``SATISFIED`` conjunction.
+    """
+    outcome = result.check_feasibility()
+    if outcome is ConstraintOutcome.VIOLATED:
+        return True
+    elif outcome is ConstraintOutcome.SATISFIED:
+        return False
+    else:
+        return any(
+            operand.check_feasibility() is ConstraintOutcome.VIOLATED
+            for operand in (left, right)
+        )
+
+
 def create_intersection_param(
     left: Param[_T],
     right: Param[_T],
@@ -1618,10 +1664,14 @@ def create_intersection_param(
     Finite-set operands are intersected by baking both effective value sets;
     permutation operands keep their member set, and numeric operands merge
     domain attributes conservatively -- both of these kinds carry the
-    conjunction of both operands' constraints, rescoped to the result
-    variable. A mixed pair of one interval-integer parameter and one plain
-    integer parameter whose constraints are all bound expressions is
-    supported by coercing the plain parameter to interval form first.
+    conjunction of both operands' constraints with both operands' variables
+    renamed to the result variable, so a constraint relating the two
+    operands becomes a constraint on the result alone. A mixed pair of one
+    interval-integer parameter and one plain integer parameter whose
+    constraints are all bound expressions is supported by coercing the
+    plain parameter to interval form first; the coerced operand contributes
+    any sign bound as a carried constraint rather than as a domain
+    attribute.
 
     Args:
         left: Left operand.
@@ -1631,17 +1681,20 @@ def create_intersection_param(
             ``Identifier("param")``.
 
     Returns:
-        A new parameter over the intersection of the operands' feasible sets.
+        A new parameter over the intersection of the operands' feasible
+        sets. A conjunction the solver leaves undecided is returned live;
+        its :meth:`Param.check_feasibility` reports ``UNDECIDED``, which
+        tells it apart from one decided feasible.
 
     Raises:
         TypeError: If the domain kinds are incompatible, or a mixed
             interval-integer/plain-integer pair's plain operand carries a
             non-bound constraint, so it has no interval form.
-        ConstraintError: If a carried constraint cannot be rescoped to the
-            result variable.
-        ParamError: If the intersection is provably empty: an empty finite
-            set, an empty integer interval, or a numeric constraint
-            conjunction the solver proves infeasible.
+        ParamError: If the intersection is provably empty: an empty
+            finite-set intersection, permutation operands over different
+            member sets, a numeric conjunction the enumeration or the
+            solver proves infeasible, or an operand that is itself proven
+            infeasible.
 
     """
     coerced_left, coerced_right = _coerce_intersection_operands(left, right)
@@ -1659,10 +1712,6 @@ def create_intersection_param(
         variable=variable,
         constraint_system=create_constraint_system(*constraints),
     )
-    # Route through the tri-state query rather than the optimistic
-    # ``is_empty`` wrapper: only a *proven* infeasible conjunction raises
-    # here. An undecided solver result must not be read as empty, since the
-    # caller then holds a live, merely-unproven-feasible parameter.
-    if result.check_feasibility() is ConstraintOutcome.VIOLATED:
+    if _is_intersection_provably_empty(result, coerced_left, coerced_right):
         raise ParamError("Intersection of parameters is empty.")
     return result

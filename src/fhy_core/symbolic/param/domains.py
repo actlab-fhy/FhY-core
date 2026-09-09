@@ -22,7 +22,12 @@ permutation domains). Cross-space and cross-family queries decide ``VIOLATED``.
 the tri-state :class:`~fhy_core.symbolic.constraint.ConstraintOutcome`, so a
 solver that gave up, or an enumeration a dependent constraint leaves open, is
 reported as ``UNDECIDED`` rather than being folded into either decided answer.
-Finite-set domains enumerate their value sets and so always decide.
+The same holds when screening weakens the system the solver is asked about by
+dropping or narrowing a constraint it cannot be posed: an answer the weaker
+system still proves is kept (infeasibility, a counterexample against an exact
+antecedent, an implication into an exact consequent), and an answer it does not
+prove is reported as ``UNDECIDED``. Finite-set domains enumerate their value
+sets and so always decide.
 """
 
 import itertools
@@ -388,8 +393,8 @@ def _screen_equation_constraint(
 
     A dependent constraint whose scope reaches beyond ``variable`` is
     excluded (logged at ``WARNING``) rather than raising, so the caller
-    degrades to the optimistic default instead of crashing on a foreign
-    identifier.
+    poses a weakened system to the solver instead of crashing on a
+    foreign identifier; the exclusion marks that system inexact.
 
     """
     if constraint.get_free_identifiers() == frozenset((variable,)):
@@ -484,9 +489,9 @@ def _build_screened_constraint_system(
     ``_screen_in_set_constraint``), and a ``NotInSetConstraint`` scoped
     to ``variable`` with at least one liftable member, narrowed to those
     members (see ``_screen_not_in_set_constraint``). Every exclusion and
-    narrowing is logged at ``WARNING``, so the caller degrades to the
-    documented optimistic default instead of crashing or silently losing
-    constraints.
+    narrowing is logged at ``WARNING`` and weakens the system; this
+    convenience discards whether that happened, which
+    :func:`_build_screened_constraint_system_with_fidelity` reports.
 
     """
     system, _ = _build_screened_constraint_system_with_fidelity(constraints, variable)
@@ -619,6 +624,31 @@ def _rescope_constraints_to_variable(
     )
 
 
+def _substitute_operand_variable(
+    constraints: Sequence[Constraint],
+    operand_variable: Identifier,
+    variable: Identifier,
+) -> tuple[Constraint, ...]:
+    """Return ``constraints`` with ``operand_variable`` replaced by ``variable``.
+
+    Only an ``EquationConstraint`` can mention an identifier beyond the
+    one it is scoped to, so only its expression is substituted (a no-op
+    where ``operand_variable`` is not free in it); a set constraint is
+    returned as is.
+
+    """
+    return tuple(
+        EquationConstraint(
+            constraint.expression.substitute(
+                {operand_variable: IdentifierExpression(variable)}
+            )
+        )
+        if isinstance(constraint, EquationConstraint)
+        else constraint
+        for constraint in constraints
+    )
+
+
 def _merge_intersection_constraints(
     own_constraints: Sequence[Constraint],
     own_variable: Identifier,
@@ -628,14 +658,29 @@ def _merge_intersection_constraints(
 ) -> tuple[Constraint, ...]:
     """Return both operands' constraints rescoped to ``variable``, own side first.
 
+    ``variable`` stands for both operands' quantities, so each side is
+    rescoped from its own variable and then has the other operand's
+    variable substituted by ``variable`` as well (see
+    ``_substitute_operand_variable``); a constraint relating the two
+    operands becomes a constraint on ``variable`` alone. An identifier
+    that is neither operand's variable stays free.
+
     Raises:
         ConstraintError: If a constraint cannot be rescoped (propagated
             from :func:`_rename_constraint_variable`).
 
     """
-    return _rescope_constraints_to_variable(
-        own_constraints, own_variable, variable
-    ) + _rescope_constraints_to_variable(other_constraints, other_variable, variable)
+    own = _substitute_operand_variable(
+        _rescope_constraints_to_variable(own_constraints, own_variable, variable),
+        other_variable,
+        variable,
+    )
+    other = _substitute_operand_variable(
+        _rescope_constraints_to_variable(other_constraints, other_variable, variable),
+        own_variable,
+        variable,
+    )
+    return own + other
 
 
 def _collect_effective_finite_values(
@@ -806,6 +851,39 @@ def _does_own_admit_a_value_outside(
     return True
 
 
+def _downgrade_unproven_implication(
+    outcome: ConstraintOutcome,
+    is_own_exact: bool,
+    is_other_exact: bool,
+    own_variable: Identifier,
+    other_variable: Identifier,
+) -> ConstraintOutcome:
+    """Return ``outcome`` unless a weakened side leaves it unproven, then ``UNDECIDED``.
+
+    Screening only widens a side's admissible set. A ``VIOLATED`` rests on
+    a value inside the antecedent and outside the consequent, which an
+    inexact antecedent may not actually admit; a ``SATISFIED`` rests on
+    every antecedent value lying inside the consequent, which an inexact
+    consequent may not actually admit. Either downgrade is logged at
+    ``WARNING``.
+
+    """
+    is_unproven = (outcome is ConstraintOutcome.VIOLATED and not is_own_exact) or (
+        outcome is ConstraintOutcome.SATISFIED and not is_other_exact
+    )
+    if not is_unproven:
+        return outcome
+    _LOGGER.warning(
+        "compute_constraint_implication_subset: the solver's %s answer to "
+        "whether %r implies %r rests on constraints screening dropped or "
+        "narrowed; reporting UNDECIDED.",
+        outcome.name,
+        own_variable,
+        other_variable,
+    )
+    return ConstraintOutcome.UNDECIDED
+
+
 def compute_constraint_implication_subset(
     own_domain: "ParamDomain",
     own_constraints: Sequence[Constraint],
@@ -834,17 +912,18 @@ def compute_constraint_implication_subset(
     other side admits, and the relation is decided ``VIOLATED``. No other
     answer is drawn from this branch.
 
-    Otherwise the two sides' variable-only constraint systems (see
-    ``_build_screened_constraint_system``) are renamed onto one shared
-    identifier and decided via ``ConstraintSystem.check_implication`` over
-    ``symbol_type``, whose outcome is reported as it stands. Neither
-    answer from that branch is a proof: ``UNDECIDED`` says the solver gave
-    up, and a ``VIOLATED`` may rest on a counterexample screening
-    manufactured by weakening the antecedent. A constraint excluded for
-    reaching outside either parameter's own variable is likewise only
-    logged at ``WARNING``, so it too leaves the outcome resting on a
-    weakened system. Only a decided answer from the two
-    enumeration-backed branches rests on proof.
+    Otherwise the two sides' screened constraint systems (see
+    ``_build_screened_constraint_system_with_fidelity``) are renamed onto
+    one shared identifier and decided via
+    ``ConstraintSystem.check_implication`` over ``symbol_type``. Screening
+    only widens a side's admissible set, so a decided answer is kept
+    exactly when the weakened systems still prove it: ``SATISFIED`` with
+    an exact consequent, or ``VIOLATED`` with an exact antecedent. A
+    ``VIOLATED`` from an inexact antecedent (a counterexample the dropped
+    constraints might forbid) and a ``SATISFIED`` into an inexact
+    consequent (an implication the dropped constraints might break) are
+    reported ``UNDECIDED`` (logged at ``WARNING``), as is a solver that
+    gave up.
 
     Args:
         own_domain: Domain of the candidate subset parameter.
@@ -856,9 +935,10 @@ def compute_constraint_implication_subset(
         symbol_type: The Z3 sort used to reason about the shared variable.
 
     Returns:
-        ``SATISFIED`` when the subset relation holds, ``VIOLATED`` when a
-        counterexample is reported, and ``UNDECIDED`` when neither the
-        solver nor the enumeration could decide.
+        ``SATISFIED`` when the subset relation is decided to hold,
+        ``VIOLATED`` when a counterexample is decided, and ``UNDECIDED``
+        when neither the solver nor the enumeration could decide, or the
+        solver decided only a weakened question.
 
     """
     if any(isinstance(c, InSetConstraint) for c in own_constraints):
@@ -886,15 +966,17 @@ def compute_constraint_implication_subset(
         ):
             return ConstraintOutcome.VIOLATED
     common_variable = Identifier("var")
+    own_screened, is_own_exact = _build_screened_constraint_system_with_fidelity(
+        own_constraints, own_variable
+    )
+    other_screened, is_other_exact = _build_screened_constraint_system_with_fidelity(
+        other_constraints, other_variable
+    )
     own_system = _rename_constraint_system_variable(
-        _build_screened_constraint_system(own_constraints, own_variable),
-        own_variable,
-        common_variable,
+        own_screened, own_variable, common_variable
     )
     other_system = _rename_constraint_system_variable(
-        _build_screened_constraint_system(other_constraints, other_variable),
-        other_variable,
-        common_variable,
+        other_screened, other_variable, common_variable
     )
     outcome = own_system.check_implication(other_system, {common_variable: symbol_type})
     if outcome is ConstraintOutcome.UNDECIDED:
@@ -904,7 +986,9 @@ def compute_constraint_implication_subset(
             own_variable,
             other_variable,
         )
-    return outcome
+    return _downgrade_unproven_implication(
+        outcome, is_own_exact, is_other_exact, own_variable, other_variable
+    )
 
 
 class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence, ABC):
@@ -1044,7 +1128,8 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
         into a fresh member set and carries no constraints; a permutation
         kind keeps its member set; a numeric kind merges the domain
         attributes conservatively. The latter two carry the conjunction of
-        both operands' constraints, rescoped to ``variable``.
+        both operands' constraints with both operands' variables renamed
+        to ``variable``.
 
         Args:
             own_constraints: Constraints carried by the parameter owning
@@ -1063,8 +1148,10 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
             TypeError: If ``other`` is a different domain kind.
             ConstraintError: If a carried constraint cannot be rescoped.
             ParamError: If the intersection is provably empty. A
-                finite-set kind detects that here; numeric emptiness is
-                left to the calling factory's feasibility query.
+                finite-set kind detects an empty member intersection
+                here, and a permutation kind detects operands ranging
+                over different member sets; numeric emptiness is left to
+                the calling factory's feasibility query.
 
         """
 
@@ -1195,18 +1282,30 @@ def _numeric_has_feasible_value(
     sibling reports ``UNDECIDED``. Otherwise decides the screened
     ``ConstraintSystem`` built from ``variable``-only equation
     constraints and ``NotInSetConstraint``s narrowed to their liftable
-    members (see ``_build_screened_constraint_system``) and reports that
-    outcome as it stands. A dependent or foreign-scoped constraint is
-    dropped from the screened system before the question is posed
-    (logged at ``WARNING``), so the outcome rests on a weakened system; a
-    solver that gives up reports ``UNDECIDED`` rather than being read as
-    feasibility.
+    members (see ``_build_screened_constraint_system_with_fidelity``).
+    Screening only widens the admissible set, so ``VIOLATED`` on the
+    screened system is reported as it stands, while ``SATISFIED`` is
+    reported only when that system is exact: when a dependent or
+    foreign-scoped constraint was dropped or narrowed (logged at
+    ``WARNING``), the satisfying value may violate it, and ``UNDECIDED``
+    is reported instead (also logged at ``WARNING``). A solver that gives
+    up reports ``UNDECIDED``.
 
     """
     if any(isinstance(c, InSetConstraint) for c in constraints):
         return _decide_feasibility_by_enumeration(domain, constraints, variable)
-    system = _build_screened_constraint_system(constraints, variable)
+    system, is_exact = _build_screened_constraint_system_with_fidelity(
+        constraints, variable
+    )
     outcome = system.check_satisfiability({variable: symbol_type})
+    if outcome is ConstraintOutcome.SATISFIED and not is_exact:
+        _LOGGER.warning(
+            "_numeric_has_feasible_value: the solver's SATISFIED answer for "
+            "variable %r rests on constraints screening dropped or narrowed; "
+            "reporting UNDECIDED.",
+            variable,
+        )
+        return ConstraintOutcome.UNDECIDED
     if outcome is ConstraintOutcome.UNDECIDED:
         _LOGGER.warning(
             "_numeric_has_feasible_value: the solver could not decide "
@@ -1560,12 +1659,13 @@ class IntervalIntegerDomain(ParamDomain):
         other_variable: Identifier,
         variable: Identifier,
     ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
-        """Intersect, rendering the result's bounds with this operand's bias.
+        """Intersect, carrying this operand's ``prefer_inclusive`` onto the result.
 
         The merged domain takes ``prefer_inclusive`` from ``self`` rather
-        than reconciling it with ``other``'s. That flag only decides how
-        the result's bounds are rendered; the intersected value set itself
-        is the same either way.
+        than reconciling it with ``other``'s. The carried constraints are
+        both operands' own bounds verbatim, so the value set is the same
+        either way; the flag only selects how arithmetic on the result
+        renders the bounds it derives.
         """
         if not isinstance(other, IntervalIntegerDomain):
             raise TypeError(

@@ -3,9 +3,10 @@
 Intersection is supported for every domain kind, with a uniform emptiness
 rule: `create_intersection_param` raises `ParamError` whenever the result is
 provably empty. Finite-set kinds detect emptiness by baking an empty member
-set; permutation and numeric kinds are checked by the factory's
-`check_feasibility()` call after construction, which raises only on a
-`VIOLATED` outcome, so an undecided conjunction survives.
+set; permutation and numeric kinds are checked by the factory after
+construction: a `VIOLATED` conjunction raises, an `UNDECIDED` conjunction
+raises only when an operand is itself proven infeasible, and otherwise the
+undecided conjunction survives as a live parameter.
 """
 
 from collections.abc import Callable
@@ -20,10 +21,15 @@ from fhy_core.symbolic.constraint import (
     ConstraintBindings,
     ConstraintError,
     ConstraintOutcome,
+    EquationConstraint,
     InSetConstraint,
     NotInSetConstraint,
 )
-from fhy_core.symbolic.expression import Expression, LiteralExpression
+from fhy_core.symbolic.expression import (
+    Expression,
+    IdentifierExpression,
+    LiteralExpression,
+)
 from fhy_core.symbolic.param import (
     Param,
     ParamError,
@@ -947,3 +953,211 @@ def test_or_and_dunders_chain_the_same_as_the_factories() -> None:
 
     assert_all_valid(result, ["b", "c"])
     assert_none_valid(result, ["a", "d"])
+
+
+# =============================================================================
+# Operand variables are unified onto the result variable
+# =============================================================================
+
+
+def _create_undecided_integer_param(name: str, identifier_id: int) -> Param[int]:
+    """Create an integer parameter whose feasibility the solver cannot decide.
+
+    `v / v != 1` trips the division hazard screen, since the divisor is
+    not a nonzero literal, so the seam refuses to lower it and reports no
+    decision at all.
+    """
+    variable = mock_identifier(name, identifier_id)
+    hazardous = (
+        IdentifierExpression(variable) / IdentifierExpression(variable)
+    ).not_equals(1)
+    return create_integer_param(
+        name=variable, constraints=[EquationConstraint(hazardous)]
+    )
+
+
+def _create_empty_integer_param(name: str, identifier_id: int) -> Param[int]:
+    """Create an integer parameter the solver proves infeasible: `v < 0 and v > 0`."""
+    variable = mock_identifier(name, identifier_id)
+    expression = IdentifierExpression(variable)
+    return create_integer_param(
+        name=variable,
+        constraints=[
+            EquationConstraint(expression < 0),
+            EquationConstraint(expression > 0),
+        ],
+    )
+
+
+def _assert_scoped_to_result_variable(result: Param[Any]) -> None:
+    """Assert every constraint of `result` mentions only `result.variable`."""
+    for constraint in result.constraints:
+        assert constraint.get_free_identifiers() == frozenset({result.variable})
+
+
+@pytest.mark.z3
+def test_intersection_unifies_the_other_operands_variable_into_the_result() -> None:
+    """Test `x <= y` & `y >= 10` yields constraints decided without bindings.
+
+    The result variable stands for both operands' quantities, so `y`
+    inside the left operand's constraint is renamed to it as well; the
+    carried constraints then mention only the result variable.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    left = create_integer_param(
+        name=x,
+        constraints=[
+            EquationConstraint(IdentifierExpression(x) <= IdentifierExpression(y))
+        ],
+    )
+    right = create_integer_param(
+        name=y, constraints=[EquationConstraint(IdentifierExpression(y) >= 10)]
+    )
+
+    result = create_intersection_param(left, right)
+
+    _assert_scoped_to_result_variable(result)
+    assert_all_valid(result, [10, 12])
+    assert_none_valid(result, [9])
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "is_dependent_operand_left",
+    [True, False],
+    ids=["dependent-left", "dependent-right"],
+)
+def test_intersection_raises_when_the_unified_conjunction_is_provably_empty(
+    is_dependent_operand_left: bool,
+) -> None:
+    """Test `x < y` & `y >= 10` unifies to `param < param` and raises `ParamError`."""
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    dependent = create_integer_param(
+        name=x,
+        constraints=[
+            EquationConstraint(IdentifierExpression(x) < IdentifierExpression(y))
+        ],
+    )
+    bounded = create_integer_param(
+        name=y, constraints=[EquationConstraint(IdentifierExpression(y) >= 10)]
+    )
+    left, right = (
+        (dependent, bounded) if is_dependent_operand_left else (bounded, dependent)
+    )
+
+    with pytest.raises(ParamError, match="empty"):
+        create_intersection_param(left, right)
+
+
+@pytest.mark.z3
+def test_intersection_leaves_a_third_party_identifier_free() -> None:
+    """Test an identifier that is neither operand's variable stays free in the result.
+
+    `z` remains substitutable through bindings, and the result comes back
+    live with feasibility undecided, since the constraint mentioning `z`
+    cannot be posed to the solver.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    z = mock_identifier("z", 3)
+    left = create_integer_param(
+        name=x,
+        constraints=[
+            EquationConstraint(IdentifierExpression(x) < IdentifierExpression(z))
+        ],
+    )
+    right = create_integer_param(
+        name=y, constraints=[EquationConstraint(IdentifierExpression(y) >= 10)]
+    )
+
+    result = create_intersection_param(left, right)
+
+    assert z in result.constraint_system.get_free_identifiers()
+    assert result.check_feasibility() is ConstraintOutcome.UNDECIDED
+    assert result.is_value_valid(12, bindings={z: 50})
+    assert not result.is_value_valid(12, bindings={z: 5})
+
+
+@pytest.mark.z3
+def test_intersection_of_operands_sharing_one_variable_conjoins_constraints() -> None:
+    """Test operands over the same variable object intersect to their conjunction."""
+    x = mock_identifier("x", 1)
+    left = create_integer_param(
+        name=x, constraints=[EquationConstraint(IdentifierExpression(x) < 20)]
+    )
+    right = create_integer_param(
+        name=x, constraints=[EquationConstraint(IdentifierExpression(x) >= 10)]
+    )
+
+    result = create_intersection_param(left, right)
+
+    _assert_scoped_to_result_variable(result)
+    assert_all_valid(result, [10, 19])
+    assert_none_valid(result, [9, 20])
+
+
+# =============================================================================
+# An undecided conjunction still raises when an operand is provably empty
+# =============================================================================
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "is_empty_operand_left", [True, False], ids=["empty-left", "empty-right"]
+)
+def test_intersection_with_a_provably_empty_operand_raises_despite_undecided_result(
+    is_empty_operand_left: bool,
+) -> None:
+    """Test an undecided conjunction raises `ParamError` when an operand is empty.
+
+    The hazardous conjunct leaves the whole conjunction undecided, so the
+    factory consults each operand's own feasibility; an intersection with
+    an empty set is empty.
+    """
+    undecided = _create_undecided_integer_param("a", 1)
+    empty = _create_empty_integer_param("e", 2)
+    left, right = (empty, undecided) if is_empty_operand_left else (undecided, empty)
+
+    with pytest.raises(ParamError, match="empty"):
+        create_intersection_param(left, right)
+
+
+@pytest.mark.z3
+def test_intersection_of_two_undecided_operands_is_returned_live() -> None:
+    """Test an undecided conjunction of undecided operands is returned, not raised."""
+    left = _create_undecided_integer_param("a", 1)
+    right = _create_undecided_integer_param("b", 2)
+
+    result = create_intersection_param(left, right)
+
+    assert result.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+# =============================================================================
+# Mixed coercion: a set member that does not lift is a non-bound constraint
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "is_plain_operand_left", [True, False], ids=["plain-left", "plain-right"]
+)
+def test_intersection_with_a_non_liftable_set_member_on_the_plain_operand_raises(
+    is_plain_operand_left: bool,
+) -> None:
+    """Test a plain integer operand whose set member does not lift raises `TypeError`.
+
+    The member cannot be lifted to an expression at all, so the operand
+    has no interval form; the lifting `ConstraintError` is chained as the
+    cause.
+    """
+    i = mock_identifier("i", 1)
+    plain = create_integer_param(name=i, constraints=[InSetConstraint(i, ("s",))])
+    interval = create_interval_integer_param_between(0, 5)
+    left, right = (plain, interval) if is_plain_operand_left else (interval, plain)
+
+    with pytest.raises(TypeError, match="non-bound constraints") as excinfo:
+        create_intersection_param(left, right)
+
+    assert isinstance(excinfo.value.__cause__, ConstraintError)

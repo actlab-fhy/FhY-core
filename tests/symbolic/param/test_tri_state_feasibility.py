@@ -18,6 +18,7 @@ from fhy_core.symbolic.constraint import (
     ConstraintOutcome,
     EquationConstraint,
     InSetConstraint,
+    NotInSetConstraint,
 )
 from fhy_core.symbolic.expression import IdentifierExpression
 from fhy_core.symbolic.param import (
@@ -458,3 +459,196 @@ def test_undecided_subset_enumeration_logs_one_warning_naming_the_candidates(
     assert "2, 3" in message
     assert "1, 2, 3" not in message
     assert repr(own.variable) in message
+
+
+# =============================================================================
+# A weakened screened system cannot carry the optimistic answer
+# =============================================================================
+
+
+def _create_integer_param_with_dependent_constraint(
+    *build_bounds: Callable[[IdentifierExpression], Any],
+) -> Param[int]:
+    """Create `x` carrying the dependent `x < y` and each `build_bound(x)`.
+
+    `y` is foreign to the parameter, so screening drops `x < y` before
+    the solver is asked and the screened system is inexact.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    x_expression = IdentifierExpression(x)
+    dependent = EquationConstraint(x_expression < IdentifierExpression(y))
+    bounds = [
+        EquationConstraint(build_bound(x_expression)) for build_bound in build_bounds
+    ]
+    return create_integer_param(name=x, constraints=[dependent, *bounds])
+
+
+def _find_downgrade_warnings(
+    caplog: pytest.LogCaptureFixture,
+) -> list[logging.LogRecord]:
+    """Return the domains module's WARNING records that report `UNDECIDED`."""
+    return [
+        record
+        for record in _find_domain_warnings(caplog)
+        if "UNDECIDED" in record.getMessage()
+    ]
+
+
+def test_check_feasibility_reports_undecided_for_a_satisfiable_weakened_system() -> (
+    None
+):
+    """Test a dropped constraint downgrades the solver's `SATISFIED` to `UNDECIDED`."""
+    param = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+def test_check_feasibility_reports_undecided_for_a_satisfiable_narrowed_system() -> (
+    None
+):
+    """Test a narrowed not-in-set constraint downgrades `SATISFIED` to `UNDECIDED`."""
+    x = mock_identifier("x", 1)
+    param = create_integer_param(name=x, constraints=[NotInSetConstraint(x, {5, "a"})])
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+def test_check_feasibility_keeps_violated_for_an_unsatisfiable_weakened_system() -> (
+    None
+):
+    """Test `x < 0 and x > 0` stays `VIOLATED` beside a dropped constraint."""
+    param = _create_integer_param_with_dependent_constraint(
+        lambda x: x > 0, lambda x: x < 0
+    )
+
+    assert param.check_feasibility() is ConstraintOutcome.VIOLATED
+
+
+def test_check_subset_reports_undecided_for_a_counterexample_to_a_weakened_antecedent() -> (  # noqa: E501
+    None
+):
+    """Test a counterexample against a weakened antecedent is not trusted.
+
+    The screened own side is only `x > 0`, which admits `6` outside
+    `[0, 5]`; the dropped `x < y` might forbid it, so the relation is
+    reported `UNDECIDED` rather than `VIOLATED`.
+    """
+    own = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+    other = create_integer_param_between(0, 5)
+
+    assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
+
+
+def test_check_subset_reports_undecided_for_an_implication_into_a_weakened_consequent() -> (  # noqa: E501
+    None
+):
+    """Test an implication into a weakened consequent is not trusted.
+
+    `[1, 3]` implies the screened `x > 0`, but the dropped `x < y` may
+    reject part of it, so the relation is reported `UNDECIDED` rather
+    than `SATISFIED`.
+    """
+    own = create_integer_param_between(1, 3)
+    other = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+
+    assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
+
+
+def test_check_subset_keeps_satisfied_when_only_the_antecedent_is_weakened() -> None:
+    """Test `SATISFIED` survives a weakened antecedent.
+
+    The screened own side `x > 0` admits every value the original does,
+    so its inclusion in `z >= 0` proves the original's inclusion too.
+    """
+    own = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+    other = _create_integer_param_with_bound(3, lambda z: z >= 0)
+
+    assert own.check_subset(other) is ConstraintOutcome.SATISFIED
+
+
+def test_check_subset_keeps_violated_when_only_the_consequent_is_weakened() -> None:
+    """Test `VIOLATED` survives a weakened consequent.
+
+    `-5` lies in the exact own side and outside the screened `x > 0`,
+    which admits every value the original consequent does, so it lies
+    outside the original as well.
+    """
+    own = create_integer_param_between(-5, 3)
+    other = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
+
+
+def test_is_feasible_and_is_empty_fold_a_weakened_feasibility_optimistically() -> None:
+    """Test the boolean wrappers fold a weakened-system `UNDECIDED` optimistically."""
+    param = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+
+    assert param.is_feasible() is True
+    assert param.is_empty() is False
+
+
+def test_is_subset_folds_an_untrusted_counterexample_to_true() -> None:
+    """Test `is_subset` reports `True` when the only counterexample is untrusted."""
+    own = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+    other = create_integer_param_between(0, 5)
+
+    assert own.is_subset(other) is True
+
+
+def test_is_subset_folds_an_untrusted_implication_to_true() -> None:
+    """Test `is_subset` reports `True` for an undecided weakened implication."""
+    own = create_integer_param_between(1, 3)
+    other = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+
+    assert own.is_subset(other) is True
+
+
+def test_weakened_feasibility_downgrade_logs_one_warning_naming_the_variable(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test downgrading a weakened `SATISFIED` logs one WARNING naming the variable."""
+    param = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+
+    with caplog.at_level(logging.WARNING, logger=_DOMAINS_LOGGER):
+        outcome = param.check_feasibility()
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    downgrades = _find_downgrade_warnings(caplog)
+    assert len(downgrades) == 1
+    assert repr(param.variable) in downgrades[0].getMessage()
+
+
+@pytest.mark.parametrize(
+    ("build_own", "build_other"),
+    [
+        pytest.param(
+            lambda: _create_integer_param_with_dependent_constraint(lambda x: x > 0),
+            lambda: create_integer_param_between(0, 5),
+            id="weakened-antecedent",
+        ),
+        pytest.param(
+            lambda: create_integer_param_between(1, 3),
+            lambda: _create_integer_param_with_dependent_constraint(lambda x: x > 0),
+            id="weakened-consequent",
+        ),
+    ],
+)
+def test_weakened_subset_downgrade_logs_one_warning_naming_both_variables(
+    build_own: Callable[[], Param[int]],
+    build_other: Callable[[], Param[int]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test downgrading a weakened subset answer logs one WARNING naming both sides."""
+    own = build_own()
+    other = build_other()
+
+    with caplog.at_level(logging.WARNING, logger=_DOMAINS_LOGGER):
+        outcome = own.check_subset(other)
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    downgrades = _find_downgrade_warnings(caplog)
+    assert len(downgrades) == 1
+    message = downgrades[0].getMessage()
+    assert repr(own.variable) in message
+    assert repr(other.variable) in message
