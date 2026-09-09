@@ -24,7 +24,11 @@ from fhy_core.symbolic.expression import (
     IdentifierExpression,
     LiteralExpression,
 )
-from fhy_core.symbolic.param import create_integer_param, create_integer_param_between
+from fhy_core.symbolic.param import (
+    ParamError,
+    create_integer_param,
+    create_integer_param_between,
+)
 
 from .conftest import mock_identifier
 
@@ -507,3 +511,60 @@ def test_unbounded_param_stays_subset_when_no_counterexample_is_provable() -> No
     other = create_integer_param(name=y, constraints=[InSetConstraint(y, {0, 1, 2})])
 
     assert own.is_subset(other) is True
+
+
+@pytest.mark.parametrize("constant_name", ["e", "pi"])
+def test_param_named_after_a_native_constant_is_not_decided_infeasible(
+    constant_name: str,
+) -> None:
+    """Test a parameter whose name collides with a native constant is not decided.
+
+    The expression bridge resolves an identifier whose `name_hint` names a
+    registered native constant to that constant rather than to a
+    substitutable symbol, so the candidate binding is silently dropped and
+    the constraint is evaluated against the constant's value instead.
+    Reporting `False` there is a proof claim the backend never
+    established -- and it flipped with the presence of an unrelated in-set
+    constraint, since only the enumeration path routed through the bridge
+    this way.
+    """
+    constant = mock_identifier(constant_name, 1)
+    equation = EquationConstraint(
+        BinaryExpression(
+            BinaryOperation.EQUAL, IdentifierExpression(constant), LiteralExpression(3)
+        )
+    )
+    enumerated = create_integer_param(
+        name=constant, constraints=[InSetConstraint(constant, {3}), equation]
+    )
+    solver_decided = create_integer_param(name=constant, constraints=[equation])
+
+    assert enumerated.is_feasible() is True
+    assert enumerated.is_empty() is False
+    assert solver_decided.is_feasible() == enumerated.is_feasible()
+
+
+def test_bridge_failure_degrades_instead_of_escaping_a_boolean_api() -> None:
+    """Test an expression the bridge cannot lower degrades rather than raising.
+
+    `x / 3` over the integers leaves a rational the SymPy bridge refuses
+    to lift, raising `PassExecutionError` from deep inside evaluation.
+    Every parameter-level entry point here returns `bool` or raises
+    `ParamError`, so the backend failing to answer must degrade to the
+    documented optimistic default instead of escaping as an unrelated
+    exception type.
+    """
+    x = mock_identifier("x", 1)
+    unliftable = EquationConstraint(
+        BinaryExpression(
+            BinaryOperation.DIVIDE, IdentifierExpression(x), LiteralExpression(3)
+        )
+    )
+    param = create_integer_param(
+        name=x, constraints=[InSetConstraint(x, {2, 4}), unliftable]
+    )
+
+    assert param.is_feasible() is True
+    assert param.is_value_valid(2) is False
+    with pytest.raises(ParamError, match="could not be verified"):
+        param.validate_value(2)

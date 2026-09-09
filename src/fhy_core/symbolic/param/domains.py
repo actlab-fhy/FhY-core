@@ -27,6 +27,7 @@ from typing import Any
 
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
+from fhy_core.pass_infrastructure import PassExecutionError
 from fhy_core.serialization import (
     FieldCodec,
     SerializedValue,
@@ -36,6 +37,7 @@ from fhy_core.serialization import (
 )
 from fhy_core.symbolic.constraint import (
     Constraint,
+    ConstraintBindings,
     ConstraintError,
     ConstraintOutcome,
     ConstraintSystem,
@@ -146,6 +148,39 @@ def _build_equation_constraint_system(
     )
 
 
+def evaluate_system_outcome(
+    system: ConstraintSystem, bindings: ConstraintBindings
+) -> ConstraintOutcome:
+    """Decide ``system`` under ``bindings``, degrading on an expression-pass failure.
+
+    Evaluation lowers through the SymPy bridge, which is not total: a
+    constraint it cannot lower or lift raises ``PassExecutionError``.
+    That is the backend failing to answer rather than the parameter being
+    invalid, so it degrades to ``UNDECIDED`` (logged at ``WARNING``) the
+    way every other undecidable outcome here does. Every parameter-level
+    entry point returns ``bool``, so a bridge failure must not escape one
+    as an exception.
+
+    Args:
+        system: Constraints to decide.
+        bindings: Values for the identifiers the constraints reference.
+
+    Returns:
+        The system's outcome, or ``UNDECIDED`` when the bridge failed.
+
+    """
+    try:
+        return system.evaluate_with_bindings(bindings)
+    except PassExecutionError:
+        _LOGGER.warning(
+            "evaluate_system_outcome: the expression bridge could not evaluate "
+            "%r under bindings for %s; reporting UNDECIDED.",
+            system,
+            format_comma_separated_list(tuple(bindings)) or "no identifiers",
+        )
+        return ConstraintOutcome.UNDECIDED
+
+
 def _enumerate_feasible_in_set_candidates(
     domain: "ParamDomain", constraints: Sequence[Constraint], variable: Identifier
 ) -> list[Any]:
@@ -165,7 +200,7 @@ def _enumerate_feasible_in_set_candidates(
     for candidate in _compute_numeric_in_set_candidates(constraints):
         if not domain.is_value_admissible(candidate):
             continue
-        outcome = equation_system.evaluate_with_bindings({variable: candidate})
+        outcome = evaluate_system_outcome(equation_system, {variable: candidate})
         if outcome is ConstraintOutcome.VIOLATED:
             continue
         if outcome is ConstraintOutcome.UNDECIDED:
@@ -204,7 +239,7 @@ def _is_candidate_accepted_by_other_side(
             if does_collection_contain_param_value(constraint.members, candidate):
                 return False
     equation_system = _build_equation_constraint_system(other_constraints)
-    outcome = equation_system.evaluate_with_bindings({other_variable: candidate})
+    outcome = evaluate_system_outcome(equation_system, {other_variable: candidate})
     if outcome is ConstraintOutcome.UNDECIDED:
         _LOGGER.warning(
             "_is_candidate_accepted_by_other_side: equation constraints could "

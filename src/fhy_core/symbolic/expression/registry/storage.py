@@ -63,6 +63,26 @@ def is_entry_registered(name: str) -> bool:
         return name in _REGISTRY
 
 
+def is_native_constant_name(name: str) -> bool:
+    """Return whether ``name`` is registered as a native constant.
+
+    An identifier carrying such a ``name_hint`` denotes the constant to
+    every backend bridge, which resolves it to the constant's value
+    instead of to a substitutable symbol. A caller that needs to bind
+    that identifier to a value of its own therefore cannot, and uses this
+    to detect the collision rather than to silently lose the binding.
+
+    Args:
+        name: Identifier name hint to test.
+
+    Returns:
+        Whether a native constant is registered under ``name``.
+
+    """
+    with _REGISTRY_LOCK:
+        return isinstance(_REGISTRY.get(name), NativeConstant)
+
+
 def set_registry_state_for_tests(
     state: Mapping[str, RegisteredEntry],
 ) -> None:

@@ -55,6 +55,7 @@ from fhy_core.symbolic.expression import (
     make_binary_expression,
     pformat_expression,
 )
+from fhy_core.symbolic.expression.registry import is_native_constant_name
 from fhy_core.symbolic.solver import simplify_expression
 from fhy_core.term import (
     DerivedEquivalenceMixin,
@@ -424,13 +425,31 @@ class EquationConstraint(Constraint):
 
         """
         scope = self.get_free_identifiers()
-        environment = _coerce_bindings_to_environment(
-            {
-                identifier: value
-                for identifier, value in bindings.items()
-                if identifier in scope
-            }
+        in_scope = {
+            identifier: value
+            for identifier, value in bindings.items()
+            if identifier in scope
+        }
+        captured = sorted(
+            (
+                identifier
+                for identifier in in_scope
+                if is_native_constant_name(identifier.name_hint)
+            ),
+            key=lambda identifier: identifier.id,
         )
+        if captured:
+            _LOGGER.warning(
+                "%s.evaluate_with_bindings: identifier(s) %s name a registered "
+                "native constant, so the backend bridge resolves them to that "
+                "constant instead of to a substitutable symbol and the supplied "
+                "binding cannot be honored; reporting UNDECIDED rather than a "
+                "decision the binding did not take part in",
+                type(self).__name__,
+                format_comma_separated_list(tuple(captured)),
+            )
+            return ConstraintOutcome.UNDECIDED
+        environment = _coerce_bindings_to_environment(in_scope)
         result = simplify_expression(self.expression, environment)
         if isinstance(result, LiteralExpression):
             if isinstance(result.value, bool) and result.value:

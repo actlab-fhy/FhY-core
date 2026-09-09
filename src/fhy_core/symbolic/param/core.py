@@ -57,6 +57,7 @@ from .domains import (
     build_categorical_domain,
     build_ordinal_domain,
     build_permutation_domain,
+    evaluate_system_outcome,
     is_bound_expression,
 )
 from .values import (
@@ -315,12 +316,14 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             ``UNDECIDED``), and ``constraint`` is a member exhibiting it.
 
         """
-        system_outcome = self.constraint_system.evaluate_with_bindings(environment)
+        system_outcome = evaluate_system_outcome(self.constraint_system, environment)
         if system_outcome is ConstraintOutcome.SATISFIED:
             return True, None, None
         fallback: Constraint | None = None
         for constraint in self.constraints:
-            outcome = constraint.evaluate_with_bindings(environment)
+            outcome = evaluate_system_outcome(
+                create_constraint_system(constraint), environment
+            )
             if outcome is system_outcome:
                 return False, constraint, system_outcome
             if outcome is not ConstraintOutcome.SATISFIED and fallback is None:
