@@ -4,7 +4,11 @@ from typing import Any
 
 import pytest
 
-from fhy_core.serialization import Serializable, register_serializable
+from fhy_core.serialization import (
+    Serializable,
+    SerializationFormat,
+    register_serializable,
+)
 from fhy_core.symbolic.param import (
     Param,
     create_categorical_param,
@@ -30,7 +34,10 @@ __all__ = [
     "SerializableOrderableSelf",
     "SerializableOrderableTrait",
     "assert_all_satisfied",
+    "assert_all_valid",
     "assert_none_satisfied",
+    "assert_none_valid",
+    "assert_param_round_trips_in_all_formats",
     "categorical_param_abc",
     "default_int_param",
     "default_real_param",
@@ -245,6 +252,48 @@ def assert_none_satisfied(param: Param[Any], values: list[Any]) -> None:
     for v in values:
         assert not param.is_constraints_satisfied(v), (
             f"Value {v} should not satisfy constraints of parameter {param}"
+        )
+
+
+def assert_all_valid(param: Param[Any], values: list[Any]) -> None:
+    """Assert every value in ``values`` is valid for ``param``.
+
+    Unlike :func:`assert_all_satisfied` this also checks domain
+    admissibility, so it is the right check for a parameter whose value set
+    is restricted by its domain rather than by its constraints -- such as a
+    baked finite-set union or intersection, which carries no constraints at
+    all.
+    """
+    for v in values:
+        assert param.is_value_valid(v), (
+            f"Value {v} should be valid for parameter {param}"
+        )
+
+
+def assert_none_valid(param: Param[Any], values: list[Any]) -> None:
+    """Assert no value in ``values`` is valid for ``param``."""
+    for v in values:
+        assert not param.is_value_valid(v), (
+            f"Value {v} should not be valid for parameter {param}"
+        )
+
+
+def assert_param_round_trips_in_all_formats(param: Param[Any]) -> None:
+    """Assert ``param`` round-trips through DICT, JSON, and BINARY serialization.
+
+    ``Param`` equality is identity rather than structure, so this checks
+    ``is_structurally_equivalent`` instead of reusing
+    ``tests.serialization.conftest.assert_round_trips_in_all_formats``,
+    which compares with ``==`` and would fail for two distinct ``Param``
+    instances however faithfully the round trip preserved them.
+    """
+    for serialization_format in SerializationFormat:
+        restored: Param[Any] = Param.deserialize(
+            param.serialize(serialization_format), serialization_format
+        )
+        assert restored.is_structurally_equivalent(param), (
+            f"Param {restored!r} should be structurally equivalent to {param!r} "
+            f"after a {serialization_format} round trip"
         )
 
 

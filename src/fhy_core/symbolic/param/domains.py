@@ -2,7 +2,7 @@
 
 A :class:`ParamDomain` captures everything that varies between kinds of
 parameter: admissibility, constraint validation, implied constraints, subset
-semantics, structural equivalence, and rendering. A single
+semantics, set algebra, structural equivalence, and rendering. A single
 :class:`~fhy_core.symbolic.param.core.Param` composes one domain rather than being
 subclassed per kind.
 
@@ -16,12 +16,18 @@ Subset semantics use value-space gating: two parameters are comparable for
 :meth:`compute_feasibility_subset` only when their domains occupy the same value
 space (the integer line for integer and interval-integer domains, the reals for
 real domains, or the same finite family for ordinal, categorical, and
-permutation domains). Cross-space and cross-family queries return ``False``.
+permutation domains). Cross-space and cross-family queries decide ``VIOLATED``.
+
+:meth:`compute_feasibility_subset` and :meth:`has_feasible_value` answer with
+the tri-state :class:`~fhy_core.symbolic.constraint.ConstraintOutcome`, so a
+solver that gave up is reported as ``UNDECIDED`` rather than being folded into
+either decided answer. Finite-set domains enumerate their value sets and so
+always decide.
 """
 
 import itertools
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -107,6 +113,24 @@ def _is_value_valid_for(
     return domain.is_value_admissible(value) and are_all_constraints_satisfied(
         constraints, variable, value
     )
+
+
+def _decide_outcome(is_holding: bool) -> ConstraintOutcome:
+    """Return the decided outcome a proof-backed answer stands for.
+
+    Enumeration over a finite value set decides a feasibility or subset
+    question outright, leaving no room for ``UNDECIDED``; this maps such
+    an answer onto the tri-state vocabulary the solver-backed branches
+    also speak.
+
+    Args:
+        is_holding: Whether the question was decided affirmatively.
+
+    Returns:
+        ``SATISFIED`` when ``is_holding``, ``VIOLATED`` otherwise.
+
+    """
+    return ConstraintOutcome.SATISFIED if is_holding else ConstraintOutcome.VIOLATED
 
 
 def _compute_numeric_in_set_candidates(constraints: Sequence[Constraint]) -> list[Any]:
@@ -503,6 +527,162 @@ def _rename_constraint_system_variable(
     )
 
 
+def _rescope_constraints_to_variable(
+    constraints: Sequence[Constraint],
+    old_variable: Identifier,
+    new_variable: Identifier,
+) -> tuple[Constraint, ...]:
+    """Return ``constraints`` each rescoped from ``old_variable`` to ``new_variable``.
+
+    Args:
+        constraints: Constraints to rescope, in the order to keep.
+        old_variable: Variable the constraints are currently scoped to.
+        new_variable: Variable the returned constraints are scoped to.
+
+    Returns:
+        Equivalent constraints scoped to ``new_variable``.
+
+    Raises:
+        ConstraintError: If a constraint cannot be rescoped (propagated
+            from :func:`_rename_constraint_variable`).
+
+    """
+    return tuple(
+        _rename_constraint_variable(constraint, old_variable, new_variable)
+        for constraint in constraints
+    )
+
+
+def _merge_intersection_constraints(
+    own_constraints: Sequence[Constraint],
+    own_variable: Identifier,
+    other_constraints: Sequence[Constraint],
+    other_variable: Identifier,
+    variable: Identifier,
+) -> tuple[Constraint, ...]:
+    """Return both operands' constraints rescoped to ``variable``, own side first.
+
+    Raises:
+        ConstraintError: If a constraint cannot be rescoped (propagated
+            from :func:`_rename_constraint_variable`).
+
+    """
+    return _rescope_constraints_to_variable(
+        own_constraints, own_variable, variable
+    ) + _rescope_constraints_to_variable(other_constraints, other_variable, variable)
+
+
+def _collect_effective_finite_values(
+    domain: "ParamDomain",
+    constraints: Sequence[Constraint],
+    variable: Identifier,
+    values: Sequence[Any],
+) -> tuple[Any, ...]:
+    """Return the members of ``values`` a domain's own constraints leave valid."""
+    return tuple(
+        value
+        for value in values
+        if _is_value_valid_for(domain, constraints, variable, value)
+    )
+
+
+def _combine_finite_set_values(
+    own_domain: "ParamDomain",
+    own_constraints: Sequence[Constraint],
+    own_variable: Identifier,
+    own_values: Sequence[Any],
+    other_domain: "ParamDomain",
+    other_constraints: Sequence[Constraint],
+    other_variable: Identifier,
+    other_values: Sequence[Any],
+    combine: Callable[[Sequence[Any], Sequence[Any]], tuple[Any, ...]],
+) -> tuple[Any, ...]:
+    """Return ``combine`` applied to both operands' effective finite value sets.
+
+    Each side's declared members are filtered by that side's own
+    constraints first, so a set-algebra result folds both operands'
+    constraints into the member set it bakes.
+
+    Args:
+        own_domain: Domain of the left operand.
+        own_constraints: Constraints carried by the left operand.
+        own_variable: Variable ``own_constraints`` are scoped to.
+        own_values: The left operand's declared members.
+        other_domain: Domain of the right operand.
+        other_constraints: Constraints carried by the right operand.
+        other_variable: Variable ``other_constraints`` are scoped to.
+        other_values: The right operand's declared members.
+        combine: Type-strict set operation over the two effective sets.
+
+    Returns:
+        The combined member sequence, which may be empty.
+
+    """
+    own_effective = _collect_effective_finite_values(
+        own_domain, own_constraints, own_variable, own_values
+    )
+    other_effective = _collect_effective_finite_values(
+        other_domain, other_constraints, other_variable, other_values
+    )
+    return combine(own_effective, other_effective)
+
+
+def _merge_finite_values(own: Sequence[Any], other: Sequence[Any]) -> tuple[Any, ...]:
+    """Return the type-strict union of two finite value sequences.
+
+    ``own`` is kept in full; a value from ``other`` is appended only when
+    no value already collected matches it under the type-strict
+    membership predicate, so ``True`` never absorbs ``1``.
+    """
+    merged = list(own)
+    for value in other:
+        if not does_collection_contain_param_value(merged, value):
+            merged.append(value)
+    return tuple(merged)
+
+
+def _intersect_finite_values(
+    own: Sequence[Any], other: Sequence[Any]
+) -> tuple[Any, ...]:
+    """Return the type-strict intersection of two finite value sequences."""
+    return tuple(
+        value for value in own if does_collection_contain_param_value(other, value)
+    )
+
+
+def _merge_non_negative_attributes(
+    left_non_negative: bool,
+    left_zero_included: bool,
+    right_non_negative: bool,
+    right_zero_included: bool,
+) -> tuple[bool, bool]:
+    """Return the ``(non_negative, zero_included)`` pair an intersection inherits.
+
+    ``non_negative`` is the disjunction of both operands': either operand
+    ruling out negative values rules them out of the intersection too.
+    ``zero_included`` tightens to ``False`` as soon as a non-negative
+    operand excludes zero.
+
+    Args:
+        left_non_negative: Whether the left operand admits no negatives.
+        left_zero_included: Whether the left operand admits zero, given it
+            is non-negative.
+        right_non_negative: Whether the right operand admits no negatives.
+        right_zero_included: Whether the right operand admits zero, given
+            it is non-negative.
+
+    Returns:
+        The merged pair.
+
+    """
+    non_negative = left_non_negative or right_non_negative
+    zero_included = not (
+        (left_non_negative and not left_zero_included)
+        or (right_non_negative and not right_zero_included)
+    )
+    return non_negative, zero_included
+
+
 def _does_own_admit_a_value_outside(
     own_domain: "ParamDomain",
     own_constraints: Sequence[Constraint],
@@ -568,34 +748,34 @@ def compute_constraint_implication_subset(
     other_constraints: Sequence[Constraint],
     other_variable: Identifier,
     symbol_type: SymbolType,
-) -> bool:
-    """Return whether ``own_constraints``'s admissible set is a subset of ``other``'s.
+) -> ConstraintOutcome:
+    """Decide whether ``own_constraints``'s admissible set is a subset of ``other``'s.
 
     When ``own_constraints`` contains an ``InSetConstraint``, the
     admissible values are finite: every surviving candidate (see
     ``_enumerate_feasible_in_set_candidates``) must be accepted by
     ``other_domain``/``other_constraints`` (type-strict set membership,
     domain admissibility, and equation constraints decided per candidate).
+    Enumeration leaves nothing open, so this branch decides.
 
     When only ``other_constraints`` is finite, its admissible values are
     enumerated and ``own`` is asked, through the solver, whether it
     provably admits a value outside them (see
     ``_does_own_admit_a_value_outside``); such a value is a genuine
     counterexample, since the enumeration over-approximates what the
-    other side admits, and the relation is decided ``False``.
+    other side admits, and the relation is decided ``VIOLATED``.
 
     Otherwise the two sides' variable-only constraint systems (see
     ``_build_screened_constraint_system``) are renamed onto one shared
     identifier and decided via ``ConstraintSystem.check_implication`` over
-    ``symbol_type``. An outcome the checks cannot disprove -- a solver
-    ``UNDECIDED`` result, or a constraint excluded for reaching outside
-    either parameter's own variable -- is treated as "not a
-    counterexample" (each logged at ``WARNING``), so the subset relation
-    holds; a ``True`` result therefore means "not disproven", not
-    "proven". A ``False`` result from this branch is likewise not a
-    proof, since screening weakens the antecedent and can manufacture a
-    counterexample; only the two enumeration-backed branches decide
-    ``False`` from proof.
+    ``symbol_type``, whose outcome is reported as it stands. Neither
+    answer from that branch is a proof: ``UNDECIDED`` says the solver gave
+    up, and a ``VIOLATED`` may rest on a counterexample screening
+    manufactured by weakening the antecedent. A constraint excluded for
+    reaching outside either parameter's own variable is likewise only
+    logged at ``WARNING``, so it too leaves the outcome resting on a
+    weakened system. Only the two enumeration-backed branches decide from
+    proof.
 
     Args:
         own_domain: Domain of the candidate subset parameter.
@@ -607,18 +787,22 @@ def compute_constraint_implication_subset(
         symbol_type: The Z3 sort used to reason about the shared variable.
 
     Returns:
-        Whether the subset relation holds.
+        ``SATISFIED`` when the subset relation holds, ``VIOLATED`` when a
+        counterexample is reported, and ``UNDECIDED`` when the solver
+        could not decide.
 
     """
     if any(isinstance(c, InSetConstraint) for c in own_constraints):
         own_candidates = _enumerate_feasible_in_set_candidates(
             own_domain, own_constraints, own_variable
         )
-        return all(
-            _is_candidate_accepted_by_other_side(
-                other_domain, other_constraints, other_variable, candidate
+        return _decide_outcome(
+            all(
+                _is_candidate_accepted_by_other_side(
+                    other_domain, other_constraints, other_variable, candidate
+                )
+                for candidate in own_candidates
             )
-            for candidate in own_candidates
         )
     if any(isinstance(c, InSetConstraint) for c in other_constraints):
         other_candidates = _enumerate_feasible_in_set_candidates(
@@ -627,7 +811,7 @@ def compute_constraint_implication_subset(
         if _does_own_admit_a_value_outside(
             own_domain, own_constraints, own_variable, other_candidates, symbol_type
         ):
-            return False
+            return ConstraintOutcome.VIOLATED
     common_variable = Identifier("var")
     own_system = _rename_constraint_system_variable(
         _build_screened_constraint_system(own_constraints, own_variable),
@@ -643,14 +827,11 @@ def compute_constraint_implication_subset(
     if outcome is ConstraintOutcome.UNDECIDED:
         _LOGGER.warning(
             "compute_constraint_implication_subset: the solver could not "
-            "decide whether %r implies %r; optimistically treating %r as a "
-            "subset of %r.",
-            own_variable,
-            other_variable,
+            "decide whether %r implies %r; reporting UNDECIDED.",
             own_variable,
             other_variable,
         )
-    return outcome is not ConstraintOutcome.VIOLATED
+    return outcome
 
 
 class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence, ABC):
@@ -700,14 +881,112 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
         other: "ParamDomain",
         other_constraints: Sequence[Constraint],
         other_variable: Identifier,
-    ) -> bool:
-        """Return whether this domain's constrained set is a subset of ``other``'s."""
+    ) -> ConstraintOutcome:
+        """Decide whether this domain's constrained set is a subset of ``other``'s.
+
+        Returns:
+            ``SATISFIED`` when the subset relation holds, ``VIOLATED``
+            when a counterexample is reported, and ``UNDECIDED`` when the
+            solver could not decide. Finite-set domains enumerate, so
+            they never report ``UNDECIDED``.
+
+        """
 
     @abstractmethod
     def has_feasible_value(
         self, constraints: Sequence[Constraint], variable: Identifier
-    ) -> bool:
-        """Return whether some admissible value satisfies every constraint."""
+    ) -> ConstraintOutcome:
+        """Decide whether some admissible value satisfies every constraint.
+
+        Returns:
+            ``SATISFIED`` when a satisfying value is reported, ``VIOLATED``
+            when none can exist, and ``UNDECIDED`` when the solver could
+            not decide. Finite-set domains enumerate, so they never report
+            ``UNDECIDED``.
+
+        """
+
+    def compute_union(
+        self,
+        own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
+        other: "ParamDomain",
+        other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple["ParamDomain", tuple[Constraint, ...]]:
+        """Compute the domain and constraints denoting the union of two value sets.
+
+        Union is representable only for the finite-set domain kinds that
+        can bake both operands' effective value sets into a new member
+        set, so this raises for every other kind;
+        :class:`OrdinalDomain` and :class:`CategoricalDomain` override it.
+
+        Args:
+            own_constraints: Constraints carried by the parameter owning
+                this domain.
+            own_variable: Variable ``own_constraints`` are scoped to.
+            other: Domain of the right operand.
+            other_constraints: Constraints carried by the right operand.
+            other_variable: Variable ``other_constraints`` are scoped to.
+            variable: Variable of the result parameter; every returned
+                constraint is scoped to it.
+
+        Returns:
+            A ``(domain, constraints)`` pair denoting the union. The
+            finite-set overrides bake both operands' constraints into the
+            member set, so their constraint tuple is always empty.
+
+        Raises:
+            TypeError: If this domain kind does not support union.
+
+        """
+        del own_constraints, own_variable, other, other_constraints
+        del other_variable, variable
+        raise TypeError(
+            f"Union is not supported for domain kind {type(self).__name__}."
+        )
+
+    @abstractmethod
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
+        other: "ParamDomain",
+        other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple["ParamDomain", tuple[Constraint, ...]]:
+        """Compute the domain and constraints denoting the intersection of two sets.
+
+        Every domain kind intersects. A finite-set kind bakes the
+        type-strict intersection of both operands' effective value sets
+        into a fresh member set and carries no constraints; a permutation
+        kind keeps its member set; a numeric kind merges the domain
+        attributes conservatively. The latter two carry the conjunction of
+        both operands' constraints, rescoped to ``variable``.
+
+        Args:
+            own_constraints: Constraints carried by the parameter owning
+                this domain.
+            own_variable: Variable ``own_constraints`` are scoped to.
+            other: Domain of the right operand; must be the same kind.
+            other_constraints: Constraints carried by the right operand.
+            other_variable: Variable ``other_constraints`` are scoped to.
+            variable: Variable of the result parameter; every returned
+                constraint is scoped to it.
+
+        Returns:
+            A ``(domain, constraints)`` pair denoting the intersection.
+
+        Raises:
+            TypeError: If ``other`` is a different domain kind.
+            ConstraintError: If a carried constraint cannot be rescoped.
+            ParamError: If the intersection is provably empty. A
+                finite-set kind detects that here; numeric emptiness is
+                left to the calling factory's feasibility query.
+
+        """
 
     @abstractmethod
     @override
@@ -806,9 +1085,9 @@ def _compute_numeric_feasibility_subset(
     other: ParamDomain,
     other_constraints: Sequence[Constraint],
     other_variable: Identifier,
-) -> bool:
+) -> ConstraintOutcome:
     if own.symbol_type is None or other.symbol_type != own.symbol_type:
-        return False
+        return ConstraintOutcome.VIOLATED
     return compute_constraint_implication_subset(
         own,
         own_constraints,
@@ -825,34 +1104,35 @@ def _numeric_has_feasible_value(
     symbol_type: SymbolType,
     constraints: Sequence[Constraint],
     variable: Identifier,
-) -> bool:
-    """Return whether some domain-admissible value satisfies every constraint.
+) -> ConstraintOutcome:
+    """Decide whether some domain-admissible value satisfies every constraint.
 
     Routes through enumeration when an ``InSetConstraint`` makes the
     admissible values finite (see
-    ``_enumerate_feasible_in_set_candidates``); otherwise decides the
-    screened ``ConstraintSystem`` built from ``variable``-only equation
-    constraints and ``NotInSetConstraint``s narrowed to their liftable
-    members (see ``_build_screened_constraint_system``), with dependent
-    constraints, foreign-scoped constraints, and a solver ``UNDECIDED``
-    result all degrading to the documented optimistic default (``True``,
-    logged at ``WARNING``).
+    ``_enumerate_feasible_in_set_candidates``), which decides outright;
+    otherwise decides the screened ``ConstraintSystem`` built from
+    ``variable``-only equation constraints and ``NotInSetConstraint``s
+    narrowed to their liftable members (see
+    ``_build_screened_constraint_system``) and reports that outcome as it
+    stands. A dependent or foreign-scoped constraint is dropped from the
+    screened system before the question is posed (logged at ``WARNING``),
+    so the outcome rests on a weakened system; a solver that gives up
+    reports ``UNDECIDED`` rather than being read as feasibility.
 
     """
     if any(isinstance(c, InSetConstraint) for c in constraints):
-        return bool(
-            _enumerate_feasible_in_set_candidates(domain, constraints, variable)
+        return _decide_outcome(
+            bool(_enumerate_feasible_in_set_candidates(domain, constraints, variable))
         )
     system = _build_screened_constraint_system(constraints, variable)
     outcome = system.check_satisfiability({variable: symbol_type})
     if outcome is ConstraintOutcome.UNDECIDED:
         _LOGGER.warning(
             "_numeric_has_feasible_value: the solver could not decide "
-            "satisfiability for variable %r; optimistically treating it as "
-            "feasible.",
+            "satisfiability for variable %r; reporting UNDECIDED.",
             variable,
         )
-    return outcome is not ConstraintOutcome.VIOLATED
+    return outcome
 
 
 @register_serializable(type_id="integer_domain")
@@ -913,7 +1193,7 @@ class IntegerDomain(ParamDomain):
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
         other_variable: Identifier,
-    ) -> bool:
+    ) -> ConstraintOutcome:
         return _compute_numeric_feasibility_subset(
             self,
             own_constraints,
@@ -926,8 +1206,35 @@ class IntegerDomain(ParamDomain):
     @override
     def has_feasible_value(
         self, constraints: Sequence[Constraint], variable: Identifier
-    ) -> bool:
+    ) -> ConstraintOutcome:
         return _numeric_has_feasible_value(self, SymbolType.INT, constraints, variable)
+
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        if not isinstance(other, IntegerDomain):
+            raise TypeError(
+                "Cannot intersect an IntegerDomain with a domain of type "
+                f"{type(other).__name__}."
+            )
+        non_negative, zero_included = _merge_non_negative_attributes(
+            self.non_negative,
+            self.zero_included,
+            other.non_negative,
+            other.zero_included,
+        )
+        return IntegerDomain(
+            non_negative=non_negative, zero_included=zero_included
+        ), _merge_intersection_constraints(
+            own_constraints, own_variable, other_constraints, other_variable, variable
+        )
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:
@@ -995,7 +1302,7 @@ class RealDomain(ParamDomain):
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
         other_variable: Identifier,
-    ) -> bool:
+    ) -> ConstraintOutcome:
         return _compute_numeric_feasibility_subset(
             self,
             own_constraints,
@@ -1008,8 +1315,27 @@ class RealDomain(ParamDomain):
     @override
     def has_feasible_value(
         self, constraints: Sequence[Constraint], variable: Identifier
-    ) -> bool:
+    ) -> ConstraintOutcome:
         return _numeric_has_feasible_value(self, SymbolType.REAL, constraints, variable)
+
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        if not isinstance(other, RealDomain):
+            raise TypeError(
+                "Cannot intersect a RealDomain with a domain of type "
+                f"{type(other).__name__}."
+            )
+        return RealDomain(), _merge_intersection_constraints(
+            own_constraints, own_variable, other_constraints, other_variable, variable
+        )
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:
@@ -1127,7 +1453,7 @@ class IntervalIntegerDomain(ParamDomain):
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
         other_variable: Identifier,
-    ) -> bool:
+    ) -> ConstraintOutcome:
         return _compute_numeric_feasibility_subset(
             self,
             own_constraints,
@@ -1140,8 +1466,44 @@ class IntervalIntegerDomain(ParamDomain):
     @override
     def has_feasible_value(
         self, constraints: Sequence[Constraint], variable: Identifier
-    ) -> bool:
+    ) -> ConstraintOutcome:
         return _numeric_has_feasible_value(self, SymbolType.INT, constraints, variable)
+
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        """Intersect, rendering the result's bounds with this operand's bias.
+
+        The merged domain takes ``prefer_inclusive`` from ``self`` rather
+        than reconciling it with ``other``'s. That flag only decides how
+        the result's bounds are rendered; the intersected value set itself
+        is the same either way.
+        """
+        if not isinstance(other, IntervalIntegerDomain):
+            raise TypeError(
+                "Cannot intersect an IntervalIntegerDomain with a domain of "
+                f"type {type(other).__name__}."
+            )
+        non_negative, zero_included = _merge_non_negative_attributes(
+            self.non_negative,
+            self.zero_included,
+            other.non_negative,
+            other.zero_included,
+        )
+        return IntervalIntegerDomain(
+            prefer_inclusive=self.prefer_inclusive,
+            non_negative=non_negative,
+            zero_included=zero_included,
+        ), _merge_intersection_constraints(
+            own_constraints, own_variable, other_constraints, other_variable, variable
+        )
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:
@@ -1244,24 +1606,88 @@ class OrdinalDomain(ParamDomain):
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
         other_variable: Identifier,
-    ) -> bool:
+    ) -> ConstraintOutcome:
         if not isinstance(other, OrdinalDomain):
-            return False
+            return ConstraintOutcome.VIOLATED
         for value in self.sorted_values:
             if not _is_value_valid_for(self, own_constraints, own_variable, value):
                 continue
             if not _is_value_valid_for(other, other_constraints, other_variable, value):
-                return False
-        return True
+                return ConstraintOutcome.VIOLATED
+        return ConstraintOutcome.SATISFIED
 
     @override
     def has_feasible_value(
         self, constraints: Sequence[Constraint], variable: Identifier
-    ) -> bool:
-        return any(
-            _is_value_valid_for(self, constraints, variable, value)
-            for value in self.sorted_values
+    ) -> ConstraintOutcome:
+        return _decide_outcome(
+            any(
+                _is_value_valid_for(self, constraints, variable, value)
+                for value in self.sorted_values
+            )
         )
+
+    @override
+    def compute_union(
+        self,
+        own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        del variable
+        if not isinstance(other, OrdinalDomain):
+            raise TypeError(
+                "Cannot union an OrdinalDomain with a domain of type "
+                f"{type(other).__name__}."
+            )
+        merged = _combine_finite_set_values(
+            self,
+            own_constraints,
+            own_variable,
+            self.sorted_values,
+            other,
+            other_constraints,
+            other_variable,
+            other.sorted_values,
+            _merge_finite_values,
+        )
+        if not merged:
+            raise ParamError("Union of ordinal value sets is empty.")
+        return build_ordinal_domain(merged), ()
+
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        del variable
+        if not isinstance(other, OrdinalDomain):
+            raise TypeError(
+                "Cannot intersect an OrdinalDomain with a domain of type "
+                f"{type(other).__name__}."
+            )
+        intersected = _combine_finite_set_values(
+            self,
+            own_constraints,
+            own_variable,
+            self.sorted_values,
+            other,
+            other_constraints,
+            other_variable,
+            other.sorted_values,
+            _intersect_finite_values,
+        )
+        if not intersected:
+            raise ParamError("Intersection of ordinal value sets is empty.")
+        return build_ordinal_domain(intersected), ()
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:
@@ -1358,26 +1784,90 @@ class CategoricalDomain(ParamDomain):
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
         other_variable: Identifier,
-    ) -> bool:
+    ) -> ConstraintOutcome:
         if not isinstance(other, CategoricalDomain):
-            return False
+            return ConstraintOutcome.VIOLATED
         for category in self.categories:
             if not _is_value_valid_for(self, own_constraints, own_variable, category):
                 continue
             if not _is_value_valid_for(
                 other, other_constraints, other_variable, category
             ):
-                return False
-        return True
+                return ConstraintOutcome.VIOLATED
+        return ConstraintOutcome.SATISFIED
 
     @override
     def has_feasible_value(
         self, constraints: Sequence[Constraint], variable: Identifier
-    ) -> bool:
-        return any(
-            _is_value_valid_for(self, constraints, variable, category)
-            for category in self.categories
+    ) -> ConstraintOutcome:
+        return _decide_outcome(
+            any(
+                _is_value_valid_for(self, constraints, variable, category)
+                for category in self.categories
+            )
         )
+
+    @override
+    def compute_union(
+        self,
+        own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        del variable
+        if not isinstance(other, CategoricalDomain):
+            raise TypeError(
+                "Cannot union a CategoricalDomain with a domain of type "
+                f"{type(other).__name__}."
+            )
+        merged = _combine_finite_set_values(
+            self,
+            own_constraints,
+            own_variable,
+            self.categories,
+            other,
+            other_constraints,
+            other_variable,
+            other.categories,
+            _merge_finite_values,
+        )
+        if not merged:
+            raise ParamError("Union of categorical value sets is empty.")
+        return build_categorical_domain(merged), ()
+
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        del variable
+        if not isinstance(other, CategoricalDomain):
+            raise TypeError(
+                "Cannot intersect a CategoricalDomain with a domain of type "
+                f"{type(other).__name__}."
+            )
+        intersected = _combine_finite_set_values(
+            self,
+            own_constraints,
+            own_variable,
+            self.categories,
+            other,
+            other_constraints,
+            other_variable,
+            other.categories,
+            _intersect_finite_values,
+        )
+        if not intersected:
+            raise ParamError("Intersection of categorical value sets is empty.")
+        return build_categorical_domain(intersected), ()
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:
@@ -1487,11 +1977,11 @@ class PermutationDomain(ParamDomain):
         other: ParamDomain,
         other_constraints: Sequence[Constraint],
         other_variable: Identifier,
-    ) -> bool:
+    ) -> ConstraintOutcome:
         if not isinstance(other, PermutationDomain):
-            return False
+            return ConstraintOutcome.VIOLATED
         if len(self.ordered_members) != len(other.ordered_members):
-            return False
+            return ConstraintOutcome.VIOLATED
         for permutation in itertools.permutations(self.ordered_members):
             if not _is_value_valid_for(
                 self, own_constraints, own_variable, permutation
@@ -1500,16 +1990,49 @@ class PermutationDomain(ParamDomain):
             if not _is_value_valid_for(
                 other, other_constraints, other_variable, permutation
             ):
-                return False
-        return True
+                return ConstraintOutcome.VIOLATED
+        return ConstraintOutcome.SATISFIED
 
     @override
     def has_feasible_value(
         self, constraints: Sequence[Constraint], variable: Identifier
-    ) -> bool:
-        return any(
-            _is_value_valid_for(self, constraints, variable, permutation)
-            for permutation in itertools.permutations(self.ordered_members)
+    ) -> ConstraintOutcome:
+        return _decide_outcome(
+            any(
+                _is_value_valid_for(self, constraints, variable, permutation)
+                for permutation in itertools.permutations(self.ordered_members)
+            )
+        )
+
+    @override
+    def compute_intersection(
+        self,
+        own_constraints: Sequence[Constraint],
+        own_variable: Identifier,
+        other: ParamDomain,
+        other_constraints: Sequence[Constraint],
+        other_variable: Identifier,
+        variable: Identifier,
+    ) -> tuple[ParamDomain, tuple[Constraint, ...]]:
+        """Intersect, keeping the member set and conjoining both constraint sets.
+
+        Permutations are not enumerated here: two permutation domains
+        either range over the same members, in which case the intersection
+        is that same member set narrowed by both operands' constraints, or
+        they do not, in which case no value is admissible to both.
+        """
+        if not isinstance(other, PermutationDomain):
+            raise TypeError(
+                "Cannot intersect a PermutationDomain with a domain of type "
+                f"{type(other).__name__}."
+            )
+        if not (self.is_value_set_subset(other) and other.is_value_set_subset(self)):
+            raise ParamError(
+                "Intersection of permutation domains with different member "
+                "sets is empty."
+            )
+        return self, _merge_intersection_constraints(
+            own_constraints, own_variable, other_constraints, other_variable, variable
         )
 
     @override

@@ -373,3 +373,57 @@ def test_assignment_deserialize_rejects_payload_with_value_not_serialized_dict()
         DeserializationValueError, match='deserializing to "ParamAssignment"'
     ):
         ParamAssignment.deserialize_from_dict(payload)  # type: ignore[arg-type]  # test: dict shape
+
+
+# =============================================================================
+# Direct construction normalizes like `Param.assign`
+# =============================================================================
+
+
+def test_direct_construction_stores_the_domain_canonical_value() -> None:
+    """Test constructing with a mutable value stores the canonical form."""
+    param = create_permutation_param([1, 2, 3])
+    members: Any = [1, 2, 3]
+
+    assignment = ParamAssignment(param, members)
+
+    assert assignment.value == (1, 2, 3)
+    assert isinstance(assignment.value, tuple)
+
+
+def test_direct_construction_equals_the_assign_form_of_the_same_binding() -> None:
+    """Test the constructor and `assign` produce equivalent assignments."""
+    param = create_permutation_param([1, 2, 3])
+    members: Any = [1, 2, 3]
+
+    constructed = ParamAssignment(param, members)
+    assigned = param.assign(members)
+
+    assert constructed.is_structurally_equivalent(assigned)
+    assert assigned.is_structurally_equivalent(constructed)
+
+
+def test_direct_construction_does_not_alias_a_mutable_argument() -> None:
+    """Test mutating the argument afterward cannot invalidate the assignment."""
+    param = create_permutation_param([1, 2, 3])
+    members: Any = [1, 2, 3]
+
+    assignment = ParamAssignment(param, members)
+    members.append(4)
+
+    assert assignment.value == (1, 2, 3)
+
+
+def test_direct_construction_with_a_mutable_value_serializes() -> None:
+    """Test a directly constructed assignment round-trips through JSON."""
+    param = create_permutation_param(["n", "c", "h", "w"])
+    members: Any = ["n", "c", "h", "w"]
+    assignment = ParamAssignment(param, members)
+
+    payload = assignment.serialize(SerializationFormat.JSON)
+    restored: ParamAssignment[Any] = ParamAssignment.deserialize(
+        payload, SerializationFormat.JSON
+    )
+
+    assert restored.value == ("n", "c", "h", "w")
+    assert restored.is_structurally_equivalent(assignment)

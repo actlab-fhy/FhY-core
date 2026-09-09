@@ -1016,3 +1016,66 @@ def test_bound_int_param_addition_rejects_int_param_with_non_bound_constraint() 
 
     with pytest.raises(TypeError):
         bound + integer
+
+
+# =============================================================================
+# Arithmetic results are bound to their own variable
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "combine",
+    [
+        pytest.param(lambda left, right: left + right, id="add"),
+        pytest.param(lambda left, right: left - right, id="sub"),
+        pytest.param(lambda left, right: left * right, id="mul"),
+    ],
+)
+def test_bound_int_param_arithmetic_result_gets_its_own_variable(
+    combine: Any,
+) -> None:
+    """Test a binary arithmetic result shares neither operand's variable.
+
+    A derived interval denotes its own quantity, so reusing an operand's
+    identifier would conflate the two wherever both reach one constraint
+    system. Every parameter here takes a freshly minted identifier, so the
+    three are distinct by construction.
+    """
+    left = create_interval_integer_param_between(1, 5)
+    right = create_interval_integer_param_between(2, 3)
+
+    result = combine(left, right)
+
+    assert result.variable != left.variable
+    assert result.variable != right.variable
+
+
+def test_bound_int_param_negation_result_gets_its_own_variable() -> None:
+    """Test a negation result does not share its operand's variable."""
+    operand = create_interval_integer_param_between(1, 5)
+
+    result = -operand
+
+    assert result.variable != operand.variable
+
+
+def test_bound_int_param_repeated_addition_yields_distinct_variables() -> None:
+    """Test two results derived from the same operands are separate quantities."""
+    left = create_interval_integer_param_between(1, 5)
+    right = create_interval_integer_param_between(2, 3)
+
+    first = left + right
+    second = left + right
+
+    assert first.variable != second.variable
+
+
+def test_bound_int_param_arithmetic_result_constraints_name_the_result() -> None:
+    """Test the result's constraints are scoped to the result's own variable."""
+    left = create_interval_integer_param_between(1, 5)
+    right = create_interval_integer_param_between(2, 3)
+
+    result = left + right
+
+    for constraint in result.constraints:
+        assert constraint.get_free_identifiers() == frozenset((result.variable,))
