@@ -42,7 +42,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from functools import cached_property
-from typing import Any, Final, NoReturn, Protocol, TypeAlias, runtime_checkable
+from typing import Any, Final, Protocol, TypeAlias, runtime_checkable
 
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
@@ -167,13 +167,6 @@ class ConstraintOutcome(Enum):
     UNDECIDED = auto()
 
 
-def _raise_not_implemented_error(instance: object, method_name: str) -> NoReturn:
-    """Raise NotImplementedError naming the class and the unoverridden method."""
-    raise NotImplementedError(
-        f'"{type(instance).__name__}" does not implement "{method_name}".'
-    )
-
-
 @runtime_checkable
 class SymbolicPredicate(Protocol):
     """Predicate over identifiers, evaluable under a partial assignment.
@@ -191,7 +184,6 @@ class SymbolicPredicate(Protocol):
             Frozen set of identifiers; empty for a ground predicate.
 
         """
-        _raise_not_implemented_error(self, "get_free_identifiers")
 
     def evaluate_with_bindings(self, bindings: ConstraintBindings) -> ConstraintOutcome:
         """Return the tri-state outcome of the predicate under the bindings.
@@ -206,7 +198,6 @@ class SymbolicPredicate(Protocol):
             (possibly partial) bindings; ``UNDECIDED`` otherwise.
 
         """
-        _raise_not_implemented_error(self, "evaluate_with_bindings")
 
     def is_satisfied_with_bindings(self, bindings: ConstraintBindings) -> bool:
         """Return whether the bindings provably satisfy the predicate.
@@ -215,7 +206,6 @@ class SymbolicPredicate(Protocol):
         rejection).
 
         """
-        _raise_not_implemented_error(self, "is_satisfied_with_bindings")
 
     def convert_to_expression(self) -> Expression:
         """Return an ``Expression`` whose truth value matches the predicate.
@@ -224,7 +214,6 @@ class SymbolicPredicate(Protocol):
             ConstraintError: If the predicate cannot be expressed.
 
         """
-        _raise_not_implemented_error(self, "convert_to_expression")
 
 
 class Constraint(

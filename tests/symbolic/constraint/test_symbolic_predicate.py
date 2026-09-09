@@ -1,6 +1,5 @@
 """Tests for the `SymbolicPredicate` protocol conformance."""
 
-from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -179,53 +178,3 @@ def test_identifier_expression_does_not_satisfy_symbolic_predicate() -> None:
     )
     assert not isinstance(object(), SymbolicPredicate)
     assert not isinstance(42, SymbolicPredicate)
-
-
-# =============================================================================
-# The protocol's own method bodies raise rather than silently return `None`
-# =============================================================================
-
-
-class _IncompleteSymbolicPredicate(SymbolicPredicate):
-    """A `SymbolicPredicate` subclass that overrides none of its methods.
-
-    Explicit (non-structural) inheritance from a `Protocol` produces an
-    ordinary, instantiable class, so nothing stops a real implementer
-    from forgetting to override a method. This class stands in for that
-    mistake.
-    """
-
-
-@pytest.mark.parametrize(
-    "method_name, call",
-    [
-        pytest.param(
-            "get_free_identifiers",
-            lambda predicate: predicate.get_free_identifiers(),
-            id="get_free_identifiers",
-        ),
-        pytest.param(
-            "evaluate_with_bindings",
-            lambda predicate: predicate.evaluate_with_bindings({}),
-            id="evaluate_with_bindings",
-        ),
-        pytest.param(
-            "is_satisfied_with_bindings",
-            lambda predicate: predicate.is_satisfied_with_bindings({}),
-            id="is_satisfied_with_bindings",
-        ),
-        pytest.param(
-            "convert_to_expression",
-            lambda predicate: predicate.convert_to_expression(),
-            id="convert_to_expression",
-        ),
-    ],
-)
-def test_symbolic_predicate_default_method_body_raises_not_implemented_error(
-    method_name: str, call: Callable[[SymbolicPredicate], object]
-) -> None:
-    """Test each protocol method's default body raises instead of returning `None`."""
-    predicate = _IncompleteSymbolicPredicate()
-
-    with pytest.raises(NotImplementedError, match=method_name):
-        call(predicate)
