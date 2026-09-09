@@ -163,6 +163,13 @@ def _decide_satisfiability(
 def create_constraint_system(*constraints: Constraint) -> "ConstraintSystem":
     """Create a constraint system from the given constraints.
 
+    The door every caller builds a system through. ``ConstraintSystem``
+    holds its members as a ``tuple`` and is annotated as taking one, so
+    an iterable of a different shape is unpacked here rather than passed
+    to the constructor under a type suppression: ``*sequence`` for a
+    sequence already in hand, ``*generator`` for a lazy one, which the
+    call itself materializes.
+
     Args:
         constraints: Zero or more constraints; identifiers shared between
             constraints denote the same variable.
@@ -185,15 +192,15 @@ class ConstraintSystem(
 ):
     """An ordered conjunction of constraints over shared identifiers.
 
-    Semantically the logical AND of its member constraints. The
-    ``constraints`` argument is materialized once before it is traversed,
-    so a single-pass iterable is retained in full rather than consumed
-    into an empty system. Constraints are then normalized into canonical
-    order, keyed on the same things structural equivalence compares, so
-    structurally equivalent systems built from differently ordered inputs
-    are structurally equivalent and serialize identically. Duplicate
-    constraints are retained (conjunction is idempotent). Instances are
-    frozen; mutation raises ``FrozenMutationError``.
+    Semantically the logical AND of its member constraints. Members are
+    taken as a ``tuple`` -- ``create_constraint_system`` is the door that
+    normalizes any other argument shape into one -- and are normalized
+    into canonical order, keyed on the same things structural
+    equivalence compares, so structurally equivalent systems built from
+    differently ordered inputs are structurally equivalent and serialize
+    identically. Duplicate constraints are retained (conjunction is
+    idempotent). Instances are frozen; mutation raises
+    ``FrozenMutationError``.
 
     ``ConstraintSystem`` is declared ``@dataclass(frozen=True, eq=False)``,
     so ``__eq__`` and ``__hash__`` fall back to object identity rather than
@@ -229,9 +236,6 @@ class ConstraintSystem(
     constraints: tuple[Constraint, ...]
 
     def __post_init__(self) -> None:
-        # Materialize before anything else: validation and canonical ordering
-        # each traverse the members, and a one-shot iterator would be empty by
-        # the second pass.
         constraints = tuple(self.constraints)
         for constraint in constraints:
             if not isinstance(constraint, Constraint):

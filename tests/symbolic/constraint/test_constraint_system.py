@@ -152,7 +152,15 @@ def test_create_constraint_system_retains_duplicate_constraints() -> None:
 
 
 def test_constraint_system_materializes_a_one_shot_iterator_input() -> None:
-    """Test a one-shot iterator input is retained rather than consumed by validation."""
+    """Test the constructor's defensive materialization holds for a one-shot input.
+
+    The annotation asks for a tuple and `create_constraint_system` unpacks
+    anything else into one, so this shape is deliberately outside the
+    declared contract -- hence the suppression. What it pins is the
+    defence in `__post_init__`: a caller who bypasses both still gets
+    every member, rather than an iterator consumed by validation and an
+    empty system by the time ordering runs.
+    """
     x = mock_identifier("x", 0)
     first = InSetConstraint(x, {1, 2})
     second = InSetConstraint(x, {2, 3})
@@ -162,20 +170,18 @@ def test_constraint_system_materializes_a_one_shot_iterator_input() -> None:
     assert len(system.constraints) == 2
 
 
-def test_constraint_system_materializes_a_generator_input() -> None:
-    """Test a generator input is retained rather than consumed by validation."""
+def test_create_constraint_system_retains_an_unpacked_generator() -> None:
+    """Test a generator unpacked into the factory keeps every member."""
     x = mock_identifier("x", 0)
     members = (InSetConstraint(x, {1, 2}), InSetConstraint(x, {2, 3}))
 
-    system = ConstraintSystem(  # type: ignore[arg-type]
-        member for member in members
-    )
+    system = create_constraint_system(*(member for member in members))
 
     assert len(system.constraints) == 2
 
 
 @pytest.mark.z3
-def test_constraint_system_from_a_generator_is_not_vacuously_satisfiable() -> None:
+def test_system_from_an_unpacked_generator_is_not_vacuously_satisfiable() -> None:
     """Test a generator-built contradictory system is not silently emptied.
 
     An emptied system answers SATISFIED vacuously, which is the visible
@@ -185,9 +191,7 @@ def test_constraint_system_from_a_generator_is_not_vacuously_satisfiable() -> No
     x = mock_identifier("x", 0)
     members = (InSetConstraint(x, {1}), InSetConstraint(x, {2}))
 
-    system = ConstraintSystem(  # type: ignore[arg-type]
-        member for member in members
-    )
+    system = create_constraint_system(*(member for member in members))
 
     outcome = system.check_satisfiability({x: SymbolType.INT})
 
