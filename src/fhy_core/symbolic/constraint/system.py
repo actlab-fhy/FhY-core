@@ -11,8 +11,9 @@ classes its solver-backed entry points screen for before consulting Z3.
 The module also owns the shared ``symbol_types``-coverage validation
 (``_validate_symbol_types_cover_free_identifiers``,
 ``_validate_symbol_types_cover_both_sides``) and the classification
-helper (``_decide_satisfiability``) that every solver-backed entry point
-routes through.
+helper (``_classify_solver_answer``) that every solver-backed entry
+point routes its seam answer through, so the rule that an undecided seam
+answer stays undecided has one owner.
 """
 
 __all__ = [
@@ -96,6 +97,29 @@ def _validate_symbol_types_cover_both_sides(
     _raise_if_missing_symbol_types(free_identifiers - set(symbol_types))
 
 
+def _classify_solver_answer(answer: bool | None) -> ConstraintOutcome:
+    """Map a solver seam's tri-state answer onto a ``ConstraintOutcome``.
+
+    Every solver-backed entry point classifies through here, so the rule
+    that an undecided seam answer stays undecided -- rather than
+    collapsing to a decided outcome -- has exactly one owner.
+
+    Args:
+        answer: Seam result, where ``None`` reports that the question was
+            screened as hazardous or left inconclusive by the solver.
+
+    Returns:
+        ``UNDECIDED`` for ``None``, ``SATISFIED`` for ``True``, and
+        ``VIOLATED`` for ``False``.
+
+    """
+    if answer is None:
+        return ConstraintOutcome.UNDECIDED
+    if answer:
+        return ConstraintOutcome.SATISFIED
+    return ConstraintOutcome.VIOLATED
+
+
 def _decide_satisfiability(
     expression: Expression,
     symbol_types: Mapping[Identifier, SymbolType],
@@ -128,16 +152,13 @@ def _decide_satisfiability(
 
     """
     _validate_symbol_types_cover_free_identifiers(expression, symbol_types)
-    satisfiable = check_expression_satisfiability(
-        expression,
-        dict(symbol_types),
-        timeout_milliseconds=timeout_milliseconds,
+    return _classify_solver_answer(
+        check_expression_satisfiability(
+            expression,
+            dict(symbol_types),
+            timeout_milliseconds=timeout_milliseconds,
+        )
     )
-    if satisfiable is None:
-        return ConstraintOutcome.UNDECIDED
-    if satisfiable:
-        return ConstraintOutcome.SATISFIED
-    return ConstraintOutcome.VIOLATED
 
 
 def create_constraint_system(*constraints: Constraint) -> "ConstraintSystem":
@@ -471,17 +492,14 @@ class ConstraintSystem(
         antecedent = self.convert_to_expression()
         consequent = other.convert_to_expression()
         _validate_symbol_types_cover_both_sides(antecedent, consequent, symbol_types)
-        holds = does_expression_imply(
-            antecedent,
-            consequent,
-            dict(symbol_types),
-            timeout_milliseconds=timeout_milliseconds,
+        return _classify_solver_answer(
+            does_expression_imply(
+                antecedent,
+                consequent,
+                dict(symbol_types),
+                timeout_milliseconds=timeout_milliseconds,
+            )
         )
-        if holds is None:
-            return ConstraintOutcome.UNDECIDED
-        if holds:
-            return ConstraintOutcome.SATISFIED
-        return ConstraintOutcome.VIOLATED
 
     @classmethod
     @override

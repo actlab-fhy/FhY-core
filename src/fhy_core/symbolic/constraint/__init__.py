@@ -45,6 +45,7 @@ __all__ = [
     "SymbolicPredicate",
     "build_constraint_ordering_key",
     "create_constraint_system",
+    "does_member_lift_to_expression",
 ]
 
 from .core import (
@@ -57,6 +58,10 @@ from .core import (
     SymbolicPredicate,
 )
 from .errors import ConstraintError, MissingSymbolTypeError
-from .members import ConstraintMember, MemberCollection
+from .members import (
+    ConstraintMember,
+    MemberCollection,
+    does_member_lift_to_expression,
+)
 from .ordering import build_constraint_ordering_key
 from .system import ConstraintSystem, create_constraint_system

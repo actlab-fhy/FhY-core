@@ -43,6 +43,7 @@ from fhy_core.symbolic.constraint import (
     InSetConstraint,
     NotInSetConstraint,
     create_constraint_system,
+    does_member_lift_to_expression,
 )
 from fhy_core.symbolic.expression import (
     BinaryExpression,
@@ -234,12 +235,10 @@ def _split_not_in_set_members_by_liftability(
     liftable: list[Any] = []
     excluded: list[Any] = []
     for member in constraint.members:
-        try:
-            NotInSetConstraint(constraint.variable, {member}).convert_to_expression()
-        except ConstraintError:
-            excluded.append(member)
-        else:
+        if does_member_lift_to_expression(member):
             liftable.append(member)
+        else:
+            excluded.append(member)
     return tuple(liftable), tuple(excluded)
 
 
@@ -633,6 +632,33 @@ def _is_numeric_value_set_subset(
     return own_symbol_type is not None and other.symbol_type == own_symbol_type
 
 
+def _build_non_negative_implied_constraints(
+    variable: Identifier, *, non_negative: bool, zero_included: bool
+) -> tuple[Constraint, ...]:
+    """Return the sign bound a non-negative integer domain implies.
+
+    Shared by the integer domains, whose implied constraints differ only
+    in the flags they hold rather than in how those flags map to a bound.
+
+    Args:
+        variable: Identifier the bound constrains.
+        non_negative: Whether the domain admits only non-negative values.
+        zero_included: Whether the domain admits zero, given it is
+            non-negative.
+
+    Returns:
+        A single lower-bound constraint for a non-negative domain, and an
+        empty tuple otherwise.
+
+    """
+    if not non_negative:
+        return ()
+    variable_expression = IdentifierExpression(variable)
+    if zero_included:
+        return (EquationConstraint(variable_expression >= 0),)
+    return (EquationConstraint(variable_expression > 0),)
+
+
 def _compute_numeric_feasibility_subset(
     own: ParamDomain,
     own_constraints: Sequence[Constraint],
@@ -729,12 +755,11 @@ class IntegerDomain(ParamDomain):
 
     @override
     def get_implied_constraints(self, variable: Identifier) -> tuple[Constraint, ...]:
-        if not self.non_negative:
-            return ()
-        variable_expression = IdentifierExpression(variable)
-        if self.zero_included:
-            return (EquationConstraint(variable_expression >= 0),)
-        return (EquationConstraint(variable_expression > 0),)
+        return _build_non_negative_implied_constraints(
+            variable,
+            non_negative=self.non_negative,
+            zero_included=self.zero_included,
+        )
 
     @override
     def is_value_set_subset(self, other: ParamDomain) -> bool:
@@ -944,12 +969,11 @@ class IntervalIntegerDomain(ParamDomain):
 
     @override
     def get_implied_constraints(self, variable: Identifier) -> tuple[Constraint, ...]:
-        if not self.non_negative:
-            return ()
-        variable_expression = IdentifierExpression(variable)
-        if self.zero_included:
-            return (EquationConstraint(variable_expression >= 0),)
-        return (EquationConstraint(variable_expression > 0),)
+        return _build_non_negative_implied_constraints(
+            variable,
+            non_negative=self.non_negative,
+            zero_included=self.zero_included,
+        )
 
     @override
     def is_value_set_subset(self, other: ParamDomain) -> bool:

@@ -42,7 +42,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from functools import cached_property
-from typing import Any, ClassVar, NoReturn, Protocol, TypeAlias, runtime_checkable
+from typing import Any, Final, NoReturn, Protocol, TypeAlias, runtime_checkable
 
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
@@ -454,6 +454,17 @@ class EquationConstraint(Constraint):
         return pformat_expression(self.expression)
 
 
+_UNBOUND: Final = object()
+"""Sentinel distinguishing an absent binding from a legitimately bound value.
+
+Read through ``Mapping.get`` so the constrained variable is fetched with
+exactly one lookup against the caller's mapping, without copying the whole
+mapping first. A caller may supply a mapping that permits only one read per
+key, and set-constraint evaluation runs once per candidate inside the
+enumeration loops in ``fhy_core.symbolic.param.domains``.
+"""
+
+
 def _validate_set_binding_value(identifier: Identifier, value: object) -> None:
     """Reject a non-``Expression`` binding value that could never be a member.
 
@@ -525,17 +536,16 @@ def _evaluate_set_membership_with_bindings(
             one but is unhashable.
 
     """
-    snapshot = dict(bindings)
-    if variable not in snapshot:
+    value: Any = bindings.get(variable, _UNBOUND)
+    if value is _UNBOUND:
         _LOGGER.debug(
             "%s.evaluate_with_bindings: no binding for variable %r; the "
             "bindings supplied %s; reporting UNDECIDED",
             kind_name,
             variable,
-            format_comma_separated_list(tuple(snapshot)) or "no identifiers",
+            format_comma_separated_list(tuple(bindings)) or "no identifiers",
         )
         return ConstraintOutcome.UNDECIDED
-    value = snapshot[variable]
     if isinstance(value, Expression):
         if not isinstance(value, LiteralExpression):
             _LOGGER.debug(
@@ -564,6 +574,42 @@ def _evaluate_set_membership_with_bindings(
     return ConstraintOutcome.VIOLATED
 
 
+@dataclass(frozen=True)
+class _SetPolarity:
+    """Knobs distinguishing one set-constraint leaf's polarity from the other's.
+
+    Attributes:
+        satisfied_when_member: True if membership satisfies the
+            constraint, False if it violates the constraint.
+        comparison_operation: Operation comparing the variable against
+            one member literal.
+        empty_set_literal: Boolean ``convert_to_expression`` returns for
+            an empty member set.
+        render_connective: Word ``__str__`` renders between the variable
+            and the member set.
+
+    """
+
+    satisfied_when_member: bool
+    comparison_operation: BinaryOperation
+    empty_set_literal: bool
+    render_connective: str
+
+
+_IN_SET_POLARITY: Final = _SetPolarity(
+    satisfied_when_member=True,
+    comparison_operation=BinaryOperation.EQUAL,
+    empty_set_literal=False,
+    render_connective="in",
+)
+_NOT_IN_SET_POLARITY: Final = _SetPolarity(
+    satisfied_when_member=False,
+    comparison_operation=BinaryOperation.NOT_EQUAL,
+    empty_set_literal=True,
+    render_connective="not in",
+)
+
+
 @dataclass(frozen=True, eq=False)
 class _SetConstraint(Constraint):
     """Shared unary-membership predicate over one identifier.
@@ -575,15 +621,10 @@ class _SetConstraint(Constraint):
     cached derived state, and evaluation/conversion/rendering behavior
     lives here. A leaf contributes only:
 
-    - ``_satisfied_when_member``: ``True`` if membership satisfies the
-      constraint (``InSetConstraint``), ``False`` if it violates the
-      constraint (``NotInSetConstraint``).
-    - ``_comparison_operation``: the ``BinaryOperation`` comparing
-      ``variable`` against one member literal (``EQUAL``/``NOT_EQUAL``).
-    - ``_empty_set_literal``: the ``bool`` ``convert_to_expression``
-      returns for an empty ``values`` (``False``/``True``).
-    - ``_render_connective``: the word ``__str__`` renders between the
-      variable and the member set (``"in"``/``"not in"``).
+    - ``_polarity``: the ``_SetPolarity`` deciding which outcome
+      membership maps to, which comparison a member literal is built
+      with, which boolean an empty member set converts to, and which
+      connective ``__str__`` renders.
     - ``_combine_expressions``: folds one per-member comparison
       expression into the whole (``logical_or``/``logical_and``).
 
@@ -620,10 +661,10 @@ class _SetConstraint(Constraint):
         },
     )
 
-    _satisfied_when_member: ClassVar[bool]
-    _comparison_operation: ClassVar[BinaryOperation]
-    _empty_set_literal: ClassVar[bool]
-    _render_connective: ClassVar[str]
+    @property
+    @abstractmethod
+    def _polarity(self) -> _SetPolarity:
+        """Return the polarity knobs this leaf decides membership with."""
 
     def __post_init__(self) -> None:
         wrapped = _normalize_constraint_member_collection(self.values)
@@ -636,7 +677,7 @@ class _SetConstraint(Constraint):
         # already built, so no reader has to derive it a second time.
         object.__setattr__(self, "_members", wrapped)
 
-    @property
+    @cached_property
     def members(self) -> tuple[ConstraintMember, ...]:
         """Return the members as raw values, in canonical order.
 
@@ -691,14 +732,14 @@ class _SetConstraint(Constraint):
             self.variable,
             self._members,
             bindings,
-            satisfied_when_member=self._satisfied_when_member,
+            satisfied_when_member=self._polarity.satisfied_when_member,
         )
 
     @override
     def convert_to_expression(self) -> Expression:
         members = self._members
         if len(members) == 0:
-            return LiteralExpression(self._empty_set_literal)
+            return LiteralExpression(self._polarity.empty_set_literal)
         sorted_values = sorted(members, key=repr)
         if len(sorted_values) == 1:
             return self._build_leaf_expression(sorted_values[0])
@@ -713,7 +754,7 @@ class _SetConstraint(Constraint):
     def _build_leaf_expression(self, wrapped: _TypedMember) -> Expression:
         literal = _lift_member_to_literal_expression(_unwrap_member(wrapped))
         return make_binary_expression(
-            self._comparison_operation, self.variable, literal
+            self._polarity.comparison_operation, self.variable, literal
         )
 
     @override
@@ -726,7 +767,7 @@ class _SetConstraint(Constraint):
     @override
     def __str__(self) -> str:
         return (
-            f"{self.variable} {self._render_connective} "
+            f"{self.variable} {self._polarity.render_connective} "
             f"{_render_member_set_str(self._members)}"
         )
 
@@ -747,10 +788,7 @@ class InSetConstraint(_SetConstraint):
 
     """
 
-    _satisfied_when_member = True
-    _comparison_operation = BinaryOperation.EQUAL
-    _empty_set_literal = False
-    _render_connective = "in"
+    _polarity = _IN_SET_POLARITY
 
     @override
     def _combine_expressions(self, expressions: Iterable[Expression]) -> Expression:
@@ -771,10 +809,7 @@ class NotInSetConstraint(_SetConstraint):
 
     """
 
-    _satisfied_when_member = False
-    _comparison_operation = BinaryOperation.NOT_EQUAL
-    _empty_set_literal = True
-    _render_connective = "not in"
+    _polarity = _NOT_IN_SET_POLARITY
 
     @override
     def _combine_expressions(self, expressions: Iterable[Expression]) -> Expression:

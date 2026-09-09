@@ -18,6 +18,7 @@ serialize identically.
 __all__ = [
     "ConstraintMember",
     "MemberCollection",
+    "does_member_lift_to_expression",
 ]
 
 from collections.abc import Collection, Hashable, Iterator, Mapping
@@ -334,6 +335,31 @@ def _lift_member_to_literal_expression(value: ConstraintMember) -> LiteralExpres
         raise ConstraintError(
             f"Member {value!r} cannot be represented as a literal expression: {exc}"
         ) from exc
+
+
+def does_member_lift_to_expression(value: ConstraintMember) -> bool:
+    """Return whether a constraint member lifts to a ``LiteralExpression``.
+
+    Answers the question a caller would otherwise have to ask by
+    converting a set constraint and catching the failure. A member that
+    does not lift cannot take part in the expression a set constraint
+    converts to, so a caller lowering constraints to the solver uses this
+    to partition the members it can represent from the ones it must drop.
+
+    Args:
+        value: Candidate constraint member.
+
+    Returns:
+        True if the member lifts to a literal expression, False if it is
+        not a ``LiteralType``, is a ``str``, or is a value
+        ``LiteralExpression`` refuses.
+
+    """
+    try:
+        _lift_member_to_literal_expression(value)
+    except ConstraintError:
+        return False
+    return True
 
 
 def _serialize_constraint_member(value: ConstraintMember) -> SerializedDict:
