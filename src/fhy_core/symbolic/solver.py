@@ -449,10 +449,23 @@ def _render_identifier_sorts(
     return format_comma_separated_list(rendered)
 
 
-_DIVISION_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
-    {BinaryOperation.DIVIDE, BinaryOperation.FLOOR_DIVIDE, BinaryOperation.MODULO}
+_PARTIAL_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
+    {
+        BinaryOperation.DIVIDE,
+        BinaryOperation.FLOOR_DIVIDE,
+        BinaryOperation.MODULO,
+        BinaryOperation.POWER,
+    }
 )
-"""Binary operations whose right operand is a divisor that can be zero."""
+"""Binary operations Z3 lowers to a function that is partial or divergent.
+
+Each is underspecified somewhere in its domain (division and modulo at a
+zero divisor, exponentiation at ``0 ** 0`` and at every negative
+exponent) or lowers to an operation whose semantics differ from this
+package's. The satisfiability encoding does not bind a partial function
+outside the domain where it is defined, so a term reaching one of those
+points admits a decided answer that no concrete assignment supports.
+"""
 
 
 _EUCLIDEAN_DIVERGENT_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
@@ -507,42 +520,126 @@ def _is_safe_positive_divisor(node: Expression) -> bool:
     return False
 
 
-def _does_node_divide_by_an_unsafe_operand(expression: Expression) -> bool:
-    """Return whether this one node divides by an operand its operation cannot trust."""
+def _does_operand_lower_to_real_sort(
+    node: Expression, symbol_types: Mapping[Identifier, SymbolType]
+) -> bool:
+    """Return whether ``node`` provably lowers to a Z3 REAL sort.
+
+    Answers conservatively: an operand this cannot prove real is treated
+    as not real, so a caller screening on "provably real" refuses the
+    cases it cannot classify rather than trusting them. Arithmetic is
+    real-sorted as soon as one side is, matching the Z3 bridge's
+    coercion.
+
+    Args:
+        node: Operand about to be lowered to Z3.
+        symbol_types: Z3 sort for each free identifier of the expression.
+
+    Returns:
+        True when ``node`` is a REAL-typed identifier, a float-valued
+        literal, or arithmetic with a provably real operand.
+
+    """
+    if isinstance(node, IdentifierExpression):
+        return symbol_types.get(node.identifier) is SymbolType.REAL
+    if isinstance(node, LiteralExpression):
+        return _is_float_valued_literal(node)
+    if (
+        isinstance(node, BinaryExpression)
+        and node.operation in _NUMERIC_BINARY_OPERATIONS
+    ):
+        return _does_operand_lower_to_real_sort(
+            node.left, symbol_types
+        ) or _does_operand_lower_to_real_sort(node.right, symbol_types)
+    if isinstance(node, UnaryExpression) and node.operation is UnaryOperation.NEGATE:
+        return _does_operand_lower_to_real_sort(node.operand, symbol_types)
+    return False
+
+
+def _is_safe_true_division(
+    expression: BinaryExpression, symbol_types: Mapping[Identifier, SymbolType]
+) -> bool:
+    """Return whether a ``DIVIDE`` node lowers to real division Z3 agrees on.
+
+    Two conditions, both required. The divisor must be a finite nonzero
+    literal, or Z3's division at zero is underspecified. One operand must
+    also lower to a REAL sort: Z3 divides two INT-sorted operands with
+    truncating integer division, so ``7 / 2`` is ``3`` there and ``3.5``
+    here, and the seam would otherwise decide the negation of what
+    ``simplify_expression`` decides for the same node.
+
+    """
+    if not _is_safe_nonzero_divisor(expression.right):
+        return False
+    return _does_operand_lower_to_real_sort(
+        expression.left, symbol_types
+    ) or _does_operand_lower_to_real_sort(expression.right, symbol_types)
+
+
+def _is_safe_exponent(node: Expression) -> bool:
+    """Return whether ``node`` is an exponent Z3 raises to totally.
+
+    Requires a literal strict integer of at least one. A negative
+    exponent makes exponentiation a division, underspecified at a zero
+    base and rational-valued on integers; a zero exponent leaves
+    ``0 ** 0`` underspecified; a non-integer exponent lowers to a real
+    power that is undefined for a negative base; and a symbolic exponent
+    cannot be classified at all.
+
+    """
+    if not isinstance(node, LiteralExpression):
+        return False
+    value = node.value
+    return is_strict_int(value) and value >= 1
+
+
+def _does_node_use_an_unsafe_partial_operation(
+    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
+) -> bool:
+    """Return whether this one node applies a partial operation off its safe domain."""
     if not (
         isinstance(expression, BinaryExpression)
-        and expression.operation in _DIVISION_BINARY_OPERATIONS
+        and expression.operation in _PARTIAL_BINARY_OPERATIONS
     ):
         return False
+    if expression.operation is BinaryOperation.POWER:
+        return not _is_safe_exponent(expression.right)
     if expression.operation in _EUCLIDEAN_DIVERGENT_BINARY_OPERATIONS:
         return not _is_safe_positive_divisor(expression.right)
-    return not _is_safe_nonzero_divisor(expression.right)
+    return not _is_safe_true_division(expression, symbol_types)
 
 
-def _find_division_hazard(expression: Expression) -> Expression | None:
-    """Return the first node of ``expression`` that divides by an unsafe operand.
+def _find_partial_operation_hazard(
+    expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
+) -> Expression | None:
+    """Return the first node of ``expression`` applying an unsafe partial operation.
 
-    Screens the whole tree, mirroring ``_find_bool_sort_hazard``: a
-    ``DIVIDE`` node whose divisor is not provably a finite nonzero
-    literal is refused, since the solver seam's satisfiability encoding
-    around a zero divisor is unsound; a ``FLOOR_DIVIDE``/``MODULO`` node
-    whose divisor is not provably a finite *positive* literal is
-    refused, since Z3 lowers both to Euclidean division, which
-    disagrees with this package's floor semantics for a zero, negative,
-    or non-finite divisor.
+    Screens the whole tree, mirroring ``_find_bool_sort_hazard``. A
+    ``DIVIDE`` node is refused unless its divisor is a finite nonzero
+    literal and one operand lowers to a REAL sort, since the encoding
+    around a zero divisor is unsound and Z3 divides two INT-sorted
+    operands with truncating integer division. A
+    ``FLOOR_DIVIDE``/``MODULO`` node is refused unless its divisor is a
+    finite *positive* literal, since Z3 lowers both to Euclidean
+    division, which disagrees with this package's floor semantics for a
+    zero, negative, or non-finite divisor. A ``POWER`` node is refused
+    unless its exponent is a literal integer of at least one, since Z3's
+    exponentiation is underspecified at ``0 ** 0`` and at every negative
+    exponent.
 
     Args:
         expression: Expression about to be lowered to Z3.
+        symbol_types: Z3 sort for each free identifier of ``expression``.
 
     Returns:
-        The offending node, or ``None`` when every division in the tree
-        divides by an operand safe for its operation.
+        The offending node, or ``None`` when every partial operation in
+        the tree stays inside the domain its lowering is sound on.
 
     """
-    if _does_node_divide_by_an_unsafe_operand(expression):
+    if _does_node_use_an_unsafe_partial_operation(expression, symbol_types):
         return expression
     for child in expression.get_visit_children():
-        hazard = _find_division_hazard(child)
+        hazard = _find_partial_operation_hazard(child, symbol_types)
         if hazard is not None:
             return hazard
     return None
@@ -637,19 +734,30 @@ def _log_bool_coercion_hazard(
     )
 
 
-def _log_division_hazard(hazard: Expression, *, context: str) -> None:
+def _log_partial_operation_hazard(
+    hazard: Expression,
+    symbol_types: Mapping[Identifier, SymbolType],
+    *,
+    context: str,
+) -> None:
     _LOGGER.warning(
-        "%s: node %r divides by an operand that is not a safe literal "
-        "divisor for its operation (a finite nonzero literal for DIVIDE; "
-        "a finite strictly positive literal for FLOOR_DIVIDE/MODULO, "
-        "since Z3 lowers those to Euclidean division, which disagrees "
-        "with floor semantics for a zero, negative, or non-finite "
-        "divisor), and the solver seam's satisfiability encoding around "
-        "such a divisor is unsound. The expression is not handed to the "
-        "solver; bounding timeout_milliseconds cannot change this "
-        "outcome.",
+        "%s: node %r applies an operation Z3 lowers partially or with "
+        "divergent semantics off the domain the seam can trust (DIVIDE "
+        "needs a finite nonzero literal divisor and one REAL-sorted "
+        "operand, since Z3 divides two INT-sorted operands with "
+        "truncating integer division; FLOOR_DIVIDE/MODULO need a finite "
+        "strictly positive literal divisor, since Z3 lowers those to "
+        "Euclidean division, which disagrees with floor semantics for a "
+        "zero, negative, or non-finite divisor; POWER needs a literal "
+        "integer exponent of at least one, since exponentiation is "
+        "underspecified at 0 ** 0 and at every negative exponent), and "
+        "the seam's satisfiability encoding does not bind a partial "
+        "function outside its domain; identifier sorts at that node: "
+        "%s. The expression is not handed to the solver; bounding "
+        "timeout_milliseconds cannot change this outcome.",
         context,
         hazard,
+        _render_identifier_sorts(hazard, symbol_types),
     )
 
 
@@ -680,10 +788,11 @@ def _find_and_log_hazard(
 ) -> bool:
     """Screen ``expression`` for a hazard the Z3 bridge cannot lower soundly.
 
-    Checks, in order, the Boolean-coercion hazard, the
-    division-by-possibly-zero hazard, and the int/float ``EQUAL``/
-    ``NOT_EQUAL`` sort-mixing hazard; the first one found is logged at
-    ``WARNING`` and short-circuits the remaining checks.
+    Checks, in order, the Boolean-coercion hazard, the partial-operation
+    hazard (division and exponentiation off the domain their lowering is
+    sound on), and the int/float ``EQUAL``/``NOT_EQUAL`` sort-mixing
+    hazard; the first one found is logged at ``WARNING`` and
+    short-circuits the remaining checks.
 
     Args:
         expression: Expression about to be lowered to Z3.
@@ -700,9 +809,9 @@ def _find_and_log_hazard(
     if hazard is not None:
         _log_bool_coercion_hazard(hazard, symbol_types, context=context)
         return True
-    hazard = _find_division_hazard(expression)
+    hazard = _find_partial_operation_hazard(expression, symbol_types)
     if hazard is not None:
-        _log_division_hazard(hazard, context=context)
+        _log_partial_operation_hazard(hazard, symbol_types, context=context)
         return True
     hazard = _find_int_float_equality_hazard(expression, symbol_types)
     if hazard is not None:

@@ -810,6 +810,169 @@ def test_check_expression_satisfiability_non_finite_literal_divisor_is_screened(
     assert result is None
 
 
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "claimed_quotient",
+    [3, 3.5],
+    ids=["truncating_semantics_value", "true_division_value"],
+)
+def test_check_expression_satisfiability_int_true_division_is_screened(
+    claimed_quotient: float,
+) -> None:
+    """Test `7 / 2` compared against either candidate quotient is screened.
+
+    Z3 divides two INT-sorted operands with truncating integer division,
+    so it reports `3` where this package's true division (and
+    `simplify_expression`) reports `3.5`. The two candidate quotients are
+    mutually exclusive, so screening must report both as undecided rather
+    than decide either definitively -- without the screen the seam
+    answers `True` for one and `False` for the other, exactly inverting
+    `simplify_expression` on the same node.
+    """
+    division = BinaryExpression(
+        BinaryOperation.DIVIDE, LiteralExpression(7), LiteralExpression(2)
+    )
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, division, LiteralExpression(claimed_quotient)
+    )
+
+    assert check_expression_satisfiability(expression, {}) is None
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_int_dividend_real_divisor_stays_decided() -> (
+    None
+):
+    """Test a REAL-sorted operand keeps true division decidable.
+
+    Contrasts the INT/INT case: one real operand makes the Z3 bridge
+    lower the whole division to real arithmetic, which agrees with this
+    package, so the screen must not refuse it.
+    """
+    division = BinaryExpression(
+        BinaryOperation.DIVIDE, LiteralExpression(7), LiteralExpression(2.0)
+    )
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, division, LiteralExpression(3.5)
+    )
+
+    assert check_expression_satisfiability(expression, {}) is True
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_int_true_division_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a screened INT/INT division logs a WARNING naming the node."""
+    division = BinaryExpression(
+        BinaryOperation.DIVIDE, LiteralExpression(7), LiteralExpression(2)
+    )
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, division, LiteralExpression(3.5)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = check_expression_satisfiability(expression, {})
+
+    assert result is None
+    messages = _collect_solver_warning_messages(caplog)
+    assert messages, "expected a WARNING naming the hazardous division node"
+    assert "check_expression_satisfiability" in messages[0]
+    assert repr(division) in messages[0]
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "is_equality",
+    [True, False],
+    ids=["asserted", "negated"],
+)
+def test_check_expression_satisfiability_zero_to_the_zero_is_screened(
+    is_equality: bool,
+) -> None:
+    """Test `0 ** 0` is screened whether the claim is asserted or negated.
+
+    Z3 leaves exponentiation underspecified at `0 ** 0`, and the
+    satisfiability encoding does not bind a partial function outside its
+    domain, so without the screen both `0 ** 0 == 1` and `0 ** 0 != 1`
+    come back provably unsatisfiable -- a pair no concrete assignment can
+    justify. Screening must report both as undecided.
+    """
+    power = BinaryExpression(
+        BinaryOperation.POWER, LiteralExpression(0), LiteralExpression(0)
+    )
+    operation = BinaryOperation.EQUAL if is_equality else BinaryOperation.NOT_EQUAL
+    expression = BinaryExpression(operation, power, LiteralExpression(1))
+
+    assert check_expression_satisfiability(expression, {}) is None
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_negative_exponent_is_screened() -> None:
+    """Test a negative exponent is screened.
+
+    A negative exponent makes exponentiation a division, underspecified
+    at a zero base, so `x ** -1 == 0` must not report the satisfiable
+    verdict Z3's partial lowering otherwise supports: no real `x`
+    satisfies `1 / x == 0`.
+    """
+    x = mock_identifier("x", 0)
+    power = BinaryExpression(
+        BinaryOperation.POWER, IdentifierExpression(x), LiteralExpression(-1)
+    )
+    expression = BinaryExpression(BinaryOperation.EQUAL, power, LiteralExpression(0))
+
+    result = check_expression_satisfiability(expression, {x: SymbolType.REAL})
+
+    assert result is None
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "exponent",
+    [0, 0.5, "2"],
+    ids=["zero", "non_integer", "string_form"],
+)
+def test_check_expression_satisfiability_unsafe_exponent_is_screened(
+    exponent: str | float | int | bool,
+) -> None:
+    """Test an exponent that is not a literal integer of at least one is screened.
+
+    A zero exponent leaves `0 ** 0` reachable, a non-integer exponent
+    lowers to a real power undefined for a negative base, and a
+    string-form literal carries no sort guarantee.
+    """
+    x = mock_identifier("x", 0)
+    power = BinaryExpression(
+        BinaryOperation.POWER, IdentifierExpression(x), LiteralExpression(exponent)
+    )
+    expression = BinaryExpression(BinaryOperation.EQUAL, power, LiteralExpression(1))
+
+    result = check_expression_satisfiability(expression, {x: SymbolType.INT})
+
+    assert result is None
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_positive_integer_exponent_stays_decided() -> (
+    None
+):
+    """Test a literal positive integer exponent is not screened.
+
+    Contrasts the refused exponents: `x ** 2` is total on every integer,
+    so the screen must leave it decidable.
+    """
+    x = mock_identifier("x", 0)
+    power = BinaryExpression(
+        BinaryOperation.POWER, IdentifierExpression(x), LiteralExpression(2)
+    )
+    expression = BinaryExpression(BinaryOperation.EQUAL, power, LiteralExpression(4))
+
+    result = check_expression_satisfiability(expression, {x: SymbolType.INT})
+
+    assert result is True
+
+
 def test_check_expression_satisfiability_int_float_equality_hazard_returns_none(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
