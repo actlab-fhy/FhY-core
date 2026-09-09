@@ -8,6 +8,7 @@ set; permutation and numeric kinds are checked by the factory's
 `VIOLATED` outcome, so an undecided conjunction survives.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,6 +21,7 @@ from fhy_core.symbolic.constraint import (
     ConstraintError,
     ConstraintOutcome,
     InSetConstraint,
+    NotInSetConstraint,
 )
 from fhy_core.symbolic.expression import Expression, LiteralExpression
 from fhy_core.symbolic.param import (
@@ -46,6 +48,7 @@ from fhy_core.symbolic.param import (
 from fhy_core.symbolic.param.domains import (
     CategoricalDomain,
     IntegerDomain,
+    IntervalIntegerDomain,
     OrdinalDomain,
 )
 from fhy_core.term import compared_as_reference
@@ -117,7 +120,13 @@ def test_ordinal_intersection_of_disjoint_sets_raises_param_error() -> None:
 
 
 def test_finite_set_intersection_result_carries_no_constraints() -> None:
-    """Test the baked finite-set intersection result carries no constraints."""
+    """Test a baked finite-set intersection folds operand constraints into its set.
+
+    ``left`` declares ``{"a","b","c"}`` but its in-set constraint narrows it
+    to ``{"a","b"}``; against ``{"b","c"}`` only ``"b"`` survives. The
+    result carries that narrowing in its baked member set and no
+    constraints at all.
+    """
     left = create_categorical_param({"a", "b", "c"})
     left = left.add_constraint(InSetConstraint(left.variable, {"a", "b"}))
     right = create_categorical_param({"b", "c"})
@@ -125,6 +134,29 @@ def test_finite_set_intersection_result_carries_no_constraints() -> None:
     result = create_intersection_param(left, right)
 
     assert result.constraints == ()
+    assert_all_valid(result, ["b"])
+    assert_none_valid(result, ["a", "c"])
+
+
+def test_ordinal_intersection_folds_not_in_set_and_in_set_constraints() -> None:
+    """Test ordinal intersection bakes each side's set constraint into the result.
+
+    ``left`` declares ``[1..5]`` minus ``{1, 5}``, so ``{2,3,4}``; ``right``
+    declares ``[2..6]`` narrowed to ``{3,4,5,6}``. Only ``{3, 4}`` is
+    admitted by both, and the result bakes exactly that.
+    """
+    left = create_ordinal_param([1, 2, 3, 4, 5])
+    left = left.add_constraint(NotInSetConstraint(left.variable, {1, 5}))
+    right = create_ordinal_param([2, 3, 4, 5, 6])
+    right = right.add_constraint(InSetConstraint(right.variable, {3, 4, 5, 6}))
+
+    result = create_intersection_param(left, right)
+
+    assert isinstance(result.domain, OrdinalDomain)
+    assert result.domain.sorted_values == (3, 4)
+    assert result.constraints == ()
+    assert_all_valid(result, [3, 4])
+    assert_none_valid(result, [1, 2, 5, 6])
 
 
 # =============================================================================
@@ -261,6 +293,36 @@ def test_interval_intersection_merges_non_negative_attribute() -> None:
     assert result.domain.non_negative  # type: ignore[attr-defined]
 
 
+@pytest.mark.z3
+def test_interval_intersection_rendering_follows_left_operand_prefer_inclusive() -> (
+    None
+):
+    """Test the intersection's ``prefer_inclusive`` follows the LEFT operand's.
+
+    Each pair mixes operands with DIFFERING ``prefer_inclusive`` flags, so
+    a result that took the flag from the right operand, or reconciled the
+    two, is distinguishable from one that takes it from the left. The flag
+    only decides how later arithmetic renders bounds; both results admit
+    the same values.
+    """
+    x_incl = create_interval_integer_param_between(0, 10, prefer_inclusive=True)
+    y_excl = create_interval_integer_param_between(5, 20, prefer_inclusive=False)
+    x_excl = create_interval_integer_param_between(0, 10, prefer_inclusive=False)
+    y_incl = create_interval_integer_param_between(5, 20, prefer_inclusive=True)
+
+    z_left_incl = x_incl & y_excl
+    z_left_excl = x_excl & y_incl
+
+    for v in range(0, 25):
+        assert z_left_incl.is_constraints_satisfied(
+            v
+        ) == z_left_excl.is_constraints_satisfied(v)
+    assert isinstance(z_left_incl.domain, IntervalIntegerDomain)
+    assert isinstance(z_left_excl.domain, IntervalIntegerDomain)
+    assert z_left_incl.domain.prefer_inclusive
+    assert not z_left_excl.domain.prefer_inclusive
+
+
 # =============================================================================
 # Mixed interval-integer / plain-integer intersection (coercion)
 # =============================================================================
@@ -288,6 +350,37 @@ def test_intersection_coerces_plain_integer_operand_on_left() -> None:
 
     assert_all_satisfied(result, [5, 10])
     assert_none_satisfied(result, [4, 11])
+
+
+def test_intersection_rejects_integer_param_with_non_bound_constraint_on_right() -> (
+    None
+):
+    """Test ``interval & integer`` rejects a plain integer carrying a set constraint.
+
+    A set constraint has no interval form, so the plain integer operand
+    cannot be coerced and the intersection raises before any bound
+    merging.
+    """
+    interval = create_interval_integer_param_between(0, 10)
+    integer = create_integer_param()
+    integer = integer.add_constraint(InSetConstraint(integer.variable, {1, 2, 3}))
+
+    with pytest.raises(
+        TypeError, match="Cannot coerce an integer parameter with non-bound constraints"
+    ):
+        _ = interval & integer
+
+
+def test_intersection_rejects_integer_param_with_non_bound_constraint_on_left() -> None:
+    """Test ``integer & interval`` rejects a set-constrained integer on the left."""
+    interval = create_interval_integer_param_between(0, 10)
+    integer = create_integer_param()
+    integer = integer.add_constraint(InSetConstraint(integer.variable, {1, 2, 3}))
+
+    with pytest.raises(
+        TypeError, match="Cannot coerce an integer parameter with non-bound constraints"
+    ):
+        _ = integer & interval
 
 
 # =============================================================================
@@ -338,6 +431,106 @@ def test_real_intersection_conjoins_bound_constraints() -> None:
 
     assert_all_satisfied(result, [0.0, 5.0, 10.0])
     assert_none_satisfied(result, [-1.0, 11.0])
+
+
+# =============================================================================
+# Non-negative attribute merging: `zero_included`
+# =============================================================================
+
+
+def _build_integer_operand(zero_included: bool | None) -> Param[int]:
+    """Build a plain integer param for ``None``, else a natural one with the flag."""
+    if zero_included is None:
+        return create_integer_param()
+    return create_natural_param(zero_included=zero_included)
+
+
+def _build_interval_integer_operand(zero_included: bool | None) -> Param[int]:
+    """Build a plain interval-integer param for ``None``, else a natural one."""
+    if zero_included is None:
+        return create_interval_integer_param()
+    return create_interval_natural_param(zero_included=zero_included)
+
+
+_NATURAL_OPERAND_BUILDERS = [
+    pytest.param(_build_integer_operand, IntegerDomain, id="integer"),
+    pytest.param(
+        _build_interval_integer_operand, IntervalIntegerDomain, id="interval-integer"
+    ),
+]
+
+_ZERO_EXCLUDING_OPERAND_PAIRS = [
+    pytest.param(False, True, id="zero-excluded-and-zero-included"),
+    pytest.param(True, False, id="zero-included-and-zero-excluded"),
+    pytest.param(None, False, id="plain-integer-and-zero-excluded"),
+    pytest.param(False, None, id="zero-excluded-and-plain-integer"),
+]
+
+_ZERO_KEEPING_OPERAND_PAIRS = [
+    pytest.param(True, None, id="zero-included-and-plain-integer"),
+    pytest.param(None, True, id="plain-integer-and-zero-included"),
+]
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("build_operand, domain_type", _NATURAL_OPERAND_BUILDERS)
+@pytest.mark.parametrize(
+    "left_zero_included, right_zero_included", _ZERO_EXCLUDING_OPERAND_PAIRS
+)
+def test_intersection_domain_excludes_zero_when_a_natural_operand_does(
+    build_operand: Callable[[bool | None], Param[int]],
+    domain_type: type[IntegerDomain] | type[IntervalIntegerDomain],
+    left_zero_included: bool | None,
+    right_zero_included: bool | None,
+) -> None:
+    """Test the merged integer domain itself excludes zero if any operand's does.
+
+    The result also carries the zero-excluding operand's own ``> 0``
+    constraint, which rejects zero regardless of the merged domain, so
+    the admissibility check is made with the carried constraints
+    stripped: re-canonicalizing an empty constraint set leaves exactly
+    what the merged domain implies on its own.
+    """
+    left = build_operand(left_zero_included)
+    right = build_operand(right_zero_included)
+
+    result = create_intersection_param(left, right)
+    domain_alone = result.replace_constraints(())
+
+    assert isinstance(result.domain, domain_type)
+    assert result.domain.non_negative
+    assert not result.domain.zero_included
+    assert not domain_alone.is_value_valid(0)
+    assert domain_alone.is_value_valid(1)
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("build_operand, domain_type", _NATURAL_OPERAND_BUILDERS)
+@pytest.mark.parametrize(
+    "left_zero_included, right_zero_included", _ZERO_KEEPING_OPERAND_PAIRS
+)
+def test_intersection_domain_keeps_zero_when_no_natural_operand_excludes_it(
+    build_operand: Callable[[bool | None], Param[int]],
+    domain_type: type[IntegerDomain] | type[IntervalIntegerDomain],
+    left_zero_included: bool | None,
+    right_zero_included: bool | None,
+) -> None:
+    """Test the merged integer domain keeps zero when no natural operand excludes it.
+
+    The merged domain is still non-negative (one operand is natural), so
+    with the carried constraints stripped it admits zero but not ``-1``.
+    """
+    left = build_operand(left_zero_included)
+    right = build_operand(right_zero_included)
+
+    result = create_intersection_param(left, right)
+    domain_alone = result.replace_constraints(())
+
+    assert isinstance(result.domain, domain_type)
+    assert result.domain.non_negative
+    assert result.domain.zero_included
+    assert domain_alone.is_value_valid(0)
+    assert not domain_alone.is_value_valid(-1)
 
 
 # =============================================================================

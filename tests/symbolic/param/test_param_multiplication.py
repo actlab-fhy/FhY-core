@@ -32,6 +32,7 @@ from .conftest import (
     assert_all_satisfied,
     assert_none_satisfied,
     assert_param_round_trips_in_all_formats,
+    build_interval_integer_param,
 )
 
 # =============================================================================
@@ -161,6 +162,51 @@ def test_multiplication_of_non_negative_interval_with_unbounded_below_operand() 
 
     assert_all_satisfied(z, [0, -(10**6)])
     assert_none_satisfied(z, [1])
+
+
+@pytest.mark.parametrize(
+    "left_bounds, right_bounds, admitted, rejected",
+    [
+        pytest.param((1, None), (-3, -1), [-(10**6), -1], [0], id="[1,+inf)*[-3,-1]"),
+        pytest.param((-3, -1), (1, None), [-(10**6), -1], [0], id="[-3,-1]*[1,+inf)"),
+        pytest.param((None, -1), (-3, -1), [1, 10**6], [0], id="(-inf,-1]*[-3,-1]"),
+        pytest.param((-3, -1), (None, -1), [1, 10**6], [0], id="[-3,-1]*(-inf,-1]"),
+        pytest.param((None, -1), (None, -1), [1, 10**6], [0], id="(-inf,-1]*(-inf,-1]"),
+        pytest.param(
+            (None, -1), (1, None), [-(10**6), -1], [0], id="(-inf,-1]*[1,+inf)"
+        ),
+        pytest.param(
+            (1, None), (None, -1), [-(10**6), -1], [0], id="[1,+inf)*(-inf,-1]"
+        ),
+        pytest.param(
+            (-2, None), (3, None), [-(10**6), -6, 10**6], [], id="[-2,+inf)*[3,+inf)"
+        ),
+        pytest.param(
+            (3, None), (-2, None), [-(10**6), -6, 10**6], [], id="[3,+inf)*[-2,+inf)"
+        ),
+    ],
+)
+def test_multiplication_negative_finite_endpoint_signs_unbounded_corner_product(
+    left_bounds: tuple[int | None, int | None],
+    right_bounds: tuple[int | None, int | None],
+    admitted: list[int],
+    rejected: list[int],
+) -> None:
+    """Test a negative finite endpoint sets the sign of its unbounded corner product.
+
+    Each case pairs a negative finite endpoint with an unbounded end of the
+    other operand, in both operand orders. The unbounded side's extreme
+    and the finite endpoint itself are admitted, and the first integer
+    past the finite end is rejected, so a product that read the finite
+    factor as positive would misplace both ends of the result.
+    """
+    x = build_interval_integer_param(*left_bounds)
+    y = build_interval_integer_param(*right_bounds)
+
+    z = x * y
+
+    assert_all_satisfied(z, admitted)
+    assert_none_satisfied(z, rejected)
 
 
 # =============================================================================
@@ -377,6 +423,25 @@ def test_multiplication_zero_included_is_or_of_operands() -> None:
     assert_all_satisfied(z, [0])
 
 
+def test_multiplication_zero_included_is_or_of_operands_in_reversed_order() -> None:
+    """Test ``[0,3] * [1,3]`` includes zero when only the LEFT operand admits it.
+
+    The operand order of ``test_multiplication_zero_included_is_or_of_operands``
+    swapped, so a result that read ``zero_included`` from the right
+    operand alone would wrongly exclude zero here.
+    """
+    x = create_interval_natural_param(zero_included=True)
+    x = x.add_upper_bound_constraint(3)
+    y = create_interval_natural_param(zero_included=False)
+    y = y.add_lower_bound_constraint(1).add_upper_bound_constraint(3)
+
+    z = x * y
+
+    assert z.domain.non_negative  # type: ignore[attr-defined]
+    assert z.domain.zero_included  # type: ignore[attr-defined]
+    assert_all_satisfied(z, [0])
+
+
 def test_multiplication_zero_included_false_when_both_operands_exclude_zero() -> None:
     """Test ``zero_included`` stays ``False`` when neither operand admits zero."""
     x = create_interval_natural_param(zero_included=False)
@@ -548,17 +613,21 @@ def test_rmul_result_uses_a_fresh_variable() -> None:
 
 
 @pytest.mark.parametrize(
-    "lower, upper",
+    "left_lower, left_upper, right_lower, right_upper",
     [
-        pytest.param(0, 0, id="0-0"),
-        pytest.param(0, 3, id="0-3"),
-        pytest.param(-3, 3, id="neg3-3"),
-        pytest.param(-3, -1, id="neg3-neg1"),
-        pytest.param(1, 3, id="1-3"),
+        pytest.param(0, 0, 0, 0, id="0-0-x-0-0"),
+        pytest.param(0, 3, 0, 3, id="0-3-x-0-3"),
+        pytest.param(-3, 3, -3, 3, id="neg3-3-x-neg3-3"),
+        pytest.param(-3, -1, -3, -1, id="neg3-neg1-x-neg3-neg1"),
+        pytest.param(1, 3, 1, 3, id="1-3-x-1-3"),
+        pytest.param(-3, -1, 1, 3, id="neg3-neg1-x-1-3"),
+        pytest.param(1, 3, -3, -1, id="1-3-x-neg3-neg1"),
+        pytest.param(-2, 3, -3, 1, id="neg2-3-x-neg3-1"),
+        pytest.param(0, 3, -3, -1, id="0-3-x-neg3-neg1"),
     ],
 )
 def test_multiplication_matches_brute_force_corner_products_over_bounded_intervals(
-    lower: int, upper: int
+    left_lower: int, left_upper: int, right_lower: int, right_upper: int
 ) -> None:
     """Test multiplication's satisfied range matches the four-corner hull.
 
@@ -569,12 +638,19 @@ def test_multiplication_matches_brute_force_corner_products_over_bounded_interva
     that are not the product of any actual pair -- e.g. ``[1,3] * [1,3]``
     admits ``5``, which is not ``a * b`` for any ``a, b`` in ``{1,2,3}``.
     So this test checks the satisfied range against the corner-product hull
-    directly, not against the brute-force set of actual products.
+    directly, not against the brute-force set of actual products. The
+    operands are given independently, so the asymmetric pairs exercise
+    corners a self-product never reaches.
     """
-    corners = [lower * lower, lower * upper, upper * lower, upper * upper]
+    corners = [
+        left_lower * right_lower,
+        left_lower * right_upper,
+        left_upper * right_lower,
+        left_upper * right_upper,
+    ]
     expected_min, expected_max = min(corners), max(corners)
-    x = create_interval_integer_param_between(lower, upper)
-    y = create_interval_integer_param_between(lower, upper)
+    x = create_interval_integer_param_between(left_lower, left_upper)
+    y = create_interval_integer_param_between(right_lower, right_upper)
 
     z = x * y
 

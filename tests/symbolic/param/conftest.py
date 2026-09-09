@@ -13,6 +13,10 @@ from fhy_core.symbolic.param import (
     Param,
     create_categorical_param,
     create_integer_param,
+    create_interval_integer_param,
+    create_interval_integer_param_between,
+    create_interval_integer_param_with_lower_bound,
+    create_interval_integer_param_with_upper_bound,
     create_ordinal_param,
     create_permutation_param,
     create_real_param,
@@ -38,6 +42,7 @@ __all__ = [
     "assert_none_satisfied",
     "assert_none_valid",
     "assert_param_round_trips_in_all_formats",
+    "build_interval_integer_param",
     "categorical_param_abc",
     "default_int_param",
     "default_real_param",
@@ -295,6 +300,24 @@ def assert_param_round_trips_in_all_formats(param: Param[Any]) -> None:
             f"Param {restored!r} should be structurally equivalent to {param!r} "
             f"after a {serialization_format} round trip"
         )
+
+
+def build_interval_integer_param(
+    lower_bound: int | None, upper_bound: int | None
+) -> Param[int]:
+    """Build an interval-integer param over ``[lower, upper]``, ``None`` unbounded.
+
+    Picks the factory matching which ends are bounded, so a test can spell
+    a half-bounded or fully unbounded operand with the same call shape as
+    a bounded one.
+    """
+    if lower_bound is None:
+        if upper_bound is None:
+            return create_interval_integer_param()
+        return create_interval_integer_param_with_upper_bound(upper_bound)
+    if upper_bound is None:
+        return create_interval_integer_param_with_lower_bound(lower_bound)
+    return create_interval_integer_param_between(lower_bound, upper_bound)
 
 
 @pytest.fixture
