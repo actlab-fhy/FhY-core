@@ -21,7 +21,6 @@ from fhy_core.symbolic.constraint import (
     EquationConstraint,
     InSetConstraint,
     NotInSetConstraint,
-    build_constraint_ordering_key,
     create_constraint_system,
 )
 from fhy_core.symbolic.expression import (
@@ -189,4 +188,4 @@ def test_ordering_key_is_constant_on_structural_equivalence_classes(
     left, right = pair
     if not left.is_structurally_equivalent(right):
         return
-    assert build_constraint_ordering_key(left) == build_constraint_ordering_key(right)
+    assert left.build_ordering_key() == right.build_ordering_key()

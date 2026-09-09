@@ -1,10 +1,10 @@
-"""Tests for the public `build_constraint_ordering_key`.
+"""Tests for `Constraint.build_ordering_key`.
 
-`ConstraintSystem` and (per the design doc) the param layer both order
-their constraints by this key, so its contract -- constant on
+`ConstraintSystem` orders its members by this key and the param layer's
+constraint tuple inherits that order, so its contract -- constant on
 structural-equivalence classes, distinct across kinds and member sets,
-and a documented `repr` fallback for third-party subclasses -- is pinned
-directly here rather than only observed indirectly through
+and supplied by every concrete subclass including third-party ones -- is
+pinned directly here rather than only observed indirectly through
 `ConstraintSystem`'s canonical order.
 """
 
@@ -18,7 +18,6 @@ from fhy_core.symbolic.constraint import (
     EquationConstraint,
     InSetConstraint,
     NotInSetConstraint,
-    build_constraint_ordering_key,
     create_constraint_system,
 )
 from fhy_core.symbolic.expression import (
@@ -52,7 +51,7 @@ def test_equal_keys_for_in_set_constraints_built_in_different_member_orders() ->
         "the two constraints must store their members in different orders "
         "for this test to say anything about order independence"
     )
-    assert build_constraint_ordering_key(left) == build_constraint_ordering_key(right)
+    assert left.build_ordering_key() == right.build_ordering_key()
 
 
 def test_equal_keys_for_equation_constraints_built_from_equivalent_expressions() -> (
@@ -64,7 +63,7 @@ def test_equal_keys_for_equation_constraints_built_from_equivalent_expressions()
     right = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 5))
 
     assert left.is_structurally_equivalent(right)
-    assert build_constraint_ordering_key(left) == build_constraint_ordering_key(right)
+    assert left.build_ordering_key() == right.build_ordering_key()
 
 
 def test_equal_keys_for_constraints_over_independently_built_identifiers() -> None:
@@ -75,7 +74,7 @@ def test_equal_keys_for_constraints_over_independently_built_identifiers() -> No
     right = InSetConstraint(x2, {1, 2})
 
     assert x1 is not x2
-    assert build_constraint_ordering_key(left) == build_constraint_ordering_key(right)
+    assert left.build_ordering_key() == right.build_ordering_key()
 
 
 # =============================================================================
@@ -89,9 +88,7 @@ def test_distinct_keys_across_kinds_for_the_same_variable() -> None:
     in_set = InSetConstraint(x, {1, 2})
     not_in_set = NotInSetConstraint(x, {1, 2})
 
-    assert build_constraint_ordering_key(in_set) != build_constraint_ordering_key(
-        not_in_set
-    )
+    assert in_set.build_ordering_key() != not_in_set.build_ordering_key()
 
 
 def test_distinct_keys_across_different_variables() -> None:
@@ -101,7 +98,7 @@ def test_distinct_keys_across_different_variables() -> None:
     left = InSetConstraint(x, {1, 2})
     right = InSetConstraint(y, {1, 2})
 
-    assert build_constraint_ordering_key(left) != build_constraint_ordering_key(right)
+    assert left.build_ordering_key() != right.build_ordering_key()
 
 
 def test_distinct_keys_across_different_member_sets() -> None:
@@ -110,7 +107,7 @@ def test_distinct_keys_across_different_member_sets() -> None:
     left = InSetConstraint(x, {1, 2})
     right = InSetConstraint(x, {1, 2, 3})
 
-    assert build_constraint_ordering_key(left) != build_constraint_ordering_key(right)
+    assert left.build_ordering_key() != right.build_ordering_key()
 
 
 def test_distinct_keys_for_type_strict_members() -> None:
@@ -119,7 +116,7 @@ def test_distinct_keys_for_type_strict_members() -> None:
     left = InSetConstraint(x, [1])
     right = InSetConstraint(x, [True])
 
-    assert build_constraint_ordering_key(left) != build_constraint_ordering_key(right)
+    assert left.build_ordering_key() != right.build_ordering_key()
 
 
 def test_distinct_keys_for_different_equation_expressions() -> None:
@@ -128,11 +125,11 @@ def test_distinct_keys_for_different_equation_expressions() -> None:
     left = EquationConstraint(LiteralExpression(True))
     right = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 5))
 
-    assert build_constraint_ordering_key(left) != build_constraint_ordering_key(right)
+    assert left.build_ordering_key() != right.build_ordering_key()
 
 
 # =============================================================================
-# `repr` fallback for a third-party `Constraint` subclass
+# A third-party `Constraint` subclass supplies its own key
 # =============================================================================
 
 
@@ -140,9 +137,9 @@ def test_distinct_keys_for_different_equation_expressions() -> None:
 class _ThirdPartyConstraint(Constraint):
     """A `Constraint` subclass declared outside `fhy_core.symbolic.constraint`.
 
-    Exercises the documented fallback: a subclass this module does not
-    recognize keys on its own `repr` rather than on structural fields the
-    ordering key function has no way to introspect generically.
+    The subclassing contract requires an ordering key, so a kind this
+    package knows nothing about keys on its own fields and takes its
+    place in a system's canonical order like any built-in leaf.
     """
 
     variable: Identifier = field(metadata=compared_as_reference())
@@ -160,6 +157,10 @@ class _ThirdPartyConstraint(Constraint):
         return LiteralExpression(True)
 
     @override
+    def build_ordering_key(self) -> str:
+        return f"_ThirdPartyConstraint|{self.variable.id}"
+
+    @override
     def __repr__(self) -> str:
         return f"_ThirdPartyConstraint(marker={self.variable!r})"
 
@@ -168,24 +169,24 @@ class _ThirdPartyConstraint(Constraint):
         return "_ThirdPartyConstraint"
 
 
-def test_third_party_subclass_ordering_key_falls_back_to_repr() -> None:
-    """Test the ordering key for an unrecognized subclass is derived from `repr`."""
+def test_third_party_subclass_supplies_its_own_ordering_key() -> None:
+    """Test an out-of-package subclass keys on its own fields."""
     x = mock_identifier("x", 0)
     constraint = _ThirdPartyConstraint(x)
 
-    key = build_constraint_ordering_key(constraint)
+    key = constraint.build_ordering_key()
 
-    assert repr(constraint) in key
+    assert key == f"_ThirdPartyConstraint|{x.id}"
 
 
 def test_third_party_subclass_ordering_key_distinguishes_distinct_instances() -> None:
-    """Test two third-party instances with different `repr`s key apart."""
+    """Test two third-party instances over different variables key apart."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
     left = _ThirdPartyConstraint(x)
     right = _ThirdPartyConstraint(y)
 
-    assert build_constraint_ordering_key(left) != build_constraint_ordering_key(right)
+    assert left.build_ordering_key() != right.build_ordering_key()
 
 
 # =============================================================================
@@ -207,7 +208,7 @@ def test_constraint_system_member_order_matches_sorting_by_the_public_key() -> N
     system = create_constraint_system(*members)
 
     assert list(system.constraints) == sorted(
-        members, key=build_constraint_ordering_key
+        members, key=lambda member: member.build_ordering_key()
     )
 
 
@@ -222,5 +223,5 @@ def test_constraint_system_member_order_matches_the_key_for_a_third_party_kind()
     system = create_constraint_system(*members)
 
     assert list(system.constraints) == sorted(
-        members, key=build_constraint_ordering_key
+        members, key=lambda member: member.build_ordering_key()
     )

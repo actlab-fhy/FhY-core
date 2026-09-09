@@ -358,6 +358,10 @@ def test_equivalence_requires_dataclass_constraint_subclass() -> None:
             return LiteralExpression(True)
 
         @override
+        def build_ordering_key(self) -> str:
+            return "_NonDataclassConstraint"
+
+        @override
         def __repr__(self) -> str:
             return "_NonDataclassConstraint"
 

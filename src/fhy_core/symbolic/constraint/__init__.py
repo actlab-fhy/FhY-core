@@ -26,7 +26,8 @@ The package is organized by concern:
   canonical ordering, and the set-constraint member codec.
 - ``core``: ``ConstraintOutcome``, bindings coercion, the
   ``SymbolicPredicate`` protocol, and the ``Constraint`` family.
-- ``ordering``: ``build_constraint_ordering_key``.
+- ``ordering``: expression-level ordering keys, used by
+  ``Constraint.build_ordering_key``.
 - ``system``: ``create_constraint_system`` and ``ConstraintSystem``.
 """
 
@@ -43,7 +44,6 @@ __all__ = [
     "MissingSymbolTypeError",
     "NotInSetConstraint",
     "SymbolicPredicate",
-    "build_constraint_ordering_key",
     "create_constraint_system",
     "does_member_lift_to_expression",
 ]
@@ -63,5 +63,4 @@ from .members import (
     MemberCollection,
     does_member_lift_to_expression,
 )
-from .ordering import build_constraint_ordering_key
 from .system import ConstraintSystem, create_constraint_system

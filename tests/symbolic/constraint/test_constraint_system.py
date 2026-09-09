@@ -67,8 +67,9 @@ class _ProbeConstraint(Constraint):
 
     Lets a test observe which members were evaluated, in what order, and
     with what bindings snapshot, without depending on any other kind's
-    ``repr`` (whose mock-identifier form is not controllable) for canonical
-    ordering: ``label`` drives a deterministic, test-controlled ``repr``.
+    keying (whose mock-identifier form is not controllable) for canonical
+    ordering: ``label`` drives both a deterministic ``repr`` and the
+    ordering key a system sorts members by.
     """
 
     variable: Identifier = field(metadata=compared_as_reference())
@@ -99,6 +100,10 @@ class _ProbeConstraint(Constraint):
     @override
     def convert_to_expression(self) -> Expression:
         return LiteralExpression(True)
+
+    @override
+    def build_ordering_key(self) -> str:
+        return f"_ProbeConstraint|{self.label}"
 
     @override
     def __repr__(self) -> str:

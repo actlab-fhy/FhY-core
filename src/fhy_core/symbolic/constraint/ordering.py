@@ -1,22 +1,16 @@
-"""Canonical ordering keys for expressions and constraints.
+"""Canonical ordering keys for expression trees and bare literals.
 
-``build_constraint_ordering_key`` is constant on structural-equivalence
-classes: two structurally equivalent constraints always key alike,
+``_build_expression_ordering_key`` is constant on structural-equivalence
+classes: two structurally equivalent expressions always key alike,
 independent of construction order or the per-process hash seed that
 would otherwise leak into a naive ``repr``-based sort.
-``ConstraintSystem`` (``fhy_core.symbolic.constraint.system``) sorts its
-members by this key, and the param layer orders each parameter's
-constraint tuple by it, so the two layers agree on canonical order. The
-private helpers here build a textual key for an ``Expression`` subtree
-(``_build_expression_ordering_key``/``_render_expression_node_ordering_data``)
-or a bare literal (``_build_literal_ordering_key``); the member-set key
-used for a set constraint (``_build_member_ordering_key``) lives in
-``fhy_core.symbolic.constraint.members``.
+``EquationConstraint.build_ordering_key``
+(``fhy_core.symbolic.constraint.core``) keys its wrapped expression with
+it; the member-set key a set constraint uses
+(``_build_member_ordering_key``) lives in
+``fhy_core.symbolic.constraint.members`` instead. Nothing here knows
+about the constraint family, so this module sits below it.
 """
-
-__all__ = [
-    "build_constraint_ordering_key",
-]
 
 from decimal import Decimal
 
@@ -29,9 +23,6 @@ from fhy_core.symbolic.expression import (
     LiteralType,
     UnaryExpression,
 )
-
-from .core import Constraint, EquationConstraint, _SetConstraint
-from .members import _build_member_ordering_key
 
 
 def _build_literal_ordering_key(value: LiteralType) -> str:
@@ -101,41 +92,3 @@ def _render_expression_node_ordering_data(expression: Expression) -> str:
     elif isinstance(expression, CallExpression):
         return f"call:{expression.function_name}"
     return ""
-
-
-def build_constraint_ordering_key(constraint: Constraint) -> str:
-    """Return the canonical ordering key for a constraint.
-
-    Constant on structural-equivalence classes: two structurally
-    equivalent constraints always key alike, so a system's member order
-    does not depend on construction order. It is keyed on the same
-    things equivalence compares -- the concrete kind, and either the
-    expression tree or the variable's ``Identifier.id`` and the
-    type-strict member set -- rather than on ``repr``, which neither
-    separates every distinct constraint nor agrees on every equivalent
-    pair. ``ConstraintSystem`` orders its members by this key, and the
-    param layer orders each parameter's constraint tuple by it, so the
-    two layers agree on canonical order.
-
-    A ``Constraint`` subclass that is none of this package's leaves
-    falls back to its ``repr``, which the subclassing contract requires
-    to identify the kind and the scope. Dispatch is by type, so a
-    subclass of a leaf keys structurally like the leaf it derives from.
-
-    Args:
-        constraint: Member to key.
-
-    Returns:
-        Textual key ordering the member within its system.
-
-    """
-    kind = type(constraint).__name__
-    if isinstance(constraint, EquationConstraint):
-        expression_key = _build_expression_ordering_key(constraint.expression)
-        return f"{kind}|{expression_key}"
-    elif isinstance(constraint, _SetConstraint):
-        members = ",".join(
-            sorted(_build_member_ordering_key(member) for member in constraint.members)
-        )
-        return f"{kind}|{constraint.variable.id}|{{{members}}}"
-    return f"{kind}|{constraint!r}"

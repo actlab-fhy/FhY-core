@@ -55,9 +55,8 @@ def test_serialize_wrapped_leaf_value_rejects_unsupported_type(
 # =============================================================================
 # Constraint ordering
 #
-# `Param` constraint ordering goes through the constraint module's public
-# `build_constraint_ordering_key`, covered directly under
-# `tests/symbolic/constraint/**`.
-# `test_scope_attachment.py::test_param_constraint_tuple_matches_build_constraint_ordering_key_order`  # noqa: E501
+# `Param` constraint ordering goes through `Constraint.build_ordering_key`,
+# covered directly under `tests/symbolic/constraint/**`.
+# `test_scope_attachment.py::test_param_constraint_tuple_matches_build_ordering_key_order`  # noqa: E501
 # pins the same ordering property at the `Param` level.
 # =============================================================================

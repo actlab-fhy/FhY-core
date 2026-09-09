@@ -48,7 +48,6 @@ from .core import (
     _coerce_bindings_to_environment,
 )
 from .errors import ConstraintError, MissingSymbolTypeError
-from .ordering import build_constraint_ordering_key
 
 _LOGGER = get_logger(__name__)
 
@@ -244,7 +243,7 @@ class ConstraintSystem(
         object.__setattr__(
             self,
             "constraints",
-            tuple(sorted(constraints, key=build_constraint_ordering_key)),
+            tuple(sorted(constraints, key=lambda member: member.build_ordering_key())),
         )
 
     @override

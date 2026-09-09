@@ -71,6 +71,7 @@ from .members import (
     _VALUES_CODEC,
     ConstraintMember,
     MemberCollection,
+    _build_member_ordering_key,
     _lift_member_to_literal_expression,
     _normalize_constraint_member_collection,
     _order_members_canonically,
@@ -82,6 +83,7 @@ from .members import (
     _wrap_member,
     _wrap_member_collection,
 )
+from .ordering import _build_expression_ordering_key
 
 _LOGGER = get_logger(__name__)
 
@@ -245,6 +247,8 @@ class Constraint(
           from it.
         - Override ``convert_to_expression`` to produce an equivalent
           ``Expression``.
+        - Override ``build_ordering_key`` to key on the same things
+          structural equivalence compares.
         - Override ``__repr__`` and ``__str__`` so the textual form
           identifies the kind and the scope.
 
@@ -314,6 +318,35 @@ class Constraint(
             ConstraintError: If the constraint cannot be expressed (for
                 example, a set member is a ``str``, or is not itself a
                 ``LiteralType``).
+
+        """
+
+    # TODO: derive this from the field schema instead of overriding it per
+    # leaf. `DerivedEquivalenceMixin` already builds a per-type plan that
+    # drives `is_structurally_equivalent` (`fhy_core.term.derived_equivalence`),
+    # and this key is a projection of that same plan. Deriving it there would
+    # make "the key agrees with equivalence" true by construction rather than
+    # by each leaf keeping the two in step by hand. It is a change in
+    # `fhy_core.term` affecting every `DerivedEquivalenceMixin` user, so it is
+    # not in scope here.
+    @abstractmethod
+    def build_ordering_key(self) -> str:
+        """Return the canonical ordering key for this constraint.
+
+        Constant on structural-equivalence classes: two structurally
+        equivalent constraints always key alike, so a system's member
+        order does not depend on construction order. An implementation
+        keys on the same things ``is_structurally_equivalent`` compares
+        -- the concrete kind, plus whatever fields participate in
+        equivalence -- rather than on ``repr``, which neither separates
+        every distinct constraint nor agrees on every equivalent pair.
+
+        ``ConstraintSystem`` orders its members by this key, and the
+        param layer's constraint tuple inherits that order, so the two
+        layers agree on canonical form.
+
+        Returns:
+            Textual key ordering the constraint within its system.
 
         """
 
@@ -466,6 +499,13 @@ class EquationConstraint(Constraint):
     def convert_to_expression(self) -> Expression:
         """Return the wrapped expression."""
         return self.expression
+
+    @override
+    def build_ordering_key(self) -> str:
+        """Return the kind and the wrapped expression's tree key."""
+        return (
+            f"{type(self).__name__}|{_build_expression_ordering_key(self.expression)}"
+        )
 
     @override
     def __repr__(self) -> str:
@@ -776,6 +816,14 @@ class _SetConstraint(Constraint):
         return self._combine_expressions(
             self._build_leaf_expression(member) for member in sorted_values
         )
+
+    @override
+    def build_ordering_key(self) -> str:
+        """Return the kind, the variable's ``id``, and the member-set key."""
+        members = ",".join(
+            sorted(_build_member_ordering_key(member) for member in self.members)
+        )
+        return f"{type(self).__name__}|{self.variable.id}|{{{members}}}"
 
     @abstractmethod
     def _combine_expressions(self, expressions: Iterable[Expression]) -> Expression:

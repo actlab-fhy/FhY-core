@@ -7,7 +7,7 @@ parameter's variable is a member of the constraint's scope
 equation constraints (including dependent, multi-variable ones and ground,
 variable-free ones) and confirm set constraints keep their simpler
 single-variable attachment rule. They also pin the constraint tuple's
-canonical order to the new public `build_constraint_ordering_key`.
+canonical order to `Constraint.build_ordering_key`.
 """
 
 from collections.abc import Callable
@@ -164,21 +164,13 @@ def test_set_constraint_rejected_when_variable_differs_from_param(
 # =============================================================================
 
 
-def test_param_constraint_tuple_matches_build_constraint_ordering_key_order() -> None:
-    """Test a param's constraint tuple order matches `build_constraint_ordering_key`.
+def test_param_constraint_tuple_matches_build_ordering_key_order() -> None:
+    """Test a param's constraint tuple order matches `Constraint.build_ordering_key`.
 
     Builds the same three constraints in two different insertion orders and
-    confirms both parameters converge on the same order: the order the
-    public ordering key independently derives. `build_constraint_ordering_key`
-    is imported locally because it does not exist on the current module
-    surface; a module-level import would break collection of this whole
-    file rather than just this test.
+    confirms both parameters converge on the same order: the order each
+    constraint's own ordering key independently derives.
     """
-    # test: not on the module surface yet
-    from fhy_core.symbolic.constraint import (  # noqa: PLC0415
-        build_constraint_ordering_key,
-    )
-
     x_first = mock_identifier("x", 1)
     x_second = mock_identifier("x", 1)
     in_set = InSetConstraint(x_first, {3, 4})
@@ -191,7 +183,10 @@ def test_param_constraint_tuple_matches_build_constraint_ordering_key_order() ->
     )
 
     expected_order = tuple(
-        sorted((in_set, lower, upper), key=build_constraint_ordering_key)
+        sorted(
+            (in_set, lower, upper),
+            key=lambda constraint: constraint.build_ordering_key(),
+        )
     )
     assert forward.constraints == expected_order
     assert reverse.constraints == expected_order

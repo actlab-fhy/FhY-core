@@ -24,6 +24,7 @@ _CONSTRAINT_OWN_ABSTRACT_METHODS = (
     "get_free_identifiers",
     "evaluate_with_bindings",
     "convert_to_expression",
+    "build_ordering_key",
     "__repr__",
     "__str__",
 )
@@ -54,6 +55,8 @@ def _make_constraint_subclass_omitting(method_name: str) -> type[Constraint]:
         )
     if method_name != "convert_to_expression":
         namespace["convert_to_expression"] = lambda self: LiteralExpression(True)
+    if method_name != "build_ordering_key":
+        namespace["build_ordering_key"] = lambda self: "stub"
     if method_name != "__repr__":
         namespace["__repr__"] = lambda self: "stub"
     if method_name != "__str__":
@@ -94,6 +97,10 @@ def test_constraint_subclass_with_full_overrides_instantiates() -> None:
             return IdentifierExpression(self.identifier)
 
         @override
+        def build_ordering_key(self) -> str:
+            return f"ConcreteConstraint|{self.identifier.id}"
+
+        @override
         def __repr__(self) -> str:
             return "ConcreteConstraint"
 
@@ -108,10 +115,11 @@ def test_constraint_subclass_with_full_overrides_instantiates() -> None:
     assert instance.evaluate_with_bindings({}) is ConstraintOutcome.SATISFIED
     assert instance.is_satisfied_with_bindings({}) is True
     assert isinstance(instance.convert_to_expression(), IdentifierExpression)
+    assert instance.build_ordering_key() == f"ConcreteConstraint|{x.id}"
 
 
 def test_constraint_class_advertises_abstract_methods() -> None:
-    """Test ``Constraint.__abstractmethods__`` includes all five contract methods."""
+    """Test ``Constraint.__abstractmethods__`` includes all six contract methods."""
     abstract = set(Constraint.__abstractmethods__)
 
     for method_name in _CONSTRAINT_OWN_ABSTRACT_METHODS:
