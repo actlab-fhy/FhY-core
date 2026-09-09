@@ -427,3 +427,17 @@ def test_direct_construction_with_a_mutable_value_serializes() -> None:
 
     assert restored.value == ("n", "c", "h", "w")
     assert restored.is_structurally_equivalent(assignment)
+
+
+def test_construct_from_fields_stores_the_domain_canonical_value() -> None:
+    """Test `construct_from_fields` with a list value stores the canonical tuple."""
+    param = create_permutation_param([1, 2, 3])
+    members: Any = [1, 2, 3]
+
+    from_fields = ParamAssignment.construct_from_fields(
+        {"param": param, "value": members}
+    )
+    constructed = ParamAssignment(param, members)
+
+    assert from_fields.value == (1, 2, 3)
+    assert from_fields.is_structurally_equivalent(constructed)

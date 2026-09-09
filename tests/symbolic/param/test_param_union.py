@@ -26,7 +26,14 @@ from fhy_core.symbolic.param import (
     create_real_param,
     create_union_param,
 )
-from fhy_core.symbolic.param.domains import CategoricalDomain, OrdinalDomain
+from fhy_core.symbolic.param.domains import (
+    CategoricalDomain,
+    IntegerDomain,
+    OrdinalDomain,
+    ParamDomain,
+    PermutationDomain,
+    RealDomain,
+)
 
 from .conftest import (
     assert_all_valid,
@@ -326,6 +333,46 @@ def test_union_across_ordinal_and_categorical_kinds_raises_type_error() -> None:
         create_union_param(left, right)
 
 
+@pytest.mark.parametrize(
+    "domain",
+    [IntegerDomain(), RealDomain(), PermutationDomain(("a", "b"))],
+    ids=["integer", "real", "permutation"],
+)
+def test_compute_union_answers_none_for_a_kind_that_does_not_represent_union(
+    domain: ParamDomain,
+) -> None:
+    """Test a domain kind without a union representation answers ``None``."""
+    left_variable = mock_identifier("x", 1)
+    right_variable = mock_identifier("y", 2)
+    result_variable = mock_identifier("z", 3)
+
+    result = domain.compute_union(
+        (), left_variable, domain, (), right_variable, result_variable
+    )
+
+    assert result is None
+
+
+def test_compute_union_answers_a_pair_for_a_kind_that_represents_union() -> None:
+    """Test an ordinal domain answers a merged domain with no constraints."""
+    left = OrdinalDomain((1, 2))
+    right = OrdinalDomain((2, 3))
+
+    result = left.compute_union(
+        (),
+        mock_identifier("x", 1),
+        right,
+        (),
+        mock_identifier("y", 2),
+        mock_identifier("z", 3),
+    )
+
+    assert result is not None
+    domain, constraints = result
+    assert domain.is_structurally_equivalent(OrdinalDomain((1, 2, 3)))
+    assert constraints == ()
+
+
 # =============================================================================
 # Result variable
 # =============================================================================
@@ -391,7 +438,7 @@ def test_or_dunder_with_non_param_operand_raises_type_error() -> None:
     left = create_categorical_param({"a"})
 
     with pytest.raises(TypeError, match="unsupported operand type"):
-        _ = left | "not a param"
+        _ = left | "not a param"  # type: ignore[operator]  # test: non-Param operand
 
 
 # =============================================================================

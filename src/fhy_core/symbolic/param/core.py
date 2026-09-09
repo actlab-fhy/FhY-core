@@ -689,12 +689,12 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
 
     # -- set algebra --------------------------------------------------------
 
-    def __or__(self, other: Any) -> "Param[_T]":
+    def __or__(self, other: "Param[_T]") -> "Param[_T]":
         if not isinstance(other, Param):
             return NotImplemented
         return create_union_param(self, other)
 
-    def __and__(self, other: Any) -> "Param[_T]":
+    def __and__(self, other: "Param[_T]") -> "Param[_T]":
         if not isinstance(other, Param):
             return NotImplemented
         return create_intersection_param(self, other)
@@ -804,14 +804,9 @@ class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generi
     )
 
     def __post_init__(self) -> None:
-        """Validate the value and store it in the domain's canonical form.
-
-        Normalizing here keeps a directly constructed assignment
-        indistinguishable from the ``Param.assign`` form of the same
-        binding: both hold the canonical value, so the two compare
-        structurally equivalent, neither can be mutated into invalidity
-        through a shared mutable argument, and both serialize.
-        """
+        # Normalize here so a directly constructed assignment and the
+        # ``Param.assign`` form of the same binding hold the same canonical
+        # value: they compare structurally equivalent and both serialize.
         self.param.validate_value(self.value)
         object.__setattr__(self, "value", self.param.domain.normalize_value(self.value))
 
@@ -826,12 +821,14 @@ class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generi
         of the serialized state. Deserialization therefore re-checks what
         is decidable in isolation -- domain admissibility and every
         constraint decidable from this parameter's own variable -- and
-        accepts an undecided remainder.
+        accepts an undecided remainder. The accepted value is stored in
+        the domain's canonical form.
         """
         param: Param[Any] = fields["param"]
         value = fields["value"]
         _raise_if_value_provably_invalid(param, value)
-        return _construct_unchecked_assignment(param, value)
+        normalized = param.domain.normalize_value(value)
+        return _construct_unchecked_assignment(param, normalized)
 
     def is_value_set(self) -> bool:
         """Return whether this assignment has a value."""
@@ -1539,7 +1536,7 @@ def create_union_param(
 
     """
     variable = name or Identifier("param")
-    domain, constraints = left.domain.compute_union(
+    union = left.domain.compute_union(
         left.constraints,
         left.variable,
         right.domain,
@@ -1547,6 +1544,11 @@ def create_union_param(
         right.variable,
         variable,
     )
+    if union is None:
+        raise TypeError(
+            f"Union is not supported for domain kind {type(left.domain).__name__}."
+        )
+    domain, constraints = union
     return Param(
         domain,
         variable=variable,
@@ -1630,7 +1632,7 @@ def create_intersection_param(
         coerced_right.variable,
         variable,
     )
-    result: Param[Any] = Param(
+    result: Param[_T] = Param(
         domain,
         variable=variable,
         constraint_system=create_constraint_system(*constraints),
@@ -1641,4 +1643,4 @@ def create_intersection_param(
     # caller then holds a live, merely-unproven-feasible parameter.
     if result.check_feasibility() is ConstraintOutcome.VIOLATED:
         raise ParamError("Intersection of parameters is empty.")
-    return cast("Param[_T]", result)
+    return result

@@ -177,7 +177,9 @@ def test_canonicalize_caller_idiom_yields_canonical_form_for_both() -> None:
     frozen = _FrozenCanonicalNode(-3)
 
     assert (mutable.canonicalize() or mutable).value == 3
-    assert (frozen.canonicalize() or frozen).value == 3
+    assert (
+        frozen.canonicalize() or frozen  # type: ignore[truthy-bool]  # test: idiom
+    ).value == 3
 
 
 def test_structural_equivalence_runtime_protocol() -> None:

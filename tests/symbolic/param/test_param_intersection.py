@@ -538,7 +538,7 @@ def test_and_dunder_with_non_param_operand_raises_type_error() -> None:
     left = create_categorical_param({"a"})
 
     with pytest.raises(TypeError, match="unsupported operand type"):
-        _ = left & "not a param"
+        _ = left & "not a param"  # type: ignore[operator]  # test: non-Param operand
 
 
 # =============================================================================

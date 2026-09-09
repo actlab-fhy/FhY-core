@@ -44,7 +44,7 @@ def fail_fast_structural_equivalence() -> Generator[None, None, None]:
         setattr(cls, method_name, wrapped)
 
     for module in list(sys.modules.values()):
-        if not module or not hasattr(module, "__name__"):
+        if module is None or not hasattr(module, "__name__"):
             continue
 
         # Iterate __dict__ directly rather than via inspect.getmembers so

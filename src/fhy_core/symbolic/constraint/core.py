@@ -152,21 +152,35 @@ def _coerce_bindings_to_environment(
 
 
 class ConstraintOutcome(Enum):
-    """Tri-state result of checking a value against a constraint.
+    """Tri-state answer to a constraint query.
 
-    A constraint check distinguishes three outcomes:
+    Every query that can be proven, refuted, or left open answers with
+    one of these members: whether a value satisfies a constraint,
+    whether a constraint system is satisfiable, whether one system
+    implies another, whether a parameter has a feasible value, and
+    whether one parameter's value set is a subset of another's.
 
-    - ``SATISFIED``: the value provably satisfies the constraint.
-    - ``VIOLATED``: the value provably violates the constraint.
+    - ``SATISFIED``: the relation provably holds.
+    - ``VIOLATED``: the relation provably fails.
     - ``UNDECIDED``: the checker cannot decide (for example, the
-      expression simplifier could not reduce the substituted expression
-      to a literal). This is neither a satisfaction nor a violation; it
-      signals that the value's admissibility could not be determined.
+      expression simplifier could not reduce a substituted expression to
+      a literal, or the solver timed out). This is neither a satisfaction
+      nor a violation; it signals that the relation could not be settled.
+
+    A member has no truth value: ``bool()`` on one raises ``TypeError``,
+    so an outcome is compared against a member rather than tested for
+    truthiness.
     """
 
     SATISFIED = auto()
     VIOLATED = auto()
     UNDECIDED = auto()
+
+    # Folding a tri-state answer to a truth value would silently read
+    # UNDECIDED as one of the decided members; refuse so every consumer
+    # names the member it is folding away.
+    def __bool__(self) -> bool:
+        raise TypeError("ConstraintOutcome is tri-state; compare against a member.")
 
 
 @runtime_checkable

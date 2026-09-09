@@ -859,7 +859,11 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
 
     @abstractmethod
     def normalize_value(self, value: Any) -> Any:
-        """Return the canonical form of ``value`` used for storage and checks."""
+        """Return the canonical form of ``value`` used for storage and checks.
+
+        Normalization must be idempotent: an already canonical value
+        normalizes to an equal value.
+        """
 
     @abstractmethod
     def validate_constraint(self, constraint: Constraint, variable: Identifier) -> None:
@@ -914,13 +918,14 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
         other_constraints: Sequence[Constraint],
         other_variable: Identifier,
         variable: Identifier,
-    ) -> tuple["ParamDomain", tuple[Constraint, ...]]:
+    ) -> tuple["ParamDomain", tuple[Constraint, ...]] | None:
         """Compute the domain and constraints denoting the union of two value sets.
 
-        Union is representable only for the finite-set domain kinds that
-        can bake both operands' effective value sets into a new member
-        set, so this raises for every other kind;
-        :class:`OrdinalDomain` and :class:`CategoricalDomain` override it.
+        Union is representable only by the kinds that override this
+        method, each of which bakes both operands' effective value sets
+        into a fresh member set; every other kind answers ``None``, so a
+        caller can ask whether a union is representable before building
+        one.
 
         Args:
             own_constraints: Constraints carried by the parameter owning
@@ -933,19 +938,21 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
                 constraint is scoped to it.
 
         Returns:
-            A ``(domain, constraints)`` pair denoting the union. The
-            finite-set overrides bake both operands' constraints into the
-            member set, so their constraint tuple is always empty.
+            A ``(domain, constraints)`` pair denoting the union, or
+            ``None`` if this kind does not represent union. An override
+            bakes both operands' constraints into the member set, so its
+            constraint tuple is always empty.
 
         Raises:
-            TypeError: If this domain kind does not support union.
+            TypeError: From an override, if ``other`` is a different kind
+                or the merged ordinal members are not mutually comparable.
+            ParamError: From an override, if the merged effective value
+                set is empty.
 
         """
         del own_constraints, own_variable, other, other_constraints
         del other_variable, variable
-        raise TypeError(
-            f"Union is not supported for domain kind {type(self).__name__}."
-        )
+        return None
 
     @abstractmethod
     def compute_intersection(
