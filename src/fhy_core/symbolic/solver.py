@@ -670,10 +670,22 @@ def _is_int_sorted_operand(
     return isinstance(node, LiteralExpression) and is_strict_int(node.value)
 
 
+def _is_strict_int_literal(node: Expression) -> bool:
+    """Return whether ``node`` is a literal holding a strict ``int`` value."""
+    return isinstance(node, LiteralExpression) and is_strict_int(node.value)
+
+
 def _does_node_mix_int_and_float_equality(
     expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
 ) -> bool:
-    """Return whether this node's ``EQUAL``/``NOT_EQUAL`` mixes INT and float sorts."""
+    """Return whether this node's ``EQUAL``/``NOT_EQUAL`` mixes INT and float sorts.
+
+    Screens both directions of the mismatch, since Z3 rationalizes
+    whichever side is INT-sorted and then compares numerically, in either
+    arrangement collapsing the type-strict int/float distinction this
+    package draws between ``1`` and ``1.0``.
+
+    """
     if not (
         isinstance(expression, BinaryExpression)
         and expression.operation in (BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL)
@@ -681,22 +693,36 @@ def _does_node_mix_int_and_float_equality(
         return False
     left, right = expression.left, expression.right
     return (
-        _is_float_valued_literal(left) and _is_int_sorted_operand(right, symbol_types)
-    ) or (
-        _is_float_valued_literal(right) and _is_int_sorted_operand(left, symbol_types)
+        (_is_float_valued_literal(left) and _is_int_sorted_operand(right, symbol_types))
+        or (
+            _is_float_valued_literal(right)
+            and _is_int_sorted_operand(left, symbol_types)
+        )
+        or (
+            _is_strict_int_literal(left)
+            and _does_operand_lower_to_real_sort(right, symbol_types)
+        )
+        or (
+            _is_strict_int_literal(right)
+            and _does_operand_lower_to_real_sort(left, symbol_types)
+        )
     )
 
 
 def _find_int_float_equality_hazard(
     expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
 ) -> Expression | None:
-    """Return the first node comparing an INT-sorted operand to a float literal.
+    """Return the first node whose equality mixes an INT and a REAL sort.
 
     Z3's ``ToReal`` rationalization of the INT-sorted operand collapses
     this package's type-strict int/float distinction, so an ``EQUAL``/
-    ``NOT_EQUAL`` node mixing the two is refused. Ordering comparisons
-    (``<``, ``<=``, ``>``, ``>=``) are not screened: mixed-sort ordering
-    stays mathematically meaningful.
+    ``NOT_EQUAL`` node mixing the two is refused in either arrangement:
+    a float-valued literal against an INT-sorted operand, and a
+    strict-int literal against a REAL-sorted one. Both carry the same
+    hazard, and the second is what a type-strict set constraint lowers
+    to when an integer member is screened against a real-valued
+    parameter. Ordering comparisons (``<``, ``<=``, ``>``, ``>=``) are
+    not screened: mixed-sort ordering stays mathematically meaningful.
 
     Args:
         expression: Expression about to be lowered to Z3.
@@ -704,7 +730,7 @@ def _find_int_float_equality_hazard(
 
     Returns:
         The offending node, or ``None`` when no ``EQUAL``/``NOT_EQUAL``
-        node mixes an INT-sorted operand with a float-valued literal.
+        node mixes the two sorts.
 
     """
     if _does_node_mix_int_and_float_equality(expression, symbol_types):

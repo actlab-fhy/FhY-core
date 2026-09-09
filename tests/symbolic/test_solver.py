@@ -973,6 +973,77 @@ def test_check_expression_satisfiability_positive_integer_exponent_stays_decided
     assert result is True
 
 
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "operation",
+    [BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL],
+    ids=["equal", "not_equal"],
+)
+def test_check_expression_satisfiability_real_operand_int_literal_is_screened(
+    operation: BinaryOperation,
+) -> None:
+    """Test comparing a REAL-sorted identifier to a strict-int literal is screened.
+
+    The mirror of the float-literal-against-INT-sorted case. Z3
+    rationalizes whichever side is INT-sorted and compares numerically,
+    so it reads `1` and `1.0` as the same value in either arrangement,
+    while this package holds them type-strictly distinct. A type-strict
+    set constraint over an integer member lowers to exactly this shape
+    when its parameter is real-valued.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        operation, IdentifierExpression(x), LiteralExpression(1)
+    )
+
+    result = check_expression_satisfiability(expression, {x: SymbolType.REAL})
+
+    assert result is None
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_real_operand_float_literal_stays_decided() -> (
+    None
+):
+    """Test a REAL-sorted identifier against a float literal is not screened.
+
+    Contrasts the int-literal case: both sides are already real, so no
+    rationalization happens and no type-strict distinction is collapsed.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(1.0)
+    )
+
+    result = check_expression_satisfiability(expression, {x: SymbolType.REAL})
+
+    assert result is True
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "operation",
+    [BinaryOperation.LESS, BinaryOperation.GREATER_EQUAL],
+    ids=["less", "greater_equal"],
+)
+def test_check_expression_satisfiability_real_operand_int_literal_ordering_decides(
+    operation: BinaryOperation,
+) -> None:
+    """Test ordering a REAL-sorted identifier against an int literal is not screened.
+
+    Only `EQUAL`/`NOT_EQUAL` collapse the int/float distinction; mixed-sort
+    ordering stays mathematically meaningful and must stay decidable.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        operation, IdentifierExpression(x), LiteralExpression(1)
+    )
+
+    result = check_expression_satisfiability(expression, {x: SymbolType.REAL})
+
+    assert result is True
+
+
 def test_check_expression_satisfiability_int_float_equality_hazard_returns_none(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
