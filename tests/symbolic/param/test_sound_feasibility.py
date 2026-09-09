@@ -10,6 +10,8 @@ correct, or an honestly documented optimistic default, rather than a
 provably wrong decided answer.
 """
 
+from typing import cast
+
 import pytest
 
 from fhy_core.symbolic.constraint import (
@@ -25,9 +27,11 @@ from fhy_core.symbolic.expression import (
     LiteralExpression,
 )
 from fhy_core.symbolic.param import (
+    Param,
     ParamError,
     create_integer_param,
     create_integer_param_between,
+    create_real_param,
 )
 
 from .conftest import mock_identifier
@@ -568,3 +572,113 @@ def test_bridge_failure_degrades_instead_of_escaping_a_boolean_api() -> None:
     assert param.is_value_valid(2) is False
     with pytest.raises(ParamError, match="could not be verified"):
         param.validate_value(2)
+
+
+# =============================================================================
+# Enumeration combines every constraint kind, not just a lone in-set constraint
+# =============================================================================
+
+
+def test_two_in_set_constraints_intersect_under_type_strict_equality() -> None:
+    """Test a second in-set constraint narrows the candidate set.
+
+    Enumeration seeds from the first in-set constraint's members and
+    intersects every subsequent one. Without the intersection step the
+    seed set survives whole and a value only one constraint permits is
+    reported feasible.
+    """
+    x = mock_identifier("x", 1)
+    param = create_integer_param(
+        name=x,
+        constraints=[InSetConstraint(x, {1, 2, 3}), InSetConstraint(x, {3, 4, 5})],
+    )
+
+    assert param.is_feasible() is True
+    assert param.is_value_valid(3) is True
+    assert param.is_value_valid(1) is False
+    assert param.is_value_valid(4) is False
+
+
+def test_not_in_set_constraint_can_empty_an_in_set_constrained_param() -> None:
+    """Test a disjoint not-in-set constraint subtracts the whole candidate set.
+
+    Enumeration removes every not-in-set member from the candidates. With
+    the subtraction dropped, a parameter that provably admits nothing
+    reports itself feasible.
+    """
+    x = mock_identifier("x", 1)
+    param = create_integer_param(
+        name=x,
+        constraints=[
+            InSetConstraint(x, {1, 2, 3}),
+            NotInSetConstraint(x, {1, 2, 3}),
+        ],
+    )
+
+    assert param.is_feasible() is False
+    assert param.is_empty() is True
+
+
+def test_equation_constraint_excludes_in_set_candidates_it_violates() -> None:
+    """Test an equation constraint removes candidates it provably violates.
+
+    `{1, 2}` with `x > 5` admits nothing. Without the per-candidate
+    equation filter the in-set members survive unexamined and the
+    parameter reports itself feasible.
+    """
+    x = mock_identifier("x", 1)
+    param = create_integer_param(
+        name=x,
+        constraints=[
+            InSetConstraint(x, {1, 2}),
+            EquationConstraint(
+                BinaryExpression(
+                    BinaryOperation.GREATER,
+                    IdentifierExpression(x),
+                    LiteralExpression(5),
+                )
+            ),
+        ],
+    )
+
+    assert param.is_feasible() is False
+    assert param.is_empty() is True
+
+
+# =============================================================================
+# The other side of a subset query rejects on its domain and its not-in-set set
+# =============================================================================
+
+
+def test_in_set_param_is_not_subset_when_other_side_forbids_a_candidate() -> None:
+    """Test the other side's not-in-set constraint rejects a candidate.
+
+    Every candidate the own side admits must be accepted by the other
+    side, which checks its own not-in-set members. Without that arm,
+    `{1, 2, 3}` is reported a subset of a parameter that explicitly
+    forbids exactly those values.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    own = create_integer_param(name=x, constraints=[InSetConstraint(x, {1, 2, 3})])
+    other = create_integer_param(name=y, constraints=[NotInSetConstraint(y, {1, 2, 3})])
+
+    assert own.is_subset(other) is False
+
+
+def test_real_in_set_param_is_not_subset_of_an_integer_param() -> None:
+    """Test the other side's domain admissibility rejects a candidate.
+
+    A real parameter restricted to `{1.5, 2.5}` cannot be a subset of any
+    integer parameter, since neither member is an admissible integer.
+    Without the domain-admissibility arm the candidates pass unexamined.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    own = create_real_param(name=x, constraints=[InSetConstraint(x, {1.5, 2.5})])
+    other = create_integer_param(name=y)
+
+    # `Param[_T]` is an advisory call-site hint; the domain enforces the
+    # admissible type at runtime, and a cross-domain query is exactly what
+    # this asserts returns False.
+    assert own.is_subset(cast("Param[str | float]", other)) is False

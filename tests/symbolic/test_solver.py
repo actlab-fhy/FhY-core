@@ -1331,3 +1331,95 @@ def test_timeout_milliseconds_is_threaded_to_the_z3_solver(
     )
 
     assert recorded.get("timeout") == 2500
+
+
+# =============================================================================
+# Hazard screening on every seam entry point and in every operand position
+# =============================================================================
+
+
+@pytest.mark.z3
+def test_does_expression_imply_screens_a_hazard_in_the_consequent() -> None:
+    """Test a hazard in the consequent is screened, not just one in the antecedent.
+
+    The screen tests the antecedent `or` the consequent, so a suite that
+    only ever places the hazard on the left never evaluates the right
+    operand. With the consequent unscreened, `x == 1 implies x in {True}`
+    reports a decided answer that contradicts the type-strict truth.
+    """
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(1)
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(True)
+    )
+
+    result = does_expression_imply(antecedent, consequent, {x: SymbolType.INT})
+
+    assert result is None
+
+
+@pytest.mark.z3
+def test_holds_for_all_free_assignments_screens_a_hazard() -> None:
+    """Test the lenient universal-validity entry point screens hazards too.
+
+    The `assert_` twin re-implements the screen, so covering only that one
+    leaves this entry point's own screen call unexecuted, despite the
+    design requiring every Z3-question entry point to be guarded.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(1.5)
+    )
+
+    result = holds_for_all_free_assignments(
+        frozenset({x}), expression, {x: SymbolType.INT}
+    )
+
+    assert result is None
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_screens_a_bool_in_arithmetic() -> None:
+    """Test a Boolean operand inside arithmetic is screened, not only in a comparison.
+
+    Every other bool-hazard case reaches the screen through a comparison
+    or a piecewise; the arithmetic arm covers `x + b`, where the Z3
+    bindings rewrite `b` to `If(b, 1, 0)`.
+    """
+    x = mock_identifier("x", 0)
+    b = mock_identifier("b", 1)
+    total = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(x), IdentifierExpression(b)
+    )
+    expression = BinaryExpression(BinaryOperation.GREATER, total, LiteralExpression(0))
+
+    result = check_expression_satisfiability(
+        expression, {x: SymbolType.INT, b: SymbolType.BOOL}
+    )
+
+    assert result is None
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_screens_a_nested_int_float_equality() -> None:
+    """Test the int/float equality screen descends past the root node.
+
+    A multi-member `ConstraintSystem` lowers to `logical_and(...)`, so the
+    realistic position for this hazard is a child rather than the root. A
+    screen that only inspected the root would hand the conjunction to Z3
+    and decide it.
+    """
+    x = mock_identifier("x", 0)
+    hazard = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(x), LiteralExpression(1.5)
+    )
+    benign = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+    )
+    expression = Expression.logical_and(benign, hazard)
+
+    result = check_expression_satisfiability(expression, {x: SymbolType.INT})
+
+    assert result is None
