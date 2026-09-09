@@ -88,10 +88,11 @@ def coverage(session: nox.Session) -> None:
 
 @nox.session
 def property(session: nox.Session) -> None:
-    """Run hypothesis-based property tests (opt-in)."""
+    """Run hypothesis-based property tests."""
     _sync(session, "property")
-    # Exit 5 == no tests collected; tolerate it until property tests are added.
-    session.run("pytest", "-m", "property", *session.posargs, success_codes=[0, 5])
+    # No success_codes override: exit 5 (nothing collected) must fail, so a
+    # marker typo or a collection error cannot pass as a clean run.
+    session.run("pytest", "-m", "property", *session.posargs)
 
 
 @nox.session

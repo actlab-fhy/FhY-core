@@ -31,7 +31,7 @@ def test_constrained_real_param_is_subset_of_unconstrained_real_param() -> None:
     """Test a constrained real param is a subset of an unconstrained one only."""
     constrained = create_real_param()
     constrained = constrained.add_constraint(
-        EquationConstraint(constrained.variable, constrained.variable_expression > 0)
+        EquationConstraint(constrained.variable_expression > 0)
     )
     unconstrained = create_real_param()
 
@@ -42,18 +42,14 @@ def test_constrained_real_param_is_subset_of_unconstrained_real_param() -> None:
 def test_narrower_interval_real_param_is_subset_of_wider_interval_real_param() -> None:
     """Test a narrower-interval real param is a subset of a wider-interval one."""
     wider = create_real_param()
-    wider = wider.add_constraint(
-        EquationConstraint(wider.variable, wider.variable_expression >= 0)
-    )
-    wider = wider.add_constraint(
-        EquationConstraint(wider.variable, wider.variable_expression <= 3)
-    )
+    wider = wider.add_constraint(EquationConstraint(wider.variable_expression >= 0))
+    wider = wider.add_constraint(EquationConstraint(wider.variable_expression <= 3))
     narrower = create_real_param()
     narrower = narrower.add_constraint(
-        EquationConstraint(narrower.variable, narrower.variable_expression >= 0)
+        EquationConstraint(narrower.variable_expression >= 0)
     )
     narrower = narrower.add_constraint(
-        EquationConstraint(narrower.variable, narrower.variable_expression <= 2)
+        EquationConstraint(narrower.variable_expression <= 2)
     )
 
     assert not wider.is_subset(narrower)

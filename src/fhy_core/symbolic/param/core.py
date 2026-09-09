@@ -1,6 +1,7 @@
 """Constrained parameters built by composing a value domain.
 
-A :class:`Param` pairs a variable identifier and a set of constraints with a
+A :class:`Param` pairs a variable identifier and a
+:class:`~fhy_core.symbolic.constraint.ConstraintSystem` with a
 :class:`~fhy_core.symbolic.param.domains.ParamDomain` that supplies all kind-specific
 behavior. There is a single concrete ``Param`` class; the common kinds are built
 through the ``create_*`` factory functions.
@@ -10,14 +11,12 @@ A parameter serializes through the schema-derived ``Serializable`` engine; the
 domain.
 """
 
-import json
 import operator
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar, cast
 
 from fhy_core.identifier import Identifier
-from fhy_core.logger import get_logger
 from fhy_core.serialization import (
     FieldCodec,
     Serializable,
@@ -29,8 +28,11 @@ from fhy_core.serialization import (
 )
 from fhy_core.symbolic.constraint import (
     Constraint,
+    ConstraintBindings,
     ConstraintOutcome,
+    ConstraintSystem,
     EquationConstraint,
+    create_constraint_system,
 )
 from fhy_core.symbolic.expression import (
     BinaryExpression,
@@ -55,6 +57,7 @@ from .domains import (
     build_categorical_domain,
     build_ordinal_domain,
     build_permutation_domain,
+    evaluate_system_outcome,
     is_bound_expression,
 )
 from .values import (
@@ -99,19 +102,18 @@ __all__ = [
     "create_single_valid_value_param",
 ]
 
-_LOGGER = get_logger(__name__)
-
 _T = TypeVar("_T")
-
-
-def _constraint_structural_ordering_key(constraint: Constraint) -> str:
-    """Return a deterministic key for canonical constraint ordering."""
-    return json.dumps(constraint.serialize_to_dict(), sort_keys=True, default=str)
 
 
 _WRAPPED_VALUE_CODEC: FieldCodec = make_field_codec(
     serialize_registry_wrapped_value, deserialize_registry_wrapped_value
 )
+
+# ``constraint_system`` is annotated ``ConstraintSystem``, a concrete
+# ``Serializable`` the engine could infer automatically, but the codec is
+# supplied explicitly (mirroring ``_PARAM_CODEC`` below) so the wire shape is
+# declared in this module rather than left to inference.
+_CONSTRAINT_SYSTEM_CODEC: FieldCodec = _SerializableFieldCodec(ConstraintSystem)
 
 
 # ---------------------------------------------------------------------------
@@ -136,20 +138,34 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
     Two parameters are structurally equivalent when they have the same variable,
     domain, and constraints; under alpha comparison they are equivalent up to
     renaming of the bound variable. Construction validates and de-duplicates the
-    constraints, appends the domain's implied constraints, and sorts them into a
-    canonical order so that constraint-set order does not affect equivalence.
+    constraints, appends the domain's implied constraints, and stores the result
+    as a :class:`~fhy_core.symbolic.constraint.ConstraintSystem`, which orders its
+    members canonically by construction, so that constraint-set order does not
+    affect equivalence.
     """
 
     domain: ParamDomain
     variable: Identifier = field(
         default_factory=lambda: Identifier("param"),
-        metadata=compared_as_binder(scopes_over=("constraints",)),
+        metadata=compared_as_binder(scopes_over=("constraint_system",)),
     )
-    constraints: tuple[Constraint, ...] = ()
+    constraint_system: ConstraintSystem = field(
+        default_factory=create_constraint_system,
+        metadata={"serialize_codec": _CONSTRAINT_SYSTEM_CODEC},
+    )
 
     def __post_init__(self) -> None:
-        canonical = self._build_canonical_constraints(self.constraints)
-        object.__setattr__(self, "constraints", canonical)
+        canonical = self._build_canonical_constraints(
+            self.constraint_system.constraints
+        )
+        object.__setattr__(
+            self, "constraint_system", create_constraint_system(*canonical)
+        )
+
+    @property
+    def constraints(self) -> tuple[Constraint, ...]:
+        """Return this parameter's constraints in canonical order."""
+        return self.constraint_system.constraints
 
     def _build_canonical_constraints(
         self, constraints: Sequence[Constraint]
@@ -160,7 +176,7 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
                 existing.is_structurally_equivalent(implied) for existing in accumulated
             ):
                 accumulated = (*accumulated, implied)
-        return tuple(sorted(accumulated, key=_constraint_structural_ordering_key))
+        return accumulated
 
     def _validate_and_deduplicate_constraints(
         self, constraints: Sequence[Constraint]
@@ -201,58 +217,172 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
 
         """
         return Param(
-            self.domain, variable=self.variable, constraints=tuple(constraints)
+            self.domain,
+            variable=self.variable,
+            constraint_system=create_constraint_system(*constraints),
         )
 
-    def is_value_valid(self, value: Any) -> bool:
-        """Return whether a value is admissible and satisfies all constraints."""
-        return self.is_value_admissible(value) and self.is_constraints_satisfied(value)
+    def is_value_valid(
+        self, value: Any, *, bindings: ConstraintBindings | None = None
+    ) -> bool:
+        """Return whether a value is admissible and satisfies all constraints.
+
+        Conservative about indeterminacy: a constraint the checker cannot
+        decide counts as not satisfied, so a ``False`` result means
+        "not proven valid" rather than "proven invalid". A dependent
+        constraint checked without the bindings it needs is undecided for
+        every value, so this reports ``False`` for every value until those
+        bindings are supplied. This is the opposite polarity from
+        ``is_feasible``/``is_subset``, which treat an undecided outcome
+        optimistically; use ``validate_value`` to tell the two cases
+        apart from the message it raises.
+
+        Args:
+            value: Candidate value for this parameter's own variable.
+            bindings: Values for identifiers a dependent constraint
+                references besides this parameter's own variable.
+
+        Returns:
+            Whether the value is admissible and every constraint is
+            provably satisfied.
+
+        Raises:
+            ParamError: If ``bindings`` supplies an entry for this
+                parameter's own variable.
+            ConstraintError: If a value bound to an identifier a
+                constraint references cannot be lifted into the
+                substitution environment.
+
+        """
+        self._validate_bindings(bindings)
+        return self.is_value_admissible(value) and self.is_constraints_satisfied(
+            value, bindings=bindings
+        )
 
     def is_value_admissible(self, value: Any) -> bool:
         """Return whether a value lies in this parameter's value domain."""
         return self.domain.is_value_admissible(value)
 
-    def is_constraints_satisfied(self, value: Any) -> bool:
-        """Return whether the value satisfies all constraints."""
-        normalized = self.domain.normalize_value(value)
-        return self._find_failing_constraint(normalized)[0]
+    def is_constraints_satisfied(
+        self, value: Any, *, bindings: ConstraintBindings | None = None
+    ) -> bool:
+        """Return whether the value provably satisfies all constraints.
 
-    def _find_failing_constraint(
-        self, value: Any
-    ) -> tuple[bool, Constraint | None, ConstraintOutcome | None]:
-        """Return the first non-satisfied constraint and its outcome.
+        Conservative about indeterminacy in the same way as
+        ``is_value_valid``: only a ``SATISFIED`` outcome from the whole
+        constraint system reports ``True``.
 
-        Constraints are checked in canonical order; the first constraint
-        whose ``evaluate`` does not return ``SATISFIED`` short-circuits.
+        Args:
+            value: Candidate value for this parameter's own variable.
+            bindings: Values for identifiers a dependent constraint
+                references besides this parameter's own variable.
 
         Returns:
-            A ``(is_satisfied, constraint, outcome)`` triple. When every
-            constraint is satisfied, this is ``(True, None, None)``.
-            Otherwise ``is_satisfied`` is ``False``, ``constraint`` is the
-            first non-satisfied constraint, and ``outcome`` is its
-            ``ConstraintOutcome`` (``VIOLATED`` or ``UNDECIDED``).
-
-        """
-        for constraint in self.constraints:
-            outcome = constraint.evaluate(value)
-            if outcome is not ConstraintOutcome.SATISFIED:
-                return False, constraint, outcome
-        return True, None, None
-
-    def validate_value(self, value: Any) -> None:
-        """Raise if ``value`` is not a valid assignment for this parameter.
+            Whether every constraint is provably satisfied.
 
         Raises:
-            ParamError: If the value is not admissible, violates a constraint,
-                or cannot be verified against a constraint.
+            ParamError: If ``bindings`` supplies an entry for this
+                parameter's own variable.
+            ConstraintError: If a value bound to an identifier a
+                constraint references cannot be lifted into the
+                substitution environment.
 
         """
+        normalized = self.domain.normalize_value(value)
+        environment = self._build_environment(normalized, bindings)
+        return self._find_failing_constraint(environment)[0]
+
+    def _validate_bindings(self, bindings: ConstraintBindings | None) -> None:
+        """Raise if ``bindings`` supplies an entry for this parameter's own variable.
+
+        Raises:
+            ParamError: If ``bindings`` supplies an entry for this
+                parameter's own variable; passing it as both ``value`` and
+                ``bindings`` is an ambiguous call.
+
+        """
+        if bindings is not None and self.variable in bindings:
+            raise ParamError(
+                f"bindings must not include this parameter's own variable "
+                f"{self.variable!r}; its value is already supplied as `value`."
+            )
+
+    def _build_environment(
+        self, value: Any, bindings: ConstraintBindings | None
+    ) -> ConstraintBindings:
+        """Merge ``value`` for this parameter's own variable with ``bindings``.
+
+        Raises:
+            ParamError: If ``bindings`` supplies an entry for this
+                parameter's own variable; passing it as both ``value`` and
+                ``bindings`` is an ambiguous call.
+
+        """
+        self._validate_bindings(bindings)
+        environment: dict[Identifier, Any] = {self.variable: value}
+        if bindings is not None:
+            environment.update(bindings)
+        return environment
+
+    def _find_failing_constraint(
+        self, environment: ConstraintBindings
+    ) -> tuple[bool, Constraint | None, ConstraintOutcome | None]:
+        """Return the constraint accounting for a non-satisfied outcome.
+
+        The outcome is the constraint system's own: a definite violation
+        dominates indeterminacy, so a provably violated constraint is
+        reported even when an earlier constraint in canonical order is
+        merely undecided. The per-constraint scan then names the member
+        the system's outcome came from, preferring the violated one.
+
+        Returns:
+            A ``(is_satisfied, constraint, outcome)`` triple. When the
+            system reports ``SATISFIED``, this is ``(True, None, None)``.
+            Otherwise ``is_satisfied`` is ``False``, ``outcome`` is the
+            system's ``ConstraintOutcome`` (``VIOLATED`` or
+            ``UNDECIDED``), and ``constraint`` is a member exhibiting it.
+
+        """
+        system_outcome = evaluate_system_outcome(self.constraint_system, environment)
+        if system_outcome is ConstraintOutcome.SATISFIED:
+            return True, None, None
+        fallback: Constraint | None = None
+        for constraint in self.constraints:
+            outcome = evaluate_system_outcome(
+                create_constraint_system(constraint), environment
+            )
+            if outcome is system_outcome:
+                return False, constraint, system_outcome
+            if outcome is not ConstraintOutcome.SATISFIED and fallback is None:
+                fallback = constraint
+        return False, fallback, system_outcome
+
+    def validate_value(
+        self, value: Any, *, bindings: ConstraintBindings | None = None
+    ) -> None:
+        """Raise if ``value`` is not a valid assignment for this parameter.
+
+        Args:
+            value: Candidate value for this parameter's own variable.
+            bindings: Values for identifiers a dependent constraint
+                references besides this parameter's own variable.
+
+        Raises:
+            ParamError: If ``bindings`` supplies an entry for this
+                parameter's own variable, if the value is not admissible,
+                if the value violates a constraint, or if a constraint
+                could not be verified. The bindings check runs first, so
+                a caller error is reported whatever the value is.
+
+        """
+        self._validate_bindings(bindings)
         if not self.is_value_admissible(value):
             raise ParamError(
                 f"Value {value!r} is not admissible for parameter {self!r}."
             )
         normalized = self.domain.normalize_value(value)
-        _, failing_constraint, outcome = self._find_failing_constraint(normalized)
+        environment = self._build_environment(normalized, bindings)
+        _, failing_constraint, outcome = self._find_failing_constraint(environment)
         if failing_constraint is None:
             return
         if outcome is ConstraintOutcome.UNDECIDED:
@@ -278,12 +408,23 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         within their own family. Cross-space and cross-family queries return
         ``False``.
 
-        When the solver cannot decide a numeric implication, the relation is
-        assumed to hold, so a ``True`` result means "not disproven", not
-        "proven".
+        A parameter whose admissible values an ``InSetConstraint`` makes
+        finite is decided by enumeration, on either side; that branch, and
+        only that branch, decides ``False`` from proof.
+
+        Otherwise the relation is decided through the solver, and neither
+        answer there is a proof. An undecided implication, or a constraint
+        excluded for reaching outside either parameter's own variable, is
+        read as "not a counterexample", so ``True`` means "not
+        disproven"; and screening weakens the antecedent, so a ``False``
+        may rest on a counterexample the unscreened constraints forbid.
         """
         return self.domain.compute_feasibility_subset(
-            self.constraints, other.domain, other.constraints
+            self.constraints,
+            self.variable,
+            other.domain,
+            other.constraints,
+            other.variable,
         )
 
     def is_feasible(self) -> bool:
@@ -291,27 +432,51 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
 
         The constraints already include the domain's implied constraints, so the
         domain reasons only about the constraints it is given.
+
+        Set-constrained numeric parameters are decided by enumerating the
+        finite admissible members; otherwise, when the solver cannot decide
+        satisfiability, or when a constraint reaches outside this
+        parameter's own variable, the parameter is assumed feasible, so a
+        ``True`` result means "not disproven", not "proven".
         """
-        return self.domain.has_feasible_value(self.constraints)
+        return self.domain.has_feasible_value(self.constraints, self.variable)
 
     def is_empty(self) -> bool:
-        """Return whether no value satisfies the domain and all constraints."""
+        """Return whether no value satisfies the domain and all constraints.
+
+        Derived from ``is_feasible``, so it inherits the same documented
+        optimism: a ``True`` result means infeasibility was proven, and a
+        ``False`` result means feasibility was proven or merely not
+        disproven.
+        """
         return not self.is_feasible()
 
-    def assign(self, value: _T) -> "ParamAssignment[_T]":
+    def assign(
+        self, value: _T, *, bindings: ConstraintBindings | None = None
+    ) -> "ParamAssignment[_T]":
         """Assign a value to the parameter, returning a parameter assignment.
 
         Args:
             value: Value to assign; normalized by the domain before binding.
+            bindings: Values for identifiers a dependent constraint
+                references besides this parameter's own variable.
 
         Returns:
             A parameter assignment with the normalized value.
 
         Raises:
-            ParamError: If the value is not admissible or violates a constraint.
+            ParamError: If ``bindings`` supplies an entry for this
+                parameter's own variable, if the value is not admissible,
+                if the value violates a constraint, or if a constraint
+                could not be verified.
+            ConstraintError: If a value bound to an identifier a
+                constraint references cannot be lifted into the
+                substitution environment.
 
         """
-        return ParamAssignment(self, cast(_T, self.domain.normalize_value(value)))
+        self.validate_value(value, bindings=bindings)
+        normalized = cast(_T, self.domain.normalize_value(value))
+        return _construct_unchecked_assignment(self, normalized)
 
     def add_constraint(self, constraint: Constraint) -> "Param[_T]":
         """Return a new parameter with an additional constraint.
@@ -337,14 +502,23 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
     def validate_constraint(self, constraint: Constraint) -> None:
         """Validate whether a constraint can be added to this parameter.
 
+        A constraint attaches exactly when this parameter's variable is a
+        member of the constraint's scope (``get_free_identifiers()``); a
+        dependent constraint whose scope also reaches other identifiers is
+        accepted, while a ground or foreign-only-scope constraint is not.
+
         Raises:
-            ParamError: If the constraint variable does not match, or the domain
-                rejects the constraint.
+            ParamError: If this parameter's variable is not in the
+                constraint's scope, or the domain rejects the constraint.
             TypeError: If the domain forbids the constraint's type.
 
         """
-        if constraint.variable != self.variable:
-            raise ParamError("Constraint variable must match parameter variable.")
+        if self.variable not in constraint.get_free_identifiers():
+            raise ParamError(
+                f"Constraint scope must include the parameter's variable "
+                f"{self.variable!r}, but got constraint {constraint!r} with "
+                f"scope {constraint.get_free_identifiers()!r}."
+            )
         self.domain.validate_constraint(constraint, self.variable)
 
     def add_lower_bound_constraint(
@@ -471,6 +645,62 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
 _PARAM_CODEC: FieldCodec = _SerializableFieldCodec(Param)
 
 
+def _construct_unchecked_assignment(
+    param: "Param[_T]", value: _T
+) -> "ParamAssignment[_T]":
+    """Build a ``ParamAssignment`` for a value the caller already validated.
+
+    ``ParamAssignment.__post_init__`` re-validates through
+    ``Param.validate_value`` with no ``bindings``, so it cannot see
+    bindings a caller already used to prove a dependent constraint
+    satisfied. ``Param.assign`` validates with the caller's bindings first,
+    then builds the assignment through this bypass instead of the
+    bindings-blind constructor path, using the same manual-construction
+    pattern (``cls.__new__``, direct attribute assignment, an explicit
+    ``freeze()`` call) ``FrozenMixin`` documents for deserialization.
+    ``ParamAssignment`` is a native frozen dataclass, so ``is_frozen``
+    reads ``True`` as soon as ``__new__`` runs the mixin's one-time class
+    setup; field assignment must therefore go through
+    ``object.__setattr__`` even here, exactly as the dataclass-generated
+    ``__init__`` this bypasses would do internally.
+
+    """
+    assignment: ParamAssignment[_T] = ParamAssignment.__new__(ParamAssignment)
+    object.__setattr__(assignment, "param", param)
+    object.__setattr__(assignment, "value", value)
+    assignment.freeze()
+    return assignment
+
+
+def _raise_if_value_provably_invalid(param: "Param[_T]", value: _T) -> None:
+    """Raise if the parameter provably cannot hold ``value``.
+
+    The deserialization-side counterpart of ``Param.validate_value``: it
+    rejects an inadmissible value and any constraint outcome that is
+    ``VIOLATED``, but accepts ``UNDECIDED``. A dependent constraint is
+    undecidable from the assignment's own state -- the bindings that proved
+    it satisfied at ``Param.assign`` time are not part of the serialized
+    payload -- so absence of a provable violation is accepted rather than
+    demanding a proof of satisfaction that cannot exist here.
+
+    Raises:
+        ParamError: If ``value`` is not admissible in the parameter's
+            domain, or a constraint provably rejects it.
+
+    """
+    if not param.is_value_admissible(value):
+        raise ParamError(f"Value {value!r} is not admissible for parameter {param!r}.")
+    environment: dict[Identifier, Any] = {
+        param.variable: param.domain.normalize_value(value)
+    }
+    for constraint in param.constraints:
+        if constraint.evaluate_with_bindings(environment) is ConstraintOutcome.VIOLATED:
+            raise ParamError(
+                f"Value {value!r} violates constraint {constraint!r} "
+                f"for parameter {param!r}."
+            )
+
+
 @register_serializable(type_id="param_assignment")
 @dataclass(frozen=True, eq=False)
 class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
@@ -490,6 +720,24 @@ class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generi
 
     def __post_init__(self) -> None:
         self.param.validate_value(self.value)
+
+    @classmethod
+    @override
+    def construct_from_fields(cls, fields: dict[str, Any]) -> "ParamAssignment[Any]":
+        """Rebuild an assignment, rejecting only provable invalidity.
+
+        The constructor path demands full proof of satisfaction, which a
+        dependent constraint can only receive through the ``bindings`` of
+        the originating ``Param.assign`` call; those bindings are not part
+        of the serialized state. Deserialization therefore re-checks what
+        is decidable in isolation -- domain admissibility and every
+        constraint decidable from this parameter's own variable -- and
+        accepts an undecided remainder.
+        """
+        param: Param[Any] = fields["param"]
+        value = fields["value"]
+        _raise_if_value_provably_invalid(param, value)
+        return _construct_unchecked_assignment(param, value)
 
     def is_value_set(self) -> bool:
         """Return whether this assignment has a value."""
@@ -521,7 +769,7 @@ def _create_bound_constraint(
             if is_inclusive
             else variable_expression < bound
         )
-    return EquationConstraint(variable, equation)
+    return EquationConstraint(equation)
 
 
 def _validate_natural_lower_bound(
@@ -629,7 +877,16 @@ def _bound_from_literal(
     return is_lower, value, is_inclusive
 
 
-def _bound_from_constraint(constraint: Constraint) -> tuple[bool, int, bool]:
+def _bound_from_constraint(
+    constraint: Constraint, variable: Identifier
+) -> tuple[bool, int, bool]:
+    """Decode a bound constraint's ``(is_lower, bound, is_inclusive)`` triple.
+
+    ``variable`` interprets the expression's two sides: the identifier
+    side must name ``variable`` itself, so a well-formed but
+    unexpectedly-scoped bound expression is rejected rather than
+    silently misread.
+    """
     if not isinstance(constraint, EquationConstraint):
         raise RuntimeError(
             "Interval parameter has a non-EquationConstraint constraint: "
@@ -642,12 +899,16 @@ def _bound_from_constraint(constraint: Constraint) -> tuple[bool, int, bool]:
     expression = constraint.convert_to_expression()
     if not isinstance(expression, BinaryExpression):  # pragma: no cover
         raise RuntimeError("Interval parameter has a non-bound constraint.")
-    if isinstance(expression.left, IdentifierExpression) and isinstance(
-        expression.right, LiteralExpression
+    if (
+        isinstance(expression.left, IdentifierExpression)
+        and expression.left.identifier == variable
+        and isinstance(expression.right, LiteralExpression)
     ):
         return _bound_from_literal(expression.right, expression.operation)
-    if isinstance(expression.right, IdentifierExpression) and isinstance(
-        expression.left, LiteralExpression
+    if (
+        isinstance(expression.right, IdentifierExpression)
+        and expression.right.identifier == variable
+        and isinstance(expression.left, LiteralExpression)
     ):
         return _bound_from_literal(
             expression.left, _invert_comparison(expression.operation)
@@ -656,9 +917,9 @@ def _bound_from_constraint(constraint: Constraint) -> tuple[bool, int, bool]:
 
 
 def _iter_interval_bounds(
-    constraints: Sequence[Constraint],
+    constraints: Sequence[Constraint], variable: Identifier
 ) -> list[tuple[bool, int, bool]]:
-    return [_bound_from_constraint(constraint) for constraint in constraints]
+    return [_bound_from_constraint(constraint, variable) for constraint in constraints]
 
 
 def _get_effective_min_max(
@@ -666,7 +927,7 @@ def _get_effective_min_max(
 ) -> tuple[int | None, int | None]:
     min_int: int | None = None
     max_int: int | None = None
-    for is_lower, bound, inclusive in _iter_interval_bounds(constraints):
+    for is_lower, bound, inclusive in _iter_interval_bounds(constraints, variable):
         if is_lower:
             effective = bound if inclusive else bound + 1
             min_int = effective if min_int is None else max(min_int, effective)
@@ -768,7 +1029,7 @@ def _coerce_to_interval_param(template: "Param[Any]", other: Any) -> "Param[int]
         return Param(
             IntervalIntegerDomain(prefer_inclusive=template_domain.prefer_inclusive),
             variable=other.variable,
-            constraints=other.constraints,
+            constraint_system=create_constraint_system(*other.constraints),
         )
     raise TypeError(f"Unsupported operand type: {type(other)}")
 
@@ -785,7 +1046,7 @@ def create_integer_param(
     return Param(
         IntegerDomain(),
         variable=name or Identifier("param"),
-        constraints=tuple(constraints),
+        constraint_system=create_constraint_system(*constraints),
     )
 
 
@@ -799,7 +1060,7 @@ def create_natural_param(
     return Param(
         IntegerDomain(non_negative=True, zero_included=zero_included),
         variable=name or Identifier("param"),
-        constraints=tuple(constraints),
+        constraint_system=create_constraint_system(*constraints),
     )
 
 
@@ -810,7 +1071,7 @@ def create_real_param(
     return Param(
         RealDomain(),
         variable=name or Identifier("param"),
-        constraints=tuple(constraints),
+        constraint_system=create_constraint_system(*constraints),
     )
 
 

@@ -9,7 +9,11 @@ from typing import Any
 
 import pytest
 
-from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
+from fhy_core.symbolic.constraint import (
+    EquationConstraint,
+    InSetConstraint,
+    create_constraint_system,
+)
 from fhy_core.symbolic.expression import (
     BinaryOperation,
     LiteralExpression,
@@ -103,7 +107,9 @@ def _build_interval_param_with_injected_constraints(
 ) -> Any:
     """Build an interval-integer param with an injected tuple of constraints."""
     param = create_interval_integer_param()
-    object.__setattr__(param, "constraints", constraints)
+    object.__setattr__(
+        param, "constraint_system", create_constraint_system(*constraints)
+    )
     return param
 
 
@@ -119,8 +125,7 @@ def test_bound_int_param_iter_bounds_rejects_non_equation_constraint_in_state() 
 
 def test_bound_int_param_iter_bounds_rejects_non_bound_expression_in_state() -> None:
     """Test ``_iter_interval_bounds`` raises for a non-bound expression in state."""
-    var = mock_identifier("x", 1)
-    bad = EquationConstraint(var, LiteralExpression(0))
+    bad = EquationConstraint(LiteralExpression(0))
     param = _build_interval_param_with_injected_constraints((bad,))
 
     with pytest.raises(RuntimeError, match="non-bound"):

@@ -178,10 +178,7 @@ def test_ordinal_param_rejects_non_set_constraint(
     """Test ordinal param add_constraint raises for equation constraints."""
     with pytest.raises(ParamError):
         ordinal_param_123.add_constraint(
-            EquationConstraint(
-                ordinal_param_123.variable,
-                ordinal_param_123.variable_expression > 1,
-            )
+            EquationConstraint(ordinal_param_123.variable_expression > 1)
         )
 
 

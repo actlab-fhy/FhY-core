@@ -71,14 +71,9 @@ def test_real_param_add_constraint_combines_with_existing_constraints(
 ) -> None:
     """Test sequential `add_constraint` calls produce a combined feasibility set."""
     param = default_real_param.add_constraint(
-        EquationConstraint(
-            default_real_param.variable,
-            default_real_param.variable_expression * 3.14 < 20.0,
-        )
+        EquationConstraint(default_real_param.variable_expression * 3.14 < 20.0)
     )
-    param = param.add_constraint(
-        EquationConstraint(param.variable, param.variable_expression >= 1.0)
-    )
+    param = param.add_constraint(EquationConstraint(param.variable_expression >= 1.0))
 
     assert_all_satisfied(param, [2.0])
     assert_none_satisfied(param, [0.5, 7.0])
@@ -373,12 +368,8 @@ def test_real_param_is_not_structurally_equivalent_to_int_param() -> None:
 def test_real_param_serialization_round_trip_preserves_constraints() -> None:
     """Test real param round-trips through dict serialization with its constraints."""
     param = create_real_param()
-    param = param.add_constraint(
-        EquationConstraint(param.variable, param.variable_expression > 0)
-    )
-    param = param.add_constraint(
-        EquationConstraint(param.variable, param.variable_expression < 10)
-    )
+    param = param.add_constraint(EquationConstraint(param.variable_expression > 0))
+    param = param.add_constraint(EquationConstraint(param.variable_expression < 10))
 
     dictionary = param.serialize_to_dict()
     restored: Param[float] = Param.deserialize_from_dict(dictionary)

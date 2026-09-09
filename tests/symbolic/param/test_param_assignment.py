@@ -138,14 +138,16 @@ def test_assignment_reports_violation_for_genuinely_violated_constraint() -> Non
 def test_assignment_reports_could_not_verify_for_undecided_constraint() -> None:
     """Test an undecided constraint raises the ``could not be verified`` message.
 
-    The constraint's expression references a second free identifier that
-    the substitution cannot bind, so the simplifier cannot decide. The
-    assigned value is admissible, so the failure must surface as an
-    undecided (``could not be verified``) error rather than a violation.
+    The constraint is dependent on a second identifier that `assign` is
+    given no `bindings` for, so it stays undecided. The assigned value is
+    admissible, so the failure must surface as an undecided (``could not
+    be verified``) error rather than a violation.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
-    undecided_constraint = EquationConstraint(x, IdentifierExpression(y))
+    undecided_constraint = EquationConstraint(
+        IdentifierExpression(x) < IdentifierExpression(y)
+    )
     param = create_integer_param(name=x, constraints=[undecided_constraint])
 
     with pytest.raises(ParamError, match="could not be verified against constraint"):
@@ -156,7 +158,9 @@ def test_assignment_undecided_message_is_distinct_from_violation_message() -> No
     """Test the undecided error does not use the ``violates`` wording."""
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
-    undecided_constraint = EquationConstraint(x, IdentifierExpression(y))
+    undecided_constraint = EquationConstraint(
+        IdentifierExpression(x) < IdentifierExpression(y)
+    )
     param = create_integer_param(name=x, constraints=[undecided_constraint])
 
     with pytest.raises(ParamError) as exc_info:
@@ -202,6 +206,45 @@ def test_assignment_round_trips_through_json_and_binary_serialization() -> None:
     )
     assert isinstance(from_binary.param.domain, PermutationDomain)
     assert from_binary.value == ("n", "c", "h", "w")
+
+
+def test_dependent_assignment_round_trips_through_dict_serialization() -> None:
+    """Test an assignment proven via bindings survives a serialization round-trip.
+
+    The bindings that proved the dependent constraint satisfied at
+    ``assign`` time are not part of the serialized state, so deserialization
+    cannot re-prove satisfaction; it must accept the absence of a provable
+    violation rather than reject the assignment as unverifiable.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    dependent = EquationConstraint(IdentifierExpression(x) < IdentifierExpression(y))
+    param = create_integer_param(name=x, constraints=[dependent])
+    assignment = param.assign(3, bindings={y: 5})
+
+    dictionary = assignment.serialize_to_dict()
+    restored: ParamAssignment[Any] = ParamAssignment.deserialize_from_dict(dictionary)
+
+    assert restored.value == 3
+    assert restored.param.is_structurally_equivalent(param)
+    assert restored.serialize_to_dict() == dictionary
+
+
+def test_deserialization_rejects_a_value_that_provably_violates() -> None:
+    """Test a tampered payload whose value violates a decidable constraint is rejected.
+
+    Tolerating an undecided dependent constraint must not open the door to
+    provably invalid payloads: a value that a decidable constraint rejects
+    still fails deserialization.
+    """
+    x = mock_identifier("x", 1)
+    constrained = create_integer_param(name=x, constraints=[NotInSetConstraint(x, {9})])
+    tampered = constrained.assign(3).serialize_to_dict()
+    donor = create_integer_param(name=mock_identifier("d", 2)).assign(9)
+    tampered["value"] = donor.serialize_to_dict()["value"]
+
+    with pytest.raises(DeserializationValueError, match="violates constraint"):
+        ParamAssignment.deserialize_from_dict(tampered)
 
 
 def test_permutation_validate_value_normalizes_list_before_constraint_check() -> None:

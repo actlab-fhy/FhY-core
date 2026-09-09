@@ -712,9 +712,7 @@ def _build_literal_left_constraint(
     variable: Identifier, op: BinaryOperation, literal_value: int
 ) -> EquationConstraint:
     """Build a ``literal op variable`` `EquationConstraint`."""
-    return EquationConstraint(
-        variable, make_binary_expression(op, literal_value, variable)
-    )
+    return EquationConstraint(make_binary_expression(op, literal_value, variable))
 
 
 @pytest.mark.parametrize(
@@ -868,11 +866,9 @@ def test_bound_int_param_add_constraint_rejects_non_equation_constraint() -> Non
         p.add_constraint(InSetConstraint(p.variable, {1, 2}))
 
 
-def _build_bound_constraint_with_expression(
-    variable: Identifier, expression: Any
-) -> EquationConstraint:
-    """Wrap an expression in an `EquationConstraint` for the given variable."""
-    return EquationConstraint(variable, expression)
+def _build_bound_constraint_with_expression(expression: Any) -> EquationConstraint:
+    """Wrap an expression in an `EquationConstraint`."""
+    return EquationConstraint(expression)
 
 
 @pytest.mark.parametrize(
@@ -905,14 +901,19 @@ def _build_bound_constraint_with_expression(
 def test_bound_int_param_add_constraint_rejects_each_invalid_bound_expression(
     build_expression: Any,
 ) -> None:
-    """Test interval-integer ``add_constraint`` rejects each invalid bound expr."""
+    """Test interval-integer ``add_constraint`` rejects each invalid bound expr.
+
+    A ground expression (no free identifiers, e.g. the "non-binary" and
+    "no-identifier-operand" cases) is rejected earlier, at the scope-based
+    attachment check, than one that references the variable but is
+    otherwise malformed (rejected by the domain's bound-expression check);
+    both paths raise `ParamError`.
+    """
     p = create_interval_integer_param()
 
     with pytest.raises(ParamError):
         p.add_constraint(
-            _build_bound_constraint_with_expression(
-                p.variable, build_expression(p.variable)
-            )
+            _build_bound_constraint_with_expression(build_expression(p.variable))
         )
 
 
@@ -944,10 +945,10 @@ def _valid_bound_int_payload() -> dict[str, Any]:
             ),
             id="prefer-inclusive-not-bool",
         ),
-        # Top-level ``constraints`` field missing.
+        # Top-level ``constraint_system`` field missing.
         pytest.param(
-            lambda payload: payload.__delitem__("constraints"),
-            id="missing-constraints",
+            lambda payload: payload.__delitem__("constraint_system"),
+            id="missing-constraint-system",
         ),
     ],
 )
@@ -1009,9 +1010,7 @@ def test_bound_int_param_addition_rejects_int_param_with_non_bound_constraint() 
     """Test addition rejects integer param operand carrying a non-bound constraint."""
     integer = create_integer_param()
     integer = integer.add_constraint(
-        EquationConstraint(
-            integer.variable, (integer.variable_expression % 5).equals(0)
-        )
+        EquationConstraint((integer.variable_expression % 5).equals(0))
     )
     bound = create_interval_integer_param_exactly(1)
 

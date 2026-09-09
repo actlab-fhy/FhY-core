@@ -210,10 +210,7 @@ def test_categorical_param_rejects_non_set_constraint(
     """Test categorical param add_constraint raises for equation constraints."""
     with pytest.raises(ParamError):
         categorical_param_abc.add_constraint(
-            EquationConstraint(
-                categorical_param_abc.variable,
-                categorical_param_abc.variable_expression > 1,
-            )
+            EquationConstraint(categorical_param_abc.variable_expression > 1)
         )
 
 

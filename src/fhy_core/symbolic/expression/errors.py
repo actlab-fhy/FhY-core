@@ -99,13 +99,32 @@ class StringLiteralPrecisionError(ValueError):
 
 @register_error
 class UndecidableError(RuntimeError):
-    """Raised by strict Z3 companions when the solver returns ``unknown``.
+    """Raised by strict Z3 companions when a query cannot be decided.
 
     The lenient ``holds_for_all_free_assignments`` / ``does_expression_imply``
     functions return ``None`` in this case so callers can choose their
     own conservative interpretation; ``assert_holds_for_all_free_assignments``
     and ``assert_expression_implies`` raise this error instead.
+
+    Carries a machine-readable ``reason`` alongside the human-readable
+    message: Z3's own ``reason_unknown()`` text (for example
+    ``"timeout"``) when the solver ran and gave up, or a fixed marker
+    when the expression was refused by the solver seam's hazard screen
+    before Z3 was ever consulted. A caller can use ``reason`` to tell a
+    retryable timeout apart from a query that is undecidable in
+    principle, which a larger ``timeout_milliseconds`` will not change.
     """
+
+    _reason: str
+
+    def __init__(self, message: str = "", *, reason: str = "") -> None:
+        super().__init__(message)
+        self._reason = reason
+
+    @property
+    def reason(self) -> str:
+        """Machine-readable reason the query could not be decided."""
+        return self._reason
 
 
 @register_error

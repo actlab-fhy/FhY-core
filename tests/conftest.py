@@ -69,6 +69,15 @@ def mock_identifier(name_hint: str, identifier_id: int) -> Identifier:
     identifier.__hash__ = MagicMock(  # type: ignore[method-assign]
         side_effect=lambda: hash(identifier.id)
     )
+    # `repr()` must be deterministic and content-based, matching the shape of
+    # the real `Identifier.__repr__` ("<name_hint>::<id>"), rather than
+    # Mock's default address-based form. Code under test canonicalizes by
+    # `repr` (e.g. `ConstraintSystem` sorts its members this way), so two
+    # independently constructed mocks for the same logical identifier must
+    # render identically.
+    identifier.__repr__ = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda: f"{identifier.name_hint}::{identifier.id}"
+    )
     identifier.serialize_to_dict = lambda: {
         "id": identifier.id,
         "name_hint": identifier.name_hint,

@@ -35,6 +35,7 @@ __all__ = [
     "get_registered_entries",
     "get_registered_entry",
     "is_entry_registered",
+    "is_native_constant_name",
     "register_function",
     "register_native_constant",
     "register_native_function",
@@ -58,5 +59,6 @@ from .storage import (
     get_registered_entries,
     get_registered_entry,
     is_entry_registered,
+    is_native_constant_name,
     set_registry_state_for_tests,
 )
