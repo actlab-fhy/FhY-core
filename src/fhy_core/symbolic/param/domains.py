@@ -364,7 +364,32 @@ def _build_screened_constraint_system(
     constraints.
 
     """
+    system, _ = _build_screened_constraint_system_with_fidelity(constraints, variable)
+    return system
+
+
+def _build_screened_constraint_system_with_fidelity(
+    constraints: Sequence[Constraint], variable: Identifier
+) -> tuple[ConstraintSystem, bool]:
+    """Build the screened system and report whether it lost nothing.
+
+    The fidelity flag says the screened system denotes exactly the same
+    value set as ``constraints``: no constraint was excluded and none was
+    narrowed. A caller may only read a decided satisfying assignment as a
+    genuine witness about the original constraints when this holds, since
+    screening can only weaken a system, and a weakened system admits
+    values the original forbids.
+
+    Args:
+        constraints: Constraints to screen.
+        variable: Variable the system is built for.
+
+    Returns:
+        The screened system paired with whether it is exact.
+
+    """
     members: list[Constraint] = []
+    is_exact = True
     for constraint in constraints:
         screened: Constraint | None
         if isinstance(constraint, EquationConstraint):
@@ -375,9 +400,13 @@ def _build_screened_constraint_system(
             screened = _screen_not_in_set_constraint(constraint, variable)
         else:
             screened = None
-        if screened is not None:
-            members.append(screened)
-    return create_constraint_system(*members)
+        if screened is None:
+            is_exact = False
+            continue
+        if screened is not constraint:
+            is_exact = False
+        members.append(screened)
+    return create_constraint_system(*members), is_exact
 
 
 def _rename_constraint_variable(
@@ -439,6 +468,63 @@ def _rename_constraint_system_variable(
     )
 
 
+def _does_own_admit_a_value_outside(
+    own_domain: "ParamDomain",
+    own_constraints: Sequence[Constraint],
+    own_variable: Identifier,
+    permitted_values: Sequence[Any],
+    symbol_type: SymbolType,
+) -> bool:
+    """Return whether ``own`` provably admits a value outside ``permitted_values``.
+
+    Decides only the negative direction of the subset relation, and only
+    from proof. Requires the screened system to be exact, since a
+    weakened system admits values the original forbids, and requires the
+    solver to decide ``SATISFIED``, since an undecided outcome is not a
+    witness. Both conditions failing simply means no counterexample was
+    proven, not that none exists.
+
+    Args:
+        own_domain: Domain of the candidate subset parameter.
+        own_constraints: Constraints of the candidate subset parameter.
+        own_variable: Variable of the candidate subset parameter.
+        permitted_values: Values the other side admits, over-approximated.
+        symbol_type: Z3 sort used to reason about the variable.
+
+    Returns:
+        True only when a value satisfying every one of ``own``'s
+        constraints provably lies outside ``permitted_values``.
+
+    """
+    own_system, is_exact = _build_screened_constraint_system_with_fidelity(
+        own_constraints, own_variable
+    )
+    if not is_exact:
+        return False
+    common_variable = Identifier("var")
+    renamed = _rename_constraint_system_variable(
+        own_system, own_variable, common_variable
+    )
+    try:
+        exclusion = NotInSetConstraint(common_variable, tuple(permitted_values))
+        exclusion.convert_to_expression()
+    except ConstraintError:
+        # The permitted values do not lift to an expression, so the
+        # exclusion cannot be posed to the solver at all.
+        return False
+    witness_system = create_constraint_system(*renamed.constraints, exclusion)
+    outcome = witness_system.check_satisfiability({common_variable: symbol_type})
+    if outcome is not ConstraintOutcome.SATISFIED:
+        return False
+    _LOGGER.debug(
+        "_does_own_admit_a_value_outside: %r provably admits a value outside "
+        "the %d value(s) the other side permits.",
+        own_variable,
+        len(permitted_values),
+    )
+    return True
+
+
 def compute_constraint_implication_subset(
     own_domain: "ParamDomain",
     own_constraints: Sequence[Constraint],
@@ -455,15 +541,26 @@ def compute_constraint_implication_subset(
     ``_enumerate_feasible_in_set_candidates``) must be accepted by
     ``other_domain``/``other_constraints`` (type-strict set membership,
     domain admissibility, and equation constraints decided per candidate).
+
+    When only ``other_constraints`` is finite, its admissible values are
+    enumerated and ``own`` is asked, through the solver, whether it
+    provably admits a value outside them (see
+    ``_does_own_admit_a_value_outside``); such a value is a genuine
+    counterexample, since the enumeration over-approximates what the
+    other side admits, and the relation is decided ``False``.
+
     Otherwise the two sides' variable-only constraint systems (see
     ``_build_screened_constraint_system``) are renamed onto one shared
     identifier and decided via ``ConstraintSystem.check_implication`` over
-    ``symbol_type``. In both branches, an outcome the checks cannot
-    disprove -- a solver ``UNDECIDED`` result, or a constraint excluded for
-    reaching outside either parameter's own variable -- is treated as
-    "not a counterexample" (each logged at ``WARNING``), so the subset
-    relation holds; a ``True`` result therefore means "not disproven", not
-    "proven".
+    ``symbol_type``. An outcome the checks cannot disprove -- a solver
+    ``UNDECIDED`` result, or a constraint excluded for reaching outside
+    either parameter's own variable -- is treated as "not a
+    counterexample" (each logged at ``WARNING``), so the subset relation
+    holds; a ``True`` result therefore means "not disproven", not
+    "proven". A ``False`` result from this branch is likewise not a
+    proof, since screening weakens the antecedent and can manufacture a
+    counterexample; only the two enumeration-backed branches decide
+    ``False`` from proof.
 
     Args:
         own_domain: Domain of the candidate subset parameter.
@@ -488,6 +585,14 @@ def compute_constraint_implication_subset(
             )
             for candidate in own_candidates
         )
+    if any(isinstance(c, InSetConstraint) for c in other_constraints):
+        other_candidates = _enumerate_feasible_in_set_candidates(
+            other_domain, other_constraints, other_variable
+        )
+        if _does_own_admit_a_value_outside(
+            own_domain, own_constraints, own_variable, other_candidates, symbol_type
+        ):
+            return False
     common_variable = Identifier("var")
     own_system = _rename_constraint_system_variable(
         _build_screened_constraint_system(own_constraints, own_variable),

@@ -13,11 +13,17 @@ provably wrong decided answer.
 import pytest
 
 from fhy_core.symbolic.constraint import (
+    ConstraintMember,
     EquationConstraint,
     InSetConstraint,
     NotInSetConstraint,
 )
-from fhy_core.symbolic.expression import IdentifierExpression
+from fhy_core.symbolic.expression import (
+    BinaryExpression,
+    BinaryOperation,
+    IdentifierExpression,
+    LiteralExpression,
+)
 from fhy_core.symbolic.param import create_integer_param, create_integer_param_between
 
 from .conftest import mock_identifier
@@ -405,3 +411,99 @@ def test_is_subset_with_dependent_constraint_is_two_sided_and_safe() -> None:
 
     assert forward is True
     assert backward is True
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "members",
+    [{1.0}, {True}, {"5"}],
+    ids=["float_member", "bool_member", "string_member"],
+)
+def test_unbounded_param_is_not_subset_of_a_provably_empty_in_set_param(
+    members: set[ConstraintMember],
+) -> None:
+    """Test an infinite parameter is not a subset of an empty set-constrained one.
+
+    The other side's members are inadmissible for an integer domain, so
+    it admits nothing, while the own side admits every non-negative
+    integer. The enumeration gate previously keyed only on the own side
+    carrying an `InSetConstraint`, so both sides went to the implication
+    branch, where the unliftable member set is dropped whole from the
+    consequent -- weakening it to `True` -- and the undecided result
+    collapsed optimistically to a wrong `True`.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    own = create_integer_param(
+        name=x,
+        constraints=[
+            EquationConstraint(
+                BinaryExpression(
+                    BinaryOperation.GREATER_EQUAL,
+                    IdentifierExpression(x),
+                    LiteralExpression(0),
+                )
+            )
+        ],
+    )
+    other = create_integer_param(
+        name=y, constraints=[InSetConstraint(y, frozenset(members))]
+    )
+
+    assert other.is_feasible() is False
+    assert own.is_subset(other) is False
+
+
+@pytest.mark.z3
+def test_unbounded_param_is_not_subset_of_a_narrower_in_set_param() -> None:
+    """Test an infinite parameter admitting an outside value is not a subset.
+
+    Generalizes the empty-superset case: the own side admits `3`, which
+    lies outside the other side's `{0, 1, 2}`, so the relation is decided
+    `False` from a genuine counterexample rather than left to the
+    optimistic default.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    own = create_integer_param(
+        name=x,
+        constraints=[
+            EquationConstraint(
+                BinaryExpression(
+                    BinaryOperation.GREATER_EQUAL,
+                    IdentifierExpression(x),
+                    LiteralExpression(0),
+                )
+            )
+        ],
+    )
+    other = create_integer_param(name=y, constraints=[InSetConstraint(y, {0, 1, 2})])
+
+    assert own.is_subset(other) is False
+
+
+@pytest.mark.z3
+def test_unbounded_param_stays_subset_when_no_counterexample_is_provable() -> None:
+    """Test the optimistic default survives when no counterexample can be proven.
+
+    The own side is pinned to a single value inside the other side's
+    finite set, so no admitted value lies outside it and the relation
+    must not be decided `False`.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    own = create_integer_param(
+        name=x,
+        constraints=[
+            EquationConstraint(
+                BinaryExpression(
+                    BinaryOperation.EQUAL,
+                    IdentifierExpression(x),
+                    LiteralExpression(1),
+                )
+            )
+        ],
+    )
+    other = create_integer_param(name=y, constraints=[InSetConstraint(y, {0, 1, 2})])
+
+    assert own.is_subset(other) is True
