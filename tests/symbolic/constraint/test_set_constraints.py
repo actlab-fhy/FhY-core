@@ -826,3 +826,19 @@ def test_set_constraint_equivalence_survives_duplication(
     assert constraint.is_structurally_equivalent(duplicated)
     assert duplicated.is_structurally_equivalent(constraint)
     assert constraint.is_alpha_equivalent(duplicated)
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+def test_set_constraint_rejects_a_non_identifier_variable(
+    kind: type[InSetConstraint | NotInSetConstraint],
+) -> None:
+    """Test a non-identifier variable is rejected at construction.
+
+    Scope, canonical ordering, and evaluation all key on the identifier.
+    Without this check the constructor accepts any object,
+    `get_free_identifiers` returns a value violating its own declared
+    return type, and the mistake surfaces as a raw `AttributeError` from
+    the ordering key, arbitrarily far from the call that caused it.
+    """
+    with pytest.raises(ConstraintError, match="constrains an identifier"):
+        kind("oops", {1})  # type: ignore[arg-type]

@@ -10,7 +10,7 @@ plus cross-cutting bindings-API contracts shared by every kind.
 
 import logging
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from decimal import Decimal
 from typing import Any, cast
 
@@ -18,6 +18,7 @@ import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.constraint import (
+    Constraint,
     ConstraintError,
     ConstraintOutcome,
     EquationConstraint,
@@ -25,6 +26,7 @@ from fhy_core.symbolic.constraint import (
     NotInSetConstraint,
 )
 from fhy_core.symbolic.expression import (
+    BinaryExpression,
     BinaryOperation,
     IdentifierExpression,
     LiteralExpression,
@@ -467,3 +469,44 @@ def test_is_satisfied_with_bindings_folds_undecided_to_false(
 
     assert constraint.evaluate_with_bindings({}) is ConstraintOutcome.UNDECIDED
     assert constraint.is_satisfied_with_bindings({}) is False
+
+
+@pytest.mark.parametrize(
+    "build_constraint",
+    [
+        pytest.param(
+            lambda x: EquationConstraint(
+                BinaryExpression(
+                    BinaryOperation.GREATER_EQUAL,
+                    IdentifierExpression(x),
+                    LiteralExpression(0),
+                )
+            ),
+            id="equation",
+        ),
+        pytest.param(lambda x: InSetConstraint(x, {1, 2}), id="in_set"),
+        pytest.param(lambda x: NotInSetConstraint(x, {7, 8}), id="not_in_set"),
+    ],
+)
+def test_every_leaf_ignores_an_out_of_scope_binding_value(
+    build_constraint: Callable[[Identifier], Constraint],
+) -> None:
+    """Test a binding outside the scope is ignored without inspecting its value.
+
+    A `ConstraintSystem` hands the whole mapping to every member and stops
+    at the first violation, so if one leaf validated out-of-scope values
+    and another ignored them, whether a system raised or reported an
+    outcome would depend on which member kinds it held and where they fell
+    in canonical order.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    constraint = build_constraint(x)
+
+    # `ConstraintBindings` declares a narrower value type than the set
+    # leaves actually accept, so an out-of-scope sentinel needs the cast.
+    bindings = cast("Mapping[Identifier, Any]", {x: 1, y: object()})
+
+    outcome = constraint.evaluate_with_bindings(bindings)
+
+    assert outcome is ConstraintOutcome.SATISFIED

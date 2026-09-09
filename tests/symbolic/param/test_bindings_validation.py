@@ -16,8 +16,13 @@ from collections.abc import Callable
 import pytest
 
 from fhy_core.identifier import Identifier
-from fhy_core.symbolic.constraint import EquationConstraint
-from fhy_core.symbolic.expression import IdentifierExpression
+from fhy_core.symbolic.constraint import ConstraintOutcome, EquationConstraint
+from fhy_core.symbolic.expression import (
+    BinaryExpression,
+    BinaryOperation,
+    IdentifierExpression,
+    LiteralExpression,
+)
 from fhy_core.symbolic.param import (
     Param,
     ParamError,
@@ -203,24 +208,35 @@ def test_bindings_for_own_variable_raises_param_error(
 
 
 @pytest.mark.parametrize(
-    "value",
-    [5, "not-an-int", 1.5],
-    ids=["admissible", "inadmissible-string", "inadmissible-float"],
+    ("method_name", "value"),
+    [
+        (method, value)
+        for method in ("is_value_valid", "validate_value", "assign")
+        for value in (5, "not-an-int", 1.5)
+    ],
+    ids=[
+        f"{method}-{value_id}"
+        for method in ("is_value_valid", "validate_value", "assign")
+        for value_id in ("admissible", "inadmissible-string", "inadmissible-float")
+    ],
 )
-def test_is_value_valid_raises_for_own_variable_binding_regardless_of_admissibility(
-    value: object,
+def test_own_variable_binding_raises_regardless_of_admissibility(
+    method_name: str, value: object
 ) -> None:
-    """Test the own-variable bindings error surfaces for any value.
+    """Test the own-variable bindings error surfaces for any value on every entry point.
 
     A domain-inadmissible `value` must not short-circuit past the bindings
-    check: `is_value_valid` raises the same `ParamError` naming the
-    parameter's own variable whether `value` is admissible or not.
+    check on any of the three bindings-aware entry points: each raises the
+    same `ParamError` naming the parameter's own variable whether `value`
+    is admissible or not, so a caller bug neither surfaces nor vanishes
+    depending on an unrelated argument.
     """
     x = mock_identifier("x", 1)
     param = create_integer_param_between(0, 10, name=x)
+    method = getattr(param, method_name)
 
     with pytest.raises(ParamError, match=re.escape(repr(x))):
-        param.is_value_valid(value, bindings={x: 3})
+        method(value, bindings={x: 3})
 
 
 def test_is_value_valid_with_well_formed_bindings_is_false_for_inadmissible_value() -> (
@@ -270,3 +286,34 @@ def test_assign_with_violating_binding_raises(
 
     with pytest.raises(ParamError, match="violates constraint"):
         param.assign(3, bindings={y: 2})
+
+
+def test_validate_value_reports_a_violation_that_a_later_constraint_proves() -> None:
+    """Test a provable violation is reported as such despite an earlier undecided one.
+
+    The constraint system lets a definite violation dominate
+    indeterminacy. `Param` must report the system's own outcome rather
+    than the first non-satisfied constraint in canonical order, or a
+    provably invalid value is presented as merely unverified and a caller
+    retrying with ever-more bindings never converges.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    dependent = EquationConstraint(
+        BinaryExpression(
+            BinaryOperation.EQUAL, IdentifierExpression(x), IdentifierExpression(y)
+        )
+    )
+    violated = EquationConstraint(
+        BinaryExpression(
+            BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(100)
+        )
+    )
+    param = create_integer_param(name=x, constraints=[dependent, violated])
+
+    assert (
+        param.constraint_system.evaluate_with_bindings({x: 5})
+        is ConstraintOutcome.VIOLATED
+    )
+    with pytest.raises(ParamError, match="violates constraint"):
+        param.validate_value(5)

@@ -299,25 +299,33 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
     def _find_failing_constraint(
         self, environment: ConstraintBindings
     ) -> tuple[bool, Constraint | None, ConstraintOutcome | None]:
-        """Return the first non-satisfied constraint and its outcome.
+        """Return the constraint accounting for a non-satisfied outcome.
 
-        Constraints are checked in canonical order; the first constraint
-        whose ``evaluate_with_bindings`` does not return ``SATISFIED``
-        short-circuits.
+        The outcome is the constraint system's own: a definite violation
+        dominates indeterminacy, so a provably violated constraint is
+        reported even when an earlier constraint in canonical order is
+        merely undecided. The per-constraint scan then names the member
+        the system's outcome came from, preferring the violated one.
 
         Returns:
-            A ``(is_satisfied, constraint, outcome)`` triple. When every
-            constraint is satisfied, this is ``(True, None, None)``.
-            Otherwise ``is_satisfied`` is ``False``, ``constraint`` is the
-            first non-satisfied constraint, and ``outcome`` is its
-            ``ConstraintOutcome`` (``VIOLATED`` or ``UNDECIDED``).
+            A ``(is_satisfied, constraint, outcome)`` triple. When the
+            system reports ``SATISFIED``, this is ``(True, None, None)``.
+            Otherwise ``is_satisfied`` is ``False``, ``outcome`` is the
+            system's ``ConstraintOutcome`` (``VIOLATED`` or
+            ``UNDECIDED``), and ``constraint`` is a member exhibiting it.
 
         """
+        system_outcome = self.constraint_system.evaluate_with_bindings(environment)
+        if system_outcome is ConstraintOutcome.SATISFIED:
+            return True, None, None
+        fallback: Constraint | None = None
         for constraint in self.constraints:
             outcome = constraint.evaluate_with_bindings(environment)
-            if outcome is not ConstraintOutcome.SATISFIED:
-                return False, constraint, outcome
-        return True, None, None
+            if outcome is system_outcome:
+                return False, constraint, system_outcome
+            if outcome is not ConstraintOutcome.SATISFIED and fallback is None:
+                fallback = constraint
+        return False, fallback, system_outcome
 
     def validate_value(
         self, value: Any, *, bindings: ConstraintBindings | None = None
@@ -330,12 +338,14 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
                 references besides this parameter's own variable.
 
         Raises:
-            ParamError: If the value is not admissible, if ``bindings``
-                supplies an entry for this parameter's own variable, if the
-                value violates a constraint, or if a constraint could not
-                be verified.
+            ParamError: If ``bindings`` supplies an entry for this
+                parameter's own variable, if the value is not admissible,
+                if the value violates a constraint, or if a constraint
+                could not be verified. The bindings check runs first, so
+                a caller error is reported whatever the value is.
 
         """
+        self._validate_bindings(bindings)
         if not self.is_value_admissible(value):
             raise ParamError(
                 f"Value {value!r} is not admissible for parameter {self!r}."

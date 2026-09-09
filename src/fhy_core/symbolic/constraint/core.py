@@ -405,10 +405,17 @@ class EquationConstraint(Constraint):
         none -- every free identifier was bound yet the simplifier still
         failed to reduce it to a literal.
 
+        A binding for an identifier outside this constraint's scope is
+        ignored, and its value is never inspected, matching the set
+        constraints: whether a system reports an outcome or raises must
+        not depend on which member kinds it holds or where they fall in
+        canonical order.
+
         Raises:
-            ConstraintError: If a binding value falls outside
-                ``Expression | LiteralType`` and so cannot be lifted into
-                the substitution environment.
+            ConstraintError: If the value bound to an identifier in this
+                constraint's scope falls outside ``Expression |
+                LiteralType`` and so cannot be lifted into the
+                substitution environment.
             ValueError: From ``LiteralExpression`` when a ``str`` binding
                 value matches neither the integer nor the float grammar.
             PassExecutionError: Propagated from ``simplify_expression``
@@ -416,7 +423,14 @@ class EquationConstraint(Constraint):
                 substituted expression.
 
         """
-        environment = _coerce_bindings_to_environment(bindings)
+        scope = self.get_free_identifiers()
+        environment = _coerce_bindings_to_environment(
+            {
+                identifier: value
+                for identifier, value in bindings.items()
+                if identifier in scope
+            }
+        )
         result = simplify_expression(self.expression, environment)
         if isinstance(result, LiteralExpression):
             if isinstance(result.value, bool) and result.value:
@@ -667,6 +681,13 @@ class _SetConstraint(Constraint):
         """Return the polarity knobs this leaf decides membership with."""
 
     def __post_init__(self) -> None:
+        if not isinstance(self.variable, Identifier):
+            raise ConstraintError(
+                f"{type(self).__name__} constrains an identifier, but got "
+                f"{self.variable!r} of type {type(self.variable).__name__}. "
+                "Scope, canonical ordering, and evaluation all key on the "
+                "identifier, so a non-identifier fails far from here."
+            )
         wrapped = _normalize_constraint_member_collection(self.values)
         object.__setattr__(
             self,
