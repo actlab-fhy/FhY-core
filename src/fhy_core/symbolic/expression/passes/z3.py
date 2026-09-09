@@ -52,6 +52,21 @@ _LOGGER = get_logger(__name__)
 
 
 def _z3_floor_divide(left: z3.ExprRef, right: z3.ExprRef) -> z3.ExprRef:
+    """Lower floor division, real operands by truncation toward negative infinity.
+
+    The two branches do not agree on negative operands. A real-sorted
+    quotient goes through ``ToInt``, which is a true floor; an int-sorted
+    one is Z3's own ``div``, which is Euclidean and disagrees with this
+    package's floor semantics whenever the divisor is not positive.
+    ``MODULO`` lowers to Z3's Euclidean ``mod`` for the same reason.
+
+    Nothing here compensates for that divergence. The solver seam screens
+    it instead, refusing to lower floor division or modulo without a
+    finite strictly positive literal divisor, so a caller reaching this
+    function through the seam has already been narrowed to the operands
+    both semantics agree on.
+
+    """
     expr: z3.ArithRef = left / right
     if expr.is_real():
         return z3.ToInt(expr)

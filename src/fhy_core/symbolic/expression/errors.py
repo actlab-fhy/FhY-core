@@ -99,7 +99,7 @@ class StringLiteralPrecisionError(ValueError):
 
 @register_error
 class UndecidableError(RuntimeError):
-    """Raised by strict Z3 companions when the solver returns ``unknown``.
+    """Raised by strict Z3 companions when a query cannot be decided.
 
     The lenient ``holds_for_all_free_assignments`` / ``does_expression_imply``
     functions return ``None`` in this case so callers can choose their

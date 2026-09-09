@@ -205,14 +205,25 @@ class ConstraintSystem(
     when you expect value-based lookups.
 
     All satisfiability and implication entry points report ``UNDECIDED``
-    instead of a decided outcome for three hazard classes: Boolean
-    operands in numeric contexts; division/floor-division/modulo whose
-    divisor is not a nonzero literal; and ``EQUAL``/``NOT_EQUAL`` mixing
-    an INT-sorted operand with a float-valued literal. The screen for
-    these hazards lives in ``fhy_core.symbolic.solver``, the seam every
-    entry point below lowers through, and it logs a ``WARNING`` (naming
-    the seam function and the offending node) before the outcome is
-    reported as undecided.
+    instead of a decided outcome for three hazard classes:
+
+    - a Boolean operand in a numeric context;
+    - a partial arithmetic operation off the domain its lowering is sound
+      on -- true division without a finite nonzero literal divisor and a
+      REAL-sorted operand, floor division or modulo without a finite
+      strictly positive literal divisor, or exponentiation without a
+      literal integer exponent of at least one;
+    - an ``EQUAL``/``NOT_EQUAL`` mixing an INT and a REAL sort, in either
+      arrangement.
+
+    The screen for these hazards lives in ``fhy_core.symbolic.solver``,
+    the seam every entry point below lowers through, and it logs a
+    ``WARNING`` (naming the seam function and the offending node) before
+    the outcome is reported as undecided. It covers the questions this
+    class asks the solver; ``Constraint.evaluate_with_bindings`` decides
+    an assignment through the expression bridge instead, which these
+    screens do not cover, so the two can disagree on a system the screens
+    refuse but substitution decides.
 
     """
 
@@ -426,7 +437,9 @@ class ConstraintSystem(
                 identifier.
             ConstraintError: If a member cannot be converted to an
                 expression, or if a ``bindings`` value falls outside
-                ``Expression | LiteralType``.
+                ``Expression | LiteralType``. Both are reached only once
+                there is a member to lower, so an empty system returns
+                ``SATISFIED`` without inspecting ``bindings`` at all.
             ValueError: If ``timeout_milliseconds`` is not None and not
                 positive. Checked before the empty-system and hazard
                 early returns, so an inadmissible bound is rejected even

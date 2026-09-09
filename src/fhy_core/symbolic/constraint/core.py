@@ -732,12 +732,13 @@ class _SetConstraint(Constraint):
     def _members(self) -> frozenset[_TypedMember]:
         """Return the type-strict member set membership is decided against.
 
-        Held as a stored set rather than re-derived per read: ``evaluate``
-        is then a constant-time frozenset lookup, and ``__repr__`` costs
-        no wrapper allocations either. ``__post_init__`` seeds it with
-        the set built during normalization; this body re-derives it from
-        ``values`` for an instance that reaches a reader unseeded, so the
-        public field stays the single source of truth.
+        Held as a stored set rather than re-derived per read: deciding
+        membership is then a constant-time frozenset lookup, and
+        ``__repr__`` costs no wrapper allocations either.
+        ``__post_init__`` seeds it with the set built during
+        normalization; this body re-derives it from ``values`` for an
+        instance that reaches a reader unseeded, so the public field
+        stays the single source of truth.
         """
         return _wrap_member_collection(self.values)
 

@@ -117,9 +117,10 @@ def build_constraint_ordering_key(constraint: Constraint) -> str:
     param layer orders each parameter's constraint tuple by it, so the
     two layers agree on canonical order.
 
-    A ``Constraint`` subclass declared outside this module falls back to
-    its ``repr``, which the subclassing contract requires to identify the
-    kind and the scope.
+    A ``Constraint`` subclass that is none of this package's leaves
+    falls back to its ``repr``, which the subclassing contract requires
+    to identify the kind and the scope. Dispatch is by type, so a
+    subclass of a leaf keys structurally like the leaf it derives from.
 
     Args:
         constraint: Member to key.

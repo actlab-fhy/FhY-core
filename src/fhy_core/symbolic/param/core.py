@@ -227,14 +227,31 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
     ) -> bool:
         """Return whether a value is admissible and satisfies all constraints.
 
+        Conservative about indeterminacy: a constraint the checker cannot
+        decide counts as not satisfied, so a ``False`` result means
+        "not proven valid" rather than "proven invalid". A dependent
+        constraint checked without the bindings it needs is undecided for
+        every value, so this reports ``False`` for every value until those
+        bindings are supplied. This is the opposite polarity from
+        ``is_feasible``/``is_subset``, which treat an undecided outcome
+        optimistically; use ``validate_value`` to tell the two cases
+        apart from the message it raises.
+
         Args:
             value: Candidate value for this parameter's own variable.
             bindings: Values for identifiers a dependent constraint
                 references besides this parameter's own variable.
 
+        Returns:
+            Whether the value is admissible and every constraint is
+            provably satisfied.
+
         Raises:
             ParamError: If ``bindings`` supplies an entry for this
                 parameter's own variable.
+            ConstraintError: If a value bound to an identifier a
+                constraint references cannot be lifted into the
+                substitution environment.
 
         """
         self._validate_bindings(bindings)
@@ -249,16 +266,26 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
     def is_constraints_satisfied(
         self, value: Any, *, bindings: ConstraintBindings | None = None
     ) -> bool:
-        """Return whether the value satisfies all constraints.
+        """Return whether the value provably satisfies all constraints.
+
+        Conservative about indeterminacy in the same way as
+        ``is_value_valid``: only a ``SATISFIED`` outcome from the whole
+        constraint system reports ``True``.
 
         Args:
             value: Candidate value for this parameter's own variable.
             bindings: Values for identifiers a dependent constraint
                 references besides this parameter's own variable.
 
+        Returns:
+            Whether every constraint is provably satisfied.
+
         Raises:
             ParamError: If ``bindings`` supplies an entry for this
                 parameter's own variable.
+            ConstraintError: If a value bound to an identifier a
+                constraint references cannot be lifted into the
+                substitution environment.
 
         """
         normalized = self.domain.normalize_value(value)
@@ -381,11 +408,16 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         within their own family. Cross-space and cross-family queries return
         ``False``.
 
-        Set-constrained numeric parameters are decided by enumerating the
-        finite admissible members; otherwise, when the solver cannot decide
-        a numeric implication, or when a constraint reaches outside either
-        parameter's own variable, the relation is assumed to hold, so a
-        ``True`` result means "not disproven", not "proven".
+        A parameter whose admissible values an ``InSetConstraint`` makes
+        finite is decided by enumeration, on either side; that branch, and
+        only that branch, decides ``False`` from proof.
+
+        Otherwise the relation is decided through the solver, and neither
+        answer there is a proof. An undecided implication, or a constraint
+        excluded for reaching outside either parameter's own variable, is
+        read as "not a counterexample", so ``True`` means "not
+        disproven"; and screening weakens the antecedent, so a ``False``
+        may rest on a counterexample the unscreened constraints forbid.
         """
         return self.domain.compute_feasibility_subset(
             self.constraints,
@@ -433,10 +465,13 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             A parameter assignment with the normalized value.
 
         Raises:
-            ParamError: If the value is not admissible, if ``bindings``
-                supplies an entry for this parameter's own variable, if the
-                value violates a constraint, or if a constraint could not
-                be verified.
+            ParamError: If ``bindings`` supplies an entry for this
+                parameter's own variable, if the value is not admissible,
+                if the value violates a constraint, or if a constraint
+                could not be verified.
+            ConstraintError: If a value bound to an identifier a
+                constraint references cannot be lifted into the
+                substitution environment.
 
         """
         self.validate_value(value, bindings=bindings)

@@ -24,9 +24,10 @@ class ConstraintError(ValueError):
 class MissingSymbolTypeError(ValueError):
     """Raised when ``symbol_types`` lacks an entry for a free identifier being lowered.
 
-    ``ConstraintSystem.check_satisfiability`` and
-    ``check_satisfiability_with_bindings`` require a Z3 sort for every free
-    identifier of the expression they lower. A missing entry is a caller
+    Every ``ConstraintSystem`` entry point that lowers to the solver --
+    ``check_satisfiability``, ``check_satisfiability_with_bindings``, and
+    ``check_implication``, which requires coverage for both sides --
+    needs a Z3 sort for every free identifier it lowers. A missing entry is a caller
     precondition violation, not a dictionary lookup miss, so this is a
     ``ValueError`` rather than a ``KeyError``: the missing-identifier
     message must render cleanly in a traceback, and a bare ``except
