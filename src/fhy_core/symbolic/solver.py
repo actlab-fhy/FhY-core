@@ -248,6 +248,12 @@ def simplify_expression(
     Raises:
         SolverCapabilityError: If ``backend`` is not SIMPLIFICATION-capable
             (currently: any backend other than SYMPY).
+        NativeConstantBindingError: If ``environment`` binds a registered
+            native constant's canonical identifier that ``expression``
+            references. The SymPy bridge resolves such an identifier by
+            identity to the constant's own value before any substitution
+            runs, so the binding would otherwise be silently dropped
+            rather than applied.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
             condition, provably denotes a number, counting an operand

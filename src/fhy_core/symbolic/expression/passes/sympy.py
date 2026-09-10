@@ -41,7 +41,11 @@ from ..core import (
     is_integer_valued_literal,
     validate_logical_operands,
 )
-from ..errors import ComplexInfinityLiftError, PartialPiecewiseError
+from ..errors import (
+    ComplexInfinityLiftError,
+    NativeConstantBindingError,
+    PartialPiecewiseError,
+)
 from ..registry import (
     EntryLookupError,
     NativeConstant,
@@ -495,6 +499,65 @@ class SympyVariableSubstitutionPass(
         )
 
 
+def _raise_for_bound_native_constants(bound_constants: list[Identifier]) -> None:
+    """Raise ``NativeConstantBindingError`` naming each already-sorted identifier."""
+    if not bound_constants:
+        return
+    raise NativeConstantBindingError(
+        f"cannot bind the native constant(s) {bound_constants}: a constant's "
+        "value is fixed by the registry, and a binding for its canonical "
+        "identifier is refused here because the SymPy bridge resolves the "
+        "constant by identity before a substitution ever runs, silently "
+        "dropping the binding rather than applying it."
+    )
+
+
+def _raise_if_environment_binds_a_referenced_native_constant(
+    expression: Expression, environment: dict[Identifier, Expression]
+) -> None:
+    """Raise if ``environment`` binds a native constant ``expression`` references."""
+    referenced = expression.get_free_identifiers()
+    bound_constants = sorted(
+        (
+            identifier
+            for identifier in environment
+            if identifier in referenced
+            and try_get_native_constant_for_identifier(identifier) is not None
+        ),
+        key=lambda identifier: identifier.id,
+    )
+    _raise_for_bound_native_constants(bound_constants)
+
+
+def _raise_if_sympy_expression_binds_a_referenced_native_constant(
+    sympy_expression: sympy.Expr | sympy.logic.boolalg.Boolean,
+    environment: dict[Identifier, Expression],
+) -> None:
+    """Raise if ``environment`` binds a native constant free in ``sympy_expression``.
+
+    A native constant's canonical identifier never lowers to a ``Symbol``:
+    ``visit_identifier_expression`` resolves it to the constant's own
+    SymPy value instead, so this checks the symbol name a caller's
+    binding would target against ``sympy_expression``'s free symbols,
+    which only matches a hand-built SymPy expression that still carries
+    such a symbol.
+    """
+    referenced_symbol_names = frozenset(
+        symbol.name for symbol in sympy_expression.free_symbols
+    )
+    bound_constants = sorted(
+        (
+            identifier
+            for identifier in environment
+            if ExpressionToSympyConverter.format_identifier(identifier)
+            in referenced_symbol_names
+            and try_get_native_constant_for_identifier(identifier) is not None
+        ),
+        key=lambda identifier: identifier.id,
+    )
+    _raise_for_bound_native_constants(bound_constants)
+
+
 def substitute_sympy_expression_variables(
     sympy_expression: sympy.Expr | sympy.logic.boolalg.Boolean,
     environment: dict[Identifier, Expression],
@@ -516,6 +579,9 @@ def substitute_sympy_expression_variables(
         SymPy expression with substituted variables.
 
     Raises:
+        NativeConstantBindingError: If ``environment`` binds a native
+            constant's canonical identifier that is free in
+            ``sympy_expression`` as a symbol.
         NonBooleanLogicalOperandError: If a replacement value in
             ``environment`` contains a ``LOGICAL_AND``, ``LOGICAL_OR``, or
             ``LOGICAL_NOT`` node whose operand, or a piecewise whose case
@@ -532,6 +598,9 @@ def substitute_sympy_expression_variables(
     # also have nothing to substitute, so we short-circuit the no-op case.
     if isinstance(sympy_expression, bool):
         return sympy_expression
+    _raise_if_sympy_expression_binds_a_referenced_native_constant(
+        sympy_expression, environment
+    )
     # ``.subs(..., simultaneous=True)`` is deliberately avoided here.
     # Internally it masks every replacement behind a synthetic
     # ``Dummy() * Dummy()`` product before unmasking it with a final
@@ -994,6 +1063,12 @@ def simplify_expression(
         Simplified expression.
 
     Raises:
+        NativeConstantBindingError: If ``environment`` binds a registered
+            native constant's canonical identifier that ``expression``
+            references. The SymPy bridge resolves such an identifier by
+            identity to the constant's own value before any substitution
+            runs, so the binding would otherwise be silently dropped
+            rather than applied.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
             condition, provably denotes a number, counting an operand
@@ -1010,6 +1085,10 @@ def simplify_expression(
 
     """
     validate_logical_operands(expression, environment)
+    if environment is not None:
+        _raise_if_environment_binds_a_referenced_native_constant(
+            expression, environment
+        )
     sympy_expression = convert_expression_to_sympy_expression(expression)
     if environment is not None:
         sympy_expression = substitute_sympy_expression_variables(

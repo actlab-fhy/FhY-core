@@ -11,6 +11,7 @@ __all__ = [
     "ComplexInfinityLiftError",
     "EntryLookupError",
     "EntryRegistrationError",
+    "NativeConstantBindingError",
     "NativeConstantLoweringError",
     "NativeResultSortError",
     "NonBooleanLogicalOperandError",
@@ -60,6 +61,11 @@ class ComplexInfinityLiftError(ValueError):
     so a caller can tell an ill-defined quotient apart from an
     unimplemented lifting arm.
     """
+
+
+@register_error
+class NativeConstantBindingError(ValueError):
+    """Raised when an environment binds a native constant the expression references."""
 
 
 @register_error

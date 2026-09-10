@@ -18,6 +18,7 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    NativeConstantBindingError,
     NonBooleanLogicalOperandError,
     PartialPiecewiseError,
     PiecewiseExpression,
@@ -322,6 +323,32 @@ def test_substitute_sympy_expression_variables_raises_for_a_nan_comparison() -> 
         substitute_sympy_expression_variables(sympy_expression, substitutions)
 
     assert isinstance(exc_info.value.__cause__, TypeError)
+
+
+def test_substitute_sympy_variables_refuses_a_referenced_constant_binding() -> None:
+    """Test a binding for a native constant's symbol free in the tree is refused."""
+    pi = get_native_constant_identifier("pi")
+    pi_symbol = sympy.Symbol(ExpressionToSympyConverter.format_identifier(pi))
+    sympy_expression = pi_symbol + 1
+    substitutions: dict[Identifier, Expression] = {pi: LiteralExpression(3)}
+
+    with pytest.raises(NativeConstantBindingError, match="pi"):
+        substitute_sympy_expression_variables(sympy_expression, substitutions)
+
+
+def test_substitute_sympy_variables_ignores_an_unreferenced_constant_binding() -> None:
+    """Test a native-constant binding absent from the sympy expression is ignored."""
+    x = mock_identifier("x", 0)
+    pi = get_native_constant_identifier("pi")
+    sympy_expression = sympy.Symbol("x_0") + 1
+    substitutions: dict[Identifier, Expression] = {
+        x: LiteralExpression(2),
+        pi: LiteralExpression(3),
+    }
+
+    result = substitute_sympy_expression_variables(sympy_expression, substitutions)
+
+    assert result == 3
 
 
 def test_substitute_sympy_variables_still_decides_a_well_defined_comparison() -> None:
@@ -1004,6 +1031,41 @@ def test_simplify_expression_is_idempotent_over_a_native_constant(
 
     assert first.is_structurally_equivalent(second)
     assert first.get_free_identifiers() == {constant}
+
+
+# =============================================================================
+# Binding a referenced native constant's canonical identifier is refused
+# =============================================================================
+
+
+def test_simplify_expression_refuses_a_binding_for_a_referenced_native_constant() -> (
+    None
+):
+    """Test binding pi's canonical identifier is refused when pi is referenced.
+
+    Without the refusal, the SymPy bridge lowers ``pi`` to ``sympy.pi``
+    before substitution ever runs, so the binding's ``xreplace`` key
+    never matches and is silently dropped instead of applied.
+    """
+    pi = get_native_constant_identifier("pi")
+    expression = IdentifierExpression(pi) + LiteralExpression(1)
+
+    with pytest.raises(NativeConstantBindingError, match="pi"):
+        simplify_expression(expression, {pi: LiteralExpression(3)})
+
+
+def test_simplify_expression_ignores_an_unreferenced_native_constant_binding() -> None:
+    """Test a binding for pi is ignored when the expression does not reference pi."""
+    x = mock_identifier("x", 0)
+    pi = get_native_constant_identifier("pi")
+    expression = IdentifierExpression(x) + LiteralExpression(1)
+
+    result = simplify_expression(
+        expression, {x: LiteralExpression(2), pi: LiteralExpression(3)}
+    )
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == 3
 
 
 # =============================================================================

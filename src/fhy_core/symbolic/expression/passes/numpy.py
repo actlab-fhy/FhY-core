@@ -94,6 +94,7 @@ from ..core import (
 )
 from ..errors import (
     EntryLookupError,
+    NativeConstantBindingError,
     NonBooleanLogicalOperandError,
     NonFiniteCastError,
     UnboundVariableError,
@@ -103,6 +104,7 @@ from ..registry import (
     NativeConstant,
     NativeFunction,
     get_registered_entry,
+    try_get_native_constant_for_identifier,
 )
 from ..sort import FunctionSort
 from .inline import inline_functions
@@ -249,6 +251,37 @@ def _derive_symbol_types_from_environment(
         if symbol_type is not None:
             derived[identifier] = symbol_type
     return derived
+
+
+def _raise_if_environment_binds_a_referenced_native_constant(
+    expression: Expression, environment: "NumpyEnvironment"
+) -> None:
+    """Raise if ``environment`` binds a native constant ``expression`` references.
+
+    Read ahead of the walk, since
+    :meth:`NumpyExpressionEvaluator.visit_identifier_expression` checks
+    the environment before falling back to a registered constant and
+    would otherwise silently prefer the caller's bound value over the
+    constant's.
+    """
+    referenced = expression.get_free_identifiers()
+    bound_constants = sorted(
+        (
+            identifier
+            for identifier in environment
+            if identifier in referenced
+            and try_get_native_constant_for_identifier(identifier) is not None
+        ),
+        key=lambda identifier: identifier.id,
+    )
+    if bound_constants:
+        raise NativeConstantBindingError(
+            f"cannot bind the native constant(s) {bound_constants}: a "
+            "constant's value is fixed by the registry, and a binding for "
+            "its canonical identifier is refused because this evaluator "
+            "would otherwise read the environment first and silently "
+            "prefer the caller's value over the constant's."
+        )
 
 
 @register_pass(
@@ -594,6 +627,12 @@ def evaluate_expression_with_numpy(
     Raises:
         ImportError: If NumPy is not installed. Raised directly, before
             any evaluation, with guidance to install the ``numpy`` extra.
+        NativeConstantBindingError: If ``environment`` binds a registered
+            native constant's canonical identifier that the inlined
+            expression references. Raised directly, before any
+            evaluation: this evaluator otherwise reads the environment
+            before checking for a constant and would silently prefer the
+            caller's bound value over the constant's.
         NonBooleanLogicalOperandError: If a ``LOGICAL_AND``, ``LOGICAL_OR``,
             or ``LOGICAL_NOT`` operand provably denotes a number. Raised
             directly, before any evaluation, from a static check over the
@@ -645,5 +684,8 @@ def evaluate_expression_with_numpy(
         environment, numpy_module
     )
     validate_logical_operands(inlined_expression, symbol_types=derived_symbol_types)
+    _raise_if_environment_binds_a_referenced_native_constant(
+        inlined_expression, environment
+    )
     evaluator = NumpyExpressionEvaluator(environment, numpy_module)
     return evaluator(inlined_expression)

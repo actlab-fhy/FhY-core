@@ -20,6 +20,7 @@ from fhy_core.symbolic.expression import (
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
+    NativeConstantBindingError,
     NativeFunction,
     NonBooleanLogicalOperandError,
     NonFiniteCastError,
@@ -879,6 +880,56 @@ def test_raises_for_unbound_identifier_merely_named_like_a_native_constant() -> 
     cause = exception_info.value.__cause__
     assert isinstance(cause, UnboundVariableError)
     assert "shares its name with the native constant" in str(cause)
+
+
+def test_raises_for_a_binding_that_shadows_a_referenced_native_constant() -> None:
+    """Test binding pi's canonical identifier is refused when pi is referenced.
+
+    Without the refusal, the evaluator would read the environment before
+    checking for a constant and silently prefer the caller's value over
+    the constant's, unlike the SymPy bridge, which resolves the constant
+    by identity and never consults the environment for it.
+    """
+    pi = get_native_constant_identifier("pi")
+    expression = IdentifierExpression(pi) + 1.0
+
+    with pytest.raises(NativeConstantBindingError, match="pi"):
+        evaluate_expression_with_numpy(expression, {pi: 3.0})
+
+
+def test_ignores_a_binding_for_an_unreferenced_native_constant() -> None:
+    """Test a binding for pi is ignored when the expression does not reference pi."""
+    x = mock_identifier("x", 0)
+    pi = get_native_constant_identifier("pi")
+    expression = IdentifierExpression(x) + 1.0
+
+    result = evaluate_expression_with_numpy(expression, {x: 2.0, pi: 3.0})
+
+    assert result == 3.0
+
+
+def test_raises_for_a_binding_shadowing_a_constant_referenced_inside_an_inlined_body(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the refusal accounts for a constant referenced only inside an inlined body.
+
+    The evaluator inlines expression-bodied function calls before
+    walking the tree, so a constant reference hidden inside a called
+    function's body must still be caught even though it is absent from
+    the un-inlined call expression.
+    """
+    pi = get_native_constant_identifier("pi")
+    register_function(
+        "np_eval_scaled_by_pi",
+        parameters=[],
+        parameter_sorts=[],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(pi),
+    )
+    expression = call("np_eval_scaled_by_pi")
+
+    with pytest.raises(NativeConstantBindingError, match="pi"):
+        evaluate_expression_with_numpy(expression, {pi: 3.0})
 
 
 # =============================================================================

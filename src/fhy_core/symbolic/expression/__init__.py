@@ -35,6 +35,7 @@ __all__ = [
     "LiteralType",
     "MatchBindings",
     "NativeConstant",
+    "NativeConstantBindingError",
     "NativeConstantLoweringError",
     "NativeFunction",
     "NativeResultSortError",
@@ -122,6 +123,7 @@ from .core import (
 )
 from .errors import (
     ComplexInfinityLiftError,
+    NativeConstantBindingError,
     NativeConstantLoweringError,
     NativeResultSortError,
     NonBooleanLogicalOperandError,

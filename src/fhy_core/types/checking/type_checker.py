@@ -404,7 +404,10 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             signal an unbound identifier; the type checker catches this
             and falls back to resolving the identifier as a registered
             ``NativeConstant`` before raising a typed-error. Any other
-            exception propagates unchanged.
+            exception propagates unchanged. A type supplied for a
+            registered ``NativeConstant``'s canonical identifier is
+            rejected as a type error instead of being honored: the
+            constant's type is fixed by its sort, not by the caller.
         resolve_call_target: Callable that maps a call-site function
             name to its registered entry. Injected rather than hard-
             wired to the global registry so the type checker stays
@@ -495,6 +498,15 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                     f"identifier "
                     f"`{_format_expression(identifier_expression)}` is not bound"
                 ) from exc
+            if (
+                try_get_native_constant_for_identifier(identifier_expression.identifier)
+                is not None
+            ):
+                raise self._context.type_error(
+                    f"identifier `{_format_expression(identifier_expression)}` "
+                    "names a native constant, whose type is fixed by its sort "
+                    "and cannot be supplied by the environment"
+                )
             if identifier_qualifier == TypeQualifier.OUTPUT:
                 raise self._context.type_error(
                     f"identifier `{_format_expression(identifier_expression)}` has "

@@ -26,6 +26,7 @@ from fhy_core.symbolic.expression import (
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
+    NativeConstantBindingError,
     NonBooleanLogicalOperandError,
     PiecewiseExpression,
     UnaryExpression,
@@ -2142,6 +2143,11 @@ def test_non_boolean_logical_operand_error_is_a_type_error() -> None:
 def test_non_boolean_logical_operand_error_is_in_the_compiler_error_registry() -> None:
     """Test the error is discoverable through `@register_error`'s catalog."""
     assert NonBooleanLogicalOperandError in get_registered_errors()
+
+
+def test_native_constant_binding_error_is_in_the_compiler_error_registry() -> None:
+    """Test the error is discoverable through `@register_error`'s catalog."""
+    assert NativeConstantBindingError in get_registered_errors()
 
 
 # =============================================================================

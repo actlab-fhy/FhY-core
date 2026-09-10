@@ -20,6 +20,7 @@ from fhy_core.symbolic.expression import (
     LiteralExpression,
     UnaryExpression,
     UnaryOperation,
+    get_native_constant_identifier,
     pformat_expression,
 )
 from fhy_core.types import (
@@ -860,6 +861,38 @@ def test_non_output_qualifier_operand_is_accepted_in_unary_expression(
     )
 
     assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.INT32))
+
+
+# =============================================================================
+# Native constant identifiers: the registry's sort is fixed, not the caller's
+# =============================================================================
+
+
+def test_environment_supplied_type_for_a_native_constant_is_rejected() -> None:
+    """Test a caller-supplied type for a native constant's identifier is rejected.
+
+    The constant's sort is fixed by the registry, so a local lookup that
+    resolves the canonical identifier to some other type is a type error
+    rather than a value the checker should honor.
+    """
+    pi = get_native_constant_identifier("pi")
+    checker = make_identifier_checker(
+        {pi: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM)}
+    )
+
+    with pytest.raises(FhYCoreTypeError, match="native constant"):
+        checker.visit(IdentifierExpression(pi))
+
+
+def test_native_constant_still_resolves_from_the_registry_on_lookup_miss() -> None:
+    """Test a native constant resolves to its registry sort when the lookup misses."""
+    pi = get_native_constant_identifier("pi")
+    checker = make_identifier_checker({})
+
+    result_type, qualifier = checker.visit(IdentifierExpression(pi))
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.FLOAT64))
+    assert qualifier is TypeQualifier.PARAM
 
 
 # =============================================================================

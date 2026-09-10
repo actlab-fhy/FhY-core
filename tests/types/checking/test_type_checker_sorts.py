@@ -332,28 +332,26 @@ class TestNativeConstantTypeInference:
 
         assert result_type.is_structurally_equivalent(_scalar(CoreDataType.INT64))
 
-    def test_local_identifier_binding_shadows_registered_constant(
+    def test_local_identifier_binding_for_a_registered_constant_is_rejected(
         self, function_registry_snapshot: None
     ) -> None:
-        """Test the local `get_identifier_type` lookup shadows the constant itself.
+        """Test a local `get_identifier_type` binding for a constant is rejected.
 
-        When the identifier resolves to a value in the local lookup, the
-        local type is used; the registry is consulted only as a fallback.
+        The constant's type is fixed by its registered sort, so a local
+        lookup that supplies some other type for its canonical identifier
+        is a type error rather than a type the checker should honor.
         """
         register_native_constant(
             "test_tc_const_shadow", sort=FunctionSort.REAL, value=math.pi
         )
         identifier = get_native_constant_identifier("test_tc_const_shadow")
         expression = IdentifierExpression(identifier)
-
-        # Local lookup returns INT32 — different from the constant's REAL sort.
         lookup = _single_lookup(
             identifier, _scalar(CoreDataType.INT32), TypeQualifier.INPUT
         )
-        result_type, qualifier = synthesize_expression_type(expression, lookup)
 
-        assert result_type.is_structurally_equivalent(_scalar(CoreDataType.INT32))
-        assert qualifier == TypeQualifier.INPUT
+        with pytest.raises(FhYCoreTypeError, match="native constant"):
+            synthesize_expression_type(expression, lookup)
 
     def test_identifier_merely_named_like_a_constant_is_unbound(
         self, function_registry_snapshot: None
