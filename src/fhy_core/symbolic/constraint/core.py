@@ -342,9 +342,11 @@ class Constraint(
     # drives `is_structurally_equivalent` (`fhy_core.term.derived_equivalence`),
     # and this key is a projection of that same plan. Deriving it there would
     # make "the key agrees with equivalence" true by construction rather than
-    # by each leaf keeping the two in step by hand. It is a change in
-    # `fhy_core.term` affecting every `DerivedEquivalenceMixin` user, so it is
-    # not in scope here.
+    # by each leaf keeping the two in step by hand. Literal values already
+    # key that way -- `build_literal_equivalence_key` renders the classifier
+    # `LiteralExpression` compares by -- but the tree and member-set keys do
+    # not. It is a change in `fhy_core.term` affecting every
+    # `DerivedEquivalenceMixin` user, so it is not in scope here.
     @abstractmethod
     def build_ordering_key(self) -> str:
         """Return the canonical ordering key for this constraint.

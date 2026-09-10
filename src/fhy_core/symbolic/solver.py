@@ -14,11 +14,14 @@ no ground comparison is decided one way by ``simplify_expression`` and the
 other way by the Z3 questions below.
 
 Known divergences: the Z3 and SymPy bridges disagree with each other and
-with the type checker on integer division, floor-division/modulo
-Euclidean semantics, and inf/nan lifting. This module routes to each
-bridge unchanged; it does not reconcile that math. The hazard screens
-below refuse the division-like shapes rather than let a bridge decide one
-of them.
+with the type checker on integer division and floor-division/modulo
+Euclidean semantics. The two bridges also treat native constants
+differently: the SymPy bridge resolves ``pi``, ``e``, ``inf``, and
+``nan`` to their values, while the Z3 bridge lowers a constant's
+canonical identifier as an ordinary variable of whatever sort
+``symbol_types`` gives it. This module routes to each bridge unchanged;
+it does not reconcile that math. The hazard screens below refuse the
+division-like shapes rather than let a bridge decide one of them.
 
 The Z3-question entry points (``check_expression_satisfiability``,
 ``does_expression_imply``, ``holds_for_all_free_assignments``, and

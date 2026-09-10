@@ -8,6 +8,8 @@ pinned directly here rather than only observed indirectly through
 `ConstraintSystem`'s canonical order.
 """
 
+import math
+import pickle
 from dataclasses import dataclass, field
 
 from fhy_core.identifier import Identifier
@@ -75,6 +77,40 @@ def test_equal_keys_for_constraints_over_independently_built_identifiers() -> No
 
     assert x1 is not x2
     assert left.build_ordering_key() == right.build_ordering_key()
+
+
+def test_equations_over_separately_produced_nans_are_equivalent_and_key_alike() -> None:
+    """Test equations over two different NaN objects agree on equivalence and key.
+
+    NaN compares unequal to itself, so an equivalence that compared the
+    stored ``float`` objects would split two equations the key puts
+    together, breaking the key's contract of being constant on
+    equivalence classes.
+    """
+    x = mock_identifier("x", 0)
+    left = EquationConstraint(
+        make_binary_expression(BinaryOperation.LESS, x, float("nan"))
+    )
+    right = EquationConstraint(
+        make_binary_expression(BinaryOperation.LESS, x, math.inf - math.inf)
+    )
+
+    assert left.is_structurally_equivalent(right)
+    assert left.build_ordering_key() == right.build_ordering_key()
+
+
+def test_equation_over_a_nan_literal_matches_its_pickle_round_trip() -> None:
+    """Test a NaN-bearing equation and its unpickled copy are equivalent."""
+    constraint = EquationConstraint(
+        make_binary_expression(
+            BinaryOperation.LESS, LiteralExpression(1.0), LiteralExpression(math.nan)
+        )
+    )
+
+    restored = pickle.loads(pickle.dumps(constraint))
+
+    assert constraint.is_structurally_equivalent(restored)
+    assert constraint.build_ordering_key() == restored.build_ordering_key()
 
 
 # =============================================================================

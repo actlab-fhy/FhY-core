@@ -117,14 +117,19 @@ _NATIVE_FUNCTION_LIFT_DISPATCH: tuple[tuple[type, str], ...] = (
     (sympy.ceiling, "ceil"),
 )
 
-# Native-constant lowering / lifting.
+# Native-constant lowering / lifting. SymPy folds a negated ``oo`` into a
+# separate ``-oo`` atom, which ``_try_lift_native_constant`` handles.
 _NATIVE_CONSTANT_LOWER: dict[str, Any] = {
     "pi": sympy.pi,
     "e": sympy.E,
+    "inf": sympy.oo,
+    "nan": sympy.nan,
 }
 _NATIVE_CONSTANT_LIFT: dict[Any, str] = {
     sympy.pi: "pi",
     sympy.E: "e",
+    sympy.oo: "inf",
+    sympy.nan: "nan",
 }
 
 
@@ -210,10 +215,17 @@ def _try_lift_native_constant(expr: sympy.Expr) -> Expression | None:
 
     Lifts to the registry's canonical identifier for the constant, so a
     lowered constant lifts back as the same identifier it came from and
-    the round trip is idempotent. A sympy constant whose IR counterpart
-    is not registered has no canonical identifier to lift to and is left
-    to the ordinary dispatch.
+    the round trip is idempotent. ``-oo`` lifts as the ``NEGATE`` of the
+    canonical ``inf``, the IR's own spelling of a negative infinity. A
+    sympy constant whose IR counterpart is not registered has no
+    canonical identifier to lift to and is left to the ordinary
+    dispatch.
     """
+    if expr == sympy.S.NegativeInfinity:
+        infinity = _try_lift_native_constant(sympy.oo)
+        if infinity is None:
+            return None
+        return UnaryExpression(UnaryOperation.NEGATE, infinity)
     for sympy_value, name in _NATIVE_CONSTANT_LIFT.items():
         if expr == sympy_value:
             try:
@@ -368,7 +380,9 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
           becomes a ``sympy.Integer``. Both are in one equivalence class,
           so both have to reach SymPy as one number kind.
         - A Python ``float`` is an IEEE-754 binary value, and
-          ``sympy.Float`` carries exactly that value.
+          ``sympy.Float`` carries exactly that value. A non-finite one
+          becomes ``oo``, ``-oo``, or ``nan``, which lift back as the
+          registered ``inf``/``nan`` constants rather than as literals.
         - A float-grammar ``str`` is exact decimal, so it becomes a
           ``sympy.Rational`` built from the text, which is that decimal
           exactly. ``sympy.Float`` would instead round the text to binary,
@@ -898,9 +912,11 @@ def convert_sympy_expression_to_expression(
 
     A ``sympy.Rational`` lifts exactly: to a float-grammar string literal
     when its decimal expansion terminates, and otherwise to a ``DIVIDE``
-    of its numerator and denominator. ``sympy.zoo`` is the one numeric
-    value with no IR counterpart and raises
-    :class:`ComplexInfinityLiftError`.
+    of its numerator and denominator. ``sympy.oo`` and ``sympy.nan``
+    lift to the canonical identifiers of the registered ``inf`` and
+    ``nan`` constants, and ``-oo`` to the negation of ``inf``.
+    ``sympy.zoo`` is the one numeric value with no IR counterpart and
+    raises :class:`ComplexInfinityLiftError`.
 
     Args:
         sympy_expression: SymPy expression to convert.

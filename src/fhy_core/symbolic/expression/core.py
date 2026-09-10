@@ -17,6 +17,7 @@ __all__ = [
     "PiecewiseExpression",
     "UnaryExpression",
     "UnaryOperation",
+    "build_literal_equivalence_key",
     "call",
     "is_integer_valued_literal",
     "logical_and",
@@ -28,11 +29,12 @@ __all__ = [
     "validate_logical_operands",
 ]
 
+import math
 import re
 from abc import ABC
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import MAX_EMAX, MIN_EMIN, Context, Decimal
 from typing import Any, TypeAlias, TypedDict, TypeGuard
 
 from immutabledict import immutabledict
@@ -752,24 +754,83 @@ _INTEGER_LITERAL_PATTERN = re.compile(r"\d+")
 _FLOAT_LITERAL_PATTERN = re.compile(r"\d+\.\d*|\.\d+")
 
 
-_LiteralBucket: TypeAlias = tuple[str, "bool | int | float | Decimal"]
+_LiteralBucket: TypeAlias = tuple[str, "bool | int | float | str | Decimal"]
 
 _INTEGER_LITERAL_BUCKET = "int"
 _BOOLEAN_LITERAL_BUCKET = "bool"
+_FLOAT_BINARY_LITERAL_BUCKET = "float-binary"
+_FLOAT_DECIMAL_LITERAL_BUCKET = "float-decimal"
+
+_CANONICAL_NAN_FORM = "nan"
+"""Canonical form every NaN ``float`` shares in the float-binary bucket."""
+
+
+def _normalize_decimal_exactly(value: Decimal) -> Decimal:
+    """Return ``value`` with its trailing coefficient zeros stripped, unrounded.
+
+    ``Decimal.normalize`` strips trailing zeros but first rounds to the
+    context precision, 28 digits by default, which would merge distinct
+    long decimals. A context exactly as wide as the coefficient, with
+    the widest exponent range, leaves nothing to round, so numerically
+    equal decimals come out identical and unequal ones stay apart.
+    """
+    precision = len(value.as_tuple().digits)
+    return value.normalize(Context(prec=precision, Emax=MAX_EMAX, Emin=MIN_EMIN))
 
 
 def _classify_literal_value(value: LiteralType) -> _LiteralBucket:
-    """Return the (bucket, canonical-form) pair used for literal equivalence."""
+    """Return the (bucket, canonical-form) pair used for literal equivalence.
+
+    Two literals are equivalent exactly when their pairs are equal, and
+    within a bucket equal canonical forms are identical values, which is
+    what lets :func:`build_literal_equivalence_key` render the pair as
+    text. A binary ``float`` gains zero, folding ``-0.0`` into the
+    ``0.0`` it already equals. A NaN equals nothing, itself included, so
+    every NaN takes one shared token instead of its own value; without
+    it, whether two NaN literals were equivalent would depend on
+    whether they held the same ``float`` object. An exact decimal is
+    stripped of trailing zeros without rounding, so ``"1.5"`` and
+    ``"1.50"`` coincide.
+    """
     if isinstance(value, bool):
         return (_BOOLEAN_LITERAL_BUCKET, value)
     elif isinstance(value, int):
         return (_INTEGER_LITERAL_BUCKET, value)
     elif isinstance(value, float):
-        return ("float-binary", value)
+        if math.isnan(value):
+            return (_FLOAT_BINARY_LITERAL_BUCKET, _CANONICAL_NAN_FORM)
+        return (_FLOAT_BINARY_LITERAL_BUCKET, value + 0.0)
     elif _INTEGER_LITERAL_PATTERN.fullmatch(value):
         return (_INTEGER_LITERAL_BUCKET, int(value))
     else:
-        return ("float-decimal", Decimal(value))
+        return (
+            _FLOAT_DECIMAL_LITERAL_BUCKET,
+            _normalize_decimal_exactly(Decimal(value)),
+        )
+
+
+def build_literal_equivalence_key(value: LiteralType) -> str:
+    """Return text two literal values share exactly when they are equivalent.
+
+    Renders the bucket and canonical form :class:`LiteralExpression`
+    compares by, so the key cannot disagree with structural equivalence
+    in either direction: ``5``, ``"5"``, and ``"05"`` share a key, as do
+    ``"1.5"`` and ``"1.50"``, ``0.0`` and ``-0.0``, and every NaN, while
+    a ``bool`` keys apart from every integer and an exact-decimal string
+    apart from the binary ``float`` with the same digits. The key is a
+    pure function of the value, so it is identical in every process and
+    across a serialization or pickle round trip.
+
+    Args:
+        value: Value stored on a :class:`LiteralExpression`.
+
+    Returns:
+        Bucket-prefixed text, such as ``"int:5"`` or
+        ``"float-binary:nan"``.
+
+    """
+    bucket, canonical = _classify_literal_value(value)
+    return f"{bucket}:{canonical}"
 
 
 def is_integer_valued_literal(value: LiteralType) -> bool:
@@ -838,7 +899,10 @@ class LiteralExpression(Expression):
       to the underlying integer, so ``LiteralExpression("5")``,
       ``LiteralExpression("05")``, and ``LiteralExpression(5)`` are all
       equivalent.
-    - float-binary (Python ``float``): by value.
+    - float-binary (Python ``float``): by value, except that every NaN
+      is equivalent to every other NaN, keeping the relation reflexive
+      for the one value IEEE-754 makes unequal to itself; ``-0.0`` and
+      ``0.0`` are equivalent because they compare equal.
     - float-decimal (float-grammar ``str``): canonicalized to a
       ``decimal.Decimal`` so ``"1.5"`` and ``"1.50"`` are equivalent;
       ``str`` form and ``float`` form are *not* cross-equivalent, since

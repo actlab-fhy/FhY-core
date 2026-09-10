@@ -1,7 +1,10 @@
 """Tests for `fhy_core.symbolic.expression.core`."""
 
 import dataclasses
+import itertools
+import math
 import operator
+import pickle
 from collections.abc import Callable
 from typing import Any
 
@@ -26,6 +29,7 @@ from fhy_core.symbolic.expression import (
     UnaryExpression,
     UnaryOperation,
     UndecidableError,
+    build_literal_equivalence_key,
     call,
     is_integer_valued_literal,
     logical_and,
@@ -383,6 +387,112 @@ def test_literal_equivalence_distinguishes_buckets(
 
     assert not left.is_structurally_equivalent(right)
     assert not right.is_structurally_equivalent(left)
+
+
+# =============================================================================
+# NaN keeps the literal equivalence relation reflexive
+# =============================================================================
+
+
+def test_nan_literals_holding_distinct_float_objects_are_equivalent() -> None:
+    """Test two NaN literals are equivalent whichever ``float`` object each holds.
+
+    NaN compares unequal to itself, so comparing stored values would make
+    NaN equivalence a question of object identity: a literal would be
+    equivalent to itself but not to one built from a separately computed
+    NaN.
+    """
+    left = LiteralExpression(float("nan"))
+    right = LiteralExpression(math.inf - math.inf)
+
+    assert left.value is not right.value
+    assert left.is_structurally_equivalent(right)
+    assert right.is_structurally_equivalent(left)
+
+
+def test_nan_literal_is_equivalent_to_its_own_pickle_round_trip() -> None:
+    """Test a NaN literal and its unpickled copy are equivalent.
+
+    Unpickling rebuilds the ``float``, so the copy holds a different NaN
+    object than the original; equivalence must not depend on that.
+    """
+    literal = LiteralExpression(math.nan)
+
+    restored = pickle.loads(pickle.dumps(literal))
+
+    assert restored.value is not literal.value
+    assert literal.is_structurally_equivalent(restored)
+
+
+_LITERAL_EQUIVALENCE_SAMPLE: tuple[bool | int | float | str, ...] = (
+    True,
+    False,
+    0,
+    5,
+    "5",
+    "05",
+    0.0,
+    -0.0,
+    5.0,
+    1.5,
+    math.inf,
+    -math.inf,
+    math.nan,
+    float("nan"),
+    -math.nan,
+    "0.0",
+    ".0",
+    "5.0",
+    "1.5",
+    "1.50",
+    "1.00000000000000000000000000001",
+    "1.0",
+)
+
+
+def test_literal_equivalence_key_is_shared_exactly_by_equivalent_literals() -> None:
+    """Test the key agrees with literal equivalence in both directions.
+
+    Canonical ordering needs the key constant on equivalence classes, and
+    a key that also separates what equivalence separates never lets two
+    inequivalent literals tie. The sample spans every bucket, ``-0.0``,
+    NaNs of distinct identity and sign, and a decimal too long to survive
+    rounding to ``Decimal``'s default 28 digits.
+    """
+    for left_value, right_value in itertools.product(
+        _LITERAL_EQUIVALENCE_SAMPLE, repeat=2
+    ):
+        equivalent = LiteralExpression(left_value).is_structurally_equivalent(
+            LiteralExpression(right_value)
+        )
+        keyed_alike = build_literal_equivalence_key(
+            left_value
+        ) == build_literal_equivalence_key(right_value)
+        assert equivalent is keyed_alike, (left_value, right_value)
+
+
+@pytest.mark.parametrize(
+    "value, expected_key",
+    [
+        pytest.param(True, "bool:True", id="bool"),
+        pytest.param("05", "int:5", id="integer_string"),
+        pytest.param(-0.0, "float-binary:0.0", id="negative_zero"),
+        pytest.param(float("nan"), "float-binary:nan", id="nan"),
+        pytest.param(-math.inf, "float-binary:-inf", id="negative_infinity"),
+        pytest.param("1.50", "float-decimal:1.5", id="decimal_trailing_zero"),
+        pytest.param("100.0", "float-decimal:1E+2", id="decimal_whole_number"),
+    ],
+)
+def test_literal_equivalence_key_renders_bucket_and_canonical_form(
+    value: bool | int | float | str, expected_key: str
+) -> None:
+    """Test the key text for representative literals.
+
+    ``ConstraintSystem`` orders its members by keys built from this text
+    and serializes them in that order, so the rendering is pinned rather
+    than only compared.
+    """
+    assert build_literal_equivalence_key(value) == expected_key
 
 
 # =============================================================================
