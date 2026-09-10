@@ -40,6 +40,7 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     IdentifierExpression,
     LiteralExpression,
+    try_get_native_constant_for_identifier,
 )
 from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.term import (
@@ -125,6 +126,28 @@ _CONSTRAINT_SYSTEM_CODEC: FieldCodec = _SerializableFieldCodec(ConstraintSystem)
 # ---------------------------------------------------------------------------
 
 
+def _raise_if_variable_is_native_constant(variable: Identifier) -> None:
+    """Raise if ``variable`` is a native constant's canonical identifier.
+
+    A native constant's canonical identifier names a fixed value, not a
+    variable a parameter can range over; the constraint layer already
+    refuses to bind it, and letting a parameter carry it as its variable
+    would let enumeration decide questions the binding layer cannot.
+
+    Raises:
+        ParamError: If ``variable`` is the canonical identifier of a
+            registered native constant.
+
+    """
+    constant = try_get_native_constant_for_identifier(variable)
+    if constant is not None:
+        raise ParamError(
+            f"Parameter variable {variable!r} is the canonical identifier "
+            f"of the native constant {constant.name!r}; it names a value, "
+            "not a variable."
+        )
+
+
 @register_serializable(type_id="param")
 @dataclass(frozen=True, eq=False)
 class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
@@ -159,6 +182,7 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
     )
 
     def __post_init__(self) -> None:
+        _raise_if_variable_is_native_constant(self.variable)
         canonical = self._build_canonical_constraints(
             self.constraint_system.constraints
         )

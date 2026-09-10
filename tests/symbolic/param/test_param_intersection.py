@@ -30,6 +30,7 @@ from fhy_core.symbolic.expression import (
     IdentifierExpression,
     LiteralExpression,
     NonBooleanLogicalOperandError,
+    get_native_constant_identifier,
 )
 from fhy_core.symbolic.param import (
     Param,
@@ -700,6 +701,16 @@ def test_intersection_result_uses_given_name() -> None:
     result = create_intersection_param(left, right, name=given)
 
     assert result.variable is given
+
+
+def test_intersection_result_named_by_native_constant_raises_param_error() -> None:
+    """Test naming an intersection result by a native constant's identifier raises."""
+    left = create_real_param()
+    right = create_real_param_with_lower_bound(0.0)
+    pi = get_native_constant_identifier("pi")
+
+    with pytest.raises(ParamError, match="native constant"):
+        create_intersection_param(left, right, name=pi)
 
 
 # =============================================================================
