@@ -52,6 +52,7 @@ from .core import (
     ConstraintOutcome,
     SymbolicPredicate,
     _coerce_bindings_to_environment,
+    _find_bound_native_constants,
 )
 from .errors import ConstraintError, MissingSymbolTypeError
 
@@ -485,6 +486,15 @@ class ConstraintSystem(
         the same way, while binding a variable to a value of the matching
         sort can retire a hazard the unsubstituted conjunction had.
 
+        A binding for a registered native constant's canonical identifier
+        is refused rather than substituted: the identifier names a value
+        rather than a variable, and substituting it would answer for a
+        world where the constant has the bound value. A binding for a
+        constant the conjunction references reports ``UNDECIDED`` with a
+        ``WARNING``, after every check listed under ``Raises``, exactly as
+        ``evaluate_with_bindings`` reports it; one for a constant the
+        conjunction does not reference is ignored.
+
         Args:
             bindings: Partial assignment substituted into the conjunction
                 before the satisfiability check. Values must be
@@ -543,6 +553,20 @@ class ConstraintSystem(
         conjunction = self.convert_to_expression()
         _validate_symbol_types_cover_residual(conjunction, environment, symbol_types)
         validate_logical_operands(conjunction, environment)
+        captured = _find_bound_native_constants(
+            conjunction.get_free_identifiers(), environment
+        )
+        if captured:
+            _LOGGER.warning(
+                "ConstraintSystem.check_satisfiability_with_bindings: "
+                "identifier(s) %s are the canonical identifiers of registered "
+                "native constants, which name values rather than variables, so "
+                "the supplied binding cannot be honored; reporting UNDECIDED "
+                "rather than deciding for a world where the constant has the "
+                "bound value",
+                format_comma_separated_list(tuple(captured)),
+            )
+            return ConstraintOutcome.UNDECIDED
         residual = conjunction.substitute(environment)
         return _decide_satisfiability(
             residual,

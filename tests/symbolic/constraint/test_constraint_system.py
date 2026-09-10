@@ -2608,3 +2608,148 @@ def test_check_satisfiability_requires_a_sort_for_a_variable_beside_a_constant()
         system.check_satisfiability({})
 
     assert _extract_reported_missing_names(exception_info.value) == x.name_hint
+
+
+@pytest.mark.z3
+def test_check_satisfiability_with_bindings_refuses_a_bound_native_constant(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test binding a constant's identifier reports UNDECIDED with a warning.
+
+    ``pi < 4`` holds for the constant. Substituting ``{pi: 5}`` answers
+    for a world where ``pi`` is 5 instead, and decided ``VIOLATED``. The
+    identifier names a value rather than a variable, so the binding cannot
+    take part in the decision.
+    """
+    pi = get_native_constant_identifier("pi")
+    system = create_constraint_system(
+        EquationConstraint(make_binary_expression(BinaryOperation.LESS, pi, 4))
+    )
+
+    with caplog.at_level(logging.WARNING, logger=_CONSTRAINT_LOGGER):
+        outcome = system.check_satisfiability_with_bindings({pi: 5}, {})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    records = _find_records(caplog, logging.WARNING)
+    assert records
+    assert repr(pi) in records[0].getMessage()
+
+
+_BINDINGS_DECISIONS = [
+    pytest.param(
+        lambda system, bindings, symbol_types: system.evaluate_with_bindings(bindings),
+        id="evaluate_with_bindings",
+    ),
+    pytest.param(
+        lambda system, bindings, symbol_types: (
+            system.check_satisfiability_with_bindings(bindings, symbol_types)
+        ),
+        id="check_satisfiability_with_bindings",
+    ),
+]
+
+_DecideWithBindings = Callable[
+    [ConstraintSystem, ConstraintBindings, Mapping[Identifier, SymbolType]],
+    ConstraintOutcome,
+]
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
+@pytest.mark.parametrize(
+    "build_expression, bound_value",
+    [
+        pytest.param(
+            lambda pi, y: make_binary_expression(BinaryOperation.LESS, pi, 4),
+            5,
+            id="binding_flips_the_answer",
+        ),
+        pytest.param(
+            lambda pi, y: make_binary_expression(BinaryOperation.GREATER, pi, y),
+            4,
+            id="binding_beside_a_free_variable",
+        ),
+    ],
+)
+def test_bindings_paths_agree_that_a_bound_native_constant_is_undecided(
+    decide: _DecideWithBindings,
+    build_expression: Callable[[Identifier, Identifier], Expression],
+    bound_value: int,
+) -> None:
+    """Test both bindings-aware paths refuse a binding for a constant's identifier.
+
+    Evaluation already refused it, since the SymPy bridge lowers the
+    identifier to the constant's value and the binding cannot take
+    effect; the satisfiability check has to agree rather than decide for
+    a world where the constant has the bound value.
+    """
+    pi = get_native_constant_identifier("pi")
+    y = mock_identifier("y", 1)
+    system = create_constraint_system(EquationConstraint(build_expression(pi, y)))
+
+    outcome = decide(system, {pi: bound_value}, {y: SymbolType.INT})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
+def test_bindings_paths_report_an_unliftable_value_ahead_of_a_bound_constant(
+    decide: _DecideWithBindings,
+) -> None:
+    """Test a binding value outside the bindings contract raises from both paths.
+
+    Refusing the constant's binding leaves the question undecided, and a
+    malformed question is reported as malformed ahead of any undecided
+    outcome, so the order of the two checks cannot make the paths differ.
+    """
+    pi = get_native_constant_identifier("pi")
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(
+        EquationConstraint(make_binary_expression(BinaryOperation.GREATER, pi, x))
+    )
+    bindings: dict[Identifier, Any] = {pi: 4, x: object()}
+
+    with pytest.raises(ConstraintError):
+        decide(system, bindings, {})
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
+def test_bindings_paths_report_ill_typedness_ahead_of_a_bound_constant(
+    decide: _DecideWithBindings,
+) -> None:
+    """Test an ill-typed expression beside a constant's binding raises from both.
+
+    ``x`` bound to 2 under ``and`` is meaningless to every backend, which
+    is the diagnosis a caller can act on; the constant's binding alone
+    would only have left the question undecided.
+    """
+    pi = get_native_constant_identifier("pi")
+    x = mock_identifier("x", 0)
+    expression = make_binary_expression(
+        BinaryOperation.LOGICAL_AND,
+        x,
+        make_binary_expression(BinaryOperation.GREATER, pi, 3),
+    )
+    system = create_constraint_system(EquationConstraint(expression))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        decide(system, {pi: 4, x: LiteralExpression(2)}, {})
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
+def test_bindings_paths_ignore_a_constant_binding_out_of_scope(
+    decide: _DecideWithBindings,
+) -> None:
+    """Test a constant's binding is refused only where the expression uses it."""
+    pi = get_native_constant_identifier("pi")
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(
+        EquationConstraint(make_binary_expression(BinaryOperation.GREATER, x, 3))
+    )
+
+    outcome = decide(system, {pi: 4, x: 5}, {})
+
+    assert outcome is ConstraintOutcome.SATISFIED

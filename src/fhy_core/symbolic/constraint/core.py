@@ -54,6 +54,7 @@ from fhy_core.symbolic.expression import (
     LiteralType,
     make_binary_expression,
     pformat_expression,
+    validate_logical_operands,
 )
 from fhy_core.symbolic.expression.registry import (
     try_get_native_constant_for_identifier,
@@ -151,6 +152,36 @@ def _coerce_bindings_to_environment(
             value if isinstance(value, Expression) else LiteralExpression(value)
         )
     return environment
+
+
+def _find_bound_native_constants(
+    scope: frozenset[Identifier], bindings: Mapping[Identifier, object]
+) -> list[Identifier]:
+    """Return the native constants' canonical identifiers ``bindings`` binds in scope.
+
+    Such a binding cannot take effect: the identifier names the constant's
+    value rather than a variable, and the SymPy bridge lowers it to that
+    value whatever it is bound to. Both bindings-aware paths refuse it,
+    reporting ``UNDECIDED``.
+
+    Args:
+        scope: Identifiers the question references.
+        bindings: Bindings supplied for the question.
+
+    Returns:
+        The bound canonical identifiers in ``scope``, ordered by id so a
+        caller can name them.
+
+    """
+    return sorted(
+        (
+            identifier
+            for identifier in bindings
+            if identifier in scope
+            and try_get_native_constant_for_identifier(identifier) is not None
+        ),
+        key=lambda identifier: identifier.id,
+    )
 
 
 class ConstraintOutcome(Enum):
@@ -466,9 +497,13 @@ class EquationConstraint(Constraint):
         canonical identifier reports ``UNDECIDED`` with a ``WARNING``:
         the bridge lowers that identifier to the constant's value rather
         than to a substitutable symbol, so the binding cannot take part
-        in the decision. An identifier that merely shares a constant's
-        ``name_hint`` is an ordinary variable and its binding is applied
-        like any other.
+        in the decision. The refusal comes after the checks that raise,
+        so a binding value that cannot be lifted, or a provably numeric
+        operand in a Boolean position, is reported instead.
+        ``ConstraintSystem.check_satisfiability_with_bindings`` refuses
+        the same bindings in the same order. An identifier that merely
+        shares a constant's ``name_hint`` is an ordinary variable and its
+        binding is applied like any other.
 
         Raises:
             ConstraintError: If the value bound to an identifier in this
@@ -494,15 +529,12 @@ class EquationConstraint(Constraint):
             for identifier, value in bindings.items()
             if identifier in scope
         }
-        captured = sorted(
-            (
-                identifier
-                for identifier in in_scope
-                if try_get_native_constant_for_identifier(identifier) is not None
-            ),
-            key=lambda identifier: identifier.id,
-        )
+        environment = _coerce_bindings_to_environment(in_scope)
+        captured = _find_bound_native_constants(scope, environment)
         if captured:
+            # An ill-typed expression is reported ahead of the refusal, as
+            # `simplify_expression` reports it on every other path.
+            validate_logical_operands(self.expression, environment)
             _LOGGER.warning(
                 "%s.evaluate_with_bindings: identifier(s) %s are the canonical "
                 "identifiers of registered native constants, so the backend "
@@ -514,7 +546,6 @@ class EquationConstraint(Constraint):
                 format_comma_separated_list(tuple(captured)),
             )
             return ConstraintOutcome.UNDECIDED
-        environment = _coerce_bindings_to_environment(in_scope)
         result = simplify_expression(self.expression, environment)
         if isinstance(result, LiteralExpression):
             if isinstance(result.value, bool) and result.value:
