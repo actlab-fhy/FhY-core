@@ -8,8 +8,10 @@ parametrized over the constraint factory.
 import copy
 import dataclasses
 import io
+import json
 import pickle
 from collections.abc import Callable
+from enum import IntEnum
 from typing import Any, cast
 
 import pytest
@@ -23,6 +25,7 @@ from fhy_core.symbolic.constraint import (
     NotInSetConstraint,
 )
 from fhy_core.symbolic.constraint import core as constraint_core_module
+from fhy_core.symbolic.expression import LiteralExpression
 from fhy_core.traits import FrozenMutationError
 from fhy_core.utils.override import override
 
@@ -842,3 +845,168 @@ def test_set_constraint_rejects_a_non_identifier_variable(
     """
     with pytest.raises(ConstraintError, match="constrains an identifier"):
         kind("oops", {1})  # type: ignore[arg-type]
+
+
+# =============================================================================
+# Number-subclass members are the exact numbers they denote
+# =============================================================================
+
+
+class _Level(IntEnum):
+    """An ``int`` subclass, which a literal holds as the ``int`` it denotes."""
+
+    LOW = 1
+    HIGH = 3
+
+
+class _Measure(float):
+    """A ``float`` subclass, which a literal holds as the ``float`` it denotes."""
+
+
+_NUMBER_SUBCLASS_MEMBERS = [
+    pytest.param(_Level.HIGH, 3, id="int_subclass"),
+    pytest.param(_Measure(1.5), 1.5, id="float_subclass"),
+]
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_stores_a_number_subclass_member_as_its_exact_value(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test the stored member is the exact number its literal holds.
+
+    A member lifts to a literal holding the exact number, so membership
+    has to accept exactly the values that literal equals. A member kept
+    as its subclass would lift to an expression accepting a value
+    membership refuses, and a solver-backed answer would then disagree
+    with evaluation.
+    """
+    constraint = kind(mock_identifier("x", 0), {member})
+
+    assert constraint.members == (exact_member,)
+    assert [type(value) for value in constraint.values] == [type(exact_member)]
+
+
+@pytest.mark.parametrize(
+    ("kind", "member_outcome", "non_member_outcome"), _KINDS_WITH_EVALUATE_OUTCOMES
+)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_decides_a_number_subclass_as_the_exact_value(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member_outcome: ConstraintOutcome,
+    non_member_outcome: ConstraintOutcome,
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test a subclass and its exact twin are one member, bound either way round."""
+    x = mock_identifier("x", 0)
+
+    assert kind(x, {member}).evaluate_with_bindings({x: exact_member}) is (
+        member_outcome
+    )
+    assert kind(x, {exact_member}).evaluate_with_bindings({x: member}) is (
+        member_outcome
+    )
+    assert kind(x, {exact_member}).evaluate_with_bindings(
+        {x: LiteralExpression(member)}
+    ) is (member_outcome)
+    assert kind(x, {member}).evaluate_with_bindings({x: exact_member + 1}) is (
+        non_member_outcome
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "member_outcome", "non_member_outcome"), _KINDS_WITH_EVALUATE_OUTCOMES
+)
+def test_set_constraint_keeps_a_bool_apart_from_an_int_subclass(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member_outcome: ConstraintOutcome,
+    non_member_outcome: ConstraintOutcome,
+) -> None:
+    """Test an ``int`` subclass is the ``int`` it denotes, never a ``bool``.
+
+    ``_Level.LOW`` carries ``1``, which ``True`` equals, but ``bool`` is a
+    kind of its own for members as it is for literals.
+    """
+    del member_outcome
+    x = mock_identifier("x", 0)
+
+    assert kind(x, {True}).evaluate_with_bindings({x: _Level.LOW}) is (
+        non_member_outcome
+    )
+    assert kind(x, {_Level.LOW}).evaluate_with_bindings({x: True}) is (
+        non_member_outcome
+    )
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_with_a_number_subclass_member_is_its_exact_twin(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test equivalence, the ordering key, and deduplication see one member."""
+    x = mock_identifier("x", 0)
+    constraint = kind(x, {member})
+    twin = kind(x, {exact_member})
+
+    assert constraint.is_structurally_equivalent(twin)
+    assert constraint.is_alpha_equivalent(twin)
+    assert constraint.build_ordering_key() == twin.build_ordering_key()
+    assert len(kind(x, [member, exact_member]).members) == 1
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_with_a_number_subclass_member_round_trips(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test a serialization round trip gives back an equivalent constraint.
+
+    A number goes over the wire as the exact number, so under type-strict
+    equality a member kept as its subclass would come back as a different
+    member.
+    """
+    x = mock_identifier("x", 0)
+    constraint = kind(x, {member})
+
+    data = json.loads(json.dumps(constraint.serialize_to_dict()))
+    restored = kind.deserialize_from_dict(data)
+
+    assert data == kind(x, {exact_member}).serialize_to_dict()
+    assert restored.is_structurally_equivalent(constraint)
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_lifts_a_number_subclass_member_to_its_exact_literal(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test the converted expression is the one the exact twin converts to."""
+    x = mock_identifier("x", 0)
+
+    expression = kind(x, {member}).convert_to_expression()
+
+    assert expression.is_structurally_equivalent(
+        kind(x, {exact_member}).convert_to_expression()
+    )
+
+
+def test_set_constraint_container_member_holds_number_subclass_leaves_exactly() -> None:
+    """Test the leaves of a container member are their exact numbers too."""
+    x = mock_identifier("x", 0)
+    constraint = InSetConstraint(x, {(_Level.HIGH, _Measure(1.5))})
+    bindings: dict[Identifier, Any] = {x: (3, 1.5)}
+
+    leaves = cast(tuple[Any, ...], constraint.members[0])
+
+    assert [type(leaf) for leaf in leaves] == [int, float]
+    assert constraint.evaluate_with_bindings(bindings) is ConstraintOutcome.SATISFIED

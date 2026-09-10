@@ -127,9 +127,9 @@ def _lift_binding_value(identifier: Identifier, value: LiteralType) -> Expressio
     """Wrap a raw binding value in the ``LiteralExpression`` it denotes.
 
     Being a ``LiteralType`` is not enough: ``LiteralExpression`` holds a
-    ``str`` only when it matches the integer or float grammar, and a
-    number only as an exact ``bool``, ``int``, or ``float``, not as a
-    subclass such as an ``IntEnum`` member.
+    ``str`` only when it matches the integer or float grammar. A number
+    always lifts; one whose type subclasses ``int`` or ``float``, such as
+    an ``IntEnum`` member, lifts to the exact value it denotes.
 
     Args:
         identifier: Identifier the value is bound to.
@@ -146,7 +146,7 @@ def _lift_binding_value(identifier: Identifier, value: LiteralType) -> Expressio
     """
     try:
         return LiteralExpression(value)
-    except (TypeError, ValueError) as exc:
+    except ValueError as exc:
         raise ConstraintError(
             f"Binding for identifier {identifier!r} cannot be lifted into a "
             f"literal: value {value!r} of type {type(value).__name__} is not "
@@ -175,9 +175,7 @@ def _coerce_bindings_to_environment(
     Raises:
         ConstraintError: If a value falls outside ``Expression |
             LiteralType``, or is a literal value ``LiteralExpression``
-            refuses: a ``str`` outside the integer and float grammars, or a
-            number whose type subclasses ``int`` or ``float`` without being
-            ``bool``.
+            refuses: a ``str`` outside the integer and float grammars.
 
     """
     environment: dict[Identifier, Expression] = {}
@@ -973,9 +971,11 @@ class InSetConstraint(_SetConstraint):
     ``VIOLATED`` otherwise, comparing by type-strict equality (so
     ``True`` and ``1`` are distinct members, and ``1`` and ``1.0`` are
     distinct members, including inside nested ``tuple`` or ``frozenset``
-    members). A membership check against a concrete value is always
-    decidable, so it never reports ``UNDECIDED`` once ``variable`` is
-    bound to a literal.
+    members; a number whose type subclasses ``int`` or ``float``, such as
+    an ``IntEnum`` member, is the exact value it denotes, both as a member
+    and as a bound value). A membership check against a concrete value is
+    always decidable, so it never reports ``UNDECIDED`` once ``variable``
+    is bound to a literal.
 
     """
 

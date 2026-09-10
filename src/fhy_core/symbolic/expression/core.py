@@ -632,7 +632,7 @@ class Expression(
             return IdentifierExpression(other)
         elif type(other) is bool:
             raise _make_bare_bool_coercion_error("Operand", other)
-        elif type(other) in (int, float, str):
+        elif isinstance(other, (int, float)) or type(other) is str:
             return LiteralExpression(other)
         else:
             raise ValueError(
@@ -917,6 +917,11 @@ class LiteralExpression(Expression):
 
     - ``bool`` / ``int`` / ``float`` values are stored unchanged. ``bool`` is
       checked before ``int`` to keep the two distinct.
+    - A value whose type subclasses ``int`` (other than ``bool``) or
+      ``float``, such as an ``IntEnum`` member or a NumPy ``float64``, is
+      stored as the exact ``int`` or ``float`` it denotes. The subclass is
+      not part of the literal: the literal is equivalent to, keys like, and
+      serializes as the one built from that exact value.
     - ``str`` values matching the integer grammar (``\d+``) or the float
       grammar (``\d+\.\d*`` or ``\.\d+``) are stored as ``str`` to preserve
       the caller's exact text. Native ``float`` would impose IEEE-754
@@ -924,7 +929,8 @@ class LiteralExpression(Expression):
       choice. The design preserves both so downstream passes can perform
       exact-decimal arithmetic before any conversion to ``float``.
     - Any other ``str`` raises ``ValueError``; any other Python type raises
-      ``TypeError``.
+      ``TypeError``, including a NumPy ``int64``, which does not subclass
+      ``int``.
 
     Structural and alpha equivalence compare literals by *bucket* and
     *canonical form*, not by stored Python type:
@@ -949,11 +955,13 @@ class LiteralExpression(Expression):
 
     def __post_init__(self) -> None:
         value = self.value
-        if type(value) is bool:
+        if type(value) in (bool, int, float):
             return
-        if type(value) is int:
+        if isinstance(value, int):
+            object.__setattr__(self, "value", int(value))
             return
-        if type(value) is float:
+        if isinstance(value, float):
+            object.__setattr__(self, "value", float(value))
             return
         if not isinstance(value, str):
             raise TypeError(

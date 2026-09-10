@@ -6,6 +6,7 @@ import math
 import operator
 import pickle
 from collections.abc import Callable
+from enum import IntEnum
 from typing import Any
 
 import pytest
@@ -190,6 +191,147 @@ def test_literal_expression_rejects_unsupported_python_types(value: object) -> N
     """
     with pytest.raises(TypeError, match=r"(?i)literal"):
         LiteralExpression(value)  # type: ignore[arg-type]
+
+
+# =============================================================================
+# Number subclasses: the literal holds the exact value
+# =============================================================================
+
+
+class _Level(IntEnum):
+    """An ``int`` subclass, which a literal holds as the ``int`` it denotes."""
+
+    HIGH = 3
+
+
+class _Measure(float):
+    """A ``float`` subclass, which a literal holds as the ``float`` it denotes."""
+
+
+_NUMBER_SUBCLASS_VALUES = [
+    pytest.param(_Level.HIGH, 3, id="int_subclass"),
+    pytest.param(_Measure(1.5), 1.5, id="float_subclass"),
+]
+
+
+@pytest.mark.parametrize(("value", "exact_value"), _NUMBER_SUBCLASS_VALUES)
+def test_literal_expression_holds_a_number_subclass_as_its_exact_value(
+    value: float, exact_value: float
+) -> None:
+    """Test an ``int`` or ``float`` subclass is stored as the exact number.
+
+    The numeric parameter domains admit such a value, so the literal it
+    lifts into has to hold it. The subclass is not part of the literal.
+    """
+    literal = LiteralExpression(value)
+
+    assert type(literal.value) is type(exact_value)
+    assert literal.value == exact_value
+
+
+@pytest.mark.parametrize(("value", "exact_value"), _NUMBER_SUBCLASS_VALUES)
+def test_number_subclass_literal_is_equivalent_to_its_exact_twin(
+    value: float, exact_value: float
+) -> None:
+    """Test the literal compares and keys exactly as its exact-type twin does."""
+    literal = LiteralExpression(value)
+    twin = LiteralExpression(exact_value)
+
+    assert literal.is_structurally_equivalent(twin)
+    assert twin.is_structurally_equivalent(literal)
+    assert literal.is_alpha_equivalent(twin)
+    assert build_literal_equivalence_key(literal.value) == (
+        build_literal_equivalence_key(twin.value)
+    )
+
+
+@pytest.mark.parametrize(("value", "exact_value"), _NUMBER_SUBCLASS_VALUES)
+def test_number_subclass_literal_serializes_as_its_exact_twin(
+    value: float, exact_value: float
+) -> None:
+    """Test the wire form is the exact number's, so it round-trips to the twin."""
+    literal = LiteralExpression(value)
+    twin = LiteralExpression(exact_value)
+
+    data = literal.serialize_to_dict()
+    restored = LiteralExpression.deserialize_from_dict(data)
+
+    assert data == twin.serialize_to_dict()
+    assert type(restored.value) is type(exact_value)
+    assert restored.is_structurally_equivalent(twin)
+
+
+@pytest.mark.parametrize(("value", "exact_value"), _NUMBER_SUBCLASS_VALUES)
+def test_number_subclass_literal_pickles_to_its_exact_value(
+    value: float, exact_value: float
+) -> None:
+    """Test a pickle round trip restores the exact number, not the subclass."""
+    restored = pickle.loads(pickle.dumps(LiteralExpression(value)))
+
+    assert type(restored.value) is type(exact_value)
+    assert restored.value == exact_value
+
+
+@pytest.mark.parametrize(("value", "exact_value"), _NUMBER_SUBCLASS_VALUES)
+def test_builders_lift_a_number_subclass_operand_as_its_exact_value(
+    value: float, exact_value: float
+) -> None:
+    """Test the builders and operator dunders coerce such an operand too.
+
+    Each builder coerces any ``LiteralType`` value but a ``bool``, and a
+    bound factory hands its bounds to one, so an operand the literal can
+    hold has to reach it.
+    """
+    x = mock_identifier("x", 0)
+    expected = make_binary_expression(BinaryOperation.LESS, x, exact_value)
+
+    for expression in (
+        make_binary_expression(BinaryOperation.LESS, x, value),
+        IdentifierExpression(x) < value,
+    ):
+        assert expression.is_structurally_equivalent(expected)
+        assert isinstance(expression.right, LiteralExpression)
+        assert type(expression.right.value) is type(exact_value)
+
+
+def test_literal_expression_holds_a_numpy_float64_as_a_python_float() -> None:
+    """Test NumPy's ``float64``, a ``float`` subclass, is stored as a ``float``."""
+    np = pytest.importorskip("numpy")
+
+    literal = LiteralExpression(np.float64(1.5))
+
+    assert type(literal.value) is float
+    assert literal.is_structurally_equivalent(LiteralExpression(1.5))
+
+
+def test_literal_expression_holds_a_numpy_nan_as_a_nan_float() -> None:
+    """Test a NumPy NaN is a NaN ``float`` literal, equivalent to every NaN."""
+    np = pytest.importorskip("numpy")
+
+    literal = LiteralExpression(np.float64("nan"))
+
+    assert type(literal.value) is float
+    assert math.isnan(literal.value)
+    assert literal.is_structurally_equivalent(LiteralExpression(math.nan))
+
+
+@pytest.mark.parametrize("dtype_name", ["int64", "float32", "bool_"])
+def test_numpy_scalars_outside_the_python_number_types_stay_refused(
+    dtype_name: str,
+) -> None:
+    """Test a NumPy scalar that subclasses no Python number is refused everywhere.
+
+    NumPy's ``int64``, ``float32``, and ``bool_`` are not ``int``,
+    ``float``, or ``bool`` instances, so neither the literal nor a builder
+    admits one; none is half admitted by one entry point and not the other.
+    """
+    np = pytest.importorskip("numpy")
+    value = getattr(np, dtype_name)(1)
+
+    with pytest.raises(TypeError, match=r"(?i)literal"):
+        LiteralExpression(value)
+    with pytest.raises(ValueError, match="Unable to cast"):
+        make_binary_expression(BinaryOperation.LESS, mock_identifier("x", 0), value)
 
 
 # =============================================================================

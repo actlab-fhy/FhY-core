@@ -11,6 +11,9 @@ pinned directly here rather than only observed indirectly through
 import math
 import pickle
 from dataclasses import dataclass, field
+from enum import IntEnum
+
+import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.constraint import (
@@ -36,6 +39,41 @@ from .conftest import HashCollidingMember, mock_identifier
 # =============================================================================
 # Constant on structural-equivalence classes
 # =============================================================================
+
+
+class _Level(IntEnum):
+    """An ``int`` subclass, which a literal holds as the ``int`` it denotes."""
+
+    HIGH = 3
+
+
+class _Measure(float):
+    """A ``float`` subclass, which a literal holds as the ``float`` it denotes."""
+
+
+@pytest.mark.parametrize(
+    ("value", "exact_value"),
+    [
+        pytest.param(_Level.HIGH, 3, id="int_subclass"),
+        pytest.param(_Measure(1.5), 1.5, id="float_subclass"),
+    ],
+)
+def test_equation_keys_a_number_subclass_literal_like_its_exact_twin(
+    value: float, exact_value: float
+) -> None:
+    """Test a literal built from a number subclass keys as the exact number.
+
+    The literal holds the exact number, so the key, which renders the
+    literal's equivalence class, cannot tell the two constructions apart.
+    """
+    x = mock_identifier("x", 0)
+
+    def build(bound: float) -> EquationConstraint:
+        return EquationConstraint(
+            make_binary_expression(BinaryOperation.LESS, x, LiteralExpression(bound))
+        )
+
+    assert build(value).build_ordering_key() == build(exact_value).build_ordering_key()
 
 
 def test_equal_keys_for_in_set_constraints_built_in_different_member_orders() -> None:

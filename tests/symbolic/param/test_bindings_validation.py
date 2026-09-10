@@ -413,16 +413,24 @@ def test_a_boolean_bound_into_a_case_condition_still_decides(
 
 
 class _Level(IntEnum):
-    """An ``int`` subclass, which ``LiteralType`` admits and a literal does not."""
+    """An ``int`` subclass, which a literal holds as the ``int`` it denotes."""
 
     HIGH = 3
 
 
-_UNLIFTABLE_LITERALS = [
-    pytest.param("1e5", ValueError, id="exponent_string"),
-    pytest.param("-1.5", ValueError, id="signed_string"),
-    pytest.param("nan", ValueError, id="nan_string"),
-    pytest.param(_Level.HIGH, TypeError, id="int_subclass"),
+class _Measure(float):
+    """A ``float`` subclass, which a literal holds as the ``float`` it denotes."""
+
+
+_UNLIFTABLE_STRINGS = [
+    pytest.param("1e5", id="exponent_string"),
+    pytest.param("-1.5", id="signed_string"),
+    pytest.param("nan", id="nan_string"),
+]
+
+_NUMBER_SUBCLASS_VALUES = [
+    pytest.param(_Level.HIGH, id="int_subclass"),
+    pytest.param(_Measure(1.5), id="float_subclass"),
 ]
 
 
@@ -449,25 +457,24 @@ _UNLIFTABLE_LITERALS = [
         ),
     ],
 )
-@pytest.mark.parametrize(("value", "cause_type"), _UNLIFTABLE_LITERALS)
+@pytest.mark.parametrize("value", _UNLIFTABLE_STRINGS)
 def test_param_bindings_method_refuses_a_value_no_literal_can_hold(
     dependent_param: tuple[Param[int], Identifier, Identifier],
     call: Callable[[Param[int], ConstraintBindings], object],
-    value: Any,
-    cause_type: type[Exception],
+    value: str,
 ) -> None:
     """Test such a binding raises `ConstraintError` from every bindings-aware method.
 
     Each documents `ConstraintError` for a bound value that cannot be
-    lifted into the substitution environment; the literal constructor's
-    own error used to escape instead.
+    lifted into the substitution environment, with the literal
+    constructor's own error chained as the cause.
     """
     param, _, y = dependent_param
 
     with pytest.raises(ConstraintError, match=re.escape(repr(y))) as exception_info:
         call(param, {y: value})
 
-    assert isinstance(exception_info.value.__cause__, cause_type)
+    assert isinstance(exception_info.value.__cause__, ValueError)
 
 
 @pytest.mark.parametrize(
@@ -487,12 +494,11 @@ def test_param_bindings_method_refuses_a_value_no_literal_can_hold(
         ),
     ],
 )
-@pytest.mark.parametrize(("value", "cause_type"), _UNLIFTABLE_LITERALS)
+@pytest.mark.parametrize("value", _UNLIFTABLE_STRINGS)
 def test_domain_helper_refuses_a_value_no_literal_can_hold(
     dependent_param: tuple[Param[int], Identifier, Identifier],
     call: Callable[[Param[int], Identifier, Identifier, Any], object],
-    value: Any,
-    cause_type: type[Exception],
+    value: str,
 ) -> None:
     """Test the domain helpers the parameter queries use raise it too."""
     param, x, y = dependent_param
@@ -500,4 +506,64 @@ def test_domain_helper_refuses_a_value_no_literal_can_hold(
     with pytest.raises(ConstraintError) as exception_info:
         call(param, x, y, value)
 
-    assert isinstance(exception_info.value.__cause__, cause_type)
+    assert isinstance(exception_info.value.__cause__, ValueError)
+
+
+@pytest.mark.parametrize(
+    ("call", "expected"),
+    [
+        pytest.param(
+            lambda param, bindings: param.is_value_valid(1, bindings=bindings),
+            True,
+            id="is_value_valid",
+        ),
+        pytest.param(
+            lambda param, bindings: param.is_constraints_satisfied(
+                1, bindings=bindings
+            ),
+            True,
+            id="is_constraints_satisfied",
+        ),
+        pytest.param(
+            lambda param, bindings: param.validate_value(1, bindings=bindings),
+            None,
+            id="validate_value",
+        ),
+        pytest.param(
+            lambda param, bindings: param.assign(1, bindings=bindings).value,
+            1,
+            id="assign",
+        ),
+    ],
+)
+@pytest.mark.parametrize("value", _NUMBER_SUBCLASS_VALUES)
+def test_param_bindings_method_lifts_a_number_subclass_as_the_value_it_denotes(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+    call: Callable[[Param[int], ConstraintBindings], object],
+    expected: object,
+    value: float,
+) -> None:
+    """Test such a binding decides `x < y` as the exact number it denotes.
+
+    `LiteralType` admits an `int` or `float` subclass, so every
+    bindings-aware method has to lift one; `1 < y` holds for both values.
+    """
+    param, _, y = dependent_param
+
+    assert call(param, {y: value}) == expected
+
+
+@pytest.mark.parametrize("value", _NUMBER_SUBCLASS_VALUES)
+def test_domain_helpers_lift_a_number_subclass_as_the_value_it_denotes(
+    value: float,
+) -> None:
+    """Test the domain helpers the parameter queries use lift such a value too."""
+    x = mock_identifier("x", 1)
+    param = create_integer_param(
+        name=x, constraints=[EquationConstraint(IdentifierExpression(x) < 10)]
+    )
+
+    outcome = evaluate_system_outcome(param.constraint_system, {x: value})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+    assert are_all_constraints_satisfied(param.constraints, x, value)

@@ -7,7 +7,10 @@ primitive Python types plus ``Serializable`` leaves and tuple/frozenset
 containers of the same; validation rejects everything else.
 ``_TypedMember`` wraps every stored member so ``int``, ``float``, and
 ``bool`` never compare equal even when they carry the same value,
-including at the leaves of a nested ``tuple``/``frozenset``.
+including at the leaves of a nested ``tuple``/``frozenset``. A number
+whose type subclasses ``int`` or ``float`` is wrapped, and so stored, as
+the exact value ``LiteralExpression`` holds for it, so a member lifts to a
+literal that equals exactly the values membership accepts.
 ``_order_members_canonically``/``_build_member_ordering_key`` give a
 reproducible iteration order independent of the per-process hash seed,
 and the member (de)serialization codec (``_VALUES_CODEC``) emits members
@@ -66,7 +69,9 @@ A constraint member is one of: the four primitive Python types
 that is also ``Hashable``; or a tuple or frozenset of valid members.
 Members are stored with type-strict equality: ``int``, ``float``, and
 ``bool`` are not interchangeable, even at the leaves of nested
-containers.
+containers. A number whose type subclasses ``int`` or ``float``, such as
+an ``IntEnum`` member or a NumPy ``float64``, is stored as the exact
+``int`` or ``float`` it denotes.
 """
 
 _MemberT_co = TypeVar("_MemberT_co", covariant=True)
@@ -166,11 +171,21 @@ class _TypedMember(FrozenMixin):
 
 
 def _wrap_member(value: Any) -> _TypedMember:
-    """Recursively wrap a validated constraint member for type-strict storage."""
+    """Recursively wrap a validated constraint member for type-strict storage.
+
+    A number is wrapped as the value ``LiteralExpression`` holds for it, so
+    one whose type subclasses ``int`` or ``float`` is the exact value it
+    denotes. Membership then accepts exactly the values the member's
+    literal equals: an ``IntEnum`` member and the ``int`` it denotes are one
+    member, as they are one literal, while ``bool``, ``int``, and ``float``
+    stay apart, as the literal's buckets do.
+    """
     if isinstance(value, tuple):
         return _TypedMember(tuple(_wrap_member(v) for v in value))
     elif isinstance(value, frozenset):
         return _TypedMember(frozenset(_wrap_member(v) for v in value))
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        return _TypedMember(LiteralExpression(value).value)
     else:
         return _TypedMember(value)
 

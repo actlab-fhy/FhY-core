@@ -515,16 +515,24 @@ def test_every_leaf_ignores_an_out_of_scope_binding_value(
 
 
 class _Level(IntEnum):
-    """An ``int`` subclass, which ``LiteralType`` admits and a literal does not."""
+    """An ``int`` subclass, which a literal holds as the ``int`` it denotes."""
 
     HIGH = 3
 
 
-_UNLIFTABLE_LITERALS = [
-    pytest.param("1e5", ValueError, id="exponent_string"),
-    pytest.param("-1.5", ValueError, id="signed_string"),
-    pytest.param("nan", ValueError, id="nan_string"),
-    pytest.param(_Level.HIGH, TypeError, id="int_subclass"),
+class _Measure(float):
+    """A ``float`` subclass, which a literal holds as the ``float`` it denotes."""
+
+
+_UNLIFTABLE_STRINGS = [
+    pytest.param("1e5", id="exponent_string"),
+    pytest.param("-1.5", id="signed_string"),
+    pytest.param("nan", id="nan_string"),
+]
+
+_NUMBER_SUBCLASS_VALUES = [
+    pytest.param(_Level.HIGH, 3, id="int_subclass"),
+    pytest.param(_Measure(1.5), 1.5, id="float_subclass"),
 ]
 
 _EQUATION_BACKED_BINDINGS_METHODS = [
@@ -559,19 +567,17 @@ _EQUATION_BACKED_BINDINGS_METHODS = [
 
 
 @pytest.mark.parametrize("decide", _EQUATION_BACKED_BINDINGS_METHODS)
-@pytest.mark.parametrize(("value", "cause_type"), _UNLIFTABLE_LITERALS)
+@pytest.mark.parametrize("value", _UNLIFTABLE_STRINGS)
 def test_bindings_method_refuses_a_value_no_literal_can_hold(
     decide: Callable[[EquationConstraint, Mapping[Identifier, Any]], object],
-    value: Any,
-    cause_type: type[Exception],
+    value: str,
 ) -> None:
     """Test a `LiteralType` value no literal can hold raises `ConstraintError`.
 
     A `str` lifts into a `LiteralExpression` only in the integer or float
-    grammar, and an `int` subclass not at all. Every method that lifts a
-    binding let that constructor's own error escape, where the documented
-    contract is `ConstraintError` for a value that cannot be lifted into
-    the substitution environment.
+    grammar. The documented contract of every method that lifts a binding
+    is `ConstraintError` for a value that cannot be lifted into the
+    substitution environment, with the constructor's own error chained.
     """
     x = mock_identifier("x", 0)
     constraint = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 10))
@@ -580,7 +586,31 @@ def test_bindings_method_refuses_a_value_no_literal_can_hold(
         decide(constraint, {x: value})
 
     assert repr(value) in str(exception_info.value)
-    assert isinstance(exception_info.value.__cause__, cause_type)
+    assert isinstance(exception_info.value.__cause__, ValueError)
+
+
+@pytest.mark.parametrize("decide", _EQUATION_BACKED_BINDINGS_METHODS)
+@pytest.mark.parametrize(("value", "exact_value"), _NUMBER_SUBCLASS_VALUES)
+def test_bindings_method_lifts_a_number_subclass_as_the_value_it_denotes(
+    decide: Callable[[EquationConstraint, Mapping[Identifier, Any]], object],
+    value: float,
+    exact_value: float,
+) -> None:
+    """Test a bound `int` or `float` subclass decides as the exact value it denotes.
+
+    `LiteralType` admits such a value, as do the numeric parameter
+    domains, so every method that lifts a binding has to lift it. The
+    literal holds the exact number, so the answer is its exact twin's.
+    """
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(
+        make_binary_expression(BinaryOperation.EQUAL, x, exact_value)
+    )
+
+    answer = decide(constraint, {x: value})
+
+    assert answer is ConstraintOutcome.SATISFIED or answer is True
+    assert answer == decide(constraint, {x: exact_value})
 
 
 @pytest.mark.parametrize(
