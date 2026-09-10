@@ -745,10 +745,16 @@ def test_deserialize_data_from_dict_rejects_malformed_member_entry() -> None:
         )
 
 
-def test_json_serialization_rejects_a_nan_member() -> None:
-    """Test a NaN-valued member propagates the module's NaN-rejection contract."""
+def test_json_serialization_rejects_a_nan_literal() -> None:
+    """Test a NaN-valued literal propagates the module's NaN-rejection contract."""
     x = mock_identifier("x", 0)
-    system = create_constraint_system(InSetConstraint(x, {float("nan")}))
+    system = create_constraint_system(
+        EquationConstraint(
+            make_binary_expression(
+                BinaryOperation.LESS, x, LiteralExpression(float("nan"))
+            )
+        )
+    )
 
     with pytest.raises(SerializationValueError, match="JSON-finite numeric payload"):
         system.to_json()

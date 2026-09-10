@@ -9,6 +9,7 @@ import copy
 import dataclasses
 import io
 import json
+import math
 import pickle
 from collections.abc import Callable
 from enum import IntEnum
@@ -17,12 +18,17 @@ from typing import Any, cast
 import pytest
 
 from fhy_core.identifier import Identifier
+from fhy_core.serialization import (
+    DeserializationValueError,
+    serialize_registry_wrapped_value,
+)
 from fhy_core.symbolic.constraint import (
     Constraint,
     ConstraintError,
     ConstraintOutcome,
     InSetConstraint,
     NotInSetConstraint,
+    create_constraint_system,
 )
 from fhy_core.symbolic.constraint import core as constraint_core_module
 from fhy_core.symbolic.expression import LiteralExpression
@@ -384,16 +390,6 @@ def test_set_constraint_with_nested_frozenset_uses_strict_inner_equality(
 
     assert constraint.is_satisfied_with_bindings({x: frozenset({True})}) is in_set  # type: ignore[dict-item]  # test: type-strict frozenset member off-union
     assert constraint.is_satisfied_with_bindings({x: frozenset({1})}) is not in_set  # type: ignore[dict-item]  # test: type-strict frozenset member off-union
-
-
-def test_in_set_constraint_with_nan_member_does_not_satisfy_distinct_nan_instance() -> (
-    None
-):
-    """Test a distinct NaN instance is not detected as a member."""
-    x = mock_identifier("x", 0)
-    constraint = InSetConstraint(x, {float("nan")})
-
-    assert not constraint.is_satisfied_with_bindings({x: float("nan")})
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
@@ -1010,3 +1006,106 @@ def test_set_constraint_container_member_holds_number_subclass_leaves_exactly() 
 
     assert [type(leaf) for leaf in leaves] == [int, float]
     assert constraint.evaluate_with_bindings(bindings) is ConstraintOutcome.SATISFIED
+
+
+# =============================================================================
+# NaN set members
+# =============================================================================
+
+_NAN_MEMBER_FORMS = [
+    pytest.param(float("nan"), id="bare_float"),
+    pytest.param(math.nan, id="math_nan"),
+    pytest.param((float("nan"), 1.0), id="nested_in_tuple"),
+    pytest.param(frozenset({float("nan")}), id="nested_in_frozenset"),
+]
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize("nan_member", _NAN_MEMBER_FORMS)
+def test_set_constraint_rejects_a_declared_nan_member(
+    factory: SetConstraintFactory,
+    nan_member: Any,
+) -> None:
+    """Test declaring a NaN member, bare or nested, raises `ConstraintError`."""
+    with pytest.raises(ConstraintError, match="NaN"):
+        factory(mock_identifier("x", 0), {nan_member})
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_rejects_a_declared_numpy_float64_nan_member(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test a NumPy `float64` NaN member is refused like any float NaN."""
+    np = pytest.importorskip("numpy")
+
+    with pytest.raises(ConstraintError, match="NaN"):
+        factory(mock_identifier("x", 0), {np.float64("nan")})
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+def test_set_constraint_deserialize_rejects_a_tampered_nan_member(
+    kind: type[InSetConstraint | NotInSetConstraint],
+) -> None:
+    """Test deserializing a payload carrying a NaN member fails like construction."""
+    payload = kind(mock_identifier("x", 0), {1.0}).serialize_to_dict()
+    payload["__data__"]["values"] = [  # type: ignore[index]  # test: modify serialized
+        serialize_registry_wrapped_value(float("nan")),
+    ]
+
+    with pytest.raises(DeserializationValueError, match="NaN"):
+        kind.deserialize_from_dict(payload)
+
+
+_NAN_BINDING_OUTCOMES = [
+    pytest.param(InSetConstraint, ConstraintOutcome.VIOLATED, id="in_set"),
+    pytest.param(NotInSetConstraint, ConstraintOutcome.SATISFIED, id="not_in_set"),
+]
+
+
+@pytest.mark.parametrize("factory, outcome", _NAN_BINDING_OUTCOMES)
+def test_set_constraint_evaluate_with_bindings_decides_a_nan_binding(
+    factory: SetConstraintFactory,
+    outcome: ConstraintOutcome,
+) -> None:
+    """Test a NaN-bound value against an ordinary member still decides."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1.0})
+
+    assert constraint.evaluate_with_bindings({x: float("nan")}) is outcome
+
+
+@pytest.mark.parametrize("factory, outcome", _NAN_BINDING_OUTCOMES)
+def test_constraint_system_evaluate_with_bindings_decides_a_nan_binding(
+    factory: SetConstraintFactory,
+    outcome: ConstraintOutcome,
+) -> None:
+    """Test a NaN binding decides through the constraint system's bindings path too."""
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(factory(x, {1.0}))
+
+    assert system.evaluate_with_bindings({x: float("nan")}) is outcome
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("factory, outcome", _NAN_BINDING_OUTCOMES)
+def test_constraint_system_check_satisfiability_with_bindings_decides_a_nan_binding(
+    factory: SetConstraintFactory,
+    outcome: ConstraintOutcome,
+) -> None:
+    """Test a NaN binding decides through the satisfiability-with-bindings path too."""
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(factory(x, {1.0}))
+
+    assert system.check_satisfiability_with_bindings({x: float("nan")}, {}) is outcome
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_still_accepts_an_ordinary_float_member(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test an ordinary, non-NaN float member still constructs and decides."""
+    x = mock_identifier("x", 0)
+    in_set = factory is InSetConstraint
+    constraint = factory(x, {1.5})
+
+    assert constraint.is_satisfied_with_bindings({x: 1.5}) is in_set

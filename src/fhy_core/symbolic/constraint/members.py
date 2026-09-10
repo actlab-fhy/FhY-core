@@ -4,7 +4,9 @@ A set constraint's ``values`` collection is stored, compared, and
 serialized through this module's machinery rather than through plain
 Python collection semantics. ``ConstraintMember`` names the four
 primitive Python types plus ``Serializable`` leaves and tuple/frozenset
-containers of the same; validation rejects everything else.
+containers of the same; validation rejects everything else, including a
+float NaN, bare or nested inside a tuple/frozenset, since NaN is unequal
+to itself and could never be matched to a bound value.
 ``_TypedMember`` wraps every stored member so ``int``, ``float``, and
 ``bool`` never compare equal even when they carry the same value,
 including at the leaves of a nested ``tuple``/``frozenset``. A number
@@ -24,6 +26,7 @@ __all__ = [
     "does_member_lift_to_expression",
 ]
 
+import math
 from collections.abc import Collection, Hashable, Iterator, Mapping
 from typing import (
     Any,
@@ -202,6 +205,36 @@ def _unwrap_member(wrapped: Any) -> Any:
         return wrapped
 
 
+def _raise_if_member_contains_nan(value: Any) -> None:
+    """Raise if a declared constraint member is, or contains, a float NaN.
+
+    NaN is unequal to itself, so a NaN member could never match the bound
+    value that produced it, and two independently constructed NaNs could
+    never be recognized as the same member. This mirrors the refusal the
+    ordinal and permutation domains apply to their own members. A number
+    whose type subclasses ``float``, such as a NumPy ``float64``, is
+    caught the same way ``isinstance`` and ``math.isnan`` catch any other
+    float.
+
+    Args:
+        value: A constraint member already accepted by
+            ``_validate_constraint_member``.
+
+    Raises:
+        ConstraintError: If ``value`` is a float NaN, or a tuple/frozenset
+            containing one at any depth.
+
+    """
+    if isinstance(value, (tuple, frozenset)):
+        for nested_value in value:
+            _raise_if_member_contains_nan(nested_value)
+    elif isinstance(value, float) and math.isnan(value):
+        raise ConstraintError(
+            f"Constraint member {value!r} is NaN: NaN is unequal to itself, "
+            "so a NaN member could never be matched to a bound value."
+        )
+
+
 def _normalize_constraint_member_collection(
     values: Collection[ConstraintMember],
 ) -> frozenset[_TypedMember]:
@@ -216,8 +249,10 @@ def _normalize_constraint_member_collection(
     Raises:
         ConstraintError: If ``values`` is itself a ``str``/``bytes``/
             ``bytearray`` (which would silently split into its elements), a
-            ``Mapping`` (which would silently keep only its keys), or if
-            any member fails validation or is unhashable after validation.
+            ``Mapping`` (which would silently keep only its keys), if any
+            member fails validation, if any member is a NaN float or
+            contains one nested inside a tuple/frozenset, or if any member
+            is unhashable after validation.
 
     """
     if isinstance(values, (str, bytes, bytearray)):
@@ -237,6 +272,7 @@ def _normalize_constraint_member_collection(
     wrapped_values: list[_TypedMember] = []
     for value in values:
         _validate_constraint_member(value)
+        _raise_if_member_contains_nan(value)
         wrapped = _wrap_member(value)
         try:
             hash(wrapped)
