@@ -282,7 +282,9 @@ def convert_expression_to_z3_expression(
     a logical connective, or a provably numeric piecewise case condition,
     is refused here rather than handed to Z3,
     which reports the sort mismatch as a backend exception the pass
-    infrastructure would then wrap. A registered native constant's
+    infrastructure would then wrap. An identifier ``symbol_types``
+    declares INT or REAL counts as numeric, since that is the sort it
+    would be lowered with. A registered native constant's
     canonical identifier is refused as well: the bridge has no lowering
     for a constant, and lowering the identifier as a variable would let
     Z3 choose the constant's value.
@@ -302,7 +304,8 @@ def convert_expression_to_z3_expression(
             constant's canonical identifier.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, in ``expression`` provably denotes a number. Screened
+            condition, in ``expression`` provably denotes a number, counting
+            an identifier ``symbol_types`` declares INT or REAL. Screened
             after the ``symbol_types`` precondition, so a missing entry
             raises first.
         NativeConstantLoweringError: If ``expression`` references a
@@ -326,7 +329,7 @@ def convert_expression_to_z3_expression(
         raise KeyError(
             f"symbol_types is missing entries for identifiers: {sorted_missing}"
         )
-    validate_logical_operands(expression)
+    validate_logical_operands(expression, symbol_types=resolved_symbol_types)
     if constant_identifiers:
         sorted_constants = sorted(constant_identifiers, key=lambda i: i.id)
         raise NativeConstantLoweringError(
@@ -383,7 +386,8 @@ def holds_for_all_free_assignments(
     Raises:
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, in ``expression`` provably denotes a number, which Z3
+            condition, in ``expression`` provably denotes a number, counting
+            an identifier ``symbol_types`` declares INT or REAL, which Z3
             has no faithful lowering for.
         NativeConstantLoweringError: If ``expression`` references a
             registered native constant's canonical identifier.
@@ -488,8 +492,9 @@ def does_expression_imply(
             identifier referenced by either expression.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, in either expression provably denotes a number. The
-            check runs over the conjunction the implication is encoded as,
+            condition, in either expression provably denotes a number,
+            counting an identifier ``symbol_types`` declares INT or REAL.
+            The check runs over the conjunction the implication is encoded as,
             so a numeric ``antecedent`` or ``consequent`` is caught too.
         NativeConstantLoweringError: If either expression references a
             registered native constant's canonical identifier.
@@ -565,7 +570,8 @@ def assert_holds_for_all_free_assignments(
         KeyError: If ``symbol_types`` is missing an entry.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, in ``expression`` provably denotes a number.
+            condition, in ``expression`` provably denotes a number, counting
+            an identifier ``symbol_types`` declares INT or REAL.
         NativeConstantLoweringError: If ``expression`` references a
             registered native constant's canonical identifier.
         RuntimeError: If the underlying solver returns an unrecognized
@@ -615,7 +621,8 @@ def assert_expression_implies(
         KeyError: If ``symbol_types`` is missing an entry.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, in either expression provably denotes a number.
+            condition, in either expression provably denotes a number,
+            counting an identifier ``symbol_types`` declares INT or REAL.
         NativeConstantLoweringError: If either expression references a
             registered native constant's canonical identifier.
         RuntimeError: If the underlying solver returns an unrecognized

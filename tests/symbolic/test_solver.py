@@ -15,6 +15,7 @@ from fhy_core.symbolic.expression import (
     IdentifierExpression,
     LiteralExpression,
     NonBooleanLogicalOperandError,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     get_native_constant_identifier,
@@ -2203,6 +2204,99 @@ def test_z3_question_reports_a_native_constant_under_a_connective_as_ill_typed(
 
     with pytest.raises(NonBooleanLogicalOperandError):
         query(expression)
+
+
+_Z3_QUESTIONS_OVER_ONE_SORTED_EXPRESSION = [
+    pytest.param(check_expression_satisfiability, id="check_expression_satisfiability"),
+    pytest.param(
+        lambda expression, symbol_types: does_expression_imply(
+            expression, LiteralExpression(True), symbol_types
+        ),
+        id="does_expression_imply_antecedent",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: does_expression_imply(
+            LiteralExpression(True), expression, symbol_types
+        ),
+        id="does_expression_imply_consequent",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: holds_for_all_free_assignments(
+            frozenset(), expression, symbol_types
+        ),
+        id="holds_for_all_free_assignments",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: assert_holds_for_all_free_assignments(
+            frozenset(), expression, symbol_types
+        ),
+        id="assert_holds_for_all_free_assignments",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: assert_expression_implies(
+            expression, LiteralExpression(True), symbol_types
+        ),
+        id="assert_expression_implies_antecedent",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: assert_expression_implies(
+            LiteralExpression(True), expression, symbol_types
+        ),
+        id="assert_expression_implies_consequent",
+    ),
+]
+
+_SortedQuery = Callable[[Expression, dict[Identifier, SymbolType]], bool | None]
+
+
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_SORTED_EXPRESSION)
+@pytest.mark.parametrize("sort", [SymbolType.INT, SymbolType.REAL])
+@pytest.mark.parametrize(
+    "build_expression",
+    [
+        pytest.param(
+            lambda operand: Expression.logical_and(operand, LiteralExpression(True)),
+            id="and",
+        ),
+        pytest.param(
+            lambda operand: (
+                PiecewiseExpression(
+                    (operand,), (LiteralExpression(1),), LiteralExpression(2)
+                )
+                > 0
+            ),
+            id="case_condition",
+        ),
+    ],
+)
+def test_z3_question_reports_a_numeric_sort_in_a_boolean_position(
+    build_expression: Callable[[Expression], Expression],
+    sort: SymbolType,
+    query: _SortedQuery,
+) -> None:
+    """Test an identifier declared INT or REAL in a Boolean position is ill-typed.
+
+    Z3 rejected the sort mismatch with a raw exception, which surfaced
+    wrapped as ``PassExecutionError``: a failure of the tool, when the
+    question itself has no meaning under any backend.
+    """
+    x = mock_identifier("x", 0)
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(build_expression(IdentifierExpression(x)), {x: sort})
+
+
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_SORTED_EXPRESSION)
+def test_z3_question_decides_a_boolean_sort_in_a_boolean_position(
+    query: _SortedQuery,
+) -> None:
+    """Test an identifier declared BOOL under a connective is still decided."""
+    x = mock_identifier("x", 0)
+    expression = Expression.logical_and(
+        IdentifierExpression(x), LiteralExpression(True)
+    )
+
+    assert isinstance(query(expression, {x: SymbolType.BOOL}), bool)
 
 
 def test_native_constant_screen_warns_naming_the_constant_and_the_entry_point(

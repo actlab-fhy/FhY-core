@@ -46,6 +46,7 @@ from fhy_core.serialization import (
     WrappedFamilySerializable,
     register_serializable,
 )
+from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.term import (
     DerivedEquivalenceMixin,
     Term,
@@ -1155,6 +1156,11 @@ _ARITHMETIC_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
 )
 """Binary operations that denote arithmetic, so their result is a number."""
 
+_NUMERIC_SYMBOL_TYPES: frozenset[SymbolType] = frozenset(
+    {SymbolType.INT, SymbolType.REAL}
+)
+"""Declared sorts under which an identifier lowers to a number."""
+
 
 def _get_native_constant_sort(identifier: Identifier) -> FunctionSort | None:
     """Return the declared sort of the native constant ``identifier`` denotes.
@@ -1172,34 +1178,40 @@ def _get_native_constant_sort(identifier: Identifier) -> FunctionSort | None:
 
 
 def _is_identifier_provably_non_boolean(
-    identifier: Identifier, environment: Mapping[Identifier, Expression]
+    identifier: Identifier,
+    environment: Mapping[Identifier, Expression],
+    symbol_types: Mapping[Identifier, SymbolType],
 ) -> bool:
     """Return whether ``identifier`` provably denotes a number.
 
     A native constant's canonical identifier takes the constant's declared
-    sort, whatever ``environment`` binds it to. Any other identifier takes
-    its binding's classification, and an unbound one answers False.
+    sort, whatever ``environment`` binds it to. Any other bound identifier
+    takes its binding's classification. An unbound one is numeric when
+    ``symbol_types`` declares it INT or REAL, and answers False otherwise.
     """
     constant_sort = _get_native_constant_sort(identifier)
     if constant_sort is not None:
         return constant_sort is not FunctionSort.BOOL
     bound = environment.get(identifier)
-    return bound is not None and _is_provably_non_boolean(bound, {})
+    if bound is not None:
+        return _is_provably_non_boolean(bound, {}, symbol_types)
+    return symbol_types.get(identifier) in _NUMERIC_SYMBOL_TYPES
 
 
 def _is_provably_non_boolean(
-    expression: Expression, environment: Mapping[Identifier, Expression]
+    expression: Expression,
+    environment: Mapping[Identifier, Expression],
+    symbol_types: Mapping[Identifier, SymbolType],
 ) -> bool:
     """Return whether ``expression`` provably denotes a number, not a Boolean.
 
     Answers conservatively: a node whose sort cannot be read off the tree
-    -- an identifier with no ``environment`` binding, and a call, whose
-    result sort lives in the registry rather than in the node -- answers
-    False, so a caller screening on "provably non-Boolean" refuses only
-    what it can prove. A registered native constant's canonical
-    identifier is the exception: it denotes the constant's value, so it
-    takes the constant's declared sort, which is REAL for every built-in
-    constant.
+    or ``symbol_types`` -- an identifier with no ``environment`` binding
+    and no numeric declared sort, and a call, whose result sort lives in
+    the registry rather than in the node -- answers False, so a caller
+    screening on "provably non-Boolean" refuses only what it can prove. A
+    registered native constant's canonical identifier takes the constant's
+    declared sort, which is REAL for every built-in constant.
 
     Args:
         expression: Node whose sort is wanted.
@@ -1211,6 +1223,9 @@ def _is_provably_non_boolean(
             canonical identifier is classified by the constant's sort
             whatever it is bound to: it names a value rather than a
             variable, and the SymPy bridge lowers it to that value.
+        symbol_types: Sorts declared for the identifiers left free once
+            ``environment`` is substituted, including any a bound value
+            brings in; an identifier declared INT or REAL is numeric.
 
     Returns:
         True when the node denotes a number.
@@ -1220,14 +1235,16 @@ def _is_provably_non_boolean(
         bucket, _ = _classify_literal_value(expression.value)
         return bucket != _BOOLEAN_LITERAL_BUCKET
     elif isinstance(expression, IdentifierExpression):
-        return _is_identifier_provably_non_boolean(expression.identifier, environment)
+        return _is_identifier_provably_non_boolean(
+            expression.identifier, environment, symbol_types
+        )
     elif isinstance(expression, UnaryExpression):
         return expression.operation is not UnaryOperation.LOGICAL_NOT
     elif isinstance(expression, BinaryExpression):
         return expression.operation in _ARITHMETIC_BINARY_OPERATIONS
     elif isinstance(expression, PiecewiseExpression):
         return all(
-            _is_provably_non_boolean(branch, environment)
+            _is_provably_non_boolean(branch, environment, symbol_types)
             for branch in (*expression.values, expression.otherwise)
         )
     return False
@@ -1255,14 +1272,16 @@ def _get_boolean_position_operands(expression: Expression) -> tuple[Expression, 
 
 
 def _find_non_boolean_logical_operand(
-    expression: Expression, environment: Mapping[Identifier, Expression]
+    expression: Expression,
+    environment: Mapping[Identifier, Expression],
+    symbol_types: Mapping[Identifier, SymbolType],
 ) -> tuple[Expression, Expression] | None:
     """Return the first numeric Boolean-position operand paired with its parent."""
     for operand in _get_boolean_position_operands(expression):
-        if _is_provably_non_boolean(operand, environment):
+        if _is_provably_non_boolean(operand, environment, symbol_types):
             return expression, operand
     for child in expression.get_visit_children():
-        found = _find_non_boolean_logical_operand(child, environment)
+        found = _find_non_boolean_logical_operand(child, environment, symbol_types)
         if found is not None:
             return found
     return None
@@ -1271,6 +1290,8 @@ def _find_non_boolean_logical_operand(
 def validate_logical_operands(
     expression: Expression,
     environment: Mapping[Identifier, Expression] | None = None,
+    *,
+    symbol_types: Mapping[Identifier, SymbolType] | None = None,
 ) -> None:
     """Raise unless every Boolean position in ``expression`` holds a Boolean.
 
@@ -1286,10 +1307,12 @@ def validate_logical_operands(
     Only a provably numeric operand is refused. A registered native
     constant's canonical identifier counts as the constant's declared
     sort, which is REAL for every built-in constant, so ``pi`` under a
-    connective is refused. Any other identifier with no ``environment``
-    binding, and a call, keep their sort off the tree, so they pass: the
-    screen refuses what it can prove ill-typed rather than everything it
-    cannot prove well-typed.
+    connective is refused. An unbound identifier ``symbol_types`` declares
+    INT or REAL is numeric too, since that is the sort the Z3 bridge
+    lowers it with. Any other identifier with no ``environment`` binding
+    -- one declared BOOL or not declared at all -- and a call keep their
+    sort off the tree, so they pass: the screen refuses what it can prove
+    ill-typed rather than everything it cannot prove well-typed.
 
     Args:
         expression: Expression about to be lowered to a symbolic backend,
@@ -1300,6 +1323,12 @@ def validate_logical_operands(
             consulted: the identifier names a value rather than a
             variable. Defaults to ``None``, meaning no identifier is
             bound.
+        symbol_types: Sorts declared for the identifiers left free once
+            ``environment`` is substituted, as the Z3 bridge reads them,
+            so an identifier declared INT or REAL is screened as a
+            number. An identifier ``environment`` binds is classified by
+            its value instead. Defaults to ``None``, meaning no sort is
+            declared.
 
     Raises:
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
@@ -1307,7 +1336,9 @@ def validate_logical_operands(
             condition, provably denotes a number.
 
     """
-    found = _find_non_boolean_logical_operand(expression, environment or {})
+    found = _find_non_boolean_logical_operand(
+        expression, environment or {}, symbol_types or {}
+    )
     if found is None:
         return
     connective, operand = found

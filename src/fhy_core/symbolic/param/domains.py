@@ -850,7 +850,9 @@ def _does_own_admit_a_value_outside(
 
     Raises:
         NonBooleanLogicalOperandError: If ``own``'s screened system
-            holds a provably numeric operand in a Boolean position.
+            holds a provably numeric operand in a Boolean position,
+            counting ``own_variable`` itself when ``symbol_type`` is INT
+            or REAL.
 
     """
     own_system, is_exact = _build_screened_constraint_system_with_fidelity(
@@ -976,7 +978,8 @@ def compute_constraint_implication_subset(
             evaluates holds a provably numeric operand in a Boolean
             position -- under a logical connective or as a piecewise
             case condition -- counting an in-set candidate bound to its
-            variable. Such a constraint is ill-typed rather than
+            variable, or the shared variable itself when ``symbol_type``
+            is INT or REAL. Such a constraint is ill-typed rather than
             undecided, so it raises instead of reporting ``UNDECIDED``.
 
     """
@@ -1393,7 +1396,8 @@ def _numeric_has_feasible_value(
         NonBooleanLogicalOperandError: If a constraint the enumeration
             or the solver evaluates holds a provably numeric operand in a
             Boolean position, counting an in-set candidate bound to
-            ``variable``.
+            ``variable``, or ``variable`` itself when ``symbol_type`` is
+            INT or REAL.
 
     """
     if any(isinstance(c, InSetConstraint) for c in constraints):

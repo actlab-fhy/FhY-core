@@ -2753,3 +2753,57 @@ def test_bindings_paths_ignore_a_constant_binding_out_of_scope(
     outcome = decide(system, {pi: 4, x: 5}, {})
 
     assert outcome is ConstraintOutcome.SATISFIED
+
+
+_SOLVER_BACKED_QUESTIONS = [
+    pytest.param(
+        lambda system, symbol_types: system.check_satisfiability(symbol_types),
+        id="check_satisfiability",
+    ),
+    pytest.param(
+        lambda system, symbol_types: system.check_satisfiability_with_bindings(
+            {}, symbol_types
+        ),
+        id="check_satisfiability_with_bindings",
+    ),
+    pytest.param(
+        lambda system, symbol_types: system.check_implication(
+            create_constraint_system(), symbol_types
+        ),
+        id="check_implication_antecedent",
+    ),
+    pytest.param(
+        lambda system, symbol_types: create_constraint_system(
+            EquationConstraint(LiteralExpression(True))
+        ).check_implication(system, symbol_types),
+        id="check_implication_consequent",
+    ),
+]
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _SOLVER_BACKED_QUESTIONS)
+@pytest.mark.parametrize("sort", [SymbolType.INT, SymbolType.REAL])
+def test_solver_questions_report_a_numeric_sort_in_a_boolean_position(
+    decide: Callable[
+        [ConstraintSystem, Mapping[Identifier, SymbolType]], ConstraintOutcome
+    ],
+    sort: SymbolType,
+) -> None:
+    """Test a variable declared INT or REAL under a connective is ill-typed.
+
+    The system hands the caller's sorts to the solver seam, whose screen
+    now reads them, so the sort mismatch is reported as the typed error
+    rather than as Z3's own exception wrapped in ``PassExecutionError``.
+    """
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(
+        EquationConstraint(
+            make_binary_expression(
+                BinaryOperation.LOGICAL_AND, x, LiteralExpression(True)
+            )
+        )
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        decide(system, {x: sort})

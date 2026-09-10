@@ -446,9 +446,10 @@ class ConstraintSystem(
             NonBooleanLogicalOperandError: If the lowered conjunction
                 holds a provably numeric operand in a Boolean position
                 -- under a logical connective or as a piecewise case
-                condition. Such a conjunction is ill-typed rather than
-                undecidable, so it raises instead of reporting
-                ``UNDECIDED``. Checked after the symbol-type
+                condition -- counting a variable ``symbol_types``
+                declares INT or REAL. Such a conjunction is ill-typed
+                rather than undecidable, so it raises instead of
+                reporting ``UNDECIDED``. Checked after the symbol-type
                 precondition and ahead of the seam's hazard screen, so
                 it is reported even where the screen would also refuse
                 the conjunction.
@@ -536,7 +537,8 @@ class ConstraintSystem(
             NonBooleanLogicalOperandError: If the conjunction holds a
                 provably numeric operand in a Boolean position -- under
                 a logical connective or as a piecewise case condition --
-                counting an identifier ``bindings`` binds to a number.
+                counting an identifier ``bindings`` binds to a number,
+                or an unbound one ``symbol_types`` declares INT or REAL.
                 Checked against the bindings before they are
                 substituted, since substituting a number into a case
                 condition would build a piecewise that refuses its own
@@ -552,7 +554,7 @@ class ConstraintSystem(
         environment = _coerce_bindings_to_environment(bindings)
         conjunction = self.convert_to_expression()
         _validate_symbol_types_cover_residual(conjunction, environment, symbol_types)
-        validate_logical_operands(conjunction, environment)
+        validate_logical_operands(conjunction, environment, symbol_types=symbol_types)
         captured = _find_bound_native_constants(
             conjunction.get_free_identifiers(), environment
         )
@@ -619,8 +621,9 @@ class ConstraintSystem(
             NonBooleanLogicalOperandError: If either side's lowered
                 expression holds a provably numeric operand in a Boolean
                 position -- under a logical connective or as a piecewise
-                case condition. Such a pair is ill-typed rather than
-                undecidable, so it raises instead of reporting
+                case condition -- counting a variable ``symbol_types``
+                declares INT or REAL. Such a pair is ill-typed rather
+                than undecidable, so it raises instead of reporting
                 ``UNDECIDED``.
 
         """

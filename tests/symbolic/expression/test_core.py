@@ -43,6 +43,7 @@ from fhy_core.symbolic.expression import (
     register_native_constant,
     validate_logical_operands,
 )
+from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.traits import FrozenMutationError, HasOperands, StructuralEquivalence
 from fhy_core.utils.override import override
 
@@ -1769,6 +1770,89 @@ def test_validate_logical_operands_accepts_a_constant_outside_a_boolean_position
     variable whose sort the tree does not carry.
     """
     validate_logical_operands(expression)
+
+
+@pytest.mark.parametrize(
+    "build_expression",
+    [
+        pytest.param(
+            lambda operand: logical_and(operand, LiteralExpression(True)), id="and"
+        ),
+        pytest.param(logical_not, id="not"),
+        pytest.param(
+            lambda operand: piecewise(
+                (operand, LiteralExpression(1)), otherwise=LiteralExpression(2)
+            ),
+            id="case_condition",
+        ),
+    ],
+)
+@pytest.mark.parametrize("sort", [SymbolType.INT, SymbolType.REAL])
+def test_validate_logical_operands_rejects_an_identifier_declared_numeric(
+    sort: SymbolType, build_expression: Callable[[Expression], Expression]
+) -> None:
+    """Test an identifier declared INT or REAL is refused in a Boolean position.
+
+    ``symbol_types`` is the sort the Z3 bridge lowers the identifier with,
+    so an INT or REAL identifier under a connective is a sort mismatch
+    that Z3 rejects with an exception of its own.
+    """
+    x = mock_identifier("x", 0)
+
+    with pytest.raises(
+        NonBooleanLogicalOperandError, match="provably denotes a number"
+    ):
+        validate_logical_operands(
+            build_expression(IdentifierExpression(x)), symbol_types={x: sort}
+        )
+
+
+@pytest.mark.parametrize(
+    "declared_sort", [SymbolType.BOOL, None], ids=["declared_bool", "undeclared"]
+)
+def test_validate_logical_operands_accepts_an_identifier_not_declared_numeric(
+    declared_sort: SymbolType | None,
+) -> None:
+    """Test an identifier declared BOOL, or with no declared sort, still passes."""
+    x = mock_identifier("x", 0)
+    symbol_types = {} if declared_sort is None else {x: declared_sort}
+
+    validate_logical_operands(
+        logical_and(IdentifierExpression(x), LiteralExpression(True)),
+        symbol_types=symbol_types,
+    )
+
+
+def test_validate_logical_operands_reads_a_binding_ahead_of_a_declared_sort() -> None:
+    """Test a bound identifier is classified by its value, not its declared sort.
+
+    Substitution replaces the identifier, so its declared sort never
+    reaches a backend; the value that takes its place does.
+    """
+    x = mock_identifier("x", 0)
+    expression = logical_and(IdentifierExpression(x), LiteralExpression(True))
+
+    validate_logical_operands(
+        expression, {x: LiteralExpression(False)}, symbol_types={x: SymbolType.INT}
+    )
+
+
+def test_validate_logical_operands_reads_the_sort_a_binding_brings_in() -> None:
+    """Test an identifier a binding substitutes in is screened by its declared sort.
+
+    ``symbol_types`` describes the identifiers left free after
+    substitution, and ``q`` is one of them once it replaces ``p``.
+    """
+    p = mock_identifier("p", 0)
+    q = mock_identifier("q", 1)
+    expression = logical_and(IdentifierExpression(p), LiteralExpression(True))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_logical_operands(
+            expression,
+            {p: IdentifierExpression(q)},
+            symbol_types={q: SymbolType.INT},
+        )
 
 
 def test_validate_logical_operands_screens_a_case_condition_bound_to_a_number() -> None:

@@ -1334,6 +1334,22 @@ def test_convert_expression_to_z3_reports_a_constant_operand_as_ill_typed() -> N
         convert_expression_to_z3_expression(expression, {})
 
 
+@pytest.mark.parametrize("sort", [SymbolType.INT, SymbolType.REAL])
+def test_convert_expression_to_z3_reports_a_numeric_sort_operand_as_ill_typed(
+    sort: SymbolType,
+) -> None:
+    """Test an INT or REAL identifier under a connective raises the typed error.
+
+    Z3 rejects the sort mismatch with its own exception, which the pass
+    infrastructure used to wrap as ``PassExecutionError``.
+    """
+    x = mock_identifier("x", 0)
+    expression = logical_and(IdentifierExpression(x), LiteralExpression(True))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        convert_expression_to_z3_expression(expression, {x: sort})
+
+
 def test_bridge_question_refuses_a_native_constant_it_would_decide_wrongly() -> None:
     """Test the bridge's own questions refuse a constant, not only the solver seam.
 

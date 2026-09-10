@@ -22,7 +22,9 @@ from fhy_core.symbolic.constraint import (
 )
 from fhy_core.symbolic.expression import (
     IdentifierExpression,
+    LiteralExpression,
     NonBooleanLogicalOperandError,
+    logical_and,
 )
 from fhy_core.symbolic.param import (
     Param,
@@ -905,3 +907,101 @@ def test_subset_raises_for_a_number_in_a_case_condition(
 
     with pytest.raises(NonBooleanLogicalOperandError):
         query(own, other)
+
+
+_BOOLEAN_POSITION_CONSTRAINTS = [
+    pytest.param(
+        lambda variable: EquationConstraint(
+            logical_and(IdentifierExpression(variable), LiteralExpression(True))
+        ),
+        id="and",
+    ),
+    pytest.param(
+        lambda variable: build_case_condition_constraint(
+            IdentifierExpression(variable)
+        ),
+        id="case_condition",
+    ),
+]
+
+_NUMERIC_PARAM_FACTORIES = [
+    pytest.param(create_integer_param, id="integer"),
+    pytest.param(create_real_param, id="real"),
+]
+
+
+@pytest.mark.parametrize("create_param", _NUMERIC_PARAM_FACTORIES)
+@pytest.mark.parametrize("build_constraint", _BOOLEAN_POSITION_CONSTRAINTS)
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(Param.check_feasibility, id="check_feasibility"),
+        pytest.param(Param.is_feasible, id="is_feasible"),
+        pytest.param(Param.is_empty, id="is_empty"),
+    ],
+)
+def test_feasibility_raises_for_the_variable_itself_in_a_boolean_position(
+    create_param: Callable[..., Param[Any]],
+    build_constraint: Callable[[Any], EquationConstraint],
+    query: Callable[[Param[Any]], object],
+) -> None:
+    """Test a numeric parameter's own variable in a Boolean position raises.
+
+    The domain declares the variable INT or REAL to the solver, so the
+    variable under a connective or as a case condition is ill-typed. Z3
+    used to reject the sort mismatch itself, which escaped a tri-state
+    query as a `PassExecutionError`.
+    """
+    x = mock_identifier("x", 1)
+    param = create_param(name=x, constraints=[build_constraint(x)])
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(param)
+
+
+@pytest.mark.parametrize("create_param", _NUMERIC_PARAM_FACTORIES)
+@pytest.mark.parametrize("build_constraint", _BOOLEAN_POSITION_CONSTRAINTS)
+@pytest.mark.parametrize(
+    "is_own_ill_typed", [True, False], ids=["antecedent", "consequent"]
+)
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(Param.check_subset, id="check_subset"),
+        pytest.param(Param.is_subset, id="is_subset"),
+    ],
+)
+def test_subset_raises_for_the_variable_itself_in_a_boolean_position(
+    create_param: Callable[..., Param[Any]],
+    build_constraint: Callable[[Any], EquationConstraint],
+    is_own_ill_typed: bool,
+    query: Callable[[Param[Any], Param[Any]], object],
+) -> None:
+    """Test the solver's implication raises for either side's ill-typed variable."""
+    x = mock_identifier("x", 1)
+    ill_typed = create_param(name=x, constraints=[build_constraint(x)])
+    plain = create_param(name=mock_identifier("y", 2))
+    own, other = (ill_typed, plain) if is_own_ill_typed else (plain, ill_typed)
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(own, other)
+
+
+@pytest.mark.parametrize("build_constraint", _BOOLEAN_POSITION_CONSTRAINTS)
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(Param.check_subset, id="check_subset"),
+        pytest.param(Param.is_subset, id="is_subset"),
+    ],
+)
+def test_subset_witness_search_raises_for_the_variable_in_a_boolean_position(
+    build_constraint: Callable[[Any], EquationConstraint],
+    query: Callable[[Param[int], Param[int]], object],
+) -> None:
+    """Test the search for a value outside a finite other side raises too."""
+    x = mock_identifier("x", 1)
+    own = create_integer_param(name=x, constraints=[build_constraint(x)])
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(own, _create_well_typed_in_set_param())

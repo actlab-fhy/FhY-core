@@ -466,9 +466,10 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
                 parameter that the query evaluates holds a provably
                 numeric operand in a Boolean position -- under a logical
                 connective or as a piecewise case condition -- counting
-                an in-set candidate bound to its variable. Such a
-                constraint is ill-typed rather than undecided, so it
-                raises instead of reporting ``UNDECIDED``.
+                an in-set candidate bound to its variable, or the variable
+                itself, which a numeric domain declares INT or REAL to the
+                solver. Such a constraint is ill-typed rather than
+                undecided, so it raises instead of reporting ``UNDECIDED``.
 
         """
         return self.domain.compute_feasibility_subset(
@@ -531,9 +532,10 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
                 evaluates holds a provably numeric operand in a Boolean
                 position -- under a logical connective or as a piecewise
                 case condition -- counting an in-set candidate bound to
-                this parameter's variable. Such a constraint is
-                ill-typed rather than undecided, so it raises instead of
-                reporting ``UNDECIDED``.
+                this parameter's variable, or the variable itself, which
+                a numeric domain declares INT or REAL to the solver. Such
+                a constraint is ill-typed rather than undecided, so it
+                raises instead of reporting ``UNDECIDED``.
 
         """
         return self.domain.has_feasible_value(self.constraints, self.variable)

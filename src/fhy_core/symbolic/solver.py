@@ -1040,7 +1040,8 @@ def check_expression_satisfiability(
             identifier here and needs no entry; the screen refuses it.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, in ``expression`` provably denotes a number. Such an
+            condition, in ``expression`` provably denotes a number, counting
+            an identifier ``symbol_types`` declares INT or REAL. Such an
             expression is ill-typed rather than undecidable, so it raises
             instead of reporting ``None``. Checked after the
             ``symbol_types`` precondition but ahead of the hazard screen, so
@@ -1056,7 +1057,7 @@ def check_expression_satisfiability(
     _validate_symbol_types_cover_free_identifiers(
         expression.get_free_identifiers(), symbol_types
     )
-    validate_logical_operands(expression)
+    validate_logical_operands(expression, symbol_types=symbol_types)
     if _find_and_log_hazard(
         expression, symbol_types, context="check_expression_satisfiability"
     ):
@@ -1119,8 +1120,9 @@ def does_expression_imply(
             refuses it.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, in either expression provably denotes a number. Such
-            a pair is ill-typed rather than undecidable, so it raises
+            condition, in either expression provably denotes a number,
+            counting an identifier ``symbol_types`` declares INT or REAL.
+            Such a pair is ill-typed rather than undecidable, so it raises
             instead of reporting ``None``. Checked after the
             ``symbol_types`` precondition but ahead of the hazard screen, so
             it is reported even where the screen would also refuse the
@@ -1136,8 +1138,8 @@ def does_expression_imply(
         antecedent.get_free_identifiers() | consequent.get_free_identifiers(),
         symbol_types,
     )
-    validate_logical_operands(antecedent)
-    validate_logical_operands(consequent)
+    validate_logical_operands(antecedent, symbol_types=symbol_types)
+    validate_logical_operands(consequent, symbol_types=symbol_types)
     if _find_and_log_hazard(
         antecedent, symbol_types, context="does_expression_imply"
     ) or _find_and_log_hazard(
@@ -1197,7 +1199,8 @@ def holds_for_all_free_assignments(
             needs no entry; the screen refuses it.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, in ``expression`` provably denotes a number. Such an
+            condition, in ``expression`` provably denotes a number, counting
+            an identifier ``symbol_types`` declares INT or REAL. Such an
             expression is ill-typed rather than undecidable, so it raises
             instead of reporting ``None``. Checked after the
             ``symbol_types`` precondition but ahead of the hazard screen, so
@@ -1213,7 +1216,7 @@ def holds_for_all_free_assignments(
     _validate_symbol_types_cover_free_identifiers(
         expression.get_free_identifiers() | set(considered_identifiers), symbol_types
     )
-    validate_logical_operands(expression)
+    validate_logical_operands(expression, symbol_types=symbol_types)
     if _find_and_log_hazard(
         expression, symbol_types, context="holds_for_all_free_assignments"
     ):
@@ -1265,7 +1268,8 @@ def assert_holds_for_all_free_assignments(
             needs no entry; the screen refuses it.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, in ``expression`` provably denotes a number. Reported
+            condition, in ``expression`` provably denotes a number, counting
+            an identifier ``symbol_types`` declares INT or REAL. Reported
             as its own error rather than as ``UndecidableError``: the
             expression is ill-typed, so no ``timeout_milliseconds`` makes it
             decidable. Checked after the ``symbol_types`` precondition but
@@ -1281,7 +1285,7 @@ def assert_holds_for_all_free_assignments(
     _validate_symbol_types_cover_free_identifiers(
         expression.get_free_identifiers() | set(considered_identifiers), symbol_types
     )
-    validate_logical_operands(expression)
+    validate_logical_operands(expression, symbol_types=symbol_types)
     if _find_and_log_hazard(
         expression, symbol_types, context="assert_holds_for_all_free_assignments"
     ):
@@ -1343,7 +1347,8 @@ def assert_expression_implies(
             refuses it.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, in either expression provably denotes a number.
+            condition, in either expression provably denotes a number,
+            counting an identifier ``symbol_types`` declares INT or REAL.
             Reported as its own error rather than as ``UndecidableError``:
             the pair is ill-typed, so no ``timeout_milliseconds`` makes it
             decidable. Checked after the ``symbol_types`` precondition but
@@ -1360,8 +1365,8 @@ def assert_expression_implies(
         antecedent.get_free_identifiers() | consequent.get_free_identifiers(),
         symbol_types,
     )
-    validate_logical_operands(antecedent)
-    validate_logical_operands(consequent)
+    validate_logical_operands(antecedent, symbol_types=symbol_types)
+    validate_logical_operands(consequent, symbol_types=symbol_types)
     if _find_and_log_hazard(
         antecedent, symbol_types, context="assert_expression_implies"
     ) or _find_and_log_hazard(
