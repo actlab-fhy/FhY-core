@@ -31,6 +31,7 @@ sets and so always decide.
 """
 
 import itertools
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -1434,10 +1435,36 @@ class IntegerDomain(ParamDomain):
         return ""
 
 
+def _is_literal_grammar_string(value: str) -> bool:
+    """Return whether ``value`` is a string ``LiteralExpression`` accepts.
+
+    Asks :class:`~fhy_core.symbolic.expression.LiteralExpression` itself
+    rather than restating its integer and float grammar, so admissibility
+    cannot drift from the literal a constraint evaluation lifts a bound
+    value into.
+    """
+    try:
+        LiteralExpression(value)
+    except ValueError:
+        return False
+    return True
+
+
 @register_serializable(type_id="real_domain")
 @dataclass(frozen=True, eq=False)
 class RealDomain(ParamDomain):
-    """Real-valued domain (floats and float-parseable strings)."""
+    """Real-valued domain over finite floats and literal-grammar strings.
+
+    A value is admissible exactly when it is a finite literal: a finite
+    Python ``float``, or a ``str`` in the integer or float grammar
+    :class:`~fhy_core.symbolic.expression.LiteralExpression` accepts, which
+    denotes an exact decimal. NaN and the infinities are refused, as is a
+    string that grammar refuses even where ``float()`` parses it (a sign, an
+    exponent, surrounding whitespace, digit grouping, ``"nan"``, ``"inf"``).
+    Constraint evaluation lifts the candidate into a literal, so no
+    admissible value makes a validator raise. ``bool`` and ``int`` are not
+    admissible.
+    """
 
     @property
     @override
@@ -1446,16 +1473,10 @@ class RealDomain(ParamDomain):
 
     @override
     def is_value_admissible(self, value: Any) -> bool:
-        if isinstance(value, bool):
-            return False
         if isinstance(value, float):
-            return True
+            return math.isfinite(value)
         if isinstance(value, str):
-            try:
-                float(value)
-            except ValueError:
-                return False
-            return True
+            return _is_literal_grammar_string(value)
         return False
 
     @override
