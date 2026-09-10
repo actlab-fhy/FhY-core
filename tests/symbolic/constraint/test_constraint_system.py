@@ -2383,6 +2383,117 @@ def test_check_satisfiability_int_identifier_lt_float_literal_not_screened() -> 
     assert outcome is ConstraintOutcome.SATISFIED
 
 
+def test_check_satisfiability_with_bindings_int_addition_vs_float_set_undecided() -> (
+    None
+):
+    """Test binding a set variable to INT arithmetic against a float member.
+
+    ``InSetConstraint(x, {3.0})`` type-strictly excludes every ``int``, so
+    binding ``x`` to the INT-valued ``y + 1`` must not be reported
+    satisfiable: the mixed-kind equality hazard applies to the lowered
+    residual just as it does to a bare INT identifier.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    system = create_constraint_system(InSetConstraint(x, {3.0}))
+    binding = make_binary_expression(BinaryOperation.ADD, y, 1)
+
+    outcome = system.check_satisfiability_with_bindings(
+        {x: binding}, {y: SymbolType.INT}
+    )
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+def test_check_satisfiability_with_bindings_int_addition_vs_notin_float_undecided() -> (
+    None
+):
+    """Test the same hazard applies to a `NotInSetConstraint` residual.
+
+    ``NotInSetConstraint(x, {3.0})`` lowers to the negation of the same
+    equality, so the mixed-kind hazard screens it identically.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    system = create_constraint_system(NotInSetConstraint(x, {3.0}))
+    binding = make_binary_expression(BinaryOperation.ADD, y, 1)
+
+    outcome = system.check_satisfiability_with_bindings(
+        {x: binding}, {y: SymbolType.INT}
+    )
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+def test_check_satisfiability_with_bindings_real_piecewise_vs_int_set_undecided() -> (
+    None
+):
+    """Test binding a set variable to a REAL piecewise against an int member.
+
+    Every branch of the piecewise is REAL-valued, so it hits the same
+    mixed-kind hazard as a bare REAL-sorted operand compared to the
+    integer member ``1``.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    b = mock_identifier("b", 2)
+    system = create_constraint_system(InSetConstraint(x, {1}))
+    binding = piecewise((b, y), otherwise=y)
+
+    outcome = system.check_satisfiability_with_bindings(
+        {x: binding}, {y: SymbolType.REAL, b: SymbolType.BOOL}
+    )
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+def test_check_satisfiability_with_bindings_does_not_contradict_literal_violation() -> (
+    None
+):
+    """Test the satisfiability path never reports SATISFIED where evaluation is not.
+
+    ``evaluate_with_bindings({x: 3})`` is VIOLATED because the
+    type-strict set ``{3.0}`` excludes every ``int``;
+    ``check_satisfiability_with_bindings`` on the symbolic binding
+    ``{x: y + 1}`` must not contradict that by reporting SATISFIED for
+    some INT ``y``.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    system = create_constraint_system(InSetConstraint(x, {3.0}))
+    binding = make_binary_expression(BinaryOperation.ADD, y, 1)
+
+    literal_outcome = system.evaluate_with_bindings({x: 3})
+    symbolic_outcome = system.check_satisfiability_with_bindings(
+        {x: binding}, {y: SymbolType.INT}
+    )
+
+    assert literal_outcome is ConstraintOutcome.VIOLATED
+    assert symbolic_outcome is ConstraintOutcome.UNDECIDED
+
+
+@pytest.mark.z3
+def test_check_satisfiability_with_bindings_int_addition_vs_int_member_satisfied() -> (
+    None
+):
+    """Test binding a set variable to INT arithmetic against an integer member.
+
+    Contrasts the hazard: ``3`` is integer-valued, so no kind mismatch
+    exists against the INT-valued ``y + 1`` and the system stays
+    satisfiable.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    system = create_constraint_system(InSetConstraint(x, {3}))
+    binding = make_binary_expression(BinaryOperation.ADD, y, 1)
+
+    outcome = system.check_satisfiability_with_bindings(
+        {x: binding}, {y: SymbolType.INT}
+    )
+
+    assert outcome is ConstraintOutcome.SATISFIED
+
+
 # =============================================================================
 # `check_implication`: system-level entailment seam
 # =============================================================================

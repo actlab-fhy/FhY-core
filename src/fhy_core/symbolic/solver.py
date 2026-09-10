@@ -47,14 +47,16 @@ divisor is unsound, or a finite strictly positive literal for
 ``FLOOR_DIVIDE``/``MODULO``, since Z3 lowers both to Euclidean
 division, which disagrees with this package's floor semantics for a
 zero, negative, or non-finite (``nan``/``inf``) divisor; and an
-``EQUAL``/``NOT_EQUAL`` comparison mixing an INT-sorted operand with a
-float-valued literal, since Z3's ``ToReal`` rationalization of the
-INT-sorted side collapses this package's type-strict int/float
-distinction. A refused expression is never lowered: the lenient entry
-points report the same ``None`` they use for a Z3 ``unknown`` result,
-and the strict ``assert_*`` companions raise the same
-``UndecidableError`` they raise for one, so the screen protects every
-caller of this seam the same way regardless of entry point.
+``EQUAL``/``NOT_EQUAL`` comparison where one side is a numeric literal
+and the other side's evaluated int/float kind differs from the
+literal's or cannot be determined, since Z3's ``ToReal``
+rationalization of an INT-sorted side collapses this package's
+type-strict int/float distinction. A refused expression is never
+lowered: the lenient entry points report the same ``None`` they use
+for a Z3 ``unknown`` result, and the strict ``assert_*`` companions
+raise the same ``UndecidableError`` they raise for one, so the screen
+protects every caller of this seam the same way regardless of entry
+point.
 
 An ill-typed expression is a separate matter from an undecidable one and
 is reported separately: a provably numeric operand of a logical
@@ -101,13 +103,16 @@ from .expression import (
     BinaryExpression,
     BinaryOperation,
     CallExpression,
+    EntryLookupError,
     Expression,
+    FunctionSort,
     IdentifierExpression,
     LiteralExpression,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     UndecidableError,
+    get_registered_entry,
     is_integer_valued_literal,
     try_get_native_constant_for_identifier,
     validate_predicate,
@@ -751,29 +756,211 @@ def _is_float_valued_literal(node: Expression) -> bool:
     return not is_integer_valued_literal(value)
 
 
-def _is_int_sorted_operand(
+_SAME_KIND_ARITHMETIC_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
+    {
+        BinaryOperation.ADD,
+        BinaryOperation.SUBTRACT,
+        BinaryOperation.MULTIPLY,
+        BinaryOperation.FLOOR_DIVIDE,
+        BinaryOperation.MODULO,
+    }
+)
+"""Binary operations whose IR result is INT exactly when both operands are.
+
+``DIVIDE`` and ``POWER`` are classified separately: dividing two INT
+operands need not yield an int, and exponentiation yields an int only
+for a literal integer exponent of at least one.
+"""
+
+
+def _get_call_result_numeric_kind(function_name: str) -> SymbolType | None:
+    """Return the INT/REAL kind a call to ``function_name`` evaluates to.
+
+    Returns ``None`` when the name is unregistered or its registered
+    entry declares a non-numeric (or no) result sort.
+    """
+    try:
+        entry = get_registered_entry(function_name)
+    except EntryLookupError:
+        return None
+    result_sort = getattr(entry, "result_sort", None)
+    if result_sort in (FunctionSort.INT, FunctionSort.NAT):
+        return SymbolType.INT
+    if result_sort is FunctionSort.REAL:
+        return SymbolType.REAL
+    return None
+
+
+def _classify_literal_operand_numeric_kind(
+    node: LiteralExpression,
+) -> SymbolType | None:
+    """Return the INT/REAL kind a literal denotes, or ``None`` for a ``bool``."""
+    if isinstance(node.value, bool):
+        return None
+    if is_integer_valued_literal(node.value):
+        return SymbolType.INT
+    if _is_float_valued_literal(node):
+        return SymbolType.REAL
+    return None
+
+
+def _classify_power_operand_numeric_kind(
+    expression: BinaryExpression, symbol_types: Mapping[Identifier, SymbolType]
+) -> SymbolType | None:
+    """Return the INT/REAL kind a ``POWER`` node evaluates to.
+
+    INT when the base is INT and the exponent is a literal integer of at
+    least one: the only exponent the partial-operation screen lets
+    through, and one under which the IR yields an int even though Z3
+    sorts ``Int ** Int`` as Real. REAL when both operands' kinds are
+    known and either is REAL. ``None`` otherwise.
+    """
+    base_kind = _classify_operand_numeric_kind(expression.left, symbol_types)
+    exponent = expression.right
+    if base_kind is SymbolType.INT and _is_safe_exponent(exponent):
+        return SymbolType.INT
+    exponent_kind = _classify_operand_numeric_kind(exponent, symbol_types)
+    if base_kind is None or exponent_kind is None:
+        return None
+    if base_kind is SymbolType.REAL or exponent_kind is SymbolType.REAL:
+        return SymbolType.REAL
+    return None
+
+
+def _classify_same_kind_arithmetic_numeric_kind(
+    expression: BinaryExpression, symbol_types: Mapping[Identifier, SymbolType]
+) -> SymbolType | None:
+    """Return the INT/REAL kind of an ADD/SUBTRACT/MULTIPLY/FLOOR_DIVIDE/MODULO node.
+
+    ``None`` if either operand's kind is unknown; INT if both operands
+    are INT; REAL otherwise.
+    """
+    left_kind = _classify_operand_numeric_kind(expression.left, symbol_types)
+    right_kind = _classify_operand_numeric_kind(expression.right, symbol_types)
+    if left_kind is None or right_kind is None:
+        return None
+    if left_kind is SymbolType.INT and right_kind is SymbolType.INT:
+        return SymbolType.INT
+    return SymbolType.REAL
+
+
+def _classify_divide_operand_numeric_kind(
+    expression: BinaryExpression, symbol_types: Mapping[Identifier, SymbolType]
+) -> SymbolType | None:
+    """Return the INT/REAL kind a ``DIVIDE`` node evaluates to.
+
+    REAL when both operands' kinds are known and either is REAL;
+    ``None`` otherwise. INT/INT division is refused separately by the
+    partial-operation hazard screen.
+    """
+    left_kind = _classify_operand_numeric_kind(expression.left, symbol_types)
+    right_kind = _classify_operand_numeric_kind(expression.right, symbol_types)
+    if left_kind is None or right_kind is None:
+        return None
+    if left_kind is SymbolType.REAL or right_kind is SymbolType.REAL:
+        return SymbolType.REAL
+    return None
+
+
+def _classify_binary_operand_numeric_kind(
+    node: BinaryExpression, symbol_types: Mapping[Identifier, SymbolType]
+) -> SymbolType | None:
+    """Return the INT/REAL kind a binary node evaluates to, or ``None``."""
+    if node.operation in _SAME_KIND_ARITHMETIC_BINARY_OPERATIONS:
+        return _classify_same_kind_arithmetic_numeric_kind(node, symbol_types)
+    if node.operation is BinaryOperation.POWER:
+        return _classify_power_operand_numeric_kind(node, symbol_types)
+    if node.operation is BinaryOperation.DIVIDE:
+        return _classify_divide_operand_numeric_kind(node, symbol_types)
+    return None
+
+
+def _classify_piecewise_operand_numeric_kind(
+    node: PiecewiseExpression, symbol_types: Mapping[Identifier, SymbolType]
+) -> SymbolType | None:
+    """Return the INT/REAL kind every branch of a piecewise agrees on, or ``None``."""
+    branch_kinds = [
+        _classify_operand_numeric_kind(branch, symbol_types)
+        for branch in (*node.values, node.otherwise)
+    ]
+    if all(kind is SymbolType.INT for kind in branch_kinds):
+        return SymbolType.INT
+    if all(kind is SymbolType.REAL for kind in branch_kinds):
+        return SymbolType.REAL
+    return None
+
+
+# One early return per node kind reads clearest here; the alternative is a
+# lookup table that would have to be threaded through `symbol_types` anyway.
+def _classify_operand_numeric_kind(  # noqa: PLR0911
     node: Expression, symbol_types: Mapping[Identifier, SymbolType]
+) -> SymbolType | None:
+    """Return the INT/REAL kind ``node`` evaluates to in the IR, not Z3's sort.
+
+    This is the value kind the IR itself computes, which a Z3 lowering
+    can obscure: Z3 sorts ``Int ** Int`` as Real, but the IR evaluates a
+    literal-exponent power of an INT base to an int. ``SymbolType.BOOL``
+    is never returned, since a Boolean is not numeric.
+
+    Args:
+        node: Operand whose evaluated numeric kind is wanted.
+        symbol_types: Declared symbol type for each free identifier of
+            the enclosing expression.
+
+    Returns:
+        ``SymbolType.INT`` or ``SymbolType.REAL`` when ``node`` provably
+        evaluates to that kind; ``None`` when it is not numeric or its
+        kind cannot be determined.
+
+    """
+    if isinstance(node, LiteralExpression):
+        return _classify_literal_operand_numeric_kind(node)
+    elif isinstance(node, IdentifierExpression):
+        symbol_type = symbol_types.get(node.identifier)
+        return symbol_type if symbol_type in (SymbolType.INT, SymbolType.REAL) else None
+    elif isinstance(node, UnaryExpression):
+        if node.operation in (UnaryOperation.NEGATE, UnaryOperation.POSITIVE):
+            return _classify_operand_numeric_kind(node.operand, symbol_types)
+        return None
+    elif isinstance(node, BinaryExpression):
+        return _classify_binary_operand_numeric_kind(node, symbol_types)
+    elif isinstance(node, PiecewiseExpression):
+        return _classify_piecewise_operand_numeric_kind(node, symbol_types)
+    elif isinstance(node, CallExpression):
+        return _get_call_result_numeric_kind(node.function_name)
+    return None
+
+
+def _is_mixed_kind_equality_operand(
+    literal_candidate: Expression,
+    other: Expression,
+    symbol_types: Mapping[Identifier, SymbolType],
 ) -> bool:
-    """Return whether ``node`` is an INT-typed identifier or an integer literal."""
-    if isinstance(node, IdentifierExpression):
-        return symbol_types.get(node.identifier) is SymbolType.INT
-    return _is_int_sorted_literal(node)
+    """Return whether ``literal_candidate`` is a numeric literal ``other`` mismatches.
 
-
-def _is_int_sorted_literal(node: Expression) -> bool:
-    """Return whether ``node`` is a literal the Z3 bridge lowers to the INT sort."""
-    return isinstance(node, LiteralExpression) and is_integer_valued_literal(node.value)
+    ``other`` mismatches when its evaluated kind differs from the
+    literal's, including when ``other``'s kind cannot be determined.
+    """
+    if not isinstance(literal_candidate, LiteralExpression):
+        return False
+    literal_kind = _classify_operand_numeric_kind(literal_candidate, symbol_types)
+    if literal_kind is None:
+        return False
+    other_kind = _classify_operand_numeric_kind(other, symbol_types)
+    return other_kind is not literal_kind
 
 
 def _does_node_mix_int_and_float_equality(
     expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
 ) -> bool:
-    """Return whether this node's ``EQUAL``/``NOT_EQUAL`` mixes INT and float sorts.
+    """Return whether this node's ``EQUAL``/``NOT_EQUAL`` mixes INT and REAL kinds.
 
-    Screens both directions of the mismatch, since Z3 rationalizes
-    whichever side is INT-sorted and then compares numerically, in either
-    arrangement collapsing the type-strict int/float distinction this
-    package draws between ``1`` and ``1.0``.
+    Screens both directions of the mismatch: a numeric literal on either
+    side against an operand whose evaluated int/float kind differs from
+    the literal's, or cannot be determined. Z3 rationalizes the INT
+    side of a mixed comparison and then compares numerically, collapsing
+    the type-strict int/float distinction this package draws between
+    ``1`` and ``1.0``.
 
     """
     if not (
@@ -782,37 +969,25 @@ def _does_node_mix_int_and_float_equality(
     ):
         return False
     left, right = expression.left, expression.right
-    return (
-        (_is_float_valued_literal(left) and _is_int_sorted_operand(right, symbol_types))
-        or (
-            _is_float_valued_literal(right)
-            and _is_int_sorted_operand(left, symbol_types)
-        )
-        or (
-            _is_int_sorted_literal(left)
-            and _does_operand_lower_to_real_sort(right, symbol_types)
-        )
-        or (
-            _is_int_sorted_literal(right)
-            and _does_operand_lower_to_real_sort(left, symbol_types)
-        )
-    )
+    return _is_mixed_kind_equality_operand(
+        left, right, symbol_types
+    ) or _is_mixed_kind_equality_operand(right, left, symbol_types)
 
 
 def _find_int_float_equality_hazard(
     expression: Expression, symbol_types: Mapping[Identifier, SymbolType]
 ) -> Expression | None:
-    """Return the first node whose equality mixes an INT and a REAL sort.
+    """Return the first node whose equality mixes an INT and a REAL kind.
 
-    Z3's ``ToReal`` rationalization of the INT-sorted operand collapses
-    this package's type-strict int/float distinction, so an ``EQUAL``/
-    ``NOT_EQUAL`` node mixing the two is refused in either arrangement:
-    a float-valued literal against an INT-sorted operand, and a
-    strict-int literal against a REAL-sorted one. Both carry the same
-    hazard, and the second is what a type-strict set constraint lowers
-    to when an integer member is screened against a real-valued
-    parameter. Ordering comparisons (``<``, ``<=``, ``>``, ``>=``) are
-    not screened: mixed-sort ordering stays mathematically meaningful.
+    An ``EQUAL``/``NOT_EQUAL`` node is a hazard when, for either
+    ordering, one side is a numeric literal and the other side's
+    evaluated int/float kind differs from the literal's or cannot be
+    determined. Z3's ``ToReal`` rationalization of the INT side of such
+    a mismatch collapses this package's type-strict int/float
+    distinction. An equality between two non-literal operands is not
+    screened. Ordering comparisons (``<``, ``<=``, ``>``, ``>=``) are
+    not screened either: mixed-kind ordering stays mathematically
+    meaningful.
 
     Args:
         expression: Expression about to be lowered to Z3.
@@ -820,7 +995,7 @@ def _find_int_float_equality_hazard(
 
     Returns:
         The offending node, or ``None`` when no ``EQUAL``/``NOT_EQUAL``
-        node mixes the two sorts.
+        node mixes the two kinds.
 
     """
     if _does_node_mix_int_and_float_equality(expression, symbol_types):
@@ -897,12 +1072,14 @@ def _log_int_float_equality_hazard(
     context: str,
 ) -> None:
     _LOGGER.warning(
-        "%s: node %r compares an INT-sorted operand against a float-valued "
-        "literal with EQUAL/NOT_EQUAL, where the Z3 bridge's ToReal "
-        "rationalization of the INT-sorted side collapses this package's "
-        "type-strict int/float distinction; identifier sorts at that "
-        "node: %s. The expression is not handed to the solver; bounding "
-        "timeout_milliseconds cannot change this outcome.",
+        "%s: node %r compares a numeric literal against an operand with "
+        "EQUAL/NOT_EQUAL where the operand's evaluated int/float kind "
+        "differs from the literal's, or cannot be determined; the Z3 "
+        "bridge's ToReal rationalization of the INT side of such a "
+        "mismatch collapses this package's type-strict int/float "
+        "distinction; identifier sorts at that node: %s. The expression "
+        "is not handed to the solver; bounding timeout_milliseconds "
+        "cannot change this outcome.",
         context,
         hazard,
         _render_identifier_sorts(hazard, symbol_types),
