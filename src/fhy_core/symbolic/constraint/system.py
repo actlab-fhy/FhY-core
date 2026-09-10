@@ -32,6 +32,7 @@ from fhy_core.serialization import WrappedFamilySerializable, register_serializa
 from fhy_core.symbolic.expression import (
     Expression,
     LiteralExpression,
+    try_get_native_constant_for_identifier,
     validate_logical_operands,
 )
 from fhy_core.symbolic.solver import (
@@ -57,8 +58,20 @@ from .errors import ConstraintError, MissingSymbolTypeError
 _LOGGER = get_logger(__name__)
 
 
-def _raise_if_missing_symbol_types(missing: frozenset[Identifier]) -> None:
-    """Raise ``MissingSymbolTypeError`` naming ``missing``, or return if it is empty."""
+def _raise_if_missing_symbol_types(
+    identifiers: frozenset[Identifier], symbol_types: Mapping[Identifier, SymbolType]
+) -> None:
+    """Raise ``MissingSymbolTypeError`` naming each of ``identifiers`` with no sort.
+
+    A registered native constant's canonical identifier is exempt: it
+    names a value rather than a variable, and the solver seam refuses it
+    without reading a sort.
+    """
+    missing = [
+        identifier
+        for identifier in identifiers - set(symbol_types)
+        if try_get_native_constant_for_identifier(identifier) is None
+    ]
     if not missing:
         return
     missing_names = ", ".join(sorted(identifier.name_hint for identifier in missing))
@@ -77,9 +90,7 @@ def _validate_symbol_types_cover_free_identifiers(
             ``expression`` have no corresponding ``symbol_types`` entry.
 
     """
-    _raise_if_missing_symbol_types(
-        expression.get_free_identifiers() - set(symbol_types)
-    )
+    _raise_if_missing_symbol_types(expression.get_free_identifiers(), symbol_types)
 
 
 def _validate_symbol_types_cover_both_sides(
@@ -95,10 +106,10 @@ def _validate_symbol_types_cover_both_sides(
             ``symbol_types`` entry.
 
     """
-    free_identifiers = (
-        antecedent.get_free_identifiers() | consequent.get_free_identifiers()
+    _raise_if_missing_symbol_types(
+        antecedent.get_free_identifiers() | consequent.get_free_identifiers(),
+        symbol_types,
     )
-    _raise_if_missing_symbol_types(free_identifiers - set(symbol_types))
 
 
 def _validate_symbol_types_cover_residual(
@@ -126,7 +137,7 @@ def _validate_symbol_types_cover_residual(
         residual |= (
             frozenset({identifier}) if bound is None else bound.get_free_identifiers()
         )
-    _raise_if_missing_symbol_types(residual - set(symbol_types))
+    _raise_if_missing_symbol_types(residual, symbol_types)
 
 
 def _classify_solver_answer(answer: bool | None) -> ConstraintOutcome:
@@ -162,7 +173,7 @@ def _decide_satisfiability(
 
     Validates the caller's symbol types, then consults
     ``fhy_core.symbolic.solver.check_expression_satisfiability``. That
-    seam function screens the expression for the three hazard classes
+    seam function screens the expression for the hazard classes
     documented on ``ConstraintSystem`` before it ever reaches Z3, so
     ``None`` from the seam -- whether from a screened hazard or an
     inconclusive solver -- maps here to ``UNDECIDED``.
@@ -244,8 +255,10 @@ class ConstraintSystem(
     when you expect value-based lookups.
 
     All satisfiability and implication entry points report ``UNDECIDED``
-    instead of a decided outcome for three hazard classes:
+    instead of a decided outcome for four hazard classes:
 
+    - a reference to a registered native constant, which Z3 has no term
+      for and could only lower as a variable free to take any value;
     - a Boolean operand in a numeric context;
     - a partial arithmetic operation off the domain its lowering is sound
       on -- true division without a finite nonzero literal divisor and a
@@ -379,7 +392,7 @@ class ConstraintSystem(
         solver.
 
         Limitation: ``fhy_core.symbolic.solver`` screens the lowered
-        conjunction for the three hazard classes documented on this class
+        conjunction for the hazard classes documented on this class
         before the solver is consulted, and a hazardous conjunction
         returns ``UNDECIDED`` rather than a provably-wrong decided
         outcome. The Boolean-coercion hazard is a ``BoolVal`` reaching a
@@ -402,7 +415,9 @@ class ConstraintSystem(
                 its ``variable`` as part of the system's scope, but
                 lowers to a bare ``LiteralExpression`` with no free
                 identifier at all, so an unreferenced ``variable`` needs
-                no entry.
+                no entry. A registered native constant's canonical
+                identifier needs none either: it names a value rather
+                than a variable.
             timeout_milliseconds: Optional bound, in milliseconds, on the
                 underlying Z3 solver invocation. ``None`` (the default)
                 leaves the solver unbounded.
@@ -462,7 +477,7 @@ class ConstraintSystem(
         identifiers left free after substitution. Answers questions of the
         form "given x = 4, can y and z still be chosen?".
 
-        Limitation: the same three hazard classes documented on this class
+        Limitation: the same hazard classes documented on this class
         apply here; ``fhy_core.symbolic.solver`` screens the residual
         rather than the original conjunction. Substitution is therefore
         part of the screen: a ``bool`` binding value lands in the
@@ -547,7 +562,7 @@ class ConstraintSystem(
         The system-level entailment seam: both sides are lowered via
         ``convert_to_expression`` and passed to
         ``fhy_core.symbolic.solver.does_expression_imply``, which screens
-        both lowered sides for the three hazard classes documented on
+        both lowered sides for the hazard classes documented on
         this class before consulting the solver. ``SATISFIED`` when
         entailment is proven, ``VIOLATED`` when a counterexample
         assignment provably exists, ``UNDECIDED`` on a screened hazard on

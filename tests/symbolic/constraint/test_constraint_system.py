@@ -36,6 +36,7 @@ from fhy_core.symbolic.expression import (
     IdentifierExpression,
     LiteralExpression,
     NonBooleanLogicalOperandError,
+    get_native_constant_identifier,
     logical_or,
     make_binary_expression,
     piecewise,
@@ -2528,3 +2529,82 @@ def test_check_implication_rejects_invalid_timeout_even_for_a_hazardous_pair(
         antecedent.check_implication(
             consequent, {x: SymbolType.INT}, timeout_milliseconds=timeout_milliseconds
         )
+
+
+# =============================================================================
+# Native constants: refused by the solver, and needing no symbol type
+# =============================================================================
+
+_SATISFIABILITY_CHECKS = [
+    pytest.param(
+        lambda system, symbol_types: system.check_satisfiability(symbol_types),
+        id="check_satisfiability",
+    ),
+    pytest.param(
+        lambda system, symbol_types: system.check_satisfiability_with_bindings(
+            {}, symbol_types
+        ),
+        id="check_satisfiability_with_bindings",
+    ),
+]
+
+
+def _build_system_comparing_pi_with(bound: int) -> ConstraintSystem:
+    """Return the one-member system ``pi > bound`` over pi's canonical identifier."""
+    pi = get_native_constant_identifier("pi")
+    return create_constraint_system(
+        EquationConstraint(make_binary_expression(BinaryOperation.GREATER, pi, bound))
+    )
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _SATISFIABILITY_CHECKS)
+@pytest.mark.parametrize(
+    "declare_a_sort", [False, True], ids=["no_sort", "declared_real"]
+)
+def test_satisfiability_is_undecided_for_a_native_constant(
+    decide: Callable[
+        [ConstraintSystem, Mapping[Identifier, SymbolType]], ConstraintOutcome
+    ],
+    declare_a_sort: bool,
+) -> None:
+    """Test a system over ``pi`` is UNDECIDED, whether or not ``pi`` has a sort.
+
+    ``pi > 4`` is unsatisfiable, but Z3 has no term for ``pi`` and could
+    only decide over a free REAL, which it can set above 4. The canonical
+    identifier names a value rather than a variable, so leaving it out of
+    ``symbol_types`` is not a missing-sort error either.
+    """
+    pi = get_native_constant_identifier("pi")
+    symbol_types = {pi: SymbolType.REAL} if declare_a_sort else {}
+
+    outcome = decide(_build_system_comparing_pi_with(4), symbol_types)
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+@pytest.mark.z3
+def test_check_implication_is_undecided_for_a_native_constant() -> None:
+    """Test entailment between systems over ``pi`` is UNDECIDED with no sort for it."""
+    antecedent = _build_system_comparing_pi_with(4)
+
+    outcome = antecedent.check_implication(_build_system_comparing_pi_with(5), {})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+@pytest.mark.z3
+def test_check_satisfiability_requires_a_sort_for_a_variable_beside_a_constant() -> (
+    None
+):
+    """Test the missing-sort error names the variable and not the constant beside it."""
+    x = mock_identifier("x", 0)
+    pi = get_native_constant_identifier("pi")
+    system = create_constraint_system(
+        EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, pi))
+    )
+
+    with pytest.raises(MissingSymbolTypeError) as exception_info:
+        system.check_satisfiability({})
+
+    assert _extract_reported_missing_names(exception_info.value) == x.name_hint

@@ -15,19 +15,29 @@ other way by the Z3 questions below.
 
 Known divergences: the Z3 and SymPy bridges disagree with each other and
 with the type checker on integer division and floor-division/modulo
-Euclidean semantics. The two bridges also treat native constants
-differently: the SymPy bridge resolves ``pi``, ``e``, ``inf``, and
-``nan`` to their values, while the Z3 bridge lowers a constant's
-canonical identifier as an ordinary variable of whatever sort
-``symbol_types`` gives it. This module routes to each bridge unchanged;
-it does not reconcile that math. The hazard screens below refuse the
+Euclidean semantics. This module routes to each bridge unchanged; it
+does not reconcile that math. The hazard screens below refuse the
 division-like shapes rather than let a bridge decide one of them.
+
+Native constants are decided by one bridge and refused by the other.
+The SymPy bridge resolves ``pi``, ``e``, ``inf``, and ``nan`` to their
+values, so ``simplify_expression`` decides ``pi > 3``. Z3 has no term
+for any of them -- ``pi`` and ``e`` are transcendental, and ``inf`` and
+``nan`` are not real numbers -- and the only lowering left for a
+constant is a free variable, over which a Z3 question would be answered
+for every value the solver can choose rather than for the constant's
+own. The hazard screen below therefore refuses every Z3 question that
+references a registered native constant's canonical identifier. That
+identifier names a value rather than a variable, so it needs no
+``symbol_types`` entry; an identifier that merely shares a constant's
+name is an ordinary variable and is lowered like any other.
 
 The Z3-question entry points (``check_expression_satisfiability``,
 ``does_expression_imply``, ``holds_for_all_free_assignments``, and
 their strict ``assert_*`` companions) additionally screen every
-expression argument before it is lowered, refusing three node shapes
-the Z3 bridge cannot lower soundly: a Boolean operand reaching a
+expression argument before it is lowered, refusing four node shapes
+the Z3 bridge cannot lower soundly: a registered native constant's
+canonical identifier, for the reason above; a Boolean operand reaching a
 numeric context, where the Z3 Python bindings silently rewrite it to
 ``If(b, 1, 0)`` and collapse this package's type-strict Boolean/numeric
 distinction; a ``DIVIDE``/``FLOOR_DIVIDE``/``MODULO`` node whose divisor
@@ -95,6 +105,7 @@ from .expression import (
     UnaryOperation,
     UndecidableError,
     is_integer_valued_literal,
+    try_get_native_constant_for_identifier,
     validate_logical_operands,
 )
 from .expression.passes.sympy import simplify_expression as _sympy_simplify_expression
@@ -251,11 +262,47 @@ def simplify_expression(
 # =============================================================================
 # Lowering hazard screens
 #
-# The Z3 bridge mis-lowers three expression shapes: it cannot be trusted to
+# The Z3 bridge mis-lowers four expression shapes: it cannot be trusted to
 # decide an outcome for them, so every Z3-question entry point below screens
 # its expression argument(s) for these shapes before lowering, rather than
 # letting the bridge decide something it cannot decide soundly.
 # =============================================================================
+
+
+def _is_native_constant_identifier(identifier: Identifier) -> bool:
+    """Return whether ``identifier`` is a registered native constant's own identifier.
+
+    Only the canonical identifier the registry minted for a constant
+    counts; an identifier that merely shares a constant's name is an
+    ordinary variable.
+    """
+    return try_get_native_constant_for_identifier(identifier) is not None
+
+
+def _find_native_constant_identifiers(expression: Expression) -> list[Identifier]:
+    """Return the canonical native-constant identifiers ``expression`` references.
+
+    The Z3 bridge has no term for a native constant, so it could only
+    lower one as a free variable, and a Z3 question would then be
+    answered over every value the solver can give that variable instead
+    of over the constant's own value.
+
+    Args:
+        expression: Expression about to be lowered to Z3.
+
+    Returns:
+        The referenced canonical identifiers, ordered by id so the caller
+        can name them; empty when ``expression`` references none.
+
+    """
+    return sorted(
+        (
+            identifier
+            for identifier in expression.get_free_identifiers()
+            if _is_native_constant_identifier(identifier)
+        ),
+        key=lambda identifier: identifier.id,
+    )
 
 
 class _LoweredSort(Enum):
@@ -781,6 +828,19 @@ def _find_int_float_equality_hazard(
     return None
 
 
+def _log_native_constant_hazard(constants: list[Identifier], *, context: str) -> None:
+    _LOGGER.warning(
+        "%s: the expression references the native constant(s) %s, which the "
+        "Z3 bridge has no term for (the built-in pi and e are "
+        "transcendental, and inf and nan are not real numbers); lowered as "
+        "a variable, a constant would take whatever value the solver "
+        "chose. The expression is not handed to the solver; bounding "
+        "timeout_milliseconds cannot change this outcome.",
+        context,
+        format_comma_separated_list(constants),
+    )
+
+
 def _log_bool_coercion_hazard(
     hazard: Expression,
     symbol_types: Mapping[Identifier, SymbolType],
@@ -853,11 +913,13 @@ def _find_and_log_hazard(
 ) -> bool:
     """Screen ``expression`` for a hazard the Z3 bridge cannot lower soundly.
 
-    Checks, in order, the Boolean-coercion hazard, the partial-operation
-    hazard (division and exponentiation off the domain their lowering is
-    sound on), and the int/float ``EQUAL``/``NOT_EQUAL`` sort-mixing
-    hazard; the first one found is logged at ``WARNING`` and
-    short-circuits the remaining checks.
+    Checks, in order, the native-constant hazard (a reference to a
+    registered native constant's canonical identifier), the
+    Boolean-coercion hazard, the partial-operation hazard (division and
+    exponentiation off the domain their lowering is sound on), and the
+    int/float ``EQUAL``/``NOT_EQUAL`` sort-mixing hazard; the first one
+    found is logged at ``WARNING`` and short-circuits the remaining
+    checks.
 
     Args:
         expression: Expression about to be lowered to Z3.
@@ -870,6 +932,10 @@ def _find_and_log_hazard(
         lowers soundly.
 
     """
+    constants = _find_native_constant_identifiers(expression)
+    if constants:
+        _log_native_constant_hazard(constants, context=context)
+        return True
     hazard = _find_bool_sort_hazard(expression, symbol_types)
     if hazard is not None:
         _log_bool_coercion_hazard(hazard, symbol_types, context=context)
@@ -900,26 +966,34 @@ def _validate_symbol_types_cover_free_identifiers(
     free_identifiers: frozenset[Identifier],
     symbol_types: Mapping[Identifier, SymbolType],
 ) -> None:
-    """Raise unless every one of ``free_identifiers`` has a ``symbol_types`` entry.
+    """Raise if a variable in ``free_identifiers`` has no ``symbol_types`` entry.
 
     Mirrors the check the Z3 bridge's own conversion performs, run ahead
     of the hazard screen above so a missing entry still raises even when
     the same expression is also refused by that screen: without this, an
     expression that is both hazardous and missing a sort would
     short-circuit to a screened ``None``/``UndecidableError`` before the
-    bridge ever got a chance to raise.
+    bridge ever got a chance to raise. A registered native constant's
+    canonical identifier is exempt: it names a value rather than a
+    variable, and the screen refuses it without reading a sort.
 
     Args:
         free_identifiers: Identifiers that must each have a
-            ``symbol_types`` entry.
+            ``symbol_types`` entry, unless one is a native constant's
+            canonical identifier.
         symbol_types: Z3 sort supplied for each identifier.
 
     Raises:
         KeyError: If ``symbol_types`` lacks an entry for one or more of
-            ``free_identifiers``.
+            ``free_identifiers`` that are not native constants' canonical
+            identifiers.
 
     """
-    missing = free_identifiers - set(symbol_types)
+    missing = {
+        identifier
+        for identifier in free_identifiers - set(symbol_types)
+        if not _is_native_constant_identifier(identifier)
+    }
     if not missing:
         return
     sorted_missing = sorted(missing, key=lambda identifier: identifier.id)
@@ -961,7 +1035,9 @@ def check_expression_satisfiability(
         SolverCapabilityError: If ``backend`` is not SATISFIABILITY-capable.
         KeyError: If ``symbol_types`` lacks an entry for a free identifier.
             Checked ahead of the hazard screen, so the precondition raises
-            even for an expression the screen would otherwise refuse.
+            even for an expression the screen would otherwise refuse. A
+            native constant's canonical identifier is not a free
+            identifier here and needs no entry; the screen refuses it.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
             condition, in ``expression`` provably denotes a number. Such an
@@ -1038,7 +1114,9 @@ def does_expression_imply(
         KeyError: If ``symbol_types`` lacks an entry for a free identifier
             of either expression. Checked ahead of the hazard screen, so
             the precondition raises even for a pair the screen would
-            otherwise refuse.
+            otherwise refuse. A native constant's canonical identifier is
+            not a free identifier here and needs no entry; the screen
+            refuses it.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
             condition, in either expression provably denotes a number. Such
@@ -1114,7 +1192,9 @@ def holds_for_all_free_assignments(
         KeyError: If ``symbol_types`` lacks an entry for a free or
             considered identifier. Checked ahead of the hazard screen, so
             the precondition raises even for an expression the screen
-            would otherwise refuse.
+            would otherwise refuse. A native constant's canonical
+            identifier is not a free or considered identifier here and
+            needs no entry; the screen refuses it.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
             condition, in ``expression`` provably denotes a number. Such an
@@ -1180,7 +1260,9 @@ def assert_holds_for_all_free_assignments(
         KeyError: If ``symbol_types`` lacks an entry for a free or
             considered identifier. Checked ahead of the hazard screen, so
             the precondition raises even for an expression the screen
-            would otherwise refuse.
+            would otherwise refuse. A native constant's canonical
+            identifier is not a free or considered identifier here and
+            needs no entry; the screen refuses it.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
             condition, in ``expression`` provably denotes a number. Reported
@@ -1256,7 +1338,9 @@ def assert_expression_implies(
         KeyError: If ``symbol_types`` lacks an entry for a free identifier
             of either expression. Checked ahead of the hazard screen, so
             the precondition raises even for a pair the screen would
-            otherwise refuse.
+            otherwise refuse. A native constant's canonical identifier is
+            not a free identifier here and needs no entry; the screen
+            refuses it.
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
             condition, in either expression provably denotes a number.

@@ -27,11 +27,13 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    NativeConstantLoweringError,
     NonBooleanLogicalOperandError,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     convert_expression_to_z3_expression,
+    get_native_constant_identifier,
     logical_and,
     logical_not,
     logical_or,
@@ -1255,3 +1257,88 @@ def test_non_finite_float_literal_is_refused_rather_than_lowered(value: float) -
         convert_expression_to_z3_expression(LiteralExpression(value), {})
 
     assert isinstance(exception_info.value.__cause__, (OverflowError, ValueError))
+
+
+# =============================================================================
+# Native constants have no Z3 lowering
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "declare_a_sort", [False, True], ids=["no_sort", "declared_real"]
+)
+@pytest.mark.parametrize("constant_name", ["pi", "e", "inf", "nan"])
+def test_convert_expression_to_z3_refuses_a_native_constant(
+    constant_name: str, declare_a_sort: bool
+) -> None:
+    """Test a constant's canonical identifier is refused, not lowered as a variable.
+
+    Lowered as a variable, the constant would take whatever value the
+    solver chose, and declaring a sort for it does not change that. The
+    identifier is refused either way, with the package's own error naming
+    it rather than a wrapped backend failure.
+    """
+    constant = get_native_constant_identifier(constant_name)
+    symbol_types = {constant: SymbolType.REAL} if declare_a_sort else {}
+
+    with pytest.raises(NativeConstantLoweringError) as exception_info:
+        convert_expression_to_z3_expression(
+            IdentifierExpression(constant), symbol_types
+        )
+
+    assert repr(constant) in str(exception_info.value)
+
+
+def test_convert_expression_to_z3_reports_a_missing_sort_before_a_native_constant() -> (
+    None
+):
+    """Test a variable missing its sort is reported ahead of the constant beside it.
+
+    The constant needs no entry, so the error names only the variable.
+    """
+    x = mock_identifier("x", 0)
+    pi = get_native_constant_identifier("pi")
+    expression = BinaryExpression(
+        BinaryOperation.LESS, IdentifierExpression(pi), IdentifierExpression(x)
+    )
+
+    with pytest.raises(KeyError) as exception_info:
+        convert_expression_to_z3_expression(expression, {})
+
+    assert repr(x) in str(exception_info.value)
+    assert repr(pi) not in str(exception_info.value)
+
+
+def test_convert_expression_to_z3_reports_ill_typedness_before_a_native_constant() -> (
+    None
+):
+    """Test an ill-typed operand is reported ahead of the constant refusal."""
+    pi = get_native_constant_identifier("pi")
+    expression = logical_and(
+        LiteralExpression(2),
+        BinaryExpression(
+            BinaryOperation.GREATER, IdentifierExpression(pi), LiteralExpression(3)
+        ),
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        convert_expression_to_z3_expression(expression, {})
+
+
+def test_bridge_question_refuses_a_native_constant_it_would_decide_wrongly() -> None:
+    """Test the bridge's own questions refuse a constant, not only the solver seam.
+
+    ``pi > 3`` holds for the constant, but over a free REAL Z3 finds a
+    counterexample such as ``pi = 0``. The bridge's questions lower
+    through ``convert_expression_to_z3_expression``, so they refuse the
+    constant too, even with a sort declared for it.
+    """
+    pi = get_native_constant_identifier("pi")
+    expression = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(pi), LiteralExpression(3)
+    )
+
+    with pytest.raises(NativeConstantLoweringError):
+        assert_holds_for_all_free_assignments(
+            frozenset(), expression, {pi: SymbolType.REAL}
+        )

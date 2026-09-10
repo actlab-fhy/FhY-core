@@ -11,6 +11,7 @@ __all__ = [
     "ComplexInfinityLiftError",
     "EntryLookupError",
     "EntryRegistrationError",
+    "NativeConstantLoweringError",
     "NativeResultSortError",
     "NonBooleanLogicalOperandError",
     "NonFiniteCastError",
@@ -58,6 +59,23 @@ class ComplexInfinityLiftError(ValueError):
     of reporting it as a node kind the lifter merely has not learned yet,
     so a caller can tell an ill-defined quotient apart from an
     unimplemented lifting arm.
+    """
+
+
+@register_error
+class NativeConstantLoweringError(RuntimeError):
+    """Raised when a registered native constant reaches the Z3 bridge.
+
+    The Z3 bridge has no lowering for a native constant, and the built-in
+    ones have no exact Z3 term at all: ``pi`` and ``e`` are
+    transcendental, and ``inf`` and ``nan`` are not real numbers.
+    Lowering a constant's canonical identifier as a variable instead
+    would let the solver choose the constant's value and answer a
+    question about some other number, so
+    :func:`~fhy_core.symbolic.expression.convert_expression_to_z3_expression`
+    refuses the identifier. The solver seam refuses the same queries
+    before lowering and reports them undecided rather than raising this
+    error.
     """
 
 

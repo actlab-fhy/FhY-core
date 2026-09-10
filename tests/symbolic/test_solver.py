@@ -17,6 +17,7 @@ from fhy_core.symbolic.expression import (
     NonBooleanLogicalOperandError,
     UnaryExpression,
     UnaryOperation,
+    get_native_constant_identifier,
 )
 from fhy_core.symbolic.expression.errors import UndecidableError
 from fhy_core.symbolic.expression.passes.sympy import (
@@ -1584,12 +1585,12 @@ def test_backends_agree_on_an_identifier_named_after_a_native_constant(
 ) -> None:
     """Test Z3 and SymPy treat a variable named ``pi`` the same way.
 
-    The Z3 bridge has never resolved native constants, so while the SymPy
-    bridge keyed them on `name_hint` the two backends disagreed about
-    `pi == 1`: satisfiability called it satisfiable (a free variable can
-    be 1) and simplification folded it to `False` (the constant is not
-    1). Both now see one free variable, so satisfiability decides `True`
-    and simplification leaves a residual.
+    Only a constant's canonical identifier denotes the constant, so an
+    identifier that merely shares its name is an ordinary variable to
+    both backends: satisfiability decides `pi == 1` `True` (the variable
+    can be 1) and simplification leaves a residual, where reading it as
+    the constant would fold it to `False` on one side and refuse it on
+    the other.
     """
     variable = mock_identifier(constant_name, 1024)
     expression = BinaryExpression(
@@ -1990,3 +1991,232 @@ def test_decimal_string_tenths_are_decided_the_same_way_by_both_backends() -> No
 
     assert simplified.is_structurally_equivalent(LiteralExpression(True))
     assert satisfiable is True
+
+
+# =============================================================================
+# Native constants are refused rather than lowered as variables
+# =============================================================================
+
+_NATIVE_CONSTANT_NAMES = ["pi", "e", "inf", "nan"]
+
+_LENIENT_Z3_QUESTIONS = [
+    pytest.param(
+        lambda expression: check_expression_satisfiability(expression, {}),
+        id="check_expression_satisfiability",
+    ),
+    pytest.param(
+        lambda expression: does_expression_imply(
+            expression, LiteralExpression(True), {}
+        ),
+        id="does_expression_imply_antecedent",
+    ),
+    pytest.param(
+        lambda expression: does_expression_imply(
+            LiteralExpression(True), expression, {}
+        ),
+        id="does_expression_imply_consequent",
+    ),
+    pytest.param(
+        lambda expression: holds_for_all_free_assignments(frozenset(), expression, {}),
+        id="holds_for_all_free_assignments",
+    ),
+]
+
+_STRICT_Z3_QUESTIONS = [
+    pytest.param(
+        lambda expression: assert_holds_for_all_free_assignments(
+            frozenset(), expression, {}
+        ),
+        id="assert_holds_for_all_free_assignments",
+    ),
+    pytest.param(
+        lambda expression: assert_expression_implies(
+            expression, LiteralExpression(True), {}
+        ),
+        id="assert_expression_implies_antecedent",
+    ),
+    pytest.param(
+        lambda expression: assert_expression_implies(
+            LiteralExpression(True), expression, {}
+        ),
+        id="assert_expression_implies_consequent",
+    ),
+]
+
+
+def _refer_to_constant(constant_name: str) -> IdentifierExpression:
+    """Return a reference to the named native constant's canonical identifier."""
+    return IdentifierExpression(get_native_constant_identifier(constant_name))
+
+
+def _declare_real(constant_name: str) -> dict[Identifier, SymbolType]:
+    """Return ``symbol_types`` giving the named constant's identifier a REAL sort."""
+    return {get_native_constant_identifier(constant_name): SymbolType.REAL}
+
+
+@pytest.mark.parametrize("query", _LENIENT_Z3_QUESTIONS)
+@pytest.mark.parametrize("constant_name", _NATIVE_CONSTANT_NAMES)
+def test_lenient_z3_question_refuses_a_native_constant(
+    constant_name: str, query: Callable[[Expression], bool | None]
+) -> None:
+    """Test a question over a native constant is undecided, with no sort supplied.
+
+    Z3 has no term for the constant, so the only lowering left would be a
+    free variable the solver could set to anything. The canonical
+    identifier names a value rather than a variable, so the question
+    needs no ``symbol_types`` entry to be refused.
+    """
+    expression = _refer_to_constant(constant_name) > 4
+
+    assert query(expression) is None
+
+
+@pytest.mark.parametrize("query", _STRICT_Z3_QUESTIONS)
+@pytest.mark.parametrize("constant_name", _NATIVE_CONSTANT_NAMES)
+def test_strict_z3_question_refuses_a_native_constant_as_screened(
+    constant_name: str, query: Callable[[Expression], bool]
+) -> None:
+    """Test the strict companions refuse a native constant with the screen's reason.
+
+    The refusal is permanent -- no timeout lets Z3 represent ``pi`` -- so
+    the reason is the hazard-screen marker rather than a solver's
+    ``unknown`` text a caller might retry on.
+    """
+    expression = _refer_to_constant(constant_name) > 4
+
+    with pytest.raises(UndecidableError) as exc_info:
+        query(expression)
+
+    assert exc_info.value.reason == "hazard_screen"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(
+            lambda: check_expression_satisfiability(
+                _refer_to_constant("pi") > 4, _declare_real("pi")
+            ),
+            id="pi_above_four_is_satisfiable",
+        ),
+        pytest.param(
+            lambda: does_expression_imply(
+                _refer_to_constant("pi") > 4,
+                _refer_to_constant("pi") > 5,
+                _declare_real("pi"),
+            ),
+            id="pi_above_four_implies_pi_above_five",
+        ),
+        pytest.param(
+            lambda: holds_for_all_free_assignments(
+                frozenset(), _refer_to_constant("pi") > 3, _declare_real("pi")
+            ),
+            id="pi_above_three_holds",
+        ),
+        pytest.param(
+            lambda: check_expression_satisfiability(
+                _refer_to_constant("inf").equals(_refer_to_constant("inf") + 1),
+                _declare_real("inf"),
+            ),
+            id="inf_equals_inf_plus_one_is_satisfiable",
+        ),
+        pytest.param(
+            lambda: holds_for_all_free_assignments(
+                frozenset(),
+                _refer_to_constant("nan").equals(_refer_to_constant("nan")),
+                _declare_real("nan"),
+            ),
+            id="nan_equals_nan_holds",
+        ),
+    ],
+)
+def test_z3_question_over_a_native_constant_with_a_declared_sort_is_refused(
+    query: Callable[[], bool | None],
+) -> None:
+    """Test a sort entry for a constant does not let Z3 decide over it as a variable.
+
+    The constant's value settles each of these questions: ``pi > 4`` is
+    unsatisfiable, it implies ``pi > 5`` vacuously, ``pi > 3`` holds, and
+    in IEEE arithmetic ``inf == inf + 1`` is true and ``nan == nan`` is
+    false. Deciding over a free REAL instead, Z3 answers every one of them
+    the other way, so the sort entry is tolerated but the question is
+    still refused.
+    """
+    assert query() is None
+
+
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
+def test_z3_question_still_requires_a_sort_for_a_variable_beside_a_constant(
+    query: Callable[[Expression], bool | None],
+) -> None:
+    """Test a variable's missing sort raises ahead of the constant screen.
+
+    The constant needs no entry, so the error names only the variable the
+    caller forgot to declare.
+    """
+    x = mock_identifier("x", 0)
+    pi = get_native_constant_identifier("pi")
+    expression = BinaryExpression(
+        BinaryOperation.LESS, IdentifierExpression(pi), IdentifierExpression(x)
+    )
+
+    with pytest.raises(KeyError) as exc_info:
+        query(expression)
+
+    assert repr(x) in str(exc_info.value)
+    assert repr(pi) not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
+def test_z3_question_reports_ill_typedness_ahead_of_a_native_constant(
+    query: Callable[[Expression], bool | None],
+) -> None:
+    """Test an ill-typed tree that also references a constant raises its own error.
+
+    The constant makes the question unanswerable by this backend; the
+    numeric ``and`` operand makes it meaningless to every backend, which
+    is the diagnosis a caller can act on.
+    """
+    expression = Expression.logical_and(
+        LiteralExpression(2), _refer_to_constant("pi") > 3
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(expression)
+
+
+def test_native_constant_screen_warns_naming_the_constant_and_the_entry_point(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test the refusal is logged with the constant it refused and who asked."""
+    pi = get_native_constant_identifier("pi")
+
+    with caplog.at_level(logging.WARNING):
+        result = check_expression_satisfiability(IdentifierExpression(pi) > 4, {})
+
+    assert result is None
+    messages = _collect_solver_warning_messages(caplog)
+    assert messages, "expected a WARNING naming the native constant"
+    assert "check_expression_satisfiability" in messages[0]
+    assert repr(pi) in messages[0]
+
+
+@pytest.mark.z3
+def test_holds_for_all_free_assignments_needs_no_sort_for_a_considered_constant() -> (
+    None
+):
+    """Test a considered constant the expression never references needs no entry.
+
+    Considering a constant quantifies nothing, and with no reference to it
+    in the tree there is nothing to refuse, so the question is decided as
+    though the constant had not been named.
+    """
+    x = mock_identifier("x", 0)
+    pi = get_native_constant_identifier("pi")
+    expression = IdentifierExpression(x).equals(IdentifierExpression(x))
+
+    result = holds_for_all_free_assignments(
+        frozenset({pi}), expression, {x: SymbolType.INT}
+    )
+
+    assert result is True
