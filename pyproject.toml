@@ -107,7 +107,7 @@ include = ["src", "tests"]
 [tool.mypy]
 pretty = false
 strict = true
-enable_error_code = ["explicit-override"]
+enable_error_code = ["explicit-override", "truthy-bool"]
 
 [tool.ruff]
 line-length = 88

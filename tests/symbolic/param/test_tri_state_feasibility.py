@@ -1,0 +1,654 @@
+"""Tests for tri-state `Param.check_feasibility` and `Param.check_subset`.
+
+The tri-state queries are the real implementation; `is_feasible`,
+`is_empty`, and `is_subset` are thin wrappers that fold an `UNDECIDED`
+outcome into the optimistic boolean. These tests pin down all three
+outcomes on the tri-state side and the exact fold on the boolean side, so
+the wrappers' documented optimism cannot drift away from the outcome it is
+derived from.
+"""
+
+import logging
+from collections.abc import Callable
+from typing import Any
+
+import pytest
+
+from fhy_core.symbolic.constraint import (
+    ConstraintOutcome,
+    EquationConstraint,
+    InSetConstraint,
+    NotInSetConstraint,
+)
+from fhy_core.symbolic.expression import IdentifierExpression
+from fhy_core.symbolic.param import (
+    Param,
+    create_categorical_param,
+    create_integer_param,
+    create_integer_param_between,
+    create_ordinal_param,
+    create_permutation_param,
+    create_real_param,
+)
+
+from .conftest import mock_identifier
+
+
+def _create_undecided_param(name: str = "x", identifier_id: int = 1) -> Param[int]:
+    """Create an integer parameter whose feasibility the solver cannot decide.
+
+    `x / x != 1` trips the division hazard screen, since the divisor is
+    not a nonzero literal, so the seam refuses to lower it and reports no
+    decision at all.
+    """
+    variable = mock_identifier(name, identifier_id)
+    hazardous = (
+        IdentifierExpression(variable) / IdentifierExpression(variable)
+    ).not_equals(1)
+    return create_integer_param(
+        name=variable, constraints=[EquationConstraint(hazardous)]
+    )
+
+
+# =============================================================================
+# check_feasibility: all three outcomes
+# =============================================================================
+
+
+def test_check_feasibility_reports_satisfied_for_a_reachable_interval() -> None:
+    """Test a satisfiable integer interval reports `SATISFIED`."""
+    param = create_integer_param_between(1, 5)
+
+    assert param.check_feasibility() is ConstraintOutcome.SATISFIED
+
+
+def test_check_feasibility_reports_violated_for_contradictory_constraints() -> None:
+    """Test contradictory bounds report `VIOLATED`."""
+    x = mock_identifier("x", 1)
+    param = create_integer_param(
+        name=x,
+        constraints=[
+            EquationConstraint(IdentifierExpression(x) < 0),
+            EquationConstraint(IdentifierExpression(x) > 0),
+        ],
+    )
+
+    assert param.check_feasibility() is ConstraintOutcome.VIOLATED
+
+
+def test_check_feasibility_reports_undecided_when_the_solver_refuses() -> None:
+    """Test a hazardous equation the seam refuses reports `UNDECIDED`.
+
+    This is the outcome the boolean wrappers cannot express: it is neither
+    a proof of feasibility nor a proof of emptiness.
+    """
+    param = _create_undecided_param()
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+# =============================================================================
+# is_feasible / is_empty fold UNDECIDED optimistically
+# =============================================================================
+
+
+def test_is_feasible_folds_undecided_to_true() -> None:
+    """Test `is_feasible` reads an undecided outcome as "not disproven"."""
+    param = _create_undecided_param()
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+    assert param.is_feasible()
+
+
+def test_is_empty_folds_undecided_to_false() -> None:
+    """Test `is_empty` reads an undecided outcome as "not proven empty"."""
+    param = _create_undecided_param()
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+    assert not param.is_empty()
+
+
+def test_is_feasible_and_is_empty_are_both_false_only_when_undecided() -> None:
+    """Test the two wrappers are complements, so neither is lost to the fold.
+
+    An undecided parameter reports feasible and not empty, which is the
+    documented optimism; a decided one reports exactly one of the two.
+    """
+    undecided = _create_undecided_param()
+    feasible = create_integer_param_between(1, 5)
+    x = mock_identifier("x", 2)
+    empty = create_integer_param(
+        name=x,
+        constraints=[
+            EquationConstraint(IdentifierExpression(x) < 0),
+            EquationConstraint(IdentifierExpression(x) > 0),
+        ],
+    )
+
+    assert (undecided.is_feasible(), undecided.is_empty()) == (True, False)
+    assert (feasible.is_feasible(), feasible.is_empty()) == (True, False)
+    assert (empty.is_feasible(), empty.is_empty()) == (False, True)
+
+
+# =============================================================================
+# check_subset: all three outcomes
+# =============================================================================
+
+
+def test_check_subset_reports_satisfied_for_a_narrower_interval() -> None:
+    """Test a narrower integer interval reports `SATISFIED` against a wider one."""
+    narrower = create_integer_param_between(2, 3)
+    wider = create_integer_param_between(1, 5)
+
+    assert narrower.check_subset(wider) is ConstraintOutcome.SATISFIED
+
+
+def test_check_subset_reports_violated_for_a_wider_interval() -> None:
+    """Test a wider integer interval reports `VIOLATED` against a narrower one."""
+    wider = create_integer_param_between(1, 5)
+    narrower = create_integer_param_between(2, 3)
+
+    assert wider.check_subset(narrower) is ConstraintOutcome.VIOLATED
+
+
+def test_check_subset_reports_violated_across_value_spaces() -> None:
+    """Test an integer parameter reports `VIOLATED` against a real one.
+
+    Value-space gating is a decided answer, not an undecided one: the two
+    parameters range over different value spaces, so no subset relation
+    can hold.
+    """
+    integer: Param[Any] = create_integer_param_between(1, 5)
+    real: Param[Any] = create_real_param()
+
+    assert integer.check_subset(real) is ConstraintOutcome.VIOLATED
+
+
+def test_check_subset_reports_violated_across_finite_families() -> None:
+    """Test an ordinal parameter reports `VIOLATED` against a categorical one."""
+    ordinal = create_ordinal_param([1, 2])
+    categorical = create_categorical_param({1, 2})
+
+    assert ordinal.check_subset(categorical) is ConstraintOutcome.VIOLATED
+
+
+def test_check_subset_reports_undecided_when_the_solver_refuses() -> None:
+    """Test a hazardous antecedent the seam refuses reports `UNDECIDED`."""
+    undecided = _create_undecided_param()
+    wider = create_integer_param(name=undecided.variable)
+
+    assert undecided.check_subset(wider) is ConstraintOutcome.UNDECIDED
+
+
+# =============================================================================
+# is_subset folds UNDECIDED optimistically
+# =============================================================================
+
+
+def test_is_subset_folds_undecided_to_true() -> None:
+    """Test `is_subset` reads an undecided implication as "not disproven"."""
+    undecided = _create_undecided_param()
+    wider = create_integer_param(name=undecided.variable)
+
+    assert undecided.check_subset(wider) is ConstraintOutcome.UNDECIDED
+    assert undecided.is_subset(wider)
+
+
+def test_is_subset_reports_false_only_for_a_violated_outcome() -> None:
+    """Test only a reported counterexample folds `is_subset` to `False`."""
+    wider = create_integer_param_between(1, 5)
+    narrower = create_integer_param_between(2, 3)
+
+    assert wider.check_subset(narrower) is ConstraintOutcome.VIOLATED
+    assert not wider.is_subset(narrower)
+    assert narrower.is_subset(wider)
+
+
+# =============================================================================
+# Finite-set domains enumerate, so they never report UNDECIDED
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "create_param",
+    [
+        pytest.param(lambda: create_ordinal_param([1, 2, 3]), id="ordinal"),
+        pytest.param(lambda: create_categorical_param({"a", "b"}), id="categorical"),
+        pytest.param(lambda: create_permutation_param(["n", "c"]), id="permutation"),
+    ],
+)
+def test_finite_set_check_feasibility_always_decides(
+    create_param: Callable[[], Param[Any]],
+) -> None:
+    """Test a finite-set parameter's feasibility is never undecided."""
+    param = create_param()
+
+    assert param.check_feasibility() is ConstraintOutcome.SATISFIED
+
+
+def test_finite_set_check_feasibility_reports_violated_for_an_empty_narrowing() -> None:
+    """Test an ordinal parameter narrowed to no admissible member is `VIOLATED`."""
+    param = create_ordinal_param([1, 2, 3])
+    narrowed = param.add_constraint(InSetConstraint(param.variable, {9}))
+
+    assert narrowed.check_feasibility() is ConstraintOutcome.VIOLATED
+    assert narrowed.is_empty()
+
+
+# =============================================================================
+# Numeric in-set enumeration carries each candidate's outcome
+# =============================================================================
+
+
+_DOMAINS_LOGGER = "fhy_core.symbolic.param.domains"
+
+
+def _find_domain_warnings(
+    caplog: pytest.LogCaptureFixture,
+) -> list[logging.LogRecord]:
+    """Return the domains module's records emitted at exactly `WARNING`."""
+    return [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and record.name == _DOMAINS_LOGGER
+    ]
+
+
+def _create_in_set_param_with_undecided_members() -> Param[int]:
+    """Create `x in {1, 2, 3}` with `x + y > 0`, leaving every member undecided.
+
+    `y` is foreign to the parameter, so binding any member of the set
+    leaves the equation unresolved.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    dependent = EquationConstraint(
+        IdentifierExpression(x) + IdentifierExpression(y) > 0
+    )
+    return create_integer_param(
+        name=x, constraints=[InSetConstraint(x, (1, 2, 3)), dependent]
+    )
+
+
+def _create_in_set_param_with_one_decided_member() -> Param[int]:
+    """Create `x in {0, 1}` with `x * y == 0`, deciding only the member `0`.
+
+    Binding `0` reduces the product to a literal, so that member is
+    decided; binding `1` leaves `y == 0` unresolved.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    dependent = EquationConstraint(
+        (IdentifierExpression(x) * IdentifierExpression(y)).equals(0)
+    )
+    return create_integer_param(
+        name=x, constraints=[InSetConstraint(x, (0, 1)), dependent]
+    )
+
+
+def _create_integer_param_with_bound(
+    identifier_id: int, build_bound: Callable[[IdentifierExpression], Any]
+) -> Param[int]:
+    """Create an integer parameter `z` constrained by `build_bound(z)`."""
+    z = mock_identifier("z", identifier_id)
+    return create_integer_param(
+        name=z, constraints=[EquationConstraint(build_bound(IdentifierExpression(z)))]
+    )
+
+
+def test_check_feasibility_reports_undecided_when_no_in_set_candidate_is_decided() -> (
+    None
+):
+    """Test enumeration reports `UNDECIDED` when no candidate is decided either way."""
+    param = _create_in_set_param_with_undecided_members()
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+def test_check_feasibility_reports_satisfied_when_one_in_set_candidate_is_decided() -> (
+    None
+):
+    """Test one decided-feasible candidate outweighs an undecided sibling."""
+    param = _create_in_set_param_with_one_decided_member()
+
+    assert param.check_feasibility() is ConstraintOutcome.SATISFIED
+
+
+def test_in_set_enumeration_decides_violated_when_the_solver_refuses() -> None:
+    """Test enumeration decides `VIOLATED` for a hazard the solver seam refuses.
+
+    Binding each member of `{1, 2, 3}` reduces `x / x != 1` to a false
+    literal, so the enumeration decides what the solver would not.
+    """
+    undecided = _create_undecided_param()
+    narrowed = undecided.add_constraint(InSetConstraint(undecided.variable, (1, 2, 3)))
+
+    assert narrowed.check_feasibility() is ConstraintOutcome.VIOLATED
+
+
+def test_check_subset_reports_undecided_when_the_rejected_candidate_is_undecided() -> (
+    None
+):
+    """Test a rejected candidate `own` cannot place in its own set is no counterexample.
+
+    `y <= 2` empties `own`, so the relation holds; `y >= 3` places `3` in
+    `own`, which `other` rejects. Neither is decided.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    dependent = EquationConstraint(
+        IdentifierExpression(x) + IdentifierExpression(y) > 5
+    )
+    own = create_integer_param(
+        name=x, constraints=[InSetConstraint(x, (1, 2, 3)), dependent]
+    )
+    other = _create_integer_param_with_bound(3, lambda z: z <= 2)
+
+    assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
+
+
+def test_check_subset_reports_undecided_beside_an_accepted_decided_candidate() -> None:
+    """Test an accepted decided candidate leaves an undecided rejected one open."""
+    own = _create_in_set_param_with_one_decided_member()
+    other = _create_integer_param_with_bound(3, lambda z: z <= 0)
+
+    assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
+
+
+def test_check_subset_reports_violated_when_a_decided_candidate_is_rejected() -> None:
+    """Test a candidate decided into `own` and out of `other` is a counterexample."""
+    own = _create_in_set_param_with_one_decided_member()
+    other = _create_integer_param_with_bound(3, lambda z: z >= 1)
+
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
+
+
+def test_check_subset_reports_satisfied_when_other_accepts_every_candidate() -> None:
+    """Test `other` accepting every candidate decides `SATISFIED` regardless of `own`.
+
+    A candidate `other` accepts cannot break the relation whether or not
+    it actually lies in `own`.
+    """
+    own = _create_in_set_param_with_undecided_members()
+    other = _create_integer_param_with_bound(3, lambda z: z >= 1)
+
+    assert own.check_subset(other) is ConstraintOutcome.SATISFIED
+
+
+@pytest.mark.z3
+def test_check_subset_reports_violated_when_own_exceeds_an_undecided_finite_other() -> (
+    None
+):
+    """Test an infinite `own` exceeding an undecided finite `other` is a counterexample.
+
+    `other` admits at most `{1, 2, 3}` however its dependent constraint
+    resolves, and `own` admits `4`, so the relation is decided from proof.
+    """
+    own = _create_integer_param_with_bound(3, lambda z: z >= 1)
+    other = _create_in_set_param_with_undecided_members()
+
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
+
+
+def test_is_feasible_and_is_empty_fold_an_undecided_enumeration() -> None:
+    """Test the boolean wrappers read an undecided enumeration as "not disproven"."""
+    param = _create_in_set_param_with_undecided_members()
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+    assert param.is_feasible()
+    assert not param.is_empty()
+
+
+def test_is_subset_folds_an_undecided_enumeration_to_true() -> None:
+    """Test `is_subset` reads an undecided enumeration as "not disproven"."""
+    own = _create_in_set_param_with_one_decided_member()
+    other = _create_integer_param_with_bound(3, lambda z: z <= 0)
+
+    assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
+    assert own.is_subset(other)
+
+
+def test_undecided_feasibility_enumeration_logs_one_warning_naming_the_candidates(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test an undecided feasibility enumeration logs one WARNING naming candidates."""
+    param = _create_in_set_param_with_undecided_members()
+
+    with caplog.at_level(logging.WARNING, logger=_DOMAINS_LOGGER):
+        outcome = param.check_feasibility()
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    warnings = _find_domain_warnings(caplog)
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "1, 2, 3" in message
+    assert repr(param.variable) in message
+
+
+def test_decided_feasibility_enumeration_logs_no_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a feasibility enumeration decided by one candidate logs no WARNING."""
+    param = _create_in_set_param_with_one_decided_member()
+
+    with caplog.at_level(logging.WARNING, logger=_DOMAINS_LOGGER):
+        outcome = param.check_feasibility()
+
+    assert outcome is ConstraintOutcome.SATISFIED
+    assert _find_domain_warnings(caplog) == []
+
+
+def test_undecided_subset_enumeration_logs_one_warning_naming_the_candidates(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test an undecided subset enumeration logs one WARNING naming its candidates.
+
+    `other` accepts `1` outright, so only `2` and `3`, each undecided on
+    the own side and rejected by `other`, leave the relation open.
+    """
+    own = _create_in_set_param_with_undecided_members()
+    other = _create_integer_param_with_bound(3, lambda z: z <= 1)
+
+    with caplog.at_level(logging.WARNING, logger=_DOMAINS_LOGGER):
+        outcome = own.check_subset(other)
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    warnings = _find_domain_warnings(caplog)
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "2, 3" in message
+    assert "1, 2, 3" not in message
+    assert repr(own.variable) in message
+
+
+# =============================================================================
+# A weakened screened system cannot carry the optimistic answer
+# =============================================================================
+
+
+def _create_integer_param_with_dependent_constraint(
+    *build_bounds: Callable[[IdentifierExpression], Any],
+) -> Param[int]:
+    """Create `x` carrying the dependent `x < y` and each `build_bound(x)`.
+
+    `y` is foreign to the parameter, so screening drops `x < y` before
+    the solver is asked and the screened system is inexact.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    x_expression = IdentifierExpression(x)
+    dependent = EquationConstraint(x_expression < IdentifierExpression(y))
+    bounds = [
+        EquationConstraint(build_bound(x_expression)) for build_bound in build_bounds
+    ]
+    return create_integer_param(name=x, constraints=[dependent, *bounds])
+
+
+def _find_downgrade_warnings(
+    caplog: pytest.LogCaptureFixture,
+) -> list[logging.LogRecord]:
+    """Return the domains module's WARNING records that report `UNDECIDED`."""
+    return [
+        record
+        for record in _find_domain_warnings(caplog)
+        if "UNDECIDED" in record.getMessage()
+    ]
+
+
+def test_check_feasibility_reports_undecided_for_a_satisfiable_weakened_system() -> (
+    None
+):
+    """Test a dropped constraint downgrades the solver's `SATISFIED` to `UNDECIDED`."""
+    param = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+def test_check_feasibility_reports_undecided_for_a_satisfiable_narrowed_system() -> (
+    None
+):
+    """Test a narrowed not-in-set constraint downgrades `SATISFIED` to `UNDECIDED`."""
+    x = mock_identifier("x", 1)
+    param = create_integer_param(name=x, constraints=[NotInSetConstraint(x, {5, "a"})])
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+def test_check_feasibility_keeps_violated_for_an_unsatisfiable_weakened_system() -> (
+    None
+):
+    """Test `x < 0 and x > 0` stays `VIOLATED` beside a dropped constraint."""
+    param = _create_integer_param_with_dependent_constraint(
+        lambda x: x > 0, lambda x: x < 0
+    )
+
+    assert param.check_feasibility() is ConstraintOutcome.VIOLATED
+
+
+def test_check_subset_reports_undecided_for_a_counterexample_to_a_weakened_antecedent() -> (  # noqa: E501
+    None
+):
+    """Test a counterexample against a weakened antecedent is not trusted.
+
+    The screened own side is only `x > 0`, which admits `6` outside
+    `[0, 5]`; the dropped `x < y` might forbid it, so the relation is
+    reported `UNDECIDED` rather than `VIOLATED`.
+    """
+    own = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+    other = create_integer_param_between(0, 5)
+
+    assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
+
+
+def test_check_subset_reports_undecided_for_an_implication_into_a_weakened_consequent() -> (  # noqa: E501
+    None
+):
+    """Test an implication into a weakened consequent is not trusted.
+
+    `[1, 3]` implies the screened `x > 0`, but the dropped `x < y` may
+    reject part of it, so the relation is reported `UNDECIDED` rather
+    than `SATISFIED`.
+    """
+    own = create_integer_param_between(1, 3)
+    other = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+
+    assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
+
+
+def test_check_subset_keeps_satisfied_when_only_the_antecedent_is_weakened() -> None:
+    """Test `SATISFIED` survives a weakened antecedent.
+
+    The screened own side `x > 0` admits every value the original does,
+    so its inclusion in `z >= 0` proves the original's inclusion too.
+    """
+    own = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+    other = _create_integer_param_with_bound(3, lambda z: z >= 0)
+
+    assert own.check_subset(other) is ConstraintOutcome.SATISFIED
+
+
+def test_check_subset_keeps_violated_when_only_the_consequent_is_weakened() -> None:
+    """Test `VIOLATED` survives a weakened consequent.
+
+    `-5` lies in the exact own side and outside the screened `x > 0`,
+    which admits every value the original consequent does, so it lies
+    outside the original as well.
+    """
+    own = create_integer_param_between(-5, 3)
+    other = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
+
+
+def test_is_feasible_and_is_empty_fold_a_weakened_feasibility_optimistically() -> None:
+    """Test the boolean wrappers fold a weakened-system `UNDECIDED` optimistically."""
+    param = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+
+    assert param.is_feasible() is True
+    assert param.is_empty() is False
+
+
+def test_is_subset_folds_an_untrusted_counterexample_to_true() -> None:
+    """Test `is_subset` reports `True` when the only counterexample is untrusted."""
+    own = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+    other = create_integer_param_between(0, 5)
+
+    assert own.is_subset(other) is True
+
+
+def test_is_subset_folds_an_untrusted_implication_to_true() -> None:
+    """Test `is_subset` reports `True` for an undecided weakened implication."""
+    own = create_integer_param_between(1, 3)
+    other = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+
+    assert own.is_subset(other) is True
+
+
+def test_weakened_feasibility_downgrade_logs_one_warning_naming_the_variable(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test downgrading a weakened `SATISFIED` logs one WARNING naming the variable."""
+    param = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
+
+    with caplog.at_level(logging.WARNING, logger=_DOMAINS_LOGGER):
+        outcome = param.check_feasibility()
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    downgrades = _find_downgrade_warnings(caplog)
+    assert len(downgrades) == 1
+    assert repr(param.variable) in downgrades[0].getMessage()
+
+
+@pytest.mark.parametrize(
+    ("build_own", "build_other"),
+    [
+        pytest.param(
+            lambda: _create_integer_param_with_dependent_constraint(lambda x: x > 0),
+            lambda: create_integer_param_between(0, 5),
+            id="weakened-antecedent",
+        ),
+        pytest.param(
+            lambda: create_integer_param_between(1, 3),
+            lambda: _create_integer_param_with_dependent_constraint(lambda x: x > 0),
+            id="weakened-consequent",
+        ),
+    ],
+)
+def test_weakened_subset_downgrade_logs_one_warning_naming_both_variables(
+    build_own: Callable[[], Param[int]],
+    build_other: Callable[[], Param[int]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test downgrading a weakened subset answer logs one WARNING naming both sides."""
+    own = build_own()
+    other = build_other()
+
+    with caplog.at_level(logging.WARNING, logger=_DOMAINS_LOGGER):
+        outcome = own.check_subset(other)
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    downgrades = _find_downgrade_warnings(caplog)
+    assert len(downgrades) == 1
+    message = downgrades[0].getMessage()
+    assert repr(own.variable) in message
+    assert repr(other.variable) in message

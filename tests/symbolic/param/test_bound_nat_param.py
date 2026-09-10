@@ -214,3 +214,95 @@ def test_bound_nat_param_addition_preserves_zero_excluded_flag() -> None:
 
     assert isinstance(result.domain, IntervalIntegerDomain)
     assert result.domain.non_negative
+
+
+# =============================================================================
+# Exclusive bound rendering falls back on a non-negative domain
+# =============================================================================
+
+
+def test_bound_nat_param_addition_with_exclusive_rendering_does_not_raise() -> None:
+    """Test ``[0,5] + [0,3]`` renders on a zero-included exclusive-preferring domain.
+
+    ``prefer_inclusive=False`` asks for the result's lower bound of 0 to be
+    rendered as ``> -1``, but ``-1`` is not an admissible natural-domain
+    literal, so the rendering has to fall back to the equivalent ``>= 0``
+    instead of offering the gate a literal it must reject.
+    """
+    left = _create_interval_natural_param_between(0, 5, prefer_inclusive=False)
+    right = _create_interval_natural_param_between(0, 3, prefer_inclusive=False)
+
+    result = left + right
+
+    assert_all_satisfied(result, [0, 8])
+    assert_none_satisfied(result, [-1, 9])
+
+
+def test_bound_nat_param_addition_with_exclusive_rendering_emits_inclusive_lower() -> (
+    None
+):
+    """Test the fallback renders the lower bound inclusively and the upper exclusively.
+
+    Only the lower bound needs the fallback here: ``< 9`` is an admissible
+    natural-domain upper literal, so the exclusive preference still holds
+    there.
+    """
+    left = _create_interval_natural_param_between(0, 5, prefer_inclusive=False)
+    right = _create_interval_natural_param_between(0, 3, prefer_inclusive=False)
+
+    result = left + right
+
+    assert ">= 0" in str(result)
+    assert "< 9" in str(result)
+
+
+def test_bound_nat_param_multiplication_with_exclusive_rendering_does_not_raise() -> (
+    None
+):
+    """Test ``[0,5] * [0,3]`` needs the same lower-bound fallback as addition."""
+    left = _create_interval_natural_param_between(0, 5, prefer_inclusive=False)
+    right = _create_interval_natural_param_between(0, 3, prefer_inclusive=False)
+
+    result = left * right
+
+    assert_all_satisfied(result, [0, 15])
+    assert_none_satisfied(result, [-1, 16])
+
+
+def test_bound_nat_param_exclusive_rendering_survives_zero_excluded_domain() -> None:
+    """Test a zero-excluded natural domain renders a result lower bound of 2.
+
+    ``> 1`` is an admissible zero-excluded natural lower literal, so no
+    fallback is needed and the exclusive preference is honored.
+    """
+    left = _create_interval_natural_param_between(
+        1, 5, prefer_inclusive=False, zero_included=False
+    )
+    right = _create_interval_natural_param_between(
+        1, 3, prefer_inclusive=False, zero_included=False
+    )
+
+    result = left + right
+
+    assert " > 1" in str(result)
+    assert_all_satisfied(result, [2, 8])
+    assert_none_satisfied(result, [1, 9])
+
+
+def test_bound_nat_param_multiplication_admits_zero_when_one_operand_does() -> None:
+    """Test ``(x > 0) * (y >= 0)`` admits a product of zero.
+
+    A product reaches zero as soon as either operand admits it, unlike a
+    sum, so the result's domain must include zero even though the left
+    operand's excludes it.
+    """
+    zero_excluded = _create_interval_natural_param_between(1, 5, zero_included=False)
+    zero_included = _create_interval_natural_param_between(0, 3, zero_included=True)
+
+    result = zero_excluded * zero_included
+
+    assert isinstance(result.domain, IntervalIntegerDomain)
+    assert result.domain.non_negative
+    assert result.domain.zero_included
+    assert_all_satisfied(result, [0, 15])
+    assert_none_satisfied(result, [-1, 16])

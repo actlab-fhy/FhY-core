@@ -29,6 +29,7 @@ from fhy_core.serialization import (
 from fhy_core.symbolic.constraint import (
     Constraint,
     ConstraintBindings,
+    ConstraintError,
     ConstraintOutcome,
     ConstraintSystem,
     EquationConstraint,
@@ -86,6 +87,7 @@ __all__ = [
     "create_integer_param_between",
     "create_integer_param_with_lower_bound",
     "create_integer_param_with_upper_bound",
+    "create_intersection_param",
     "create_interval_integer_param",
     "create_interval_integer_param_between",
     "create_interval_integer_param_exactly",
@@ -100,6 +102,7 @@ __all__ = [
     "create_real_param_with_lower_bound",
     "create_real_param_with_upper_bound",
     "create_single_valid_value_param",
+    "create_union_param",
 ]
 
 _T = TypeVar("_T")
@@ -128,8 +131,8 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
 
     A parameter is defined by its variable, a set of constraints, and a
     :class:`~fhy_core.symbolic.param.domains.ParamDomain` that supplies admissibility,
-    subset, equivalence, and serialization behavior. Construct one directly with
-    a domain, or use a ``create_*`` factory for the common kinds.
+    subset, set algebra, equivalence, and serialization behavior. Construct one
+    directly with a domain, or use a ``create_*`` factory for the common kinds.
 
     The ``Param[_T]`` type parameter is an advisory hint for call-site inference
     only; the admissible value type is enforced by the domain at runtime, not by
@@ -399,25 +402,48 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         """Return whether this parameter's value set is a subset of ``other``'s."""
         return self.domain.is_value_set_subset(other.domain)
 
-    def is_subset(self, other: "Param[_T]") -> bool:
-        """Return whether this parameter's feasible set is a subset of ``other``'s.
+    def check_subset(self, other: "Param[_T]") -> ConstraintOutcome:
+        """Decide whether this parameter's feasible set is a subset of ``other``'s.
 
         Comparison is gated on value space: numeric parameters compare only with
         numeric parameters sharing the same numeric symbol type (integers with
         integers, reals with reals), and finite-set parameters compare only
-        within their own family. Cross-space and cross-family queries return
-        ``False``.
+        within their own family. Cross-space and cross-family queries decide
+        ``VIOLATED``.
 
-        A parameter whose admissible values an ``InSetConstraint`` makes
-        finite is decided by enumeration, on either side; that branch, and
-        only that branch, decides ``False`` from proof.
+        A finite-set parameter (ordinal, categorical, permutation)
+        enumerates its domain and always decides; the solver, screening,
+        and ``UNDECIDED`` below apply only to numeric parameters.
 
-        Otherwise the relation is decided through the solver, and neither
-        answer there is a proof. An undecided implication, or a constraint
-        excluded for reaching outside either parameter's own variable, is
-        read as "not a counterexample", so ``True`` means "not
-        disproven"; and screening weakens the antecedent, so a ``False``
-        may rest on a counterexample the unscreened constraints forbid.
+        A numeric parameter whose admissible values an ``InSetConstraint``
+        makes finite is decided by evaluating each candidate on both sides
+        with it bound. When this parameter is the finite one, a candidate
+        decided into it and decided out of ``other`` is a counterexample
+        (``VIOLATED``), ``other`` deciding every candidate not decided out
+        of this parameter proves the relation (``SATISFIED``), and
+        anything else, such as a candidate a dependent constraint leaves
+        undecided, reports ``UNDECIDED`` (logged at ``WARNING``). When only
+        ``other`` is finite, the relation is ``VIOLATED`` if this parameter
+        provably admits a value outside ``other``'s candidates and
+        otherwise goes to the solver.
+
+        Otherwise the relation goes to the solver. A constraint reaching
+        outside either parameter's own variable is dropped before the
+        question is posed (logged at ``WARNING``), which only widens that
+        side, so a decided answer is kept exactly when the weakened
+        question still proves it: ``SATISFIED`` when ``other``'s side is
+        exact, ``VIOLATED`` when this parameter's side is exact. A
+        ``VIOLATED`` resting on a counterexample this parameter's dropped
+        constraints might forbid, and a ``SATISFIED`` into a consequent
+        ``other``'s dropped constraints might narrow, report ``UNDECIDED``
+        (logged at ``WARNING``), as does a solver that gives up.
+
+        Returns:
+            ``SATISFIED`` when the subset relation is decided to hold,
+            ``VIOLATED`` when a counterexample is decided, and
+            ``UNDECIDED`` when neither the solver nor the enumeration
+            could decide, or the solver decided only a weakened question.
+
         """
         return self.domain.compute_feasibility_subset(
             self.constraints,
@@ -427,29 +453,72 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             other.variable,
         )
 
-    def is_feasible(self) -> bool:
-        """Return whether some value satisfies the domain and all constraints.
+    def is_subset(self, other: "Param[_T]") -> bool:
+        """Return whether this parameter's feasible set is a subset of ``other``'s.
+
+        An optimistic wrapper over :meth:`check_subset`: only a
+        ``VIOLATED`` outcome reports ``False``, so an ``UNDECIDED`` one
+        reports ``True`` and a ``True`` result means "not disproven", not
+        "proven". Call :meth:`check_subset` to tell an undecided relation
+        apart from one reported to hold.
+        """
+        return self.check_subset(other) is not ConstraintOutcome.VIOLATED
+
+    def check_feasibility(self) -> ConstraintOutcome:
+        """Decide whether some value satisfies the domain and all constraints.
 
         The constraints already include the domain's implied constraints, so the
         domain reasons only about the constraints it is given.
 
-        Set-constrained numeric parameters are decided by enumerating the
-        finite admissible members; otherwise, when the solver cannot decide
-        satisfiability, or when a constraint reaches outside this
-        parameter's own variable, the parameter is assumed feasible, so a
-        ``True`` result means "not disproven", not "proven".
+        A finite-set parameter (ordinal, categorical, permutation)
+        enumerates its domain and always decides; the solver, screening,
+        and ``UNDECIDED`` below apply only to numeric parameters.
+
+        A numeric parameter whose admissible values an ``InSetConstraint``
+        makes finite is decided by evaluating each candidate against the
+        constraints with it bound: one decided to satisfy them reports
+        ``SATISFIED``, all decided to violate them report ``VIOLATED``, and
+        otherwise, when a dependent constraint leaves a candidate undecided
+        and none is decided feasible, ``UNDECIDED`` (logged at
+        ``WARNING``). Otherwise the question goes to the solver. A
+        constraint reaching outside this parameter's own variable is
+        dropped before the question is posed (logged at ``WARNING``),
+        which only widens the admissible set: a ``VIOLATED`` answer to
+        the weakened question stands, while a ``SATISFIED`` one names a
+        value the dropped constraint might forbid and is reported
+        ``UNDECIDED`` (logged at ``WARNING``). A solver that cannot decide
+        satisfiability reports ``UNDECIDED``.
+
+        Returns:
+            ``SATISFIED`` when a satisfying value is decided to exist,
+            ``VIOLATED`` when none can exist, and ``UNDECIDED`` when
+            neither the solver nor the enumeration could decide, or the
+            solver decided only a weakened question.
+
         """
         return self.domain.has_feasible_value(self.constraints, self.variable)
+
+    def is_feasible(self) -> bool:
+        """Return whether some value satisfies the domain and all constraints.
+
+        An optimistic wrapper over :meth:`check_feasibility`: only a
+        ``VIOLATED`` outcome reports ``False``, so an ``UNDECIDED`` one
+        reports ``True`` and a ``True`` result means "not disproven", not
+        "proven". Call :meth:`check_feasibility` to tell an undecided
+        parameter apart from one reported feasible.
+        """
+        return self.check_feasibility() is not ConstraintOutcome.VIOLATED
 
     def is_empty(self) -> bool:
         """Return whether no value satisfies the domain and all constraints.
 
-        Derived from ``is_feasible``, so it inherits the same documented
-        optimism: a ``True`` result means infeasibility was proven, and a
-        ``False`` result means feasibility was proven or merely not
-        disproven.
+        The complement of :meth:`is_feasible`, and so subject to the same
+        optimism from the other side: a ``True`` result means infeasibility
+        was reported, and a ``False`` result covers a parameter reported
+        feasible and one merely not disproven alike. Call
+        :meth:`check_feasibility` to tell those apart.
         """
-        return not self.is_feasible()
+        return self.check_feasibility() is ConstraintOutcome.VIOLATED
 
     def assign(
         self, value: _T, *, bindings: ConstraintBindings | None = None
@@ -548,6 +617,11 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         )
 
     # -- interval arithmetic (interval-integer domains only) ----------------
+    #
+    # Every result is a fresh parameter over a fresh variable: a derived
+    # interval denotes its own quantity, not either operand's, so sharing an
+    # operand's identifier would conflate the two wherever both reach one
+    # constraint system.
 
     def _require_interval_domain(self) -> IntervalIntegerDomain:
         if not isinstance(self.domain, IntervalIntegerDomain):
@@ -580,7 +654,7 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         new_min = _combine_optional_bounds(self_min, other_min, operator.add)
         new_max = _combine_optional_bounds(self_max, other_max, operator.add)
         return _create_class_preserved_interval_param(
-            self, coerced, new_min, new_max, domain
+            coerced, new_min, new_max, domain, zero_included=domain.zero_included
         )
 
     def __radd__(self, other: Any) -> "Param[int]":
@@ -600,19 +674,61 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         )
         new_min = _combine_optional_bounds(self_min, other_max, operator.sub)
         new_max = _combine_optional_bounds(self_max, other_min, operator.sub)
-        return _create_widened_interval_param(self.variable, new_min, new_max, domain)
+        return _create_widened_interval_param(new_min, new_max, domain)
 
     def __rsub__(self, other: Any) -> "Param[int]":
         if not isinstance(self.domain, IntervalIntegerDomain):
             return NotImplemented
         return _coerce_to_interval_param(self, other).__sub__(self)
 
+    def __mul__(self, other: Any) -> "Param[int]":
+        if not isinstance(self.domain, IntervalIntegerDomain):
+            coerced_self = self._coerce_interval_operand(other)
+            if coerced_self is None:
+                return NotImplemented
+            return coerced_self.__mul__(other)
+        domain = self.domain
+        coerced = _coerce_to_interval_param(self, other)
+        coerced_domain = cast(IntervalIntegerDomain, coerced.domain)
+        self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
+        other_min, other_max = _get_effective_min_max(
+            coerced.constraints, coerced.variable
+        )
+        new_min, new_max = _multiply_optional_bounds(
+            self_min, self_max, other_min, other_max
+        )
+        # A product reaches zero as soon as *either* operand admits zero
+        # (``x > 0`` times ``y >= 0`` admits ``0``), unlike a sum, which needs
+        # both. So the result admits zero whenever either operand does.
+        return _create_class_preserved_interval_param(
+            coerced,
+            new_min,
+            new_max,
+            domain,
+            zero_included=domain.zero_included or coerced_domain.zero_included,
+        )
+
+    def __rmul__(self, other: Any) -> "Param[int]":
+        return self.__mul__(other)
+
     def __neg__(self) -> "Param[int]":
         domain = self._require_interval_domain()
         self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
         new_min = None if self_max is None else -self_max
         new_max = None if self_min is None else -self_min
-        return _create_widened_interval_param(self.variable, new_min, new_max, domain)
+        return _create_widened_interval_param(new_min, new_max, domain)
+
+    # -- set algebra --------------------------------------------------------
+
+    def __or__(self, other: "Param[_T]") -> "Param[_T]":
+        if not isinstance(other, Param):
+            return NotImplemented
+        return create_union_param(self, other)
+
+    def __and__(self, other: "Param[_T]") -> "Param[_T]":
+        if not isinstance(other, Param):
+            return NotImplemented
+        return create_intersection_param(self, other)
 
     @override
     def __repr__(self) -> str:
@@ -719,7 +835,11 @@ class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generi
     )
 
     def __post_init__(self) -> None:
+        # Normalize here so a directly constructed assignment and the
+        # ``Param.assign`` form of the same binding hold the same canonical
+        # value: they compare structurally equivalent and both serialize.
         self.param.validate_value(self.value)
+        object.__setattr__(self, "value", self.param.domain.normalize_value(self.value))
 
     @classmethod
     @override
@@ -732,12 +852,14 @@ class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generi
         of the serialized state. Deserialization therefore re-checks what
         is decidable in isolation -- domain admissibility and every
         constraint decidable from this parameter's own variable -- and
-        accepts an undecided remainder.
+        accepts an undecided remainder. The accepted value is stored in
+        the domain's canonical form.
         """
         param: Param[Any] = fields["param"]
         value = fields["value"]
         _raise_if_value_provably_invalid(param, value)
-        return _construct_unchecked_assignment(param, value)
+        normalized = param.domain.normalize_value(value)
+        return _construct_unchecked_assignment(param, normalized)
 
     def is_value_set(self) -> bool:
         """Return whether this assignment has a value."""
@@ -772,53 +894,72 @@ def _create_bound_constraint(
     return EquationConstraint(equation)
 
 
+def _is_valid_natural_lower_bound(
+    bound: int, *, zero_included: bool, is_inclusive: bool
+) -> bool:
+    """Return whether ``bound`` is an admissible natural-domain lower-bound literal."""
+    if zero_included:
+        if bound < 0:
+            return False
+        return is_inclusive or bound >= 1
+    if is_inclusive:
+        return bound >= 1
+    return bound >= 0
+
+
+def _is_valid_natural_upper_bound(
+    bound: int, *, zero_included: bool, is_inclusive: bool
+) -> bool:
+    """Return whether ``bound`` is an admissible natural-domain upper-bound literal."""
+    if zero_included:
+        if is_inclusive:
+            return bound >= 0
+        return bound >= 1
+    if is_inclusive:
+        return bound >= 1
+    return bound >= 2  # noqa: PLR2004
+
+
 def _validate_natural_lower_bound(
     bound: int, *, zero_included: bool, is_inclusive: bool
 ) -> None:
+    if _is_valid_natural_lower_bound(
+        bound, zero_included=zero_included, is_inclusive=is_inclusive
+    ):
+        return
     if zero_included:
         if bound < 0:
             raise ParamError("Lower bound must be non-negative.")
-        if not is_inclusive and bound < 1:
-            raise ParamError(
-                "Lower bound must be at least 1 if zero is included and "
-                "bound is exclusive."
-            )
-    elif is_inclusive:
-        if bound < 1:
-            raise ParamError(
-                "Lower bound must be at least 1 when zero is not included."
-            )
-    elif bound < 0:
         raise ParamError(
-            "Lower bound must be non-negative when zero is not included "
-            "and bound is exclusive."
+            "Lower bound must be at least 1 if zero is included and bound is exclusive."
         )
+    if is_inclusive:
+        raise ParamError("Lower bound must be at least 1 when zero is not included.")
+    raise ParamError(
+        "Lower bound must be non-negative when zero is not included "
+        "and bound is exclusive."
+    )
 
 
 def _validate_natural_upper_bound(
     bound: int, *, zero_included: bool, is_inclusive: bool
 ) -> None:
+    if _is_valid_natural_upper_bound(
+        bound, zero_included=zero_included, is_inclusive=is_inclusive
+    ):
+        return
     if zero_included:
         if is_inclusive:
-            if bound < 0:
-                raise ParamError(
-                    "Upper bound must be non-negative when zero is included."
-                )
-        elif bound < 1:
-            raise ParamError(
-                "Upper bound must be at least 1 if zero is included and "
-                "bound is exclusive."
-            )
-    elif is_inclusive:
-        if bound < 1:
-            raise ParamError(
-                "Upper bound must be at least 1 when zero is not included."
-            )
-    elif bound < 2:  # noqa: PLR2004
+            raise ParamError("Upper bound must be non-negative when zero is included.")
         raise ParamError(
-            "Upper bound must be at least 2 when zero is not included "
-            "and bound is exclusive."
+            "Upper bound must be at least 1 if zero is included and bound is exclusive."
         )
+    if is_inclusive:
+        raise ParamError("Upper bound must be at least 1 when zero is not included.")
+    raise ParamError(
+        "Upper bound must be at least 2 when zero is not included "
+        "and bound is exclusive."
+    )
 
 
 def _validate_natural_bound(
@@ -952,42 +1093,153 @@ def _combine_optional_bounds(
     return combine(left, right)
 
 
+# An extended-integer bound is a ``(bucket, value)`` pair: ``bucket`` is ``-1``
+# for negative infinity, ``0`` for a finite value, or ``1`` for positive
+# infinity. ``value`` carries the finite magnitude when ``bucket == 0`` and is
+# an unused placeholder otherwise. Ordinary tuple comparison then gives a
+# total order (``-inf < any finite < +inf``) without any float sentinel.
+def _convert_to_extended_bound(value: int | None, *, is_lower: bool) -> tuple[int, int]:
+    if value is not None:
+        return (0, value)
+    return (-1, 0) if is_lower else (1, 0)
+
+
+def _convert_from_extended_bound(extended: tuple[int, int]) -> int | None:
+    bucket, value = extended
+    return value if bucket == 0 else None
+
+
+def _multiply_extended_bounds(
+    left: tuple[int, int], right: tuple[int, int]
+) -> tuple[int, int]:
+    """Multiply two extended-integer bounds, per interval-product set semantics.
+
+    A finite zero operand forces the product to zero even against an
+    unbounded operand, since the product set of ``{0}`` with any interval
+    is ``{0}``.
+    """
+    left_bucket, left_value = left
+    right_bucket, right_value = right
+    if (left_bucket == 0 and left_value == 0) or (
+        right_bucket == 0 and right_value == 0
+    ):
+        return (0, 0)
+    if left_bucket == 0 and right_bucket == 0:
+        return (0, left_value * right_value)
+    left_sign = left_bucket if left_bucket != 0 else (1 if left_value > 0 else -1)
+    right_sign = right_bucket if right_bucket != 0 else (1 if right_value > 0 else -1)
+    return (left_sign * right_sign, 0)
+
+
+def _multiply_optional_bounds(
+    self_min: int | None,
+    self_max: int | None,
+    other_min: int | None,
+    other_max: int | None,
+) -> tuple[int | None, int | None]:
+    """Multiply two extended-integer intervals via the four-candidate rule.
+
+    ``[self_min, self_max] * [other_min, other_max]`` spans the minimum and
+    maximum of the four pairwise endpoint products, where ``None`` denotes
+    an unbounded end (negative infinity for a lower bound, positive
+    infinity for an upper bound).
+
+    Args:
+        self_min: Left interval's lower bound, or ``None`` if unbounded.
+        self_max: Left interval's upper bound, or ``None`` if unbounded.
+        other_min: Right interval's lower bound, or ``None`` if unbounded.
+        other_max: Right interval's upper bound, or ``None`` if unbounded.
+
+    Returns:
+        The product interval's ``(min, max)`` pair, each ``None`` when that
+        end is unbounded.
+
+    """
+    candidates = tuple(
+        _multiply_extended_bounds(left, right)
+        for left in (
+            _convert_to_extended_bound(self_min, is_lower=True),
+            _convert_to_extended_bound(self_max, is_lower=False),
+        )
+        for right in (
+            _convert_to_extended_bound(other_min, is_lower=True),
+            _convert_to_extended_bound(other_max, is_lower=False),
+        )
+    )
+    return (
+        _convert_from_extended_bound(min(candidates)),
+        _convert_from_extended_bound(max(candidates)),
+    )
+
+
 def _apply_interval_bounds(
     param: "Param[int]", min_int: int | None, max_int: int | None
 ) -> "Param[int]":
     domain = cast(IntervalIntegerDomain, param.domain)
     if min_int is not None:
-        if domain.prefer_inclusive:
-            param = param.add_lower_bound_constraint(min_int, is_inclusive=True)
-        else:
+        if _is_exclusive_lower_rendering_valid(domain, min_int):
             param = param.add_lower_bound_constraint(min_int - 1, is_inclusive=False)
-    if max_int is not None:
-        if domain.prefer_inclusive:
-            param = param.add_upper_bound_constraint(max_int, is_inclusive=True)
         else:
+            param = param.add_lower_bound_constraint(min_int, is_inclusive=True)
+    if max_int is not None:
+        if _is_exclusive_upper_rendering_valid(domain, max_int):
             param = param.add_upper_bound_constraint(max_int + 1, is_inclusive=False)
+        else:
+            param = param.add_upper_bound_constraint(max_int, is_inclusive=True)
     return param
 
 
+def _is_exclusive_lower_rendering_valid(
+    domain: IntervalIntegerDomain, min_int: int
+) -> bool:
+    """Return whether ``min_int`` may be rendered as ``> min_int - 1``.
+
+    ``> min_int - 1`` admits exactly what ``>= min_int`` admits over the
+    integers, but on a non-negative domain the natural-number gate judges
+    the literal rather than what it admits, and rejects the shifted one
+    (``> -1`` on a zero-included natural domain is exactly ``>= 0``, yet
+    ``-1`` is not an admissible natural literal). Rendering falls back to
+    the inclusive form in that case instead of tripping the gate.
+    """
+    if domain.prefer_inclusive:
+        return False
+    return not domain.non_negative or _is_valid_natural_lower_bound(
+        min_int - 1, zero_included=domain.zero_included, is_inclusive=False
+    )
+
+
+def _is_exclusive_upper_rendering_valid(
+    domain: IntervalIntegerDomain, max_int: int
+) -> bool:
+    """Return whether ``max_int`` may be rendered as ``< max_int + 1``.
+
+    The upper-bound mirror of :func:`_is_exclusive_lower_rendering_valid`.
+    """
+    if domain.prefer_inclusive:
+        return False
+    return not domain.non_negative or _is_valid_natural_upper_bound(
+        max_int + 1, zero_included=domain.zero_included, is_inclusive=False
+    )
+
+
 def _create_widened_interval_param(
-    variable: Identifier,
     min_int: int | None,
     max_int: int | None,
     template_domain: IntervalIntegerDomain,
 ) -> "Param[int]":
     param: Param[int] = Param(
-        IntervalIntegerDomain(prefer_inclusive=template_domain.prefer_inclusive),
-        variable=variable,
+        IntervalIntegerDomain(prefer_inclusive=template_domain.prefer_inclusive)
     )
     return _apply_interval_bounds(param, min_int, max_int)
 
 
 def _create_class_preserved_interval_param(
-    template: "Param[Any]",
     other: "Param[Any]",
     min_int: int | None,
     max_int: int | None,
     template_domain: IntervalIntegerDomain,
+    *,
+    zero_included: bool,
 ) -> "Param[int]":
     other_domain = other.domain
     if (
@@ -999,14 +1251,30 @@ def _create_class_preserved_interval_param(
             IntervalIntegerDomain(
                 prefer_inclusive=template_domain.prefer_inclusive,
                 non_negative=True,
-                zero_included=template_domain.zero_included,
-            ),
-            variable=template.variable,
+                zero_included=zero_included,
+            )
         )
         return _apply_interval_bounds(param, min_int, max_int)
-    return _create_widened_interval_param(
-        template.variable, min_int, max_int, template_domain
+    return _create_widened_interval_param(min_int, max_int, template_domain)
+
+
+def _require_bound_constraint(constraint: Constraint) -> None:
+    """Raise ``TypeError`` unless ``constraint`` lifts to a bound expression.
+
+    A constraint that does not lift to an expression at all (its
+    ``convert_to_expression`` raises ``ConstraintError``) is not a bound
+    either; that error is chained as the cause.
+    """
+    message = (
+        "Cannot coerce an integer parameter with non-bound constraints to an "
+        "interval parameter."
     )
+    try:
+        expression = constraint.convert_to_expression()
+    except ConstraintError as error:
+        raise TypeError(message) from error
+    if not is_bound_expression(expression):
+        raise TypeError(message)
 
 
 def _coerce_to_interval_param(template: "Param[Any]", other: Any) -> "Param[int]":
@@ -1021,11 +1289,7 @@ def _coerce_to_interval_param(template: "Param[Any]", other: Any) -> "Param[int]
         return other
     if isinstance(other, Param) and isinstance(other.domain, IntegerDomain):
         for constraint in other.constraints:
-            if not is_bound_expression(constraint.convert_to_expression()):
-                raise TypeError(
-                    "Cannot coerce an integer parameter with non-bound "
-                    "constraints to an interval parameter."
-                )
+            _require_bound_constraint(constraint)
         return Param(
             IntervalIntegerDomain(prefer_inclusive=template_domain.prefer_inclusive),
             variable=other.variable,
@@ -1282,3 +1546,172 @@ def create_single_valid_value_param(
 ) -> Param[_CategoricalValueT]:
     """Create a parameter that admits only a single value."""
     return create_categorical_param([value], name=name)
+
+
+# ---------------------------------------------------------------------------
+# Set algebra
+# ---------------------------------------------------------------------------
+
+
+def create_union_param(
+    left: Param[_T],
+    right: Param[_T],
+    *,
+    name: Identifier | None = None,
+) -> Param[_T]:
+    """Create a parameter admitting exactly the values valid for either operand.
+
+    Both operands' constraints are folded into the result: each operand's
+    member set is filtered by its own constraints before the sets are merged,
+    so the result carries no constraints of its own.
+
+    Args:
+        left: Left operand; must have an ordinal or categorical domain.
+        right: Right operand; must have the same domain kind as ``left``.
+        name: Variable for the result; defaults to a fresh
+            ``Identifier("param")``.
+
+    Returns:
+        A new parameter over the union of the operands' effective value sets.
+
+    Raises:
+        TypeError: If either operand's domain kind does not support union, the
+            kinds differ, or merged ordinal values are not mutually comparable.
+        ParamError: If both operands' effective value sets are empty, so the
+            union would be empty.
+
+    """
+    variable = name or Identifier("param")
+    union = left.domain.compute_union(
+        left.constraints,
+        left.variable,
+        right.domain,
+        right.constraints,
+        right.variable,
+        variable,
+    )
+    if union is None:
+        raise TypeError(
+            f"Union is not supported for domain kind {type(left.domain).__name__}."
+        )
+    domain, constraints = union
+    return Param(
+        domain,
+        variable=variable,
+        constraint_system=create_constraint_system(*constraints),
+    )
+
+
+def _coerce_intersection_operands(
+    left: "Param[Any]", right: "Param[Any]"
+) -> tuple["Param[Any]", "Param[Any]"]:
+    """Coerce a mixed interval-integer/plain-integer operand pair to one kind.
+
+    Reuses the interval-arithmetic coercion: the plain integer operand is
+    rewrapped over an ``IntervalIntegerDomain`` so both operands share a
+    domain kind before dispatching to ``compute_intersection``. Any other
+    pairing (already one kind, or an unsupported mix) is returned
+    unchanged, leaving the delegated ``compute_intersection`` to report a
+    kind mismatch.
+
+    Raises:
+        TypeError: If the plain integer operand carries a non-bound
+            constraint, so it has no interval form (propagated from
+            :func:`_coerce_to_interval_param`).
+
+    """
+    if isinstance(left.domain, IntervalIntegerDomain) and isinstance(
+        right.domain, IntegerDomain
+    ):
+        return left, _coerce_to_interval_param(left, right)
+    if isinstance(right.domain, IntervalIntegerDomain) and isinstance(
+        left.domain, IntegerDomain
+    ):
+        return _coerce_to_interval_param(right, left), right
+    return left, right
+
+
+def _is_intersection_provably_empty(
+    result: "Param[Any]", left: "Param[Any]", right: "Param[Any]"
+) -> bool:
+    """Return whether the intersection ``result`` of two operands is proven empty.
+
+    A ``VIOLATED`` conjunction is empty outright. An ``UNDECIDED`` one is
+    empty when either operand is itself proven infeasible, since an
+    intersection with an empty set is empty; the operands are not
+    consulted for a ``SATISFIED`` conjunction.
+    """
+    outcome = result.check_feasibility()
+    if outcome is ConstraintOutcome.VIOLATED:
+        return True
+    elif outcome is ConstraintOutcome.SATISFIED:
+        return False
+    else:
+        return any(
+            operand.check_feasibility() is ConstraintOutcome.VIOLATED
+            for operand in (left, right)
+        )
+
+
+def create_intersection_param(
+    left: Param[_T],
+    right: Param[_T],
+    *,
+    name: Identifier | None = None,
+) -> Param[_T]:
+    """Create a parameter admitting exactly the values valid for both operands.
+
+    Finite-set operands are intersected by baking both effective value sets;
+    permutation operands keep their member set, and numeric operands merge
+    domain attributes conservatively -- both of these kinds carry the
+    conjunction of both operands' constraints with both operands' variables
+    renamed to the result variable, so a constraint relating the two
+    operands becomes a constraint on the result alone. A mixed pair of one
+    interval-integer parameter and one plain integer parameter whose
+    constraints are all bound expressions is supported by coercing the
+    plain parameter to interval form first; the coerced operand contributes
+    any sign bound as a carried constraint rather than as a domain
+    attribute.
+
+    Args:
+        left: Left operand.
+        right: Right operand; must have the same domain kind as ``left``
+            (modulo the interval/integer coercion above).
+        name: Variable for the result; defaults to a fresh
+            ``Identifier("param")``.
+
+    Returns:
+        A new parameter over the intersection of the operands' feasible
+        sets. A conjunction the solver leaves undecided is returned live;
+        its :meth:`Param.check_feasibility` reports ``UNDECIDED``, which
+        tells it apart from one decided feasible.
+
+    Raises:
+        TypeError: If the domain kinds are incompatible, or a mixed
+            interval-integer/plain-integer pair's plain operand carries a
+            non-bound constraint, so it has no interval form.
+        ParamError: If the intersection is provably empty: an empty
+            finite-set intersection, permutation operands over different
+            member sets, a numeric conjunction the enumeration or the
+            solver proves infeasible, or an operand that is itself proven
+            infeasible.
+
+    """
+    coerced_left, coerced_right = _coerce_intersection_operands(left, right)
+    variable = name or Identifier("param")
+    domain, constraints = coerced_left.domain.compute_intersection(
+        coerced_left.constraints,
+        coerced_left.variable,
+        coerced_right.domain,
+        coerced_right.constraints,
+        coerced_right.variable,
+        variable,
+    )
+    result: Param[_T] = Param(
+        domain,
+        variable=variable,
+        constraint_system=create_constraint_system(*constraints),
+    )
+    if _is_intersection_provably_empty(result, coerced_left, coerced_right):
+        raise ParamError("Intersection of parameters is empty.")
+    return result
