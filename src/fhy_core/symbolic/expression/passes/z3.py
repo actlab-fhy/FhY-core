@@ -209,23 +209,52 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
     def visit_literal_expression(  # noqa: PLR0911
         self, literal_expression: LiteralExpression
     ) -> z3.ExprRef:
+        """Lower a literal to the Z3 numeral its IR form denotes exactly.
+
+        ``LiteralExpression`` gives each literal form its own precision
+        contract, and each form reaches Z3 as the exact value that
+        contract names:
+
+        - ``bool`` becomes a ``BoolVal``.
+        - An integer -- a Python ``int`` or an integer-grammar ``str`` --
+          becomes an ``IntVal``. Both are in one equivalence class, so
+          both have to reach Z3 in one sort; ``RealVal`` for the string
+          form would let the solver decide for one member of a class what
+          it refuses for another.
+        - A Python ``float`` is an IEEE-754 binary value, so it becomes
+          the rational its bits denote, taken from
+          ``float.as_integer_ratio``. Handing the ``float`` itself to
+          ``z3.RealVal`` would instead reinterpret its shortest repr as
+          exact decimal text, so ``0.1`` would reach the solver as
+          ``1/10`` -- a different number from the one the literal stores.
+        - A float-grammar ``str`` is exact decimal, and ``RealVal`` reads
+          decimal text exactly, so the text goes to Z3 unconverted.
+
+        The SymPy bridge lowers each of those forms to the same value, so
+        no ground comparison is decided one way by ``simplify_expression``
+        and the other way by the solver seam.
+
+        A non-finite ``float`` has no rational value at all:
+        ``as_integer_ratio`` raises ``OverflowError`` for an infinity and
+        ``ValueError`` for a NaN, and the pass infrastructure surfaces
+        either as a ``PassExecutionError``. The solver seam screens the
+        division-like shapes that can otherwise reach the solver with a
+        non-finite divisor. An unsupported literal type raises
+        ``TypeError``.
+        """
         value = literal_expression.value
         if isinstance(value, bool):
             return z3.BoolVal(value)
         elif isinstance(value, int):
             return z3.IntVal(value)
         elif isinstance(value, float):
-            return z3.RealVal(value)
+            return z3.RatVal(*value.as_integer_ratio())
         elif isinstance(value, str):
             if value == "True":
                 return z3.BoolVal(True)
             elif value == "False":
                 return z3.BoolVal(False)
             elif is_integer_valued_literal(value):
-                # An integer-grammar string is in the same equivalence class
-                # as the Python `int` it denotes, so it has to reach Z3 in the
-                # same sort; `RealVal` here would let the solver decide for
-                # one member of a class what it refuses for another.
                 return z3.IntVal(int(value))
             else:
                 return z3.RealVal(value)

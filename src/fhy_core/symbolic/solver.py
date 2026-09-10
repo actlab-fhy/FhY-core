@@ -6,11 +6,19 @@ selection is explicit: asking a backend for a query kind it cannot
 answer raises ``SolverCapabilityError``. Each query kind currently has
 exactly one capable backend.
 
-Known divergences: the Z3 and SymPy bridges disagree with each other
-and with the type checker on ``Rational`` lifting, integer division,
-floor-division/modulo Euclidean semantics, and inf/nan lifting. This
-module routes to each bridge unchanged; it does not reconcile that
-math.
+The two bridges agree on what a literal denotes. Each of
+``LiteralExpression``'s numeric forms carries its own precision contract
+-- a Python ``float`` is IEEE-754 binary, a float-grammar ``str`` is
+exact decimal -- and both bridges lower each form to that exact value, so
+no ground comparison is decided one way by ``simplify_expression`` and the
+other way by the Z3 questions below.
+
+Known divergences: the Z3 and SymPy bridges disagree with each other and
+with the type checker on integer division, floor-division/modulo
+Euclidean semantics, and inf/nan lifting. This module routes to each
+bridge unchanged; it does not reconcile that math. The hazard screens
+below refuse the division-like shapes rather than let a bridge decide one
+of them.
 
 The Z3-question entry points (``check_expression_satisfiability``,
 ``does_expression_imply``, ``holds_for_all_free_assignments``, and
@@ -217,9 +225,11 @@ def simplify_expression(
         PassExecutionError: If the SymPy bridge's lowering or lifting pass
             fails internally, for example when simplification yields a
             ``sympy.Piecewise`` whose final branch condition is not
-            ``sympy.true``. The pass infrastructure wraps the originating
-            error (e.g. ``PartialPiecewiseError``) as ``__cause__`` rather
-            than letting it propagate directly.
+            ``sympy.true``, or when it yields ``sympy.zoo``, which a
+            quotient by zero folds to. The pass infrastructure wraps the
+            originating error (e.g. ``PartialPiecewiseError``,
+            ``ComplexInfinityLiftError``) as ``__cause__`` rather than
+            letting it propagate directly.
 
     """
     _validate_backend_capability(backend, SolverQueryKind.SIMPLIFICATION)

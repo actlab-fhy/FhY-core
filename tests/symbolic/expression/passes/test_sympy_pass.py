@@ -12,6 +12,7 @@ from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
     CallExpression,
+    ComplexInfinityLiftError,
     Expression,
     IdentifierExpression,
     LiteralExpression,
@@ -51,7 +52,7 @@ from ..conftest import mock_identifier
         (LiteralExpression(5.5), sympy.Float(5.5)),
         (LiteralExpression(True), sympy.true),
         (LiteralExpression(False), sympy.false),
-        (LiteralExpression("10.6"), sympy.Float(10.6)),
+        (LiteralExpression("10.6"), sympy.Rational("10.6")),
         (LiteralExpression("5"), sympy.Integer(5)),
         (LiteralExpression("05"), sympy.Integer(5)),
         (
@@ -1673,3 +1674,263 @@ def test_lifted_boolean_node_lowers_back_to_an_equivalent_sympy_boolean(
 
     assert isinstance(lowered, sympy.logic.boolalg.Boolean)
     assert sympy.simplify(sympy.Equivalent(sympy_expression, lowered)) is sympy.true
+
+
+# =============================================================================
+# Rational lifting
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "rational, expected_expression",
+    [
+        pytest.param(sympy.Rational(1, 2), LiteralExpression("0.5"), id="one_half"),
+        pytest.param(
+            sympy.Rational(7, 2), LiteralExpression("3.5"), id="three_and_a_half"
+        ),
+        pytest.param(sympy.Rational(1, 10), LiteralExpression("0.1"), id="one_tenth"),
+        pytest.param(
+            sympy.Rational(1, 8), LiteralExpression("0.125"), id="powers_of_two_only"
+        ),
+        pytest.param(
+            sympy.Rational(1, 5), LiteralExpression("0.2"), id="powers_of_five_only"
+        ),
+        pytest.param(
+            sympy.Rational(3, 40),
+            LiteralExpression("0.075"),
+            id="mixed_two_and_five_factors",
+        ),
+        pytest.param(
+            sympy.Rational(-7, 2),
+            UnaryExpression(UnaryOperation.NEGATE, LiteralExpression("3.5")),
+            id="negative_terminating",
+        ),
+    ],
+)
+def test_terminating_rational_lifts_to_an_exact_decimal_string_literal(
+    rational: sympy.Rational, expected_expression: Expression
+) -> None:
+    """Test a rational with a terminating expansion lifts to exact decimal text.
+
+    A denominator whose only prime factors are 2 and 5 divides a power of
+    ten, so the rational has finite decimal text and
+    ``LiteralExpression`` stores that text as an exact
+    ``decimal.Decimal``. The float grammar carries no sign, so a negative
+    one lifts as a ``NEGATE`` of its magnitude.
+    """
+    result = convert_sympy_expression_to_expression(rational)
+
+    assert result.is_structurally_equivalent(expected_expression)
+
+
+@pytest.mark.parametrize(
+    "rational, expected_numerator, expected_denominator",
+    [
+        pytest.param(sympy.Rational(1, 3), 1, 3, id="one_third"),
+        pytest.param(sympy.Rational(2, 7), 2, 7, id="two_sevenths"),
+        pytest.param(sympy.Rational(-1, 3), -1, 3, id="negative_one_third"),
+        pytest.param(
+            sympy.Rational(1, 30), 1, 30, id="terminating_factors_plus_a_third"
+        ),
+    ],
+)
+def test_repeating_rational_lifts_to_an_exact_divide(
+    rational: sympy.Rational, expected_numerator: int, expected_denominator: int
+) -> None:
+    """Test a rational with no finite decimal text lifts to a `DIVIDE`.
+
+    One third has no exact decimal spelling at any precision, so lifting
+    it as decimal text would have to round. The quotient of its numerator
+    and denominator is exact instead, and keeps lifting total over every
+    rational SymPy can produce.
+    """
+    result = convert_sympy_expression_to_expression(rational)
+
+    assert result.is_structurally_equivalent(
+        BinaryExpression(
+            BinaryOperation.DIVIDE,
+            LiteralExpression(expected_numerator),
+            LiteralExpression(expected_denominator),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "rational",
+    [
+        pytest.param(sympy.Rational(1, 2**100), id="hundred_binary_places"),
+        pytest.param(sympy.Rational(1, 10**30), id="thirty_decimal_places"),
+        pytest.param(
+            sympy.Rational(12345678901234567890, 2**80), id="wide_numerator_and_scale"
+        ),
+    ],
+)
+def test_terminating_rational_lift_is_exact_past_the_default_decimal_precision(
+    rational: sympy.Rational,
+) -> None:
+    """Test a rational wider than `decimal`'s default context lifts exactly.
+
+    ``decimal`` rounds arithmetic to its context precision, 28 digits by
+    default, so a lift that computed the digits by dividing would silently
+    truncate here. Lowering the lifted text has to recover the original
+    rational, and the text has to stay in fixed-point form -- scientific
+    notation does not match the float grammar and would be rejected at
+    construction.
+    """
+    result = convert_sympy_expression_to_expression(rational)
+
+    assert isinstance(result, LiteralExpression)
+    assert "e" not in str(result.value).lower()
+    assert convert_expression_to_sympy_expression(result) == rational
+
+
+def test_integer_lifts_as_an_integer_and_not_as_a_rational() -> None:
+    """Test `sympy.Integer` is not captured by the rational arm.
+
+    ``sympy.Integer`` subclasses ``sympy.Rational``, and the lift
+    dispatch is first-match-wins, so an ``Integer`` reaching the rational
+    arm would come back as ``5 / 1`` rather than as the literal ``5``.
+    """
+    result = convert_sympy_expression_to_expression(sympy.Integer(5))
+
+    assert result.is_structurally_equivalent(LiteralExpression(5))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("0.1", id="one_tenth"),
+        pytest.param("1.5", id="one_and_a_half"),
+        pytest.param("0.075", id="three_decimal_places"),
+        pytest.param(".5", id="no_integer_part"),
+    ],
+)
+def test_decimal_string_literal_round_trips_through_sympy_unchanged(text: str) -> None:
+    """Test a float-grammar string literal survives lowering and lifting.
+
+    Lowering reads the text as an exact rational and lifting writes that
+    rational back as exact decimal text, so the round trip lands in the
+    float-decimal bucket it started in rather than collapsing into the
+    float-binary one.
+    """
+    literal = LiteralExpression(text)
+
+    result = convert_sympy_expression_to_expression(
+        convert_expression_to_sympy_expression(literal)
+    )
+
+    assert result.is_structurally_equivalent(literal)
+    assert isinstance(result, LiteralExpression)
+    assert type(result.value) is str
+
+
+@pytest.mark.parametrize(
+    "text, expected_integer",
+    [
+        pytest.param("2.0", 2, id="trailing_zero"),
+        pytest.param("2.", 2, id="no_fractional_digits"),
+        pytest.param("0.0", 0, id="zero"),
+    ],
+)
+def test_whole_valued_decimal_string_literal_lifts_into_the_integer_bucket(
+    text: str, expected_integer: int
+) -> None:
+    """Test a float-grammar string with no fractional part comes back as an integer.
+
+    ``sympy.Rational`` normalizes a unit denominator away, so ``"2.0"``
+    reaches SymPy as ``sympy.Integer(2)``, indistinguishable from the
+    literal ``2``. The lifter sees only that value, so the round trip
+    lands in the integer bucket. The value is preserved exactly; only the
+    bucket moves.
+    """
+    literal = LiteralExpression(text)
+
+    result = convert_sympy_expression_to_expression(
+        convert_expression_to_sympy_expression(literal)
+    )
+
+    assert result.is_structurally_equivalent(LiteralExpression(expected_integer))
+    assert not result.is_structurally_equivalent(literal)
+
+
+def test_simplify_divide_by_a_literal_yields_the_exact_half() -> None:
+    """Test `x / 2` simplifies rather than raising on SymPy's `Half`.
+
+    SymPy folds the quotient to ``Half * x``, and lifting ``Half``
+    exactly is what makes ordinary division by a literal survive
+    simplification at all.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.DIVIDE, IdentifierExpression(x), LiteralExpression(2)
+    )
+
+    result = simplify_expression(expression)
+
+    assert result.is_structurally_equivalent(
+        BinaryExpression(
+            BinaryOperation.MULTIPLY,
+            LiteralExpression("0.5"),
+            IdentifierExpression(x),
+        )
+    )
+
+
+def test_simplify_ground_quotient_yields_the_exact_decimal_value() -> None:
+    """Test `7 / 2` simplifies to exactly three and a half."""
+    expression = BinaryExpression(
+        BinaryOperation.DIVIDE, LiteralExpression(7), LiteralExpression(2)
+    )
+
+    result = simplify_expression(expression)
+
+    assert result.is_structurally_equivalent(LiteralExpression("3.5"))
+
+
+def test_simplify_repeating_ground_quotient_yields_a_divide() -> None:
+    """Test `1 / 3` simplifies to a `DIVIDE` rather than raising.
+
+    One third has no exact literal form, so the residual quotient is the
+    exact answer; refusing to lift it would make simplification partial
+    over ordinary division.
+    """
+    expression = BinaryExpression(
+        BinaryOperation.DIVIDE, LiteralExpression(1), LiteralExpression(3)
+    )
+
+    result = simplify_expression(expression)
+
+    assert result.is_structurally_equivalent(
+        BinaryExpression(
+            BinaryOperation.DIVIDE, LiteralExpression(1), LiteralExpression(3)
+        )
+    )
+
+
+def test_simplify_quotient_by_zero_raises_the_complex_infinity_error() -> None:
+    """Test `1 / 0` is refused by name rather than as an unsupported node type.
+
+    SymPy folds the quotient to ``zoo``, its directionless complex
+    infinity, which no expression denotes. Reporting it as an unlearned
+    node kind would leave a caller unable to tell an ill-defined quotient
+    from a lifting arm nobody has written yet.
+    """
+    expression = BinaryExpression(
+        BinaryOperation.DIVIDE, LiteralExpression(1), LiteralExpression(0)
+    )
+
+    with pytest.raises(PassExecutionError) as exception_info:
+        simplify_expression(expression)
+
+    cause = exception_info.value.__cause__
+    assert isinstance(cause, ComplexInfinityLiftError)
+    assert "Unsupported expression type" not in str(exception_info.value)
+    assert "zoo" in str(cause)
+
+
+def test_complex_infinity_is_refused_by_the_lifter_directly() -> None:
+    """Test lifting `sympy.zoo` on its own raises the named error."""
+    with pytest.raises(PassExecutionError) as exception_info:
+        convert_sympy_expression_to_expression(sympy.zoo)
+
+    assert isinstance(exception_info.value.__cause__, ComplexInfinityLiftError)

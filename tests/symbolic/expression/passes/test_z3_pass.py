@@ -74,6 +74,18 @@ pytestmark = pytest.mark.z3
             LiteralExpression("10.6"), {}, z3.RealVal(10.6), id="literal_numeric_string"
         ),
         pytest.param(
+            LiteralExpression(0.1),
+            {},
+            z3.RatVal(*(0.1).as_integer_ratio()),
+            id="literal_float_no_exact_binary_form",
+        ),
+        pytest.param(
+            LiteralExpression("0.1"),
+            {},
+            z3.RatVal(1, 10),
+            id="literal_numeric_string_exact_decimal",
+        ),
+        pytest.param(
             UnaryExpression(
                 UnaryOperation.POSITIVE, IdentifierExpression(mock_identifier("x", 0))
             ),
@@ -1163,3 +1175,31 @@ def test_z3_finds_a_counterexample_to_a_symbolic_conjunction() -> None:
     )
 
     assert result is False
+
+
+# =============================================================================
+# Non-finite float literals have no rational value
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(float("inf"), id="positive_infinity"),
+        pytest.param(float("-inf"), id="negative_infinity"),
+        pytest.param(float("nan"), id="nan"),
+    ],
+)
+def test_non_finite_float_literal_is_refused_rather_than_lowered(value: float) -> None:
+    """Test a non-finite float literal fails lowering instead of reaching Z3.
+
+    Lowering a float means naming the rational its bits denote, and an
+    infinity or a NaN denotes no rational at all. The refusal has to be an
+    error rather than some stand-in numeral: a substituted finite value
+    would let the solver decide a query about a quantity Z3 was never
+    given.
+    """
+    with pytest.raises(PassExecutionError) as exception_info:
+        convert_expression_to_z3_expression(LiteralExpression(value), {})
+
+    assert isinstance(exception_info.value.__cause__, (OverflowError, ValueError))

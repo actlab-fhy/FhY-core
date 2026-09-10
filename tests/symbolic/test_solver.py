@@ -1789,3 +1789,64 @@ def test_seam_decides_a_connective_mixing_an_identifier_with_a_boolean_literal()
         )
         is True
     )
+
+
+# =============================================================================
+# Both bridges honour each literal form's precision contract
+# =============================================================================
+
+
+def _make_three_tenths_comparison(
+    one_tenth: float | str, three_tenths: float | str
+) -> Expression:
+    """Build ``one_tenth + one_tenth + one_tenth == three_tenths``."""
+    total = BinaryExpression(
+        BinaryOperation.ADD,
+        BinaryExpression(
+            BinaryOperation.ADD,
+            LiteralExpression(one_tenth),
+            LiteralExpression(one_tenth),
+        ),
+        LiteralExpression(one_tenth),
+    )
+    return BinaryExpression(
+        BinaryOperation.EQUAL, total, LiteralExpression(three_tenths)
+    )
+
+
+@pytest.mark.z3
+def test_binary_float_tenths_are_decided_the_same_way_by_both_backends() -> None:
+    """Test `0.1 + 0.1 + 0.1 == 0.3` is false for simplification and the solver.
+
+    A Python `float` is an IEEE-754 binary value, and summing three
+    copies of the nearest binary value to one tenth does not give the
+    nearest binary value to three tenths. Both backends have to say so:
+    reading the literals' shortest reprs as exact decimal instead would
+    let the solver report a witness for a comparison simplification
+    refutes.
+    """
+    expression = _make_three_tenths_comparison(0.1, 0.3)
+
+    simplified = simplify_expression(expression)
+    satisfiable = check_expression_satisfiability(expression, {})
+
+    assert simplified.is_structurally_equivalent(LiteralExpression(False))
+    assert satisfiable is False
+
+
+@pytest.mark.z3
+def test_decimal_string_tenths_are_decided_the_same_way_by_both_backends() -> None:
+    """Test `"0.1" + "0.1" + "0.1" == "0.3"` is true for simplification and the solver.
+
+    A float-grammar string is exact decimal, and three exact tenths sum
+    to exactly three tenths. Both backends have to say so: rounding the
+    decimal text to binary instead would let simplification refute a
+    comparison the solver satisfies.
+    """
+    expression = _make_three_tenths_comparison("0.1", "0.3")
+
+    simplified = simplify_expression(expression)
+    satisfiable = check_expression_satisfiability(expression, {})
+
+    assert simplified.is_structurally_equivalent(LiteralExpression(True))
+    assert satisfiable is True

@@ -8,6 +8,7 @@ from ``fhy_core.symbolic.expression.registry`` and ``fhy_core.symbolic.expressio
 """
 
 __all__ = [
+    "ComplexInfinityLiftError",
     "EntryLookupError",
     "EntryRegistrationError",
     "NativeResultSortError",
@@ -43,6 +44,21 @@ class EntryRegistrationError(RuntimeError):
 @register_error
 class EntryLookupError(KeyError):
     """Raised when a name is requested but not registered."""
+
+
+@register_error
+class ComplexInfinityLiftError(ValueError):
+    """Raised when SymPy's complex infinity reaches the lifter.
+
+    SymPy folds a quotient by zero to ``sympy.zoo``, its directionless
+    complex infinity. The expression IR has no literal for that value:
+    every :class:`LiteralExpression` denotes a ``bool``, an integer, or
+    a real number, and no real number is the quotient of a nonzero
+    numerator by zero. Lifting therefore refuses the value here instead
+    of reporting it as a node kind the lifter merely has not learned yet,
+    so a caller can tell an ill-defined quotient apart from an
+    unimplemented lifting arm.
+    """
 
 
 @register_error

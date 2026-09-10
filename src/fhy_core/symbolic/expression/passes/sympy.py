@@ -11,6 +11,7 @@ __all__ = [
 
 import operator
 from collections.abc import Callable
+from decimal import Decimal
 from typing import Any, ClassVar
 
 import sympy  # type: ignore
@@ -40,7 +41,7 @@ from ..core import (
     is_integer_valued_literal,
     validate_logical_operands,
 )
-from ..errors import PartialPiecewiseError
+from ..errors import ComplexInfinityLiftError, PartialPiecewiseError
 from ..registry import (
     EntryLookupError,
     NativeConstant,
@@ -145,6 +146,63 @@ def _try_get_native_constant_sympy_value(identifier: Identifier) -> Any | None:
     if isinstance(entry.value, int):
         return sympy.Integer(entry.value)
     return sympy.Float(entry.value)
+
+
+def _split_off_prime_factor(value: int, prime: int) -> tuple[int, int]:
+    """Return the multiplicity of ``prime`` in ``value`` and the remaining cofactor.
+
+    Args:
+        value: Strictly positive integer to factor.
+        prime: Prime to divide out.
+
+    Returns:
+        The exponent of ``prime`` in ``value``, and ``value`` with every
+        factor of ``prime`` removed.
+
+    """
+    exponent = 0
+    while value % prime == 0:
+        value //= prime
+        exponent += 1
+    return exponent, value
+
+
+def _try_format_rational_as_exact_decimal(
+    numerator: int, denominator: int
+) -> str | None:
+    """Return the exact decimal text for a non-negative rational, or ``None``.
+
+    A rational in lowest terms has a terminating decimal expansion
+    exactly when the only prime factors of its denominator are 2 and 5,
+    the prime factors of ten. In that case ``n / (2**a * 5**b)`` equals
+    ``n * 2**(k-a) * 5**(k-b) / 10**k`` for ``k = max(a, b)``, which is
+    written exactly with ``k`` fractional digits; every other rational
+    repeats forever and has no finite decimal text.
+
+    Args:
+        numerator: Non-negative numerator, in lowest terms with
+            ``denominator``.
+        denominator: Strictly positive denominator.
+
+    Returns:
+        Exact fixed-point decimal text, or ``None`` when the expansion
+        does not terminate.
+
+    """
+    two_exponent, cofactor = _split_off_prime_factor(denominator, 2)
+    five_exponent, cofactor = _split_off_prime_factor(cofactor, 5)
+    if cofactor != 1:
+        return None
+    fractional_digits = max(two_exponent, five_exponent)
+    scaled = (
+        numerator
+        * 2 ** (fractional_digits - two_exponent)
+        * 5 ** (fractional_digits - five_exponent)
+    )
+    # Decimal's string constructor is exact regardless of the ambient
+    # context precision, and the ``f`` format never falls back to
+    # scientific notation, which the float grammar does not accept.
+    return format(Decimal(f"{scaled}e-{fractional_digits}"), "f")
 
 
 def _try_lift_native_constant(expr: sympy.Expr) -> Expression | None:
@@ -299,6 +357,35 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
     def visit_literal_expression(  # noqa: PLR0911
         self, literal_expression: LiteralExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
+        """Lower a literal to the SymPy number its IR form denotes exactly.
+
+        ``LiteralExpression`` gives each literal form its own precision
+        contract, and each form reaches SymPy as the exact value that
+        contract names:
+
+        - ``bool`` becomes ``sympy.true``/``sympy.false``.
+        - An integer -- a Python ``int`` or an integer-grammar ``str`` --
+          becomes a ``sympy.Integer``. Both are in one equivalence class,
+          so both have to reach SymPy as one number kind.
+        - A Python ``float`` is an IEEE-754 binary value, and
+          ``sympy.Float`` carries exactly that value.
+        - A float-grammar ``str`` is exact decimal, so it becomes a
+          ``sympy.Rational`` built from the text, which is that decimal
+          exactly. ``sympy.Float`` would instead round the text to binary,
+          making ``"0.1" + "0.1" + "0.1" == "0.3"`` simplify to False for
+          the same reason the binary form does.
+
+        The Z3 bridge lowers each of those forms to the same value, so no
+        ground comparison is decided one way by ``simplify_expression``
+        and the other way by the solver seam.
+
+        A float-grammar string whose decimal value is a whole number
+        (``"2."``, ``"2.0"``) yields a ``sympy.Integer``, since
+        ``sympy.Rational`` normalizes a unit denominator away; lifting it
+        back therefore lands in the integer bucket rather than the
+        float-decimal one. An unsupported literal type raises
+        ``TypeError``.
+        """
         value = literal_expression.value
         if isinstance(value, bool):
             return sympy.true if value else sympy.false
@@ -313,12 +400,7 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
                 return sympy.false
             if is_integer_valued_literal(value):
                 return sympy.Integer(int(value))
-            # Float-grammar strings: SymPy operates on binary floats, so
-            # the exact-decimal text preserved by ``LiteralExpression``
-            # is lost here. Round-tripping ``LiteralExpression("1.5")``
-            # through the SymPy bridge yields ``LiteralExpression(1.5)``
-            # (float-binary), not the original float-decimal bucket.
-            return sympy.Float(value)
+            return sympy.Rational(value)
         raise TypeError(f"Unsupported literal type: {type(value)}")
 
     @staticmethod
@@ -430,6 +512,10 @@ class SymPyToExpressionConverter(
 ):
     """Converts a SymPy expression to an expression tree."""
 
+    # First match wins, so a subclass entry must precede its base:
+    # ``sympy.Integer`` subclasses ``sympy.Rational``, and an ``Integer``
+    # placed after ``Rational`` would be lifted as a quotient instead of
+    # as an integer literal.
     _EXPR_DISPATCH: ClassVar[tuple[tuple[type, str], ...]] = (
         (sympy.Piecewise, "_convert_piecewise"),
         (sympy.Add, "_convert_add"),
@@ -439,6 +525,8 @@ class SymPyToExpressionConverter(
         (sympy.Symbol, "_convert_symbol"),
         (sympy.Integer, "_convert_integer"),
         (sympy.Float, "_convert_float"),
+        (sympy.Rational, "_convert_rational"),
+        (sympy.core.numbers.ComplexInfinity, "_refuse_complex_infinity"),
     )
     _BOOL_DISPATCH: ClassVar[tuple[tuple[type, str], ...]] = (
         (sympy.logic.boolalg.Not, "_convert_not"),
@@ -719,6 +807,49 @@ class SymPyToExpressionConverter(
     def _convert_float(self, float_: sympy.Float) -> LiteralExpression:
         return LiteralExpression(float(float_))
 
+    def _convert_rational(self, rational: sympy.Rational) -> Expression:
+        """Lift a non-integer rational to whichever exact IR form represents it.
+
+        A rational whose decimal expansion terminates becomes a
+        float-grammar string literal, the form ``LiteralExpression``
+        stores as an exact ``decimal.Decimal``; that is what lets a
+        decimal-string literal survive the round trip through SymPy. Every
+        other rational -- ``1/3``, say -- has no finite decimal text, so
+        it becomes a ``DIVIDE`` of its numerator and denominator, which is
+        exact for every rational SymPy can hand over and so keeps lifting
+        total.
+
+        The float grammar is unsigned, so a negative terminating rational
+        becomes a ``NEGATE`` of its magnitude's decimal text -- the IR's
+        own spelling of a negative decimal. A non-terminating one carries
+        the sign on its integer numerator instead.
+        """
+        numerator = int(rational.p)
+        denominator = int(rational.q)
+        decimal_text = _try_format_rational_as_exact_decimal(
+            abs(numerator), denominator
+        )
+        if decimal_text is None:
+            return BinaryExpression(
+                BinaryOperation.DIVIDE,
+                LiteralExpression(numerator),
+                LiteralExpression(denominator),
+            )
+        magnitude = LiteralExpression(decimal_text)
+        if numerator < 0:
+            return UnaryExpression(UnaryOperation.NEGATE, magnitude)
+        return magnitude
+
+    def _refuse_complex_infinity(
+        self, complex_infinity: sympy.core.numbers.ComplexInfinity
+    ) -> Expression:
+        """Refuse SymPy's complex infinity, which no IR expression denotes."""
+        raise ComplexInfinityLiftError(
+            f"cannot lift {complex_infinity!r} to an expression: SymPy folds a "
+            "quotient by zero to its directionless complex infinity, and no "
+            "expression denotes that value."
+        )
+
     def _convert_piecewise(self, piecewise: sympy.Piecewise) -> Expression:
         """Lift a ``sympy.Piecewise`` to a flat ``PiecewiseExpression``.
 
@@ -765,6 +896,12 @@ def convert_sympy_expression_to_expression(
     meaning it does not cover its domain -- has no faithful
     representation and raises :class:`PartialPiecewiseError`.
 
+    A ``sympy.Rational`` lifts exactly: to a float-grammar string literal
+    when its decimal expansion terminates, and otherwise to a ``DIVIDE``
+    of its numerator and denominator. ``sympy.zoo`` is the one numeric
+    value with no IR counterpart and raises
+    :class:`ComplexInfinityLiftError`.
+
     Args:
         sympy_expression: SymPy expression to convert.
 
@@ -775,7 +912,8 @@ def convert_sympy_expression_to_expression(
         PassExecutionError: Wrapping :class:`PartialPiecewiseError` as
             ``__cause__`` if ``sympy_expression`` contains a
             ``sympy.Piecewise`` whose final branch condition is not
-            ``sympy.true``.
+            ``sympy.true``, or :class:`ComplexInfinityLiftError` if it
+            contains ``sympy.zoo``.
 
     """
     converter = SymPyToExpressionConverter()
@@ -802,7 +940,9 @@ def simplify_expression(
             folding it with SymPy's bitwise ``&``/``|``.
         PassExecutionError: Wrapping :class:`PartialPiecewiseError` as
             ``__cause__`` if simplification yields a ``sympy.Piecewise``
-            whose final branch condition is not ``sympy.true``.
+            whose final branch condition is not ``sympy.true``, or
+            :class:`ComplexInfinityLiftError` if it yields ``sympy.zoo``,
+            which a quotient by zero folds to.
 
     """
     validate_logical_operands(expression, environment)

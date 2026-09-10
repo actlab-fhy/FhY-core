@@ -22,6 +22,7 @@ __all__ = [
     "CallExpressionPattern",
     "CallTargetResolver",
     "CapturePattern",
+    "ComplexInfinityLiftError",
     "EntryLookupError",
     "EntryRegistrationError",
     "Expression",
@@ -115,6 +116,7 @@ from .core import (
     validate_logical_operands,
 )
 from .errors import (
+    ComplexInfinityLiftError,
     NativeResultSortError,
     NonBooleanLogicalOperandError,
     NonFiniteCastError,

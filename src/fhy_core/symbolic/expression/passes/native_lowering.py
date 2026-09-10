@@ -8,10 +8,13 @@ helpers centralize that lowering so the two passes share one contract --
 in particular, the refusal to coerce a float-grammar string literal to a
 lossy binary ``float``.
 
-The SymPy bridge (:mod:`fhy_core.symbolic.expression.passes.sympy`) is
-exempt from this contract: SymPy operates on binary floats, so it converts
-a float-grammar string with ``sympy.Float`` -- accepting the precision loss
--- rather than routing through these helpers.
+The SymPy bridge (:mod:`fhy_core.symbolic.expression.passes.sympy`) does
+not route through these helpers, and does not need the refusal: it has an
+exact target to convert into, so it lowers a float-grammar string to a
+``sympy.Rational`` carrying the literal's exact decimal value. The
+refusal here is about the destination, not about the string form -- a
+Python ``float`` is the only real number Python and NumPy arithmetic can
+hold, and no binary ``float`` equals ``0.1``.
 """
 
 __all__ = [
