@@ -1142,6 +1142,61 @@ def test_index_scaling_with_non_literal_stride_emits_scalar_times_stride() -> No
     assert result_type.is_structurally_equivalent(expected)
 
 
+@pytest.mark.parametrize(
+    "stride_value",
+    [2, "2"],
+    ids=["int", "string"],
+)
+def test_index_scaling_folds_a_stride_denoting_an_integer(
+    stride_value: int | str,
+) -> None:
+    """Test scaling folds an integer-grammar string stride like the int literal."""
+    identifier = mock_identifier("idx", 0)
+    index = IndexType(
+        LiteralExpression(1), LiteralExpression(8), LiteralExpression(stride_value)
+    )
+    checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.MULTIPLY,
+            IdentifierExpression(identifier),
+            LiteralExpression(3),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(3) * LiteralExpression(1),
+        LiteralExpression(3) * LiteralExpression(8),
+        LiteralExpression(6),
+    )
+    assert result_type.is_structurally_equivalent(expected)
+
+
+def test_index_scaling_with_boolean_stride_emits_scalar_times_stride() -> None:
+    """Test scaling an index with a boolean stride does not fold it as an integer."""
+    identifier = mock_identifier("idx", 0)
+    index = IndexType(
+        LiteralExpression(1), LiteralExpression(8), LiteralExpression(True)
+    )
+    checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
+
+    result_type, _ = checker.visit(
+        BinaryExpression(
+            BinaryOperation.MULTIPLY,
+            IdentifierExpression(identifier),
+            LiteralExpression(3),
+        )
+    )
+
+    expected = IndexType(
+        LiteralExpression(3) * LiteralExpression(1),
+        LiteralExpression(3) * LiteralExpression(8),
+        LiteralExpression(3) * LiteralExpression(True),
+    )
+    assert result_type.is_structurally_equivalent(expected)
+
+
 def test_index_times_zero_literal_is_rejected() -> None:
     """Test scaling an index by `0` is rejected (positive-integer requirement)."""
     identifier = mock_identifier("idx", 0)
@@ -1937,6 +1992,61 @@ def test_unary_positive_on_zero_stride_index_is_rejected() -> None:
         checker.visit(
             UnaryExpression(UnaryOperation.POSITIVE, IdentifierExpression(identifier))
         )
+
+
+@pytest.mark.parametrize(
+    "stride_value",
+    [0, "0", "00"],
+    ids=["int-zero", "single-digit-string", "zero-padded-string"],
+)
+def test_synthesize_rejects_index_whose_stride_denotes_zero(
+    stride_value: int | str,
+) -> None:
+    """Test every literal form denoting stride zero is rejected identically."""
+    identifier = mock_identifier("idx", 0)
+    index = IndexType(
+        LiteralExpression(1), LiteralExpression(8), LiteralExpression(stride_value)
+    )
+    checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
+
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"index type with stride `0` is not allowed",
+    ):
+        checker.visit(IdentifierExpression(identifier))
+
+
+@pytest.mark.parametrize(
+    "stride_value",
+    [3, "3"],
+    ids=["int", "string"],
+)
+def test_synthesize_accepts_index_whose_stride_denotes_a_nonzero_integer(
+    stride_value: int | str,
+) -> None:
+    """Test a nonzero stride, in either literal form, synthesizes without error."""
+    identifier = mock_identifier("idx", 0)
+    index = IndexType(
+        LiteralExpression(1), LiteralExpression(8), LiteralExpression(stride_value)
+    )
+    checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
+
+    result_type, _ = checker.visit(IdentifierExpression(identifier))
+
+    assert result_type.is_structurally_equivalent(index)
+
+
+def test_synthesize_accepts_index_with_boolean_false_stride() -> None:
+    """Test a boolean `False` stride is not treated as the literal zero."""
+    identifier = mock_identifier("idx", 0)
+    index = IndexType(
+        LiteralExpression(1), LiteralExpression(8), LiteralExpression(False)
+    )
+    checker = make_identifier_checker({identifier: (index, TypeQualifier.PARAM)})
+
+    result_type, _ = checker.visit(IdentifierExpression(identifier))
+
+    assert result_type.is_structurally_equivalent(index)
 
 
 # =============================================================================

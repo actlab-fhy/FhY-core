@@ -51,6 +51,7 @@ from fhy_core.pass_infrastructure import (
     VisitablePass,
     register_pass,
 )
+from fhy_core.symbolic.expression import is_integer_valued_literal
 from fhy_core.symbolic.expression.core import (
     BinaryExpression,
     BinaryOperation,
@@ -1231,8 +1232,8 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             stride = type_.stride
             if (
                 isinstance(stride, LiteralExpression)
-                and is_strict_int(stride.value)
-                and stride.value == 0
+                and is_integer_valued_literal(stride.value)
+                and int(stride.value) == 0
             ):
                 raise self._context.type_error(
                     "index type with stride `0` is not allowed; stride must be "
@@ -1314,8 +1315,10 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 f"got scalar value {value}"
             )
         stride = index_type.stride
-        if isinstance(stride, LiteralExpression) and is_strict_int(stride.value):
-            new_stride: Expression = LiteralExpression(value * stride.value)
+        if isinstance(stride, LiteralExpression) and is_integer_valued_literal(
+            stride.value
+        ):
+            new_stride: Expression = LiteralExpression(value * int(stride.value))
         else:
             new_stride = scalar * stride
         return IndexType(
