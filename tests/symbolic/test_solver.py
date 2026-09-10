@@ -14,6 +14,7 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    NonBooleanLogicalOperandError,
     UnaryExpression,
     UnaryOperation,
 )
@@ -1603,3 +1604,188 @@ def test_backends_agree_on_an_identifier_named_after_a_native_constant(
     assert satisfiable is True
     assert not isinstance(simplified, LiteralExpression)
     assert simplified.get_free_identifiers() == {variable}
+
+
+# =============================================================================
+# Ill-typed logical connectives are refused, not reported as undecidable
+# =============================================================================
+
+_NUMERIC_CONNECTIVES = [
+    pytest.param(
+        Expression.logical_and(LiteralExpression(2), LiteralExpression(4)), id="and"
+    ),
+    pytest.param(
+        Expression.logical_or(LiteralExpression(2), LiteralExpression(4)), id="or"
+    ),
+    pytest.param(
+        UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(2)), id="not"
+    ),
+]
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("expression", _NUMERIC_CONNECTIVES)
+def test_check_expression_satisfiability_refuses_a_numeric_logical_operand(
+    expression: Expression,
+) -> None:
+    """Test the seam refuses an ill-typed connective with its own typed error.
+
+    Z3 rejects an integer operand of ``z3.And`` with a ``Z3Exception``,
+    which the pass infrastructure wraps into a `PassExecutionError` naming
+    an SMT-LIB declaration. Neither name tells the caller their expression
+    is ill-typed, so the seam reports it as such.
+    """
+    with pytest.raises(NonBooleanLogicalOperandError) as exc_info:
+        check_expression_satisfiability(expression, {})
+
+    assert type(exc_info.value) is NonBooleanLogicalOperandError
+    assert "Sort mismatch" not in str(exc_info.value)
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("expression", _NUMERIC_CONNECTIVES)
+def test_both_backends_refuse_one_ill_typed_expression_with_the_same_error(
+    expression: Expression,
+) -> None:
+    """Test simplification and satisfiability agree on how they refuse.
+
+    The two queries route to different backends whose native complaints
+    differ -- a SymPy ``TypeError`` on one side, a wrapped ``Z3Exception``
+    on the other -- so without a shared screen a caller would have to
+    catch two unrelated error types for the same authoring mistake.
+    """
+    with pytest.raises(NonBooleanLogicalOperandError) as simplify_error:
+        simplify_expression(expression)
+    with pytest.raises(NonBooleanLogicalOperandError) as satisfiability_error:
+        check_expression_satisfiability(expression, {})
+
+    assert type(simplify_error.value) is type(satisfiability_error.value)
+
+
+@pytest.mark.z3
+def test_does_expression_imply_raises_rather_than_reporting_none() -> None:
+    """Test an ill-typed operand raises instead of taking the hazard screen's `None`.
+
+    ``None`` is this seam's report for "the solver could not settle a
+    well-typed question". An ill-typed expression has no answer to settle,
+    so folding it into the same channel would let an authoring bug pass
+    for a solver limitation.
+    """
+    antecedent = Expression.logical_and(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        does_expression_imply(antecedent, LiteralExpression(True), {})
+
+
+@pytest.mark.z3
+def test_holds_for_all_free_assignments_raises_rather_than_reporting_none() -> None:
+    """Test the lenient universal-validity entry point raises on a numeric operand."""
+    expression = Expression.logical_or(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        holds_for_all_free_assignments(frozenset(), expression, {})
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(
+            lambda expression: assert_holds_for_all_free_assignments(
+                frozenset(), expression, {}
+            ),
+            id="assert_holds_for_all_free_assignments",
+        ),
+        pytest.param(
+            lambda expression: assert_expression_implies(
+                expression, LiteralExpression(True), {}
+            ),
+            id="assert_expression_implies",
+        ),
+    ],
+)
+def test_strict_companion_refuses_an_ill_typed_operand_as_a_type_error(
+    query: Callable[[Expression], bool],
+) -> None:
+    """Test the strict companions do not dress an ill-typed shape as undecidability.
+
+    `UndecidableError` carries a ``reason`` a caller can act on -- a
+    timeout invites a larger bound, a hazard-screen marker says to stop
+    asking. An ill-typed expression fits neither: it needs the tree fixed,
+    which is what a `TypeError` says.
+    """
+    expression = Expression.logical_and(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError) as exc_info:
+        query(expression)
+
+    assert not isinstance(exc_info.value, UndecidableError)
+
+
+@pytest.mark.z3
+def test_simplify_expression_refuses_a_number_bound_into_a_connective() -> None:
+    """Test an environment binding a number under a connective is refused too.
+
+    Substitution happens after lowering, so the number would otherwise
+    meet SymPy's Boolean constructor inside the bridge and leak SymPy's
+    own ``TypeError`` out of this entry point.
+    """
+    p = mock_identifier("p", 0)
+    expression = Expression.logical_and(
+        IdentifierExpression(p), LiteralExpression(True)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        simplify_expression(expression, {p: LiteralExpression(2)})
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "expression, expected",
+    [
+        pytest.param(
+            Expression.logical_and(LiteralExpression(True), LiteralExpression(False)),
+            False,
+            id="and_true_false_is_unsatisfiable",
+        ),
+        pytest.param(
+            Expression.logical_and(LiteralExpression(True), LiteralExpression(True)),
+            True,
+            id="and_true_true_is_satisfiable",
+        ),
+        pytest.param(
+            Expression.logical_or(LiteralExpression(False), LiteralExpression(True)),
+            True,
+            id="or_false_true_is_satisfiable",
+        ),
+    ],
+)
+def test_check_expression_satisfiability_still_decides_a_ground_boolean_connective(
+    expression: Expression, expected: bool
+) -> None:
+    """Test the seam still decides Boolean connectives after the screen is in place."""
+    assert check_expression_satisfiability(expression, {}) is expected
+
+
+@pytest.mark.z3
+def test_seam_decides_a_connective_mixing_an_identifier_with_a_boolean_literal() -> (
+    None
+):
+    """Test a BOOL-sorted identifier under a connective is decided, not screened.
+
+    An identifier carries its sort in ``symbol_types`` rather than in the
+    tree, so the screen has to leave it alone; this pins that a symbolic
+    Boolean operand still reaches Z3 and gets an answer.
+    """
+    b = mock_identifier("b", 0)
+    conjunction = Expression.logical_and(
+        IdentifierExpression(b), LiteralExpression(True)
+    )
+
+    assert check_expression_satisfiability(conjunction, {b: SymbolType.BOOL}) is True
+    assert (
+        does_expression_imply(
+            conjunction, IdentifierExpression(b), {b: SymbolType.BOOL}
+        )
+        is True
+    )

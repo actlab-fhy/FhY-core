@@ -27,10 +27,14 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    NonBooleanLogicalOperandError,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
     convert_expression_to_z3_expression,
+    logical_and,
+    logical_not,
+    logical_or,
 )
 from fhy_core.symbolic.expression.errors import UndecidableError
 from fhy_core.symbolic.expression.passes.z3 import (
@@ -1002,3 +1006,160 @@ def test_z3_bool_coercion_yields_a_model_this_package_rejects() -> None:
     assert solver.check() == z3.sat
     assert z3.is_true(solver.model()[z3_variable])
     assert not LiteralExpression(True).is_structurally_equivalent(LiteralExpression(1))
+
+
+# =============================================================================
+# Boolean connectives refuse a numeric operand rather than a backend exception
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(logical_and(LiteralExpression(2), LiteralExpression(4)), id="and"),
+        pytest.param(logical_or(LiteralExpression(2), LiteralExpression(4)), id="or"),
+        pytest.param(logical_not(LiteralExpression(2)), id="not"),
+    ],
+)
+def test_convert_expression_to_z3_refuses_a_numeric_logical_operand(
+    expression: Expression,
+) -> None:
+    """Test a Boolean connective over integers is refused before Z3 is called.
+
+    ``z3.And``/``z3.Or``/``z3.Not`` reject an ``IntVal`` operand with a
+    ``Z3Exception`` about sort mismatch, which the pass infrastructure
+    wraps into a `PassExecutionError` naming Z3's SMT-LIB declaration
+    rather than the expression. The bridge screens the shape out first and
+    raises the package's own error, so the same ill-typed expression is
+    reported the same way here as through the SymPy bridge.
+    """
+    with pytest.raises(NonBooleanLogicalOperandError) as exc_info:
+        convert_expression_to_z3_expression(expression, {})
+
+    assert type(exc_info.value) is NonBooleanLogicalOperandError
+    assert not isinstance(exc_info.value, PassExecutionError)
+    assert "Sort mismatch" not in str(exc_info.value)
+
+
+def test_convert_expression_to_z3_reports_a_missing_symbol_type_before_the_screen() -> (
+    None
+):
+    """Test the `symbol_types` precondition still wins over the operand screen.
+
+    A caller who forgot a sort entry has a different bug from one who
+    wrote an ill-typed connective, and the missing entry is the one they
+    can act on without reading the tree. Screening first would mask it.
+    """
+    x = mock_identifier("x", 0)
+    expression = logical_and(
+        IdentifierExpression(x), logical_and(LiteralExpression(2), LiteralExpression(4))
+    )
+
+    with pytest.raises(KeyError, match="missing entries for identifiers"):
+        convert_expression_to_z3_expression(expression, {})
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(logical_and(LiteralExpression(2), LiteralExpression(4)), id="and"),
+        pytest.param(logical_or(LiteralExpression(2), LiteralExpression(4)), id="or"),
+    ],
+)
+def test_assert_holds_for_all_free_assignments_refuses_a_numeric_connective(
+    expression: Expression,
+) -> None:
+    """Test the strict universal-validity companion reports an ill-typed shape as such.
+
+    The refusal is not `UndecidableError`: that error invites a retry with
+    a larger ``timeout_milliseconds``, and no bound makes
+    ``logical_and(2, 4)`` mean anything.
+    """
+    with pytest.raises(NonBooleanLogicalOperandError) as exc_info:
+        assert_holds_for_all_free_assignments(frozenset(), expression, {})
+
+    assert not isinstance(exc_info.value, UndecidableError)
+
+
+def test_assert_expression_implies_refuses_a_numeric_connective_in_the_antecedent() -> (
+    None
+):
+    """Test the implication companion screens the conjunction it encodes.
+
+    The check lowers ``antecedent && !consequent``, so a numeric operand
+    on either side reaches the same screen; placing it in the antecedent
+    covers the composed tree the encoding builds.
+    """
+    antecedent = logical_and(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        assert_expression_implies(antecedent, LiteralExpression(True), {})
+
+
+@pytest.mark.parametrize(
+    "expression, expected_satisfiable",
+    [
+        pytest.param(
+            logical_and(LiteralExpression(True), LiteralExpression(False)),
+            False,
+            id="and_true_false",
+        ),
+        pytest.param(
+            logical_and(LiteralExpression(True), LiteralExpression(True)),
+            True,
+            id="and_true_true",
+        ),
+        pytest.param(
+            logical_or(LiteralExpression(True), LiteralExpression(False)),
+            True,
+            id="or_true_false",
+        ),
+        pytest.param(logical_not(LiteralExpression(False)), True, id="not_false"),
+    ],
+)
+def test_z3_still_decides_a_ground_boolean_connective(
+    expression: Expression, expected_satisfiable: bool
+) -> None:
+    """Test Boolean operands still lower and decide end to end through Z3.
+
+    Refusing a numeric operand must not cost the Boolean case its
+    decision, so each row pins the decided answer rather than only the
+    absence of an exception.
+    """
+    lowered, _ = convert_expression_to_z3_expression(expression, {})
+    solver = z3.Solver()
+    solver.add(lowered)
+
+    assert (solver.check() == z3.sat) is expected_satisfiable
+
+
+def test_z3_decides_a_connective_mixing_an_identifier_with_a_boolean_literal() -> None:
+    """Test a BOOL-sorted identifier conjoined with a Boolean literal still lowers.
+
+    The realistic caller shape is symbolic rather than ground: the sort
+    comes from ``symbol_types`` rather than from the node, so this covers
+    the operand position the screen has to leave undetermined.
+    """
+    b = mock_identifier("b", 0)
+    expression = logical_or(
+        IdentifierExpression(b),
+        UnaryExpression(UnaryOperation.LOGICAL_NOT, IdentifierExpression(b)),
+    )
+
+    result = holds_for_all_free_assignments(
+        frozenset(), expression, {b: SymbolType.BOOL}
+    )
+
+    assert result is True
+
+
+def test_z3_finds_a_counterexample_to_a_symbolic_conjunction() -> None:
+    """Test a conjunction of a BOOL identifier and `False` is decided unsatisfiable."""
+    b = mock_identifier("b", 0)
+    expression = logical_and(IdentifierExpression(b), LiteralExpression(False))
+
+    result = holds_for_all_free_assignments(
+        frozenset({b}), expression, {b: SymbolType.BOOL}
+    )
+
+    assert result is False

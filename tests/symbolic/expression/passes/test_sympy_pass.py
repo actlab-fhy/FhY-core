@@ -15,13 +15,19 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    NonBooleanLogicalOperandError,
     PartialPiecewiseError,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
+    call,
     convert_expression_to_sympy_expression,
     convert_sympy_expression_to_expression,
     get_native_constant_identifier,
+    inline_functions,
+    logical_and,
+    logical_not,
+    logical_or,
     substitute_sympy_expression_variables,
 )
 from fhy_core.symbolic.expression.core import LiteralType
@@ -1410,3 +1416,260 @@ def test_convert_call_expression_to_sympy_rejects_unresolved_call() -> None:
 
     with pytest.raises(PassExecutionError, match="TypeError"):
         convert_expression_to_sympy_expression(expression)
+
+
+# =============================================================================
+# Boolean connectives refuse a numeric operand rather than folding it bitwise
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(logical_and(LiteralExpression(2), LiteralExpression(4)), id="and"),
+        pytest.param(logical_or(LiteralExpression(2), LiteralExpression(4)), id="or"),
+        pytest.param(logical_not(LiteralExpression(2)), id="not"),
+    ],
+)
+def test_convert_expression_to_sympy_refuses_a_numeric_logical_operand(
+    expression: Expression,
+) -> None:
+    """Test lowering a Boolean connective over integers is refused, not computed.
+
+    SymPy's ``&``/``|`` are *bitwise* on ``sympy.Integer`` (``2 & 4`` is
+    ``0``, ``2 | 4`` is ``6``) and its ``Not`` coerces by truthiness, so
+    lowering such a node would hand back a well-formed SymPy object
+    carrying a numerically wrong answer. The bridge screens the shape out
+    before SymPy sees it.
+    """
+    with pytest.raises(NonBooleanLogicalOperandError):
+        convert_expression_to_sympy_expression(expression)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(
+            logical_and(LiteralExpression(2), LiteralExpression(4)),
+            id="and_does_not_fold_to_0",
+        ),
+        pytest.param(
+            logical_or(LiteralExpression(2), LiteralExpression(4)),
+            id="or_does_not_fold_to_6",
+        ),
+    ],
+)
+def test_simplify_expression_refuses_a_numeric_connective_instead_of_folding_it(
+    expression: Expression,
+) -> None:
+    """Test simplification refuses rather than returning a bitwise literal.
+
+    A bitwise lowering makes ``2 && 4`` fold to ``LiteralExpression(0)``
+    and ``2 || 4`` to ``LiteralExpression(6)`` -- numerically wrong
+    answers presented as decided ones, which is worse than no answer.
+    Simplification has to refuse the shape instead of reporting either.
+    """
+    with pytest.raises(NonBooleanLogicalOperandError):
+        simplify_expression(expression)
+
+
+def test_simplify_expression_refusal_is_this_packages_error_not_sympys() -> None:
+    """Test the refusal is the package's typed error, not SymPy's own `TypeError`.
+
+    ``sympy.And(Integer(2), Integer(4))`` raises a bare
+    ``TypeError("expecting bool or Boolean, ...")``. A caller cannot tell
+    that apart from any other type error, and it names SymPy's vocabulary
+    rather than the expression that is wrong, so the bridge screens ahead
+    of SymPy and raises its own registered error instead.
+    """
+    expression = logical_and(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError) as exc_info:
+        simplify_expression(expression)
+
+    assert type(exc_info.value) is NonBooleanLogicalOperandError
+    assert not isinstance(exc_info.value, PassExecutionError)
+    assert "expecting bool or Boolean" not in str(exc_info.value)
+
+
+def test_simplify_expression_refuses_a_number_bound_into_a_connective() -> None:
+    """Test a numeric binding under a connective is refused by the same error.
+
+    The number reaches the connective one step later than a written
+    literal does -- SymPy raises from inside ``xreplace`` -- so without
+    the environment in the screen this path would leak SymPy's own
+    ``TypeError`` from a public entry point.
+    """
+    p = mock_identifier("p", 0)
+    q = mock_identifier("q", 1)
+    expression = logical_and(IdentifierExpression(p), IdentifierExpression(q))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        simplify_expression(
+            expression, {p: LiteralExpression(2), q: LiteralExpression(4)}
+        )
+
+
+@pytest.mark.parametrize(
+    "expression, expected",
+    [
+        pytest.param(
+            logical_and(LiteralExpression(True), LiteralExpression(False)),
+            False,
+            id="and_true_false",
+        ),
+        pytest.param(
+            logical_and(LiteralExpression(True), LiteralExpression(True)),
+            True,
+            id="and_true_true",
+        ),
+        pytest.param(
+            logical_or(LiteralExpression(True), LiteralExpression(False)),
+            True,
+            id="or_true_false",
+        ),
+        pytest.param(
+            logical_or(LiteralExpression(False), LiteralExpression(False)),
+            False,
+            id="or_false_false",
+        ),
+        pytest.param(logical_not(LiteralExpression(True)), False, id="not_true"),
+    ],
+)
+def test_simplify_expression_still_folds_boolean_connectives(
+    expression: Expression, expected: bool
+) -> None:
+    """Test Boolean operands still fold end to end through the SymPy bridge.
+
+    The connectives lower through ``sympy.And``/``sympy.Or``/``sympy.Not``,
+    which decide a ground Boolean conjunction; refusing a numeric operand
+    must not cost the Boolean case its evaluation.
+    """
+    result = simplify_expression(expression)
+
+    assert result.is_structurally_equivalent(LiteralExpression(expected))
+
+
+def test_simplify_expression_folds_a_conjunction_of_a_bound_and_a_literal_boolean() -> (
+    None
+):
+    """Test a connective mixing an identifier with a Boolean literal still folds."""
+    p = mock_identifier("p", 0)
+    expression = logical_and(IdentifierExpression(p), LiteralExpression(True))
+
+    result = simplify_expression(expression, {p: LiteralExpression(False)})
+
+    assert result.is_structurally_equivalent(LiteralExpression(False))
+
+
+@pytest.mark.parametrize(
+    "expression, sympy_type",
+    [
+        pytest.param(
+            logical_and(
+                IdentifierExpression(mock_identifier("x", 0)),
+                IdentifierExpression(mock_identifier("y", 1)),
+            ),
+            sympy.logic.boolalg.And,
+            id="and",
+        ),
+        pytest.param(
+            logical_or(
+                IdentifierExpression(mock_identifier("x", 0)),
+                IdentifierExpression(mock_identifier("y", 1)),
+            ),
+            sympy.logic.boolalg.Or,
+            id="or",
+        ),
+    ],
+)
+def test_convert_expression_to_sympy_lowers_a_connective_to_a_sympy_boolean(
+    expression: Expression, sympy_type: type
+) -> None:
+    """Test a connective over symbols lowers to the SymPy Boolean node, not a number.
+
+    Pins the operator table's target: a bitwise-operator lowering happens
+    to produce the same node for two ``Symbol`` operands, so the symbolic
+    case alone cannot distinguish the two mappings. Asserting the node
+    class keeps the table honest about what it lowers to.
+    """
+    lowered = convert_expression_to_sympy_expression(expression)
+
+    assert isinstance(lowered, sympy_type)
+
+
+@pytest.mark.parametrize(
+    "function_name, left, right, expected",
+    [
+        pytest.param("xor", True, False, True, id="xor_true_false"),
+        pytest.param("xor", True, True, False, id="xor_true_true"),
+        pytest.param("nand", True, False, True, id="nand_true_false"),
+        pytest.param("nand", True, True, False, id="nand_true_true"),
+        pytest.param("nor", False, False, True, id="nor_false_false"),
+        pytest.param("nor", True, False, False, id="nor_true_false"),
+        pytest.param("implies", True, False, False, id="implies_true_false"),
+        pytest.param("implies", False, True, True, id="implies_false_true"),
+        pytest.param("iff", True, True, True, id="iff_true_true"),
+        pytest.param("iff", True, False, False, id="iff_true_false"),
+    ],
+)
+def test_inlined_boolean_builtin_folds_through_the_sympy_bridge(
+    function_name: str, left: bool, right: bool, expected: bool
+) -> None:
+    """Test the composed Boolean built-ins still evaluate through the SymPy bridge.
+
+    ``xor``, ``nand``, ``nor``, ``implies``, and ``iff`` have bodies built
+    out of ``LOGICAL_AND``/``LOGICAL_OR``/``LOGICAL_NOT``, so inlining one
+    over Boolean arguments produces exactly the operand shape the numeric
+    screen must leave alone. Each row pins the truth-table entry, so a
+    lowering that merely fails to raise is not enough to pass.
+    """
+    inlined = inline_functions(
+        call(function_name, LiteralExpression(left), LiteralExpression(right))
+    )
+
+    result = simplify_expression(inlined)
+
+    assert result.is_structurally_equivalent(LiteralExpression(expected))
+
+
+@pytest.mark.parametrize(
+    "sympy_expression",
+    [
+        pytest.param(
+            sympy.Xor(sympy.Symbol("x_0"), sympy.Symbol("y_1"), evaluate=False),
+            id="xor",
+        ),
+        pytest.param(
+            sympy.Not(sympy.Or(sympy.Symbol("x_0"), sympy.Symbol("y_1"))), id="nor"
+        ),
+        pytest.param(
+            sympy.Not(sympy.And(sympy.Symbol("x_0"), sympy.Symbol("y_1"))), id="nand"
+        ),
+        pytest.param(
+            sympy.And(sympy.Symbol("x_0"), sympy.Symbol("y_1"), sympy.Symbol("z_2")),
+            id="n_ary_and",
+        ),
+        pytest.param(
+            sympy.Or(sympy.Symbol("x_0"), sympy.Symbol("y_1"), sympy.Symbol("z_2")),
+            id="n_ary_or",
+        ),
+    ],
+)
+def test_lifted_boolean_node_lowers_back_to_an_equivalent_sympy_boolean(
+    sympy_expression: sympy.logic.boolalg.Boolean,
+) -> None:
+    """Test the lifters' output lowers back to a logically equivalent SymPy node.
+
+    ``Xor``, ``Nor``, ``Nand``, and the n-ary ``And``/``Or`` rebuild all
+    lift to IR trees made of ``LOGICAL_AND``/``LOGICAL_OR``/
+    ``LOGICAL_NOT`` over Boolean operands. Lowering has to accept every
+    shape the lifters can produce, or a round trip through the bridge
+    would fail on the bridge's own output.
+    """
+    lifted = convert_sympy_expression_to_expression(sympy_expression)
+
+    lowered = convert_expression_to_sympy_expression(lifted)
+
+    assert isinstance(lowered, sympy.logic.boolalg.Boolean)
+    assert sympy.simplify(sympy.Equivalent(sympy_expression, lowered)) is sympy.true

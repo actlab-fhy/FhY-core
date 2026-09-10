@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from fhy_core.error import get_registered_errors
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     SerializationFormat,
@@ -16,12 +17,15 @@ from fhy_core.serialization import (
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
+    CallExpression,
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    NonBooleanLogicalOperandError,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
+    UndecidableError,
     is_integer_valued_literal,
     logical_and,
     logical_not,
@@ -29,6 +33,7 @@ from fhy_core.symbolic.expression import (
     make_binary_expression,
     make_unary_expression,
     piecewise,
+    validate_logical_operands,
 )
 from fhy_core.traits import FrozenMutationError, HasOperands, StructuralEquivalence
 from fhy_core.utils.override import override
@@ -1254,3 +1259,234 @@ def test_make_unary_expression_rejects_unsupported_operand() -> None:
     """Test `make_unary_expression` raises ``ValueError`` for an unsupported type."""
     with pytest.raises(ValueError, match="Unable to cast"):
         make_unary_expression(UnaryOperation.NEGATE, object())  # type: ignore[arg-type]
+
+
+# =============================================================================
+# validate_logical_operands: Boolean connectives reject numeric operands
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(logical_and(LiteralExpression(2), LiteralExpression(4)), id="and"),
+        pytest.param(logical_or(LiteralExpression(2), LiteralExpression(4)), id="or"),
+        pytest.param(logical_not(LiteralExpression(2)), id="not"),
+        pytest.param(
+            logical_and(LiteralExpression(True), LiteralExpression(4)),
+            id="and_one_numeric_operand",
+        ),
+        pytest.param(
+            logical_and(LiteralExpression(1.5), LiteralExpression(2.5)), id="and_floats"
+        ),
+        pytest.param(
+            logical_and(LiteralExpression("2"), LiteralExpression("4")),
+            id="and_string_form",
+        ),
+        pytest.param(
+            logical_and(
+                BinaryExpression(
+                    BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
+                ),
+                LiteralExpression(True),
+            ),
+            id="and_arithmetic_operand",
+        ),
+        pytest.param(
+            logical_not(UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1))),
+            id="not_negation_operand",
+        ),
+    ],
+)
+def test_validate_logical_operands_rejects_a_provably_numeric_operand(
+    expression: Expression,
+) -> None:
+    """Test a Boolean connective over a numeric operand is refused.
+
+    ``LOGICAL_AND`` / ``LOGICAL_OR`` / ``LOGICAL_NOT`` denote Boolean
+    connectives. A numeric operand under one has no faithful lowering:
+    SymPy's ``&``/``|`` are *bitwise* on ``sympy.Integer``, so the shape
+    would otherwise fold to a numerically wrong literal.
+    """
+    with pytest.raises(
+        NonBooleanLogicalOperandError, match="provably denotes a number"
+    ):
+        validate_logical_operands(expression)
+
+
+def test_validate_logical_operands_names_both_the_connective_and_the_operand() -> None:
+    """Test the message identifies the offending node and the operand within it.
+
+    A caller needs the site to fix, not just the fact of a refusal, so the
+    message renders the connective and the operand that made it ill-typed.
+    """
+    expression = logical_or(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError) as exc_info:
+        validate_logical_operands(expression)
+
+    message = str(exc_info.value)
+    assert "logical_or" in message
+    assert "LiteralExpression(value=2)" in message
+
+
+def test_validate_logical_operands_descends_past_the_root() -> None:
+    """Test a numeric operand nested under a well-typed root is still found.
+
+    A conjunction of constraints puts the offending connective in a child
+    position; a screen that only inspected the root would pass this tree
+    through to a backend.
+    """
+    x = mock_identifier("x", 0)
+    benign = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+    )
+    nested = logical_and(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_logical_operands(logical_and(benign, nested))
+
+
+def test_validate_logical_operands_rejects_an_all_numeric_piecewise_operand() -> None:
+    """Test a piecewise whose every branch value is numeric is a numeric operand.
+
+    The branch values decide the sort of the whole piecewise, so one whose
+    branches agree on numeric is as ill-typed under a connective as a bare
+    integer literal is.
+    """
+    x = mock_identifier("x", 0)
+    numeric_piecewise = piecewise(
+        (IdentifierExpression(x) > LiteralExpression(0), LiteralExpression(1)),
+        otherwise=LiteralExpression(2),
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_logical_operands(
+            logical_and(numeric_piecewise, LiteralExpression(True))
+        )
+
+
+def test_validate_logical_operands_accepts_a_boolean_valued_piecewise_operand() -> None:
+    """Test a piecewise whose branch values are Boolean passes the screen."""
+    x = mock_identifier("x", 0)
+    boolean_piecewise = piecewise(
+        (IdentifierExpression(x) > LiteralExpression(0), LiteralExpression(True)),
+        otherwise=LiteralExpression(False),
+    )
+
+    validate_logical_operands(logical_and(boolean_piecewise, LiteralExpression(True)))
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(
+            logical_and(LiteralExpression(True), LiteralExpression(False)),
+            id="boolean_literals",
+        ),
+        pytest.param(
+            logical_not(LiteralExpression(True)), id="boolean_literal_negation"
+        ),
+        pytest.param(
+            logical_and(
+                IdentifierExpression(mock_identifier("p", 0)),
+                IdentifierExpression(mock_identifier("q", 1)),
+            ),
+            id="unbound_identifiers",
+        ),
+        pytest.param(
+            logical_and(
+                IdentifierExpression(mock_identifier("x", 0)) > LiteralExpression(0),
+                IdentifierExpression(mock_identifier("x", 0)) < LiteralExpression(5),
+            ),
+            id="comparisons",
+        ),
+        pytest.param(
+            logical_and(
+                CallExpression(
+                    "nand", (LiteralExpression(True), LiteralExpression(True))
+                ),
+                LiteralExpression(True),
+            ),
+            id="call_operand",
+        ),
+        pytest.param(
+            logical_and(
+                logical_not(IdentifierExpression(mock_identifier("p", 0))),
+                LiteralExpression(True),
+            ),
+            id="nested_connective_operand",
+        ),
+    ],
+)
+def test_validate_logical_operands_accepts_an_operand_it_cannot_prove_numeric(
+    expression: Expression,
+) -> None:
+    """Test the screen refuses only what it can prove, not everything unproven.
+
+    An identifier with no binding and a call carry their sort outside the
+    node -- in ``symbol_types`` and in the registry respectively -- so
+    refusing them would reject well-typed expressions the backends lower
+    correctly.
+    """
+    validate_logical_operands(expression)
+
+
+def test_validate_logical_operands_screens_an_identifier_bound_to_a_number() -> None:
+    """Test an identifier the environment binds to a number is screened as one.
+
+    Substituting a numeric value into a connective is the same ill-typed
+    shape as writing the number there, reached one step later; without the
+    environment the screen would pass the tree and the number would meet
+    the connective inside the backend.
+    """
+    p = mock_identifier("p", 0)
+    q = mock_identifier("q", 1)
+    expression = logical_and(IdentifierExpression(p), IdentifierExpression(q))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_logical_operands(
+            expression, {p: LiteralExpression(2), q: LiteralExpression(4)}
+        )
+
+
+def test_validate_logical_operands_accepts_an_identifier_bound_to_a_boolean() -> None:
+    """Test an environment binding a Boolean value leaves the connective well-typed."""
+    p = mock_identifier("p", 0)
+    expression = logical_and(IdentifierExpression(p), LiteralExpression(True))
+
+    validate_logical_operands(expression, {p: LiteralExpression(False)})
+
+
+def test_validate_logical_operands_does_not_chain_environment_bindings() -> None:
+    """Test a binding's value is classified without applying another binding to it.
+
+    Substitution is simultaneous and non-chaining, so ``{p: q, q: 2}``
+    replaces ``p`` with the residual ``q`` -- never with ``2``. A screen
+    that chained would refuse an expression the bridge lowers without
+    complaint.
+    """
+    p = mock_identifier("p", 0)
+    q = mock_identifier("q", 1)
+    expression = logical_and(IdentifierExpression(p), LiteralExpression(True))
+
+    validate_logical_operands(
+        expression, {p: IdentifierExpression(q), q: LiteralExpression(2)}
+    )
+
+
+def test_non_boolean_logical_operand_error_is_a_type_error() -> None:
+    """Test the refusal is a `TypeError`, not an undecidability report.
+
+    ``logical_and(2, 4)`` is ill-typed: no backend and no timeout gives it
+    a meaning. Reporting it as `UndecidableError` would invite a caller to
+    retry with a larger bound, and returning `None` would hide an
+    author-side bug behind the same signal a solver timeout uses.
+    """
+    assert issubclass(NonBooleanLogicalOperandError, TypeError)
+    assert not issubclass(NonBooleanLogicalOperandError, UndecidableError)
+
+
+def test_non_boolean_logical_operand_error_is_in_the_compiler_error_registry() -> None:
+    """Test the error is discoverable through `@register_error`'s catalog."""
+    assert NonBooleanLogicalOperandError in get_registered_errors()

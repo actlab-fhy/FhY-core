@@ -38,6 +38,7 @@ from ..core import (
     UnaryExpression,
     UnaryOperation,
     is_integer_valued_literal,
+    validate_logical_operands,
 )
 from ..errors import PartialPiecewiseError
 from ..registry import (
@@ -199,8 +200,15 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             BinaryOperation.FLOOR_DIVIDE: lambda x, y: sympy.floor(x / y),
             BinaryOperation.MODULO: operator.mod,
             BinaryOperation.POWER: operator.pow,
-            BinaryOperation.LOGICAL_AND: operator.and_,
-            BinaryOperation.LOGICAL_OR: operator.or_,
+            # ``sympy.And``/``sympy.Or``, not ``operator.and_``/``operator.or_``:
+            # the latter two are SymPy's ``&``/``|``, which are *bitwise* on
+            # ``sympy.Integer`` operands, so a numeric operand would fold to a
+            # numerically wrong literal instead of being refused. The sympy
+            # constructors reject a non-Boolean operand; the bridge screens for
+            # that shape before lowering so the refusal is this package's
+            # ``NonBooleanLogicalOperandError`` rather than SymPy's own error.
+            BinaryOperation.LOGICAL_AND: sympy.And,
+            BinaryOperation.LOGICAL_OR: sympy.Or,
             BinaryOperation.EQUAL: sympy.Eq,
             BinaryOperation.NOT_EQUAL: sympy.Ne,
             BinaryOperation.LESS: operator.lt,
@@ -329,13 +337,23 @@ def convert_expression_to_sympy_expression(
 ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
     """Convert an expression to a SymPy expression.
 
+    Screens the expression before lowering: a logical connective over a
+    provably numeric operand is refused here rather than handed to SymPy,
+    whose ``&``/``|`` are bitwise on ``sympy.Integer``.
+
     Args:
         expression: Expression to convert.
 
     Returns:
         SymPy expression.
 
+    Raises:
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node in ``expression`` has
+            an operand that provably denotes a number.
+
     """
+    validate_logical_operands(expression)
     converter = ExpressionToSympyConverter()
     return converter(expression)
 
@@ -359,6 +377,12 @@ def substitute_sympy_expression_variables(
 
     Returns:
         SymPy expression with substituted variables.
+
+    Raises:
+        NonBooleanLogicalOperandError: If a replacement value in
+            ``environment`` contains a ``LOGICAL_AND``, ``LOGICAL_OR``,
+            or ``LOGICAL_NOT`` node whose operand provably denotes a
+            number.
 
     """
     # SymPy can fold boolean-valued subexpressions to plain Python `bool`
@@ -771,11 +795,17 @@ def simplify_expression(
         Simplified expression.
 
     Raises:
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node has an operand that
+            provably denotes a number, counting an operand ``environment``
+            binds to one. Simplification refuses the shape rather than
+            folding it with SymPy's bitwise ``&``/``|``.
         PassExecutionError: Wrapping :class:`PartialPiecewiseError` as
             ``__cause__`` if simplification yields a ``sympy.Piecewise``
             whose final branch condition is not ``sympy.true``.
 
     """
+    validate_logical_operands(expression, environment)
     sympy_expression = convert_expression_to_sympy_expression(expression)
     if environment is not None:
         sympy_expression = substitute_sympy_expression_variables(

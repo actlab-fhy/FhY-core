@@ -40,6 +40,7 @@ from ..core import (
     is_integer_valued_literal,
     logical_and,
     logical_not,
+    validate_logical_operands,
 )
 from ..errors import UndecidableError
 from ..registry import (
@@ -247,6 +248,11 @@ def convert_expression_to_z3_expression(
 ) -> tuple[z3.ExprRef, immutabledict[Identifier, z3.ExprRef]]:
     """Convert an expression to a Z3 expression.
 
+    Screens the expression before lowering: a logical connective over a
+    provably numeric operand is refused here rather than handed to Z3,
+    which reports the sort mismatch as a backend exception the pass
+    infrastructure would then wrap.
+
     Args:
         expression: Expression to convert.
         symbol_types: Symbol types.
@@ -257,6 +263,11 @@ def convert_expression_to_z3_expression(
     Raises:
         KeyError: If ``symbol_types`` is missing an entry for any
             identifier referenced by ``expression``.
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node in ``expression`` has
+            an operand that provably denotes a number. Screened after the
+            ``symbol_types`` precondition, so a missing entry raises
+            first.
 
     """
     resolved_symbol_types = symbol_types or {}
@@ -267,6 +278,7 @@ def convert_expression_to_z3_expression(
         raise KeyError(
             f"symbol_types is missing entries for identifiers: {sorted_missing}"
         )
+    validate_logical_operands(expression)
     converter = ExpressionToZ3Converter(resolved_symbol_types)
     z3_expression = converter(expression)
     return z3_expression, converter.identifier_to_z3_expression
@@ -314,6 +326,10 @@ def holds_for_all_free_assignments(
         ``unknown``.
 
     Raises:
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node in ``expression`` has
+            an operand that provably denotes a number, which Z3 has no
+            faithful lowering for.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
 
@@ -413,6 +429,11 @@ def does_expression_imply(
     Raises:
         KeyError: If ``symbol_types`` is missing an entry for any
             identifier referenced by either expression.
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node in either expression
+            has an operand that provably denotes a number. The check runs
+            over the conjunction the implication is encoded as, so a
+            numeric ``antecedent`` or ``consequent`` is caught too.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
 
@@ -483,6 +504,9 @@ def assert_holds_for_all_free_assignments(
         UndecidableError: When Z3 returns ``unknown``. The message
             includes Z3's ``reason_unknown()`` text.
         KeyError: If ``symbol_types`` is missing an entry.
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node in ``expression`` has
+            an operand that provably denotes a number.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
 
@@ -528,6 +552,9 @@ def assert_expression_implies(
         UndecidableError: When Z3 returns ``unknown``. The message
             includes Z3's ``reason_unknown()`` text.
         KeyError: If ``symbol_types`` is missing an entry.
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node in either expression
+            has an operand that provably denotes a number.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
 

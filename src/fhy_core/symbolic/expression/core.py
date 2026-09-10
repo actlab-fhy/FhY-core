@@ -25,6 +25,7 @@ __all__ = [
     "make_binary_expression",
     "make_unary_expression",
     "piecewise",
+    "validate_logical_operands",
 ]
 
 import re
@@ -56,6 +57,8 @@ from fhy_core.traits import (
     VisitableMixin,
 )
 from fhy_core.utils import StrEnum, invert_frozen_dict
+
+from .errors import NonBooleanLogicalOperandError
 
 LiteralType: TypeAlias = str | float | int | bool
 
@@ -706,12 +709,13 @@ _FLOAT_LITERAL_PATTERN = re.compile(r"\d+\.\d*|\.\d+")
 _LiteralBucket: TypeAlias = tuple[str, "bool | int | float | Decimal"]
 
 _INTEGER_LITERAL_BUCKET = "int"
+_BOOLEAN_LITERAL_BUCKET = "bool"
 
 
 def _classify_literal_value(value: LiteralType) -> _LiteralBucket:
     """Return the (bucket, canonical-form) pair used for literal equivalence."""
     if isinstance(value, bool):
-        return ("bool", value)
+        return (_BOOLEAN_LITERAL_BUCKET, value)
     elif isinstance(value, int):
         return (_INTEGER_LITERAL_BUCKET, value)
     elif isinstance(value, float):
@@ -1010,3 +1014,127 @@ class CallExpression(Expression, HasOperands[Expression]):
         self, new_children: Sequence["Expression"]
     ) -> "CallExpression":
         return CallExpression(self.function_name, tuple(new_children))
+
+
+_LOGICAL_CONNECTIVE_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
+    {BinaryOperation.LOGICAL_AND, BinaryOperation.LOGICAL_OR}
+)
+"""Binary operations that denote a Boolean connective over their operands."""
+
+_ARITHMETIC_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
+    {
+        BinaryOperation.ADD,
+        BinaryOperation.SUBTRACT,
+        BinaryOperation.MULTIPLY,
+        BinaryOperation.DIVIDE,
+        BinaryOperation.FLOOR_DIVIDE,
+        BinaryOperation.MODULO,
+        BinaryOperation.POWER,
+    }
+)
+"""Binary operations that denote arithmetic, so their result is a number."""
+
+
+def _is_provably_non_boolean(
+    expression: Expression, environment: Mapping[Identifier, Expression]
+) -> bool:
+    """Return whether ``expression`` provably denotes a number, not a Boolean.
+
+    Answers conservatively: a node whose sort cannot be read off the tree
+    -- an identifier with no ``environment`` binding, and a call, whose
+    result sort lives in the registry rather than in the node -- answers
+    False, so a caller screening on "provably non-Boolean" refuses only
+    what it can prove.
+
+    Args:
+        expression: Node whose sort is wanted.
+        environment: Values bound to identifiers before the expression is
+            handed to a backend; a bound identifier takes its value's
+            classification. The value is classified on its own, with no
+            binding applied to it in turn, matching the simultaneous
+            non-chaining semantics of substitution.
+
+    Returns:
+        True when the node denotes a number.
+
+    """
+    if isinstance(expression, LiteralExpression):
+        bucket, _ = _classify_literal_value(expression.value)
+        return bucket != _BOOLEAN_LITERAL_BUCKET
+    elif isinstance(expression, IdentifierExpression):
+        bound = environment.get(expression.identifier)
+        return bound is not None and _is_provably_non_boolean(bound, {})
+    elif isinstance(expression, UnaryExpression):
+        return expression.operation is not UnaryOperation.LOGICAL_NOT
+    elif isinstance(expression, BinaryExpression):
+        return expression.operation in _ARITHMETIC_BINARY_OPERATIONS
+    elif isinstance(expression, PiecewiseExpression):
+        return all(
+            _is_provably_non_boolean(branch, environment)
+            for branch in (*expression.values, expression.otherwise)
+        )
+    return False
+
+
+def _find_non_boolean_logical_operand(
+    expression: Expression, environment: Mapping[Identifier, Expression]
+) -> tuple[Expression, Expression] | None:
+    """Return the first logical connective paired with its numeric operand."""
+    operands: tuple[Expression, ...] = ()
+    if (
+        isinstance(expression, UnaryExpression)
+        and expression.operation is UnaryOperation.LOGICAL_NOT
+    ) or (
+        isinstance(expression, BinaryExpression)
+        and expression.operation in _LOGICAL_CONNECTIVE_BINARY_OPERATIONS
+    ):
+        operands = expression.get_operands()
+    for operand in operands:
+        if _is_provably_non_boolean(operand, environment):
+            return expression, operand
+    for child in expression.get_visit_children():
+        found = _find_non_boolean_logical_operand(child, environment)
+        if found is not None:
+            return found
+    return None
+
+
+def validate_logical_operands(
+    expression: Expression,
+    environment: Mapping[Identifier, Expression] | None = None,
+) -> None:
+    """Raise unless every logical connective in ``expression`` has Boolean operands.
+
+    ``LOGICAL_AND``, ``LOGICAL_OR``, and ``LOGICAL_NOT`` are Boolean
+    connectives, and no symbolic backend gives one a faithful meaning
+    over a numeric operand: SymPy's ``&``/``|`` are bitwise on
+    ``sympy.Integer`` and its ``Not`` coerces by truthiness, while Z3
+    rejects the sort outright. The whole tree is screened, so a numeric
+    operand nested anywhere under the root is found.
+
+    Only a provably numeric operand is refused. An identifier with no
+    ``environment`` binding and a call keep their sort off the tree, so
+    they pass: the screen refuses what it can prove ill-typed rather than
+    everything it cannot prove well-typed.
+
+    Args:
+        expression: Expression about to be lowered to a symbolic backend.
+        environment: Values bound to identifiers before lowering, so an
+            identifier bound to a number is screened as one. Defaults to
+            ``None``, meaning no identifier is bound.
+
+    Raises:
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node has an operand that
+            provably denotes a number.
+
+    """
+    found = _find_non_boolean_logical_operand(expression, environment or {})
+    if found is None:
+        return
+    connective, operand = found
+    raise NonBooleanLogicalOperandError(
+        f"{connective!r} applies a Boolean connective to the operand "
+        f"{operand!r}, which provably denotes a number; the expression is "
+        f"ill-typed and no symbolic backend lowers it faithfully."
+    )

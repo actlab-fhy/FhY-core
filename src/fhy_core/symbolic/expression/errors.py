@@ -11,6 +11,7 @@ __all__ = [
     "EntryLookupError",
     "EntryRegistrationError",
     "NativeResultSortError",
+    "NonBooleanLogicalOperandError",
     "NonFiniteCastError",
     "PartialPiecewiseError",
     "StringLiteralPrecisionError",
@@ -53,6 +54,30 @@ class NativeResultSortError(RuntimeError):
     indicates the native implementation's contract is broken: the
     declared sort promised one runtime type family, but the
     implementation produced another.
+    """
+
+
+@register_error
+class NonBooleanLogicalOperandError(TypeError):
+    """Raised when a logical connective is applied to a non-Boolean operand.
+
+    ``LOGICAL_AND``, ``LOGICAL_OR``, and ``LOGICAL_NOT`` denote Boolean
+    connectives, so an operand that provably denotes a number -- a
+    non-``bool`` literal, an arithmetic node, or a piecewise whose every
+    branch value is numeric -- has no meaning under them. Neither
+    symbolic backend refuses such an operand on its own terms: SymPy's
+    ``&``/``|`` are *bitwise* on ``sympy.Integer`` and its ``Not``
+    coerces by truthiness, while Z3 reports the sort mismatch as a
+    backend ``z3.z3types.Z3Exception``. Both bridges screen the
+    expression before lowering and raise this error instead, so one
+    ill-typed expression is refused the same way whichever bridge a
+    caller reaches.
+
+    A ``TypeError`` because such an expression is ill-typed rather than
+    merely hard to settle. Contrast :class:`UndecidableError`, which
+    reports a well-typed query the solver declined to decide and which a
+    different solver configuration might decide; no configuration gives
+    ``logical_and(2, 4)`` a meaning.
     """
 
 

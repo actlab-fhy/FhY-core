@@ -34,6 +34,12 @@ points report the same ``None`` they use for a Z3 ``unknown`` result,
 and the strict ``assert_*`` companions raise the same
 ``UndecidableError`` they raise for one, so the screen protects every
 caller of this seam the same way regardless of entry point.
+
+An ill-typed expression is a separate matter from an undecidable one and
+is reported separately: a logical connective over a provably numeric
+operand raises ``NonBooleanLogicalOperandError`` from every entry point
+here, simplification included, since no backend and no timeout gives
+that expression a meaning to report.
 """
 
 __all__ = [
@@ -202,6 +208,12 @@ def simplify_expression(
     Raises:
         SolverCapabilityError: If ``backend`` is not SIMPLIFICATION-capable
             (currently: any backend other than SYMPY).
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node has an operand that
+            provably denotes a number, counting an operand ``environment``
+            binds to one. SymPy's ``&``/``|`` are bitwise on
+            ``sympy.Integer``, so the shape is refused rather than folded
+            to a numerically wrong literal.
         PassExecutionError: If the SymPy bridge's lowering or lifting pass
             fails internally, for example when simplification yields a
             ``sympy.Piecewise`` whose final branch condition is not
@@ -357,9 +369,12 @@ def _does_node_coerce_a_bool_operand(
       since ``z3.If`` forces its two arms to a single sort.
 
     ``z3.And``/``z3.Or``/``z3.Not`` and unary arithmetic negation do not
-    coerce: they raise on an operand of the wrong sort rather than
-    silently reinterpreting it, so a Boolean there is either correct or
-    already an error.
+    coerce, so a Boolean operand under one of those lowers faithfully and
+    is not flagged. The mirror-image mismatch -- a *numeric* operand
+    under a logical connective -- is not this screen's business either:
+    both bridges refuse that shape before lowering, with
+    ``NonBooleanLogicalOperandError``, so it never reaches a lowering
+    whose answer could be read back wrong.
 
     Args:
         expression: Node to screen. Children are not visited.
@@ -929,6 +944,11 @@ def check_expression_satisfiability(
         KeyError: If ``symbol_types`` lacks an entry for a free identifier.
             Checked ahead of the hazard screen, so the precondition raises
             even for an expression the screen would otherwise refuse.
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node in ``expression`` has
+            an operand that provably denotes a number. Such an expression
+            is ill-typed rather than undecidable, so it raises instead of
+            reporting ``None``.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
@@ -997,6 +1017,11 @@ def does_expression_imply(
             of either expression. Checked ahead of the hazard screen, so
             the precondition raises even for a pair the screen would
             otherwise refuse.
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node in either expression
+            has an operand that provably denotes a number. Such a pair is
+            ill-typed rather than undecidable, so it raises instead of
+            reporting ``None``.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
@@ -1063,6 +1088,11 @@ def holds_for_all_free_assignments(
             considered identifier. Checked ahead of the hazard screen, so
             the precondition raises even for an expression the screen
             would otherwise refuse.
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node in ``expression`` has
+            an operand that provably denotes a number. Such an expression
+            is ill-typed rather than undecidable, so it raises instead of
+            reporting ``None``.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
@@ -1120,6 +1150,11 @@ def assert_holds_for_all_free_assignments(
             considered identifier. Checked ahead of the hazard screen, so
             the precondition raises even for an expression the screen
             would otherwise refuse.
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node in ``expression`` has
+            an operand that provably denotes a number. Reported as its own
+            error rather than as ``UndecidableError``: the expression is
+            ill-typed, so no ``timeout_milliseconds`` makes it decidable.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
@@ -1187,6 +1222,11 @@ def assert_expression_implies(
             of either expression. Checked ahead of the hazard screen, so
             the precondition raises even for a pair the screen would
             otherwise refuse.
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node in either expression
+            has an operand that provably denotes a number. Reported as its
+            own error rather than as ``UndecidableError``: the pair is
+            ill-typed, so no ``timeout_milliseconds`` makes it decidable.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
         RuntimeError: If the underlying solver returns an unrecognized
             result.

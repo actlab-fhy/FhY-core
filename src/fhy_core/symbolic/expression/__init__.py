@@ -36,6 +36,7 @@ __all__ = [
     "NativeConstant",
     "NativeFunction",
     "NativeResultSortError",
+    "NonBooleanLogicalOperandError",
     "NonFiniteCastError",
     "PartialPiecewiseError",
     "Pattern",
@@ -83,6 +84,7 @@ __all__ = [
     "register_native_function",
     "substitute_sympy_expression_variables",
     "try_get_native_constant_for_identifier",
+    "validate_logical_operands",
 ]
 
 from .builtins import (
@@ -110,9 +112,11 @@ from .core import (
     make_binary_expression,
     make_unary_expression,
     piecewise,
+    validate_logical_operands,
 )
 from .errors import (
     NativeResultSortError,
+    NonBooleanLogicalOperandError,
     NonFiniteCastError,
     PartialPiecewiseError,
     StringLiteralPrecisionError,
