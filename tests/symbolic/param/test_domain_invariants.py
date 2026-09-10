@@ -92,26 +92,54 @@ def test_ordinal_domain_treats_int_and_float_as_distinct_kinds() -> None:
         OrdinalDomain((1, 1))
 
 
-@pytest.mark.parametrize("constructor", [OrdinalDomain, PermutationDomain])
-@pytest.mark.parametrize(
-    "values",
-    [
-        pytest.param((float("nan"), 1.0), id="nan-beside-a-float"),
-        pytest.param((float("nan"),), id="nan-alone"),
-        pytest.param((float("nan"), float("nan")), id="two-nans"),
-    ],
-)
-def test_finite_domain_rejects_a_nan_member(
-    constructor: Callable[..., ParamDomain], values: tuple[float, ...]
-) -> None:
-    """Test an ordinal or permutation domain refuses a NaN member.
+def _make_float_nan() -> float:
+    """Return a native ``float`` NaN."""
+    return float("nan")
 
-    NaN never matches itself, so a NaN member could never be admitted: the
-    domain would silently lack it, a permutation domain would admit no value
-    at all, and two NaNs would pass the uniqueness check.
+
+def _make_math_module_nan() -> float:
+    """Return the ``math.nan`` constant."""
+    return math.nan
+
+
+def _make_numpy_float64_nan() -> Any:
+    """Return a NumPy ``float64`` NaN, a ``float`` subclass."""
+    numpy = pytest.importorskip("numpy")
+    return numpy.float64("nan")
+
+
+_NAN_FACTORIES = [
+    pytest.param(_make_float_nan, id="float-nan"),
+    pytest.param(_make_math_module_nan, id="math-nan"),
+    pytest.param(_make_numpy_float64_nan, id="numpy-float64-nan"),
+]
+
+_NAN_MEMBER_SHAPES = [
+    pytest.param(lambda make_nan: (make_nan(), 1.0), id="nan-beside-a-float"),
+    pytest.param(lambda make_nan: (make_nan(),), id="nan-alone"),
+    pytest.param(lambda make_nan: (make_nan(), make_nan()), id="two-nans"),
+]
+
+
+@pytest.mark.parametrize("constructor", [OrdinalDomain, PermutationDomain])
+@pytest.mark.parametrize("make_nan", _NAN_FACTORIES)
+@pytest.mark.parametrize("build_values", _NAN_MEMBER_SHAPES)
+def test_finite_domain_rejects_a_nan_member(
+    constructor: Callable[..., ParamDomain],
+    make_nan: Callable[[], float],
+    build_values: Callable[[Callable[[], float]], tuple[float, ...]],
+) -> None:
+    """Test an ordinal or permutation domain refuses a NaN member, in every form.
+
+    Covers a native ``float`` NaN, the ``math.nan`` constant, and NumPy's
+    ``float64`` NaN (a ``float`` subclass): NaN never matches itself, so a
+    NaN member could never be admitted regardless of which NaN-producing
+    form supplied it. The domain would silently lack it, a permutation
+    domain would admit no value at all, and two NaNs would pass the
+    uniqueness check.
     """
     with pytest.raises(ParamError, match="NaN"):
-        constructor(values)
+        constructor(build_values(make_nan))
 
 
 def test_categorical_domain_rejects_a_nan_member_as_a_non_category() -> None:
