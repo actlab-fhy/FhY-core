@@ -1,14 +1,15 @@
 """Tests that finite-domain constructors self-enforce their invariants.
 
 The ``build_*_domain`` factories are thin delegators; the non-empty, uniqueness,
-type, and canonical-ordering invariants live in each domain's ``__post_init__``,
-so directly constructing a domain cannot produce an invalid or non-canonical
-instance.
+NaN-free, type, and canonical-ordering invariants live in each domain's
+``__post_init__``, so directly constructing a domain cannot produce an invalid
+or non-canonical instance.
 
 Also pins the idempotence of ``normalize_value`` across every built-in
 domain kind, and the interval profile each kind reports.
 """
 
+import math
 from collections.abc import Callable
 from typing import Any
 
@@ -89,6 +90,59 @@ def test_ordinal_domain_treats_int_and_float_as_distinct_kinds() -> None:
     assert OrdinalDomain((1, 1.0)).sorted_values == (1, 1.0)
     with pytest.raises(ParamError):
         OrdinalDomain((1, 1))
+
+
+@pytest.mark.parametrize("constructor", [OrdinalDomain, PermutationDomain])
+@pytest.mark.parametrize(
+    "values",
+    [
+        pytest.param((float("nan"), 1.0), id="nan-beside-a-float"),
+        pytest.param((float("nan"),), id="nan-alone"),
+        pytest.param((float("nan"), float("nan")), id="two-nans"),
+    ],
+)
+def test_finite_domain_rejects_a_nan_member(
+    constructor: Callable[..., ParamDomain], values: tuple[float, ...]
+) -> None:
+    """Test an ordinal or permutation domain refuses a NaN member.
+
+    NaN never matches itself, so a NaN member could never be admitted: the
+    domain would silently lack it, a permutation domain would admit no value
+    at all, and two NaNs would pass the uniqueness check.
+    """
+    with pytest.raises(ParamError, match="NaN"):
+        constructor(values)
+
+
+def test_categorical_domain_rejects_a_nan_member_as_a_non_category() -> None:
+    """Test a categorical domain refuses NaN, since no float is a category."""
+    with pytest.raises(TypeError, match="Categorical values"):
+        CategoricalDomain((float("nan"), "a"))  # type: ignore[arg-type]  # test: invalid input
+
+
+@pytest.mark.parametrize("infinity", [math.inf, -math.inf], ids=["inf", "-inf"])
+def test_ordinal_domain_keeps_an_infinite_member_that_matches_itself(
+    infinity: float,
+) -> None:
+    """Test an infinity stays an admissible ordinal member.
+
+    Unlike NaN it equals itself and orders against every float, so it sorts
+    into place and a separately computed infinity is admitted.
+    """
+    domain = OrdinalDomain((infinity, 0.0))
+
+    assert domain.sorted_values == tuple(sorted((infinity, 0.0)))
+    assert domain.is_value_admissible(float(repr(infinity)))
+
+
+@pytest.mark.parametrize("infinity", [math.inf, -math.inf], ids=["inf", "-inf"])
+def test_permutation_domain_keeps_an_infinite_member_that_matches_itself(
+    infinity: float,
+) -> None:
+    """Test an infinity stays a permutation member a permutation can place."""
+    domain = PermutationDomain((infinity, 0.0))
+
+    assert domain.is_value_admissible((0.0, float(repr(infinity))))
 
 
 _BUILT_IN_DOMAIN_VALUES: list[tuple[ParamDomain, Any]] = [

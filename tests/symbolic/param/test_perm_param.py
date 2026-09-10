@@ -4,6 +4,10 @@ from typing import Any
 
 import pytest
 
+from fhy_core.serialization import (
+    DeserializationValueError,
+    serialize_registry_wrapped_value,
+)
 from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
 from fhy_core.symbolic.param import ParamError, create_permutation_param
 from fhy_core.symbolic.param.core import Param
@@ -342,3 +346,15 @@ def test_perm_param_serialization_round_trip_preserves_constraints(
 
     assert_all_satisfied(restored, [["n", "c", "h", "w"], ["c", "n", "w", "h"]])
     assert_none_satisfied(restored, [["n", "c", "w", "h"]])
+
+
+def test_perm_param_deserialize_rejects_a_nan_member() -> None:
+    """Test a payload carrying a NaN member is refused, as construction refuses it."""
+    payload = create_permutation_param([1.0, 2.0]).serialize_to_dict()
+    payload["domain"]["__data__"]["ordered_members"] = [  # type: ignore[index,call-overload]  # test: modify serialized
+        serialize_registry_wrapped_value(float("nan")),
+        serialize_registry_wrapped_value(1.0),
+    ]
+
+    with pytest.raises(DeserializationValueError, match="NaN"):
+        Param.deserialize_from_dict(payload)

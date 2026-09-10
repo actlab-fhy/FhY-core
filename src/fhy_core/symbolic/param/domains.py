@@ -1869,6 +1869,31 @@ def _validate_finite_set_constraint(constraint: Constraint, kind: str) -> None:
         )
 
 
+def _raise_if_any_member_is_nan(values: Sequence[Any], kind: str) -> None:
+    """Raise if any of ``values`` is a NaN float.
+
+    NaN is unequal to itself, so a NaN member could never match a
+    candidate: the domain would silently lack that member, and the
+    uniqueness check could not tell two NaNs apart. An infinity equals
+    itself and orders against every float, so it stays an admissible
+    member.
+
+    Args:
+        values: The domain's members, already checked to be leaf values.
+        kind: How the error message names the members, such as
+            ``"Ordinal values"``.
+
+    Raises:
+        ParamError: If any of ``values`` is a NaN float.
+
+    """
+    if any(isinstance(value, float) and math.isnan(value) for value in values):
+        raise ParamError(
+            f"{kind} must not include NaN: NaN is unequal to itself, so a NaN "
+            "member could never be admitted."
+        )
+
+
 def _order_finite_values_by_repr(values: Sequence[Any]) -> list[Any]:
     """Return ``values`` ordered by ``repr``.
 
@@ -1890,6 +1915,9 @@ class OrdinalDomain(ParamDomain):
     breaking ties between values the order cannot separate (``1`` and ``True``
     compare equal). The stored order therefore depends only on the value set, not
     on the order the values were given in.
+
+    A NaN value is refused: it is unequal to itself, so it could never be
+    admitted, and it has no place in a total order. An infinity is kept.
     """
 
     sorted_values: tuple[OrdinalValue, ...] = field(
@@ -1906,6 +1934,7 @@ class OrdinalDomain(ParamDomain):
                     "Ordinal values must satisfy orderable semantics and be "
                     "serializable, or be primitive bool/int/float/str values."
                 )
+        _raise_if_any_member_is_nan(values, "Ordinal values")
         # Sorting is stable, so pre-ordering by ``repr`` decides the position of
         # values the ascending sort leaves tied (``1`` and ``True``).
         repr_ordered_values = _order_finite_values_by_repr(values)
@@ -2259,7 +2288,11 @@ class CategoricalDomain(ParamDomain):
 @register_serializable(type_id="permutation_domain")
 @dataclass(frozen=True, eq=False)
 class PermutationDomain(ParamDomain):
-    """Admissible permutations of a fixed, ordered set of members."""
+    """Admissible permutations of a fixed, ordered set of members.
+
+    A NaN member is refused: it is unequal to itself, so no permutation
+    could place it and the domain would admit no value at all.
+    """
 
     ordered_members: tuple[PermutationMemberValue, ...] = field(
         metadata={"serialize_codec": _PERMUTATION_MEMBERS_CODEC}
@@ -2275,6 +2308,7 @@ class PermutationDomain(ParamDomain):
                     "Permutation members must satisfy equal semantics and be "
                     "serializable, or be primitive bool/int/float/str values."
                 )
+        _raise_if_any_member_is_nan(values, "Permutation members")
         if not is_sequence_unique_without_set(values):
             raise ParamError("Values must be unique.")
         object.__setattr__(self, "ordered_members", values)
@@ -2422,14 +2456,15 @@ def build_ordinal_domain(values: Sequence[OrdinalValue]) -> OrdinalDomain:
     """Validate ``values`` and build a sorted :class:`OrdinalDomain`.
 
     Args:
-        values: The admissible ordinal values; must be non-empty, unique, and
-            mutually comparable.
+        values: The admissible ordinal values; must be non-empty, unique,
+            free of NaN, and mutually comparable.
 
     Returns:
         The constructed domain.
 
     Raises:
-        ParamError: If ``values`` is empty or contains duplicates.
+        ParamError: If ``values`` is empty, contains duplicates, or
+            contains NaN.
         TypeError: If a value is not ordinal or values are not mutually
             comparable.
 
@@ -2462,13 +2497,15 @@ def build_permutation_domain(
     """Validate ``members`` and build a :class:`PermutationDomain`.
 
     Args:
-        members: The ordered permutation members; must be non-empty and unique.
+        members: The ordered permutation members; must be non-empty,
+            unique, and free of NaN.
 
     Returns:
         The constructed domain.
 
     Raises:
-        ParamError: If ``members`` is empty or contains duplicates.
+        ParamError: If ``members`` is empty, contains duplicates, or
+            contains NaN.
         TypeError: If a member is not a permutation member value.
 
     """

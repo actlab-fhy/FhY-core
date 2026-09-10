@@ -4,7 +4,10 @@ from typing import Any
 
 import pytest
 
-from fhy_core.serialization import DeserializationValueError
+from fhy_core.serialization import (
+    DeserializationValueError,
+    serialize_registry_wrapped_value,
+)
 from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
 from fhy_core.symbolic.param import ParamError, create_ordinal_param
 from fhy_core.symbolic.param.core import Param
@@ -335,4 +338,16 @@ def test_ordinal_param_deserialize_rejects_unwrapped_possible_values() -> None:
     payload["domain"]["__data__"]["sorted_values"] = [1, 2, 3]  # type: ignore[index,call-overload]  # test: modify serialized
 
     with pytest.raises(DeserializationValueError):
+        Param.deserialize_from_dict(payload)
+
+
+def test_ordinal_param_deserialize_rejects_a_nan_value() -> None:
+    """Test a payload carrying a NaN value is refused, as construction refuses it."""
+    payload = create_ordinal_param([1.0, 2.0]).serialize_to_dict()
+    payload["domain"]["__data__"]["sorted_values"] = [  # type: ignore[index,call-overload]  # test: modify serialized
+        serialize_registry_wrapped_value(float("nan")),
+        serialize_registry_wrapped_value(1.0),
+    ]
+
+    with pytest.raises(DeserializationValueError, match="NaN"):
         Param.deserialize_from_dict(payload)
