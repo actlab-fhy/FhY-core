@@ -254,8 +254,10 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             ParamError: If ``bindings`` supplies an entry for this
                 parameter's own variable.
             ConstraintError: If a value bound to an identifier a
-                constraint references cannot be lifted into the
-                substitution environment.
+                constraint references -- ``value`` itself or a
+                ``bindings`` entry -- cannot be lifted into the
+                substitution environment. Checked only for an admissible
+                value.
             NonBooleanLogicalOperandError: If a constraint holds a
                 provably numeric operand in a Boolean position -- under
                 a logical connective or as a piecewise case condition --
@@ -295,8 +297,9 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             ParamError: If ``bindings`` supplies an entry for this
                 parameter's own variable.
             ConstraintError: If a value bound to an identifier a
-                constraint references cannot be lifted into the
-                substitution environment.
+                constraint references -- ``value`` itself or a
+                ``bindings`` entry -- cannot be lifted into the
+                substitution environment, for any value.
             NonBooleanLogicalOperandError: As :meth:`is_value_valid`
                 raises it, for any value.
 
@@ -386,6 +389,16 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
                 if the value violates a constraint, or if a constraint
                 could not be verified. The bindings check runs first, so
                 a caller error is reported whatever the value is.
+            ConstraintError: If a value bound to an identifier a
+                constraint references -- ``value`` itself or a
+                ``bindings`` entry -- cannot be lifted into the
+                substitution environment: a binding outside
+                ``Expression | LiteralType``, or a literal value
+                ``LiteralExpression`` refuses, such as a ``str`` outside
+                the integer and float grammars. Such a value is a caller
+                error rather than an unverifiable constraint, so it is
+                not reported as a ``ParamError``. Checked only for an
+                admissible value, after the bindings check.
             NonBooleanLogicalOperandError: If a constraint holds a
                 provably numeric operand in a Boolean position -- under
                 a logical connective or as a piecewise case condition --
@@ -594,9 +607,7 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
                 parameter's own variable, if the value is not admissible,
                 if the value violates a constraint, or if a constraint
                 could not be verified.
-            ConstraintError: If a value bound to an identifier a
-                constraint references cannot be lifted into the
-                substitution environment.
+            ConstraintError: As :meth:`validate_value` raises it.
             NonBooleanLogicalOperandError: As :meth:`validate_value`
                 raises it.
 
@@ -866,6 +877,8 @@ def _raise_if_value_provably_invalid(param: "Param[_T]", value: _T) -> None:
     Raises:
         ParamError: If ``value`` is not admissible in the parameter's
             domain, or a constraint provably rejects it.
+        ConstraintError: If ``value``, bound to the parameter's
+            variable, cannot be lifted into the substitution environment.
         NonBooleanLogicalOperandError: If a constraint holds a provably
             numeric operand in a Boolean position -- under a logical
             connective or as a piecewise case condition -- counting
@@ -898,6 +911,8 @@ class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generi
     Raises:
         ParamError: If ``value`` is not a valid assignment for ``param``,
             as :meth:`Param.validate_value` decides it without bindings.
+        ConstraintError: As :meth:`Param.validate_value` raises it;
+            without bindings, only for ``value`` itself.
         NonBooleanLogicalOperandError: As :meth:`Param.validate_value`
             raises it.
 
@@ -935,10 +950,13 @@ class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generi
         Raises:
             ParamError: If the value is not admissible in the parameter's
                 domain, or a constraint provably rejects it.
+            ConstraintError: If the value, bound to the parameter's
+                variable, cannot be lifted into the substitution
+                environment.
             NonBooleanLogicalOperandError: If binding the value puts a
                 number in a Boolean position of a constraint, which is
                 ill-typed rather than undecided. Reached through
-                deserialization, either error surfaces as a
+                deserialization, each of these errors surfaces as a
                 ``DeserializationValueError``.
 
         """

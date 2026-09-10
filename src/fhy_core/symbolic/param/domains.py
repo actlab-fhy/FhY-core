@@ -119,6 +119,8 @@ def are_all_constraints_satisfied(
     """Return whether ``value`` bound to ``variable`` satisfies every constraint.
 
     Raises:
+        ConstraintError: If a constraint cannot lift ``value``, bound to
+            ``variable``, into its substitution environment.
         NonBooleanLogicalOperandError: If a constraint holds a provably
             numeric operand in a Boolean position once ``value`` is
             bound; an ill-typed constraint is not reported unsatisfied.
@@ -223,6 +225,11 @@ def evaluate_system_outcome(
         The system's outcome, or ``UNDECIDED`` when the bridge failed.
 
     Raises:
+        ConstraintError: If a member refuses the value ``bindings`` binds
+            to an identifier in its scope, as
+            ``ConstraintSystem.evaluate_with_bindings`` raises it. It is
+            not degraded: a value that cannot be lifted is a caller error,
+            not a limit of the bridge.
         NonBooleanLogicalOperandError: If a member equation holds a
             provably numeric operand in a Boolean position, counting a
             binding that puts a number there.
