@@ -404,6 +404,16 @@ class Expression(
 
         Returns:
             The substituted expression.
+
+        Raises:
+            TypeError: If a replacement value is not an
+                :class:`Expression`.
+            ValueError: If a replacement puts a non-``bool`` literal in
+                a piecewise case condition, which
+                :class:`PiecewiseExpression` refuses to hold. Screening
+                the expression and the replacements with
+                :func:`validate_logical_operands` first reports that
+                case as :class:`NonBooleanLogicalOperandError` instead.
         """
         return self.rebuild_with_visit_children(
             tuple(child.substitute(replacements) for child in self.get_visit_children())
@@ -1186,11 +1196,14 @@ def _is_provably_non_boolean(
     return False
 
 
-def _find_non_boolean_logical_operand(
-    expression: Expression, environment: Mapping[Identifier, Expression]
-) -> tuple[Expression, Expression] | None:
-    """Return the first logical connective paired with its numeric operand."""
-    operands: tuple[Expression, ...] = ()
+def _get_boolean_position_operands(expression: Expression) -> tuple[Expression, ...]:
+    """Return the children of ``expression`` that sit in a Boolean position.
+
+    Those are the operands of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+    ``LOGICAL_NOT`` node and the case conditions of a piecewise, which
+    selects its branch by truth. Every other child may be of any sort as
+    far as its parent is concerned.
+    """
     if (
         isinstance(expression, UnaryExpression)
         and expression.operation is UnaryOperation.LOGICAL_NOT
@@ -1198,8 +1211,17 @@ def _find_non_boolean_logical_operand(
         isinstance(expression, BinaryExpression)
         and expression.operation in _LOGICAL_CONNECTIVE_BINARY_OPERATIONS
     ):
-        operands = expression.get_operands()
-    for operand in operands:
+        return expression.get_operands()
+    if isinstance(expression, PiecewiseExpression):
+        return expression.conditions
+    return ()
+
+
+def _find_non_boolean_logical_operand(
+    expression: Expression, environment: Mapping[Identifier, Expression]
+) -> tuple[Expression, Expression] | None:
+    """Return the first numeric Boolean-position operand paired with its parent."""
+    for operand in _get_boolean_position_operands(expression):
         if _is_provably_non_boolean(operand, environment):
             return expression, operand
     for child in expression.get_visit_children():
@@ -1213,14 +1235,16 @@ def validate_logical_operands(
     expression: Expression,
     environment: Mapping[Identifier, Expression] | None = None,
 ) -> None:
-    """Raise unless every logical connective in ``expression`` has Boolean operands.
+    """Raise unless every Boolean position in ``expression`` holds a Boolean.
 
-    ``LOGICAL_AND``, ``LOGICAL_OR``, and ``LOGICAL_NOT`` are Boolean
-    connectives, and no symbolic backend gives one a faithful meaning
-    over a numeric operand: SymPy's ``&``/``|`` are bitwise on
-    ``sympy.Integer`` and its ``Not`` coerces by truthiness, while Z3
-    rejects the sort outright. The whole tree is screened, so a numeric
-    operand nested anywhere under the root is found.
+    A Boolean position is an operand of ``LOGICAL_AND``, ``LOGICAL_OR``,
+    or ``LOGICAL_NOT``, or a piecewise case condition. No symbolic
+    backend gives a number there a faithful meaning: SymPy's ``&``/``|``
+    are bitwise on ``sympy.Integer``, its ``Not`` coerces by truthiness,
+    and its ``Piecewise`` rejects a numeric condition or, once a
+    substitution has put a number there, reads it as a truth value;
+    Z3 rejects the sort outright. The whole tree is screened, so a
+    numeric operand nested anywhere under the root is found.
 
     Only a provably numeric operand is refused. An identifier with no
     ``environment`` binding and a call keep their sort off the tree, so
@@ -1228,21 +1252,28 @@ def validate_logical_operands(
     everything it cannot prove well-typed.
 
     Args:
-        expression: Expression about to be lowered to a symbolic backend.
+        expression: Expression about to be lowered to a symbolic backend,
+            or to have ``environment`` substituted into it.
         environment: Values bound to identifiers before lowering, so an
             identifier bound to a number is screened as one. Defaults to
             ``None``, meaning no identifier is bound.
 
     Raises:
-        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
-            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node has an operand that
-            provably denotes a number.
+        NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
+            condition, provably denotes a number.
 
     """
     found = _find_non_boolean_logical_operand(expression, environment or {})
     if found is None:
         return
     connective, operand = found
+    if isinstance(connective, PiecewiseExpression):
+        raise NonBooleanLogicalOperandError(
+            f"{connective!r} takes {operand!r} as a case condition, which "
+            "provably denotes a number; the expression is ill-typed and no "
+            "symbolic backend lowers it faithfully."
+        )
     raise NonBooleanLogicalOperandError(
         f"{connective!r} applies a Boolean connective to the operand "
         f"{operand!r}, which provably denotes a number; the expression is "

@@ -1653,6 +1653,71 @@ def test_validate_logical_operands_does_not_chain_environment_bindings() -> None
     )
 
 
+def test_validate_logical_operands_rejects_a_numeric_piecewise_condition() -> None:
+    """Test a piecewise case condition is screened as a Boolean position.
+
+    A condition selects its branch by truth, so an arithmetic condition is
+    as ill-typed as an arithmetic operand of ``and``.
+    """
+    x = mock_identifier("x", 0)
+    expression = piecewise(
+        (IdentifierExpression(x) + LiteralExpression(1), LiteralExpression(5)),
+        otherwise=LiteralExpression(0),
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError, match="case condition"):
+        validate_logical_operands(expression)
+
+
+def test_validate_logical_operands_screens_a_case_condition_bound_to_a_number() -> None:
+    """Test an identifier condition the environment binds to a number is refused.
+
+    Substituting the number would build a piecewise whose condition is a
+    numeric literal, which ``PiecewiseExpression`` refuses to hold, and
+    SymPy would read such a condition as a truth value.
+    """
+    condition = mock_identifier("c", 0)
+    expression = piecewise(
+        (IdentifierExpression(condition), LiteralExpression(1)),
+        otherwise=LiteralExpression(0),
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError, match="case condition"):
+        validate_logical_operands(expression, {condition: LiteralExpression(1)})
+
+
+def test_validate_logical_operands_accepts_an_unprovable_case_condition() -> None:
+    """Test an unbound or Boolean-bound condition passes, as do numeric values.
+
+    Only the conditions are Boolean positions: the branch values ``1`` and
+    ``0`` are numbers and stay legal.
+    """
+    condition = mock_identifier("c", 0)
+    expression = piecewise(
+        (IdentifierExpression(condition), LiteralExpression(1)),
+        otherwise=LiteralExpression(0),
+    )
+
+    validate_logical_operands(expression)
+    validate_logical_operands(expression, {condition: LiteralExpression(True)})
+
+
+def test_validate_logical_operands_names_the_piecewise_and_its_condition() -> None:
+    """Test the refusal points at both the piecewise and the offending condition."""
+    x = mock_identifier("x", 0)
+    condition = IdentifierExpression(x) * LiteralExpression(2)
+    expression = piecewise(
+        (condition, LiteralExpression(5)), otherwise=LiteralExpression(0)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError) as exc_info:
+        validate_logical_operands(expression)
+
+    message = str(exc_info.value)
+    assert repr(expression) in message
+    assert repr(condition) in message
+
+
 def test_non_boolean_logical_operand_error_is_a_type_error() -> None:
     """Test the refusal is a `TypeError`, not an undecidability report.
 

@@ -542,6 +542,19 @@ def test_piecewise_expression_direct_construction_with_literal_condition_is_lega
     assert expression.conditions == (condition,)
 
 
+def test_substitute_refuses_to_put_a_number_in_a_piecewise_condition() -> None:
+    """Test substitution raises the documented ``ValueError`` for a numeric condition.
+
+    ``PiecewiseExpression`` refuses a non-``bool`` literal condition, and
+    the rebuild substitution performs goes through the same constructor.
+    """
+    condition = mock_identifier("c", 0)
+    expression = piecewise((IdentifierExpression(condition), 1), otherwise=0)
+
+    with pytest.raises(ValueError, match="condition literal must be a boolean"):
+        expression.substitute({condition: LiteralExpression(1)})
+
+
 def test_piecewise_helper_requires_otherwise_as_keyword() -> None:
     """Test omitting ``otherwise`` raises ``TypeError`` (keyword-only, required)."""
     with pytest.raises(TypeError, match="otherwise"):

@@ -1740,6 +1740,44 @@ def test_simplify_expression_refuses_a_number_bound_into_a_connective() -> None:
 
 
 @pytest.mark.z3
+def test_simplify_expression_refuses_a_number_bound_into_a_case_condition() -> None:
+    """Test a number bound into a piecewise condition is refused, not read as truth.
+
+    SymPy's ``Piecewise`` takes a substituted ``1`` as a true condition, so
+    the unscreened simplification would select the branch by the number's
+    truthiness and fold to that branch's value.
+    """
+    condition = mock_identifier("c", 0)
+    expression = Expression.piecewise(
+        (IdentifierExpression(condition), LiteralExpression(1)),
+        otherwise=LiteralExpression(0),
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        simplify_expression(expression, {condition: LiteralExpression(1)})
+
+
+@pytest.mark.z3
+def test_both_backends_refuse_an_arithmetic_case_condition_with_one_error() -> None:
+    """Test SymPy and Z3 refuse an arithmetic piecewise condition alike.
+
+    Each backend rejects the shape natively -- SymPy's ``Piecewise`` with
+    a ``TypeError``, Z3's ``If`` with a sort mismatch -- which the pass
+    infrastructure wraps; the shared screen reports it as ill-typedness.
+    """
+    x = mock_identifier("x", 0)
+    expression = Expression.piecewise(
+        (IdentifierExpression(x) + LiteralExpression(1), LiteralExpression(1)),
+        otherwise=LiteralExpression(0),
+    ).equals(LiteralExpression(1))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        simplify_expression(expression)
+    with pytest.raises(NonBooleanLogicalOperandError):
+        check_expression_satisfiability(expression, {x: SymbolType.INT})
+
+
+@pytest.mark.z3
 @pytest.mark.parametrize(
     "expression, expected",
     [

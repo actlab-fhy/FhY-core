@@ -433,9 +433,10 @@ def convert_expression_to_sympy_expression(
 ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
     """Convert an expression to a SymPy expression.
 
-    Screens the expression before lowering: a logical connective over a
-    provably numeric operand is refused here rather than handed to SymPy,
-    whose ``&``/``|`` are bitwise on ``sympy.Integer``.
+    Screens the expression before lowering: a provably numeric operand of
+    a logical connective, or a provably numeric piecewise case condition,
+    is refused here rather than handed to SymPy, whose ``&``/``|`` are
+    bitwise on ``sympy.Integer``.
 
     Args:
         expression: Expression to convert.
@@ -444,9 +445,9 @@ def convert_expression_to_sympy_expression(
         SymPy expression.
 
     Raises:
-        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
-            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node in ``expression`` has
-            an operand that provably denotes a number.
+        NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
+            condition, in ``expression`` provably denotes a number.
 
     """
     validate_logical_operands(expression)
@@ -476,9 +477,9 @@ def substitute_sympy_expression_variables(
 
     Raises:
         NonBooleanLogicalOperandError: If a replacement value in
-            ``environment`` contains a ``LOGICAL_AND``, ``LOGICAL_OR``,
-            or ``LOGICAL_NOT`` node whose operand provably denotes a
-            number.
+            ``environment`` contains a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            ``LOGICAL_NOT`` node whose operand, or a piecewise whose case
+            condition, provably denotes a number.
 
     """
     # SymPy can fold boolean-valued subexpressions to plain Python `bool`
@@ -949,11 +950,11 @@ def simplify_expression(
         Simplified expression.
 
     Raises:
-        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``,
-            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node has an operand that
-            provably denotes a number, counting an operand ``environment``
-            binds to one. Simplification refuses the shape rather than
-            folding it with SymPy's bitwise ``&``/``|``.
+        NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
+            condition, provably denotes a number, counting an operand
+            ``environment`` binds to one. Simplification refuses the shape
+            rather than folding it with SymPy's bitwise ``&``/``|``.
         PassExecutionError: Wrapping :class:`PartialPiecewiseError` as
             ``__cause__`` if simplification yields a ``sympy.Piecewise``
             whose final branch condition is not ``sympy.true``, or

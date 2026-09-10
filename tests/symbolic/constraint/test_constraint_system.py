@@ -35,8 +35,10 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    NonBooleanLogicalOperandError,
     logical_or,
     make_binary_expression,
+    piecewise,
 )
 from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.term import (
@@ -1019,6 +1021,95 @@ def test_check_satisfiability_empty_system_does_not_invoke_the_solver(
 
 
 @pytest.mark.z3
+def _build_piecewise_condition_constraint(condition: Identifier) -> Constraint:
+    """Return the equation ``piecewise((condition, 1), otherwise=0) == 1``."""
+    guarded = piecewise(
+        (IdentifierExpression(condition), LiteralExpression(1)),
+        otherwise=LiteralExpression(0),
+    )
+    return EquationConstraint(guarded.equals(LiteralExpression(1)))
+
+
+_BINDINGS_PATHS = [
+    pytest.param(
+        lambda constraint, bindings: constraint.evaluate_with_bindings(bindings),
+        id="equation_evaluate_with_bindings",
+    ),
+    pytest.param(
+        lambda constraint, bindings: create_constraint_system(
+            constraint
+        ).evaluate_with_bindings(bindings),
+        id="system_evaluate_with_bindings",
+    ),
+    pytest.param(
+        lambda constraint, bindings: create_constraint_system(
+            constraint
+        ).check_satisfiability_with_bindings(bindings, {}),
+        id="system_check_satisfiability_with_bindings",
+    ),
+]
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _BINDINGS_PATHS)
+def test_every_bindings_path_refuses_a_number_bound_into_a_case_condition(
+    decide: Callable[[Constraint, ConstraintBindings], ConstraintOutcome],
+) -> None:
+    """Test binding a number into a piecewise condition raises on every path.
+
+    ``evaluate_with_bindings`` substitutes through SymPy, whose
+    ``Piecewise`` would read the number as a truth value;
+    ``check_satisfiability_with_bindings`` substitutes into the IR, where
+    ``PiecewiseExpression`` refuses a numeric literal condition. Both
+    screen the binding first and raise the same documented error.
+    """
+    condition = mock_identifier("cond", 0)
+    constraint = _build_piecewise_condition_constraint(condition)
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        decide(constraint, {condition: 1})
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _BINDINGS_PATHS)
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        pytest.param(True, ConstraintOutcome.SATISFIED, id="true"),
+        pytest.param(False, ConstraintOutcome.VIOLATED, id="false"),
+    ],
+)
+def test_every_bindings_path_decides_a_boolean_bound_into_a_case_condition(
+    decide: Callable[[Constraint, ConstraintBindings], ConstraintOutcome],
+    value: bool,
+    expected: ConstraintOutcome,
+) -> None:
+    """Test a well-typed binding still decides, identically on every path."""
+    condition = mock_identifier("cond", 0)
+    constraint = _build_piecewise_condition_constraint(condition)
+
+    assert decide(constraint, {condition: value}) is expected
+
+
+@pytest.mark.z3
+def test_check_satisfiability_with_bindings_screens_before_the_symbol_types() -> None:
+    """Test an ill-typed binding raises ahead of a missing symbol type.
+
+    The binding is screened before it is substituted, alongside the
+    other checks on ``bindings``, so its error is not masked by the
+    symbol-type precondition on the residual.
+    """
+    condition = mock_identifier("cond", 0)
+    y = mock_identifier("y", 1)
+    system = create_constraint_system(
+        _build_piecewise_condition_constraint(condition),
+        EquationConstraint(make_binary_expression(BinaryOperation.LESS, y, 3)),
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        system.check_satisfiability_with_bindings({condition: 1}, {})
+
+
 def test_check_satisfiability_with_bindings_matches_the_documented_example() -> None:
     """Test `{x: 5}` on `{x<y, y<3}` is VIOLATED after substitution."""
     x = mock_identifier("x", 0)

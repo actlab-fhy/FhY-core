@@ -301,6 +301,11 @@ class Constraint(
                 ``Expression`` nor a ``LiteralType``; for a set
                 constraint, a value that is neither an ``Expression``
                 nor a valid ``ConstraintMember``.
+            NonBooleanLogicalOperandError: For ``EquationConstraint``,
+                if the expression holds a provably numeric operand in a
+                Boolean position -- under a logical connective or as a
+                piecewise case condition -- counting a binding that puts
+                a number there. A set constraint never raises it.
 
         """
 
@@ -317,6 +322,11 @@ class Constraint(
 
         Returns:
             True if the bindings satisfy the constraint; False otherwise.
+
+        Raises:
+            ConstraintError: As ``evaluate_with_bindings`` raises it.
+            NonBooleanLogicalOperandError: As ``evaluate_with_bindings``
+                raises it.
 
         """
         return self.evaluate_with_bindings(bindings) is ConstraintOutcome.SATISFIED
@@ -470,6 +480,12 @@ class EquationConstraint(Constraint):
             PassExecutionError: Propagated from ``simplify_expression``
                 when the SymPy bridge fails to lower or lift the
                 substituted expression.
+            NonBooleanLogicalOperandError: If the expression holds a
+                provably numeric operand in a Boolean position -- under
+                a logical connective or as a piecewise case condition --
+                counting an in-scope binding that puts a number there.
+                ``ConstraintSystem.check_satisfiability_with_bindings``
+                refuses the same bindings with the same error.
 
         """
         scope = self.get_free_identifiers()

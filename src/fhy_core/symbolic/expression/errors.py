@@ -75,18 +75,21 @@ class NativeResultSortError(RuntimeError):
 
 @register_error
 class NonBooleanLogicalOperandError(TypeError):
-    """Raised when a logical connective is applied to a non-Boolean operand.
+    """Raised when a Boolean position holds an operand that denotes a number.
 
     ``LOGICAL_AND``, ``LOGICAL_OR``, and ``LOGICAL_NOT`` denote Boolean
-    connectives, so an operand that provably denotes a number -- a
-    non-``bool`` literal, an arithmetic node, or a piecewise whose every
-    branch value is numeric -- has no meaning under them. Neither
-    symbolic backend refuses such an operand on its own terms: SymPy's
-    ``&``/``|`` are *bitwise* on ``sympy.Integer`` and its ``Not``
-    coerces by truthiness, while Z3 reports the sort mismatch as a
-    backend ``z3.z3types.Z3Exception``. Both bridges screen the
-    expression before lowering and raise this error instead, so one
-    ill-typed expression is refused the same way whichever bridge a
+    connectives, and a piecewise case condition selects its branch by
+    truth, so an operand that provably denotes a number -- a
+    non-``bool`` literal, an arithmetic node, a piecewise whose every
+    branch value is numeric, or an identifier bound to one of those --
+    has no meaning in either position. Neither symbolic backend refuses
+    such an operand on its own terms: SymPy's ``&``/``|`` are *bitwise*
+    on ``sympy.Integer``, its ``Not`` coerces by truthiness, and its
+    ``Piecewise`` reads a substituted number as a truth value, while Z3
+    reports the sort mismatch as a backend ``z3.z3types.Z3Exception``.
+    Both bridges screen the expression before lowering, and the
+    constraint layer screens its bindings before substituting them, so
+    one ill-typed expression is refused the same way whichever path a
     caller reaches.
 
     A ``TypeError`` because such an expression is ill-typed rather than

@@ -28,7 +28,11 @@ from typing import Any
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
 from fhy_core.serialization import WrappedFamilySerializable, register_serializable
-from fhy_core.symbolic.expression import Expression, LiteralExpression
+from fhy_core.symbolic.expression import (
+    Expression,
+    LiteralExpression,
+    validate_logical_operands,
+)
 from fhy_core.symbolic.solver import (
     check_expression_satisfiability,
     does_expression_imply,
@@ -270,6 +274,13 @@ class ConstraintSystem(
         system-level ``UNDECIDED`` identifies the members it came from
         rather than leaving the caller to re-check each one by hand.
 
+        Raises:
+            NonBooleanLogicalOperandError: If a member equation holds a
+                provably numeric operand in a Boolean position -- under
+                a logical connective or as a piecewise case condition --
+                counting a binding that puts a number there. Raised by
+                the first such member reached in canonical order.
+
         """
         resolved_bindings = dict(bindings)
         saw_undecided = False
@@ -293,7 +304,13 @@ class ConstraintSystem(
 
     @override
     def is_satisfied_with_bindings(self, bindings: ConstraintBindings) -> bool:
-        """Return whether the bindings provably satisfy every constraint."""
+        """Return whether the bindings provably satisfy every constraint.
+
+        Raises:
+            NonBooleanLogicalOperandError: As ``evaluate_with_bindings``
+                raises it.
+
+        """
         return self.evaluate_with_bindings(bindings) is ConstraintOutcome.SATISFIED
 
     @override
@@ -379,6 +396,12 @@ class ConstraintSystem(
                 positive. Checked before the empty-system and hazard
                 early returns, so an inadmissible bound is rejected even
                 when the outcome is decided without the solver.
+            NonBooleanLogicalOperandError: If the lowered conjunction
+                holds a provably numeric operand in a Boolean position
+                -- under a logical connective or as a piecewise case
+                condition. Such a conjunction is ill-typed rather than
+                undecidable, so it raises instead of reporting
+                ``UNDECIDED``.
 
         """
         validate_timeout_milliseconds(timeout_milliseconds)
@@ -447,13 +470,26 @@ class ConstraintSystem(
                 positive. Checked before the empty-system and hazard
                 early returns, so an inadmissible bound is rejected even
                 when the outcome is decided without the solver.
+            NonBooleanLogicalOperandError: If the conjunction holds a
+                provably numeric operand in a Boolean position -- under
+                a logical connective or as a piecewise case condition --
+                counting an identifier ``bindings`` binds to a number.
+                Checked against the bindings before they are
+                substituted, like the ``ConstraintError`` above, so it
+                raises ahead of ``MissingSymbolTypeError``; substituting
+                a number into a case condition would otherwise build a
+                piecewise that refuses its own condition.
+                ``evaluate_with_bindings`` refuses the same bindings
+                with the same error.
 
         """
         validate_timeout_milliseconds(timeout_milliseconds)
         if not self.constraints:
             return ConstraintOutcome.SATISFIED
         environment = _coerce_bindings_to_environment(bindings)
-        residual = self.convert_to_expression().substitute(environment)
+        conjunction = self.convert_to_expression()
+        validate_logical_operands(conjunction, environment)
+        residual = conjunction.substitute(environment)
         return _decide_satisfiability(
             residual,
             symbol_types,
@@ -502,6 +538,12 @@ class ConstraintSystem(
             ValueError: If ``timeout_milliseconds`` is not None and not
                 positive. Checked before every other early return, so an
                 inadmissible bound is rejected even for a hazardous pair.
+            NonBooleanLogicalOperandError: If either side's lowered
+                expression holds a provably numeric operand in a Boolean
+                position -- under a logical connective or as a piecewise
+                case condition. Such a pair is ill-typed rather than
+                undecidable, so it raises instead of reporting
+                ``UNDECIDED``.
 
         """
         validate_timeout_milliseconds(timeout_milliseconds)
