@@ -1109,3 +1109,86 @@ def test_set_constraint_still_accepts_an_ordinary_float_member(
     constraint = factory(x, {1.5})
 
     assert constraint.is_satisfied_with_bindings({x: 1.5}) is in_set
+
+
+# =============================================================================
+# -0.0 / 0.0 member normalization
+# =============================================================================
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_stores_a_negative_zero_member_with_a_positive_sign(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test a declared -0.0 member is stored as the positive-signed 0.0."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {-0.0})
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+
+    stored = cast(float, constraint.members[0])
+
+    assert stored == 0.0
+    assert math.copysign(1.0, stored) == 1.0
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_stores_a_nested_negative_zero_leaf_with_a_positive_sign(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test a -0.0 leaf nested in a tuple member is stored as positive-signed 0.0."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, [(-0.0,)])
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+
+    leaf = cast(tuple[Any, ...], constraint.members[0])[0]
+
+    assert leaf == 0.0
+    assert math.copysign(1.0, leaf) == 1.0
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_negative_zero_binding_matches_a_declared_positive_zero_member(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test binding -0.0 against a declared 0.0 member is still a match."""
+    x = mock_identifier("x", 0)
+    in_set = factory is InSetConstraint
+    constraint = factory(x, {0.0})
+
+    assert constraint.is_satisfied_with_bindings({x: -0.0}) is in_set
+
+
+def test_constraint_system_equivalent_for_negative_and_positive_zero() -> None:
+    """Test a two-member system agrees on equivalence regardless of zero's sign.
+
+    Both systems also carry an `InSetConstraint` over `{-1.0}` alongside the
+    signed-zero member. The ordering key that sorts a system's members
+    renders the sign of zero, so pairing the zero member with another member
+    exercises whether that sign leaks into the members' relative order,
+    rather than only into a lone constraint's own equivalence.
+    """
+    x = mock_identifier("x", 0)
+    negative_zero_system = create_constraint_system(
+        InSetConstraint(x, {-0.0}), InSetConstraint(x, {-1.0})
+    )
+    positive_zero_system = create_constraint_system(
+        InSetConstraint(x, {0.0}), InSetConstraint(x, {-1.0})
+    )
+
+    assert negative_zero_system.is_structurally_equivalent(positive_zero_system)
+
+
+def test_constraint_system_serializes_alike_for_negative_and_positive_zero() -> None:
+    """Test the same two-member system serializes alike regardless of zero's sign."""
+    x = mock_identifier("x", 0)
+    negative_zero_system = create_constraint_system(
+        InSetConstraint(x, {-0.0}), InSetConstraint(x, {-1.0})
+    )
+    positive_zero_system = create_constraint_system(
+        InSetConstraint(x, {0.0}), InSetConstraint(x, {-1.0})
+    )
+
+    assert (
+        negative_zero_system.serialize_to_dict()
+        == positive_zero_system.serialize_to_dict()
+    )

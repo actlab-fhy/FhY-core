@@ -79,6 +79,30 @@ def test_ordinal_param_init_detects_distinct_float_objects_as_duplicates() -> No
         create_ordinal_param([float("1.5"), float("1.5")])
 
 
+def test_ordinal_param_rejects_negative_and_positive_zero_with_int_between() -> None:
+    """Test ordinal param rejects -0.0 and 0.0 even with an int sorting between them.
+
+    ``0`` sorts between ``-0.0`` and ``0.0`` by ``repr``, so a uniqueness
+    check that only compares neighbours after sorting never places the two
+    floats next to each other.
+    """
+    with pytest.raises(ParamError, match="unique"):
+        create_ordinal_param([-0.0, 0, 0.0])
+
+
+def test_ordinal_param_init_accepts_negative_zero_alongside_the_int_zero() -> None:
+    """Test ordinal param accepts -0.0 and the int 0 as distinct kinds."""
+    param = create_ordinal_param([-0.0, 0])
+
+    assert isinstance(param, Param)
+
+
+def test_ordinal_param_init_rejects_negative_and_positive_zero() -> None:
+    """Test ordinal param rejects -0.0 and 0.0 as duplicate float members."""
+    with pytest.raises(ParamError, match="unique"):
+        create_ordinal_param([-0.0, 0.0])
+
+
 def test_ordinal_param_init_rejects_value_without_orderable_semantics() -> None:
     """Test ordinal param rejects wrapped-leaf values without ordering semantics."""
     with pytest.raises(TypeError):

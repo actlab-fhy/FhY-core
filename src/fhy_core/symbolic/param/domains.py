@@ -88,7 +88,6 @@ from .values import (
     is_ordinal_value,
     is_permutation_member_value,
     is_sequence_unique_without_set,
-    is_sorted_sequence_unique,
     serialize_wrapped_leaf_value,
 )
 
@@ -2036,7 +2035,7 @@ class OrdinalDomain(ParamDomain):
             raise TypeError(
                 "Ordinal values must be mutually comparable for sorting."
             ) from exc
-        if not is_sorted_sequence_unique(canonical):
+        if not is_sequence_unique_without_set(canonical):
             raise ParamError("Values must be unique.")
         object.__setattr__(self, "sorted_values", canonical)
 

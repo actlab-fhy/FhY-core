@@ -74,7 +74,9 @@ Members are stored with type-strict equality: ``int``, ``float``, and
 ``bool`` are not interchangeable, even at the leaves of nested
 containers. A number whose type subclasses ``int`` or ``float``, such as
 an ``IntEnum`` member or a NumPy ``float64``, is stored as the exact
-``int`` or ``float`` it denotes.
+``int`` or ``float`` it denotes. A ``float`` equal to zero is stored as
+positive-signed zero, so a member built from ``-0.0`` is the same member
+as one built from ``0.0``.
 """
 
 _MemberT_co = TypeVar("_MemberT_co", covariant=True)
@@ -181,14 +183,20 @@ def _wrap_member(value: Any) -> _TypedMember:
     denotes. Membership then accepts exactly the values the member's
     literal equals: an ``IntEnum`` member and the ``int`` it denotes are one
     member, as they are one literal, while ``bool``, ``int``, and ``float``
-    stay apart, as the literal's buckets do.
+    stay apart, as the literal's buckets do. A ``float`` result equal to
+    zero is further normalized to positive-signed zero, so a member built
+    from ``-0.0`` is stored, keyed, and serialized exactly as one built
+    from ``0.0``, at any depth inside a tuple or frozenset member.
     """
     if isinstance(value, tuple):
         return _TypedMember(tuple(_wrap_member(v) for v in value))
     elif isinstance(value, frozenset):
         return _TypedMember(frozenset(_wrap_member(v) for v in value))
     elif isinstance(value, (int, float)) and not isinstance(value, bool):
-        return _TypedMember(LiteralExpression(value).value)
+        literal_value = LiteralExpression(value).value
+        if isinstance(literal_value, float):
+            literal_value += 0.0
+        return _TypedMember(literal_value)
     else:
         return _TypedMember(value)
 

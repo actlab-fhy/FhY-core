@@ -151,6 +151,15 @@ def test_equation_over_a_nan_literal_matches_its_pickle_round_trip() -> None:
     assert constraint.build_ordering_key() == restored.build_ordering_key()
 
 
+def test_keys_agree_for_in_set_constraints_over_negative_and_positive_zero() -> None:
+    """Test an `InSetConstraint` over -0.0 and one over 0.0 key alike."""
+    x = mock_identifier("x", 0)
+    negative_zero = InSetConstraint(x, {-0.0})
+    positive_zero = InSetConstraint(x, {0.0})
+
+    assert negative_zero.build_ordering_key() == positive_zero.build_ordering_key()
+
+
 # =============================================================================
 # Distinctness across kinds and member sets
 # =============================================================================
