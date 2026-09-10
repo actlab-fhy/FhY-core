@@ -357,6 +357,15 @@ class Expression(
     equality with :meth:`equals` and a Boolean constant with
     ``LiteralExpression(True)`` or ``LiteralExpression(False)``.
 
+    An expression has no truth value either: ``bool(expression)`` raises
+    ``TypeError``. Python evaluates a chained comparison such as
+    ``0 <= x <= 5`` as ``(0 <= x) and (x <= 5)``, and ``and`` and ``or``
+    choose an operand by truth, so a truthy expression would silently drop
+    a conjunct. Build connectives with :func:`logical_and`,
+    :func:`logical_or`, and :func:`logical_not`, test an optional
+    expression with ``is not None``, and sort expressions by an explicit
+    key rather than by ``<``.
+
     Expressions are :class:`~fhy_core.term.Term` instances: they compare
     by alpha-equivalence (derived from the field schema), report their free
     identifiers, and support substitution. The IR has no binders, so every
@@ -512,6 +521,20 @@ class Expression(
 
     def __ge__(self, other: Any) -> "BinaryExpression":
         return make_binary_expression(BinaryOperation.GREATER_EQUAL, self, other)
+
+    # Python asks a comparison for its truth in a chained comparison, which
+    # it evaluates as `(0 <= x) and (x <= 5)`, and in `and`/`or`, which pick
+    # an operand by truth. A truthy expression would let each silently keep
+    # only one operand, so an expression refuses to be a truth value.
+    def __bool__(self) -> bool:
+        raise TypeError(
+            f"{type(self).__name__} has no truth value: it is a symbolic "
+            "expression, not a Boolean. A chained comparison such as "
+            "`0 <= x <= 5` asks for one, as do the `and`, `or`, and `not` "
+            "operators, and each would silently keep only one operand. Build "
+            "the connective with `logical_and`, `logical_or`, or "
+            "`logical_not` instead."
+        )
 
     def logical_and(
         self, *others: "Expression | Identifier | LiteralType"

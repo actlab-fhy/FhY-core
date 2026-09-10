@@ -1919,3 +1919,118 @@ def test_non_boolean_logical_operand_error_is_a_type_error() -> None:
 def test_non_boolean_logical_operand_error_is_in_the_compiler_error_registry() -> None:
     """Test the error is discoverable through `@register_error`'s catalog."""
     assert NonBooleanLogicalOperandError in get_registered_errors()
+
+
+# =============================================================================
+# Truthiness: an expression is not a Boolean
+# =============================================================================
+
+
+def _branch_on(expression: Expression) -> str:
+    """Return which way an ``if`` on ``expression`` goes."""
+    if expression:
+        return "taken"
+    return "not taken"
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(LiteralExpression(True), id="true_literal"),
+        pytest.param(LiteralExpression(0), id="zero_literal"),
+        pytest.param(IdentifierExpression(mock_identifier("x", 0)), id="identifier"),
+        pytest.param(
+            IdentifierExpression(mock_identifier("x", 0)) < LiteralExpression(5),
+            id="comparison",
+        ),
+        pytest.param(
+            logical_and(LiteralExpression(True), LiteralExpression(False)),
+            id="conjunction",
+        ),
+        pytest.param(
+            CallExpression("max", (LiteralExpression(1), LiteralExpression(2))),
+            id="call",
+        ),
+    ],
+)
+def test_expression_has_no_truth_value(expression: Expression) -> None:
+    """Test every expression refuses ``bool()``, whatever it would evaluate to.
+
+    Truthiness asks a symbolic node for a Python Boolean it does not have;
+    even a ``True`` literal is a node rather than a truth value.
+    """
+    with pytest.raises(TypeError, match="logical_and"):
+        bool(expression)
+
+
+def test_chained_comparison_raises_instead_of_dropping_a_conjunct() -> None:
+    """Test ``0 <= c <= 5`` raises rather than build only ``c <= 5``.
+
+    Python evaluates the chain as ``(0 <= c) and (c <= 5)``, which asks the
+    first comparison for its truth. A truthy expression let ``and`` return
+    the second comparison alone, so a parameter constrained by the chain
+    admitted -100.
+    """
+    c = IdentifierExpression(mock_identifier("c", 0))
+
+    with pytest.raises(TypeError, match="chained comparison"):
+        _ = LiteralExpression(0) <= c <= LiteralExpression(5)
+
+
+@pytest.mark.parametrize(
+    "combine",
+    [
+        pytest.param(lambda left, right: left and right, id="and"),
+        pytest.param(lambda left, right: left or right, id="or"),
+        pytest.param(lambda left, right: not left, id="not"),
+    ],
+)
+def test_python_connectives_raise_instead_of_picking_an_operand(
+    combine: Callable[[Expression, Expression], object],
+) -> None:
+    """Test Python's ``and``, ``or``, and ``not`` refuse expression operands.
+
+    Each consults its left operand's truth, so ``(x > 0) and (y > 0)``
+    returned ``y > 0`` alone; ``logical_and`` and ``logical_or`` build the
+    connective instead.
+    """
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+
+    with pytest.raises(TypeError, match="logical_or"):
+        combine(x > LiteralExpression(0), y > LiteralExpression(0))
+
+
+def test_branching_on_an_expression_raises() -> None:
+    """Test an ``if`` on an expression raises rather than always branching."""
+    x = IdentifierExpression(mock_identifier("x", 0))
+
+    with pytest.raises(TypeError):
+        _branch_on(x < LiteralExpression(5))
+
+
+def test_sorting_expressions_by_comparison_raises() -> None:
+    """Test sorting by ``<`` raises instead of trusting a comparison node.
+
+    ``sorted`` asks ``a < b`` for its truth, which an expression cannot
+    give, so an ordering over expressions needs an explicit key.
+    """
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+
+    with pytest.raises(TypeError):
+        sorted([x, y])
+
+
+def test_logical_and_builds_the_conjunction_a_chained_comparison_meant() -> None:
+    """Test ``logical_and`` keeps both bounds of ``0 <= c <= 5``."""
+    c = IdentifierExpression(mock_identifier("c", 0))
+    lower = LiteralExpression(0) <= c
+    upper = c <= LiteralExpression(5)
+
+    conjunction = logical_and(lower, upper)
+
+    assert isinstance(conjunction, BinaryExpression)
+    assert conjunction.operation is BinaryOperation.LOGICAL_AND
+    assert conjunction.left.is_structurally_equivalent(lower)
+    assert conjunction.right.is_structurally_equivalent(upper)
