@@ -2647,6 +2647,31 @@ def test_z3_question_reports_a_numeric_sort_in_a_boolean_position(
 
 
 @pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_SORTED_EXPRESSION)
+def test_symbol_typed_ill_typedness_is_reported_despite_a_hazard_elsewhere(
+    query: _SortedQuery,
+) -> None:
+    """Test an INT-declared identifier under a connective raises despite a hazard.
+
+    ``y / 0`` is a division hazard the screen alone would report as
+    ``None``, but ``x`` sits directly under ``logical_and`` and is
+    declared INT in ``symbol_types``, so the expression is ill-typed:
+    every entry point that accepts ``symbol_types`` has to read it when
+    classifying a Boolean-position operand, not only when screening a
+    hazard, or a numeric operand there would be reported as merely
+    undecided instead of ill-typed.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    hazardous_division = BinaryExpression(
+        BinaryOperation.DIVIDE, IdentifierExpression(y), LiteralExpression(0)
+    ).equals(LiteralExpression(1))
+    expression = Expression.logical_and(IdentifierExpression(x), hazardous_division)
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(expression, {x: SymbolType.INT, y: SymbolType.REAL})
+
+
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_SORTED_EXPRESSION)
 def test_z3_question_decides_a_boolean_sort_in_a_boolean_position(
     query: _SortedQuery,
 ) -> None:

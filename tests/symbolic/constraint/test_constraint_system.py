@@ -3212,6 +3212,38 @@ def test_solver_questions_report_a_numeric_sort_in_a_boolean_position(
         decide(system, {x: sort})
 
 
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _SOLVER_BACKED_QUESTIONS)
+def test_solver_questions_report_ill_typedness_despite_a_hazard_elsewhere(
+    decide: Callable[
+        [ConstraintSystem, Mapping[Identifier, SymbolType]], ConstraintOutcome
+    ],
+) -> None:
+    """Test an INT-declared variable under a connective raises despite a hazard.
+
+    ``y / 0`` is a division hazard the screen alone would report as
+    UNDECIDED, but ``x`` sits directly under ``logical_and`` and is
+    declared INT, so the member is ill-typed: every solver-backed
+    question has to read ``symbol_types`` when classifying a
+    Boolean-position operand, not only when screening a hazard, or a
+    numeric operand there would be reported as merely undecided instead
+    of ill-typed.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    hazardous_division = make_binary_expression(BinaryOperation.DIVIDE, y, 0).equals(
+        LiteralExpression(1)
+    )
+    system = create_constraint_system(
+        EquationConstraint(
+            Expression.logical_and(IdentifierExpression(x), hazardous_division)
+        )
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        decide(system, {x: SymbolType.INT, y: SymbolType.REAL})
+
+
 # =============================================================================
 # A numeric-rooted member is refused by its own expression, not a synthetic AND
 # =============================================================================
