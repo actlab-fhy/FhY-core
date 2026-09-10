@@ -537,6 +537,31 @@ def test_literal_equivalence_distinguishes_buckets(
     assert not right.is_structurally_equivalent(left)
 
 
+def test_decimals_differing_past_default_precision_are_not_equivalent() -> None:
+    """Test two decimals differing only in their 30th fractional digit are distinct.
+
+    ``Decimal``'s default context rounds to 28 significant digits, so
+    canonicalizing through that default context would collapse these two
+    literals onto the same value; exact-decimal normalization has to keep
+    every digit significant instead.
+    """
+    left = LiteralExpression("1." + "0" * 28 + "1")
+    right = LiteralExpression("1." + "0" * 28 + "2")
+
+    assert not left.is_structurally_equivalent(right)
+    assert not right.is_structurally_equivalent(left)
+
+
+def test_decimal_equivalence_key_differs_past_default_decimal_precision() -> None:
+    """Test the equivalence key differs for decimals differing in their 30th digit."""
+    left_value = "1." + "0" * 28 + "1"
+    right_value = "1." + "0" * 28 + "2"
+
+    assert build_literal_equivalence_key(left_value) != build_literal_equivalence_key(
+        right_value
+    )
+
+
 # =============================================================================
 # NaN keeps the literal equivalence relation reflexive
 # =============================================================================

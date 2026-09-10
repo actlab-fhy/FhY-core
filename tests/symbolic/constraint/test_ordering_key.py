@@ -211,6 +211,24 @@ def test_distinct_keys_for_different_equation_expressions() -> None:
     assert left.build_ordering_key() != right.build_ordering_key()
 
 
+def test_distinct_keys_for_equations_over_decimals_past_default_precision() -> None:
+    """Test `x == literal` keys apart for decimals differing in their 30th digit.
+
+    ``Decimal``'s default context rounds to 28 significant digits, so a
+    key built through that default context would collapse the two
+    equations onto the same key.
+    """
+    x = mock_identifier("x", 0)
+    left = EquationConstraint(
+        make_binary_expression(BinaryOperation.EQUAL, x, "1." + "0" * 28 + "1")
+    )
+    right = EquationConstraint(
+        make_binary_expression(BinaryOperation.EQUAL, x, "1." + "0" * 28 + "2")
+    )
+
+    assert left.build_ordering_key() != right.build_ordering_key()
+
+
 # =============================================================================
 # A third-party `Constraint` subclass supplies its own key
 # =============================================================================
