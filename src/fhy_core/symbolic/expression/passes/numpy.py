@@ -87,7 +87,11 @@ from ..errors import (
     UnboundVariableError,
     UnsupportedNumpyLoweringError,
 )
-from ..registry import NativeFunction, get_registered_entry
+from ..registry import (
+    NativeConstant,
+    NativeFunction,
+    get_registered_entry,
+)
 from ..sort import FunctionSort
 from .inline import inline_functions
 from .native_lowering import coerce_literal_value, try_get_native_constant_value
@@ -198,8 +202,9 @@ class NumpyExpressionEvaluator(VisitablePass[Expression, "NumpyResult"]):
 
     Each node is lowered to a vectorized NumPy operation over its
     already-evaluated children. Identifiers resolve against the caller's
-    environment (coerced with ``numpy.asarray``) or the native-constant
-    registry; every other free identifier raises
+    environment (coerced with ``numpy.asarray``) or, for a registered
+    native constant's canonical identifier, to the constant's value;
+    every other free identifier raises
     :class:`UnboundVariableError`. A native call with no NumPy lowering
     (``erf``, or a non-built-in native) raises
     :class:`UnsupportedNumpyLoweringError`.
@@ -233,7 +238,7 @@ class NumpyExpressionEvaluator(VisitablePass[Expression, "NumpyResult"]):
         identifier = expression.identifier
         if identifier in self._environment:
             return self._numpy.asarray(self._environment[identifier])
-        constant_value = try_get_native_constant_value(identifier.name_hint)
+        constant_value = try_get_native_constant_value(identifier)
         if constant_value is not None:
             return constant_value
         raise UnboundVariableError(self._describe_unbound_identifier(identifier))
@@ -241,17 +246,27 @@ class NumpyExpressionEvaluator(VisitablePass[Expression, "NumpyResult"]):
     def _describe_unbound_identifier(self, identifier: "Identifier") -> str:
         """Explain why a bare identifier could not be resolved to a value.
 
-        A name that resolves to a registered function (not a constant) is
-        the likely result of dropping a call, so the message points the
-        caller at that instead of the generic native-constant hint.
+        Two shapes of near-miss get their own wording. A name that
+        resolves to a registered function is the likely result of
+        dropping a call. A name that resolves to a registered constant
+        means the identifier shares that constant's name without being
+        the canonical identifier the registry minted for it, so it is an
+        ordinary variable the caller has to bind.
         """
         name_hint = identifier.name_hint
         try:
-            get_registered_entry(name_hint)
+            entry = get_registered_entry(name_hint)
         except EntryLookupError:
             return (
                 f"identifier {name_hint!r} is not bound in the environment "
-                f"and does not match a registered native constant."
+                f"and does not denote a registered native constant."
+            )
+        if isinstance(entry, NativeConstant):
+            return (
+                f"identifier {name_hint!r} is not bound in the environment; it "
+                f"shares its name with the native constant {name_hint!r} but is "
+                f"a distinct identifier, so bind it or use the registry's "
+                f"canonical identifier for that constant."
             )
         return (
             f"identifier {name_hint!r} names a registered function, not a "

@@ -21,6 +21,7 @@ from fhy_core.symbolic.expression import (
     UnaryOperation,
     convert_expression_to_sympy_expression,
     convert_sympy_expression_to_expression,
+    get_native_constant_identifier,
     substitute_sympy_expression_variables,
 )
 from fhy_core.symbolic.expression.core import LiteralType
@@ -813,6 +814,68 @@ def test_simplify_expression_boolean_expression_binding_avoids_sympy_deprecation
         BinaryOperation.GREATER, IdentifierExpression(y), LiteralExpression(0)
     )
     assert result.is_structurally_equivalent(expected)
+
+
+# =============================================================================
+# Native constants resolve by identity, not by name
+# =============================================================================
+
+
+@pytest.mark.parametrize("constant_name", ["pi", "e"])
+def test_simplify_expression_does_not_decide_a_variable_named_after_a_constant(
+    constant_name: str,
+) -> None:
+    """Test comparing a variable named ``pi`` to a literal stays undecided.
+
+    Resolving the constant by ``name_hint`` made the bridge substitute
+    the constant's value here and answer ``False``, fabricating a
+    decision about a free variable it knew nothing about.
+    """
+    variable = mock_identifier(constant_name, 960)
+    expression = IdentifierExpression(variable).equals(LiteralExpression(1))
+
+    result = simplify_expression(expression)
+
+    assert not isinstance(result, LiteralExpression)
+    assert result.get_free_identifiers() == {variable}
+
+
+@pytest.mark.parametrize("constant_name", ["pi", "e"])
+def test_simplify_expression_honors_a_binding_for_a_variable_named_after_a_constant(
+    constant_name: str,
+) -> None:
+    """Test a binding for a variable named ``pi`` is applied, not discarded.
+
+    The identifier lowers to a substitutable symbol, so the caller's
+    environment reaches it and the product folds to a literal.
+    """
+    variable = mock_identifier(constant_name, 961)
+    expression = LiteralExpression(2) * IdentifierExpression(variable)
+
+    result = simplify_expression(expression, {variable: LiteralExpression(3)})
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == 6
+
+
+@pytest.mark.parametrize("constant_name", ["pi", "e"])
+def test_simplify_expression_is_idempotent_over_a_native_constant(
+    constant_name: str,
+) -> None:
+    """Test simplifying twice yields the same tree and keeps the constant's identifier.
+
+    Lifting a sympy constant used to mint a brand-new ``Identifier`` per
+    call, so two simplifications of one expression disagreed and the
+    identifier the caller wrote disappeared from the result.
+    """
+    constant = get_native_constant_identifier(constant_name)
+    expression = IdentifierExpression(constant) + LiteralExpression(0)
+
+    first = simplify_expression(expression)
+    second = simplify_expression(expression)
+
+    assert first.is_structurally_equivalent(second)
+    assert first.get_free_identifiers() == {constant}
 
 
 # =============================================================================

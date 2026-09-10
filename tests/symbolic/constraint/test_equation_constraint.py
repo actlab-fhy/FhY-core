@@ -18,6 +18,7 @@ from fhy_core.symbolic.expression import (
     UnaryExpression,
     UnaryOperation,
     call,
+    get_native_constant_identifier,
     logical_and,
     make_binary_expression,
     pformat_expression,
@@ -477,3 +478,47 @@ def test_evaluate_with_bindings_two_free_identifiers_undecided_when_unbound(
 
     assert outcome is ConstraintOutcome.UNDECIDED
     assert _find_records(caplog, logging.DEBUG)
+
+
+def test_evaluate_with_bindings_refuses_to_decide_a_bound_native_constant(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test binding a constant's canonical identifier reports UNDECIDED.
+
+    The bridge lowers that identifier to the constant's value rather than
+    to a substitutable symbol, so the binding cannot take part in the
+    decision. Reporting the outcome the constant happens to give would
+    be a decision the caller's binding never reached.
+    """
+    pi = get_native_constant_identifier("pi")
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(pi), LiteralExpression(1)
+    )
+    constraint = EquationConstraint(expression)
+
+    with caplog.at_level(logging.WARNING, logger=_CONSTRAINT_LOGGER):
+        outcome = constraint.evaluate_with_bindings({pi: 1})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    records = _find_records(caplog, logging.WARNING)
+    assert records
+    assert repr(pi) in records[0].getMessage()
+
+
+def test_evaluate_with_bindings_honors_a_binding_named_after_a_constant() -> None:
+    """Test a binding for an identifier that merely shares ``pi``'s name is applied.
+
+    Only the canonical identifier denotes the constant, so this is an
+    ordinary variable: substituting ``1`` decides the equation.
+    """
+    pi_lookalike = mock_identifier("pi", 1088)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        IdentifierExpression(pi_lookalike),
+        LiteralExpression(1),
+    )
+    constraint = EquationConstraint(expression)
+
+    outcome = constraint.evaluate_with_bindings({pi_lookalike: 1})
+
+    assert outcome is ConstraintOutcome.SATISFIED

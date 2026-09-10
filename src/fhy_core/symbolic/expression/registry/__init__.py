@@ -8,8 +8,9 @@ The registry holds three kinds of entries:
 - :class:`NativeFunction`: a pure function whose body is a Python
   callable. The evaluator folds literal-argument calls; the inliner
   passes them through.
-- :class:`NativeConstant`: a named literal value. The evaluator
-  substitutes identifier references whose name matches the constant.
+- :class:`NativeConstant`: a named literal value that owns one
+  canonical :class:`Identifier`. The evaluator substitutes identifier
+  references that carry that identifier.
 
 All three kinds expose declared sorts that drive the call-site type
 checker, decoupling type inference from body inspection.
@@ -32,14 +33,15 @@ __all__ = [
     "NativeFunction",
     "RegisteredEntry",
     "RegisteredFunction",
+    "get_native_constant_identifier",
     "get_registered_entries",
     "get_registered_entry",
     "is_entry_registered",
-    "is_native_constant_name",
     "register_function",
     "register_native_constant",
     "register_native_function",
     "set_registry_state_for_tests",
+    "try_get_native_constant_for_identifier",
 ]
 
 from ..errors import EntryLookupError, EntryRegistrationError
@@ -56,9 +58,10 @@ from .entries import (
     RegisteredFunction,
 )
 from .storage import (
+    get_native_constant_identifier,
     get_registered_entries,
     get_registered_entry,
     is_entry_registered,
-    is_native_constant_name,
     set_registry_state_for_tests,
+    try_get_native_constant_for_identifier,
 )

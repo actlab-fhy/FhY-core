@@ -29,6 +29,7 @@ from fhy_core.symbolic.expression import (
     UnsupportedNumpyLoweringError,
     call,
     evaluate_expression_with_numpy,
+    get_native_constant_identifier,
     get_registered_entries,
     piecewise,
     register_function,
@@ -659,7 +660,7 @@ def test_resolves_native_constant_without_binding(
     constant_name: str, expected: float
 ) -> None:
     """Test a native-constant reference resolves without an environment entry."""
-    constant = mock_identifier(constant_name, 0)
+    constant = get_native_constant_identifier(constant_name)
     expression = IdentifierExpression(constant)
 
     result = evaluate_expression_with_numpy(expression, {})
@@ -669,7 +670,7 @@ def test_resolves_native_constant_without_binding(
 
 def test_resolves_nan_constant_without_binding() -> None:
     """Test the ``nan`` constant resolves to a NaN value."""
-    constant = mock_identifier("nan", 0)
+    constant = get_native_constant_identifier("nan")
     expression = IdentifierExpression(constant)
 
     result = evaluate_expression_with_numpy(expression, {})
@@ -680,13 +681,47 @@ def test_resolves_nan_constant_without_binding() -> None:
 def test_resolves_native_constant_within_expression() -> None:
     """Test a native constant is usable as an operand alongside a bound array."""
     x = mock_identifier("x", 0)
-    pi = mock_identifier("pi", 1)
+    pi = get_native_constant_identifier("pi")
     expression = IdentifierExpression(x) / IdentifierExpression(pi)
     values = np.array([math.pi, 2.0 * math.pi])
 
     result = evaluate_expression_with_numpy(expression, {x: values})
 
     assert np.allclose(result, [1.0, 2.0])
+
+
+def test_binds_an_identifier_merely_named_like_a_constant_from_environment() -> None:
+    """Test an identifier that only shares ``pi``'s name takes the bound value.
+
+    Constant resolution keys on the canonical identifier, so this
+    identifier is an ordinary variable and the environment binding is
+    what decides its value.
+    """
+    pi_lookalike = mock_identifier("pi", 832)
+    expression = IdentifierExpression(pi_lookalike) * 2.0
+
+    result = evaluate_expression_with_numpy(
+        expression, {pi_lookalike: np.array([1.0, 3.0])}
+    )
+
+    assert np.allclose(result, [2.0, 6.0])
+
+
+def test_raises_for_unbound_identifier_merely_named_like_a_native_constant() -> None:
+    """Test an unbound identifier that shares a constant's name is not resolved.
+
+    The message says the identifier is distinct from the constant it is
+    named after, rather than claiming the name is a registered function.
+    """
+    pi_lookalike = mock_identifier("pi", 833)
+    expression = IdentifierExpression(pi_lookalike) + 1.0
+
+    with pytest.raises(PassExecutionError) as exception_info:
+        evaluate_expression_with_numpy(expression, {})
+
+    cause = exception_info.value.__cause__
+    assert isinstance(cause, UnboundVariableError)
+    assert "shares its name with the native constant" in str(cause)
 
 
 # =============================================================================

@@ -19,9 +19,11 @@ __all__ = [
     "try_get_native_constant_value",
 ]
 
+from fhy_core.identifier import Identifier
+
 from ..core import LiteralType
-from ..errors import EntryLookupError, StringLiteralPrecisionError
-from ..registry import NativeConstant, get_registered_entry
+from ..errors import StringLiteralPrecisionError
+from ..registry import try_get_native_constant_for_identifier
 
 
 def coerce_literal_value(value: LiteralType) -> bool | int | float:
@@ -55,16 +57,17 @@ def coerce_literal_value(value: LiteralType) -> bool | int | float:
         ) from None
 
 
-def try_get_native_constant_value(name: str) -> bool | int | float | None:
-    """Return the constant value bound to ``name``, or ``None`` if absent.
+def try_get_native_constant_value(
+    identifier: Identifier,
+) -> bool | int | float | None:
+    """Return the constant value ``identifier`` denotes, or ``None`` if absent.
 
-    Returns ``None`` when ``name`` is unregistered or resolves to a
-    non-constant entry (a registered function).
+    Resolution is by identifier identity: only the canonical identifier
+    the registry minted for a constant carries its value. Returns
+    ``None`` for every other identifier, including one that merely
+    shares a constant's ``name_hint``.
     """
-    try:
-        entry = get_registered_entry(name)
-    except EntryLookupError:
+    entry = try_get_native_constant_for_identifier(identifier)
+    if entry is None:
         return None
-    if isinstance(entry, NativeConstant):
-        return entry.value
-    return None
+    return entry.value

@@ -518,34 +518,43 @@ def test_unbounded_param_stays_subset_when_no_counterexample_is_provable() -> No
 
 
 @pytest.mark.parametrize("constant_name", ["e", "pi"])
-def test_param_named_after_a_native_constant_is_not_decided_infeasible(
+def test_param_named_after_a_native_constant_binds_like_any_other(
     constant_name: str,
 ) -> None:
-    """Test a parameter whose name collides with a native constant is not decided.
+    """Test a parameter named after a native constant takes its candidate binding.
 
-    The expression bridge resolves an identifier whose `name_hint` names a
-    registered native constant to that constant rather than to a
-    substitutable symbol, so the candidate binding is silently dropped and
-    the constraint is evaluated against the constant's value instead.
-    Reporting `False` there is a proof claim the backend never
-    established -- and it flipped with the presence of an unrelated in-set
-    constraint, since only the enumeration path routed through the bridge
-    this way.
+    The expression bridge resolves a native constant by the canonical
+    identifier the registry minted for it, so a parameter that merely
+    shares a constant's `name_hint` is an ordinary variable: the
+    candidate binding reaches the constraint, and both the enumeration
+    path and the solver path decide from it rather than from the
+    constant's value.
     """
-    constant = mock_identifier(constant_name, 1)
+    named_like_constant = mock_identifier(constant_name, 1)
     equation = EquationConstraint(
         BinaryExpression(
-            BinaryOperation.EQUAL, IdentifierExpression(constant), LiteralExpression(3)
+            BinaryOperation.EQUAL,
+            IdentifierExpression(named_like_constant),
+            LiteralExpression(3),
         )
     )
-    enumerated = create_integer_param(
-        name=constant, constraints=[InSetConstraint(constant, {3}), equation]
+    satisfied = create_integer_param(
+        name=named_like_constant,
+        constraints=[InSetConstraint(named_like_constant, {3}), equation],
     )
-    solver_decided = create_integer_param(name=constant, constraints=[equation])
+    violated = create_integer_param(
+        name=named_like_constant,
+        constraints=[InSetConstraint(named_like_constant, {4}), equation],
+    )
+    solver_decided = create_integer_param(
+        name=named_like_constant, constraints=[equation]
+    )
 
-    assert enumerated.is_feasible() is True
-    assert enumerated.is_empty() is False
-    assert solver_decided.is_feasible() == enumerated.is_feasible()
+    assert satisfied.is_feasible() is True
+    assert satisfied.is_empty() is False
+    assert violated.is_feasible() is False
+    assert violated.is_empty() is True
+    assert solver_decided.is_feasible() is True
 
 
 def test_bridge_failure_degrades_instead_of_escaping_a_boolean_api() -> None:

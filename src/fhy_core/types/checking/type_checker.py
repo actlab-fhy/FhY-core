@@ -71,7 +71,10 @@ from fhy_core.symbolic.expression.registry.entries import (
     NativeFunction,
     RegisteredFunction,
 )
-from fhy_core.symbolic.expression.registry.storage import get_registered_entry
+from fhy_core.symbolic.expression.registry.storage import (
+    get_registered_entry,
+    try_get_native_constant_for_identifier,
+)
 from fhy_core.symbolic.expression.sort import FunctionSort
 from fhy_core.utils import Stack, is_strict_int
 
@@ -356,15 +359,18 @@ class _TypeCheckContext:
 
 
 def _try_resolve_native_constant_type(
-    identifier_name: str,
-    resolve_call_target: CallTargetResolver,
+    identifier: Identifier,
 ) -> tuple[Type, TypeQualifier] | None:
-    """Return the IR type for a constant reference, or ``None`` if absent."""
-    try:
-        entry = resolve_call_target(identifier_name)
-    except EntryLookupError:
-        return None
-    if not isinstance(entry, NativeConstant):
+    """Return the IR type for a constant reference, or ``None`` if absent.
+
+    Resolution is by identifier identity against the registry's canonical
+    constant identifiers, which is what the backend bridges and the
+    evaluator resolve too. It does not go through
+    ``resolve_call_target``: that resolver keys on a call-site *name*,
+    and an identifier is not a name.
+    """
+    entry = try_get_native_constant_for_identifier(identifier)
+    if entry is None:
         return None
     return (
         NumericalType(
@@ -395,14 +401,16 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
         get_identifier_type: Callable mapping an :class:`Identifier` to
             its IR type and qualifier. Raises :class:`KeyError` to
             signal an unbound identifier; the type checker catches this
-            and falls back to a registered ``NativeConstant`` lookup
-            before raising a typed-error. Any other exception
-            propagates unchanged.
-        resolve_call_target: Callable that maps a function or constant
+            and falls back to resolving the identifier as a registered
+            ``NativeConstant`` before raising a typed-error. Any other
+            exception propagates unchanged.
+        resolve_call_target: Callable that maps a call-site function
             name to its registered entry. Injected rather than hard-
             wired to the global registry so the type checker stays
             decoupled from registry-load ordering and is independently
-            testable.
+            testable. Constant references are not names and do not go
+            through it; they resolve by identifier identity against the
+            registry's canonical constant identifiers.
         defer_on_unknown_call: When ``True``, an unresolved call name
             in :meth:`_resolve_call_function` propagates its raw
             :class:`EntryLookupError` instead of being framed as a
@@ -478,8 +486,7 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
                 )
             except KeyError as exc:
                 constant_type = _try_resolve_native_constant_type(
-                    identifier_expression.identifier.name_hint,
-                    self._resolve_call_target,
+                    identifier_expression.identifier
                 )
                 if constant_type is not None:
                     return constant_type

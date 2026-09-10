@@ -63,6 +63,7 @@ __all__ = [
     "does_pattern_match",
     "evaluate_expression",
     "evaluate_expression_with_numpy",
+    "get_native_constant_identifier",
     "get_registered_entries",
     "get_registered_entry",
     "inline_functions",
@@ -80,6 +81,7 @@ __all__ = [
     "register_native_constant",
     "register_native_function",
     "substitute_sympy_expression_variables",
+    "try_get_native_constant_for_identifier",
 ]
 
 from .builtins import (
@@ -154,11 +156,13 @@ from .registry import (
     NativeFunction,
     RegisteredEntry,
     RegisteredFunction,
+    get_native_constant_identifier,
     get_registered_entries,
     get_registered_entry,
     is_entry_registered,
     register_function,
     register_native_constant,
     register_native_function,
+    try_get_native_constant_for_identifier,
 )
 from .sort import FunctionSort, is_python_value_compatible_with_sort

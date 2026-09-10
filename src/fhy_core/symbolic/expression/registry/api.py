@@ -28,7 +28,7 @@ from ..core import Expression
 from ..errors import EntryRegistrationError
 from ..sort import FunctionSort
 from .entries import NativeConstant, NativeFunction, RegisteredFunction
-from .storage import _insert_unique_entry
+from .storage import _insert_unique_entry, _insert_unique_native_constant
 
 
 def register_function(
@@ -53,8 +53,8 @@ def register_function(
             as ``parameters``.
         result_sort: Declared result sort.
         body: Body expression. Free identifiers must be a subset of
-            ``parameters`` plus any identifiers whose name matches a
-            registered :class:`NativeConstant`.
+            ``parameters`` plus the canonical identifiers of the
+            registered :class:`NativeConstant` entries.
 
     Returns:
         The newly stored ``RegisteredFunction``.
@@ -136,10 +136,16 @@ def register_native_constant(
 ) -> NativeConstant:
     """Register a named constant in the registry.
 
+    Registration mints one canonical :class:`Identifier` for the
+    constant, retrievable with
+    :func:`get_native_constant_identifier`. An
+    ``IdentifierExpression`` wrapping that identifier is what the type
+    checker and the evaluator treat as a reference to this constant;
+    an unrelated identifier that merely shares ``name`` as its
+    ``name_hint`` is an ordinary free variable.
+
     Args:
-        name: Unique registry key. An ``IdentifierExpression`` whose
-            identifier name matches ``name`` is treated as a reference
-            to this constant by the type checker and the evaluator.
+        name: Unique registry key.
         sort: Declared sort of the constant.
         value: Literal Python value. Must satisfy
             :func:`is_python_value_compatible_with_sort`.
@@ -160,5 +166,5 @@ def register_native_constant(
         registered = NativeConstant(name=name, sort=sort, value=value)
     except ValueError as exc:
         raise EntryRegistrationError(str(exc)) from exc
-    _insert_unique_entry(name, registered)
+    _insert_unique_native_constant(registered)
     return registered

@@ -55,7 +55,9 @@ from fhy_core.symbolic.expression import (
     make_binary_expression,
     pformat_expression,
 )
-from fhy_core.symbolic.expression.registry import is_native_constant_name
+from fhy_core.symbolic.expression.registry import (
+    try_get_native_constant_for_identifier,
+)
 from fhy_core.symbolic.solver import simplify_expression
 from fhy_core.term import (
     DerivedEquivalenceMixin,
@@ -448,6 +450,14 @@ class EquationConstraint(Constraint):
         not depend on which member kinds it holds or where they fall in
         canonical order.
 
+        A binding whose identifier is a registered native constant's
+        canonical identifier reports ``UNDECIDED`` with a ``WARNING``:
+        the bridge lowers that identifier to the constant's value rather
+        than to a substitutable symbol, so the binding cannot take part
+        in the decision. An identifier that merely shares a constant's
+        ``name_hint`` is an ordinary variable and its binding is applied
+        like any other.
+
         Raises:
             ConstraintError: If the value bound to an identifier in this
                 constraint's scope falls outside ``Expression |
@@ -470,17 +480,18 @@ class EquationConstraint(Constraint):
             (
                 identifier
                 for identifier in in_scope
-                if is_native_constant_name(identifier.name_hint)
+                if try_get_native_constant_for_identifier(identifier) is not None
             ),
             key=lambda identifier: identifier.id,
         )
         if captured:
             _LOGGER.warning(
-                "%s.evaluate_with_bindings: identifier(s) %s name a registered "
-                "native constant, so the backend bridge resolves them to that "
-                "constant instead of to a substitutable symbol and the supplied "
-                "binding cannot be honored; reporting UNDECIDED rather than a "
-                "decision the binding did not take part in",
+                "%s.evaluate_with_bindings: identifier(s) %s are the canonical "
+                "identifiers of registered native constants, so the backend "
+                "bridge resolves them to those constants instead of to "
+                "substitutable symbols and the supplied binding cannot be "
+                "honored; reporting UNDECIDED rather than a decision the "
+                "binding did not take part in",
                 type(self).__name__,
                 format_comma_separated_list(tuple(captured)),
             )

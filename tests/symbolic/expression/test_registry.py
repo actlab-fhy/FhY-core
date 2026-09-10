@@ -7,11 +7,15 @@ The registry holds three kinds of entries:
 - ``NativeFunction``: Python-backed function with declared
   parameter and result sorts.
 - ``NativeConstant``: named Python literal value with a declared
-  sort.
+  sort, plus the one canonical ``Identifier`` minted for it at
+  registration.
 
 Lookup helpers (``get_registered_entry``, ``get_registered_entries``,
 ``is_entry_registered``) widen to ``RegisteredEntry``; callers that
 need to distinguish kinds use ``isinstance``.
+``get_native_constant_identifier`` and
+``try_get_native_constant_for_identifier`` are the two ends of the
+constant-identity mapping.
 """
 
 import dataclasses
@@ -29,14 +33,17 @@ from fhy_core.symbolic.expression import (
     NativeConstant,
     NativeFunction,
     RegisteredFunction,
+    get_native_constant_identifier,
     get_registered_entries,
     get_registered_entry,
     is_entry_registered,
     register_function,
     register_native_constant,
     register_native_function,
+    try_get_native_constant_for_identifier,
 )
 from fhy_core.symbolic.expression.builtins import BUILTIN_CONSTANTS
+from fhy_core.symbolic.expression.registry import set_registry_state_for_tests
 
 from .conftest import mock_identifier
 
@@ -283,16 +290,16 @@ def test_register_function_rejects_sort_arity_mismatch(
 def test_register_function_accepts_body_referencing_registered_constant(
     function_registry_snapshot: None,
 ) -> None:
-    """Test a body identifier whose name matches a registered constant is not captured.
+    """Test a body carrying a constant's canonical identifier is not captured.
 
-    ``pi`` is registered as a built-in constant; an identifier named
-    ``pi`` in a body must therefore be treated as a constant reference,
-    not a captured free identifier.
+    ``pi`` is registered as a built-in constant; its canonical
+    identifier in a body is a constant reference, not a captured free
+    identifier.
     """
     x = mock_identifier("x", 0)
-    pi = mock_identifier("pi", 1)
+    pi = get_native_constant_identifier("pi")
 
-    # Should not raise: ``pi`` matches the registered native constant.
+    # Should not raise: ``pi`` is the registered constant's identifier.
     registered = register_function(
         "test_body_uses_pi",
         parameters=[x],
@@ -302,6 +309,28 @@ def test_register_function_accepts_body_referencing_registered_constant(
     )
 
     assert registered.name == "test_body_uses_pi"
+
+
+def test_register_function_rejects_body_identifier_merely_named_like_a_constant(
+    function_registry_snapshot: None,
+) -> None:
+    """Test an identifier that only shares a constant's name is captured.
+
+    The exemption from the closure check is by identifier identity, so a
+    body referencing some other identifier called ``pi`` is capturing a
+    free variable and is rejected like any other capture.
+    """
+    x = mock_identifier("x", 0)
+    pi_lookalike = mock_identifier("pi", 704)
+
+    with pytest.raises(EntryRegistrationError, match="pi"):
+        register_function(
+            "test_body_uses_pi_lookalike",
+            parameters=[x],
+            parameter_sorts=[FunctionSort.REAL],
+            result_sort=FunctionSort.REAL,
+            body=IdentifierExpression(x) * pi_lookalike,
+        )
 
 
 # =============================================================================
@@ -945,3 +974,92 @@ def test_pi_lookup_returns_a_native_constant() -> None:
 def test_builtin_constants_mapping_covers_seeded_constants() -> None:
     """Test ``BUILTIN_CONSTANTS`` exposes the canonical seeded constants."""
     assert set(BUILTIN_CONSTANTS.keys()) >= {"pi", "e", "inf", "nan"}
+
+
+# =============================================================================
+# Canonical constant identifiers
+# =============================================================================
+
+
+def test_get_native_constant_identifier_is_stable_across_calls() -> None:
+    """Test a constant's canonical identifier does not change between lookups."""
+    first = get_native_constant_identifier("pi")
+    second = get_native_constant_identifier("pi")
+
+    assert first == second
+    assert first.name_hint == "pi"
+
+
+@pytest.mark.parametrize("constant_name", ["pi", "e", "inf", "nan"])
+def test_each_seeded_constant_owns_a_distinct_identifier(constant_name: str) -> None:
+    """Test each seeded constant resolves back to its own entry by identity."""
+    identifier = get_native_constant_identifier(constant_name)
+
+    entry = try_get_native_constant_for_identifier(identifier)
+
+    assert entry is get_registered_entry(constant_name)
+
+
+def test_get_native_constant_identifier_raises_for_an_unregistered_name() -> None:
+    """Test asking for an unregistered constant's identifier raises."""
+    with pytest.raises(EntryLookupError, match="test_const_never_registered"):
+        get_native_constant_identifier("test_const_never_registered")
+
+
+def test_get_native_constant_identifier_raises_for_a_function_name() -> None:
+    """Test a registered function's name has no canonical constant identifier."""
+    with pytest.raises(EntryLookupError, match="sqrt"):
+        get_native_constant_identifier("sqrt")
+
+
+def test_register_native_constant_mints_an_identifier_for_the_new_constant(
+    function_registry_snapshot: None,
+) -> None:
+    """Test registering a constant makes its canonical identifier available."""
+    registered = register_native_constant(
+        "test_const_identity", sort=FunctionSort.REAL, value=1.5
+    )
+
+    identifier = get_native_constant_identifier("test_const_identity")
+
+    assert identifier.name_hint == "test_const_identity"
+    assert try_get_native_constant_for_identifier(identifier) is registered
+
+
+def test_try_get_native_constant_for_identifier_rejects_a_same_named_identifier() -> (
+    None
+):
+    """Test an identifier that merely shares a constant's name resolves to nothing."""
+    lookalike = mock_identifier("pi", 705)
+
+    assert try_get_native_constant_for_identifier(lookalike) is None
+
+
+def test_try_get_native_constant_for_identifier_rejects_a_function_named_identifier() -> (  # noqa: E501
+    None
+):
+    """Test an identifier named after a registered function resolves to nothing."""
+    function_lookalike = mock_identifier("sqrt", 706)
+
+    assert try_get_native_constant_for_identifier(function_lookalike) is None
+
+
+def test_restoring_a_registry_snapshot_drops_identifiers_it_does_not_carry(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a constant registered inside a snapshotted test stops resolving after it.
+
+    ``function_registry_snapshot`` restores the pre-test registry, and
+    the canonical identifiers are pruned with it, so a constant
+    registered here leaves nothing behind that a later test could still
+    resolve.
+    """
+    snapshot = dict(get_registered_entries())
+    register_native_constant("test_const_pruned", sort=FunctionSort.REAL, value=2.0)
+    identifier = get_native_constant_identifier("test_const_pruned")
+
+    set_registry_state_for_tests(snapshot)
+
+    assert try_get_native_constant_for_identifier(identifier) is None
+    with pytest.raises(EntryLookupError, match="test_const_pruned"):
+        get_native_constant_identifier("test_const_pruned")

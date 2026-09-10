@@ -43,7 +43,9 @@ from ..registry import (
     EntryLookupError,
     NativeConstant,
     RegisteredFunction,
+    get_native_constant_identifier,
     get_registered_entry,
+    try_get_native_constant_for_identifier,
 )
 
 
@@ -123,16 +125,19 @@ _NATIVE_CONSTANT_LIFT: dict[Any, str] = {
 }
 
 
-def _try_get_native_constant_sympy_value(name: str) -> Any | None:
-    """Return the sympy value for a registered constant, or ``None``."""
-    try:
-        entry = get_registered_entry(name)
-    except EntryLookupError:
+def _try_get_native_constant_sympy_value(identifier: Identifier) -> Any | None:
+    """Return the sympy value for the constant ``identifier`` denotes, or ``None``.
+
+    Resolution is by identifier identity, so an identifier that merely
+    shares a constant's ``name_hint`` lowers to a sympy ``Symbol`` like
+    any other free variable.
+    """
+    entry = try_get_native_constant_for_identifier(identifier)
+    if entry is None:
         return None
-    if not isinstance(entry, NativeConstant):
-        return None
-    if name in _NATIVE_CONSTANT_LOWER:
-        return _NATIVE_CONSTANT_LOWER[name]
+    symbolic_value = _NATIVE_CONSTANT_LOWER.get(entry.name)
+    if symbolic_value is not None:
+        return symbolic_value
     if isinstance(entry.value, bool):
         return sympy.true if entry.value else sympy.false
     if isinstance(entry.value, int):
@@ -141,10 +146,21 @@ def _try_get_native_constant_sympy_value(name: str) -> Any | None:
 
 
 def _try_lift_native_constant(expr: sympy.Expr) -> Expression | None:
-    """Return the IR expression for a sympy constant atom, or ``None``."""
+    """Return the IR expression for a sympy constant atom, or ``None``.
+
+    Lifts to the registry's canonical identifier for the constant, so a
+    lowered constant lifts back as the same identifier it came from and
+    the round trip is idempotent. A sympy constant whose IR counterpart
+    is not registered has no canonical identifier to lift to and is left
+    to the ordinary dispatch.
+    """
     for sympy_value, name in _NATIVE_CONSTANT_LIFT.items():
         if expr == sympy_value:
-            return IdentifierExpression(Identifier(name))
+            try:
+                canonical = get_native_constant_identifier(name)
+            except EntryLookupError:
+                return None
+            return IdentifierExpression(canonical)
     return None
 
 
@@ -214,7 +230,7 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
         self, identifier_expression: IdentifierExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
         identifier = identifier_expression.identifier
-        constant_value = _try_get_native_constant_sympy_value(identifier.name_hint)
+        constant_value = _try_get_native_constant_sympy_value(identifier)
         if constant_value is not None:
             return constant_value
         return sympy.Symbol(self.format_identifier(identifier))

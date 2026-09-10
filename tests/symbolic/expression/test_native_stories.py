@@ -22,6 +22,7 @@ from fhy_core.symbolic.expression import (
     convert_expression_to_sympy_expression,
     convert_sympy_expression_to_expression,
     evaluate_expression,
+    get_native_constant_identifier,
     inline_functions,
     register_native_function,
 )
@@ -135,7 +136,7 @@ def test_user_story_real_native_rejects_boolean_argument() -> None:
 
 def test_user_story_sin_of_pi_round_trips_through_sympy_to_zero() -> None:
     """Test ``sin(pi)`` lowers + simplifies through sympy and lifts back to ``0``."""
-    expression = call("sin", mock_identifier("pi", 0))
+    expression = call("sin", get_native_constant_identifier("pi"))
 
     simplified = simplify_expression(expression)
 
@@ -240,7 +241,7 @@ def test_user_story_outer_arithmetic_preserved_around_folded_native_call() -> No
 
 def test_user_story_native_call_with_constant_round_trips_through_sympy() -> None:
     """Test ``cos(pi)`` round-trips through sympy lower / lift and folds to ``-1``."""
-    expression = call("cos", mock_identifier("pi", 0))
+    expression = call("cos", get_native_constant_identifier("pi"))
 
     lowered = convert_expression_to_sympy_expression(expression)
     lifted = convert_sympy_expression_to_expression(lowered)
@@ -250,3 +251,45 @@ def test_user_story_native_call_with_constant_round_trips_through_sympy() -> Non
     # sympy before lifting).
     assert isinstance(lifted, LiteralExpression)
     assert lifted.value == -1
+
+
+# =============================================================================
+# User story: a caller's own variable named after a constant
+# =============================================================================
+
+
+@pytest.mark.parametrize("constant_name", ["pi", "e", "inf", "nan"])
+def test_user_story_variable_named_after_a_constant_stays_a_free_variable(
+    constant_name: str,
+) -> None:
+    """Test a caller's variable named after a constant is an ordinary variable.
+
+    Caller names one of their own variables ``pi``. Nothing about the
+    registry's constant of that name may reach their expression: the
+    variable types as unbound, evaluates to itself, and keeps its place
+    among the expression's free identifiers.
+    """
+    variable = mock_identifier(constant_name, 640)
+    expression = IdentifierExpression(variable)
+
+    evaluated = evaluate_expression(expression)
+
+    assert evaluated.is_structurally_equivalent(expression)
+    assert expression.get_free_identifiers() == {variable}
+    with pytest.raises(FhYCoreTypeError, match="not bound"):
+        synthesize_expression_type(expression, _no_identifiers)
+
+
+def test_user_story_binding_a_variable_named_after_a_constant_is_honored() -> None:
+    """Test a binding for a variable named ``e`` reaches the simplifier.
+
+    The bridge previously resolved the name to the constant and dropped
+    the binding, leaving the caller's substitution silently unapplied.
+    """
+    variable = mock_identifier("e", 641)
+    expression = LiteralExpression(2) * IdentifierExpression(variable)
+
+    simplified = simplify_expression(expression, {variable: LiteralExpression(3)})
+
+    assert isinstance(simplified, LiteralExpression)
+    assert simplified.value == 6

@@ -1423,3 +1423,37 @@ def test_check_expression_satisfiability_screens_a_nested_int_float_equality() -
     result = check_expression_satisfiability(expression, {x: SymbolType.INT})
 
     assert result is None
+
+
+# =============================================================================
+# Backend agreement on identifiers named after native constants
+# =============================================================================
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("constant_name", ["pi", "e"])
+def test_backends_agree_on_an_identifier_named_after_a_native_constant(
+    constant_name: str,
+) -> None:
+    """Test Z3 and SymPy treat a variable named ``pi`` the same way.
+
+    The Z3 bridge has never resolved native constants, so while the SymPy
+    bridge keyed them on `name_hint` the two backends disagreed about
+    `pi == 1`: satisfiability called it satisfiable (a free variable can
+    be 1) and simplification folded it to `False` (the constant is not
+    1). Both now see one free variable, so satisfiability decides `True`
+    and simplification leaves a residual.
+    """
+    variable = mock_identifier(constant_name, 1024)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(variable), LiteralExpression(1)
+    )
+
+    satisfiable = check_expression_satisfiability(
+        expression, {variable: SymbolType.INT}
+    )
+    simplified = simplify_expression(expression)
+
+    assert satisfiable is True
+    assert not isinstance(simplified, LiteralExpression)
+    assert simplified.get_free_identifiers() == {variable}
