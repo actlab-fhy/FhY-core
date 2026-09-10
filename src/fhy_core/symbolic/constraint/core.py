@@ -53,6 +53,7 @@ from fhy_core.symbolic.expression import (
     LiteralExpression,
     LiteralType,
     NonBooleanLogicalOperandError,
+    is_integer_valued_literal,
     make_binary_expression,
     pformat_expression,
     validate_predicate,
@@ -703,9 +704,12 @@ def _decide_bound_value_membership(
 ) -> bool | None:
     """Return whether the value bound to ``variable`` is one of ``members``.
 
-    A ``LiteralExpression`` binding is decided by the value it holds. Any
-    other ``Expression`` is symbolic, and membership cannot be decided
-    against it.
+    A ``LiteralExpression`` binding is decided by the value it denotes: an
+    integer-grammar string denotes its ``int`` (matching
+    ``LiteralExpression("5")`` being equivalent to ``LiteralExpression(5)``),
+    a float-grammar string stays a decimal-kind value, and every other
+    value passes through unchanged. Any other ``Expression`` is symbolic,
+    and membership cannot be decided against it.
 
     Args:
         variable: The constrained identifier the value is bound to.
@@ -726,6 +730,8 @@ def _decide_bound_value_membership(
         if not isinstance(value, LiteralExpression):
             return None
         value = value.value
+        if isinstance(value, str) and is_integer_valued_literal(value):
+            value = int(value)
     else:
         _validate_set_binding_value(variable, value)
     try:
@@ -751,7 +757,7 @@ def _evaluate_set_membership_with_bindings(
     Shared by ``InSetConstraint`` and ``NotInSetConstraint``: the only
     difference between the two kinds is the outcome polarity a member
     decides to. Looks up ``variable`` in ``bindings``, unwraps a
-    ``LiteralExpression`` binding to its raw value, and decides
+    ``LiteralExpression`` binding to the value it denotes, and decides
     membership by type-strict comparison against ``members``. A missing
     binding or a non-literal ``Expression`` binding yields ``UNDECIDED``
     (DEBUG-logged, naming the identifier). A binding of a registered

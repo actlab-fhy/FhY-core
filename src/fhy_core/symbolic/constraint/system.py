@@ -50,6 +50,8 @@ from .core import (
     Constraint,
     ConstraintBindings,
     ConstraintOutcome,
+    InSetConstraint,
+    NotInSetConstraint,
     SymbolicPredicate,
     _coerce_bindings_to_environment,
     _find_bound_native_constants,
@@ -218,6 +220,121 @@ def _decide_satisfiability(
             timeout_milliseconds=timeout_milliseconds,
         )
     )
+
+
+def _convert_members_to_conjunction(members: Sequence[Constraint]) -> Expression:
+    """Return the conjunction of ``members``' own expression forms.
+
+    Mirrors ``ConstraintSystem.convert_to_expression``, but over a
+    caller-chosen subset of a system's members rather than the whole
+    system: an empty sequence yields ``LiteralExpression(True)``, a
+    single member yields that member's expression unwrapped, and
+    otherwise a ``logical_and`` over the members in the given order.
+
+    Args:
+        members: Constraints to conjoin.
+
+    Returns:
+        An ``Expression`` whose truth value matches the conjunction of
+        ``members``.
+
+    Raises:
+        ConstraintError: If any member cannot be converted to an
+            expression.
+
+    """
+    if not members:
+        return LiteralExpression(True)
+    expressions = [member.convert_to_expression() for member in members]
+    if len(expressions) == 1:
+        return expressions[0]
+    return Expression.logical_and(*expressions)
+
+
+def _partition_decided_set_leaves(
+    constraints: tuple[Constraint, ...],
+    environment: Mapping[Identifier, Expression],
+) -> tuple[list[InSetConstraint | NotInSetConstraint], list[Constraint]]:
+    """Split ``constraints`` into leaves a concrete binding decides and the rest.
+
+    A decided leaf is an ``InSetConstraint``/``NotInSetConstraint`` whose
+    variable ``environment`` binds to a ``LiteralExpression`` -- the
+    coerced form of both a raw value and an already-literal binding.
+    Such a leaf is never lowered to Z3, where type-strict membership
+    cannot be expressed; instead it is decided directly by its own
+    ``evaluate_with_bindings``, the same mechanism
+    ``ConstraintSystem.evaluate_with_bindings`` uses, so the two entry
+    points agree by construction. A variable left unbound, or bound to a
+    symbolic (non-literal) ``Expression``, still goes to the solver.
+
+    Args:
+        constraints: The system's members, in canonical order.
+        environment: Substitution environment coerced from the caller's
+            bindings.
+
+    Returns:
+        The decided leaves, then the remaining members, each in the
+        given relative order.
+
+    """
+    decided_leaves: list[InSetConstraint | NotInSetConstraint] = []
+    rest: list[Constraint] = []
+    for constraint in constraints:
+        if isinstance(constraint, (InSetConstraint, NotInSetConstraint)) and isinstance(
+            environment.get(constraint.variable), LiteralExpression
+        ):
+            decided_leaves.append(constraint)
+        else:
+            rest.append(constraint)
+    return decided_leaves, rest
+
+
+def _decide_leaves_with_bindings(
+    leaves: Sequence[InSetConstraint | NotInSetConstraint],
+    bindings: ConstraintBindings,
+) -> ConstraintOutcome:
+    """Fold each decided leaf's own outcome into one outcome for the group.
+
+    Mirrors how ``ConstraintSystem.evaluate_with_bindings`` folds member
+    outcomes: a ``VIOLATED`` leaf outranks every other leaf, an
+    ``UNDECIDED`` leaf otherwise carries the group to ``UNDECIDED``, and
+    a group whose every leaf is ``SATISFIED`` is itself ``SATISFIED``.
+
+    Args:
+        leaves: Set-constraint leaves decided directly, without Z3.
+        bindings: Original bindings passed to each leaf's own
+            ``evaluate_with_bindings``, so a raw value stays raw and only
+            a ``LiteralExpression`` binding is normalized.
+
+    Returns:
+        The folded outcome of every leaf in ``leaves``.
+
+    """
+    saw_undecided = False
+    for leaf in leaves:
+        outcome = leaf.evaluate_with_bindings(bindings)
+        if outcome is ConstraintOutcome.VIOLATED:
+            return ConstraintOutcome.VIOLATED
+        if outcome is ConstraintOutcome.UNDECIDED:
+            saw_undecided = True
+    return ConstraintOutcome.UNDECIDED if saw_undecided else ConstraintOutcome.SATISFIED
+
+
+def _combine_satisfiability_outcomes(
+    leaves_outcome: ConstraintOutcome, residual_outcome: ConstraintOutcome
+) -> ConstraintOutcome:
+    """Fold a decided-leaves outcome and a residual outcome into one outcome.
+
+    A ``VIOLATED`` side outranks the other; otherwise an ``UNDECIDED``
+    side carries the result to ``UNDECIDED``; two ``SATISFIED`` sides
+    give ``SATISFIED``.
+
+    """
+    if ConstraintOutcome.VIOLATED in (leaves_outcome, residual_outcome):
+        return ConstraintOutcome.VIOLATED
+    if ConstraintOutcome.UNDECIDED in (leaves_outcome, residual_outcome):
+        return ConstraintOutcome.UNDECIDED
+    return ConstraintOutcome.SATISFIED
 
 
 def create_constraint_system(*constraints: Constraint) -> "ConstraintSystem":
@@ -497,36 +614,59 @@ class ConstraintSystem(
     ) -> ConstraintOutcome:
         """Return whether the system is satisfiable given a partial assignment.
 
-        Substitutes the bindings into the conjunction, then decides
-        satisfiability of the residual over the remaining free identifiers
-        via the z3 bridge. ``symbol_types`` needs entries only for the
-        identifiers left free after substitution. Answers questions of the
-        form "given x = 4, can y and z still be chosen?".
+        A member this system holds as an ``InSetConstraint``/
+        ``NotInSetConstraint`` whose variable is bound to a concrete
+        value -- a raw value or a ``LiteralExpression`` -- is a decided
+        leaf: it is decided directly by its own ``evaluate_with_bindings``
+        rather than lowered to Z3. Z3's numeric equality cannot express
+        this package's type-strict membership (it would, for example,
+        equate the ``bool`` ``True`` with the ``int`` ``1``, or a binary
+        float with the decimal string denoting the same number), so
+        deciding a concrete-bound leaf this way is both sound and the
+        only way to agree with ``evaluate_with_bindings`` by construction.
+        Every other member -- an equation, or a set leaf left unbound or
+        bound to a symbolic (non-literal) expression -- is the residual:
+        it is substituted and decided over the remaining free identifiers
+        via the z3 bridge, exactly as today. ``symbol_types`` needs
+        entries only for the identifiers the residual leaves free.
+        Answers questions of the form "given x = 4, can y and z still be
+        chosen?".
+
+        A decided leaf that is not a member makes the whole system
+        ``VIOLATED``, outranking a satisfiable residual. Otherwise, an
+        ``UNDECIDED`` decided leaf (an unusable binding aside, this only
+        happens for a bound registered native constant) carries the
+        system to ``UNDECIDED`` unless a later decided leaf or the
+        residual is ``VIOLATED``. A residual-free system -- every member
+        was a decided leaf -- is decided from the leaves alone, without
+        consulting the solver at all.
 
         Limitation: the same hazard classes documented on this class
-        apply here; ``fhy_core.symbolic.solver`` screens the residual
-        rather than the original conjunction. Substitution is therefore
-        part of the screen: a ``bool`` binding value lands in the
-        residual exactly as a ``bool`` set member does and is screened
-        the same way, while binding a variable to a value of the matching
-        sort can retire a hazard the unsubstituted conjunction had.
+        apply to the residual; ``fhy_core.symbolic.solver`` screens the
+        substituted residual rather than the original conjunction.
+        Substitution is therefore part of the screen: a ``bool`` binding
+        value lands in the residual exactly as a ``bool`` set member does
+        and is screened the same way, while binding a variable to a value
+        of the matching sort can retire a hazard the unsubstituted
+        residual had.
 
         A binding for a registered native constant's canonical identifier
         is refused rather than substituted: the identifier names a value
         rather than a variable, and substituting it would answer for a
-        world where the constant has the bound value. A binding for a
-        constant the conjunction references reports ``UNDECIDED`` with a
-        ``WARNING``, after every check listed under ``Raises``, exactly as
-        ``evaluate_with_bindings`` reports it; one for a constant the
-        conjunction does not reference is ignored.
+        world where the constant has the bound value. This refusal
+        covers a constant referenced by the residual or bound as a
+        decided leaf's own variable. A binding for a constant the system
+        references reports ``UNDECIDED`` with a ``WARNING``, after every
+        check listed under ``Raises``, exactly as ``evaluate_with_bindings``
+        reports it; one for a constant the system does not reference is
+        ignored.
 
         Args:
-            bindings: Partial assignment substituted into the conjunction
-                before the satisfiability check. Values must be
-                ``Expression`` or ``LiteralType``, as
-                ``ConstraintBindings`` declares.
-            symbol_types: Z3 sort for each identifier left free after
-                substitution.
+            bindings: Partial assignment consulted for the satisfiability
+                check. Values must be ``Expression`` or ``LiteralType``,
+                as ``ConstraintBindings`` declares.
+            symbol_types: Z3 sort for each identifier the residual leaves
+                free.
             timeout_milliseconds: Optional bound, in milliseconds, on the
                 underlying Z3 solver invocation. ``None`` (the default)
                 leaves the solver unbounded.
@@ -549,27 +689,34 @@ class ConstraintSystem(
                 a missing symbol type here always raises, since the Z3
                 bridge cannot proceed without a sort for every free
                 identifier.
-            ConstraintError: If a member cannot be converted to an
-                expression, or if a ``bindings`` value cannot be lifted
-                into the substitution environment: it falls outside
+            ConstraintError: If a ``bindings`` value cannot be lifted into
+                the substitution environment: it falls outside
                 ``Expression | LiteralType``, or ``LiteralExpression``
                 refuses it, as it refuses a ``str`` matching neither the
-                integer nor the float grammar. Both are reached only once
-                there is a member to lower, so an empty system returns
-                ``SATISFIED`` without inspecting ``bindings`` at all.
+                integer nor the float grammar. Checked against every
+                binding, whether or not the identifier it names ends up
+                deciding a leaf directly, so an empty system returns
+                ``SATISFIED`` without inspecting ``bindings`` at all, but
+                a non-empty one always does. Also raised if a residual
+                member cannot be converted to an expression; a decided
+                leaf is never lowered, so a member unusable that way --
+                for example a categorical string member, which membership
+                compares type-strictly but Z3 could only lower by
+                canonicalizing against numeric members -- does not raise
+                once its variable is concretely bound.
             ValueError: If ``timeout_milliseconds`` is not None and not
                 positive. Checked before the empty-system and hazard
                 early returns, so an inadmissible bound is rejected even
                 when the outcome is decided without the solver.
-            NonBooleanLogicalOperandError: If a member's own expression
-                provably denotes a number, or otherwise holds a provably
-                numeric operand in a Boolean position -- under a logical
-                connective or as a piecewise case condition -- counting
-                an identifier ``bindings`` binds to a number, or an
-                unbound one ``symbol_types`` declares INT or REAL. Each
-                member is screened on its own, so the error names the
-                offending member's own expression rather than the
-                synthetic conjunction. Checked against the bindings
+            NonBooleanLogicalOperandError: If a residual member's own
+                expression provably denotes a number, or otherwise holds
+                a provably numeric operand in a Boolean position -- under
+                a logical connective or as a piecewise case condition --
+                counting an identifier ``bindings`` binds to a number, or
+                an unbound one ``symbol_types`` declares INT or REAL. Each
+                residual member is screened on its own, so the error
+                names the offending member's own expression rather than
+                the synthetic conjunction. Checked against the bindings
                 before they are substituted, since substituting a number
                 into a case condition would build a piecewise that
                 refuses its own condition, but after the symbol-type
@@ -582,17 +729,23 @@ class ConstraintSystem(
         if not self.constraints:
             return ConstraintOutcome.SATISFIED
         environment = _coerce_bindings_to_environment(bindings)
-        conjunction = self.convert_to_expression()
-        _validate_symbol_types_cover_residual(conjunction, environment, symbol_types)
-        for constraint in self.constraints:
+        decided_leaves, rest = _partition_decided_set_leaves(
+            self.constraints, environment
+        )
+        residual_expression = _convert_members_to_conjunction(rest)
+        _validate_symbol_types_cover_residual(
+            residual_expression, environment, symbol_types
+        )
+        for constraint in rest:
             validate_predicate(
                 constraint.convert_to_expression(),
                 environment,
                 symbol_types=symbol_types,
             )
-        captured = _find_bound_native_constants(
-            conjunction.get_free_identifiers(), environment
-        )
+        scope = residual_expression.get_free_identifiers() | {
+            leaf.variable for leaf in decided_leaves
+        }
+        captured = _find_bound_native_constants(scope, environment)
         if captured:
             _LOGGER.warning(
                 "ConstraintSystem.check_satisfiability_with_bindings: "
@@ -604,12 +757,16 @@ class ConstraintSystem(
                 format_comma_separated_list(tuple(captured)),
             )
             return ConstraintOutcome.UNDECIDED
-        residual = conjunction.substitute(environment)
-        return _decide_satisfiability(
+        leaves_outcome = _decide_leaves_with_bindings(decided_leaves, bindings)
+        if leaves_outcome is ConstraintOutcome.VIOLATED or not rest:
+            return leaves_outcome
+        residual = residual_expression.substitute(environment)
+        residual_outcome = _decide_satisfiability(
             residual,
             symbol_types,
             timeout_milliseconds=timeout_milliseconds,
         )
+        return _combine_satisfiability_outcomes(leaves_outcome, residual_outcome)
 
     def check_implication(
         self,
