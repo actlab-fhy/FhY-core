@@ -51,7 +51,10 @@ is reported separately: a provably numeric operand of a logical
 connective, or a provably numeric piecewise case condition, raises
 ``NonBooleanLogicalOperandError`` from every entry point here,
 simplification included, since no backend and no timeout gives that
-expression a meaning to report.
+expression a meaning to report. The Z3-question entry points check for
+it after the ``symbol_types`` precondition and before the hazard
+screens, so an expression that is both ill-typed and hazardous is
+reported as ill-typed.
 """
 
 __all__ = [
@@ -92,6 +95,7 @@ from .expression import (
     UnaryOperation,
     UndecidableError,
     is_integer_valued_literal,
+    validate_logical_operands,
 )
 from .expression.passes.sympy import simplify_expression as _sympy_simplify_expression
 from .expression.passes.z3 import (
@@ -386,9 +390,9 @@ def _does_node_coerce_a_bool_operand(
     coerce, so a Boolean operand under one of those lowers faithfully and
     is not flagged. The mirror-image mismatch -- a *numeric* operand
     under a logical connective -- is not this screen's business either:
-    both bridges refuse that shape before lowering, with
-    ``NonBooleanLogicalOperandError``, so it never reaches a lowering
-    whose answer could be read back wrong.
+    every entry point refuses that shape with
+    ``NonBooleanLogicalOperandError`` before this screen runs, so it
+    never reaches a lowering whose answer could be read back wrong.
 
     Args:
         expression: Node to screen. Children are not visited.
@@ -962,7 +966,10 @@ def check_expression_satisfiability(
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
             condition, in ``expression`` provably denotes a number. Such an
             expression is ill-typed rather than undecidable, so it raises
-            instead of reporting ``None``.
+            instead of reporting ``None``. Checked after the
+            ``symbol_types`` precondition but ahead of the hazard screen, so
+            it is reported even where the screen would also refuse the
+            expression.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
@@ -973,6 +980,7 @@ def check_expression_satisfiability(
     _validate_symbol_types_cover_free_identifiers(
         expression.get_free_identifiers(), symbol_types
     )
+    validate_logical_operands(expression)
     if _find_and_log_hazard(
         expression, symbol_types, context="check_expression_satisfiability"
     ):
@@ -1035,7 +1043,10 @@ def does_expression_imply(
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
             condition, in either expression provably denotes a number. Such
             a pair is ill-typed rather than undecidable, so it raises
-            instead of reporting ``None``.
+            instead of reporting ``None``. Checked after the
+            ``symbol_types`` precondition but ahead of the hazard screen, so
+            it is reported even where the screen would also refuse the
+            expression.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
@@ -1047,6 +1058,8 @@ def does_expression_imply(
         antecedent.get_free_identifiers() | consequent.get_free_identifiers(),
         symbol_types,
     )
+    validate_logical_operands(antecedent)
+    validate_logical_operands(consequent)
     if _find_and_log_hazard(
         antecedent, symbol_types, context="does_expression_imply"
     ) or _find_and_log_hazard(
@@ -1106,7 +1119,10 @@ def holds_for_all_free_assignments(
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
             condition, in ``expression`` provably denotes a number. Such an
             expression is ill-typed rather than undecidable, so it raises
-            instead of reporting ``None``.
+            instead of reporting ``None``. Checked after the
+            ``symbol_types`` precondition but ahead of the hazard screen, so
+            it is reported even where the screen would also refuse the
+            expression.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
@@ -1117,6 +1133,7 @@ def holds_for_all_free_assignments(
     _validate_symbol_types_cover_free_identifiers(
         expression.get_free_identifiers() | set(considered_identifiers), symbol_types
     )
+    validate_logical_operands(expression)
     if _find_and_log_hazard(
         expression, symbol_types, context="holds_for_all_free_assignments"
     ):
@@ -1169,7 +1186,9 @@ def assert_holds_for_all_free_assignments(
             condition, in ``expression`` provably denotes a number. Reported
             as its own error rather than as ``UndecidableError``: the
             expression is ill-typed, so no ``timeout_milliseconds`` makes it
-            decidable.
+            decidable. Checked after the ``symbol_types`` precondition but
+            ahead of the hazard screen, so it is reported even where the
+            screen would also refuse the expression.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
@@ -1180,6 +1199,7 @@ def assert_holds_for_all_free_assignments(
     _validate_symbol_types_cover_free_identifiers(
         expression.get_free_identifiers() | set(considered_identifiers), symbol_types
     )
+    validate_logical_operands(expression)
     if _find_and_log_hazard(
         expression, symbol_types, context="assert_holds_for_all_free_assignments"
     ):
@@ -1242,7 +1262,9 @@ def assert_expression_implies(
             condition, in either expression provably denotes a number.
             Reported as its own error rather than as ``UndecidableError``:
             the pair is ill-typed, so no ``timeout_milliseconds`` makes it
-            decidable.
+            decidable. Checked after the ``symbol_types`` precondition but
+            ahead of the hazard screen, so it is reported even where the
+            screen would also refuse the expression.
         ValueError: If ``timeout_milliseconds`` is not None and not positive.
         RuntimeError: If the underlying solver returns an unrecognized
             result.
@@ -1254,6 +1276,8 @@ def assert_expression_implies(
         antecedent.get_free_identifiers() | consequent.get_free_identifiers(),
         symbol_types,
     )
+    validate_logical_operands(antecedent)
+    validate_logical_operands(consequent)
     if _find_and_log_hazard(
         antecedent, symbol_types, context="assert_expression_implies"
     ) or _find_and_log_hazard(

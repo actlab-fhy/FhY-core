@@ -1722,6 +1722,108 @@ def test_strict_companion_refuses_an_ill_typed_operand_as_a_type_error(
     assert not isinstance(exc_info.value, UndecidableError)
 
 
+_Z3_QUESTIONS_OVER_ONE_EXPRESSION = [
+    pytest.param(
+        lambda expression: check_expression_satisfiability(expression, {}),
+        id="check_expression_satisfiability",
+    ),
+    pytest.param(
+        lambda expression: does_expression_imply(
+            expression, LiteralExpression(True), {}
+        ),
+        id="does_expression_imply_antecedent",
+    ),
+    pytest.param(
+        lambda expression: does_expression_imply(
+            LiteralExpression(True), expression, {}
+        ),
+        id="does_expression_imply_consequent",
+    ),
+    pytest.param(
+        lambda expression: holds_for_all_free_assignments(frozenset(), expression, {}),
+        id="holds_for_all_free_assignments",
+    ),
+    pytest.param(
+        lambda expression: assert_holds_for_all_free_assignments(
+            frozenset(), expression, {}
+        ),
+        id="assert_holds_for_all_free_assignments",
+    ),
+    pytest.param(
+        lambda expression: assert_expression_implies(
+            expression, LiteralExpression(True), {}
+        ),
+        id="assert_expression_implies_antecedent",
+    ),
+    pytest.param(
+        lambda expression: assert_expression_implies(
+            LiteralExpression(True), expression, {}
+        ),
+        id="assert_expression_implies_consequent",
+    ),
+]
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
+def test_z3_question_reports_ill_typedness_ahead_of_the_hazard_screen(
+    query: Callable[[Expression], bool | None],
+) -> None:
+    """Test an ill-typed tree the hazard screen would also refuse raises its own error.
+
+    ``logical_and(2, 4) == 1`` is ill-typed, with numbers under ``and``,
+    and hazardous, comparing a Boolean with a number. The screen's refusal
+    -- ``None`` or ``UndecidableError`` -- says a different configuration
+    might decide the question; ill-typedness says none can, so it is the
+    diagnosis the caller gets.
+    """
+    expression = Expression.logical_and(
+        LiteralExpression(2), LiteralExpression(4)
+    ).equals(LiteralExpression(1))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(expression)
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "implies",
+    [
+        pytest.param(does_expression_imply, id="does_expression_imply"),
+        pytest.param(assert_expression_implies, id="assert_expression_implies"),
+    ],
+)
+def test_implication_reports_an_ill_typed_consequent_behind_a_hazardous_antecedent(
+    implies: Callable[[Expression, Expression, dict[Identifier, SymbolType]], object],
+) -> None:
+    """Test both sides are checked for ill-typedness before either hazard screen.
+
+    The antecedent is screened for hazards first, so an ill-typed
+    consequent behind a hazardous antecedent is only reported if both
+    sides are checked before the screen runs.
+    """
+    hazardous = LiteralExpression(True).equals(LiteralExpression(1))
+    ill_typed = Expression.logical_or(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        implies(hazardous, ill_typed, {})
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
+def test_z3_question_raises_a_missing_symbol_type_ahead_of_ill_typedness(
+    query: Callable[[Expression], bool | None],
+) -> None:
+    """Test the ``symbol_types`` precondition still raises before ill-typedness."""
+    x = mock_identifier("x", 0)
+    expression = Expression.logical_and(
+        LiteralExpression(2), IdentifierExpression(x)
+    ).equals(LiteralExpression(1))
+
+    with pytest.raises(KeyError):
+        query(expression)
+
+
 @pytest.mark.z3
 def test_simplify_expression_refuses_a_number_bound_into_a_connective() -> None:
     """Test an environment binding a number under a connective is refused too.
