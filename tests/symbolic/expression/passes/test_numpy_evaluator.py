@@ -42,6 +42,7 @@ from fhy_core.symbolic.expression.passes.numpy import (
     _UNARY_UFUNC_NAMES,
     NumpyExpressionEvaluator,
 )
+from fhy_core.symbolic.solver import simplify_expression
 
 from ..conftest import mock_identifier
 
@@ -731,9 +732,64 @@ def test_evaluates_literal_leaf(
     assert result == expected
 
 
-def test_raises_for_float_grammar_string_literal() -> None:
-    """Test a float-grammar string literal is refused to avoid precision loss."""
-    expression = LiteralExpression("1.5")
+EXACT_BINARY_FLOAT_STRING_CASES = [
+    ("0.5", 0.5),
+    ("0.25", 0.25),
+]
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    EXACT_BINARY_FLOAT_STRING_CASES,
+    ids=[value for value, _ in EXACT_BINARY_FLOAT_STRING_CASES],
+)
+def test_evaluates_float_grammar_string_literal_with_exact_binary_value(
+    value: str, expected: float
+) -> None:
+    """Test a float-grammar string literal that is exactly a binary float."""
+    result = evaluate_expression_with_numpy(LiteralExpression(value), {})
+
+    assert result == expected
+
+
+def test_evaluates_negated_float_grammar_string_literal_with_exact_binary_value() -> (
+    None
+):
+    """Test negating an exact-binary-value string literal evaluates to its negative."""
+    expression = -LiteralExpression("0.5")
+
+    result = evaluate_expression_with_numpy(expression, {})
+
+    assert result == -0.5
+
+
+def test_evaluates_simplified_half_division_of_a_bound_variable() -> None:
+    """Test a simplified division-by-two literal evaluates without precision loss."""
+    x = mock_identifier("x", 0)
+    expression = simplify_expression(IdentifierExpression(x) / LiteralExpression(2))
+
+    result = evaluate_expression_with_numpy(expression, {x: 3.0})
+
+    assert result == 1.5
+
+
+LOSSY_FLOAT_GRAMMAR_STRING_CASES = [
+    "0.1",
+    "0.3",
+    "0.1000000000000000055511151231257827",
+]
+
+
+@pytest.mark.parametrize(
+    "value",
+    LOSSY_FLOAT_GRAMMAR_STRING_CASES,
+    ids=["repeating-tenth", "repeating-third", "long-inexact-decimal"],
+)
+def test_raises_for_float_grammar_string_literal_with_no_exact_binary_value(
+    value: str,
+) -> None:
+    """Test a float-grammar string literal with no exact binary value is refused."""
+    expression = LiteralExpression(value)
 
     with pytest.raises(PassExecutionError) as exception_info:
         evaluate_expression_with_numpy(expression, {})

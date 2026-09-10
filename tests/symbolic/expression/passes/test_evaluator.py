@@ -486,16 +486,39 @@ def test_evaluate_rejects_string_form_float_literal_argument(
 ) -> None:
     """Test a native call with a float-grammar string argument is refused.
 
-    A float-grammar string ``LiteralExpression`` preserves an exact
-    decimal value; collapsing it to a binary float for a native call
-    would lose that precision, so evaluation raises instead.
+    A float-grammar string ``LiteralExpression`` with no exact binary
+    ``float`` equivalent would lose precision if collapsed to one, so
+    evaluation raises instead.
     """
     register_real_unary_native("test_eval_str_coerce", math.sqrt)
 
-    expression = CallExpression("test_eval_str_coerce", (LiteralExpression("4.0"),))
+    expression = CallExpression("test_eval_str_coerce", (LiteralExpression("4.1"),))
 
     with pytest.raises(PassExecutionError, match="StringLiteralPrecisionError"):
         evaluate_expression(expression)
+
+
+def test_evaluate_coerces_string_form_float_literal_with_exact_binary_value(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a float-grammar string literal with an exact binary value coerces."""
+    register_real_unary_native("test_eval_str_float_coerce", math.sqrt)
+
+    expression = CallExpression(
+        "test_eval_str_float_coerce", (LiteralExpression("4.0"),)
+    )
+    result = evaluate_expression(expression)
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == 2.0
+
+
+def test_evaluate_folds_native_call_with_exact_binary_float_string_argument() -> None:
+    """Test a call argument that is an exact-binary-value string literal folds."""
+    result = evaluate_expression(call("sin", LiteralExpression("0.5")))
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == math.sin(0.5)
 
 
 def test_evaluate_coerces_string_form_integer_literal_to_int(
