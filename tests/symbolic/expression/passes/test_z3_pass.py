@@ -776,45 +776,97 @@ def test_assert_expression_implies_undecidable_error_carries_z3s_reason(
     assert exc_info.value.reason == "timeout"
 
 
-def test_assert_holds_for_all_free_assignments_reason_on_a_real_z3_timeout() -> None:
-    """Test a real, tightly-bounded Z3 timeout surfaces `reason == "timeout"`.
+def test_assert_holds_for_all_free_assignments_bounds_z3_and_reports_its_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    trivial_satisfiability_inputs: tuple[
+        set[Identifier], Expression, dict[Identifier, SymbolType]
+    ],
+) -> None:
+    """Test a requested bound reaches Z3 and its timeout comes back as `reason`.
 
-    ``x**2 - 61*y**2 == 1`` is a Pell equation: quantifier-free nonlinear
-    integer arithmetic Z3's incomplete nonlinear procedures cannot decide
-    instantly (the smallest solution is already in the billions). A
-    1-millisecond bound reliably exhausts before Z3 decides the query
-    either way, so ``reason_unknown()`` reports elapsed time rather than
-    a structural incompleteness, keeping the test fast and deterministic.
-    No ``considered_identifiers`` are passed, so no ``z3.ForAll`` wrapper
-    is introduced either; that quantifier path is what tends to surface
-    an incompleteness reason instead of a timeout.
+    The solver is stubbed to report what it reports when its bound runs
+    out, so this pins the seam's own part of a timeout -- handing the
+    bound to the solver, and carrying Z3's ``"timeout"`` text onto the
+    raised error -- whatever the speed of the machine running it.
     """
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    x_squared = BinaryExpression(
-        BinaryOperation.MULTIPLY, IdentifierExpression(x), IdentifierExpression(x)
-    )
-    y_squared = BinaryExpression(
-        BinaryOperation.MULTIPLY, IdentifierExpression(y), IdentifierExpression(y)
-    )
-    scaled_y_squared = BinaryExpression(
-        BinaryOperation.MULTIPLY, LiteralExpression(61), y_squared
-    )
-    difference = BinaryExpression(BinaryOperation.SUBTRACT, x_squared, scaled_y_squared)
-    pell_equation_never_holds = BinaryExpression(
-        BinaryOperation.NOT_EQUAL, difference, LiteralExpression(1)
-    )
-    symbol_types = {x: SymbolType.INT, y: SymbolType.INT}
+    recorded: dict[str, object] = {}
+    original_set = z3.Solver.set
+
+    def record_solver_set_kwargs(
+        self: z3.Solver, *args: object, **kwargs: object
+    ) -> None:
+        recorded.update(kwargs)
+        original_set(self, *args, **kwargs)
+
+    monkeypatch.setattr(z3.Solver, "set", record_solver_set_kwargs)
+    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+    monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
+    considered, expression, symbol_types = trivial_satisfiability_inputs
 
     with pytest.raises(UndecidableError, match="timeout") as exc_info:
         assert_holds_for_all_free_assignments(
+            considered, expression, symbol_types, timeout_milliseconds=1
+        )
+
+    assert recorded.get("timeout") == 1
+    assert exc_info.value.reason == "timeout"
+
+
+def test_assert_holds_for_all_free_assignments_reports_a_real_z3_timeout() -> None:
+    """Test a real Z3 timeout surfaces through the seam as `reason == "timeout"`.
+
+    The expression claims ``x**3 + y**3 != z**3`` for all positive
+    integers. That is true (the ``n = 3`` case of Fermat's Last Theorem),
+    so Z3 can never find a counterexample, and ruling one out takes a
+    proof by infinite descent, which none of Z3's arithmetic procedures
+    attempt, so Z3 keeps searching until something stops it. Under a
+    bound, the only thing that stops it is the bound running out, so the
+    outcome depends on what Z3 can prove rather than on how fast the
+    machine runs. The query is quantifier-free (no
+    ``considered_identifiers``) because Z3 gives up on some quantified
+    queries by itself, with an incompleteness reason rather than a
+    timeout.
+
+    Should a future Z3 decide the query, the test skips rather than
+    fails: it can no longer observe a real timeout, which says nothing
+    about the seam. The stubbed test above covers the seam's side of a
+    timeout deterministically.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    z = mock_identifier("z", 2)
+    x_expression = IdentifierExpression(x)
+    y_expression = IdentifierExpression(y)
+    z_expression = IdentifierExpression(z)
+    cube_sum = (
+        x_expression * x_expression * x_expression
+        + y_expression * y_expression * y_expression
+    )
+    z_cubed = z_expression * z_expression * z_expression
+    no_positive_cube_sum_is_a_cube = logical_or(
+        x_expression < 1,
+        y_expression < 1,
+        z_expression < 1,
+        BinaryExpression(BinaryOperation.NOT_EQUAL, cube_sum, z_cubed),
+    )
+    symbol_types = {x: SymbolType.INT, y: SymbolType.INT, z: SymbolType.INT}
+
+    try:
+        decided = assert_holds_for_all_free_assignments(
             frozenset(),
-            pell_equation_never_holds,
+            no_positive_cube_sum_is_a_cube,
             symbol_types,
             timeout_milliseconds=1,
         )
+    except UndecidableError as error:
+        reason = error.reason
+    else:
+        pytest.skip(
+            f"Z3 decided the query ({decided}) before its bound ran out, so "
+            "no real timeout was exercised."
+        )
 
-    assert exc_info.value.reason == "timeout"
+    assert reason == "timeout"
 
 
 # =============================================================================
