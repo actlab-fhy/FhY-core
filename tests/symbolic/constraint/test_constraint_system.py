@@ -2755,6 +2755,113 @@ def test_bindings_paths_ignore_a_constant_binding_out_of_scope(
     assert outcome is ConstraintOutcome.SATISFIED
 
 
+_SET_KINDS_OVER_A_CONSTANT = [
+    pytest.param(InSetConstraint, id="in_set"),
+    pytest.param(NotInSetConstraint, id="not_in_set"),
+]
+
+_CONSTANT_MEMBER_BUILDERS = [
+    pytest.param(lambda pi: InSetConstraint(pi, {4}), id="in_set"),
+    pytest.param(lambda pi: NotInSetConstraint(pi, {4}), id="not_in_set"),
+    pytest.param(
+        lambda pi: EquationConstraint(
+            make_binary_expression(BinaryOperation.LESS, pi, 4)
+        ),
+        id="equation",
+    ),
+]
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
+@pytest.mark.parametrize("kind", _SET_KINDS_OVER_A_CONSTANT)
+@pytest.mark.parametrize(
+    "bound_value",
+    [pytest.param(4, id="member"), pytest.param(5, id="non_member")],
+)
+def test_bindings_paths_agree_on_a_set_constraint_over_a_bound_constant(
+    decide: _DecideWithBindings,
+    kind: type[InSetConstraint | NotInSetConstraint],
+    bound_value: int,
+) -> None:
+    """Test both bindings-aware paths refuse a set constraint's bound constant.
+
+    The satisfiability check refuses a binding for a constant's
+    identifier, so evaluation, which would otherwise decide membership
+    against the bound value, has to refuse it too for the two paths to
+    give one answer.
+    """
+    pi = get_native_constant_identifier("pi")
+    system = create_constraint_system(kind(pi, {4}))
+
+    outcome = decide(system, {pi: bound_value}, {})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
+@pytest.mark.parametrize("kind", _SET_KINDS_OVER_A_CONSTANT)
+def test_bindings_paths_report_an_unusable_set_binding_ahead_of_a_bound_constant(
+    decide: _DecideWithBindings,
+    kind: type[InSetConstraint | NotInSetConstraint],
+) -> None:
+    """Test a malformed binding for a set constraint's constant raises from both."""
+    pi = get_native_constant_identifier("pi")
+    system = create_constraint_system(kind(pi, {4}))
+    bindings: dict[Identifier, Any] = {pi: object()}
+
+    with pytest.raises(ConstraintError):
+        decide(system, bindings, {})
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
+@pytest.mark.parametrize("build_constant_member", _CONSTANT_MEMBER_BUILDERS)
+def test_a_bound_constant_member_leaves_a_satisfied_conjunction_undecided(
+    decide: _DecideWithBindings,
+    build_constant_member: Callable[[Identifier], Constraint],
+) -> None:
+    """Test a member over a bound constant folds in alike whatever its kind.
+
+    Beside a member the bindings satisfy, the refused member leaves the
+    conjunction undecided on both paths, for a set constraint as for an
+    equation.
+    """
+    pi = get_native_constant_identifier("pi")
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(
+        build_constant_member(pi),
+        EquationConstraint(make_binary_expression(BinaryOperation.GREATER, x, 3)),
+    )
+
+    outcome = decide(system, {pi: 4, x: 5}, {})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+@pytest.mark.parametrize("build_constant_member", _CONSTANT_MEMBER_BUILDERS)
+def test_evaluation_lets_a_violated_member_outrank_a_refused_constant_member(
+    build_constant_member: Callable[[Identifier], Constraint],
+) -> None:
+    """Test a definite violation beside a refused member decides the conjunction.
+
+    Evaluation folds its members with a violation dominating an undecided
+    member, and a set constraint's refusal is an undecided member exactly
+    as an equation's is.
+    """
+    pi = get_native_constant_identifier("pi")
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(
+        build_constant_member(pi),
+        EquationConstraint(make_binary_expression(BinaryOperation.GREATER, x, 3)),
+    )
+
+    outcome = system.evaluate_with_bindings({pi: 4, x: 1})
+
+    assert outcome is ConstraintOutcome.VIOLATED
+
+
 _SOLVER_BACKED_QUESTIONS = [
     pytest.param(
         lambda system, symbol_types: system.check_satisfiability(symbol_types),

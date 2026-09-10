@@ -196,8 +196,10 @@ def _find_bound_native_constants(
 
     Such a binding cannot take effect: the identifier names the constant's
     value rather than a variable, and the SymPy bridge lowers it to that
-    value whatever it is bound to. Both bindings-aware paths refuse it,
-    reporting ``UNDECIDED``.
+    value whatever it is bound to. Every bindings-aware path refuses it,
+    reporting ``UNDECIDED``; a set constraint, whose scope is its one
+    variable, asks ``try_get_native_constant_for_identifier`` about that
+    variable directly.
 
     Args:
         scope: Identifiers the question references.
@@ -537,10 +539,10 @@ class EquationConstraint(Constraint):
         in the decision. The refusal comes after the checks that raise,
         so a binding value that cannot be lifted, or a provably numeric
         operand in a Boolean position, is reported instead.
-        ``ConstraintSystem.check_satisfiability_with_bindings`` refuses
-        the same bindings in the same order. An identifier that merely
-        shares a constant's ``name_hint`` is an ordinary variable and its
-        binding is applied like any other.
+        ``ConstraintSystem.check_satisfiability_with_bindings`` and the
+        set constraints refuse the same bindings in the same order. An
+        identifier that merely shares a constant's ``name_hint`` is an
+        ordinary variable and its binding is applied like any other.
 
         Raises:
             ConstraintError: If the value bound to an identifier in this
@@ -669,6 +671,46 @@ def _validate_set_binding_value(identifier: Identifier, value: object) -> None:
         ) from exc
 
 
+def _decide_bound_value_membership(
+    variable: Identifier, value: object, members: frozenset[_TypedMember]
+) -> bool | None:
+    """Return whether the value bound to ``variable`` is one of ``members``.
+
+    A ``LiteralExpression`` binding is decided by the value it holds. Any
+    other ``Expression`` is symbolic, and membership cannot be decided
+    against it.
+
+    Args:
+        variable: The constrained identifier the value is bound to.
+        value: The bound value.
+        members: Type-strict wrapped member set to decide against.
+
+    Returns:
+        Whether the value is a member, or ``None`` for a non-literal
+        ``Expression`` binding.
+
+    Raises:
+        ConstraintError: If the bound value is neither an ``Expression``
+            nor a value that could be a ``ConstraintMember``, or if it is
+            one but is unhashable.
+
+    """
+    if isinstance(value, Expression):
+        if not isinstance(value, LiteralExpression):
+            return None
+        value = value.value
+    else:
+        _validate_set_binding_value(variable, value)
+    try:
+        return _wrap_member(value) in members
+    except TypeError as exc:
+        raise ConstraintError(
+            f"Binding for identifier {variable!r} is unhashable: value "
+            f"{value!r} of type {type(value).__name__} cannot be checked "
+            "for membership."
+        ) from exc
+
+
 def _evaluate_set_membership_with_bindings(
     kind_name: str,
     variable: Identifier,
@@ -685,9 +727,17 @@ def _evaluate_set_membership_with_bindings(
     ``LiteralExpression`` binding to its raw value, and decides
     membership by type-strict comparison against ``members``. A missing
     binding or a non-literal ``Expression`` binding yields ``UNDECIDED``
-    (DEBUG-logged, naming the identifier); a membership check against a
-    concrete value is always decidable, so this never reports
-    ``UNDECIDED`` once ``variable`` is bound to a literal.
+    (DEBUG-logged, naming the identifier). A binding of a registered
+    native constant's canonical identifier yields ``UNDECIDED`` with a
+    ``WARNING``: the identifier names the constant's value rather than a
+    variable, so membership decided against the bound value would answer
+    for a world where the constant has that value. The refusal comes after
+    the checks that raise, so an unusable binding value is reported
+    instead, in the order ``EquationConstraint.evaluate_with_bindings``
+    and ``ConstraintSystem.check_satisfiability_with_bindings`` use.
+    Otherwise a membership check against a concrete value is always
+    decidable, so this never reports ``UNDECIDED`` once ``variable`` is
+    bound to a literal.
 
     Args:
         kind_name: Concrete leaf's class name, used to attribute the
@@ -701,7 +751,8 @@ def _evaluate_set_membership_with_bindings(
 
     Returns:
         ``SATISFIED``/``VIOLATED`` when decidable; ``UNDECIDED`` when
-        ``variable`` is unbound or bound to a non-literal expression.
+        ``variable`` is unbound or bound to a non-literal expression, or
+        when it is a registered native constant's canonical identifier.
 
     Raises:
         ConstraintError: If the bound value is neither an ``Expression``
@@ -719,29 +770,29 @@ def _evaluate_set_membership_with_bindings(
             format_comma_separated_list(tuple(bindings)) or "no identifiers",
         )
         return ConstraintOutcome.UNDECIDED
-    if isinstance(value, Expression):
-        if not isinstance(value, LiteralExpression):
-            _LOGGER.debug(
-                "%s.evaluate_with_bindings: the binding for %r is the "
-                "non-literal expression %r; this leaf decides against a "
-                "concrete value and cannot consume a symbolic one; "
-                "reporting UNDECIDED",
-                kind_name,
-                variable,
-                value,
-            )
-            return ConstraintOutcome.UNDECIDED
-        value = value.value
-    else:
-        _validate_set_binding_value(variable, value)
-    try:
-        is_member = _wrap_member(value) in members
-    except TypeError as exc:
-        raise ConstraintError(
-            f"Binding for identifier {variable!r} is unhashable: value "
-            f"{value!r} of type {type(value).__name__} cannot be checked "
-            "for membership."
-        ) from exc
+    is_member = _decide_bound_value_membership(variable, value, members)
+    if try_get_native_constant_for_identifier(variable) is not None:
+        _LOGGER.warning(
+            "%s.evaluate_with_bindings: identifier %r is the canonical "
+            "identifier of a registered native constant, which names a value "
+            "rather than a variable, so the supplied binding cannot be "
+            "honored; reporting UNDECIDED rather than deciding membership for "
+            "a world where the constant has the bound value",
+            kind_name,
+            variable,
+        )
+        return ConstraintOutcome.UNDECIDED
+    if is_member is None:
+        _LOGGER.debug(
+            "%s.evaluate_with_bindings: the binding for %r is the "
+            "non-literal expression %r; this leaf decides against a "
+            "concrete value and cannot consume a symbolic one; "
+            "reporting UNDECIDED",
+            kind_name,
+            variable,
+            value,
+        )
+        return ConstraintOutcome.UNDECIDED
     if is_member is satisfied_when_member:
         return ConstraintOutcome.SATISFIED
     return ConstraintOutcome.VIOLATED
@@ -805,7 +856,9 @@ class _SetConstraint(Constraint):
     unary. ``evaluate_with_bindings`` resolves ``variable`` from the
     bindings and decides by type-strict membership; a missing binding or
     a non-literal ``Expression`` binding is ``UNDECIDED`` (DEBUG-logged),
-    while a literal binding is always decidable.
+    and so is any binding of a registered native constant's canonical
+    identifier (WARNING-logged), while every other literal binding is
+    decidable.
 
     Determinism:
         ``convert_to_expression`` emits its leaves in ``repr``-sorted
@@ -897,10 +950,12 @@ class _SetConstraint(Constraint):
         """Decide membership for the bound value of ``variable``.
 
         Missing binding or non-literal ``Expression`` binding ->
-        ``UNDECIDED`` (DEBUG-logged, naming the identifier). A literal
-        binding decides by type-strict membership, polarity given by
-        ``_satisfied_when_member``; never ``UNDECIDED`` once bound to a
-        literal.
+        ``UNDECIDED`` (DEBUG-logged, naming the identifier). A binding of
+        a registered native constant's canonical identifier ->
+        ``UNDECIDED`` (WARNING-logged), after the checks that raise, as
+        ``EquationConstraint.evaluate_with_bindings`` refuses it. Every
+        other literal binding decides by type-strict membership, polarity
+        given by ``_polarity``.
 
         Raises:
             ConstraintError: If the bound value is neither an
@@ -975,7 +1030,9 @@ class InSetConstraint(_SetConstraint):
     an ``IntEnum`` member, is the exact value it denotes, both as a member
     and as a bound value). A membership check against a concrete value is
     always decidable, so it never reports ``UNDECIDED`` once ``variable``
-    is bound to a literal.
+    is bound to a literal, unless ``variable`` is a registered native
+    constant's canonical identifier, whose binding it refuses as
+    ``UNDECIDED``.
 
     """
 
@@ -996,7 +1053,9 @@ class NotInSetConstraint(_SetConstraint):
     value is NOT in ``values`` and ``VIOLATED`` otherwise, comparing by
     type-strict equality. A membership check against a concrete value is
     always decidable, so it never reports ``UNDECIDED`` once ``variable``
-    is bound to a literal.
+    is bound to a literal, unless ``variable`` is a registered native
+    constant's canonical identifier, whose binding it refuses as
+    ``UNDECIDED``.
 
     """
 

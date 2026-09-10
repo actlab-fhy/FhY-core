@@ -32,6 +32,7 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     IdentifierExpression,
     LiteralExpression,
+    get_native_constant_identifier,
     make_binary_expression,
 )
 from fhy_core.utils.override import override
@@ -635,3 +636,129 @@ def test_set_constraint_decides_a_string_outside_the_literal_grammar(
     x = mock_identifier("x", 0)
 
     assert factory(x, {value}).evaluate_with_bindings({x: value}) is member_outcome
+
+
+# =============================================================================
+# A bound native constant is refused, as `EquationConstraint` refuses it
+# =============================================================================
+
+
+def _find_warning_records(
+    caplog: pytest.LogCaptureFixture,
+) -> list[logging.LogRecord]:
+    """Return the constraint module's WARNING records."""
+    return [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and record.name == _CONSTRAINT_LOGGER
+    ]
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize(
+    "bound_value",
+    [
+        pytest.param(4, id="member"),
+        pytest.param(5, id="non_member"),
+        pytest.param(LiteralExpression(4), id="member_literal"),
+        pytest.param(IdentifierExpression(mock_identifier("y", 1)), id="symbolic"),
+    ],
+)
+def test_set_constraint_refuses_a_bound_native_constant(
+    factory: Callable[[Identifier, Any], Constraint],
+    bound_value: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test binding a constant's identifier reports UNDECIDED with a warning.
+
+    The identifier names the constant's value rather than a variable, so
+    membership decided against the bound value would answer for a world
+    where ``pi`` is 4. `EquationConstraint` and the satisfiability check
+    refuse the same binding, and a system's two bindings paths have to
+    agree whatever kinds its members are.
+    """
+    pi = get_native_constant_identifier("pi")
+    constraint = factory(pi, {4})
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = constraint.evaluate_with_bindings({pi: bound_value})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    records = _find_warning_records(caplog)
+    assert len(records) == 1
+    assert repr(pi) in records[0].getMessage()
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize(
+    "bound_value",
+    [
+        pytest.param(object(), id="off_union"),
+        pytest.param([1], id="list"),
+        pytest.param(SerializableHashRaises(), id="unhashable"),
+    ],
+)
+def test_set_constraint_reports_an_unusable_value_ahead_of_a_bound_constant(
+    factory: Callable[[Identifier, Any], Constraint],
+    bound_value: Any,
+) -> None:
+    """Test a malformed binding raises rather than being refused as undecided.
+
+    `EquationConstraint` and the satisfiability check report a malformed
+    question ahead of the undecided answer the refusal gives, so the set
+    constraints order the two the same way.
+    """
+    pi = get_native_constant_identifier("pi")
+    bindings: dict[Identifier, Any] = {pi: bound_value}
+
+    with pytest.raises(ConstraintError, match=re.escape(repr(pi))):
+        factory(pi, {4}).evaluate_with_bindings(bindings)
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_over_an_unbound_native_constant_is_undecided_quietly(
+    factory: Callable[[Identifier, Any], Constraint],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test an unbound constant is an ordinary missing binding, with no warning.
+
+    `EquationConstraint` warns about a constant only when it is bound as
+    well; left unbound, the constant is not a binding to refuse.
+    """
+    pi = get_native_constant_identifier("pi")
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = factory(pi, {4}).evaluate_with_bindings({})
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    assert not _find_warning_records(caplog)
+
+
+@pytest.mark.parametrize(("factory", "member_outcome"), SET_KINDS_WITH_MEMBER_OUTCOME)
+def test_set_constraint_ignores_a_native_constant_binding_out_of_scope(
+    factory: Callable[[Identifier, Any], Constraint],
+    member_outcome: ConstraintOutcome,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a constant's binding is refused only where the constraint uses it."""
+    pi = get_native_constant_identifier("pi")
+    x = mock_identifier("x", 0)
+
+    with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
+        outcome = factory(x, {4}).evaluate_with_bindings({pi: 4, x: 4})
+
+    assert outcome is member_outcome
+    assert not _find_warning_records(caplog)
+
+
+@pytest.mark.parametrize(("factory", "member_outcome"), SET_KINDS_WITH_MEMBER_OUTCOME)
+def test_set_constraint_decides_an_identifier_sharing_only_a_constants_name(
+    factory: Callable[[Identifier, Any], Constraint],
+    member_outcome: ConstraintOutcome,
+) -> None:
+    """Test an identifier merely named ``pi`` is an ordinary variable."""
+    named_pi = mock_identifier("pi", 20)
+
+    outcome = factory(named_pi, {4}).evaluate_with_bindings({named_pi: 4})
+
+    assert outcome is member_outcome
