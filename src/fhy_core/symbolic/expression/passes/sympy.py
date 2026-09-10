@@ -37,6 +37,7 @@ from ..core import (
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
+    is_integer_valued_literal,
 )
 from ..errors import PartialPiecewiseError
 from ..registry import (
@@ -302,16 +303,14 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
                 return sympy.true
             if value == "False":
                 return sympy.false
-            try:
+            if is_integer_valued_literal(value):
                 return sympy.Integer(int(value))
-            except ValueError:
-                # Float-grammar strings: SymPy operates on binary floats,
-                # so the exact-decimal text preserved by
-                # ``LiteralExpression`` is lost here. Round-tripping
-                # ``LiteralExpression("1.5")`` through the SymPy bridge
-                # yields ``LiteralExpression(1.5)`` (float-binary), not
-                # the original float-decimal bucket.
-                return sympy.Float(value)
+            # Float-grammar strings: SymPy operates on binary floats, so
+            # the exact-decimal text preserved by ``LiteralExpression``
+            # is lost here. Round-tripping ``LiteralExpression("1.5")``
+            # through the SymPy bridge yields ``LiteralExpression(1.5)``
+            # (float-binary), not the original float-decimal bucket.
+            return sympy.Float(value)
         raise TypeError(f"Unsupported literal type: {type(value)}")
 
     @staticmethod

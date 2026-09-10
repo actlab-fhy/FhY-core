@@ -60,7 +60,7 @@ from immutabledict import immutabledict
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
-from fhy_core.utils import StrEnum, format_comma_separated_list, is_strict_int
+from fhy_core.utils import StrEnum, format_comma_separated_list
 
 from .expression import (
     BinaryExpression,
@@ -73,6 +73,7 @@ from .expression import (
     UnaryExpression,
     UnaryOperation,
     UndecidableError,
+    is_integer_valued_literal,
 )
 from .expression.passes.sympy import simplify_expression as _sympy_simplify_expression
 from .expression.passes.z3 import (
@@ -481,28 +482,29 @@ sign-dependent divergence).
 
 
 def _is_safe_nonzero_divisor(node: Expression) -> bool:
-    """Return whether ``node`` is provably a finite nonzero strict-int-or-float literal.
+    """Return whether ``node`` is provably a finite nonzero numeric literal.
 
-    A ``bool`` value, a string-form literal, and a non-finite float
-    (``nan``/``inf``) are not safe divisors: none carries the
-    provably-nonzero, finite, strict-int-or-float guarantee the
-    division hazard screen requires, even when the string is
-    numeric-looking (e.g. ``"5"``) or the float is a constructible
-    ``LiteralExpression`` value.
+    A ``bool`` value, a float-grammar string-form literal, and a
+    non-finite float (``nan``/``inf``) are not safe divisors: none
+    carries the provably-nonzero, finite guarantee the division hazard
+    screen requires, even when the float is a constructible
+    ``LiteralExpression`` value. An integer-valued literal is safe in
+    either of its forms, so the screen answers alike for every member of
+    one equivalence class.
 
     """
     if not isinstance(node, LiteralExpression):
         return False
     value = node.value
-    if is_strict_int(value):
-        return value != 0
+    if is_integer_valued_literal(value):
+        return int(value) != 0
     if isinstance(value, float):
         return math.isfinite(value) and value != 0
     return False
 
 
 def _is_safe_positive_divisor(node: Expression) -> bool:
-    """Return whether ``node`` is a finite positive strict-int-or-float literal.
+    """Return whether ``node`` is a finite positive numeric literal.
 
     Required for ``FLOOR_DIVIDE``/``MODULO``: a merely nonzero (but
     possibly negative) literal is not enough for these two operations,
@@ -513,8 +515,8 @@ def _is_safe_positive_divisor(node: Expression) -> bool:
     if not isinstance(node, LiteralExpression):
         return False
     value = node.value
-    if is_strict_int(value):
-        return value > 0
+    if is_integer_valued_literal(value):
+        return int(value) > 0
     if isinstance(value, float):
         return math.isfinite(value) and value > 0
     return False
@@ -579,18 +581,19 @@ def _is_safe_true_division(
 def _is_safe_exponent(node: Expression) -> bool:
     """Return whether ``node`` is an exponent Z3 raises to totally.
 
-    Requires a literal strict integer of at least one. A negative
-    exponent makes exponentiation a division, underspecified at a zero
-    base and rational-valued on integers; a zero exponent leaves
-    ``0 ** 0`` underspecified; a non-integer exponent lowers to a real
-    power that is undefined for a negative base; and a symbolic exponent
-    cannot be classified at all.
+    Requires an integer-valued literal of at least one, in either of the
+    forms the IR treats as that integer. A negative exponent makes
+    exponentiation a division, underspecified at a zero base and
+    rational-valued on integers; a zero exponent leaves ``0 ** 0``
+    underspecified; a non-integer exponent lowers to a real power that is
+    undefined for a negative base; and a symbolic exponent cannot be
+    classified at all.
 
     """
     if not isinstance(node, LiteralExpression):
         return False
     value = node.value
-    return is_strict_int(value) and value >= 1
+    return is_integer_valued_literal(value) and int(value) >= 1
 
 
 def _does_node_use_an_unsafe_partial_operation(
@@ -646,33 +649,36 @@ def _find_partial_operation_hazard(
 
 
 def _is_float_valued_literal(node: Expression) -> bool:
-    """Return whether ``node`` is a ``LiteralExpression`` in the float bucket.
+    """Return whether ``node`` is a ``LiteralExpression`` in a float bucket.
 
     Covers a Python ``float`` value and a float-grammar string-form
-    literal (e.g. ``"1.5"``); a ``bool``/``int`` value and an
-    integer-grammar string are not in the float bucket.
+    literal (e.g. ``"1.5"``). A literal is bucketed as Boolean,
+    integer-valued, or float-valued, so the answer is what is left once
+    the first two are ruled out through the IR's own integer predicate:
+    an integer-grammar string is not float-valued, matching the INT sort
+    the Z3 bridge lowers it to.
 
     """
     if not isinstance(node, LiteralExpression):
         return False
     value = node.value
-    if isinstance(value, float):
-        return True
-    return isinstance(value, str) and "." in value
+    if isinstance(value, bool):
+        return False
+    return not is_integer_valued_literal(value)
 
 
 def _is_int_sorted_operand(
     node: Expression, symbol_types: Mapping[Identifier, SymbolType]
 ) -> bool:
-    """Return whether ``node`` is an INT-typed identifier or a strict-int literal."""
+    """Return whether ``node`` is an INT-typed identifier or an integer literal."""
     if isinstance(node, IdentifierExpression):
         return symbol_types.get(node.identifier) is SymbolType.INT
-    return isinstance(node, LiteralExpression) and is_strict_int(node.value)
+    return _is_int_sorted_literal(node)
 
 
-def _is_strict_int_literal(node: Expression) -> bool:
-    """Return whether ``node`` is a literal holding a strict ``int`` value."""
-    return isinstance(node, LiteralExpression) and is_strict_int(node.value)
+def _is_int_sorted_literal(node: Expression) -> bool:
+    """Return whether ``node`` is a literal the Z3 bridge lowers to the INT sort."""
+    return isinstance(node, LiteralExpression) and is_integer_valued_literal(node.value)
 
 
 def _does_node_mix_int_and_float_equality(
@@ -699,11 +705,11 @@ def _does_node_mix_int_and_float_equality(
             and _is_int_sorted_operand(left, symbol_types)
         )
         or (
-            _is_strict_int_literal(left)
+            _is_int_sorted_literal(left)
             and _does_operand_lower_to_real_sort(right, symbol_types)
         )
         or (
-            _is_strict_int_literal(right)
+            _is_int_sorted_literal(right)
             and _does_operand_lower_to_real_sort(left, symbol_types)
         )
     )

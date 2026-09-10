@@ -18,6 +18,7 @@ __all__ = [
     "UnaryExpression",
     "UnaryOperation",
     "call",
+    "is_integer_valued_literal",
     "logical_and",
     "logical_not",
     "logical_or",
@@ -704,19 +705,51 @@ _FLOAT_LITERAL_PATTERN = re.compile(r"\d+\.\d*|\.\d+")
 
 _LiteralBucket: TypeAlias = tuple[str, "bool | int | float | Decimal"]
 
+_INTEGER_LITERAL_BUCKET = "int"
+
 
 def _classify_literal_value(value: LiteralType) -> _LiteralBucket:
     """Return the (bucket, canonical-form) pair used for literal equivalence."""
     if isinstance(value, bool):
         return ("bool", value)
     elif isinstance(value, int):
-        return ("int", value)
+        return (_INTEGER_LITERAL_BUCKET, value)
     elif isinstance(value, float):
         return ("float-binary", value)
     elif _INTEGER_LITERAL_PATTERN.fullmatch(value):
-        return ("int", int(value))
+        return (_INTEGER_LITERAL_BUCKET, int(value))
     else:
         return ("float-decimal", Decimal(value))
+
+
+def is_integer_valued_literal(value: LiteralType) -> bool:
+    """Return whether a literal value falls in the integer bucket.
+
+    Reads the same bucket :class:`LiteralExpression` compares by, so the
+    answer is constant on structural-equivalence classes of literals: a
+    Python ``int`` and an integer-grammar ``str`` denoting the same
+    integer (``5``, ``"5"``, ``"05"``) all answer True, while a ``bool``,
+    a Python ``float``, and a float-grammar ``str`` all answer False.
+    Whenever the answer is True, ``int(value)`` recovers that integer
+    exactly.
+
+    Every consumer that has to decide "is this literal an integer?" asks
+    here, which is what establishes the invariant that two structurally
+    equivalent literals lower to the same Z3 sort and the same SymPy
+    number kind, and are classified identically by the solver's int/float
+    hazard screen. A consumer applying its own rule breaks that
+    congruence, leaving one equivalence class part decided and part
+    refused.
+
+    Args:
+        value: Value stored on a :class:`LiteralExpression`.
+
+    Returns:
+        True when the value denotes an integer.
+
+    """
+    bucket, _ = _classify_literal_value(value)
+    return bucket == _INTEGER_LITERAL_BUCKET
 
 
 class _LiteralExpressionData(TypedDict):

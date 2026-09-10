@@ -930,17 +930,17 @@ def test_check_expression_satisfiability_negative_exponent_is_screened() -> None
 @pytest.mark.z3
 @pytest.mark.parametrize(
     "exponent",
-    [0, 0.5, "2"],
-    ids=["zero", "non_integer", "string_form"],
+    [0, 0.5, "2.0"],
+    ids=["zero", "non_integer", "float_grammar_string"],
 )
 def test_check_expression_satisfiability_unsafe_exponent_is_screened(
     exponent: str | float | int | bool,
 ) -> None:
-    """Test an exponent that is not a literal integer of at least one is screened.
+    """Test an exponent that is not an integer literal of at least one is screened.
 
-    A zero exponent leaves `0 ** 0` reachable, a non-integer exponent
-    lowers to a real power undefined for a negative base, and a
-    string-form literal carries no sort guarantee.
+    A zero exponent leaves `0 ** 0` reachable, and a non-integer
+    exponent -- whether a Python `float` or a float-grammar string --
+    lowers to a real power undefined for a negative base.
     """
     x = mock_identifier("x", 0)
     power = BinaryExpression(
@@ -954,17 +954,23 @@ def test_check_expression_satisfiability_unsafe_exponent_is_screened(
 
 
 @pytest.mark.z3
-def test_check_expression_satisfiability_positive_integer_exponent_stays_decided() -> (
-    None
-):
-    """Test a literal positive integer exponent is not screened.
+@pytest.mark.parametrize(
+    "exponent", [2, "2", "02"], ids=["int", "string", "leading_zero"]
+)
+def test_check_expression_satisfiability_positive_integer_exponent_stays_decided(
+    exponent: str | int,
+) -> None:
+    """Test a literal positive integer exponent is not screened, in every form.
 
     Contrasts the refused exponents: `x ** 2` is total on every integer,
-    so the screen must leave it decidable.
+    so the screen must leave it decidable. The integer-grammar strings
+    `"2"` and `"02"` are structurally equivalent to the integer `2`, so
+    the screen has to admit all three or the same question would be
+    decided for one member of that class and refused for another.
     """
     x = mock_identifier("x", 0)
     power = BinaryExpression(
-        BinaryOperation.POWER, IdentifierExpression(x), LiteralExpression(2)
+        BinaryOperation.POWER, IdentifierExpression(x), LiteralExpression(exponent)
     )
     expression = BinaryExpression(BinaryOperation.EQUAL, power, LiteralExpression(4))
 
@@ -1419,6 +1425,146 @@ def test_check_expression_satisfiability_screens_a_nested_int_float_equality() -
         BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
     )
     expression = Expression.logical_and(benign, hazard)
+
+    result = check_expression_satisfiability(expression, {x: SymbolType.INT})
+
+    assert result is None
+
+
+# =============================================================================
+# Decidability is constant on literal structural-equivalence classes
+# =============================================================================
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "integer_form", [1, "1", "01"], ids=["int", "string", "leading_zero"]
+)
+def test_int_float_equality_screen_refuses_every_integer_literal_form(
+    integer_form: int | str,
+) -> None:
+    """Test the int/float screen refuses an equality in every integer spelling.
+
+    `LiteralExpression(1)`, `LiteralExpression("1")`, and
+    `LiteralExpression("01")` are one structural-equivalence class, so the
+    screen has to classify all three as integer-valued and refuse each
+    against `1.0`. Deciding the string forms while refusing the `int` form
+    would answer a question for one member of a class that the seam
+    declares undecidable for another.
+    """
+    left = LiteralExpression(integer_form)
+    expression = BinaryExpression(BinaryOperation.EQUAL, left, LiteralExpression(1.0))
+
+    assert left.is_structurally_equivalent(LiteralExpression(1))
+    assert check_expression_satisfiability(expression, {}) is None
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "right_value, expected",
+    [
+        pytest.param(1, True, id="equal_integers"),
+        pytest.param("01", True, id="equal_integers_leading_zero"),
+        pytest.param(2, False, id="distinct_integers"),
+    ],
+)
+def test_equality_of_integer_literal_forms_is_decided_as_an_integer_comparison(
+    right_value: int | str, expected: bool
+) -> None:
+    """Test an integer-grammar string compares as the integer it denotes.
+
+    Both sides lower to the INT sort, so the seam decides the comparison
+    outright rather than screening it: `"1" == 1` is satisfiable and
+    `"1" == 2` is not.
+    """
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, LiteralExpression("1"), LiteralExpression(right_value)
+    )
+
+    assert check_expression_satisfiability(expression, {}) is expected
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "float_form",
+    [1.0, "1.0", 1.5, "1.5"],
+    ids=["float", "decimal", "float_fractional", "decimal_fractional"],
+)
+def test_int_float_equality_screen_refuses_every_float_literal_form(
+    float_form: float | str,
+) -> None:
+    """Test a float-valued literal against an integer literal stays refused.
+
+    The counterpart to the integer-form screen: neither float bucket is
+    integer-valued, so the mixed-sort equality is refused whichever
+    spelling the float side uses.
+    """
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, LiteralExpression(float_form), LiteralExpression(1)
+    )
+
+    assert check_expression_satisfiability(expression, {}) is None
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "operation, result_value",
+    [
+        pytest.param(BinaryOperation.POWER, 4, id="power"),
+        pytest.param(BinaryOperation.FLOOR_DIVIDE, 2, id="floor_divide"),
+        pytest.param(BinaryOperation.MODULO, 1, id="modulo"),
+    ],
+)
+@pytest.mark.parametrize(
+    "operand_form", [2, "2", "02"], ids=["int", "string", "leading_zero"]
+)
+def test_partial_operation_screen_admits_every_integer_operand_form(
+    operation: BinaryOperation, result_value: int, operand_form: int | str
+) -> None:
+    """Test the partial-operation screen admits an integer operand in every spelling.
+
+    The exponent screen wants an integer of at least one and the
+    floor-division and modulo screens want a positive integer divisor.
+    Each holds of `2`, `"2"`, and `"02"` alike, so all three stay
+    decidable: a screen keying off the stored Python type instead would
+    refuse the string spellings of a divisor it accepts as an `int`.
+    """
+    x = mock_identifier("x", 0)
+    applied = BinaryExpression(
+        operation, IdentifierExpression(x), LiteralExpression(operand_form)
+    )
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, applied, LiteralExpression(result_value)
+    )
+
+    result = check_expression_satisfiability(expression, {x: SymbolType.INT})
+
+    assert result is True
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "operation",
+    [
+        pytest.param(BinaryOperation.POWER, id="power"),
+        pytest.param(BinaryOperation.FLOOR_DIVIDE, id="floor_divide"),
+        pytest.param(BinaryOperation.MODULO, id="modulo"),
+    ],
+)
+def test_partial_operation_screen_refuses_a_float_grammar_string_operand(
+    operation: BinaryOperation,
+) -> None:
+    """Test a float-grammar string operand is still refused by the screen.
+
+    A float-grammar string is not integer-valued, so it satisfies neither
+    the integer-exponent nor the positive-integer-divisor requirement and
+    the node stays undecidable.
+    """
+    x = mock_identifier("x", 0)
+    applied = BinaryExpression(
+        operation, IdentifierExpression(x), LiteralExpression("2.0")
+    )
+    expression = BinaryExpression(BinaryOperation.EQUAL, applied, LiteralExpression(1))
 
     result = check_expression_satisfiability(expression, {x: SymbolType.INT})
 

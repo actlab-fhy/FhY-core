@@ -22,6 +22,7 @@ from fhy_core.symbolic.expression import (
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
+    is_integer_valued_literal,
     logical_and,
     logical_not,
     logical_or,
@@ -376,6 +377,84 @@ def test_literal_equivalence_distinguishes_buckets(
 
     assert not left.is_structurally_equivalent(right)
     assert not right.is_structurally_equivalent(left)
+
+
+# =============================================================================
+# Integer-bucket predicate
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(0, id="int_zero"),
+        pytest.param(5, id="int"),
+        pytest.param("0", id="string_zero"),
+        pytest.param("5", id="string"),
+        pytest.param("05", id="string_leading_zero"),
+    ],
+)
+def test_is_integer_valued_literal_accepts_every_integer_bucket_form(
+    value: int | str,
+) -> None:
+    """Test the predicate holds for both spellings of an integer literal."""
+    assert is_integer_valued_literal(value) is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(True, id="bool_true"),
+        pytest.param(False, id="bool_false"),
+        pytest.param(5.0, id="float_binary"),
+        pytest.param(1.5, id="float_binary_fractional"),
+        pytest.param("5.0", id="float_decimal"),
+        pytest.param("1.5", id="float_decimal_fractional"),
+        pytest.param(".5", id="float_decimal_no_integer_part"),
+    ],
+)
+def test_is_integer_valued_literal_rejects_every_other_bucket_form(
+    value: bool | float | str,
+) -> None:
+    """Test the predicate fails for the Boolean and the two float buckets.
+
+    A ``bool`` is held apart from the integers, and neither float bucket
+    is integer-valued even when the value has no fractional part, since
+    ``LiteralExpression`` does not treat ``5.0`` or ``"5.0"`` as
+    equivalent to ``5``.
+    """
+    assert is_integer_valued_literal(value) is False
+
+
+@pytest.mark.parametrize(
+    "left_value, right_value",
+    [
+        pytest.param(5, "5", id="int_vs_string"),
+        pytest.param("5", "05", id="string_vs_leading_zero"),
+        pytest.param(1.5, 1.5, id="float_binary_pair"),
+        pytest.param("1.5", "1.50", id="float_decimal_pair"),
+        pytest.param(True, True, id="bool_pair"),
+    ],
+)
+def test_is_integer_valued_literal_agrees_across_an_equivalence_class(
+    left_value: bool | int | float | str,
+    right_value: bool | int | float | str,
+) -> None:
+    """Test the predicate is constant on structural-equivalence classes.
+
+    Every consumer that decides "is this literal an integer" reads this
+    predicate, so the answer has to be a class invariant: were it to
+    split a class, the Z3 and SymPy bridges would lower the members to
+    different sorts and the solver's hazard screen would refuse one
+    member of a class while deciding another.
+    """
+    left = LiteralExpression(left_value)
+    right = LiteralExpression(right_value)
+    assert left.is_structurally_equivalent(right)
+
+    assert is_integer_valued_literal(left.value) is is_integer_valued_literal(
+        right.value
+    )
 
 
 # =============================================================================

@@ -37,6 +37,7 @@ from ..core import (
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
+    is_integer_valued_literal,
     logical_and,
     logical_not,
 )
@@ -203,26 +204,32 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
             f"Z3 does not support native function calls; {name!r} cannot be lowered"
         )
 
-    def visit_literal_expression(
+    # One return per literal kind lowered to Z3; flattening would not help.
+    def visit_literal_expression(  # noqa: PLR0911
         self, literal_expression: LiteralExpression
     ) -> z3.ExprRef:
-        if isinstance(literal_expression.value, bool):
-            return z3.BoolVal(literal_expression.value)
-        elif isinstance(literal_expression.value, int):
-            return z3.IntVal(literal_expression.value)
-        elif isinstance(literal_expression.value, float):
-            return z3.RealVal(literal_expression.value)
-        elif isinstance(literal_expression.value, str):
-            if literal_expression.value == "True":
+        value = literal_expression.value
+        if isinstance(value, bool):
+            return z3.BoolVal(value)
+        elif isinstance(value, int):
+            return z3.IntVal(value)
+        elif isinstance(value, float):
+            return z3.RealVal(value)
+        elif isinstance(value, str):
+            if value == "True":
                 return z3.BoolVal(True)
-            elif literal_expression.value == "False":
+            elif value == "False":
                 return z3.BoolVal(False)
+            elif is_integer_valued_literal(value):
+                # An integer-grammar string is in the same equivalence class
+                # as the Python `int` it denotes, so it has to reach Z3 in the
+                # same sort; `RealVal` here would let the solver decide for
+                # one member of a class what it refuses for another.
+                return z3.IntVal(int(value))
             else:
-                return z3.RealVal(literal_expression.value)
+                return z3.RealVal(value)
         else:
-            raise TypeError(
-                f"Unsupported literal type: {type(literal_expression.value)}"
-            )
+            raise TypeError(f"Unsupported literal type: {type(value)}")
 
     @staticmethod
     def format_identifier(identifier: Identifier) -> str:
