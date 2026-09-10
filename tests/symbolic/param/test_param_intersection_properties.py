@@ -10,13 +10,20 @@ import pytest
 
 pytest.importorskip("hypothesis")
 
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fhy_core.symbolic.constraint import InSetConstraint
 from fhy_core.symbolic.param import create_intersection_param, create_ordinal_param
 
 pytestmark = pytest.mark.property
+
+# Both properties run without a hypothesis deadline. Every example takes
+# about a millisecond and no draw is filtered -- the overlap the membership
+# law needs is built into the strategies rather than filtered for -- so a
+# deadline here would time only the scheduler: on a contended machine one
+# example can be descheduled for hundreds of milliseconds, failing a
+# membership law for a reason unrelated to it.
 
 
 _VALUES = st.integers(min_value=0, max_value=12)
@@ -62,6 +69,7 @@ def _draw_overlapping_narrowed_sets(
 # =============================================================================
 
 
+@settings(deadline=None)
 @given(value_sets=_draw_overlapping_value_sets(), candidate=st.integers(0, 15))
 def test_intersection_membership_law_holds_for_random_ordinal_sets(
     value_sets: tuple[set[int], set[int], int], candidate: int
@@ -84,6 +92,7 @@ def test_intersection_membership_law_holds_for_random_ordinal_sets(
     assert result.is_value_valid(candidate) == expected
 
 
+@settings(deadline=None)
 @given(narrowed_sets=_draw_overlapping_narrowed_sets(), candidate=st.integers(0, 15))
 def test_intersection_membership_law_follows_each_operands_narrowed_set(
     narrowed_sets: tuple[set[int], set[int], set[int], set[int]], candidate: int
