@@ -101,7 +101,7 @@ from immutabledict import immutabledict
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
-from fhy_core.utils import StrEnum, format_comma_separated_list
+from fhy_core.utils import StrEnum, format_comma_separated_list, is_strict_int
 
 from .expression import (
     BinaryExpression,
@@ -211,10 +211,15 @@ def validate_timeout_milliseconds(timeout_milliseconds: int | None) -> None:
         timeout_milliseconds: Candidate bound, in milliseconds.
 
     Raises:
-        ValueError: If the value is not ``None`` and not positive.
+        ValueError: If the value is not ``None`` and not a positive
+            integer. A ``bool`` is refused even though it subclasses
+            ``int``, and so is a ``float``: neither is the unsigned
+            integer the Z3 solver's timeout parameter takes.
 
     """
-    if timeout_milliseconds is not None and timeout_milliseconds <= 0:
+    if timeout_milliseconds is not None and (
+        not is_strict_int(timeout_milliseconds) or timeout_milliseconds <= 0
+    ):
         raise ValueError(
             "timeout_milliseconds must be None or a positive integer, but got "
             f"{timeout_milliseconds!r}."

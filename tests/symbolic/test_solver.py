@@ -1536,6 +1536,30 @@ def test_seam_functions_reject_a_non_positive_timeout(
         invoke(x, expression, bad_timeout)
 
 
+@pytest.mark.parametrize("bad_timeout", [True, 1000.0], ids=["bool", "float"])
+@pytest.mark.parametrize(
+    "invoke",
+    [invoke for _, invoke in TIMEOUT_ACCEPTING_SEAM_CALLS],
+    ids=[name for name, _ in TIMEOUT_ACCEPTING_SEAM_CALLS],
+)
+def test_seam_functions_reject_a_timeout_that_is_not_a_strict_integer(
+    invoke: Callable[[Identifier, Expression, object], object], bad_timeout: object
+) -> None:
+    """Test every timeout-accepting seam function rejects a bool or float bound.
+
+    ``True`` equals ``1`` and ``1000.0`` is positive, yet neither is the
+    unsigned integer Z3's timeout parameter takes, so each would otherwise
+    pass validation and fail inside the solver.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL, IdentifierExpression(x), IdentifierExpression(x)
+    )
+
+    with pytest.raises(ValueError, match=r"positive integer"):
+        invoke(x, expression, bad_timeout)
+
+
 @pytest.mark.z3
 @pytest.mark.parametrize(
     "invoke",
