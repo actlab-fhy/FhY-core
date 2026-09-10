@@ -123,12 +123,44 @@ def _validate_binding_value(identifier: Identifier, value: object) -> None:
     )
 
 
+def _lift_binding_value(identifier: Identifier, value: LiteralType) -> Expression:
+    """Wrap a raw binding value in the ``LiteralExpression`` it denotes.
+
+    Being a ``LiteralType`` is not enough: ``LiteralExpression`` holds a
+    ``str`` only when it matches the integer or float grammar, and a
+    number only as an exact ``bool``, ``int``, or ``float``, not as a
+    subclass such as an ``IntEnum`` member.
+
+    Args:
+        identifier: Identifier the value is bound to.
+        value: Raw binding value.
+
+    Returns:
+        The literal the value denotes.
+
+    Raises:
+        ConstraintError: If ``LiteralExpression`` refuses ``value``. The
+            message names the identifier and the value, and the
+            constructor's error is chained as the cause.
+
+    """
+    try:
+        return LiteralExpression(value)
+    except (TypeError, ValueError) as exc:
+        raise ConstraintError(
+            f"Binding for identifier {identifier!r} cannot be lifted into a "
+            f"literal: value {value!r} of type {type(value).__name__} is not "
+            f"one a `LiteralExpression` holds ({exc})"
+        ) from exc
+
+
 def _coerce_bindings_to_environment(
     bindings: ConstraintBindings,
 ) -> dict[Identifier, Expression]:
     """Coerce every binding value to the ``Expression`` a substitution consumes.
 
-    A raw ``LiteralType`` value is wrapped in a ``LiteralExpression``. An
+    A raw ``LiteralType`` value is wrapped in a ``LiteralExpression``, which
+    holds a ``str`` only in the integer or float grammar. An
     ``Expression`` value passes through unchanged, including a non-literal,
     symbolic one: substituting a symbolic value is supported, and the
     residual it leaves behind is what the caller's outcome is read from.
@@ -142,14 +174,19 @@ def _coerce_bindings_to_environment(
 
     Raises:
         ConstraintError: If a value falls outside ``Expression |
-            LiteralType``.
+            LiteralType``, or is a literal value ``LiteralExpression``
+            refuses: a ``str`` outside the integer and float grammars, or a
+            number whose type subclasses ``int`` or ``float`` without being
+            ``bool``.
 
     """
     environment: dict[Identifier, Expression] = {}
     for identifier, value in bindings.items():
         _validate_binding_value(identifier, value)
         environment[identifier] = (
-            value if isinstance(value, Expression) else LiteralExpression(value)
+            value
+            if isinstance(value, Expression)
+            else _lift_binding_value(identifier, value)
         )
     return environment
 
@@ -329,9 +366,11 @@ class Constraint(
             ConstraintError: If a binding value is unusable by this
                 constraint's own evaluation mechanism: for
                 ``EquationConstraint``, a value that is neither an
-                ``Expression`` nor a ``LiteralType``; for a set
-                constraint, a value that is neither an ``Expression``
-                nor a valid ``ConstraintMember``.
+                ``Expression`` nor a ``LiteralType``, or a literal value
+                ``LiteralExpression`` refuses, such as a ``str`` outside
+                the integer and float grammars; for a set constraint, a
+                value that is neither an ``Expression`` nor a valid
+                ``ConstraintMember``.
             NonBooleanLogicalOperandError: For ``EquationConstraint``,
                 if the expression holds a provably numeric operand in a
                 Boolean position -- under a logical connective or as a
@@ -507,11 +546,11 @@ class EquationConstraint(Constraint):
 
         Raises:
             ConstraintError: If the value bound to an identifier in this
-                constraint's scope falls outside ``Expression |
-                LiteralType`` and so cannot be lifted into the
-                substitution environment.
-            ValueError: From ``LiteralExpression`` when a ``str`` binding
-                value matches neither the integer nor the float grammar.
+                constraint's scope cannot be lifted into the substitution
+                environment: it falls outside ``Expression |
+                LiteralType``, or ``LiteralExpression`` refuses it, as it
+                refuses a ``str`` matching neither the integer nor the
+                float grammar.
             PassExecutionError: Propagated from ``simplify_expression``
                 when the SymPy bridge fails to lower or lift the
                 substituted expression.

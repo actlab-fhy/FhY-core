@@ -318,6 +318,10 @@ class ConstraintSystem(
         rather than leaving the caller to re-check each one by hand.
 
         Raises:
+            ConstraintError: If a member refuses the value bound to an
+                identifier in its scope, as that member's
+                ``evaluate_with_bindings`` documents. Raised by the first
+                such member reached in canonical order.
             NonBooleanLogicalOperandError: If a member equation holds a
                 provably numeric operand in a Boolean position -- under
                 a logical connective or as a piecewise case condition --
@@ -350,6 +354,7 @@ class ConstraintSystem(
         """Return whether the bindings provably satisfy every constraint.
 
         Raises:
+            ConstraintError: As ``evaluate_with_bindings`` raises it.
             NonBooleanLogicalOperandError: As ``evaluate_with_bindings``
                 raises it.
 
@@ -526,8 +531,11 @@ class ConstraintSystem(
                 bridge cannot proceed without a sort for every free
                 identifier.
             ConstraintError: If a member cannot be converted to an
-                expression, or if a ``bindings`` value falls outside
-                ``Expression | LiteralType``. Both are reached only once
+                expression, or if a ``bindings`` value cannot be lifted
+                into the substitution environment: it falls outside
+                ``Expression | LiteralType``, or ``LiteralExpression``
+                refuses it, as it refuses a ``str`` matching neither the
+                integer nor the float grammar. Both are reached only once
                 there is a member to lower, so an empty system returns
                 ``SATISFIED`` without inspecting ``bindings`` at all.
             ValueError: If ``timeout_milliseconds`` is not None and not

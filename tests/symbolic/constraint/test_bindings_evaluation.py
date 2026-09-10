@@ -12,6 +12,7 @@ import logging
 import re
 from collections.abc import Callable, Iterator, Mapping
 from decimal import Decimal
+from enum import IntEnum
 from typing import Any, cast
 
 import pytest
@@ -24,6 +25,7 @@ from fhy_core.symbolic.constraint import (
     EquationConstraint,
     InSetConstraint,
     NotInSetConstraint,
+    create_constraint_system,
 )
 from fhy_core.symbolic.expression import (
     BinaryExpression,
@@ -510,3 +512,96 @@ def test_every_leaf_ignores_an_out_of_scope_binding_value(
     outcome = constraint.evaluate_with_bindings(bindings)
 
     assert outcome is ConstraintOutcome.SATISFIED
+
+
+class _Level(IntEnum):
+    """An ``int`` subclass, which ``LiteralType`` admits and a literal does not."""
+
+    HIGH = 3
+
+
+_UNLIFTABLE_LITERALS = [
+    pytest.param("1e5", ValueError, id="exponent_string"),
+    pytest.param("-1.5", ValueError, id="signed_string"),
+    pytest.param("nan", ValueError, id="nan_string"),
+    pytest.param(_Level.HIGH, TypeError, id="int_subclass"),
+]
+
+_EQUATION_BACKED_BINDINGS_METHODS = [
+    pytest.param(
+        lambda constraint, bindings: constraint.evaluate_with_bindings(bindings),
+        id="EquationConstraint.evaluate_with_bindings",
+    ),
+    pytest.param(
+        lambda constraint, bindings: constraint.is_satisfied_with_bindings(bindings),
+        id="EquationConstraint.is_satisfied_with_bindings",
+    ),
+    pytest.param(
+        lambda constraint, bindings: create_constraint_system(
+            constraint
+        ).evaluate_with_bindings(bindings),
+        id="ConstraintSystem.evaluate_with_bindings",
+    ),
+    pytest.param(
+        lambda constraint, bindings: create_constraint_system(
+            constraint
+        ).is_satisfied_with_bindings(bindings),
+        id="ConstraintSystem.is_satisfied_with_bindings",
+    ),
+    pytest.param(
+        lambda constraint, bindings: create_constraint_system(
+            constraint
+        ).check_satisfiability_with_bindings(bindings, {}),
+        id="ConstraintSystem.check_satisfiability_with_bindings",
+        marks=pytest.mark.z3,
+    ),
+]
+
+
+@pytest.mark.parametrize("decide", _EQUATION_BACKED_BINDINGS_METHODS)
+@pytest.mark.parametrize(("value", "cause_type"), _UNLIFTABLE_LITERALS)
+def test_bindings_method_refuses_a_value_no_literal_can_hold(
+    decide: Callable[[EquationConstraint, Mapping[Identifier, Any]], object],
+    value: Any,
+    cause_type: type[Exception],
+) -> None:
+    """Test a `LiteralType` value no literal can hold raises `ConstraintError`.
+
+    A `str` lifts into a `LiteralExpression` only in the integer or float
+    grammar, and an `int` subclass not at all. Every method that lifts a
+    binding let that constructor's own error escape, where the documented
+    contract is `ConstraintError` for a value that cannot be lifted into
+    the substitution environment.
+    """
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 10))
+
+    with pytest.raises(ConstraintError, match=re.escape(repr(x))) as exception_info:
+        decide(constraint, {x: value})
+
+    assert repr(value) in str(exception_info.value)
+    assert isinstance(exception_info.value.__cause__, cause_type)
+
+
+@pytest.mark.parametrize(
+    ("factory", "member_outcome"),
+    [
+        pytest.param(InSetConstraint, ConstraintOutcome.SATISFIED, id="in_set"),
+        pytest.param(NotInSetConstraint, ConstraintOutcome.VIOLATED, id="not_in_set"),
+    ],
+)
+@pytest.mark.parametrize("value", ["1e5", "-1.5", "nan"])
+def test_set_constraint_decides_a_string_outside_the_literal_grammar(
+    factory: Callable[[Identifier, Any], Constraint],
+    member_outcome: ConstraintOutcome,
+    value: str,
+) -> None:
+    """Test a set constraint decides such a string as the member it is.
+
+    Membership is decided against the raw value and nothing is lifted into
+    a literal, so a string is as good a candidate as any categorical
+    member.
+    """
+    x = mock_identifier("x", 0)
+
+    assert factory(x, {value}).evaluate_with_bindings({x: value}) is member_outcome

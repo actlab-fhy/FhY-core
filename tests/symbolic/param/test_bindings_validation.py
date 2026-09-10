@@ -12,12 +12,15 @@ existing conservative treatment of any undecided constraint.
 
 import re
 from collections.abc import Callable
+from enum import IntEnum
+from typing import Any
 
 import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.constraint import (
     ConstraintBindings,
+    ConstraintError,
     ConstraintOutcome,
     EquationConstraint,
 )
@@ -34,6 +37,10 @@ from fhy_core.symbolic.param import (
     ParamError,
     create_integer_param,
     create_integer_param_between,
+)
+from fhy_core.symbolic.param.domains import (
+    are_all_constraints_satisfied,
+    evaluate_system_outcome,
 )
 
 from .conftest import mock_identifier
@@ -403,3 +410,94 @@ def test_a_boolean_bound_into_a_case_condition_still_decides(
     assert (
         param.is_value_valid(value, bindings={condition: condition_value}) is expected
     )
+
+
+class _Level(IntEnum):
+    """An ``int`` subclass, which ``LiteralType`` admits and a literal does not."""
+
+    HIGH = 3
+
+
+_UNLIFTABLE_LITERALS = [
+    pytest.param("1e5", ValueError, id="exponent_string"),
+    pytest.param("-1.5", ValueError, id="signed_string"),
+    pytest.param("nan", ValueError, id="nan_string"),
+    pytest.param(_Level.HIGH, TypeError, id="int_subclass"),
+]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(
+            lambda param, bindings: param.is_value_valid(1, bindings=bindings),
+            id="is_value_valid",
+        ),
+        pytest.param(
+            lambda param, bindings: param.is_constraints_satisfied(
+                1, bindings=bindings
+            ),
+            id="is_constraints_satisfied",
+        ),
+        pytest.param(
+            lambda param, bindings: param.validate_value(1, bindings=bindings),
+            id="validate_value",
+        ),
+        pytest.param(
+            lambda param, bindings: param.assign(1, bindings=bindings),
+            id="assign",
+        ),
+    ],
+)
+@pytest.mark.parametrize(("value", "cause_type"), _UNLIFTABLE_LITERALS)
+def test_param_bindings_method_refuses_a_value_no_literal_can_hold(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+    call: Callable[[Param[int], ConstraintBindings], object],
+    value: Any,
+    cause_type: type[Exception],
+) -> None:
+    """Test such a binding raises `ConstraintError` from every bindings-aware method.
+
+    Each documents `ConstraintError` for a bound value that cannot be
+    lifted into the substitution environment; the literal constructor's
+    own error used to escape instead.
+    """
+    param, _, y = dependent_param
+
+    with pytest.raises(ConstraintError, match=re.escape(repr(y))) as exception_info:
+        call(param, {y: value})
+
+    assert isinstance(exception_info.value.__cause__, cause_type)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(
+            lambda param, x, y, value: evaluate_system_outcome(
+                param.constraint_system, {x: 1, y: value}
+            ),
+            id="evaluate_system_outcome",
+        ),
+        pytest.param(
+            lambda param, x, y, value: are_all_constraints_satisfied(
+                param.constraints, y, value
+            ),
+            id="are_all_constraints_satisfied",
+        ),
+    ],
+)
+@pytest.mark.parametrize(("value", "cause_type"), _UNLIFTABLE_LITERALS)
+def test_domain_helper_refuses_a_value_no_literal_can_hold(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+    call: Callable[[Param[int], Identifier, Identifier, Any], object],
+    value: Any,
+    cause_type: type[Exception],
+) -> None:
+    """Test the domain helpers the parameter queries use raise it too."""
+    param, x, y = dependent_param
+
+    with pytest.raises(ConstraintError) as exception_info:
+        call(param, x, y, value)
+
+    assert isinstance(exception_info.value.__cause__, cause_type)
