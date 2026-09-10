@@ -53,6 +53,7 @@ from fhy_core.utils.override import override
 from .domains import (
     IntegerDomain,
     IntervalIntegerDomain,
+    IntervalProfile,
     ParamDomain,
     RealDomain,
     build_categorical_domain,
@@ -620,37 +621,38 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             )
         )
 
-    # -- interval arithmetic (interval-integer domains only) ----------------
+    # -- interval arithmetic ------------------------------------------------
+    #
+    # Operands are told apart by their domain's interval profile, never by
+    # their domain's kind. An operand whose profile admits only bounds takes
+    # part as it stands; one whose profile admits other constraints is
+    # recast against such a partner (see ``_coerce_to_interval_param``).
     #
     # Every result is a fresh parameter over a fresh variable: a derived
     # interval denotes its own quantity, not either operand's, so sharing an
     # operand's identifier would conflate the two wherever both reach one
     # constraint system.
 
-    def _require_interval_domain(self) -> IntervalIntegerDomain:
-        if not isinstance(self.domain, IntervalIntegerDomain):
-            raise TypeError(
-                "Arithmetic is only supported on interval-integer parameters."
-            )
-        return self.domain
-
     def _coerce_interval_operand(self, other: Any) -> "Param[int] | None":
         # Both operands are the single ``Param`` type, and Python skips the
         # reflected dunder when operands share a type. A non-interval ``self``
         # must therefore coerce and handle ``non_interval OP interval`` itself
         # rather than relying on the interval operand's reflected method.
-        if isinstance(other, Param) and isinstance(other.domain, IntervalIntegerDomain):
-            return _coerce_to_interval_param(other, self)
-        return None
+        if not isinstance(other, Param):
+            return None
+        other_profile = _get_interval_operand_profile(other)
+        if other_profile is None:
+            return None
+        return _coerce_to_interval_param(other_profile, self)
 
     def __add__(self, other: Any) -> "Param[int]":
-        if not isinstance(self.domain, IntervalIntegerDomain):
+        profile = _get_interval_operand_profile(self)
+        if profile is None:
             coerced_self = self._coerce_interval_operand(other)
             if coerced_self is None:
                 return NotImplemented
             return coerced_self.__add__(other)
-        domain = self.domain
-        coerced = _coerce_to_interval_param(self, other)
+        coerced = _coerce_to_interval_param(profile, other)
         self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
         other_min, other_max = _get_effective_min_max(
             coerced.constraints, coerced.variable
@@ -658,42 +660,47 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         new_min = _combine_optional_bounds(self_min, other_min, operator.add)
         new_max = _combine_optional_bounds(self_max, other_max, operator.add)
         return _create_class_preserved_interval_param(
-            coerced, new_min, new_max, domain, zero_included=domain.zero_included
+            _require_interval_operand_profile(coerced),
+            new_min,
+            new_max,
+            profile,
+            zero_included=profile.zero_included,
         )
 
     def __radd__(self, other: Any) -> "Param[int]":
         return self.__add__(other)
 
     def __sub__(self, other: Any) -> "Param[int]":
-        if not isinstance(self.domain, IntervalIntegerDomain):
+        profile = _get_interval_operand_profile(self)
+        if profile is None:
             coerced_self = self._coerce_interval_operand(other)
             if coerced_self is None:
                 return NotImplemented
             return coerced_self.__sub__(other)
-        domain = self.domain
-        coerced = _coerce_to_interval_param(self, other)
+        coerced = _coerce_to_interval_param(profile, other)
         self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
         other_min, other_max = _get_effective_min_max(
             coerced.constraints, coerced.variable
         )
         new_min = _combine_optional_bounds(self_min, other_max, operator.sub)
         new_max = _combine_optional_bounds(self_max, other_min, operator.sub)
-        return _create_widened_interval_param(new_min, new_max, domain)
+        return _create_widened_interval_param(new_min, new_max, profile)
 
     def __rsub__(self, other: Any) -> "Param[int]":
-        if not isinstance(self.domain, IntervalIntegerDomain):
+        profile = _get_interval_operand_profile(self)
+        if profile is None:
             return NotImplemented
-        return _coerce_to_interval_param(self, other).__sub__(self)
+        return _coerce_to_interval_param(profile, other).__sub__(self)
 
     def __mul__(self, other: Any) -> "Param[int]":
-        if not isinstance(self.domain, IntervalIntegerDomain):
+        profile = _get_interval_operand_profile(self)
+        if profile is None:
             coerced_self = self._coerce_interval_operand(other)
             if coerced_self is None:
                 return NotImplemented
             return coerced_self.__mul__(other)
-        domain = self.domain
-        coerced = _coerce_to_interval_param(self, other)
-        coerced_domain = cast(IntervalIntegerDomain, coerced.domain)
+        coerced = _coerce_to_interval_param(profile, other)
+        coerced_profile = _require_interval_operand_profile(coerced)
         self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
         other_min, other_max = _get_effective_min_max(
             coerced.constraints, coerced.variable
@@ -705,22 +712,22 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         # (``x > 0`` times ``y >= 0`` admits ``0``), unlike a sum, which needs
         # both. So the result admits zero whenever either operand does.
         return _create_class_preserved_interval_param(
-            coerced,
+            coerced_profile,
             new_min,
             new_max,
-            domain,
-            zero_included=domain.zero_included or coerced_domain.zero_included,
+            profile,
+            zero_included=profile.zero_included or coerced_profile.zero_included,
         )
 
     def __rmul__(self, other: Any) -> "Param[int]":
         return self.__mul__(other)
 
     def __neg__(self) -> "Param[int]":
-        domain = self._require_interval_domain()
+        profile = _require_interval_operand_profile(self)
         self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
         new_min = None if self_max is None else -self_max
         new_max = None if self_min is None else -self_min
-        return _create_widened_interval_param(new_min, new_max, domain)
+        return _create_widened_interval_param(new_min, new_max, profile)
 
     # -- set algebra --------------------------------------------------------
 
@@ -973,14 +980,17 @@ def _validate_natural_bound(
     is_lower: bool,
     is_inclusive: bool,
 ) -> None:
-    """Apply the natural-number bound gates for non-negative integer domains."""
-    if not isinstance(domain, (IntegerDomain, IntervalIntegerDomain)):
-        return
-    if not domain.non_negative:
+    """Apply the natural-number bound gates for a non-negative integer domain.
+
+    The gate reads the domain's interval profile, so it applies to every
+    non-negative profile, whether or not the profile admits only bounds.
+    """
+    profile = domain.get_interval_profile()
+    if profile is None or not profile.non_negative:
         return
     if not isinstance(bound, int):
         return
-    zero_included = domain.zero_included
+    zero_included = profile.zero_included
     if is_lower:
         _validate_natural_lower_bound(
             bound, zero_included=zero_included, is_inclusive=is_inclusive
@@ -994,6 +1004,32 @@ def _validate_natural_bound(
 # ---------------------------------------------------------------------------
 # Interval arithmetic helpers
 # ---------------------------------------------------------------------------
+
+
+def _get_interval_operand_profile(param: "Param[Any]") -> IntervalProfile | None:
+    """Return ``param``'s interval profile if it is an interval operand as it stands.
+
+    That holds when the profile admits only bounds. A parameter whose
+    profile admits other constraints, or whose domain has no profile, is
+    not an operand until coerced (see :func:`_coerce_to_interval_param`).
+    """
+    profile = param.domain.get_interval_profile()
+    if profile is None or not profile.admits_only_bounds:
+        return None
+    return profile
+
+
+def _require_interval_operand_profile(param: "Param[Any]") -> IntervalProfile:
+    """Return ``param``'s interval profile, raising unless it is an interval operand.
+
+    Raises:
+        TypeError: If ``param`` is not an interval operand as it stands.
+
+    """
+    profile = _get_interval_operand_profile(param)
+    if profile is None:
+        raise TypeError("Arithmetic is only supported on interval-integer parameters.")
+    return profile
 
 
 def _invert_comparison(operation: BinaryOperation) -> BinaryOperation:
@@ -1177,25 +1213,30 @@ def _multiply_optional_bounds(
 
 
 def _apply_interval_bounds(
-    param: "Param[int]", min_int: int | None, max_int: int | None
+    param: "Param[int]",
+    profile: IntervalProfile,
+    min_int: int | None,
+    max_int: int | None,
 ) -> "Param[int]":
-    domain = cast(IntervalIntegerDomain, param.domain)
+    """Bound ``param`` to ``[min_int, max_int]``, rendered as ``profile`` prefers.
+
+    ``profile`` is the interval profile of ``param``'s domain; a ``None``
+    bound leaves that end unbounded.
+    """
     if min_int is not None:
-        if _is_exclusive_lower_rendering_valid(domain, min_int):
+        if _is_exclusive_lower_rendering_valid(profile, min_int):
             param = param.add_lower_bound_constraint(min_int - 1, is_inclusive=False)
         else:
             param = param.add_lower_bound_constraint(min_int, is_inclusive=True)
     if max_int is not None:
-        if _is_exclusive_upper_rendering_valid(domain, max_int):
+        if _is_exclusive_upper_rendering_valid(profile, max_int):
             param = param.add_upper_bound_constraint(max_int + 1, is_inclusive=False)
         else:
             param = param.add_upper_bound_constraint(max_int, is_inclusive=True)
     return param
 
 
-def _is_exclusive_lower_rendering_valid(
-    domain: IntervalIntegerDomain, min_int: int
-) -> bool:
+def _is_exclusive_lower_rendering_valid(profile: IntervalProfile, min_int: int) -> bool:
     """Return whether ``min_int`` may be rendered as ``> min_int - 1``.
 
     ``> min_int - 1`` admits exactly what ``>= min_int`` admits over the
@@ -1205,61 +1246,61 @@ def _is_exclusive_lower_rendering_valid(
     ``-1`` is not an admissible natural literal). Rendering falls back to
     the inclusive form in that case instead of tripping the gate.
     """
-    if domain.prefer_inclusive:
+    if profile.prefer_inclusive:
         return False
-    return not domain.non_negative or _is_valid_natural_lower_bound(
-        min_int - 1, zero_included=domain.zero_included, is_inclusive=False
+    return not profile.non_negative or _is_valid_natural_lower_bound(
+        min_int - 1, zero_included=profile.zero_included, is_inclusive=False
     )
 
 
-def _is_exclusive_upper_rendering_valid(
-    domain: IntervalIntegerDomain, max_int: int
-) -> bool:
+def _is_exclusive_upper_rendering_valid(profile: IntervalProfile, max_int: int) -> bool:
     """Return whether ``max_int`` may be rendered as ``< max_int + 1``.
 
     The upper-bound mirror of :func:`_is_exclusive_lower_rendering_valid`.
     """
-    if domain.prefer_inclusive:
+    if profile.prefer_inclusive:
         return False
-    return not domain.non_negative or _is_valid_natural_upper_bound(
-        max_int + 1, zero_included=domain.zero_included, is_inclusive=False
+    return not profile.non_negative or _is_valid_natural_upper_bound(
+        max_int + 1, zero_included=profile.zero_included, is_inclusive=False
     )
 
 
 def _create_widened_interval_param(
     min_int: int | None,
     max_int: int | None,
-    template_domain: IntervalIntegerDomain,
+    template: IntervalProfile,
 ) -> "Param[int]":
-    param: Param[int] = Param(
-        IntervalIntegerDomain(prefer_inclusive=template_domain.prefer_inclusive)
+    domain = IntervalIntegerDomain(prefer_inclusive=template.prefer_inclusive)
+    param: Param[int] = Param(domain)
+    return _apply_interval_bounds(
+        param, domain.get_interval_profile(), min_int, max_int
     )
-    return _apply_interval_bounds(param, min_int, max_int)
 
 
 def _create_class_preserved_interval_param(
-    other: "Param[Any]",
+    other: IntervalProfile,
     min_int: int | None,
     max_int: int | None,
-    template_domain: IntervalIntegerDomain,
+    template: IntervalProfile,
     *,
     zero_included: bool,
 ) -> "Param[int]":
-    other_domain = other.domain
-    if (
-        isinstance(other_domain, IntervalIntegerDomain)
-        and template_domain.non_negative
-        and other_domain.non_negative
-    ):
-        param: Param[int] = Param(
-            IntervalIntegerDomain(
-                prefer_inclusive=template_domain.prefer_inclusive,
-                non_negative=True,
-                zero_included=zero_included,
-            )
+    """Build a result that stays natural when both operands' profiles are.
+
+    ``template`` is the left operand's profile and ``other`` the coerced
+    right operand's; the result renders as ``template`` prefers.
+    """
+    if template.non_negative and other.non_negative:
+        domain = IntervalIntegerDomain(
+            prefer_inclusive=template.prefer_inclusive,
+            non_negative=True,
+            zero_included=zero_included,
         )
-        return _apply_interval_bounds(param, min_int, max_int)
-    return _create_widened_interval_param(min_int, max_int, template_domain)
+        param: Param[int] = Param(domain)
+        return _apply_interval_bounds(
+            param, domain.get_interval_profile(), min_int, max_int
+        )
+    return _create_widened_interval_param(min_int, max_int, template)
 
 
 def _require_bound_constraint(constraint: Constraint) -> None:
@@ -1281,24 +1322,40 @@ def _require_bound_constraint(constraint: Constraint) -> None:
         raise TypeError(message)
 
 
-def _coerce_to_interval_param(template: "Param[Any]", other: Any) -> "Param[int]":
-    template_domain = cast(IntervalIntegerDomain, template.domain)
+def _coerce_to_interval_param(template: IntervalProfile, other: Any) -> "Param[int]":
+    """Return ``other`` as an interval operand that renders as ``template`` prefers.
+
+    An ``int`` becomes the exact interval it denotes. A parameter that is
+    an interval operand as it stands is returned unchanged. A parameter
+    whose interval profile admits other constraints is recast over an
+    interval domain, provided every constraint it carries is a bound; its
+    sign restriction travels as the carried bound constraint rather than as
+    a domain attribute.
+
+    Raises:
+        TypeError: If ``other`` is a ``bool``, a parameter whose domain has
+            no interval profile, a parameter carrying a non-bound
+            constraint, or a value of any other type.
+
+    """
     if isinstance(other, bool):
         raise TypeError(f"Unsupported operand type: {type(other)}")
     if isinstance(other, int):
         return create_interval_integer_param_exactly(
-            other, prefer_inclusive=template_domain.prefer_inclusive
+            other, prefer_inclusive=template.prefer_inclusive
         )
-    if isinstance(other, Param) and isinstance(other.domain, IntervalIntegerDomain):
-        return other
-    if isinstance(other, Param) and isinstance(other.domain, IntegerDomain):
-        for constraint in other.constraints:
-            _require_bound_constraint(constraint)
-        return Param(
-            IntervalIntegerDomain(prefer_inclusive=template_domain.prefer_inclusive),
-            variable=other.variable,
-            constraint_system=create_constraint_system(*other.constraints),
-        )
+    if isinstance(other, Param):
+        profile = other.domain.get_interval_profile()
+        if profile is not None:
+            if profile.admits_only_bounds:
+                return other
+            for constraint in other.constraints:
+                _require_bound_constraint(constraint)
+            return Param(
+                IntervalIntegerDomain(prefer_inclusive=template.prefer_inclusive),
+                variable=other.variable,
+                constraint_system=create_constraint_system(*other.constraints),
+            )
     raise TypeError(f"Unsupported operand type: {type(other)}")
 
 
@@ -1609,14 +1666,15 @@ def create_union_param(
 def _coerce_intersection_operands(
     left: "Param[Any]", right: "Param[Any]"
 ) -> tuple["Param[Any]", "Param[Any]"]:
-    """Coerce a mixed interval-integer/plain-integer operand pair to one kind.
+    """Coerce a pair with exactly one interval operand to one domain kind.
 
-    Reuses the interval-arithmetic coercion: the plain integer operand is
-    rewrapped over an ``IntervalIntegerDomain`` so both operands share a
-    domain kind before dispatching to ``compute_intersection``. Any other
-    pairing (already one kind, or an unsupported mix) is returned
-    unchanged, leaving the delegated ``compute_intersection`` to report a
-    kind mismatch.
+    When one operand is an interval operand as it stands and the other's
+    interval profile admits other constraints (a plain integer parameter),
+    the latter is recast through the interval-arithmetic coercion, over an
+    ``IntervalIntegerDomain``, so both operands share a domain kind before
+    dispatching to ``compute_intersection``. Any other pairing (already one
+    kind, or an unsupported mix) is returned unchanged, leaving the
+    delegated ``compute_intersection`` to report a kind mismatch.
 
     Raises:
         TypeError: If the plain integer operand carries a non-bound
@@ -1624,14 +1682,14 @@ def _coerce_intersection_operands(
             :func:`_coerce_to_interval_param`).
 
     """
-    if isinstance(left.domain, IntervalIntegerDomain) and isinstance(
-        right.domain, IntegerDomain
-    ):
-        return left, _coerce_to_interval_param(left, right)
-    if isinstance(right.domain, IntervalIntegerDomain) and isinstance(
-        left.domain, IntegerDomain
-    ):
-        return _coerce_to_interval_param(right, left), right
+    left_profile = left.domain.get_interval_profile()
+    right_profile = right.domain.get_interval_profile()
+    if left_profile is None or right_profile is None:
+        return left, right
+    if left_profile.admits_only_bounds and not right_profile.admits_only_bounds:
+        return left, _coerce_to_interval_param(left_profile, right)
+    if right_profile.admits_only_bounds and not left_profile.admits_only_bounds:
+        return _coerce_to_interval_param(right_profile, left), right
     return left, right
 
 

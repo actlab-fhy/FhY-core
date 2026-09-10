@@ -2,7 +2,8 @@
 
 A :class:`ParamDomain` captures everything that varies between kinds of
 parameter: admissibility, constraint validation, implied constraints, subset
-semantics, set algebra, structural equivalence, and rendering. A single
+semantics, set algebra, structural equivalence, rendering, and the optional
+:class:`IntervalProfile` interval arithmetic reads. A single
 :class:`~fhy_core.symbolic.param.core.Param` composes one domain rather than being
 subclassed per kind.
 
@@ -92,6 +93,7 @@ __all__ = [
     "DecidedOutcome",
     "IntegerDomain",
     "IntervalIntegerDomain",
+    "IntervalProfile",
     "OrdinalDomain",
     "ParamDomain",
     "PermutationDomain",
@@ -993,6 +995,39 @@ def compute_constraint_implication_subset(
     )
 
 
+@dataclass(frozen=True)
+class IntervalProfile:
+    """What interval arithmetic reads from a domain.
+
+    A parameter's interval lives in its bound constraints, not in its
+    domain; the domain contributes only these attributes. Interval
+    arithmetic and the natural-number bound gate dispatch on a domain's
+    profile rather than on its kind, so a domain takes part exactly when
+    :meth:`ParamDomain.get_interval_profile` returns one.
+
+    Attributes:
+        admits_only_bounds: Whether the domain admits only bound
+            constraints, so a parameter over it is an interval operand as
+            it stands. A parameter over a domain that admits other
+            constraints takes part only once each constraint it carries is
+            checked to be a bound, and is then recast over an interval
+            domain carrying its partner's ``prefer_inclusive``.
+        non_negative: Whether the domain admits only non-negative values.
+        zero_included: Whether the domain admits zero, given it is
+            non-negative.
+        prefer_inclusive: Whether bounds that arithmetic derives for a
+            parameter over this domain render in inclusive form. Read only
+            where ``admits_only_bounds`` holds, since a recast parameter
+            renders as its partner prefers.
+
+    """
+
+    admits_only_bounds: bool
+    non_negative: bool
+    zero_included: bool
+    prefer_inclusive: bool = True
+
+
 class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence, ABC):
     """Sum-type family base describing the value space of a parameter kind.
 
@@ -1031,6 +1066,20 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
     @abstractmethod
     def get_implied_constraints(self, variable: Identifier) -> tuple[Constraint, ...]:
         """Return constraints this domain imposes implicitly on ``variable``."""
+
+    def get_interval_profile(self) -> IntervalProfile | None:
+        """Return what interval arithmetic reads from this domain, or ``None``.
+
+        A domain answering ``None`` takes no part in interval arithmetic or
+        the natural-number bound gate. Only the integer domains override
+        this.
+
+        Returns:
+            The domain's interval profile, or ``None`` if its values do not
+            form an integer interval.
+
+        """
+        return None
 
     @abstractmethod
     def is_value_set_subset(self, other: "ParamDomain") -> bool:
@@ -1364,6 +1413,21 @@ class IntegerDomain(ParamDomain):
         )
 
     @override
+    def get_interval_profile(self) -> IntervalProfile:
+        """Return a profile that admits constraints other than bounds.
+
+        A parameter over this domain may carry any constraint, so it takes
+        part in interval arithmetic only once its constraints are checked
+        to be bounds. Its sign restriction feeds the natural-number bound
+        gate as it stands.
+        """
+        return IntervalProfile(
+            admits_only_bounds=False,
+            non_negative=self.non_negative,
+            zero_included=self.zero_included,
+        )
+
+    @override
     def is_value_set_subset(self, other: ParamDomain) -> bool:
         return _is_numeric_value_set_subset(self.symbol_type, other)
 
@@ -1641,6 +1705,20 @@ class IntervalIntegerDomain(ParamDomain):
             variable,
             non_negative=self.non_negative,
             zero_included=self.zero_included,
+        )
+
+    @override
+    def get_interval_profile(self) -> IntervalProfile:
+        """Return a profile that admits only bounds, with this rendering preference.
+
+        :meth:`validate_constraint` refuses every constraint but a bound, so
+        a parameter over this domain is an interval operand as it stands.
+        """
+        return IntervalProfile(
+            admits_only_bounds=True,
+            non_negative=self.non_negative,
+            zero_included=self.zero_included,
+            prefer_inclusive=self.prefer_inclusive,
         )
 
     @override
