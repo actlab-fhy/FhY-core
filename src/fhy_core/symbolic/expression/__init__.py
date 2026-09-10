@@ -88,6 +88,7 @@ __all__ = [
     "substitute_sympy_expression_variables",
     "try_get_native_constant_for_identifier",
     "validate_logical_operands",
+    "validate_predicate",
 ]
 
 from .builtins import (
@@ -117,6 +118,7 @@ from .core import (
     make_unary_expression,
     piecewise,
     validate_logical_operands,
+    validate_predicate,
 )
 from .errors import (
     ComplexInfinityLiftError,

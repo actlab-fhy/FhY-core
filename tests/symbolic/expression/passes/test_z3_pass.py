@@ -45,6 +45,12 @@ from fhy_core.symbolic.expression.passes.z3 import (
     assert_expression_implies,
     assert_holds_for_all_free_assignments,
 )
+from fhy_core.symbolic.expression.passes.z3 import (
+    does_expression_imply as z3_does_expression_imply,
+)
+from fhy_core.symbolic.expression.passes.z3 import (
+    holds_for_all_free_assignments as z3_holds_for_all_free_assignments,
+)
 from fhy_core.symbolic.solver import (
     does_expression_imply,
     holds_for_all_free_assignments,
@@ -1229,6 +1235,74 @@ def test_z3_finds_a_counterexample_to_a_symbolic_conjunction() -> None:
     )
 
     assert result is False
+
+
+# =============================================================================
+# A numeric root is refused instead of leaking a raw Z3 exception
+# =============================================================================
+
+
+def test_z3_holds_for_all_free_assignments_refuses_a_bare_numeric_literal_root() -> (
+    None
+):
+    """Test a closed numeric root raises the package's error, not `Z3Exception`.
+
+    Nothing wraps a connective around a bare
+    ``holds_for_all_free_assignments`` query the way the implication
+    encoding does, so a numeric root previously reached Z3's ``Not``
+    directly and raised ``Z3Exception("Value cannot be converted into a
+    Z3 Boolean value")`` -- a backend detail rather than a diagnosis the
+    caller can act on.
+    """
+    with pytest.raises(NonBooleanLogicalOperandError):
+        z3_holds_for_all_free_assignments(set(), LiteralExpression(2), {})
+
+
+def test_z3_holds_for_all_free_assignments_refuses_an_arithmetic_root() -> None:
+    """Test an arithmetic root over a declared identifier is refused the same way."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(x), LiteralExpression(1)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        z3_holds_for_all_free_assignments(set(), expression, {x: SymbolType.INT})
+
+
+def test_z3_holds_for_all_free_assignments_checks_symbol_types_before_the_root() -> (
+    None
+):
+    """Test the `symbol_types` precondition still raises before the root is screened."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(x), LiteralExpression(1)
+    )
+
+    with pytest.raises(KeyError, match="symbol_types is missing"):
+        z3_holds_for_all_free_assignments(set(), expression, {})
+
+
+def test_z3_does_expression_imply_refuses_a_numeric_antecedent() -> None:
+    """Test a numeric antecedent root is refused rather than screened as a hazard."""
+    with pytest.raises(NonBooleanLogicalOperandError):
+        z3_does_expression_imply(LiteralExpression(2), LiteralExpression(True), {})
+
+
+def test_z3_does_expression_imply_refuses_a_numeric_consequent() -> None:
+    """Test a numeric consequent root is refused rather than screened as a hazard."""
+    with pytest.raises(NonBooleanLogicalOperandError):
+        z3_does_expression_imply(LiteralExpression(True), LiteralExpression(2), {})
+
+
+def test_z3_does_expression_imply_checks_symbol_types_before_the_root() -> None:
+    """Test the `symbol_types` precondition still raises before the root is screened."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(x), LiteralExpression(1)
+    )
+
+    with pytest.raises(KeyError):
+        z3_does_expression_imply(expression, LiteralExpression(True), {})
 
 
 # =============================================================================

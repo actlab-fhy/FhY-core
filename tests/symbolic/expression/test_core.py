@@ -43,6 +43,7 @@ from fhy_core.symbolic.expression import (
     piecewise,
     register_native_constant,
     validate_logical_operands,
+    validate_predicate,
 )
 from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.traits import FrozenMutationError, HasOperands, StructuralEquivalence
@@ -1701,6 +1702,86 @@ def test_validate_logical_operands_accepts_a_boolean_valued_piecewise_operand() 
     validate_logical_operands(logical_and(boolean_piecewise, LiteralExpression(True)))
 
 
+@pytest.mark.parametrize("numeric_branch_position", ["value", "otherwise"])
+def test_validate_logical_operands_rejects_a_piecewise_operand_with_one_numeric_branch(
+    numeric_branch_position: str,
+) -> None:
+    """Test a piecewise operand with even one numeric branch is refused.
+
+    A piecewise in a Boolean position puts each of its branch values in a
+    Boolean position too, so a single numeric branch makes it ill-typed.
+    """
+    x = mock_identifier("x", 0)
+    condition = IdentifierExpression(x) > LiteralExpression(0)
+    if numeric_branch_position == "value":
+        mixed_piecewise = piecewise(
+            (condition, LiteralExpression(2)), otherwise=LiteralExpression(True)
+        )
+    else:
+        mixed_piecewise = piecewise(
+            (condition, LiteralExpression(True)), otherwise=LiteralExpression(2)
+        )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_logical_operands(logical_not(mixed_piecewise))
+
+
+@pytest.mark.parametrize("validate", [validate_logical_operands, validate_predicate])
+def test_validators_accept_a_numeric_piecewise_compared_as_a_number(
+    validate: Callable[[Expression], None],
+) -> None:
+    """Test a piecewise with numeric branches passes where a number is expected."""
+    x = mock_identifier("x", 0)
+    numeric_piecewise = piecewise(
+        (IdentifierExpression(x) > LiteralExpression(0), LiteralExpression(2)),
+        otherwise=LiteralExpression(3),
+    )
+
+    validate(
+        logical_and(numeric_piecewise > LiteralExpression(1), LiteralExpression(True))
+    )
+
+
+@pytest.mark.parametrize(
+    "build_expression",
+    [
+        pytest.param(
+            lambda operand: logical_and(operand, LiteralExpression(True)), id="and"
+        ),
+        pytest.param(
+            lambda operand: logical_or(LiteralExpression(False), operand), id="or"
+        ),
+        pytest.param(logical_not, id="not"),
+        pytest.param(
+            lambda operand: piecewise(
+                (operand, LiteralExpression(1)), otherwise=LiteralExpression(2)
+            ),
+            id="case_condition",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "function_name", ["floor", "sqrt"], ids=["int_result", "real_result"]
+)
+def test_validate_logical_operands_rejects_a_numeric_result_call(
+    function_name: str, build_expression: Callable[[Expression], Expression]
+) -> None:
+    """Test a call whose registered result sort is INT or REAL is refused.
+
+    ``floor`` and ``sqrt`` are registered with INT and REAL result sorts
+    respectively, so under a connective or as a piecewise case condition
+    they are as ill-typed as a bare numeric literal, even though the sort
+    lives in the registry rather than on the ``CallExpression`` node
+    itself.
+    """
+    numeric_call = call(function_name, LiteralExpression(1.5))
+
+    with pytest.raises(
+        NonBooleanLogicalOperandError, match="provably denotes a number"
+    ):
+        validate_logical_operands(build_expression(numeric_call))
+
+
 @pytest.mark.parametrize(
     "expression",
     [
@@ -2061,6 +2142,147 @@ def test_non_boolean_logical_operand_error_is_a_type_error() -> None:
 def test_non_boolean_logical_operand_error_is_in_the_compiler_error_registry() -> None:
     """Test the error is discoverable through `@register_error`'s catalog."""
     assert NonBooleanLogicalOperandError in get_registered_errors()
+
+
+# =============================================================================
+# validate_predicate: the expression root is itself a Boolean position
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(LiteralExpression(2), id="int_literal"),
+        pytest.param(LiteralExpression(1.5), id="float_literal"),
+        pytest.param(LiteralExpression("2.5"), id="decimal_string_literal"),
+        pytest.param(
+            BinaryExpression(
+                BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
+            ),
+            id="arithmetic_node",
+        ),
+        pytest.param(
+            UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1)), id="negate"
+        ),
+        pytest.param(call("floor", LiteralExpression(1.5)), id="int_result_call"),
+        pytest.param(call("sqrt", LiteralExpression(4.0)), id="real_result_call"),
+        pytest.param(
+            IdentifierExpression(get_native_constant_identifier("pi")),
+            id="canonical_pi",
+        ),
+        pytest.param(
+            piecewise(
+                (
+                    IdentifierExpression(mock_identifier("c", 0)),
+                    LiteralExpression(True),
+                ),
+                otherwise=LiteralExpression(2),
+            ),
+            id="piecewise_with_a_numeric_branch",
+        ),
+    ],
+)
+def test_validate_predicate_rejects_a_root_that_provably_denotes_a_number(
+    expression: Expression,
+) -> None:
+    """Test a numeric root is refused, not just a numeric operand of a connective.
+
+    A predicate is itself a Boolean position: ``EquationConstraint``'s
+    expression, each ``ConstraintSystem`` member, and every solver query
+    hand ``validate_predicate`` a tree that is supposed to denote a
+    Boolean on its own, with no connective or piecewise condition above
+    it to catch a numeric root the way ``validate_logical_operands``
+    does.
+    """
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_predicate(expression)
+
+
+@pytest.mark.parametrize("sort", [SymbolType.INT, SymbolType.REAL])
+def test_validate_predicate_rejects_a_root_identifier_declared_numeric(
+    sort: SymbolType,
+) -> None:
+    """Test a root identifier `symbol_types` declares INT or REAL is refused."""
+    x = mock_identifier("x", 0)
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_predicate(IdentifierExpression(x), symbol_types={x: sort})
+
+
+def test_validate_predicate_rejects_a_root_identifier_bound_to_a_number() -> None:
+    """Test a root identifier the environment binds to a number is refused."""
+    x = mock_identifier("x", 0)
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_predicate(IdentifierExpression(x), {x: LiteralExpression(2)})
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(LiteralExpression(True), id="bool_literal"),
+        pytest.param(
+            BinaryExpression(
+                BinaryOperation.GREATER, LiteralExpression(1), LiteralExpression(0)
+            ),
+            id="comparison",
+        ),
+        pytest.param(
+            logical_and(LiteralExpression(True), LiteralExpression(False)),
+            id="connective",
+        ),
+        pytest.param(
+            IdentifierExpression(mock_identifier("p", 0)),
+            id="undeclared_unbound_identifier",
+        ),
+        pytest.param(
+            piecewise(
+                (
+                    IdentifierExpression(mock_identifier("c", 0)),
+                    LiteralExpression(True),
+                ),
+                otherwise=LiteralExpression(False),
+            ),
+            id="well_typed_boolean_piecewise",
+        ),
+        pytest.param(
+            CallExpression("nand", (LiteralExpression(True), LiteralExpression(True))),
+            id="bool_result_call",
+        ),
+        pytest.param(
+            CallExpression(
+                "test_validate_predicate_totally_unregistered_function",
+                (LiteralExpression(True),),
+            ),
+            id="unregistered_call",
+        ),
+    ],
+)
+def test_validate_predicate_accepts_a_boolean_or_unprovable_root(
+    expression: Expression,
+) -> None:
+    """Test a Boolean root, or one the screen cannot prove numeric, passes."""
+    validate_predicate(expression)
+
+
+def test_validate_predicate_accepts_a_root_identifier_declared_bool() -> None:
+    """Test a root identifier `symbol_types` declares BOOL passes."""
+    x = mock_identifier("x", 0)
+
+    validate_predicate(IdentifierExpression(x), symbol_types={x: SymbolType.BOOL})
+
+
+def test_validate_predicate_still_screens_a_nested_boolean_position() -> None:
+    """Test a numeric operand nested under a connective is still found.
+
+    The root check is additional, not a replacement: a well-typed root
+    (a ``LOGICAL_AND`` node) whose operand provably denotes a number must
+    still be refused the way ``validate_logical_operands`` refuses it.
+    """
+    expression = logical_and(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_predicate(expression)
 
 
 # =============================================================================

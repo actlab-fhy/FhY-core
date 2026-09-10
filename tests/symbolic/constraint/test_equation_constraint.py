@@ -15,11 +15,13 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     IdentifierExpression,
     LiteralExpression,
+    NonBooleanLogicalOperandError,
     UnaryExpression,
     UnaryOperation,
     call,
     get_native_constant_identifier,
     logical_and,
+    logical_not,
     make_binary_expression,
     pformat_expression,
 )
@@ -207,11 +209,18 @@ def test_evaluate_with_bindings_empty_bindings_undecided_for_open_expression() -
     assert outcome is ConstraintOutcome.UNDECIDED
 
 
-def test_evaluate_with_bindings_non_bool_literal_reduction_is_violated() -> None:
-    """Test a substituted expression reducing to a non-bool literal is VIOLATED."""
+def test_evaluate_with_bindings_non_bool_literal_reduction_raises() -> None:
+    """Test a substituted expression reducing to a non-bool literal raises.
+
+    ``LiteralExpression(1)`` is a numeric root: the constraint's
+    expression is itself a Boolean position, so a residual that
+    simplifies to a non-bool literal is ill-typed rather than a decided
+    ``VIOLATED``.
+    """
     constraint = EquationConstraint(LiteralExpression(1))
 
-    assert constraint.evaluate_with_bindings({}) is ConstraintOutcome.VIOLATED
+    with pytest.raises(NonBooleanLogicalOperandError):
+        constraint.evaluate_with_bindings({})
 
 
 def test_evaluate_with_bindings_symbolic_binding_can_decide() -> None:
@@ -275,6 +284,75 @@ def test_evaluate_with_bindings_ignores_extraneous_keys() -> None:
 
 
 # =============================================================================
+# A numeric root is refused, not decided VIOLATED
+# =============================================================================
+
+
+def test_evaluate_with_bindings_refuses_a_numeric_result_call_under_not() -> None:
+    """Test a connective over a numeric-result call raises, not VIOLATED.
+
+    ``floor`` is registered with an INT result sort, so
+    ``logical_not(floor(x))`` is ill-typed once ``x`` is bound: the
+    constraint's expression is itself a Boolean position, and the
+    expression is ill-typed regardless of what value ``x`` takes.
+    """
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(logical_not(call("floor", IdentifierExpression(x))))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        constraint.evaluate_with_bindings({x: 0.5})
+
+
+def test_evaluate_with_bindings_refuses_an_arithmetic_root() -> None:
+    """Test an arithmetic root raises rather than being decided VIOLATED.
+
+    ``x + 1`` denotes a number, not a predicate, so it is refused before
+    it is ever substituted or simplified.
+    """
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(
+        make_binary_expression(BinaryOperation.ADD, x, LiteralExpression(1))
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        constraint.evaluate_with_bindings({x: 0})
+
+
+def test_is_satisfied_with_bindings_refuses_a_numeric_result_call_under_not() -> None:
+    """Test `is_satisfied_with_bindings` raises for the same ill-typed constraint."""
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(logical_not(call("floor", IdentifierExpression(x))))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        constraint.is_satisfied_with_bindings({x: 0.5})
+
+
+def test_is_satisfied_with_bindings_refuses_an_arithmetic_root() -> None:
+    """Test `is_satisfied_with_bindings` raises for an arithmetic root."""
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(
+        make_binary_expression(BinaryOperation.ADD, x, LiteralExpression(1))
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        constraint.is_satisfied_with_bindings({x: 0})
+
+
+def test_construction_still_accepts_a_numeric_literal_expression() -> None:
+    """Test construction stays permissive for a numeric root.
+
+    The refusal happens when the constraint is used
+    (``evaluate_with_bindings``), not at construction: an
+    ``EquationConstraint`` is a plain wrapper over any ``Expression``.
+    """
+    expression = LiteralExpression(5)
+
+    constraint = EquationConstraint(expression)
+
+    assert constraint.expression is expression
+
+
+# =============================================================================
 # DEBUG-vs-WARNING logging split
 # =============================================================================
 
@@ -326,14 +404,24 @@ def test_evaluate_with_bindings_logs_warning_when_fully_bound_but_irreducible(
 ) -> None:
     """Test a fully bound, fully closed, yet irreducible residual logs at WARNING.
 
-    ``arcsin`` is not registered as a native-constant-foldable function for
-    an out-of-domain argument, so the simplifier returns an unevaluated
-    `CallExpression` with no free identifiers at all: every free identifier
-    was bound, but the simplifier still failed to reduce the residual to a
-    literal -- the genuine anomaly case.
+    The root is an equality of two calls, which is a well-typed Boolean
+    position (an ``EQUAL`` node, not a numeric one), so it survives the
+    ill-typedness screen. Once ``y`` is bound to a value outside
+    ``arcsin``/``arccos``'s real domain, SymPy leaves both sides
+    unevaluated and cannot decide the equality between them, so the
+    residual is a closed (no free identifiers) but irreducible
+    `BinaryExpression`: every free identifier was bound, yet the
+    simplifier still failed to reduce it to a literal -- the genuine
+    anomaly case.
     """
     y = mock_identifier("y", 1)
-    constraint = EquationConstraint(call("arcsin", IdentifierExpression(y)))
+    constraint = EquationConstraint(
+        make_binary_expression(
+            BinaryOperation.EQUAL,
+            call("arcsin", IdentifierExpression(y)),
+            call("arccos", IdentifierExpression(y)),
+        )
+    )
 
     with caplog.at_level(logging.DEBUG, logger=_CONSTRAINT_LOGGER):
         outcome = constraint.evaluate_with_bindings({y: 2})

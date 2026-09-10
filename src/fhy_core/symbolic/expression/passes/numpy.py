@@ -44,6 +44,15 @@ boolean-dtyped: ``numpy.where`` would otherwise silently treat a nonzero
 numeric condition as true, so a non-boolean condition raises
 ``TypeError``.
 
+A ``logical_and``/``logical_or``/``logical_not`` operand must be
+boolean-dtyped: NumPy would otherwise treat a nonzero numeric value as
+true, exactly the piecewise-condition hazard above. A static check ahead
+of the walk reads a sort from each bound value's declared NumPy dtype
+and refuses a provably numeric operand with an unwrapped
+``NonBooleanLogicalOperandError``, mirroring the SymPy and Z3 bridges; a
+value the static check cannot classify (for example an object dtype) is
+still caught by a runtime guard during the walk.
+
 Expression-bodied built-ins (``relu``, ``sigmoid``, ``clamp``, ...) are
 inlined automatically before the walk via ``inline_functions``, so the
 caller does not pre-inline them. ``erf`` (and therefore ``gelu``) has no
@@ -70,6 +79,7 @@ from fhy_core.pass_infrastructure import (
 )
 from fhy_core.utils.override import override
 
+from ...symbol_type import SymbolType
 from ..core import (
     BinaryExpression,
     BinaryOperation,
@@ -80,9 +90,11 @@ from ..core import (
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
+    validate_logical_operands,
 )
 from ..errors import (
     EntryLookupError,
+    NonBooleanLogicalOperandError,
     NonFiniteCastError,
     UnboundVariableError,
     UnsupportedNumpyLoweringError,
@@ -193,6 +205,52 @@ def _import_numpy() -> Any:
     return numpy
 
 
+# NumPy dtype kind code -> the sort a value of that kind declares for the
+# static connective screen. A kind absent here (for example "O", object)
+# stays undeclared: the screen can prove nothing about it, and the
+# runtime backstop in the visitor catches it instead.
+_DTYPE_KIND_SYMBOL_TYPES: immutabledict[str, SymbolType] = immutabledict(
+    {
+        "b": SymbolType.BOOL,
+        "i": SymbolType.INT,
+        "u": SymbolType.INT,
+        "f": SymbolType.REAL,
+    }
+)
+
+
+def _derive_symbol_types_from_environment(
+    environment: "NumpyEnvironment", numpy_module: Any
+) -> "dict[Identifier, SymbolType]":
+    """Return the sort each bound value's NumPy dtype declares.
+
+    Read by :func:`evaluate_expression_with_numpy` ahead of the pass, so
+    ``validate_logical_operands`` can screen a connective or piecewise
+    condition bound to a numeric value the same way the SymPy and Z3
+    bridges do, using ``symbol_types`` rather than an ``Expression``
+    environment.
+
+    Args:
+        environment: Binding of each free identifier to a
+            NumPy-consumable value.
+        numpy_module: The imported NumPy module.
+
+    Returns:
+        The sort declared by each bound value's dtype kind
+        (``bool_``/``int``/``uint`` families, or floating-point);
+        an identifier bound to any other dtype (for example ``object``)
+        is omitted, leaving its sort undeclared.
+
+    """
+    derived: dict[Identifier, SymbolType] = {}
+    for identifier, value in environment.items():
+        kind = numpy_module.asarray(value).dtype.kind
+        symbol_type = _DTYPE_KIND_SYMBOL_TYPES.get(kind)
+        if symbol_type is not None:
+            derived[identifier] = symbol_type
+    return derived
+
+
 @register_pass(
     "fhy_core.symbolic.expression.evaluate_with_numpy",
     "Evaluate a fully-bound expression tree to concrete NumPy values.",
@@ -274,17 +332,64 @@ class NumpyExpressionEvaluator(VisitablePass[Expression, "NumpyResult"]):
         )
 
     def visit_unary_expression(self, expression: UnaryExpression) -> Any:
-        """Apply the NumPy ufunc for a unary operation to its operand."""
+        """Apply the NumPy ufunc for a unary operation to its operand.
+
+        Raises:
+            NonBooleanLogicalOperandError: If the operation is
+                ``LOGICAL_NOT`` and the operand's lowered value is not
+                boolean-dtyped.
+
+        """
         operand = self.visit(expression.operand)
+        if expression.operation is UnaryOperation.LOGICAL_NOT:
+            self._raise_unless_boolean_connective_operand(operand, expression.operation)
         ufunc = getattr(self._numpy, _UNARY_UFUNC_NAMES[expression.operation])
         return ufunc(operand)
 
     def visit_binary_expression(self, expression: BinaryExpression) -> Any:
-        """Apply the NumPy ufunc for a binary operation to its operands."""
+        """Apply the NumPy ufunc for a binary operation to its operands.
+
+        Raises:
+            NonBooleanLogicalOperandError: If the operation is
+                ``LOGICAL_AND`` or ``LOGICAL_OR`` and either operand's
+                lowered value is not boolean-dtyped.
+
+        """
         left = self.visit(expression.left)
         right = self.visit(expression.right)
+        if expression.operation in (
+            BinaryOperation.LOGICAL_AND,
+            BinaryOperation.LOGICAL_OR,
+        ):
+            self._raise_unless_boolean_connective_operand(left, expression.operation)
+            self._raise_unless_boolean_connective_operand(right, expression.operation)
         ufunc = getattr(self._numpy, _BINARY_UFUNC_NAMES[expression.operation])
         return ufunc(left, right)
+
+    def _raise_unless_boolean_connective_operand(
+        self, value: Any, operation: UnaryOperation | BinaryOperation
+    ) -> None:
+        """Raise unless a connective operand's lowered value is boolean-dtyped.
+
+        A backstop for what the static pre-check in
+        :func:`evaluate_expression_with_numpy` cannot prove from the
+        environment's declared dtypes alone -- for example a value bound
+        with an object dtype -- mirroring the existing dtype guard on a
+        piecewise condition.
+
+        Raises:
+            NonBooleanLogicalOperandError: If ``value`` is not
+                boolean-dtyped.
+
+        """
+        if self._is_boolean_condition_value(value):
+            return
+        raise NonBooleanLogicalOperandError(
+            f"{operation.value} operand has dtype "
+            f"{getattr(value, 'dtype', type(value))}, not boolean; the "
+            "expression is ill-typed and NumPy would otherwise read it by "
+            "truthiness."
+        )
 
     def visit_piecewise_expression(self, expression: PiecewiseExpression) -> Any:
         """Select elementwise via a right-folded chain of ``numpy.where`` calls.
@@ -489,6 +594,16 @@ def evaluate_expression_with_numpy(
     Raises:
         ImportError: If NumPy is not installed. Raised directly, before
             any evaluation, with guidance to install the ``numpy`` extra.
+        NonBooleanLogicalOperandError: If a ``LOGICAL_AND``, ``LOGICAL_OR``,
+            or ``LOGICAL_NOT`` operand provably denotes a number. Raised
+            directly, before any evaluation, from a static check over the
+            inlined tree that reads a sort from each bound value's NumPy
+            dtype (boolean, integer/unsigned, or floating-point; any
+            other dtype is left undeclared). An operand the static check
+            cannot prove numeric from a declared dtype -- for example one
+            bound with an object dtype -- is still caught at evaluation
+            time and surfaces as ``PassExecutionError.__cause__`` instead,
+            below.
         PassExecutionError: Wraps each domain failure below, with the
             underlying typed error attached as ``__cause__`` (matching the
             sibling expression passes). The underlying errors are:
@@ -506,6 +621,10 @@ def evaluate_expression_with_numpy(
               faithful representation for it. Inside a piecewise, only an
               element the selected branch returns raises; one produced by
               an unselected branch is discarded with its lane.
+            - :class:`NonBooleanLogicalOperandError`: a ``LOGICAL_AND``,
+              ``LOGICAL_OR``, or ``LOGICAL_NOT`` operand's lowered value
+              is not boolean-dtyped, and the static check above could not
+              prove it numeric ahead of evaluation.
             - ``TypeError``: a piecewise condition is not boolean-dtyped.
             - :class:`EntryLookupError`: a call references an
               unregistered function name.
@@ -522,5 +641,9 @@ def evaluate_expression_with_numpy(
     """
     numpy_module = _import_numpy()
     inlined_expression = inline_functions(expression)
+    derived_symbol_types = _derive_symbol_types_from_environment(
+        environment, numpy_module
+    )
+    validate_logical_operands(inlined_expression, symbol_types=derived_symbol_types)
     evaluator = NumpyExpressionEvaluator(environment, numpy_module)
     return evaluator(inlined_expression)

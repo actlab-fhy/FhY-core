@@ -30,6 +30,7 @@ from fhy_core.symbolic.expression import (
     logical_and,
     logical_not,
     logical_or,
+    piecewise,
     substitute_sympy_expression_variables,
 )
 from fhy_core.symbolic.expression.core import LiteralType
@@ -1541,6 +1542,36 @@ def test_simplify_expression_refuses_a_native_constant_in_a_boolean_position(
 
     with pytest.raises(NonBooleanLogicalOperandError):
         simplify_expression(build_expression(constant))
+
+
+def test_simplify_expression_refuses_a_numeric_result_call_under_a_connective() -> None:
+    """Test a call with a registered numeric result sort is refused under `not`.
+
+    ``sqrt`` is registered with a REAL result sort, so ``sqrt(4.0)`` is as
+    ill-typed under ``LOGICAL_NOT`` as a bare numeric literal, even though
+    the call's own node carries no sort -- the registry does.
+    """
+    numeric_call = call("sqrt", LiteralExpression(4.0))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        simplify_expression(logical_not(numeric_call))
+
+
+def test_simplify_expression_refuses_a_mixed_branch_piecewise_under_not() -> None:
+    """Test a piecewise operand with a single numeric branch is refused too.
+
+    Without this, SymPy's own truthiness reading of ``Piecewise`` folds
+    ``not {2 if x > 0 else True}`` to ``LiteralExpression(False)``: a
+    numerically meaningless answer presented as a decided one.
+    """
+    x = mock_identifier("x", 0)
+    mixed_piecewise = piecewise(
+        (IdentifierExpression(x) > LiteralExpression(0), LiteralExpression(2)),
+        otherwise=LiteralExpression(True),
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        simplify_expression(logical_not(mixed_piecewise))
 
 
 @pytest.mark.parametrize(

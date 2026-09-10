@@ -26,6 +26,10 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     IdentifierExpression,
     LiteralExpression,
+    NonBooleanLogicalOperandError,
+    call,
+    logical_not,
+    piecewise,
 )
 from fhy_core.symbolic.param import (
     Param,
@@ -273,6 +277,67 @@ def test_integer_param_with_division_by_variable_is_neither_feasible_nor_empty()
 
     assert param.is_feasible() is False
     assert param.is_empty() is False
+
+
+def test_real_param_with_in_set_and_a_numeric_rooted_equation_raises() -> None:
+    """Test enumeration over in-set candidates does not silently decide a numeric root.
+
+    ``x / 2.0`` is a numeric root, not a predicate: reducing it to
+    ``0.5`` or ``1.0`` for each enumerated candidate is not a decided
+    VIOLATED, so the enumeration this in-set membership makes possible
+    must not paper over the ill-typedness with a proof of emptiness.
+    """
+    x = mock_identifier("x", 1)
+    equation = EquationConstraint(
+        BinaryExpression(
+            BinaryOperation.DIVIDE, IdentifierExpression(x), LiteralExpression(2.0)
+        )
+    )
+    param = create_real_param(
+        name=x, constraints=[InSetConstraint(x, {1.0, 2.0}), equation]
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        param.is_empty()
+    with pytest.raises(NonBooleanLogicalOperandError):
+        param.check_feasibility()
+    with pytest.raises(NonBooleanLogicalOperandError):
+        param.is_value_valid(1.0)
+
+
+def test_real_param_with_a_numeric_rooted_equation_raises_on_the_solver_path() -> None:
+    """Test the same numeric-rooted equation raises without an in-set candidate set.
+
+    With no `InSetConstraint` to make the domain finite, feasibility goes
+    to the solver instead of enumeration; the refusal has to hold on
+    that path too.
+    """
+    x = mock_identifier("x", 1)
+    equation = EquationConstraint(
+        BinaryExpression(
+            BinaryOperation.DIVIDE, IdentifierExpression(x), LiteralExpression(2.0)
+        )
+    )
+    param = create_real_param(name=x, constraints=[equation])
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        param.is_empty()
+
+
+def test_integer_param_with_in_set_and_a_numeric_result_call_under_not_raises() -> None:
+    """Test enumeration does not decide a connective over a numeric-result call.
+
+    ``floor`` is registered with an INT result sort, so
+    ``logical_not(floor(x))`` is ill-typed for every enumerated candidate.
+    """
+    x = mock_identifier("x", 1)
+    equation = EquationConstraint(logical_not(call("floor", IdentifierExpression(x))))
+    param = create_integer_param(
+        name=x, constraints=[InSetConstraint(x, {1, 2}), equation]
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        param.check_feasibility()
 
 
 # =============================================================================
@@ -581,19 +646,37 @@ def test_param_named_after_a_native_constant_binds_like_any_other(
 
 
 def test_bridge_failure_degrades_instead_of_escaping_a_boolean_api() -> None:
-    """Test an expression the bridge cannot lower degrades rather than raising.
+    """Test an expression the bridge cannot lift degrades rather than raising.
 
-    `x / 3` over the integers leaves a rational the SymPy bridge refuses
-    to lift, raising `PassExecutionError` from deep inside evaluation.
-    Every parameter-level entry point here returns `bool` or raises
-    `ParamError`, so the backend failing to answer must degrade to an
-    unproven answer instead of escaping as an unrelated exception type.
+    The branch guarded by the unbound `y` divides by zero at both in-set
+    candidates, so the SymPy bridge refuses to lift the complex infinity
+    it folds to, raising `PassExecutionError` from deep inside
+    evaluation. Every parameter-level entry point here returns `bool` or
+    raises `ParamError`, so the backend failing to answer must degrade to
+    an unproven answer instead of escaping as an unrelated exception type.
     """
     x = mock_identifier("x", 1)
-    unliftable = EquationConstraint(
+    y = mock_identifier("y", 2)
+    denominator = BinaryExpression(
+        BinaryOperation.MULTIPLY,
         BinaryExpression(
-            BinaryOperation.DIVIDE, IdentifierExpression(x), LiteralExpression(3)
-        )
+            BinaryOperation.SUBTRACT, IdentifierExpression(x), LiteralExpression(2)
+        ),
+        BinaryExpression(
+            BinaryOperation.SUBTRACT, IdentifierExpression(x), LiteralExpression(4)
+        ),
+    )
+    guarded = piecewise(
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER, IdentifierExpression(y), LiteralExpression(0)
+            ),
+            BinaryExpression(BinaryOperation.DIVIDE, LiteralExpression(1), denominator),
+        ),
+        otherwise=LiteralExpression(1),
+    )
+    unliftable = EquationConstraint(
+        BinaryExpression(BinaryOperation.GREATER, guarded, LiteralExpression(0))
     )
     param = create_integer_param(
         name=x, constraints=[InSetConstraint(x, {2, 4}), unliftable]

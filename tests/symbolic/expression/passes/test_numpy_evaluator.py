@@ -21,6 +21,7 @@ from fhy_core.symbolic.expression import (
     IdentifierExpression,
     LiteralExpression,
     NativeFunction,
+    NonBooleanLogicalOperandError,
     NonFiniteCastError,
     StringLiteralPrecisionError,
     UnaryExpression,
@@ -182,6 +183,106 @@ def test_evaluates_chained_comparison_with_logical_and() -> None:
     assert isinstance(result, np.ndarray)
     assert result.dtype == np.bool_
     assert np.array_equal(result, (values > 0.0) & (values < 10.0))
+
+
+# =============================================================================
+# A provably numeric connective operand is refused, not read by truthiness
+# =============================================================================
+
+
+def test_logical_and_of_two_int_literals_raises_directly() -> None:
+    """Test `logical_and(2, 4)` raises rather than being read as `True`.
+
+    `numpy.logical_and` treats any nonzero value as true, so an
+    unscreened lowering would silently accept two ill-typed integer
+    operands and hand back a `True`-valued answer that means nothing.
+    """
+    expression = BinaryExpression(
+        BinaryOperation.LOGICAL_AND, LiteralExpression(2), LiteralExpression(4)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        evaluate_expression_with_numpy(expression, {})
+
+
+def test_logical_not_of_a_falsy_int_literal_raises_directly() -> None:
+    """Test `logical_not(0)` raises rather than being read as `True`."""
+    expression = UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(0))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        evaluate_expression_with_numpy(expression, {})
+
+
+def test_logical_and_of_two_int_bound_identifiers_raises_directly() -> None:
+    """Test an int-dtype binding is screened as `INT`, not treated as boolean.
+
+    The static check reads a bound Python `int`'s dtype the same way it
+    would read an int-dtype array's, so a scalar binding is screened
+    exactly like an array one.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.LOGICAL_AND, IdentifierExpression(x), IdentifierExpression(y)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        evaluate_expression_with_numpy(expression, {x: 2, y: 4})
+
+
+def test_logical_and_of_two_float_arrays_raises_directly() -> None:
+    """Test a float-dtype array binding under `logical_and` is refused."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.LOGICAL_AND, IdentifierExpression(x), IdentifierExpression(y)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        evaluate_expression_with_numpy(
+            expression, {x: np.array([1.0, 0.0]), y: np.array([1.0, 1.0])}
+        )
+
+
+def test_logical_not_of_an_object_dtype_array_raises_as_a_runtime_backstop() -> None:
+    """Test an operand the static check cannot classify still raises at runtime.
+
+    An object-dtype array carries no numeric or boolean dtype the static
+    pre-check can read from the environment, so the refusal has to come
+    from a runtime guard instead -- the same mechanism, and the same
+    `PassExecutionError`-wrapped surfacing, as the existing dtype guard on
+    a piecewise condition.
+    """
+    x = mock_identifier("x", 0)
+    expression = UnaryExpression(UnaryOperation.LOGICAL_NOT, IdentifierExpression(x))
+
+    with pytest.raises(PassExecutionError) as exc_info:
+        evaluate_expression_with_numpy(expression, {x: np.array([1, 2], dtype=object)})
+
+    assert isinstance(exc_info.value.__cause__, NonBooleanLogicalOperandError)
+
+
+def test_logical_connectives_still_evaluate_boolean_literals() -> None:
+    """Test bare Python bool literals under `logical_and`/`logical_not` still work."""
+    conjunction = BinaryExpression(
+        BinaryOperation.LOGICAL_AND, LiteralExpression(True), LiteralExpression(False)
+    )
+    negation = UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(True))
+
+    assert bool(evaluate_expression_with_numpy(conjunction, {})) is False
+    assert bool(evaluate_expression_with_numpy(negation, {})) is False
+
+
+def test_arithmetic_is_unaffected_by_the_connective_dtype_screen() -> None:
+    """Test plain arithmetic over an int-bound identifier is unaffected by the guard."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(x), LiteralExpression(1)
+    )
+
+    result = evaluate_expression_with_numpy(expression, {x: 2})
+
+    assert result == 3
 
 
 # =============================================================================
@@ -911,6 +1012,19 @@ def test_piecewise_with_non_boolean_condition_array_raises() -> None:
         otherwise=LiteralExpression(0),
     )
     values = np.array([0, 1, 2])
+
+    with pytest.raises(NonBooleanLogicalOperandError, match="case condition"):
+        evaluate_expression_with_numpy(expression, {condition: values})
+
+
+def test_piecewise_with_object_dtype_condition_array_raises_during_evaluation() -> None:
+    """Test a condition whose dtype declares no sort still raises during evaluation."""
+    condition = mock_identifier("c", 0)
+    expression = piecewise(
+        (IdentifierExpression(condition), LiteralExpression(1)),
+        otherwise=LiteralExpression(0),
+    )
+    values = np.array([0, 1, 2], dtype=object)
 
     with pytest.raises(PassExecutionError, match=r"(?i)boolean") as exception_info:
         evaluate_expression_with_numpy(expression, {condition: values})

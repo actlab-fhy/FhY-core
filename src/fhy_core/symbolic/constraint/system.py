@@ -22,7 +22,7 @@ __all__ = [
     "create_constraint_system",
 ]
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,7 +33,7 @@ from fhy_core.symbolic.expression import (
     Expression,
     LiteralExpression,
     try_get_native_constant_for_identifier,
-    validate_logical_operands,
+    validate_predicate,
 )
 from fhy_core.symbolic.solver import (
     check_expression_satisfiability,
@@ -168,20 +168,30 @@ def _decide_satisfiability(
     expression: Expression,
     symbol_types: Mapping[Identifier, SymbolType],
     *,
+    members: Sequence[Expression] = (),
     timeout_milliseconds: int | None = None,
 ) -> ConstraintOutcome:
     """Classify satisfiability of ``expression`` via the solver seam.
 
-    Validates the caller's symbol types, then consults
-    ``fhy_core.symbolic.solver.check_expression_satisfiability``. That
-    seam function screens the expression for the hazard classes
-    documented on ``ConstraintSystem`` before it ever reaches Z3, so
-    ``None`` from the seam -- whether from a screened hazard or an
-    inconclusive solver -- maps here to ``UNDECIDED``.
+    Validates the caller's symbol types, then, when ``members`` is given,
+    screens each one with ``validate_predicate`` before consulting
+    ``fhy_core.symbolic.solver.check_expression_satisfiability``, so a
+    numeric-rooted member is refused naming its own expression rather
+    than the synthetic conjunction ``expression`` lowers. That seam
+    function screens the expression for the hazard classes documented on
+    ``ConstraintSystem`` before it ever reaches Z3, so ``None`` from the
+    seam -- whether from a screened hazard or an inconclusive solver --
+    maps here to ``UNDECIDED``.
 
     Args:
-        expression: Expression to decide.
+        expression: Expression to decide; the lowered conjunction of
+            ``members`` when the caller has individual members, or an
+            already-substituted residual otherwise.
         symbol_types: Z3 sort for each free identifier of ``expression``.
+        members: Individual member expressions to screen with
+            ``validate_predicate`` ahead of the seam call. Empty when the
+            caller has already screened its members itself, or has none
+            to screen separately from ``expression``.
         timeout_milliseconds: Optional bound, in milliseconds, on the
             solver invocation.
 
@@ -193,9 +203,14 @@ def _decide_satisfiability(
     Raises:
         MissingSymbolTypeError: If ``symbol_types`` lacks an entry for a
             free identifier of ``expression``.
+        NonBooleanLogicalOperandError: If a member of ``members``
+            provably denotes a number, or is otherwise ill-typed as a
+            predicate.
 
     """
     _validate_symbol_types_cover_free_identifiers(expression, symbol_types)
+    for member in members:
+        validate_predicate(member, symbol_types=symbol_types)
     return _classify_solver_answer(
         check_expression_satisfiability(
             expression,
@@ -448,16 +463,17 @@ class ConstraintSystem(
                 positive. Checked before the empty-system and hazard
                 early returns, so an inadmissible bound is rejected even
                 when the outcome is decided without the solver.
-            NonBooleanLogicalOperandError: If the lowered conjunction
-                holds a provably numeric operand in a Boolean position
-                -- under a logical connective or as a piecewise case
-                condition -- counting a variable ``symbol_types``
-                declares INT or REAL. Such a conjunction is ill-typed
-                rather than undecidable, so it raises instead of
-                reporting ``UNDECIDED``. Checked after the symbol-type
-                precondition and ahead of the seam's hazard screen, so
-                it is reported even where the screen would also refuse
-                the conjunction.
+            NonBooleanLogicalOperandError: If a member's own expression
+                provably denotes a number, or otherwise holds a provably
+                numeric operand in a Boolean position -- under a logical
+                connective or as a piecewise case condition -- counting a
+                variable ``symbol_types`` declares INT or REAL. Such a
+                member is ill-typed rather than undecidable, so it raises
+                instead of reporting ``UNDECIDED``, naming the offending
+                member's own expression rather than the synthetic
+                conjunction. Checked after the symbol-type precondition
+                and ahead of the seam's hazard screen, so it is reported
+                even where the screen would also refuse the conjunction.
 
         """
         validate_timeout_milliseconds(timeout_milliseconds)
@@ -466,6 +482,9 @@ class ConstraintSystem(
         return _decide_satisfiability(
             self.convert_to_expression(),
             symbol_types,
+            members=[
+                constraint.convert_to_expression() for constraint in self.constraints
+            ],
             timeout_milliseconds=timeout_milliseconds,
         )
 
@@ -542,16 +561,19 @@ class ConstraintSystem(
                 positive. Checked before the empty-system and hazard
                 early returns, so an inadmissible bound is rejected even
                 when the outcome is decided without the solver.
-            NonBooleanLogicalOperandError: If the conjunction holds a
-                provably numeric operand in a Boolean position -- under
-                a logical connective or as a piecewise case condition --
-                counting an identifier ``bindings`` binds to a number,
-                or an unbound one ``symbol_types`` declares INT or REAL.
-                Checked against the bindings before they are
-                substituted, since substituting a number into a case
-                condition would build a piecewise that refuses its own
-                condition, but after the symbol-type precondition and
-                ahead of the seam's hazard screen, as in
+            NonBooleanLogicalOperandError: If a member's own expression
+                provably denotes a number, or otherwise holds a provably
+                numeric operand in a Boolean position -- under a logical
+                connective or as a piecewise case condition -- counting
+                an identifier ``bindings`` binds to a number, or an
+                unbound one ``symbol_types`` declares INT or REAL. Each
+                member is screened on its own, so the error names the
+                offending member's own expression rather than the
+                synthetic conjunction. Checked against the bindings
+                before they are substituted, since substituting a number
+                into a case condition would build a piecewise that
+                refuses its own condition, but after the symbol-type
+                precondition and ahead of the seam's hazard screen, as in
                 ``check_satisfiability``. ``evaluate_with_bindings``
                 refuses the same bindings with the same error.
 
@@ -562,7 +584,12 @@ class ConstraintSystem(
         environment = _coerce_bindings_to_environment(bindings)
         conjunction = self.convert_to_expression()
         _validate_symbol_types_cover_residual(conjunction, environment, symbol_types)
-        validate_logical_operands(conjunction, environment, symbol_types=symbol_types)
+        for constraint in self.constraints:
+            validate_predicate(
+                constraint.convert_to_expression(),
+                environment,
+                symbol_types=symbol_types,
+            )
         captured = _find_bound_native_constants(
             conjunction.get_free_identifiers(), environment
         )
@@ -626,19 +653,26 @@ class ConstraintSystem(
             ValueError: If ``timeout_milliseconds`` is not None and not
                 positive. Checked before every other early return, so an
                 inadmissible bound is rejected even for a hazardous pair.
-            NonBooleanLogicalOperandError: If either side's lowered
-                expression holds a provably numeric operand in a Boolean
-                position -- under a logical connective or as a piecewise
-                case condition -- counting a variable ``symbol_types``
-                declares INT or REAL. Such a pair is ill-typed rather
-                than undecidable, so it raises instead of reporting
-                ``UNDECIDED``.
+            NonBooleanLogicalOperandError: If a member of either side
+                provably denotes a number, or otherwise holds a provably
+                numeric operand in a Boolean position -- under a logical
+                connective or as a piecewise case condition -- counting a
+                variable ``symbol_types`` declares INT or REAL. Such a
+                member is ill-typed rather than undecidable, so it raises
+                instead of reporting ``UNDECIDED``, naming the offending
+                member's own expression rather than either side's
+                synthetic conjunction. Every member of ``self`` is
+                checked before any member of ``other``.
 
         """
         validate_timeout_milliseconds(timeout_milliseconds)
         antecedent = self.convert_to_expression()
         consequent = other.convert_to_expression()
         _validate_symbol_types_cover_both_sides(antecedent, consequent, symbol_types)
+        for constraint in (*self.constraints, *other.constraints):
+            validate_predicate(
+                constraint.convert_to_expression(), symbol_types=symbol_types
+            )
         return _classify_solver_answer(
             does_expression_imply(
                 antecedent,

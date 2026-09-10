@@ -1826,6 +1826,67 @@ def test_z3_question_raises_a_missing_symbol_type_ahead_of_ill_typedness(
         query(expression)
 
 
+# =============================================================================
+# A numeric root -- not just a numeric operand of a connective -- is refused
+# =============================================================================
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
+def test_z3_question_refuses_a_bare_numeric_root(
+    query: Callable[[Expression], bool | None],
+) -> None:
+    """Test a numeric root, with no connective above it, is refused as ill-typed.
+
+    A predicate is itself a Boolean position, so a bare numeric literal
+    handed to any of these seams is as ill-typed as one nested under a
+    connective -- even though no connective here would otherwise catch
+    it.
+    """
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(LiteralExpression(2))
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_refuses_an_arithmetic_root_before_hazard() -> (
+    None
+):
+    """Test an arithmetic root is refused before the division hazard screen runs.
+
+    ``x / y`` denotes a number, not a predicate. The hazard screen would
+    otherwise catch its unscreened divisor first and report ``None`` --
+    the same signal a solver timeout uses -- hiding that the expression
+    was never a valid satisfiability question to begin with.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.DIVIDE, IdentifierExpression(x), IdentifierExpression(y)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        check_expression_satisfiability(
+            expression, {x: SymbolType.REAL, y: SymbolType.REAL}
+        )
+
+
+@pytest.mark.z3
+def test_does_expression_imply_refuses_a_numeric_antecedent_before_the_hazard() -> None:
+    """Test the antecedent's ill-typedness is reported before the consequent's hazard.
+
+    The consequent references ``pi``, which the native-constant hazard
+    screen would otherwise report as ``None``; the antecedent is screened
+    first, so its own numeric root is what surfaces instead.
+    """
+    pi = get_native_constant_identifier("pi")
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(pi), LiteralExpression(3)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        does_expression_imply(LiteralExpression(2), consequent, {})
+
+
 @pytest.mark.z3
 def test_simplify_expression_refuses_a_number_bound_into_a_connective() -> None:
     """Test an environment binding a number under a connective is refused too.

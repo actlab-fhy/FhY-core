@@ -41,6 +41,7 @@ from ..core import (
     logical_and,
     logical_not,
     validate_logical_operands,
+    validate_predicate,
 )
 from ..errors import NativeConstantLoweringError, UndecidableError
 from ..registry import (
@@ -273,6 +274,59 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
         )
 
 
+def _find_referenced_native_constant_identifiers(
+    expression: Expression,
+) -> frozenset[Identifier]:
+    """Return the canonical identifiers of native constants ``expression`` references.
+
+    Args:
+        expression: Expression about to be lowered to Z3.
+
+    Returns:
+        The referenced canonical identifiers; empty when ``expression``
+        references none.
+
+    """
+    return frozenset(
+        identifier
+        for identifier in expression.get_free_identifiers()
+        if try_get_native_constant_for_identifier(identifier) is not None
+    )
+
+
+def _raise_if_missing_z3_symbol_types(
+    expression: Expression,
+    symbol_types: dict[Identifier, SymbolType],
+    constant_identifiers: AbstractSet[Identifier],
+) -> None:
+    """Raise unless ``symbol_types`` covers every non-constant free identifier.
+
+    A registered native constant's canonical identifier is exempt: it
+    names a value rather than a variable, and the Z3 bridge never reads
+    a sort for it.
+
+    Args:
+        expression: Expression about to be lowered to Z3.
+        symbol_types: Z3 sort declared for each free identifier.
+        constant_identifiers: Referenced native constants' canonical
+            identifiers, exempt from the coverage requirement.
+
+    Raises:
+        KeyError: If ``symbol_types`` lacks an entry for a free
+            identifier of ``expression`` other than one in
+            ``constant_identifiers``.
+
+    """
+    missing_identifiers = (
+        expression.get_free_identifiers() - constant_identifiers - symbol_types.keys()
+    )
+    if missing_identifiers:
+        sorted_missing = sorted(missing_identifiers, key=lambda i: i.id)
+        raise KeyError(
+            f"symbol_types is missing entries for identifiers: {sorted_missing}"
+        )
+
+
 def convert_expression_to_z3_expression(
     expression: Expression, symbol_types: dict[Identifier, SymbolType] | None = None
 ) -> tuple[z3.ExprRef, immutabledict[Identifier, z3.ExprRef]]:
@@ -315,20 +369,10 @@ def convert_expression_to_z3_expression(
 
     """
     resolved_symbol_types = symbol_types or {}
-    referenced_identifiers = expression.get_free_identifiers()
-    constant_identifiers = frozenset(
-        identifier
-        for identifier in referenced_identifiers
-        if try_get_native_constant_for_identifier(identifier) is not None
+    constant_identifiers = _find_referenced_native_constant_identifiers(expression)
+    _raise_if_missing_z3_symbol_types(
+        expression, resolved_symbol_types, constant_identifiers
     )
-    missing_identifiers = (
-        referenced_identifiers - constant_identifiers - resolved_symbol_types.keys()
-    )
-    if missing_identifiers:
-        sorted_missing = sorted(missing_identifiers, key=lambda i: i.id)
-        raise KeyError(
-            f"symbol_types is missing entries for identifiers: {sorted_missing}"
-        )
     validate_logical_operands(expression, symbol_types=resolved_symbol_types)
     if constant_identifiers:
         sorted_constants = sorted(constant_identifiers, key=lambda i: i.id)
@@ -384,11 +428,14 @@ def holds_for_all_free_assignments(
         ``unknown``.
 
     Raises:
-        NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
-            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, in ``expression`` provably denotes a number, counting
-            an identifier ``symbol_types`` declares INT or REAL, which Z3
-            has no faithful lowering for.
+        KeyError: If ``symbol_types`` lacks an entry for a free
+            identifier of ``expression`` other than a native constant's
+            canonical identifier.
+        NonBooleanLogicalOperandError: If ``expression``'s root, an
+            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            ``LOGICAL_NOT`` node, or a piecewise case condition, provably
+            denotes a number, counting an identifier ``symbol_types``
+            declares INT or REAL, which Z3 has no faithful lowering for.
         NativeConstantLoweringError: If ``expression`` references a
             registered native constant's canonical identifier.
         RuntimeError: If the underlying solver returns an unrecognized
@@ -419,7 +466,30 @@ def _holds_for_all_free_assignments_with_reason(
     otherwise) so :func:`assert_holds_for_all_free_assignments` can
     report the reason without widening the public function's return type.
 
+    ``expression`` is itself a predicate here -- there is no connective
+    or piecewise condition above it the way the implication encoding
+    wraps one -- so it is screened with :func:`validate_predicate`
+    before it reaches :func:`convert_expression_to_z3_expression`, ahead
+    of that function's own :func:`validate_logical_operands` screen, so
+    a numeric root is refused rather than reaching Z3's ``Not`` directly.
+
+    Raises:
+        KeyError: If ``symbol_types`` lacks an entry for a free
+            identifier of ``expression`` other than a native constant's
+            canonical identifier.
+        NonBooleanLogicalOperandError: If ``expression``'s root, or an
+            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            ``LOGICAL_NOT`` node, or a piecewise case condition, provably
+            denotes a number, counting an identifier ``symbol_types``
+            declares INT or REAL. Checked after the ``symbol_types``
+            precondition and ahead of the native-constant refusal.
+        NativeConstantLoweringError: If ``expression`` references a
+            registered native constant's canonical identifier.
+
     """
+    constant_identifiers = _find_referenced_native_constant_identifiers(expression)
+    _raise_if_missing_z3_symbol_types(expression, symbol_types, constant_identifiers)
+    validate_predicate(expression, symbol_types=symbol_types)
     z3_expression, identifier_to_z3_expression = convert_expression_to_z3_expression(
         expression, symbol_types
     )
@@ -490,12 +560,13 @@ def does_expression_imply(
     Raises:
         KeyError: If ``symbol_types`` is missing an entry for any
             identifier referenced by either expression.
-        NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
-            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, in either expression provably denotes a number,
-            counting an identifier ``symbol_types`` declares INT or REAL.
-            The check runs over the conjunction the implication is encoded as,
-            so a numeric ``antecedent`` or ``consequent`` is caught too.
+        NonBooleanLogicalOperandError: If either expression's root, an
+            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            ``LOGICAL_NOT`` node, or a piecewise case condition, provably
+            denotes a number, counting an identifier ``symbol_types``
+            declares INT or REAL. The check runs over the conjunction the
+            implication is encoded as, so a numeric ``antecedent`` or
+            ``consequent`` is caught too.
         NativeConstantLoweringError: If either expression references a
             registered native constant's canonical identifier.
         RuntimeError: If the underlying solver returns an unrecognized
@@ -568,10 +639,11 @@ def assert_holds_for_all_free_assignments(
         UndecidableError: When Z3 returns ``unknown``. The message
             includes Z3's ``reason_unknown()`` text.
         KeyError: If ``symbol_types`` is missing an entry.
-        NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
-            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, in ``expression`` provably denotes a number, counting
-            an identifier ``symbol_types`` declares INT or REAL.
+        NonBooleanLogicalOperandError: If ``expression``'s root, an
+            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            ``LOGICAL_NOT`` node, or a piecewise case condition, provably
+            denotes a number, counting an identifier ``symbol_types``
+            declares INT or REAL.
         NativeConstantLoweringError: If ``expression`` references a
             registered native constant's canonical identifier.
         RuntimeError: If the underlying solver returns an unrecognized
@@ -619,10 +691,11 @@ def assert_expression_implies(
         UndecidableError: When Z3 returns ``unknown``. The message
             includes Z3's ``reason_unknown()`` text.
         KeyError: If ``symbol_types`` is missing an entry.
-        NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
-            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, in either expression provably denotes a number,
-            counting an identifier ``symbol_types`` declares INT or REAL.
+        NonBooleanLogicalOperandError: If either expression's root, an
+            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            ``LOGICAL_NOT`` node, or a piecewise case condition, provably
+            denotes a number, counting an identifier ``symbol_types``
+            declares INT or REAL.
         NativeConstantLoweringError: If either expression references a
             registered native constant's canonical identifier.
         RuntimeError: If the underlying solver returns an unrecognized

@@ -52,9 +52,10 @@ from fhy_core.symbolic.expression import (
     Expression,
     LiteralExpression,
     LiteralType,
+    NonBooleanLogicalOperandError,
     make_binary_expression,
     pformat_expression,
-    validate_logical_operands,
+    validate_predicate,
 )
 from fhy_core.symbolic.expression.registry import (
     try_get_native_constant_for_identifier,
@@ -371,11 +372,13 @@ class Constraint(
                 the integer and float grammars; for a set constraint, a
                 value that is neither an ``Expression`` nor a valid
                 ``ConstraintMember``.
-            NonBooleanLogicalOperandError: For ``EquationConstraint``,
-                if the expression holds a provably numeric operand in a
-                Boolean position -- under a logical connective or as a
-                piecewise case condition -- counting a binding that puts
-                a number there. A set constraint never raises it.
+            NonBooleanLogicalOperandError: For ``EquationConstraint``, if
+                the expression's root provably denotes a number, if it
+                holds a provably numeric operand in a Boolean position --
+                under a logical connective or as a piecewise case
+                condition -- counting a binding that puts a number there,
+                or if the substituted expression simplifies to a
+                non-bool literal. A set constraint never raises it.
 
         """
 
@@ -469,14 +472,18 @@ class EquationConstraint(Constraint):
     ``SATISFIED`` only when the simplifier reduces it to the ``bool``
     literal ``True``.
 
+    The expression is itself a predicate -- a Boolean position on its
+    own, with no connective or piecewise condition above it -- so
+    ``evaluate_with_bindings`` screens it with ``validate_predicate``
+    before substituting anything: a numeric root, such as
+    ``LiteralExpression(1)`` or ``x + 1``, is ill-typed for every
+    possible binding and raises rather than being decided.
+
     Outcomes:
         - ``SATISFIED``: the substituted expression reduces to the
           ``bool`` literal ``True``.
         - ``VIOLATED``: the substituted expression reduces to the
-          ``bool`` literal ``False``, or to a literal whose value is not
-          a ``bool`` (for example ``LiteralExpression(1)``). A non-bool
-          literal is a decided "no", not an indeterminate case: no
-          warning is emitted.
+          ``bool`` literal ``False``.
         - ``UNDECIDED``: the simplifier cannot reduce the substituted
           expression to a ``LiteralExpression`` at all (for example
           because a free identifier remains unbound, or because the
@@ -484,6 +491,11 @@ class EquationConstraint(Constraint):
           free identifier remains in the residual (ordinary partial
           evaluation), at ``WARNING`` when none does (every identifier
           was bound yet the simplifier still could not decide).
+
+    A substituted expression that reduces to a literal whose value is not
+    a ``bool`` (for example ``LiteralExpression(1)``) raises
+    ``NonBooleanLogicalOperandError`` rather than being decided
+    ``VIOLATED``: the residual denotes a number, not a predicate.
 
     ``is_satisfied_with_bindings`` derives from ``evaluate_with_bindings``
     and treats both ``VIOLATED`` and ``UNDECIDED`` as ``False``, so an
@@ -517,10 +529,10 @@ class EquationConstraint(Constraint):
         Coerces each raw ``LiteralType`` binding value to a
         ``LiteralExpression``, substitutes the full multi-key environment
         through ``simplify_expression``, and reports ``SATISFIED`` for
-        the ``bool`` literal ``True``, ``VIOLATED`` for any other
-        literal, and ``UNDECIDED`` when no literal results. Logging on
-        ``UNDECIDED``: DEBUG when the residual (substituted and
-        simplified) expression still has free identifiers (expected
+        the ``bool`` literal ``True``, ``VIOLATED`` for the ``bool``
+        literal ``False``, and ``UNDECIDED`` when no literal results.
+        Logging on ``UNDECIDED``: DEBUG when the residual (substituted
+        and simplified) expression still has free identifiers (expected
         partial evaluation, including the case where a symbolic binding
         introduces a new free identifier), WARNING when the residual has
         none -- every free identifier was bound yet the simplifier still
@@ -532,17 +544,23 @@ class EquationConstraint(Constraint):
         not depend on which member kinds it holds or where they fall in
         canonical order.
 
+        The expression is screened with ``validate_predicate`` before
+        anything is substituted: it is itself a Boolean position, so a
+        numeric root -- for example ``LiteralExpression(1)`` or ``x + 1``
+        -- is ill-typed for every possible binding and raises rather than
+        being decided.
+
         A binding whose identifier is a registered native constant's
         canonical identifier reports ``UNDECIDED`` with a ``WARNING``:
         the bridge lowers that identifier to the constant's value rather
         than to a substitutable symbol, so the binding cannot take part
-        in the decision. The refusal comes after the checks that raise,
-        so a binding value that cannot be lifted, or a provably numeric
-        operand in a Boolean position, is reported instead.
-        ``ConstraintSystem.check_satisfiability_with_bindings`` and the
-        set constraints refuse the same bindings in the same order. An
-        identifier that merely shares a constant's ``name_hint`` is an
-        ordinary variable and its binding is applied like any other.
+        in the decision. The refusal comes after the predicate screen,
+        so a provably numeric operand in a Boolean position is reported
+        instead. ``ConstraintSystem.check_satisfiability_with_bindings``
+        and the set constraints refuse the same bindings in the same
+        order. An identifier that merely shares a constant's
+        ``name_hint`` is an ordinary variable and its binding is applied
+        like any other.
 
         Raises:
             ConstraintError: If the value bound to an identifier in this
@@ -554,12 +572,15 @@ class EquationConstraint(Constraint):
             PassExecutionError: Propagated from ``simplify_expression``
                 when the SymPy bridge fails to lower or lift the
                 substituted expression.
-            NonBooleanLogicalOperandError: If the expression holds a
-                provably numeric operand in a Boolean position -- under
-                a logical connective or as a piecewise case condition --
-                counting an in-scope binding that puts a number there.
-                ``ConstraintSystem.check_satisfiability_with_bindings``
-                refuses the same bindings with the same error.
+            NonBooleanLogicalOperandError: If the expression's root
+                provably denotes a number, if it holds a provably
+                numeric operand in a Boolean position -- under a logical
+                connective or as a piecewise case condition -- counting
+                an in-scope binding that puts a number there, or if the
+                substituted expression simplifies to a literal whose
+                value is not a ``bool``. ``ConstraintSystem
+                .check_satisfiability_with_bindings`` refuses the same
+                bindings with the same error.
 
         """
         scope = self.get_free_identifiers()
@@ -569,11 +590,9 @@ class EquationConstraint(Constraint):
             if identifier in scope
         }
         environment = _coerce_bindings_to_environment(in_scope)
+        validate_predicate(self.expression, environment)
         captured = _find_bound_native_constants(scope, environment)
         if captured:
-            # An ill-typed expression is reported ahead of the refusal, as
-            # `simplify_expression` reports it on every other path.
-            validate_logical_operands(self.expression, environment)
             _LOGGER.warning(
                 "%s.evaluate_with_bindings: identifier(s) %s are the canonical "
                 "identifiers of registered native constants, so the backend "
@@ -587,9 +606,17 @@ class EquationConstraint(Constraint):
             return ConstraintOutcome.UNDECIDED
         result = simplify_expression(self.expression, environment)
         if isinstance(result, LiteralExpression):
-            if isinstance(result.value, bool) and result.value:
-                return ConstraintOutcome.SATISFIED
-            return ConstraintOutcome.VIOLATED
+            if not isinstance(result.value, bool):
+                raise NonBooleanLogicalOperandError(
+                    f"{self.expression!r} simplified to the non-bool literal "
+                    f"{result!r}; a predicate must simplify to a `bool` "
+                    "literal, so the expression is ill-typed."
+                )
+            return (
+                ConstraintOutcome.SATISFIED
+                if result.value
+                else ConstraintOutcome.VIOLATED
+            )
         if result.get_free_identifiers():
             _LOGGER.debug(
                 "%s.evaluate_with_bindings: substituted expression %r did not "

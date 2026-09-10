@@ -2914,3 +2914,68 @@ def test_solver_questions_report_a_numeric_sort_in_a_boolean_position(
 
     with pytest.raises(NonBooleanLogicalOperandError):
         decide(system, {x: sort})
+
+
+# =============================================================================
+# A numeric-rooted member is refused by its own expression, not a synthetic AND
+# =============================================================================
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _SOLVER_BACKED_QUESTIONS)
+def test_solver_questions_refuse_a_numeric_rooted_member_naming_its_own_expression(
+    decide: Callable[
+        [ConstraintSystem, Mapping[Identifier, SymbolType]], ConstraintOutcome
+    ],
+) -> None:
+    """Test a numeric-rooted member is refused, naming its own expression.
+
+    Each constraint of a system is itself a Boolean position, so
+    ``x + 1`` is ill-typed on its own. The message names ``x + 1``, the
+    caller's own node, rather than a synthetic ``LOGICAL_AND`` the caller
+    never wrote joining it to the rest of the lowered conjunction.
+    """
+    x = mock_identifier("x", 0)
+    numeric_expression = make_binary_expression(
+        BinaryOperation.ADD, x, LiteralExpression(1)
+    )
+    system = create_constraint_system(EquationConstraint(numeric_expression))
+
+    with pytest.raises(NonBooleanLogicalOperandError) as exc_info:
+        decide(system, {x: SymbolType.INT})
+
+    message = str(exc_info.value)
+    assert repr(numeric_expression) in message
+    assert "LOGICAL_AND" not in message
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _SOLVER_BACKED_QUESTIONS)
+def test_solver_questions_refuse_a_numeric_rooted_member_beside_a_well_typed_one(
+    decide: Callable[
+        [ConstraintSystem, Mapping[Identifier, SymbolType]], ConstraintOutcome
+    ],
+) -> None:
+    """Test the same refusal holds with a well-typed member alongside it.
+
+    The lowered conjunction still joins both members with a real
+    ``LOGICAL_AND`` for the solver, but the refusal is decided per member
+    before that join, so the message still names only the offending
+    member's own expression.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    numeric_expression = make_binary_expression(
+        BinaryOperation.ADD, x, LiteralExpression(1)
+    )
+    system = create_constraint_system(
+        EquationConstraint(numeric_expression),
+        EquationConstraint(make_binary_expression(BinaryOperation.GREATER, y, 0)),
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError) as exc_info:
+        decide(system, {x: SymbolType.INT, y: SymbolType.INT})
+
+    message = str(exc_info.value)
+    assert repr(numeric_expression) in message
+    assert "LOGICAL_AND" not in message

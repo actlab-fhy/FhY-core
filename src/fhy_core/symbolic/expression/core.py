@@ -27,6 +27,7 @@ __all__ = [
     "make_unary_expression",
     "piecewise",
     "validate_logical_operands",
+    "validate_predicate",
 ]
 
 import math
@@ -1208,6 +1209,25 @@ def _get_native_constant_sort(identifier: Identifier) -> FunctionSort | None:
     return None if constant is None else constant.sort
 
 
+def _get_call_result_sort(function_name: str) -> FunctionSort | None:
+    """Return the declared result sort of the entry registered under ``function_name``.
+
+    Returns ``None`` when no entry is registered under ``function_name``,
+    or when the registered entry is a native constant, which declares no
+    result sort of its own; a call naming one is not a case this helper
+    covers.
+    """
+    # Deferred import: the registry's entry types import this module, so
+    # importing the registry at module scope here would form a cycle.
+    from .registry import EntryLookupError, get_registered_entry  # noqa: PLC0415
+
+    try:
+        entry = get_registered_entry(function_name)
+    except EntryLookupError:
+        return None
+    return getattr(entry, "result_sort", None)
+
+
 def _is_identifier_provably_non_boolean(
     identifier: Identifier,
     environment: Mapping[Identifier, Expression],
@@ -1229,20 +1249,24 @@ def _is_identifier_provably_non_boolean(
     return symbol_types.get(identifier) in _NUMERIC_SYMBOL_TYPES
 
 
-def _is_provably_non_boolean(
+# One early return per node kind reads clearest here; the alternative is a
+# lookup table that would have to be threaded through `environment` and
+# `symbol_types` anyway.
+def _is_provably_non_boolean(  # noqa: PLR0911
     expression: Expression,
     environment: Mapping[Identifier, Expression],
     symbol_types: Mapping[Identifier, SymbolType],
 ) -> bool:
     """Return whether ``expression`` provably denotes a number, not a Boolean.
 
-    Answers conservatively: a node whose sort cannot be read off the tree
-    or ``symbol_types`` -- an identifier with no ``environment`` binding
-    and no numeric declared sort, and a call, whose result sort lives in
-    the registry rather than in the node -- answers False, so a caller
-    screening on "provably non-Boolean" refuses only what it can prove. A
-    registered native constant's canonical identifier takes the constant's
-    declared sort, which is REAL for every built-in constant.
+    Answers conservatively: a node whose sort cannot be read off the tree,
+    ``symbol_types``, or the registry -- an identifier with no
+    ``environment`` binding and no numeric declared sort, and a call to
+    an unregistered name -- answers False, so a caller screening on
+    "provably non-Boolean" refuses only what it can prove. A registered
+    native constant's canonical identifier takes the constant's declared
+    sort, which is REAL for every built-in constant, and a call takes its
+    registered entry's declared result sort when one is registered.
 
     Args:
         expression: Node whose sort is wanted.
@@ -1273,6 +1297,9 @@ def _is_provably_non_boolean(
         return expression.operation is not UnaryOperation.LOGICAL_NOT
     elif isinstance(expression, BinaryExpression):
         return expression.operation in _ARITHMETIC_BINARY_OPERATIONS
+    elif isinstance(expression, CallExpression):
+        result_sort = _get_call_result_sort(expression.function_name)
+        return result_sort is not None and result_sort is not FunctionSort.BOOL
     elif isinstance(expression, PiecewiseExpression):
         return all(
             _is_provably_non_boolean(branch, environment, symbol_types)
@@ -1281,13 +1308,29 @@ def _is_provably_non_boolean(
     return False
 
 
-def _get_boolean_position_operands(expression: Expression) -> tuple[Expression, ...]:
+def _get_boolean_position_operands(
+    expression: Expression, is_in_boolean_position: bool
+) -> tuple[Expression, ...]:
     """Return the children of ``expression`` that sit in a Boolean position.
 
-    Those are the operands of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
-    ``LOGICAL_NOT`` node and the case conditions of a piecewise, which
-    selects its branch by truth. Every other child may be of any sort as
-    far as its parent is concerned.
+    The operands of a ``LOGICAL_AND``, ``LOGICAL_OR``, or ``LOGICAL_NOT``
+    node, and a piecewise's case conditions, are Boolean positions
+    unconditionally: that is intrinsic to what those operators mean,
+    wherever the node itself sits. A piecewise's case values and
+    ``otherwise`` join them only when ``is_in_boolean_position`` is True
+    -- when the piecewise itself sits in a Boolean position, so its
+    result, and therefore each branch that can produce it, must be a
+    Boolean too. Every other child may be of any sort as far as its
+    parent is concerned.
+
+    Args:
+        expression: Node whose Boolean-position children are wanted.
+        is_in_boolean_position: Whether ``expression`` itself sits in a
+            Boolean position.
+
+    Returns:
+        The children of ``expression`` that sit in a Boolean position.
+
     """
     if (
         isinstance(expression, UnaryExpression)
@@ -1298,6 +1341,8 @@ def _get_boolean_position_operands(expression: Expression) -> tuple[Expression, 
     ):
         return expression.get_operands()
     if isinstance(expression, PiecewiseExpression):
+        if is_in_boolean_position:
+            return (*expression.conditions, *expression.values, expression.otherwise)
         return expression.conditions
     return ()
 
@@ -1306,16 +1351,76 @@ def _find_non_boolean_logical_operand(
     expression: Expression,
     environment: Mapping[Identifier, Expression],
     symbol_types: Mapping[Identifier, SymbolType],
+    *,
+    is_in_boolean_position: bool,
 ) -> tuple[Expression, Expression] | None:
-    """Return the first numeric Boolean-position operand paired with its parent."""
-    for operand in _get_boolean_position_operands(expression):
+    """Return the first numeric Boolean-position operand paired with its parent.
+
+    Args:
+        expression: Subtree to search.
+        environment: As accepted by :func:`validate_logical_operands`.
+        symbol_types: As accepted by :func:`validate_logical_operands`.
+        is_in_boolean_position: Whether ``expression`` itself sits in a
+            Boolean position, which decides whether a piecewise's own
+            branches (as opposed to only its conditions) are screened.
+
+    Returns:
+        The offending parent node and operand, or ``None`` if every
+        Boolean position in the subtree holds a Boolean.
+
+    """
+    boolean_position_operands = _get_boolean_position_operands(
+        expression, is_in_boolean_position
+    )
+    for operand in boolean_position_operands:
         if _is_provably_non_boolean(operand, environment, symbol_types):
             return expression, operand
     for child in expression.get_visit_children():
-        found = _find_non_boolean_logical_operand(child, environment, symbol_types)
+        found = _find_non_boolean_logical_operand(
+            child,
+            environment,
+            symbol_types,
+            is_in_boolean_position=any(
+                child is operand for operand in boolean_position_operands
+            ),
+        )
         if found is not None:
             return found
     return None
+
+
+def _raise_for_boolean_position_violation(
+    found: tuple[Expression, Expression],
+) -> None:
+    """Raise ``NonBooleanLogicalOperandError`` naming the offending pair.
+
+    Args:
+        found: The parent node and the numeric operand it takes in a
+            Boolean position, as returned by
+            :func:`_find_non_boolean_logical_operand`.
+
+    Raises:
+        NonBooleanLogicalOperandError: Always.
+
+    """
+    connective, operand = found
+    if isinstance(connective, PiecewiseExpression):
+        if any(operand is condition for condition in connective.conditions):
+            role = "a case condition"
+        elif operand is connective.otherwise:
+            role = "its otherwise branch"
+        else:
+            role = "a case value"
+        raise NonBooleanLogicalOperandError(
+            f"{connective!r} takes {operand!r} as {role}, which provably "
+            "denotes a number; the expression is ill-typed and no symbolic "
+            "backend lowers it faithfully."
+        )
+    raise NonBooleanLogicalOperandError(
+        f"{connective!r} applies a Boolean connective to the operand "
+        f"{operand!r}, which provably denotes a number; the expression is "
+        f"ill-typed and no symbolic backend lowers it faithfully."
+    )
 
 
 def validate_logical_operands(
@@ -1327,23 +1432,28 @@ def validate_logical_operands(
     """Raise unless every Boolean position in ``expression`` holds a Boolean.
 
     A Boolean position is an operand of ``LOGICAL_AND``, ``LOGICAL_OR``,
-    or ``LOGICAL_NOT``, or a piecewise case condition. No symbolic
-    backend gives a number there a faithful meaning: SymPy's ``&``/``|``
-    are bitwise on ``sympy.Integer``, its ``Not`` coerces by truthiness,
-    and its ``Piecewise`` rejects a numeric condition or, once a
-    substitution has put a number there, reads it as a truth value;
-    Z3 rejects the sort outright. The whole tree is screened, so a
-    numeric operand nested anywhere under the root is found.
+    or ``LOGICAL_NOT``, or a piecewise case condition; a piecewise nested
+    in a Boolean position additionally puts its case values and
+    ``otherwise`` in a Boolean position, since the piecewise's own result
+    must then be a Boolean. No symbolic backend gives a number there a
+    faithful meaning: SymPy's ``&``/``|`` are bitwise on
+    ``sympy.Integer``, its ``Not`` coerces by truthiness, and its
+    ``Piecewise`` rejects a numeric condition or, once a substitution has
+    put a number there, reads it as a truth value; Z3 rejects the sort
+    outright. The whole tree is screened, so a numeric operand nested
+    anywhere under the root is found.
 
     Only a provably numeric operand is refused. A registered native
     constant's canonical identifier counts as the constant's declared
     sort, which is REAL for every built-in constant, so ``pi`` under a
     connective is refused. An unbound identifier ``symbol_types`` declares
     INT or REAL is numeric too, since that is the sort the Z3 bridge
-    lowers it with. Any other identifier with no ``environment`` binding
-    -- one declared BOOL or not declared at all -- and a call keep their
-    sort off the tree, so they pass: the screen refuses what it can prove
-    ill-typed rather than everything it cannot prove well-typed.
+    lowers it with. A call whose registered entry declares a result sort
+    other than ``FunctionSort.BOOL`` is numeric too. Any other identifier
+    with no ``environment`` binding -- one declared BOOL or not declared
+    at all -- and a call to an unregistered name keep their sort off the
+    tree, so they pass: the screen refuses what it can prove ill-typed
+    rather than everything it cannot prove well-typed.
 
     Args:
         expression: Expression about to be lowered to a symbolic backend,
@@ -1363,24 +1473,67 @@ def validate_logical_operands(
 
     Raises:
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
-            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
-            condition, provably denotes a number.
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, a piecewise case
+            condition, or a branch of a piecewise nested in a Boolean
+            position, provably denotes a number.
 
     """
     found = _find_non_boolean_logical_operand(
-        expression, environment or {}, symbol_types or {}
+        expression, environment or {}, symbol_types or {}, is_in_boolean_position=False
     )
     if found is None:
         return
-    connective, operand = found
-    if isinstance(connective, PiecewiseExpression):
+    _raise_for_boolean_position_violation(found)
+
+
+def validate_predicate(
+    expression: Expression,
+    environment: Mapping[Identifier, Expression] | None = None,
+    *,
+    symbol_types: Mapping[Identifier, SymbolType] | None = None,
+) -> None:
+    """Raise unless ``expression`` can be used as a predicate.
+
+    A predicate is itself a Boolean position: its root must hold a
+    Boolean, and so must every Boolean position within it, exactly as
+    :func:`validate_logical_operands` screens them. Handing this
+    additionally treats the root as a Boolean position in its own right,
+    which matters when the root is a piecewise: its case values and
+    ``otherwise``, not only its conditions, are then screened too, since
+    the piecewise's own result stands for the predicate.
+
+    Args:
+        expression: Expression that is itself supposed to denote a
+            Boolean, such as a constraint's expression or a solver
+            query's argument, rather than an operand nested under a
+            connective.
+        environment: As accepted by :func:`validate_logical_operands`.
+        symbol_types: As accepted by :func:`validate_logical_operands`.
+
+    Raises:
+        NonBooleanLogicalOperandError: If ``expression``'s root provably
+            denotes a number, or if an operand of a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, a piecewise case
+            condition, or a branch of a piecewise nested in a Boolean
+            position, provably denotes a number.
+
+    """
+    resolved_environment = environment or {}
+    resolved_symbol_types = symbol_types or {}
+    if _is_provably_non_boolean(
+        expression, resolved_environment, resolved_symbol_types
+    ):
         raise NonBooleanLogicalOperandError(
-            f"{connective!r} takes {operand!r} as a case condition, which "
-            "provably denotes a number; the expression is ill-typed and no "
-            "symbolic backend lowers it faithfully."
+            f"{expression!r} is used as a predicate but provably denotes a "
+            "number; the expression is ill-typed and no symbolic backend "
+            "lowers it faithfully."
         )
-    raise NonBooleanLogicalOperandError(
-        f"{connective!r} applies a Boolean connective to the operand "
-        f"{operand!r}, which provably denotes a number; the expression is "
-        f"ill-typed and no symbolic backend lowers it faithfully."
+    found = _find_non_boolean_logical_operand(
+        expression,
+        resolved_environment,
+        resolved_symbol_types,
+        is_in_boolean_position=True,
     )
+    if found is None:
+        return
+    _raise_for_boolean_position_violation(found)
