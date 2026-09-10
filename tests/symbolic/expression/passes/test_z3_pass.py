@@ -835,10 +835,13 @@ def test_assert_holds_for_all_free_assignments_reports_a_real_z3_timeout() -> No
     queries by itself, with an incompleteness reason rather than a
     timeout.
 
-    Should a future Z3 decide the query, the test skips rather than
-    fails: it can no longer observe a real timeout, which says nothing
-    about the seam. The stubbed test above covers the seam's side of a
-    timeout deterministically.
+    The query is a valid formula (true for every assignment), so a
+    decided outcome has exactly one sound value: True. The test skips
+    only on that outcome, since it can no longer observe a real timeout,
+    which says nothing about the seam; a decided False is not a
+    "future Z3 got smarter" outcome, it is an unsound answer, and the
+    test fails on it rather than skipping. The stubbed test above covers
+    the seam's side of a timeout deterministically.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
@@ -869,9 +872,15 @@ def test_assert_holds_for_all_free_assignments_reports_a_real_z3_timeout() -> No
     except UndecidableError as error:
         reason = error.reason
     else:
+        if decided is not True:
+            pytest.fail(
+                f"Z3 decided the query {decided!r}, which is unsound: the "
+                "formula holds for every assignment, so a decided False "
+                "cannot be a correct answer."
+            )
         pytest.skip(
-            f"Z3 decided the query ({decided}) before its bound ran out, so "
-            "no real timeout was exercised."
+            "Z3 decided the query True before its bound ran out, so no "
+            "real timeout was exercised."
         )
 
     assert reason == "timeout"
