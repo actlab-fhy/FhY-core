@@ -20,6 +20,8 @@ constant-identity mapping.
 
 import dataclasses
 import math
+import subprocess
+import sys
 
 import pytest
 
@@ -1063,3 +1065,57 @@ def test_restoring_a_registry_snapshot_drops_identifiers_it_does_not_carry(
     assert try_get_native_constant_for_identifier(identifier) is None
     with pytest.raises(EntryLookupError, match="test_const_pruned"):
         get_native_constant_identifier("test_const_pruned")
+
+
+# =============================================================================
+# Pinned built-in constant ids
+# =============================================================================
+
+_PINNED_BUILTIN_CONSTANT_IDS = {"pi": 8, "e": 9, "inf": 10, "nan": 11}
+
+
+def test_builtin_constants_keep_their_pinned_canonical_ids() -> None:
+    """Test the built-in constants keep the ids a serialized reference resolves by.
+
+    A constant's id is assigned by registration order at import time, so
+    it can shift if the seeding order ever changes; a wire form minted
+    against today's id would then resolve to the wrong identifier, or to
+    none at all, on a process that assigns the ids differently.
+    """
+    ids = {
+        name: get_native_constant_identifier(name).id
+        for name in _PINNED_BUILTIN_CONSTANT_IDS
+    }
+
+    assert ids == _PINNED_BUILTIN_CONSTANT_IDS
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_builtin_constants_keep_their_pinned_canonical_ids_in_a_fresh_interpreter() -> (
+    None
+):
+    """Test the pinned canonical ids hold from a clean process start.
+
+    The ids depend on registration order at import time, which earlier
+    tests in this process may have perturbed by registering their own
+    functions or constants; a fresh interpreter is the only way to see
+    the ids a real deserializing process would see.
+    """
+    names = tuple(_PINNED_BUILTIN_CONSTANT_IDS)
+    output = subprocess.check_output(
+        [
+            sys.executable,
+            "-c",
+            "import fhy_core.symbolic.expression as expression\n"
+            f"names = {names!r}\n"
+            "print(' '.join("
+            "str(expression.get_native_constant_identifier(name).id) "
+            "for name in names))",
+        ],
+        text=True,
+    ).strip()
+
+    ids = dict(zip(names, (int(part) for part in output.split()), strict=True))
+
+    assert ids == _PINNED_BUILTIN_CONSTANT_IDS
