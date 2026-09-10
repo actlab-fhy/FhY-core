@@ -26,6 +26,7 @@ from fhy_core.symbolic.expression import (
     UnaryExpression,
     UnaryOperation,
     UndecidableError,
+    call,
     is_integer_valued_literal,
     logical_and,
     logical_not,
@@ -520,7 +521,6 @@ def test_binary_operator_dunders_produce_matching_expression(
 _NON_EXPRESSION_RIGHT_OPERANDS: tuple[tuple[Any, type[Expression]], ...] = (
     (10, LiteralExpression),
     (10.5, LiteralExpression),
-    (False, LiteralExpression),
     (mock_identifier("y", 42), IdentifierExpression),
 )
 
@@ -546,7 +546,6 @@ def test_binary_dunder_promotes_right_python_operand_to_expression(
 _NON_EXPRESSION_LEFT_OPERANDS: tuple[tuple[Any, type[Expression]], ...] = (
     (6, LiteralExpression),
     (10.3, LiteralExpression),
-    (True, LiteralExpression),
     (mock_identifier("x", 1), IdentifierExpression),
 )
 
@@ -578,21 +577,6 @@ def test_binary_dunder_promotes_left_python_operand_to_expression(
         right,
     )
     assert binary_operator(left, right).is_structurally_equivalent(expected)
-
-
-@pytest.mark.parametrize("value", [True, False])
-def test_binary_dunder_preserves_bool_type_when_wrapping(value: bool) -> None:
-    """Test wrapping a Python ``bool`` keeps it as a ``bool``, not coerced to ``int``.
-
-    ``bool`` is a subtype of ``int`` and ``LiteralType`` admits both, so a naive
-    isinstance check could misclassify. This test pins down that the wrapped
-    value is the ``bool`` singleton.
-    """
-    expression = LiteralExpression(0) + value
-    assert isinstance(expression, BinaryExpression)
-    assert isinstance(expression.right, LiteralExpression)
-    assert type(expression.right.value) is bool
-    assert expression.right.value is value
 
 
 def test_binary_dunder_rejects_unsupported_type_on_right() -> None:
@@ -637,6 +621,88 @@ def test_binary_dunder_rejects_unsupported_type_on_left() -> None:
 
 
 # =============================================================================
+# Bare-bool refusal: no coercion site lifts a Python ``bool``
+# =============================================================================
+
+
+def test_accidental_expression_equality_cannot_ride_into_a_conjunction() -> None:
+    """Test ``logical_and(a == b, a > 0)`` refuses rather than planting ``False``.
+
+    ``Expression.__eq__`` is object identity, so ``a == b`` over two
+    distinct expression objects is the Python ``False``. Lifted, it turns
+    the conjunction into the constant-false ``False && (a > 0)``, which
+    then rides unnoticed into an ``EquationConstraint`` and reports a
+    permanently infeasible system.
+    """
+    a = mock_identifier("a", 0)
+    b = mock_identifier("b", 1)
+    accidental = IdentifierExpression(a) == IdentifierExpression(b)
+
+    with pytest.raises(ValueError, match="bare Python bool"):
+        logical_and(accidental, IdentifierExpression(a) > LiteralExpression(0))
+
+
+_BARE_BOOL_COERCION_SITES = [
+    pytest.param(lambda value: LiteralExpression(1) + value, id="dunder_right"),
+    pytest.param(lambda value: value + LiteralExpression(1), id="dunder_left"),
+    pytest.param(lambda value: LiteralExpression(1) < value, id="comparison"),
+    pytest.param(lambda value: LiteralExpression(1).equals(value), id="equals"),
+    pytest.param(lambda value: LiteralExpression(1).not_equals(value), id="not_equals"),
+    pytest.param(
+        lambda value: make_binary_expression(
+            BinaryOperation.EQUAL, LiteralExpression(1), value
+        ),
+        id="make_binary_expression",
+    ),
+    pytest.param(
+        lambda value: make_unary_expression(UnaryOperation.LOGICAL_NOT, value),
+        id="make_unary_expression",
+    ),
+    pytest.param(
+        lambda value: logical_and(LiteralExpression(True), value), id="logical_and"
+    ),
+    pytest.param(
+        lambda value: logical_or(value, LiteralExpression(True)), id="logical_or"
+    ),
+    pytest.param(logical_not, id="logical_not"),
+    pytest.param(
+        lambda value: LiteralExpression(True).logical_and(value),
+        id="method_logical_and",
+    ),
+    pytest.param(
+        lambda value: LiteralExpression(True).logical_or(value),
+        id="method_logical_or",
+    ),
+    pytest.param(
+        lambda value: piecewise((LiteralExpression(True), value), otherwise=0),
+        id="piecewise_value",
+    ),
+    pytest.param(
+        lambda value: piecewise((LiteralExpression(True), 1), otherwise=value),
+        id="piecewise_otherwise",
+    ),
+    pytest.param(lambda value: call("max", value, 1), id="call"),
+    pytest.param(lambda value: Expression.call("max", 1, value), id="method_call"),
+]
+
+
+@pytest.mark.parametrize("value", [True, False])
+@pytest.mark.parametrize("build", _BARE_BOOL_COERCION_SITES)
+def test_every_coercion_site_refuses_a_bare_bool(
+    build: Callable[[bool], Expression], value: bool
+) -> None:
+    """Test each builder and operator dunder refuses a bare ``bool`` operand.
+
+    The refusal lives in the one coercion every site shares, so a site
+    that stopped routing through it would lift the ``bool`` again. The
+    check is on the exact type: ``bool`` subclasses ``int``, and an
+    ``int`` operand still lifts (see the promotion tests above).
+    """
+    with pytest.raises(ValueError, match="bare Python bool"):
+        build(value)
+
+
+# =============================================================================
 # Commutative / associative tree builders
 # =============================================================================
 
@@ -655,14 +721,14 @@ def test_module_level_logical_builder_folds_three_args_right_associatively(
     """Test module-level `logical_and`/`logical_or` fold three args right-assoc."""
     first = LiteralExpression(True)
     second = LiteralExpression(False)
-    third = True  # coerced to LiteralExpression
+    third = mock_identifier("c", 2)  # coerced to IdentifierExpression
 
     result = builder(first, second, third)
 
     expected = BinaryExpression(
         expected_operation,
         first,
-        BinaryExpression(expected_operation, second, LiteralExpression(third)),
+        BinaryExpression(expected_operation, second, IdentifierExpression(third)),
     )
     assert result.is_structurally_equivalent(expected)
 
@@ -722,12 +788,14 @@ def test_module_level_logical_not_coerces_bare_identifier() -> None:
     assert result.is_structurally_equivalent(expected)
 
 
-def test_module_level_logical_not_coerces_bare_python_literal() -> None:
-    """Test `logical_not` lifts a bare Python ``bool`` via `LiteralExpression`."""
-    result = logical_not(True)
+def test_module_level_logical_not_refuses_a_bare_python_bool() -> None:
+    """Test `logical_not` refuses a bare ``bool`` and names the literal spelling.
 
-    expected = UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(True))
-    assert result.is_structurally_equivalent(expected)
+    A caller who wants the constant writes ``LiteralExpression(True)``;
+    the message says so rather than only rejecting the input.
+    """
+    with pytest.raises(ValueError, match=r"LiteralExpression\(True\)"):
+        logical_not(True)
 
 
 _INSTANCE_LOGICAL_METHODS = (

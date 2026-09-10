@@ -45,7 +45,9 @@ def test_equation_constraint_round_trip_dict_serialization() -> None:
     an ``EquationConstraint``'s only data is its wrapped expression.
     """
     x = mock_identifier("x", 0)
-    expression = make_binary_expression(BinaryOperation.EQUAL, x, True)
+    expression = make_binary_expression(
+        BinaryOperation.EQUAL, x, LiteralExpression(True)
+    )
     constraint = EquationConstraint(expression)
     expected = {
         "__type__": "equation_constraint",

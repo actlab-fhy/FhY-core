@@ -426,20 +426,31 @@ def test_piecewise_helper_rejects_bare_non_boolean_literal_condition() -> None:
         piecewise((1, 5), otherwise=10)
 
 
-def test_piecewise_helper_coerces_bool_case_value() -> None:
-    """Test ``piecewise(...)`` still coerces a bare Python bool case value."""
-    expression = piecewise((LiteralExpression(True), True), otherwise=0)
+def test_piecewise_helper_refuses_a_bare_bool_case_value() -> None:
+    """Test ``piecewise(...)`` refuses a bare Python bool case value.
 
-    assert isinstance(expression.values[0], LiteralExpression)
-    assert expression.values[0].value is True
+    A value slot is as exposed to the ``expr == k`` trap as a condition
+    slot, so it gets the same refusal.
+    """
+    with pytest.raises(ValueError, match="bare Python bool"):
+        piecewise((LiteralExpression(True), True), otherwise=0)
 
 
-def test_piecewise_helper_coerces_bool_otherwise() -> None:
-    """Test ``piecewise(...)`` still coerces a bare Python bool ``otherwise``."""
-    expression = piecewise((LiteralExpression(True), 1), otherwise=False)
+def test_piecewise_helper_refuses_a_bare_bool_otherwise() -> None:
+    """Test ``piecewise(...)`` refuses a bare Python bool ``otherwise``."""
+    with pytest.raises(ValueError, match="bare Python bool"):
+        piecewise((LiteralExpression(True), 1), otherwise=False)
 
-    assert isinstance(expression.otherwise, LiteralExpression)
-    assert expression.otherwise.value is False
+
+def test_piecewise_helper_keeps_explicit_boolean_literal_operands() -> None:
+    """Test Boolean-valued operands written as ``LiteralExpression`` pass through."""
+    value = LiteralExpression(True)
+    otherwise = LiteralExpression(False)
+
+    expression = piecewise((LiteralExpression(True), value), otherwise=otherwise)
+
+    assert expression.values[0] is value
+    assert expression.otherwise is otherwise
 
 
 def test_piecewise_helper_rejects_zero_cases() -> None:

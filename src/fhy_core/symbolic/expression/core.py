@@ -63,6 +63,32 @@ from .errors import NonBooleanLogicalOperandError
 LiteralType: TypeAlias = str | float | int | bool
 
 
+def _make_bare_bool_coercion_error(position: str, value: bool) -> ValueError:
+    """Return the error refusing to coerce a bare Python ``bool`` to an expression.
+
+    ``Expression.__eq__`` is object identity, so ``expr == k`` evaluates to
+    a Python ``bool`` rather than to an IR equality node. Lifting that
+    ``bool`` would plant a constant where the caller meant a comparison,
+    so no builder coerces one; a Boolean constant is written
+    ``LiteralExpression(True)`` or ``LiteralExpression(False)``.
+
+    Args:
+        position: Where the ``bool`` was supplied; leads the message.
+        value: The refused ``bool``.
+
+    Returns:
+        ``ValueError`` naming the position and both intended spellings.
+
+    """
+    return ValueError(
+        f"{position} is a bare Python bool ({value!r}), not an expression. "
+        "This is almost always the accidental result of `expr == k`, which "
+        "is Expression identity comparison, not IR equality; use `.equals()` "
+        "or `.not_equals()` to build an equality, or write "
+        f"`LiteralExpression({value!r})` for a Boolean constant."
+    )
+
+
 def make_binary_expression(
     operation: "BinaryOperation",
     left: "Expression | Identifier | LiteralType",
@@ -72,8 +98,8 @@ def make_binary_expression(
 
     Each operand may be an ``Expression`` (used as-is), an ``Identifier``
     (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
-    (wrapped in ``LiteralExpression``); the same coercion rules as the
-    operator dunders apply.
+    other than ``bool`` (wrapped in ``LiteralExpression``); the same
+    coercion rules as the operator dunders apply.
 
     Args:
         operation: Binary operation to apply.
@@ -84,7 +110,8 @@ def make_binary_expression(
         A ``BinaryExpression`` over the two coerced operands.
 
     Raises:
-        ValueError: If an operand has an unsupported type.
+        ValueError: If an operand is a bare Python ``bool`` or has an
+            unsupported type.
 
     """
     return BinaryExpression(
@@ -102,8 +129,8 @@ def make_unary_expression(
 
     The operand may be an ``Expression`` (used as-is), an ``Identifier``
     (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
-    (wrapped in ``LiteralExpression``); the same coercion rules as the
-    operator dunders apply.
+    other than ``bool`` (wrapped in ``LiteralExpression``); the same
+    coercion rules as the operator dunders apply.
 
     Args:
         operation: Unary operation to apply.
@@ -113,7 +140,8 @@ def make_unary_expression(
         A ``UnaryExpression`` over the coerced operand.
 
     Raises:
-        ValueError: If the operand has an unsupported type.
+        ValueError: If the operand is a bare Python ``bool`` or has an
+            unsupported type.
 
     """
     return UnaryExpression(operation, Expression._get_expression_from_other(operand))
@@ -151,8 +179,8 @@ def logical_not(
 
     The operand may be an ``Expression`` (used as-is), an ``Identifier``
     (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
-    (wrapped in ``LiteralExpression``); the same coercion rules as the
-    operator dunders apply.
+    other than ``bool`` (wrapped in ``LiteralExpression``); the same
+    coercion rules as the operator dunders apply.
 
     Args:
         expression: Operand to negate.
@@ -161,7 +189,8 @@ def logical_not(
         ``LOGICAL_NOT`` unary expression over the coerced operand.
 
     Raises:
-        ValueError: If the operand has an unsupported type.
+        ValueError: If the operand is a bare Python ``bool`` or has an
+            unsupported type.
 
     """
     return make_unary_expression(UnaryOperation.LOGICAL_NOT, expression)
@@ -174,8 +203,8 @@ def logical_and(
 
     Each operand may be an ``Expression`` (used as-is), an ``Identifier``
     (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
-    (wrapped in ``LiteralExpression``); the same coercion rules as the
-    operator dunders apply.
+    other than ``bool`` (wrapped in ``LiteralExpression``); the same
+    coercion rules as the operator dunders apply.
 
     Args:
         expressions: Operands to AND together. Must be at least two.
@@ -185,7 +214,7 @@ def logical_and(
 
     Raises:
         ValueError: If fewer than two operands are supplied, or if an
-            operand has an unsupported type.
+            operand is a bare Python ``bool`` or has an unsupported type.
 
     """
     return _build_right_folded_binary_tree(BinaryOperation.LOGICAL_AND, *expressions)
@@ -198,8 +227,8 @@ def logical_or(
 
     Each operand may be an ``Expression`` (used as-is), an ``Identifier``
     (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
-    (wrapped in ``LiteralExpression``); the same coercion rules as the
-    operator dunders apply.
+    other than ``bool`` (wrapped in ``LiteralExpression``); the same
+    coercion rules as the operator dunders apply.
 
     Args:
         expressions: Operands to OR together. Must be at least two.
@@ -209,7 +238,7 @@ def logical_or(
 
     Raises:
         ValueError: If fewer than two operands are supplied, or if an
-            operand has an unsupported type.
+            operand is a bare Python ``bool`` or has an unsupported type.
 
     """
     return _build_right_folded_binary_tree(BinaryOperation.LOGICAL_OR, *expressions)
@@ -226,8 +255,9 @@ def piecewise(
 
     Each element of each pair, and ``otherwise``, may be an ``Expression``
     (used as-is), an ``Identifier`` (wrapped in ``IdentifierExpression``),
-    or a value of ``LiteralType`` (wrapped in ``LiteralExpression``); the
-    same coercion rules as the operator dunders apply.
+    or a value of ``LiteralType`` other than ``bool`` (wrapped in
+    ``LiteralExpression``); the same coercion rules as the operator
+    dunders apply.
 
     Args:
         cases: One or more ``(condition, value)`` pairs, in evaluation
@@ -239,8 +269,8 @@ def piecewise(
 
     Raises:
         ValueError: If no case is supplied, if a case is not a 2-tuple,
-            if a condition is a bare Python ``bool``, or if an operand
-            has an unsupported type.
+            or if an operand is a bare Python ``bool`` or has an
+            unsupported type.
 
     """
     if not cases:
@@ -255,12 +285,8 @@ def piecewise(
             )
         condition, value = case
         if type(condition) is bool:
-            raise ValueError(
-                f"piecewise case {index} condition is a bare Python bool "
-                f"({condition!r}), not an expression. This is almost always "
-                "the accidental result of `expr == k`, which is Expression "
-                "identity comparison, not IR equality; use `.equals()` or "
-                "`.not_equals()` to build an equality condition."
+            raise _make_bare_bool_coercion_error(
+                f"piecewise case {index} condition", condition
             )
         conditions.append(Expression._get_expression_from_other(condition))
         values.append(Expression._get_expression_from_other(value))
@@ -279,8 +305,8 @@ def call(
 
     Each argument may be an ``Expression`` (used as-is), an ``Identifier``
     (wrapped in ``IdentifierExpression``), or a value of ``LiteralType``
-    (wrapped in ``LiteralExpression``); the same coercion rules as the
-    operator dunders apply.
+    other than ``bool`` (wrapped in ``LiteralExpression``); the same
+    coercion rules as the operator dunders apply.
 
     Args:
         function_name: Registry key of the function being called.
@@ -290,7 +316,8 @@ def call(
         A ``CallExpression`` over the coerced arguments.
 
     Raises:
-        ValueError: If an argument has an unsupported type.
+        ValueError: If an argument is a bare Python ``bool`` or has an
+            unsupported type.
 
     """
     coerced = tuple(
@@ -319,6 +346,12 @@ class Expression(
     :meth:`is_structurally_equivalent` for value-equality semantics,
     and avoid using :class:`Expression` instances as dict keys when you
     expect value-based lookups.
+
+    For the same reason, no operator dunder or builder coerces a bare
+    Python ``bool`` operand: ``expr == k`` is a ``bool``, and lifting it
+    would plant a constant where a comparison was meant. Build an
+    equality with :meth:`equals` and a Boolean constant with
+    ``LiteralExpression(True)`` or ``LiteralExpression(False)``.
 
     Expressions are :class:`~fhy_core.term.Term` instances: they compare
     by alpha-equivalence (derived from the field schema), report their free
@@ -431,6 +464,10 @@ class Expression(
         Returns:
             Equality expression.
 
+        Raises:
+            ValueError: If ``other`` is a bare Python ``bool`` or has an
+                unsupported type.
+
         """
         return make_binary_expression(BinaryOperation.EQUAL, self, other)
 
@@ -442,6 +479,10 @@ class Expression(
 
         Returns:
             Inequality expression.
+
+        Raises:
+            ValueError: If ``other`` is a bare Python ``bool`` or has an
+                unsupported type.
 
         """
         return make_binary_expression(BinaryOperation.NOT_EQUAL, self, other)
@@ -464,8 +505,8 @@ class Expression(
         """Create a logical AND expression over ``self`` and ``others``.
 
         Each item in ``others`` may be an ``Expression``, an ``Identifier``,
-        or a value of ``LiteralType``; the same coercion rules as the
-        operator dunders apply.
+        or a value of ``LiteralType`` other than ``bool``; the same
+        coercion rules as the operator dunders apply.
 
         Args:
             others: Additional operands to AND with ``self``. At least one
@@ -476,7 +517,8 @@ class Expression(
 
         Raises:
             ValueError: If no additional operands are supplied, or if an
-                operand has an unsupported type.
+                operand is a bare Python ``bool`` or has an unsupported
+                type.
 
         """
         return logical_and(self, *others)
@@ -487,8 +529,8 @@ class Expression(
         """Create a logical OR expression over ``self`` and ``others``.
 
         Each item in ``others`` may be an ``Expression``, an ``Identifier``,
-        or a value of ``LiteralType``; the same coercion rules as the
-        operator dunders apply.
+        or a value of ``LiteralType`` other than ``bool``; the same
+        coercion rules as the operator dunders apply.
 
         Args:
             others: Additional operands to OR with ``self``. At least one
@@ -499,7 +541,8 @@ class Expression(
 
         Raises:
             ValueError: If no additional operands are supplied, or if an
-                operand has an unsupported type.
+                operand is a bare Python ``bool`` or has an unsupported
+                type.
 
         """
         return logical_or(self, *others)
@@ -527,8 +570,8 @@ class Expression(
         """Build a ``CallExpression`` from a name and positional arguments.
 
         Each argument may be an ``Expression``, an ``Identifier``, or a
-        value of ``LiteralType``; the same coercion rules as the operator
-        dunders apply.
+        value of ``LiteralType`` other than ``bool``; the same coercion
+        rules as the operator dunders apply.
 
         Args:
             function_name: Registry key of the function being called.
@@ -538,7 +581,8 @@ class Expression(
             A ``CallExpression`` over the coerced arguments.
 
         Raises:
-            ValueError: If an argument has an unsupported type.
+            ValueError: If an argument is a bare Python ``bool`` or has
+                an unsupported type.
 
         """
         return call(function_name, *arguments)
@@ -549,7 +593,9 @@ class Expression(
             return other
         elif isinstance(other, Identifier):
             return IdentifierExpression(other)
-        elif type(other) is bool or type(other) in (int, float, str):
+        elif type(other) is bool:
+            raise _make_bare_bool_coercion_error("Operand", other)
+        elif type(other) in (int, float, str):
             return LiteralExpression(other)
         else:
             raise ValueError(
