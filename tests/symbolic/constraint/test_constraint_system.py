@@ -1091,23 +1091,109 @@ def test_every_bindings_path_decides_a_boolean_bound_into_a_case_condition(
     assert decide(constraint, {condition: value}) is expected
 
 
-@pytest.mark.z3
-def test_check_satisfiability_with_bindings_screens_before_the_symbol_types() -> None:
-    """Test an ill-typed binding raises ahead of a missing symbol type.
+def _ask_whether_an_ill_typed_system_is_satisfiable(
+    y: Identifier, symbol_types: Mapping[Identifier, SymbolType]
+) -> ConstraintOutcome:
+    """Ask `check_satisfiability` about ``2 and y == True``.
 
-    The binding is screened before it is substituted, alongside the
-    other checks on ``bindings``, so its error is not masked by the
-    symbol-type precondition on the residual.
+    The number under ``and`` makes the system ill-typed, and ``y == True``
+    is a hazard once ``y`` is INT-sorted.
+    """
+    hazardous = IdentifierExpression(y).equals(LiteralExpression(True))
+    system = create_constraint_system(
+        EquationConstraint(Expression.logical_and(LiteralExpression(2), hazardous))
+    )
+    return system.check_satisfiability(symbol_types)
+
+
+def _ask_whether_ill_typed_bindings_are_satisfiable(
+    y: Identifier, symbol_types: Mapping[Identifier, SymbolType]
+) -> ConstraintOutcome:
+    """Ask `check_satisfiability_with_bindings` to bind a number into a condition.
+
+    The binding makes the system ill-typed, and the member beside the
+    condition, ``y == True``, is a hazard once ``y`` is INT-sorted.
     """
     condition = mock_identifier("cond", 0)
-    y = mock_identifier("y", 1)
     system = create_constraint_system(
         _build_piecewise_condition_constraint(condition),
-        EquationConstraint(make_binary_expression(BinaryOperation.LESS, y, 3)),
+        EquationConstraint(IdentifierExpression(y).equals(LiteralExpression(True))),
     )
+    return system.check_satisfiability_with_bindings({condition: 1}, symbol_types)
+
+
+_ILL_TYPED_SATISFIABILITY_QUESTIONS = [
+    pytest.param(
+        _ask_whether_an_ill_typed_system_is_satisfiable, id="check_satisfiability"
+    ),
+    pytest.param(
+        _ask_whether_ill_typed_bindings_are_satisfiable,
+        id="check_satisfiability_with_bindings",
+    ),
+]
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("ask", _ILL_TYPED_SATISFIABILITY_QUESTIONS)
+def test_satisfiability_reports_a_missing_symbol_type_ahead_of_ill_typedness(
+    ask: Callable[[Identifier, Mapping[Identifier, SymbolType]], ConstraintOutcome],
+) -> None:
+    """Test both satisfiability methods raise a missing sort before an ill-typed tree.
+
+    The solver seam reports a missing symbol type first, then
+    ill-typedness, then the hazard screen, and both methods follow it:
+    the missing entry is the error a caller can fix without reading the
+    tree. The bindings method checks the identifiers substitution will
+    leave free before it substitutes, since substituting a number into a
+    case condition raises on its own.
+    """
+    y = mock_identifier("y", 1)
+
+    with pytest.raises(MissingSymbolTypeError) as exception_info:
+        ask(y, {})
+
+    assert _extract_reported_missing_names(exception_info.value) == y.name_hint
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("ask", _ILL_TYPED_SATISFIABILITY_QUESTIONS)
+def test_satisfiability_reports_ill_typedness_ahead_of_the_hazard_screen(
+    ask: Callable[[Identifier, Mapping[Identifier, SymbolType]], ConstraintOutcome],
+) -> None:
+    """Test both satisfiability methods raise ill-typedness rather than UNDECIDED.
+
+    With ``y`` INT-sorted, ``y == True`` is a hazard the screen would
+    report as UNDECIDED, but the tree is also ill-typed, which no solver
+    configuration can decide, so that is what both methods report.
+    """
+    y = mock_identifier("y", 1)
 
     with pytest.raises(NonBooleanLogicalOperandError):
-        system.check_satisfiability_with_bindings({condition: 1}, {})
+        ask(y, {y: SymbolType.INT})
+
+
+@pytest.mark.z3
+def test_check_satisfiability_with_bindings_counts_identifiers_a_binding_adds() -> None:
+    """Test the early symbol-type check sees identifiers a bound expression adds.
+
+    Binding ``x`` to ``z`` leaves ``z`` free and ``x`` bound, so ``z`` is
+    the missing sort to report, ahead of the number bound into the case
+    condition beside it.
+    """
+    condition = mock_identifier("cond", 0)
+    x = mock_identifier("x", 1)
+    z = mock_identifier("z", 2)
+    system = create_constraint_system(
+        _build_piecewise_condition_constraint(condition),
+        EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 3)),
+    )
+
+    with pytest.raises(MissingSymbolTypeError) as exception_info:
+        system.check_satisfiability_with_bindings(
+            {condition: 1, x: IdentifierExpression(z)}, {}
+        )
+
+    assert _extract_reported_missing_names(exception_info.value) == z.name_hint
 
 
 def test_check_satisfiability_with_bindings_matches_the_documented_example() -> None:

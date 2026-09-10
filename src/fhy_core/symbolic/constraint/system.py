@@ -10,7 +10,8 @@ classes its solver-backed entry points screen for before consulting Z3.
 
 The module also owns the shared ``symbol_types``-coverage validation
 (``_validate_symbol_types_cover_free_identifiers``,
-``_validate_symbol_types_cover_both_sides``) and the classification
+``_validate_symbol_types_cover_both_sides``,
+``_validate_symbol_types_cover_residual``) and the classification
 helper (``_classify_solver_answer``) that every solver-backed entry
 point routes its seam answer through, so the rule that an undecided seam
 answer stays undecided has one owner.
@@ -98,6 +99,34 @@ def _validate_symbol_types_cover_both_sides(
         antecedent.get_free_identifiers() | consequent.get_free_identifiers()
     )
     _raise_if_missing_symbol_types(free_identifiers - set(symbol_types))
+
+
+def _validate_symbol_types_cover_residual(
+    expression: Expression,
+    environment: Mapping[Identifier, Expression],
+    symbol_types: Mapping[Identifier, SymbolType],
+) -> None:
+    """Raise if a residual free identifier has no ``symbol_types`` entry.
+
+    Reads the identifiers ``expression.substitute(environment)`` would
+    leave free without substituting, so the precondition can be checked
+    ahead of a substitution that would raise on its own: each free
+    identifier ``environment`` binds is replaced by its value's free
+    identifiers, and every other free identifier stays.
+
+    Raises:
+        MissingSymbolTypeError: If one or more identifiers left free by
+            substituting ``environment`` into ``expression`` have no
+            corresponding ``symbol_types`` entry.
+
+    """
+    residual: frozenset[Identifier] = frozenset()
+    for identifier in expression.get_free_identifiers():
+        bound = environment.get(identifier)
+        residual |= (
+            frozenset({identifier}) if bound is None else bound.get_free_identifiers()
+        )
+    _raise_if_missing_symbol_types(residual - set(symbol_types))
 
 
 def _classify_solver_answer(answer: bool | None) -> ConstraintOutcome:
@@ -381,9 +410,11 @@ class ConstraintSystem(
         Raises:
             MissingSymbolTypeError: If ``symbol_types`` lacks an entry for
                 a free identifier of the lowered conjunction. Checked
-                ahead of the seam's hazard screen, so the precondition
-                raises even for a conjunction that would otherwise be
-                reported ``UNDECIDED``. This is a raise, not the
+                ahead of ill-typedness and of the seam's hazard screen,
+                the order the solver seam uses, so the precondition
+                raises even for a conjunction that is also ill-typed or
+                would otherwise be reported ``UNDECIDED``. This is a
+                raise, not the
                 ``ConstraintOutcome.UNDECIDED`` degradation
                 ``evaluate_with_bindings`` uses for a missing *value*
                 binding: a missing symbol type is a caller precondition
@@ -401,7 +432,10 @@ class ConstraintSystem(
                 -- under a logical connective or as a piecewise case
                 condition. Such a conjunction is ill-typed rather than
                 undecidable, so it raises instead of reporting
-                ``UNDECIDED``.
+                ``UNDECIDED``. Checked after the symbol-type
+                precondition and ahead of the seam's hazard screen, so
+                it is reported even where the screen would also refuse
+                the conjunction.
 
         """
         validate_timeout_milliseconds(timeout_milliseconds)
@@ -450,9 +484,13 @@ class ConstraintSystem(
         Raises:
             MissingSymbolTypeError: If ``symbol_types`` lacks an entry for
                 a free identifier of the residual expression left after
-                substitution. Checked ahead of the seam's hazard screen,
-                so the precondition raises even for a residual that would
-                otherwise be reported ``UNDECIDED``. Contrast a missing
+                substitution. Checked before anything is substituted,
+                against the identifiers substitution will leave free, and
+                ahead of ill-typedness and of the seam's hazard screen --
+                the order ``check_satisfiability`` and the solver seam
+                use -- so the precondition raises even for bindings that
+                are also ill-typed or a residual that would otherwise be
+                reported ``UNDECIDED``. Contrast a missing
                 entry in ``bindings`` itself: an identifier ``bindings``
                 does not cover is left free in the residual rather than
                 raising, so it only raises here if ``symbol_types`` also
@@ -475,12 +513,12 @@ class ConstraintSystem(
                 a logical connective or as a piecewise case condition --
                 counting an identifier ``bindings`` binds to a number.
                 Checked against the bindings before they are
-                substituted, like the ``ConstraintError`` above, so it
-                raises ahead of ``MissingSymbolTypeError``; substituting
-                a number into a case condition would otherwise build a
-                piecewise that refuses its own condition.
-                ``evaluate_with_bindings`` refuses the same bindings
-                with the same error.
+                substituted, since substituting a number into a case
+                condition would build a piecewise that refuses its own
+                condition, but after the symbol-type precondition and
+                ahead of the seam's hazard screen, as in
+                ``check_satisfiability``. ``evaluate_with_bindings``
+                refuses the same bindings with the same error.
 
         """
         validate_timeout_milliseconds(timeout_milliseconds)
@@ -488,6 +526,7 @@ class ConstraintSystem(
             return ConstraintOutcome.SATISFIED
         environment = _coerce_bindings_to_environment(bindings)
         conjunction = self.convert_to_expression()
+        _validate_symbol_types_cover_residual(conjunction, environment, symbol_types)
         validate_logical_operands(conjunction, environment)
         residual = conjunction.substitute(environment)
         return _decide_satisfiability(
