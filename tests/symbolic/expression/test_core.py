@@ -22,6 +22,7 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     CallExpression,
     Expression,
+    FunctionSort,
     IdentifierExpression,
     LiteralExpression,
     NonBooleanLogicalOperandError,
@@ -31,6 +32,7 @@ from fhy_core.symbolic.expression import (
     UndecidableError,
     build_literal_equivalence_key,
     call,
+    get_native_constant_identifier,
     is_integer_valued_literal,
     logical_and,
     logical_not,
@@ -38,6 +40,7 @@ from fhy_core.symbolic.expression import (
     make_binary_expression,
     make_unary_expression,
     piecewise,
+    register_native_constant,
     validate_logical_operands,
 )
 from fhy_core.traits import FrozenMutationError, HasOperands, StructuralEquivalence
@@ -1667,6 +1670,105 @@ def test_validate_logical_operands_rejects_a_numeric_piecewise_condition() -> No
 
     with pytest.raises(NonBooleanLogicalOperandError, match="case condition"):
         validate_logical_operands(expression)
+
+
+@pytest.mark.parametrize(
+    "build_expression",
+    [
+        pytest.param(
+            lambda constant: logical_and(constant, LiteralExpression(True)), id="and"
+        ),
+        pytest.param(
+            lambda constant: logical_or(LiteralExpression(False), constant), id="or"
+        ),
+        pytest.param(logical_not, id="not"),
+        pytest.param(
+            lambda constant: piecewise(
+                (constant, LiteralExpression(1)), otherwise=LiteralExpression(2)
+            ),
+            id="case_condition",
+        ),
+    ],
+)
+@pytest.mark.parametrize("constant_name", ["pi", "e", "inf", "nan"])
+def test_validate_logical_operands_rejects_a_native_constant_in_a_boolean_position(
+    constant_name: str, build_expression: Callable[[Expression], Expression]
+) -> None:
+    """Test a native constant is provably numeric in a Boolean position.
+
+    A constant's canonical identifier denotes the constant's value, and
+    every built-in constant is REAL-sorted, so under a connective or as
+    a case condition it is as ill-typed as the number it stands for.
+    """
+    constant = IdentifierExpression(get_native_constant_identifier(constant_name))
+
+    with pytest.raises(
+        NonBooleanLogicalOperandError, match="provably denotes a number"
+    ):
+        validate_logical_operands(build_expression(constant))
+
+
+def test_validate_logical_operands_reads_a_constant_by_its_sort_not_a_binding() -> None:
+    """Test a Boolean binding for a constant's identifier does not make it Boolean.
+
+    The identifier names a value rather than a variable: the SymPy bridge
+    lowers it to the constant's value whatever the environment binds it
+    to, so the binding never reaches the tree the backend sees.
+    """
+    pi = get_native_constant_identifier("pi")
+    expression = logical_and(IdentifierExpression(pi), LiteralExpression(True))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_logical_operands(expression, {pi: LiteralExpression(True)})
+
+
+def test_validate_logical_operands_accepts_a_boolean_native_constant(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a constant registered with the BOOL sort is a Boolean operand.
+
+    The screen reads the constant's declared sort rather than refusing
+    every constant, so a Boolean one is as well-typed as a Boolean
+    literal.
+    """
+    register_native_constant("test_validate_always", FunctionSort.BOOL, True)
+    constant = get_native_constant_identifier("test_validate_always")
+
+    validate_logical_operands(
+        logical_and(IdentifierExpression(constant), LiteralExpression(True))
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(
+            logical_and(
+                IdentifierExpression(get_native_constant_identifier("pi"))
+                > LiteralExpression(3),
+                LiteralExpression(True),
+            ),
+            id="constant_in_a_comparison",
+        ),
+        pytest.param(
+            logical_and(
+                IdentifierExpression(mock_identifier("pi", 0)),
+                LiteralExpression(True),
+            ),
+            id="identifier_named_after_a_constant",
+        ),
+    ],
+)
+def test_validate_logical_operands_accepts_a_constant_outside_a_boolean_position(
+    expression: Expression,
+) -> None:
+    """Test only a canonical constant standing in a Boolean position is refused.
+
+    A constant compared against a number is a well-typed Boolean, and an
+    identifier that merely shares a constant's name is an ordinary
+    variable whose sort the tree does not carry.
+    """
+    validate_logical_operands(expression)
 
 
 def test_validate_logical_operands_screens_a_case_condition_bound_to_a_number() -> None:

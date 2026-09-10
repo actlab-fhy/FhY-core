@@ -1,6 +1,7 @@
 """Tests for `fhy_core.symbolic.expression.passes.sympy`."""
 
 import logging
+from collections.abc import Callable
 from unittest.mock import Mock
 
 import pytest
@@ -1509,6 +1510,37 @@ def test_simplify_expression_refuses_a_number_bound_into_a_connective() -> None:
         simplify_expression(
             expression, {p: LiteralExpression(2), q: LiteralExpression(4)}
         )
+
+
+@pytest.mark.parametrize(
+    "build_expression",
+    [
+        pytest.param(
+            lambda constant: logical_and(constant, LiteralExpression(True)), id="and"
+        ),
+        pytest.param(logical_not, id="not"),
+        pytest.param(
+            lambda constant: PiecewiseExpression(
+                (constant,), (LiteralExpression(1),), LiteralExpression(2)
+            ),
+            id="case_condition",
+        ),
+    ],
+)
+def test_simplify_expression_refuses_a_native_constant_in_a_boolean_position(
+    build_expression: Callable[[Expression], Expression],
+) -> None:
+    """Test a constant in a Boolean position is refused with the package's error.
+
+    The bridge lowers the constant to its value, so ``pi & True`` and a
+    ``pi`` case condition made SymPy raise its own ``TypeError``, wrapped
+    as a pass failure, and ``~pi`` came back as a residual that is no
+    truth value at all. Each is ill-typed, and is refused as such.
+    """
+    constant = IdentifierExpression(get_native_constant_identifier("pi"))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        simplify_expression(build_expression(constant))
 
 
 @pytest.mark.parametrize(

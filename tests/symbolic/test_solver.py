@@ -2185,6 +2185,26 @@ def test_z3_question_reports_ill_typedness_ahead_of_a_native_constant(
         query(expression)
 
 
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
+@pytest.mark.parametrize("constant_name", _NATIVE_CONSTANT_NAMES)
+def test_z3_question_reports_a_native_constant_under_a_connective_as_ill_typed(
+    constant_name: str, query: Callable[[Expression], bool | None]
+) -> None:
+    """Test a constant under a connective raises the typed error, not a refusal.
+
+    The constant screen would refuse the question as well, but a
+    REAL-sorted constant under ``and`` is meaningless to every backend,
+    not just unanswerable by this one, and that is the diagnosis a caller
+    can act on.
+    """
+    expression = Expression.logical_and(
+        _refer_to_constant(constant_name), LiteralExpression(True)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(expression)
+
+
 def test_native_constant_screen_warns_naming_the_constant_and_the_entry_point(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

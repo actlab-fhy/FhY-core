@@ -61,6 +61,7 @@ from fhy_core.traits import (
 from fhy_core.utils import StrEnum, invert_frozen_dict
 
 from .errors import NonBooleanLogicalOperandError
+from .sort import FunctionSort
 
 LiteralType: TypeAlias = str | float | int | bool
 
@@ -1155,6 +1156,37 @@ _ARITHMETIC_BINARY_OPERATIONS: frozenset[BinaryOperation] = frozenset(
 """Binary operations that denote arithmetic, so their result is a number."""
 
 
+def _get_native_constant_sort(identifier: Identifier) -> FunctionSort | None:
+    """Return the declared sort of the native constant ``identifier`` denotes.
+
+    Returns ``None`` unless ``identifier`` is a registered native
+    constant's canonical identifier; one that merely shares a constant's
+    name is an ordinary variable.
+    """
+    # Deferred import: the registry's entry types import this module, so
+    # importing the registry at module scope here would form a cycle.
+    from .registry import try_get_native_constant_for_identifier  # noqa: PLC0415
+
+    constant = try_get_native_constant_for_identifier(identifier)
+    return None if constant is None else constant.sort
+
+
+def _is_identifier_provably_non_boolean(
+    identifier: Identifier, environment: Mapping[Identifier, Expression]
+) -> bool:
+    """Return whether ``identifier`` provably denotes a number.
+
+    A native constant's canonical identifier takes the constant's declared
+    sort, whatever ``environment`` binds it to. Any other identifier takes
+    its binding's classification, and an unbound one answers False.
+    """
+    constant_sort = _get_native_constant_sort(identifier)
+    if constant_sort is not None:
+        return constant_sort is not FunctionSort.BOOL
+    bound = environment.get(identifier)
+    return bound is not None and _is_provably_non_boolean(bound, {})
+
+
 def _is_provably_non_boolean(
     expression: Expression, environment: Mapping[Identifier, Expression]
 ) -> bool:
@@ -1164,7 +1196,10 @@ def _is_provably_non_boolean(
     -- an identifier with no ``environment`` binding, and a call, whose
     result sort lives in the registry rather than in the node -- answers
     False, so a caller screening on "provably non-Boolean" refuses only
-    what it can prove.
+    what it can prove. A registered native constant's canonical
+    identifier is the exception: it denotes the constant's value, so it
+    takes the constant's declared sort, which is REAL for every built-in
+    constant.
 
     Args:
         expression: Node whose sort is wanted.
@@ -1172,7 +1207,10 @@ def _is_provably_non_boolean(
             handed to a backend; a bound identifier takes its value's
             classification. The value is classified on its own, with no
             binding applied to it in turn, matching the simultaneous
-            non-chaining semantics of substitution.
+            non-chaining semantics of substitution. A native constant's
+            canonical identifier is classified by the constant's sort
+            whatever it is bound to: it names a value rather than a
+            variable, and the SymPy bridge lowers it to that value.
 
     Returns:
         True when the node denotes a number.
@@ -1182,8 +1220,7 @@ def _is_provably_non_boolean(
         bucket, _ = _classify_literal_value(expression.value)
         return bucket != _BOOLEAN_LITERAL_BUCKET
     elif isinstance(expression, IdentifierExpression):
-        bound = environment.get(expression.identifier)
-        return bound is not None and _is_provably_non_boolean(bound, {})
+        return _is_identifier_provably_non_boolean(expression.identifier, environment)
     elif isinstance(expression, UnaryExpression):
         return expression.operation is not UnaryOperation.LOGICAL_NOT
     elif isinstance(expression, BinaryExpression):
@@ -1246,17 +1283,23 @@ def validate_logical_operands(
     Z3 rejects the sort outright. The whole tree is screened, so a
     numeric operand nested anywhere under the root is found.
 
-    Only a provably numeric operand is refused. An identifier with no
-    ``environment`` binding and a call keep their sort off the tree, so
-    they pass: the screen refuses what it can prove ill-typed rather than
-    everything it cannot prove well-typed.
+    Only a provably numeric operand is refused. A registered native
+    constant's canonical identifier counts as the constant's declared
+    sort, which is REAL for every built-in constant, so ``pi`` under a
+    connective is refused. Any other identifier with no ``environment``
+    binding, and a call, keep their sort off the tree, so they pass: the
+    screen refuses what it can prove ill-typed rather than everything it
+    cannot prove well-typed.
 
     Args:
         expression: Expression about to be lowered to a symbolic backend,
             or to have ``environment`` substituted into it.
         environment: Values bound to identifiers before lowering, so an
-            identifier bound to a number is screened as one. Defaults to
-            ``None``, meaning no identifier is bound.
+            identifier bound to a number is screened as one. A binding
+            for a native constant's canonical identifier is not
+            consulted: the identifier names a value rather than a
+            variable. Defaults to ``None``, meaning no identifier is
+            bound.
 
     Raises:
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,

@@ -1325,6 +1325,15 @@ def test_convert_expression_to_z3_reports_ill_typedness_before_a_native_constant
         convert_expression_to_z3_expression(expression, {})
 
 
+def test_convert_expression_to_z3_reports_a_constant_operand_as_ill_typed() -> None:
+    """Test a constant in a Boolean position is ill-typed, not merely unlowerable."""
+    pi = get_native_constant_identifier("pi")
+    expression = logical_and(IdentifierExpression(pi), LiteralExpression(True))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        convert_expression_to_z3_expression(expression, {})
+
+
 def test_bridge_question_refuses_a_native_constant_it_would_decide_wrongly() -> None:
     """Test the bridge's own questions refuse a constant, not only the solver seam.
 
