@@ -13,6 +13,7 @@ from fhy_core.symbolic.expression import registry as _registry
 from fhy_core.utils.override import override
 
 __all__ = [
+    "MockIdentifierAliasError",
     "SerializableEqualHashable",
     "mock_identifier",
 ]
@@ -45,8 +46,29 @@ def function_registry_snapshot() -> Iterator[None]:
         _registry.set_registry_state_for_tests(snapshot)
 
 
+class MockIdentifierAliasError(Exception):
+    """Raised when a mock identifier would alias a registered native constant."""
+
+
+def _get_native_constant_names_by_identifier_id() -> dict[int, str]:
+    """Return each registered native constant's name, keyed by its identifier's id."""
+    return {
+        _registry.get_native_constant_identifier(name).id: name
+        for name, entry in _registry.get_registered_entries().items()
+        if isinstance(entry, _registry.NativeConstant)
+    }
+
+
 def mock_identifier(name_hint: str, identifier_id: int) -> Identifier:
     """Create a mock identifier.
+
+    The mock compares and hashes by ``id`` alone, as the real
+    :class:`Identifier` does. A native constant is recognized by its
+    canonical identifier, so a mock holding that identifier's id would be
+    the constant to every registry lookup, and a test using it as a
+    variable would silently ask about the constant. Such an id is refused.
+    The check reads the registry when the mock is made, so it cannot see a
+    constant registered afterwards.
 
     Args:
         name_hint: Variable name.
@@ -55,7 +77,19 @@ def mock_identifier(name_hint: str, identifier_id: int) -> Identifier:
     Returns:
         Mock identifier.
 
+    Raises:
+        MockIdentifierAliasError: If ``identifier_id`` is the id of a
+            currently registered native constant's canonical identifier.
+
     """
+    constant_name = _get_native_constant_names_by_identifier_id().get(identifier_id)
+    if constant_name is not None:
+        raise MockIdentifierAliasError(
+            f"mock_identifier({name_hint!r}, {identifier_id}) would alias the "
+            f"native constant {constant_name!r}: a mock compares by id, so every "
+            "registry lookup would treat it as that constant. Choose an id no "
+            "registered native constant holds."
+        )
     identifier = Mock(spec=Identifier)
     identifier._name_hint = name_hint
     identifier._id = identifier_id
