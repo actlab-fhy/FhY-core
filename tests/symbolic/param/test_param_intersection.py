@@ -902,7 +902,7 @@ def test_intersection_result_interoperates_with_is_subset() -> None:
 
     assert result.is_subset(left)
     assert result.is_subset(right)
-    assert not left.is_subset(result)
+    assert left.check_subset(result) is ConstraintOutcome.VIOLATED
 
 
 @pytest.mark.z3

@@ -12,7 +12,7 @@ import inspect
 import pytest
 
 from fhy_core.identifier import Identifier
-from fhy_core.symbolic.constraint import EquationConstraint
+from fhy_core.symbolic.constraint import ConstraintOutcome, EquationConstraint
 from fhy_core.symbolic.param import (
     Param,
     ParamError,
@@ -705,7 +705,7 @@ def test_multiplication_result_interoperates_with_is_subset() -> None:
     z = x * y
 
     assert z.is_subset(wider)
-    assert not wider.is_subset(z)
+    assert wider.check_subset(z) is ConstraintOutcome.VIOLATED
 
 
 @pytest.mark.z3

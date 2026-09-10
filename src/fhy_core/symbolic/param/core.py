@@ -232,13 +232,13 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
 
         Conservative about indeterminacy: a constraint the checker cannot
         decide counts as not satisfied, so a ``False`` result means
-        "not proven valid" rather than "proven invalid". A dependent
-        constraint checked without the bindings it needs is undecided for
-        every value, so this reports ``False`` for every value until those
-        bindings are supplied. This is the opposite polarity from
-        ``is_feasible``/``is_subset``, which treat an undecided outcome
-        optimistically; use ``validate_value`` to tell the two cases
-        apart from the message it raises.
+        "not proven valid" rather than "proven invalid"; use
+        ``validate_value`` to tell the two cases apart from the message it
+        raises. A dependent constraint checked without the bindings it
+        needs is undecided for every value, so this reports ``False`` for
+        every value until those bindings are supplied. ``is_feasible`` and
+        ``is_subset`` share this polarity: a ``True`` from any of them is a
+        proof.
 
         Args:
             value: Candidate value for this parameter's own variable.
@@ -454,15 +454,15 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         )
 
     def is_subset(self, other: "Param[_T]") -> bool:
-        """Return whether this parameter's feasible set is a subset of ``other``'s.
+        """Return whether this parameter's feasible set is proven within ``other``'s.
 
-        An optimistic wrapper over :meth:`check_subset`: only a
-        ``VIOLATED`` outcome reports ``False``, so an ``UNDECIDED`` one
-        reports ``True`` and a ``True`` result means "not disproven", not
-        "proven". Call :meth:`check_subset` to tell an undecided relation
-        apart from one reported to hold.
+        A conservative wrapper over :meth:`check_subset`: only a
+        ``SATISFIED`` outcome reports ``True``, so a ``True`` result means
+        the subset relation is proven. ``False`` covers both a decided
+        counterexample and an ``UNDECIDED`` relation; call
+        :meth:`check_subset` to tell them apart.
         """
-        return self.check_subset(other) is not ConstraintOutcome.VIOLATED
+        return self.check_subset(other) is ConstraintOutcome.SATISFIED
 
     def check_feasibility(self) -> ConstraintOutcome:
         """Decide whether some value satisfies the domain and all constraints.
@@ -499,24 +499,28 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         return self.domain.has_feasible_value(self.constraints, self.variable)
 
     def is_feasible(self) -> bool:
-        """Return whether some value satisfies the domain and all constraints.
+        """Return whether this parameter is proven to admit some value.
 
-        An optimistic wrapper over :meth:`check_feasibility`: only a
-        ``VIOLATED`` outcome reports ``False``, so an ``UNDECIDED`` one
-        reports ``True`` and a ``True`` result means "not disproven", not
-        "proven". Call :meth:`check_feasibility` to tell an undecided
-        parameter apart from one reported feasible.
+        A conservative wrapper over :meth:`check_feasibility`: only a
+        ``SATISFIED`` outcome reports ``True``, so a ``True`` result means
+        a value satisfying the domain and every constraint is proven to
+        exist. ``False`` covers both a parameter proven empty and one whose
+        feasibility is ``UNDECIDED``, so it is not the claim
+        :meth:`is_empty` makes; call :meth:`check_feasibility` to tell the
+        two apart.
         """
-        return self.check_feasibility() is not ConstraintOutcome.VIOLATED
+        return self.check_feasibility() is ConstraintOutcome.SATISFIED
 
     def is_empty(self) -> bool:
-        """Return whether no value satisfies the domain and all constraints.
+        """Return whether this parameter is proven to admit no value.
 
-        The complement of :meth:`is_feasible`, and so subject to the same
-        optimism from the other side: a ``True`` result means infeasibility
-        was reported, and a ``False`` result covers a parameter reported
-        feasible and one merely not disproven alike. Call
-        :meth:`check_feasibility` to tell those apart.
+        A conservative wrapper over :meth:`check_feasibility`: only a
+        ``VIOLATED`` outcome reports ``True``, so a ``True`` result means
+        no value can satisfy the domain and every constraint. It is not the
+        complement of :meth:`is_feasible`: an ``UNDECIDED`` outcome proves
+        neither that a value exists nor that none does, so both report
+        ``False``. Call :meth:`check_feasibility` to tell an undecided
+        parameter apart from one proven feasible.
         """
         return self.check_feasibility() is ConstraintOutcome.VIOLATED
 

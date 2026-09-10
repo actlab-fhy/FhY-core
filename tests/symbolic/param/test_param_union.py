@@ -12,7 +12,11 @@ from typing import Any
 import pytest
 
 from fhy_core.identifier import Identifier
-from fhy_core.symbolic.constraint import InSetConstraint, NotInSetConstraint
+from fhy_core.symbolic.constraint import (
+    ConstraintOutcome,
+    InSetConstraint,
+    NotInSetConstraint,
+)
 from fhy_core.symbolic.param import (
     Param,
     ParamError,
@@ -465,7 +469,7 @@ def test_union_result_interoperates_with_is_subset() -> None:
 
     assert left.is_subset(result)
     assert right.is_subset(result)
-    assert not result.is_subset(left)
+    assert result.check_subset(left) is ConstraintOutcome.VIOLATED
 
 
 def test_union_result_interoperates_with_is_feasible() -> None:
