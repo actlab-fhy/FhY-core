@@ -37,6 +37,7 @@ from fhy_core.symbolic.param import (
     create_integer_param,
     create_integer_param_between,
     create_real_param,
+    create_real_param_between,
 )
 
 from .conftest import mock_identifier
@@ -799,3 +800,89 @@ def test_real_in_set_param_is_not_subset_of_an_integer_param() -> None:
     outcome = own.check_subset(cast("Param[str | float]", other))
 
     assert outcome is ConstraintOutcome.VIOLATED
+
+
+# =============================================================================
+# Real domain: a not-in-set constraint's numeric member does not decide alone
+# =============================================================================
+
+
+def test_real_param_singleton_excluding_its_own_float_value_is_undecided() -> None:
+    """Test excluding a real singleton's own float value degrades to UNDECIDED.
+
+    Z3 lowers the excluded `float` member and the singleton's bounds to
+    the same rational, so the solver reports the parameter emptied.
+    Type-strict membership excludes only the `float` kind of `0.5` and
+    still admits the decimal-string kind that denotes the same value, so
+    the proof does not actually hold and must be reported UNDECIDED
+    rather than VIOLATED.
+    """
+    x = mock_identifier("x", 1)
+    param = create_real_param_between(0.5, 0.5, name=x).add_constraint(
+        NotInSetConstraint(x, {0.5})
+    )
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+    assert param.is_empty() is False
+
+
+def test_real_param_singleton_excluding_its_own_float_still_admits_string_kind() -> (
+    None
+):
+    """Test the excluded real singleton still admits its decimal-string kind.
+
+    Companion witness to the feasibility test above: the not-in-set
+    member is the `float` `0.5`, so the type-strict decimal-string
+    `"0.5"` denoting the same real value is a distinct member and stays a
+    valid value for the parameter.
+    """
+    x = mock_identifier("x", 1)
+    param = create_real_param_between(0.5, 0.5, name=x).add_constraint(
+        NotInSetConstraint(x, {0.5})
+    )
+
+    assert param.is_value_valid("0.5") is True
+
+
+def test_integer_param_singleton_excluding_its_own_value_stays_violated() -> None:
+    """Test an integer singleton excluding its own value stays decided VIOLATED.
+
+    The integer domain admits only `int`, so there is no second kind of
+    `5` for the exclusion to miss: the solver's proof is sound and must
+    not be downgraded the way the real-domain case above is.
+    """
+    x = mock_identifier("x", 1)
+    param = create_integer_param_between(5, 5, name=x).add_constraint(
+        NotInSetConstraint(x, {5})
+    )
+
+    assert param.check_feasibility() is ConstraintOutcome.VIOLATED
+    assert param.is_empty() is True
+
+
+def test_real_param_violated_without_set_constraints_stays_violated() -> None:
+    """Test a real VIOLATED that rests on no set member stays decided."""
+    x = mock_identifier("x", 1)
+    param = create_real_param_between(0.0, 1.0, name=x).add_constraint(
+        EquationConstraint(
+            BinaryExpression(
+                BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(2.0)
+            )
+        )
+    )
+
+    assert param.check_feasibility() is ConstraintOutcome.VIOLATED
+    assert param.is_empty() is True
+
+
+def test_real_param_in_set_float_member_is_feasible() -> None:
+    """Test a real param restricted to a float in-set member is feasible.
+
+    Enumeration over the in-set candidate compares type-strictly and is
+    unaffected by the solver's kind conflation, so this stays a decided
+    SATISFIED.
+    """
+    x = mock_identifier("x", 1)
+    param = create_real_param(name=x, constraints=[InSetConstraint(x, {0.5})])
+
+    assert param.check_feasibility() is ConstraintOutcome.SATISFIED

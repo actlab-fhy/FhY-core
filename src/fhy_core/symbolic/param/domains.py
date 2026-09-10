@@ -891,32 +891,77 @@ def _does_own_admit_a_value_outside(
     return True
 
 
+def _does_set_constraint_hold_a_float_member(
+    constraint: InSetConstraint | NotInSetConstraint, variable: Identifier
+) -> bool:
+    """Return whether constraint is scoped to variable and holds a float member.
+
+    A lifted ``float`` member is the one kind Z3's REAL sort conflates
+    with every other kind denoting the same number (a decimal-grammar
+    ``str``, in particular): type-strict membership treats them as
+    distinct members, but the sort lowers them all to one rational. Reads
+    the public ``members``, scoped to ``variable`` so a constraint scoped
+    elsewhere never triggers a kind-conflation downgrade for it.
+
+    """
+    return constraint.variable == variable and any(
+        isinstance(member, float) for member in constraint.members
+    )
+
+
 def _downgrade_unproven_implication(
     outcome: ConstraintOutcome,
     is_own_exact: bool,
     is_other_exact: bool,
+    own_constraints: Sequence[Constraint],
     own_variable: Identifier,
+    other_constraints: Sequence[Constraint],
     other_variable: Identifier,
+    symbol_type: SymbolType,
 ) -> ConstraintOutcome:
-    """Return ``outcome`` unless a weakened side leaves it unproven, then ``UNDECIDED``.
+    """Return ``outcome`` unless it rests on an unproven side, then ``UNDECIDED``.
 
     Screening only widens a side's admissible set. A ``VIOLATED`` rests on
     a value inside the antecedent and outside the consequent, which an
     inexact antecedent may not actually admit; a ``SATISFIED`` rests on
     every antecedent value lying inside the consequent, which an inexact
-    consequent may not actually admit. Either downgrade is logged at
-    ``WARNING``.
+    consequent may not actually admit. Over the REAL sort, Z3 also
+    conflates a lifted ``float`` member with every other kind denoting the
+    same number: a not-in-set antecedent holding one excludes more than
+    type-strict membership does (the true antecedent is wider), and an
+    in-set consequent holding one admits more than type-strict membership
+    does (the consequent is wider than it should be); either makes a
+    ``SATISFIED`` unproven for the same reason an inexact consequent does.
+    A ``VIOLATED`` is not downgraded for this reason, since its
+    counterexample can take the member's own kind. Every downgrade is
+    logged at ``WARNING``.
 
     """
+    is_own_narrowed_by_kind_conflation = symbol_type is SymbolType.REAL and any(
+        isinstance(constraint, NotInSetConstraint)
+        and _does_set_constraint_hold_a_float_member(constraint, own_variable)
+        for constraint in own_constraints
+    )
+    is_other_widened_by_kind_conflation = symbol_type is SymbolType.REAL and any(
+        isinstance(constraint, InSetConstraint)
+        and _does_set_constraint_hold_a_float_member(constraint, other_variable)
+        for constraint in other_constraints
+    )
     is_unproven = (outcome is ConstraintOutcome.VIOLATED and not is_own_exact) or (
-        outcome is ConstraintOutcome.SATISFIED and not is_other_exact
+        outcome is ConstraintOutcome.SATISFIED
+        and (
+            not is_other_exact
+            or is_own_narrowed_by_kind_conflation
+            or is_other_widened_by_kind_conflation
+        )
     )
     if not is_unproven:
         return outcome
     _LOGGER.warning(
         "compute_constraint_implication_subset: the solver's %s answer to "
         "whether %r implies %r rests on constraints screening dropped or "
-        "narrowed; reporting UNDECIDED.",
+        "narrowed, or on a REAL-sort member Z3 conflates with another kind; "
+        "reporting UNDECIDED.",
         outcome.name,
         own_variable,
         other_variable,
@@ -960,10 +1005,19 @@ def compute_constraint_implication_subset(
     exactly when the weakened systems still prove it: ``SATISFIED`` with
     an exact consequent, or ``VIOLATED`` with an exact antecedent. A
     ``VIOLATED`` from an inexact antecedent (a counterexample the dropped
-    constraints might forbid) and a ``SATISFIED`` into an inexact
-    consequent (an implication the dropped constraints might break) are
-    reported ``UNDECIDED`` (logged at ``WARNING``), as is a solver that
-    gave up.
+    constraints might forbid) is reported ``UNDECIDED`` (logged at
+    ``WARNING``), as is a solver that gave up.
+
+    A ``SATISFIED`` is also downgraded to ``UNDECIDED`` when the
+    consequent is inexact (an implication the dropped constraints might
+    break), and, over the REAL sort, when the antecedent's own not-in-set
+    constraint or the consequent's in-set constraint holds a lifted
+    ``float`` member: Z3 conflates that member with every other kind
+    denoting the same number, narrowing the antecedent or widening the
+    consequent beyond what type-strict membership says (see
+    ``_downgrade_unproven_implication``). A ``VIOLATED`` is not
+    downgraded for the REAL-sort case, since its counterexample can take
+    the member's own kind.
 
     Args:
         own_domain: Domain of the candidate subset parameter.
@@ -1036,7 +1090,14 @@ def compute_constraint_implication_subset(
             other_variable,
         )
     return _downgrade_unproven_implication(
-        outcome, is_own_exact, is_other_exact, own_variable, other_variable
+        outcome,
+        is_own_exact,
+        is_other_exact,
+        own_constraints,
+        own_variable,
+        other_constraints,
+        other_variable,
+        symbol_type,
     )
 
 
@@ -1391,13 +1452,19 @@ def _numeric_has_feasible_value(
     ``ConstraintSystem`` built from ``variable``-only equation
     constraints and ``NotInSetConstraint``s narrowed to their liftable
     members (see ``_build_screened_constraint_system_with_fidelity``).
-    Screening only widens the admissible set, so ``VIOLATED`` on the
-    screened system is reported as it stands, while ``SATISFIED`` is
+    Screening only widens the admissible set, so ``SATISFIED`` is
     reported only when that system is exact: when a dependent or
     foreign-scoped constraint was dropped or narrowed (logged at
     ``WARNING``), the satisfying value may violate it, and ``UNDECIDED``
-    is reported instead (also logged at ``WARNING``). A solver that gives
-    up reports ``UNDECIDED``.
+    is reported instead (also logged at ``WARNING``).
+
+    ``VIOLATED`` on the screened system is reported as it stands, except
+    over the REAL sort when some not-in-set constraint on ``variable``
+    holds a lifted ``float`` member: Z3 conflates that member with every
+    other kind denoting the same number, so it excludes more than
+    type-strict membership does, and the ``VIOLATED`` is downgraded to
+    ``UNDECIDED`` too (logged at ``WARNING``, naming ``variable``). A
+    solver that gives up reports ``UNDECIDED``.
 
     Raises:
         NonBooleanLogicalOperandError: If a constraint the enumeration
@@ -1418,6 +1485,20 @@ def _numeric_has_feasible_value(
             "_numeric_has_feasible_value: the solver's SATISFIED answer for "
             "variable %r rests on constraints screening dropped or narrowed; "
             "reporting UNDECIDED.",
+            variable,
+        )
+        return ConstraintOutcome.UNDECIDED
+    is_narrowed_by_kind_conflation = symbol_type is SymbolType.REAL and any(
+        isinstance(constraint, NotInSetConstraint)
+        and _does_set_constraint_hold_a_float_member(constraint, variable)
+        for constraint in constraints
+    )
+    if outcome is ConstraintOutcome.VIOLATED and is_narrowed_by_kind_conflation:
+        _LOGGER.warning(
+            "_numeric_has_feasible_value: the solver's VIOLATED answer for "
+            "variable %r rests on a not-in-set constraint whose float "
+            "member the REAL sort conflates with another kind denoting the "
+            "same number; reporting UNDECIDED.",
             variable,
         )
         return ConstraintOutcome.UNDECIDED

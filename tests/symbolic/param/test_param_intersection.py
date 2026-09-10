@@ -49,6 +49,7 @@ from fhy_core.symbolic.param import (
     create_ordinal_param,
     create_permutation_param,
     create_real_param,
+    create_real_param_between,
     create_real_param_with_lower_bound,
     create_union_param,
 )
@@ -1133,6 +1134,31 @@ def test_intersection_of_two_undecided_operands_is_returned_live() -> None:
     right = _create_undecided_integer_param("b", 2)
 
     result = create_intersection_param(left, right)
+
+    assert result.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+# =============================================================================
+# Real domain: a not-in-set constraint's numeric member does not decide emptiness
+# =============================================================================
+
+
+@pytest.mark.z3
+def test_real_intersection_excluding_a_shared_float_value_is_returned_live() -> None:
+    """Test a real intersection narrowed by its own float value is returned live.
+
+    ``c`` is the real singleton `0.5` and ``d`` excludes the `float`
+    member `0.5`; Z3 lowers both to the same rational, so the solver
+    reports the conjunction emptied. Type-strict membership still admits
+    the decimal-string kind of `0.5` for both operands, so the
+    conjunction is not actually empty and the factory must return a live
+    result whose feasibility is UNDECIDED rather than raise `ParamError`.
+    """
+    c = create_real_param_between(0.5, 0.5, name=mock_identifier("c", 1))
+    w = mock_identifier("w", 2)
+    d = create_real_param(name=w, constraints=[NotInSetConstraint(w, {0.5})])
+
+    result = create_intersection_param(c, d)
 
     assert result.check_feasibility() is ConstraintOutcome.UNDECIDED
 

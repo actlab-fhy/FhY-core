@@ -4,6 +4,7 @@ from fhy_core.symbolic.constraint import (
     ConstraintOutcome,
     EquationConstraint,
     InSetConstraint,
+    NotInSetConstraint,
 )
 from fhy_core.symbolic.param import (
     create_categorical_param,
@@ -13,6 +14,7 @@ from fhy_core.symbolic.param import (
     create_ordinal_param,
     create_permutation_param,
     create_real_param,
+    create_real_param_between,
     create_real_param_with_lower_bound,
     create_real_param_with_upper_bound,
 )
@@ -58,6 +60,87 @@ def test_narrower_interval_real_param_is_subset_of_wider_interval_real_param() -
 
     assert wider.check_subset(narrower) is ConstraintOutcome.VIOLATED
     assert narrower.is_subset(wider)
+
+
+def test_real_interval_subset_with_no_set_constraints_stays_satisfied() -> None:
+    """Test a real interval subset with no set constraints stays decided SATISFIED."""
+    smaller = create_real_param_between(0.2, 0.3)
+    larger = create_real_param_between(0.0, 1.0)
+
+    assert smaller.check_subset(larger) is ConstraintOutcome.SATISFIED
+
+
+# =============================================================================
+# Real domain: a numeric set member does not decide the relation alone
+# =============================================================================
+
+
+def test_real_singleton_is_not_proven_subset_of_an_in_set_float_member() -> None:
+    """Test a real singleton is not proven a subset of a float in-set param.
+
+    Z3 lowers the singleton's bound and the in-set `float` member to the
+    same rational, so the solver would prove the implication. Type-strict
+    membership admits the singleton's decimal-string kind, which the
+    in-set constraint's `float` member does not cover, so the relation
+    does not actually hold and must be reported UNDECIDED rather than
+    SATISFIED.
+    """
+    singleton = create_real_param_between(0.5, 0.5)
+    in_set = create_real_param()
+    in_set = in_set.add_constraint(InSetConstraint(in_set.variable, {0.5}))
+
+    outcome = singleton.check_subset(in_set)
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    assert singleton.is_subset(in_set) is False
+
+
+def test_self_excluding_real_singleton_is_not_proven_subset_of_a_narrower_range() -> (
+    None
+):
+    """Test a singleton narrowed by its own not-in-set float is not proven a subset.
+
+    Z3 lowers the singleton's bound and the excluded `float` member to
+    the same rational, making the singleton appear empty and therefore a
+    trivial subset of anything. Type-strict membership still admits the
+    singleton's decimal-string kind, which lies outside the narrower
+    range, so the relation does not actually hold and must be reported
+    UNDECIDED rather than SATISFIED.
+    """
+    own = create_real_param_between(0.5, 0.5)
+    own = own.add_constraint(NotInSetConstraint(own.variable, {0.5}))
+    other = create_real_param_between(0.0, 0.4)
+
+    assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
+
+
+def test_real_interval_subset_violated_by_an_excluded_member_stays_decided() -> None:
+    """Test a real subset VIOLATED by a not-in-set member stays decided.
+
+    The counterexample the solver finds can take the excluded member's
+    own `float` kind, so this VIOLATED answer is sound and must not be
+    downgraded the way a SATISFIED answer resting on the same kind of
+    constraint is.
+    """
+    own = create_real_param_between(0.0, 1.0)
+    other = create_real_param()
+    other = other.add_constraint(NotInSetConstraint(other.variable, {0.5}))
+
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
+
+
+def test_real_in_set_float_member_is_proven_subset_of_a_covering_range() -> None:
+    """Test a real in-set float member is proven a subset of a covering range.
+
+    Enumeration over the in-set candidate compares type-strictly and is
+    unaffected by the solver's kind conflation, so this stays a decided
+    SATISFIED.
+    """
+    own = create_real_param()
+    own = own.add_constraint(InSetConstraint(own.variable, {0.5}))
+    other = create_real_param_between(0.0, 1.0)
+
+    assert own.check_subset(other) is ConstraintOutcome.SATISFIED
 
 
 # =============================================================================
