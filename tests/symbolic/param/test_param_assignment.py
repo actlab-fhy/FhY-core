@@ -11,7 +11,10 @@ from fhy_core.serialization import (
     serialize_registry_wrapped_value,
 )
 from fhy_core.symbolic.constraint import EquationConstraint, NotInSetConstraint
-from fhy_core.symbolic.expression import IdentifierExpression
+from fhy_core.symbolic.expression import (
+    IdentifierExpression,
+    NonBooleanLogicalOperandError,
+)
 from fhy_core.symbolic.param import (
     Param,
     ParamAssignment,
@@ -25,7 +28,7 @@ from fhy_core.symbolic.param import (
     create_real_param_with_lower_bound,
 )
 
-from .conftest import mock_identifier
+from .conftest import build_case_condition_constraint, mock_identifier
 
 # =============================================================================
 # Construction & accessors
@@ -441,3 +444,48 @@ def test_construct_from_fields_stores_the_domain_canonical_value() -> None:
 
     assert from_fields.value == (1, 2, 3)
     assert from_fields.is_structurally_equivalent(constructed)
+
+
+# =============================================================================
+# An ill-typed constraint is refused, not accepted as undecided
+# =============================================================================
+
+
+def _create_param_conditioned_on_its_own_value() -> Param[int]:
+    """Create `x` whose constraint takes `x` itself as a case condition.
+
+    Binding any integer value to `x` puts a number in the case condition.
+    """
+    x = mock_identifier("x", 1)
+    return create_integer_param(
+        name=x, constraints=[build_case_condition_constraint(IdentifierExpression(x))]
+    )
+
+
+def test_direct_construction_raises_for_a_number_in_a_case_condition() -> None:
+    """Test constructing an assignment that binds a number into a condition raises."""
+    param = _create_param_conditioned_on_its_own_value()
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        ParamAssignment(param, 3)
+
+
+def test_deserialization_refuses_a_number_in_a_case_condition() -> None:
+    """Test deserialization refuses an ill-typed payload rather than accepting it.
+
+    Deserialization accepts a constraint it cannot decide, since the
+    bindings that proved a dependent constraint are not serialized. An
+    ill-typed constraint is not undecided: binding the value puts a number
+    in a case condition, so the payload is refused, as a
+    `DeserializationValueError` caused by the typed error.
+    """
+    param = _create_param_conditioned_on_its_own_value()
+    payload = {
+        "param": param.serialize_to_dict(),
+        "value": serialize_registry_wrapped_value(3),
+    }
+
+    with pytest.raises(DeserializationValueError) as excinfo:
+        ParamAssignment.deserialize_from_dict(payload)  # type: ignore[arg-type]  # test: dict shape
+
+    assert isinstance(excinfo.value.__cause__, NonBooleanLogicalOperandError)

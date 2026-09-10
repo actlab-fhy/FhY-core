@@ -256,6 +256,13 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             ConstraintError: If a value bound to an identifier a
                 constraint references cannot be lifted into the
                 substitution environment.
+            NonBooleanLogicalOperandError: If a constraint holds a
+                provably numeric operand in a Boolean position -- under
+                a logical connective or as a piecewise case condition --
+                counting ``value`` or a ``bindings`` entry that puts a
+                number there. Such a constraint is ill-typed rather than
+                undecided, so it raises instead of reporting ``False``.
+                Checked only for an admissible value.
 
         """
         self._validate_bindings(bindings)
@@ -290,6 +297,8 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             ConstraintError: If a value bound to an identifier a
                 constraint references cannot be lifted into the
                 substitution environment.
+            NonBooleanLogicalOperandError: As :meth:`is_value_valid`
+                raises it, for any value.
 
         """
         normalized = self.domain.normalize_value(value)
@@ -377,6 +386,13 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
                 if the value violates a constraint, or if a constraint
                 could not be verified. The bindings check runs first, so
                 a caller error is reported whatever the value is.
+            NonBooleanLogicalOperandError: If a constraint holds a
+                provably numeric operand in a Boolean position -- under
+                a logical connective or as a piecewise case condition --
+                counting ``value`` or a ``bindings`` entry that puts a
+                number there. Such a constraint is ill-typed rather than
+                unverifiable, so it is not reported as a ``ParamError``.
+                Checked only for an admissible value.
 
         """
         self._validate_bindings(bindings)
@@ -445,6 +461,15 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             ``UNDECIDED`` when neither the solver nor the enumeration
             could decide, or the solver decided only a weakened question.
 
+        Raises:
+            NonBooleanLogicalOperandError: If a constraint of either
+                parameter that the query evaluates holds a provably
+                numeric operand in a Boolean position -- under a logical
+                connective or as a piecewise case condition -- counting
+                an in-set candidate bound to its variable. Such a
+                constraint is ill-typed rather than undecided, so it
+                raises instead of reporting ``UNDECIDED``.
+
         """
         return self.domain.compute_feasibility_subset(
             self.constraints,
@@ -462,6 +487,11 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         the subset relation is proven. ``False`` covers both a decided
         counterexample and an ``UNDECIDED`` relation; call
         :meth:`check_subset` to tell them apart.
+
+        Raises:
+            NonBooleanLogicalOperandError: As :meth:`check_subset`
+                raises it.
+
         """
         return self.check_subset(other) is ConstraintOutcome.SATISFIED
 
@@ -496,6 +526,15 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             neither the solver nor the enumeration could decide, or the
             solver decided only a weakened question.
 
+        Raises:
+            NonBooleanLogicalOperandError: If a constraint the query
+                evaluates holds a provably numeric operand in a Boolean
+                position -- under a logical connective or as a piecewise
+                case condition -- counting an in-set candidate bound to
+                this parameter's variable. Such a constraint is
+                ill-typed rather than undecided, so it raises instead of
+                reporting ``UNDECIDED``.
+
         """
         return self.domain.has_feasible_value(self.constraints, self.variable)
 
@@ -509,6 +548,11 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         feasibility is ``UNDECIDED``, so it is not the claim
         :meth:`is_empty` makes; call :meth:`check_feasibility` to tell the
         two apart.
+
+        Raises:
+            NonBooleanLogicalOperandError: As :meth:`check_feasibility`
+                raises it.
+
         """
         return self.check_feasibility() is ConstraintOutcome.SATISFIED
 
@@ -522,6 +566,11 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         neither that a value exists nor that none does, so both report
         ``False``. Call :meth:`check_feasibility` to tell an undecided
         parameter apart from one proven feasible.
+
+        Raises:
+            NonBooleanLogicalOperandError: As :meth:`check_feasibility`
+                raises it.
+
         """
         return self.check_feasibility() is ConstraintOutcome.VIOLATED
 
@@ -546,6 +595,8 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             ConstraintError: If a value bound to an identifier a
                 constraint references cannot be lifted into the
                 substitution environment.
+            NonBooleanLogicalOperandError: As :meth:`validate_value`
+                raises it.
 
         """
         self.validate_value(value, bindings=bindings)
@@ -813,6 +864,12 @@ def _raise_if_value_provably_invalid(param: "Param[_T]", value: _T) -> None:
     Raises:
         ParamError: If ``value`` is not admissible in the parameter's
             domain, or a constraint provably rejects it.
+        NonBooleanLogicalOperandError: If a constraint holds a provably
+            numeric operand in a Boolean position -- under a logical
+            connective or as a piecewise case condition -- counting
+            ``value`` bound to the parameter's variable. Such a
+            constraint is ill-typed rather than undecided, so it is
+            refused rather than accepted as an undecided remainder.
 
     """
     if not param.is_value_admissible(value):
@@ -835,6 +892,13 @@ class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generi
 
     Two assignments are structurally equivalent when their parameters are
     equivalent and their bound values compare equal.
+
+    Raises:
+        ParamError: If ``value`` is not a valid assignment for ``param``,
+            as :meth:`Param.validate_value` decides it without bindings.
+        NonBooleanLogicalOperandError: As :meth:`Param.validate_value`
+            raises it.
+
     """
 
     param: "Param[_T]" = field(metadata={"serialize_codec": _PARAM_CODEC})
@@ -865,6 +929,16 @@ class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generi
         constraint decidable from this parameter's own variable -- and
         accepts an undecided remainder. The accepted value is stored in
         the domain's canonical form.
+
+        Raises:
+            ParamError: If the value is not admissible in the parameter's
+                domain, or a constraint provably rejects it.
+            NonBooleanLogicalOperandError: If binding the value puts a
+                number in a Boolean position of a constraint, which is
+                ill-typed rather than undecided. Reached through
+                deserialization, either error surfaces as a
+                ``DeserializationValueError``.
+
         """
         param: Param[Any] = fields["param"]
         value = fields["value"]
@@ -1757,6 +1831,10 @@ def create_intersection_param(
             member sets, a numeric conjunction the enumeration or the
             solver proves infeasible, or an operand that is itself proven
             infeasible.
+        NonBooleanLogicalOperandError: If a carried constraint holds a
+            provably numeric operand in a Boolean position, as the
+            emptiness check through :meth:`Param.check_feasibility`
+            raises it.
 
     """
     coerced_left, coerced_right = _coerce_intersection_operands(left, right)

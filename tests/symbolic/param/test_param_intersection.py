@@ -29,6 +29,7 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    NonBooleanLogicalOperandError,
 )
 from fhy_core.symbolic.param import (
     Param,
@@ -66,6 +67,7 @@ from .conftest import (
     assert_none_satisfied,
     assert_none_valid,
     assert_param_round_trips_in_all_formats,
+    build_case_condition_constraint,
     mock_identifier,
 )
 
@@ -1161,3 +1163,27 @@ def test_intersection_with_a_non_liftable_set_member_on_the_plain_operand_raises
         create_intersection_param(left, right)
 
     assert isinstance(excinfo.value.__cause__, ConstraintError)
+
+
+# =============================================================================
+# An ill-typed conjunction raises rather than being returned live
+# =============================================================================
+
+
+def test_intersection_raises_for_a_number_in_a_case_condition() -> None:
+    """Test an ill-typed operand's error propagates from the emptiness check.
+
+    `create_intersection_param` decides emptiness through
+    `check_feasibility`, which refuses a number in a Boolean position.
+    Returning the conjunction live as undecided would hand back a
+    parameter no query can answer.
+    """
+    x = mock_identifier("x", 1)
+    ill_typed = create_integer_param(
+        name=x,
+        constraints=[build_case_condition_constraint(IdentifierExpression(x) + 1)],
+    )
+    well_typed = create_integer_param(name=mock_identifier("y", 2))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        create_intersection_param(ill_typed, well_typed)

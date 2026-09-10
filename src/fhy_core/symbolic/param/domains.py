@@ -29,6 +29,10 @@ system still proves is kept (infeasibility, a counterexample against an exact
 antecedent, an implication into an exact consequent), and an answer it does not
 prove is reported as ``UNDECIDED``. Finite-set domains enumerate their value
 sets and so always decide.
+
+An ill-typed constraint, one holding a provably numeric operand in a Boolean
+position, is not undecided: the ``NonBooleanLogicalOperandError`` the
+constraint and solver layers raise for it propagates instead.
 """
 
 import itertools
@@ -112,7 +116,14 @@ DecidedOutcome: TypeAlias = Literal[
 def are_all_constraints_satisfied(
     constraints: Sequence[Constraint], variable: Identifier, value: Any
 ) -> bool:
-    """Return whether ``value`` bound to ``variable`` satisfies every constraint."""
+    """Return whether ``value`` bound to ``variable`` satisfies every constraint.
+
+    Raises:
+        NonBooleanLogicalOperandError: If a constraint holds a provably
+            numeric operand in a Boolean position once ``value`` is
+            bound; an ill-typed constraint is not reported unsatisfied.
+
+    """
     return all(
         constraint.is_satisfied_with_bindings({variable: value})
         for constraint in constraints
@@ -197,12 +208,24 @@ def evaluate_system_outcome(
     it degrades to ``UNDECIDED`` (logged at ``WARNING``) rather than
     escaping a parameter-level query as an exception.
 
+    An ill-typed system is not degraded. A number in a Boolean position
+    -- under a logical connective or as a piecewise case condition, a
+    binding that puts one there included -- has a meaning under no
+    backend, so ``UNDECIDED`` would invite a caller to retry a question
+    that cannot succeed; the error propagates, as it does from the
+    constraint and solver layers.
+
     Args:
         system: Constraints to decide.
         bindings: Values for the identifiers the constraints reference.
 
     Returns:
         The system's outcome, or ``UNDECIDED`` when the bridge failed.
+
+    Raises:
+        NonBooleanLogicalOperandError: If a member equation holds a
+            provably numeric operand in a Boolean position, counting a
+            binding that puts a number there.
 
     """
     try:
@@ -825,6 +848,10 @@ def _does_own_admit_a_value_outside(
         True only when a value satisfying every one of ``own``'s
         constraints provably lies outside ``permitted_values``.
 
+    Raises:
+        NonBooleanLogicalOperandError: If ``own``'s screened system
+            holds a provably numeric operand in a Boolean position.
+
     """
     own_system, is_exact = _build_screened_constraint_system_with_fidelity(
         own_constraints, own_variable
@@ -943,6 +970,14 @@ def compute_constraint_implication_subset(
         ``VIOLATED`` when a counterexample is decided, and ``UNDECIDED``
         when neither the solver nor the enumeration could decide, or the
         solver decided only a weakened question.
+
+    Raises:
+        NonBooleanLogicalOperandError: If a constraint either branch
+            evaluates holds a provably numeric operand in a Boolean
+            position -- under a logical connective or as a piecewise
+            case condition -- counting an in-set candidate bound to its
+            variable. Such a constraint is ill-typed rather than
+            undecided, so it raises instead of reporting ``UNDECIDED``.
 
     """
     if any(isinstance(c, InSetConstraint) for c in own_constraints):
@@ -1102,6 +1137,12 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
             solver could not decide. Finite-set domains enumerate, so
             they never report ``UNDECIDED``.
 
+        Raises:
+            NonBooleanLogicalOperandError: From a numeric domain, if a
+                constraint the query evaluates holds a provably numeric
+                operand in a Boolean position. A finite-set domain
+                carries only set constraints and never raises it.
+
         """
 
     @abstractmethod
@@ -1115,6 +1156,12 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
             when none can exist, and ``UNDECIDED`` when the solver could
             not decide. Finite-set domains enumerate, so they never report
             ``UNDECIDED``.
+
+        Raises:
+            NonBooleanLogicalOperandError: From a numeric domain, if a
+                constraint the query evaluates holds a provably numeric
+                operand in a Boolean position. A finite-set domain
+                carries only set constraints and never raises it.
 
         """
 
@@ -1341,6 +1388,12 @@ def _numeric_has_feasible_value(
     ``WARNING``), the satisfying value may violate it, and ``UNDECIDED``
     is reported instead (also logged at ``WARNING``). A solver that gives
     up reports ``UNDECIDED``.
+
+    Raises:
+        NonBooleanLogicalOperandError: If a constraint the enumeration
+            or the solver evaluates holds a provably numeric operand in a
+            Boolean position, counting an in-set candidate bound to
+            ``variable``.
 
     """
     if any(isinstance(c, InSetConstraint) for c in constraints):

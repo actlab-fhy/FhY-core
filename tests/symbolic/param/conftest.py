@@ -9,6 +9,8 @@ from fhy_core.serialization import (
     SerializationFormat,
     register_serializable,
 )
+from fhy_core.symbolic.constraint import EquationConstraint
+from fhy_core.symbolic.expression import Expression, LiteralExpression, piecewise
 from fhy_core.symbolic.param import (
     Param,
     create_categorical_param,
@@ -42,6 +44,7 @@ __all__ = [
     "assert_none_satisfied",
     "assert_none_valid",
     "assert_param_round_trips_in_all_formats",
+    "build_case_condition_constraint",
     "build_interval_integer_param",
     "categorical_param_abc",
     "default_int_param",
@@ -318,6 +321,19 @@ def build_interval_integer_param(
     if upper_bound is None:
         return create_interval_integer_param_with_lower_bound(lower_bound)
     return create_interval_integer_param_between(lower_bound, upper_bound)
+
+
+def build_case_condition_constraint(condition: Expression) -> EquationConstraint:
+    """Build ``piecewise((condition, 1), otherwise=0) == 1``.
+
+    Puts ``condition`` in the Boolean position a piecewise case condition
+    occupies, so a test makes the constraint ill-typed by handing it
+    something that denotes a number.
+    """
+    guarded = piecewise(
+        (condition, LiteralExpression(1)), otherwise=LiteralExpression(0)
+    )
+    return EquationConstraint(guarded.equals(LiteralExpression(1)))
 
 
 @pytest.fixture

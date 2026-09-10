@@ -20,7 +20,10 @@ from fhy_core.symbolic.constraint import (
     InSetConstraint,
     NotInSetConstraint,
 )
-from fhy_core.symbolic.expression import IdentifierExpression
+from fhy_core.symbolic.expression import (
+    IdentifierExpression,
+    NonBooleanLogicalOperandError,
+)
 from fhy_core.symbolic.param import (
     Param,
     create_categorical_param,
@@ -31,7 +34,7 @@ from fhy_core.symbolic.param import (
     create_real_param,
 )
 
-from .conftest import mock_identifier
+from .conftest import build_case_condition_constraint, mock_identifier
 
 
 def _create_undecided_param(name: str = "x", identifier_id: int = 1) -> Param[int]:
@@ -770,3 +773,135 @@ def test_is_feasible_reports_false_for_a_float_equation_an_integer_satisfies() -
     assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
     assert param.is_feasible() is False
     assert param.is_empty() is False
+
+
+# =============================================================================
+# An ill-typed constraint raises rather than reporting UNDECIDED
+# =============================================================================
+
+
+def _create_param_conditioned_on_its_own_value() -> Param[int]:
+    """Create `x in {1, 2}` whose other constraint takes `x` as a case condition.
+
+    The in-set constraint makes feasibility an enumeration, which binds
+    each member to `x` and so puts a number in the case condition.
+    """
+    x = mock_identifier("x", 1)
+    return create_integer_param(
+        name=x,
+        constraints=[
+            InSetConstraint(x, (1, 2)),
+            build_case_condition_constraint(IdentifierExpression(x)),
+        ],
+    )
+
+
+def _create_param_conditioned_on_arithmetic() -> Param[int]:
+    """Create `x` whose constraint takes `x + 1` as a case condition.
+
+    With no in-set constraint the question goes to the solver, whose seam
+    refuses `x + 1` in a Boolean position as provably numeric.
+    """
+    x = mock_identifier("x", 1)
+    return create_integer_param(
+        name=x,
+        constraints=[build_case_condition_constraint(IdentifierExpression(x) + 1)],
+    )
+
+
+def _create_unconstrained_param() -> Param[int]:
+    """Create a well-typed integer parameter `y` with no constraints."""
+    return create_integer_param(name=mock_identifier("y", 2))
+
+
+def _create_well_typed_in_set_param() -> Param[int]:
+    """Create a well-typed integer parameter `y in {1, 2}`."""
+    y = mock_identifier("y", 2)
+    return create_integer_param(name=y, constraints=[InSetConstraint(y, (1, 2))])
+
+
+@pytest.mark.parametrize(
+    "build_param",
+    [
+        pytest.param(_create_param_conditioned_on_its_own_value, id="enumeration"),
+        pytest.param(_create_param_conditioned_on_arithmetic, id="solver"),
+    ],
+)
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(Param.check_feasibility, id="check_feasibility"),
+        pytest.param(Param.is_feasible, id="is_feasible"),
+        pytest.param(Param.is_empty, id="is_empty"),
+    ],
+)
+def test_feasibility_raises_for_a_number_in_a_case_condition(
+    build_param: Callable[[], Param[int]], query: Callable[[Param[int]], object]
+) -> None:
+    """Test an ill-typed constraint raises instead of reporting `UNDECIDED`.
+
+    No backend, bound, or timeout gives a number in a Boolean position a
+    meaning, so folding it into an undecided answer would invite a caller
+    to retry a question that cannot succeed. The typed error propagates
+    from the enumeration and the solver path alike.
+    """
+    param = build_param()
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(param)
+
+
+@pytest.mark.parametrize(
+    ("build_own", "build_other"),
+    [
+        pytest.param(
+            _create_param_conditioned_on_its_own_value,
+            _create_unconstrained_param,
+            id="enumerating-own",
+        ),
+        pytest.param(
+            _create_unconstrained_param,
+            _create_param_conditioned_on_its_own_value,
+            id="enumerating-other",
+        ),
+        pytest.param(
+            _create_param_conditioned_on_arithmetic,
+            _create_unconstrained_param,
+            id="solver-antecedent",
+        ),
+        pytest.param(
+            _create_unconstrained_param,
+            _create_param_conditioned_on_arithmetic,
+            id="solver-consequent",
+        ),
+        pytest.param(
+            _create_param_conditioned_on_arithmetic,
+            _create_well_typed_in_set_param,
+            id="solver-witness-outside-a-finite-other",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(Param.check_subset, id="check_subset"),
+        pytest.param(Param.is_subset, id="is_subset"),
+    ],
+)
+def test_subset_raises_for_a_number_in_a_case_condition(
+    build_own: Callable[[], Param[int]],
+    build_other: Callable[[], Param[int]],
+    query: Callable[[Param[int], Param[int]], object],
+) -> None:
+    """Test an ill-typed constraint on either side raises from the subset query.
+
+    Covers each path that evaluates a constraint: enumerating this
+    parameter's candidates, enumerating the other side's, the solver's
+    implication in either direction, and the solver's search for a value
+    outside a finite other side.
+    """
+    own = build_own()
+    other = build_other()
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(own, other)

@@ -16,12 +16,18 @@ from collections.abc import Callable
 import pytest
 
 from fhy_core.identifier import Identifier
-from fhy_core.symbolic.constraint import ConstraintOutcome, EquationConstraint
+from fhy_core.symbolic.constraint import (
+    ConstraintBindings,
+    ConstraintOutcome,
+    EquationConstraint,
+)
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
     IdentifierExpression,
     LiteralExpression,
+    NonBooleanLogicalOperandError,
+    piecewise,
 )
 from fhy_core.symbolic.param import (
     Param,
@@ -317,3 +323,83 @@ def test_validate_value_reports_a_violation_that_a_later_constraint_proves() -> 
     )
     with pytest.raises(ParamError, match="violates constraint"):
         param.validate_value(5)
+
+
+# =============================================================================
+# A number bound into a case condition is ill-typed, not undecided
+# =============================================================================
+
+
+def _create_case_guarded_param(x: Identifier, condition: Identifier) -> Param[int]:
+    """Create `x` constrained by `piecewise((condition, x), otherwise=0) >= 0`.
+
+    `condition` is foreign to the parameter, so only `bindings` supplies it.
+    """
+    guarded = piecewise(
+        (IdentifierExpression(condition), IdentifierExpression(x)),
+        otherwise=LiteralExpression(0),
+    )
+    return create_integer_param(name=x, constraints=[EquationConstraint(guarded >= 0)])
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(
+            lambda param, bindings: param.is_value_valid(3, bindings=bindings),
+            id="is_value_valid",
+        ),
+        pytest.param(
+            lambda param, bindings: param.is_constraints_satisfied(
+                3, bindings=bindings
+            ),
+            id="is_constraints_satisfied",
+        ),
+        pytest.param(
+            lambda param, bindings: param.validate_value(3, bindings=bindings),
+            id="validate_value",
+        ),
+        pytest.param(
+            lambda param, bindings: param.assign(3, bindings=bindings),
+            id="assign",
+        ),
+    ],
+)
+@pytest.mark.parametrize("number", [1, 1.5], ids=["int", "float"])
+def test_a_number_bound_into_a_case_condition_raises_on_every_entry_point(
+    call: Callable[[Param[int], ConstraintBindings], object], number: float
+) -> None:
+    """Test a binding that puts a number in a case condition raises the typed error.
+
+    Under those bindings the constraint is ill-typed rather than undecided.
+    Reporting the value as not valid, or as one that could not be
+    verified, would invite a caller to retry with more bindings a question
+    no binding can make meaningful.
+    """
+    x = mock_identifier("x", 1)
+    condition = mock_identifier("cond", 2)
+    param = _create_case_guarded_param(x, condition)
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        call(param, {condition: number})
+
+
+@pytest.mark.parametrize(
+    ("condition_value", "value", "expected"),
+    [
+        pytest.param(True, 3, True, id="true-selects-a-non-negative-value"),
+        pytest.param(True, -3, False, id="true-selects-a-negative-value"),
+        pytest.param(False, -3, True, id="false-selects-the-fallback"),
+    ],
+)
+def test_a_boolean_bound_into_a_case_condition_still_decides(
+    condition_value: bool, value: int, expected: bool
+) -> None:
+    """Test a Boolean binding selects a branch, so only a number is refused."""
+    x = mock_identifier("x", 1)
+    condition = mock_identifier("cond", 2)
+    param = _create_case_guarded_param(x, condition)
+
+    assert (
+        param.is_value_valid(value, bindings={condition: condition_value}) is expected
+    )
