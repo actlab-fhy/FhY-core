@@ -3,10 +3,8 @@
 Covers three invariants that must hold for arbitrary piecewise trees:
 serialization round-trips under structural equivalence, the NumPy
 lowering's first-match-wins selection matches a pointwise Python fold,
-and the SymPy lowering/lifting round trip preserves case count.
+and the SymPy lowering/lifting round trip reconstructs the whole node.
 """
-
-from collections.abc import Sequence
 
 import pytest
 
@@ -40,6 +38,15 @@ np = pytest.importorskip("numpy")
 # Random piecewise-tree generation
 # =============================================================================
 
+_MAX_TREE_LEAVES = 24
+"""Most leaves a generated tree may hold, spent as the tree is built."""
+
+_MAX_CASES = 3
+"""Most cases a generated piecewise node holds."""
+
+_MIN_PIECEWISE_LEAVES = 3
+"""Leaves the smallest piecewise node needs: a condition, a value, ``otherwise``."""
+
 
 def _leaf_expressions() -> st.SearchStrategy[Expression]:
     """Return a strategy for scalar leaf expressions (int or bool literals)."""
@@ -66,38 +73,50 @@ def _coerce_to_valid_condition(expression: Expression) -> Expression:
     return expression
 
 
-def _condition_expressions(
-    children: st.SearchStrategy[Expression],
-) -> st.SearchStrategy[Expression]:
-    """Return ``children``, mapped so every draw is valid as a piecewise condition."""
-    return children.map(_coerce_to_valid_condition)
+def _count_leaves(expression: Expression) -> int:
+    """Return how many leaves ``expression`` has; a non-piecewise node is one."""
+    if isinstance(expression, PiecewiseExpression):
+        parts = (*expression.conditions, *expression.values, expression.otherwise)
+        return sum(_count_leaves(part) for part in parts)
+    return 1
 
 
-def _extend_with_piecewise(
-    children: st.SearchStrategy[Expression],
-) -> st.SearchStrategy[PiecewiseExpression]:
-    """Build a strategy for a piecewise node whose parts are drawn from ``children``."""
-    condition_children = _condition_expressions(children)
-    cases = st.lists(st.tuples(condition_children, children), min_size=1, max_size=3)
-
-    def _build(
-        case_list: Sequence[tuple[Expression, Expression]], otherwise: Expression
-    ) -> PiecewiseExpression:
-        conditions = tuple(condition for condition, _ in case_list)
-        values = tuple(value for _, value in case_list)
-        return PiecewiseExpression(conditions, values, otherwise)
-
-    return st.builds(_build, cases, children)
+@st.composite
+def _draw_expression(draw: st.DrawFn, max_leaves: int) -> Expression:
+    """Draw a leaf or, when ``max_leaves`` affords one, a piecewise node."""
+    if max_leaves >= _MIN_PIECEWISE_LEAVES and draw(st.booleans()):
+        return draw(_draw_piecewise(max_leaves))
+    return draw(_leaf_expressions())
 
 
-def _random_expressions() -> st.SearchStrategy[Expression]:
-    """Return a strategy for expressions, possibly nesting piecewise trees."""
-    return st.recursive(_leaf_expressions(), _extend_with_piecewise, max_leaves=8)
+@st.composite
+def _draw_piecewise(
+    draw: st.DrawFn, max_leaves: int = _MAX_TREE_LEAVES
+) -> PiecewiseExpression:
+    """Draw a piecewise node whose whole tree has at most ``max_leaves`` leaves.
 
-
-def _random_piecewise_expressions() -> st.SearchStrategy[PiecewiseExpression]:
-    """Return a strategy whose top-level result is always a ``PiecewiseExpression``."""
-    return _extend_with_piecewise(_random_expressions())
+    The bound is kept by construction rather than by rejection. Each part
+    is drawn under a budget taken from the leaves still unspent, less one
+    held back for every part not yet drawn, and whatever a part leaves
+    unused passes on to the parts after it, so no draw is ever discarded
+    for being too large. Drawing each part's budget, rather than handing
+    it every leaf left, spreads the trees across the whole range of sizes
+    instead of piling them up at the bound.
+    """
+    num_cases = draw(
+        st.integers(min_value=1, max_value=min(_MAX_CASES, (max_leaves - 1) // 2))
+    )
+    num_parts = 2 * num_cases + 1
+    parts: list[Expression] = []
+    unspent = max_leaves
+    for index in range(num_parts):
+        available = unspent - (num_parts - index - 1)
+        budget = draw(st.integers(min_value=1, max_value=available))
+        part = draw(_draw_expression(budget))
+        unspent -= _count_leaves(part)
+        parts.append(part)
+    conditions = tuple(_coerce_to_valid_condition(part) for part in parts[0:-1:2])
+    return PiecewiseExpression(conditions, tuple(parts[1:-1:2]), parts[-1])
 
 
 # =============================================================================
@@ -106,7 +125,7 @@ def _random_piecewise_expressions() -> st.SearchStrategy[PiecewiseExpression]:
 
 
 @settings(max_examples=50, deadline=None)
-@given(_random_piecewise_expressions())
+@given(_draw_piecewise())
 def test_random_piecewise_tree_round_trips_through_dict_serialization(
     expression: PiecewiseExpression,
 ) -> None:
@@ -177,6 +196,26 @@ def test_numpy_evaluation_matches_pointwise_first_match_fold(
 # =============================================================================
 
 
+@st.composite
+def _draw_distinct_integers(draw: st.DrawFn, count: int) -> list[int]:
+    """Draw ``count`` distinct integers from ``[-1000, 1000]`` without rejection.
+
+    Each value is drawn as a position among the integers not yet taken
+    and mapped onto that integer, so a repeat cannot be drawn and nothing
+    is filtered out. A unique list would instead redraw every duplicate
+    and abandon the example after too many, which Hypothesis's leaning
+    toward small, repeated integers makes common.
+    """
+    taken: list[int] = []
+    for already_taken in range(count):
+        value = draw(st.integers(min_value=-1000, max_value=1000 - already_taken))
+        for previous in sorted(taken):
+            if value >= previous:
+                value += 1
+        taken.append(value)
+    return taken
+
+
 @settings(max_examples=50, deadline=None)
 @given(data=st.data(), num_cases=st.integers(min_value=1, max_value=4))
 def test_sympy_round_trip_preserves_the_whole_piecewise(
@@ -185,22 +224,13 @@ def test_sympy_round_trip_preserves_the_whole_piecewise(
     """Test lowering then lifting through SymPy reconstructs an equivalent node.
 
     Asserting only the case count would pass for a bridge that reordered
-    the cases or paired a value with the wrong condition, so the values
-    are drawn distinct and the restored node is compared structurally.
+    the cases or paired a value with the wrong condition, so every case
+    value and ``otherwise`` are drawn distinct and the restored node is
+    compared structurally. All ``num_cases + 1`` values come from one
+    draw of distinct integers, with ``otherwise`` split off its end, so
+    no draw is discarded for colliding with another value.
     """
-    values = data.draw(
-        st.lists(
-            st.integers(min_value=-1000, max_value=1000),
-            min_size=num_cases,
-            max_size=num_cases,
-            unique=True,
-        )
-    )
-    otherwise_value = data.draw(
-        st.integers(min_value=-1000, max_value=1000).filter(
-            lambda candidate: candidate not in values
-        )
-    )
+    *values, otherwise_value = data.draw(_draw_distinct_integers(num_cases + 1))
     conditions = tuple(
         IdentifierExpression(mock_identifier(f"property_case_{i}", i))
         for i in range(num_cases)
