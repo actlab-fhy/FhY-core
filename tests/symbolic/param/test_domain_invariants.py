@@ -63,6 +63,27 @@ def test_finite_domain_rejects_duplicate_values(
         constructor((1, 2, 1))
 
 
+@pytest.mark.parametrize(
+    "values",
+    [(1, True), (1, 1.0)],
+    ids=["int-and-bool", "int-and-float"],
+)
+def test_ordinal_domain_canonical_order_ignores_construction_order(
+    values: tuple[Any, ...],
+) -> None:
+    """Test values that compare equal get an order independent of construction.
+
+    The ascending sort cannot separate ``1`` from ``True`` or from ``1.0``, so
+    without a tiebreak the stored tuple would simply keep whichever order the
+    caller passed and the same value set would have two canonical forms. Compares
+    the member types, because the tuples themselves compare equal either way.
+    """
+    forward = OrdinalDomain(values).sorted_values
+    reverse = OrdinalDomain(tuple(reversed(values))).sorted_values
+
+    assert [type(value) for value in forward] == [type(value) for value in reverse]
+
+
 def test_ordinal_domain_treats_int_and_float_as_distinct_kinds() -> None:
     """Test ``1`` and ``1.0`` are distinct members but two ``1``s are duplicates."""
     assert OrdinalDomain((1, 1.0)).sorted_values == (1, 1.0)

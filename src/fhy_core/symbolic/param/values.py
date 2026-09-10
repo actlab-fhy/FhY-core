@@ -186,6 +186,34 @@ def does_collection_contain_param_value(
     )
 
 
+def do_ordered_param_values_match(
+    own_values: Sequence[Any], other_values: Sequence[Any]
+) -> bool:
+    """Return whether two value sequences match position by position.
+
+    Compares equal-length sequences index-wise through
+    :func:`do_param_values_match`, so a kind-distinct pair such as ``1`` and
+    ``True`` makes the sequences differ. Use this where position carries meaning;
+    an unordered value set is compared with :func:`does_collection_contain_param_value`
+    instead.
+
+    Args:
+        own_values: The left-hand value sequence.
+        other_values: The right-hand value sequence.
+
+    Returns:
+        Whether the sequences have the same length and strictly matching values
+        at every position.
+
+    """
+    if len(own_values) != len(other_values):
+        return False
+    return all(
+        do_param_values_match(own_value, other_value)
+        for own_value, other_value in zip(own_values, other_values, strict=True)
+    )
+
+
 def serialize_wrapped_leaf_value(value: object) -> SerializedDict:
     """Serialize a validated leaf value through the wrapped registry.
 

@@ -76,6 +76,7 @@ from .values import (
     ParamError,
     PermutationMemberValue,
     deserialize_wrapped_leaf_values,
+    do_ordered_param_values_match,
     does_collection_contain_param_value,
     is_categorical_value,
     is_ordinal_value,
@@ -1716,10 +1717,28 @@ def _validate_finite_set_constraint(constraint: Constraint, kind: str) -> None:
         )
 
 
+def _order_finite_values_by_repr(values: Sequence[Any]) -> list[Any]:
+    """Return ``values`` ordered by ``repr``.
+
+    Every admissible leaf value has a ``repr``, and a value's ``repr`` depends
+    only on the value, so the order is total and identical in every process.
+    That makes it usable both as the sole order of an unordered value set and as
+    the tiebreak between values whose own comparison cannot separate them (``1``
+    and ``True`` compare equal, yet render as ``"1"`` and ``"True"``).
+    """
+    return sorted(values, key=repr)
+
+
 @register_serializable(type_id="ordinal_domain")
 @dataclass(frozen=True, eq=False)
 class OrdinalDomain(ParamDomain):
-    """Finite, totally-ordered set of admissible values."""
+    """Finite, totally-ordered set of admissible values.
+
+    Values are stored as a strict-unique tuple in ascending order, with ``repr``
+    breaking ties between values the order cannot separate (``1`` and ``True``
+    compare equal). The stored order therefore depends only on the value set, not
+    on the order the values were given in.
+    """
 
     sorted_values: tuple[OrdinalValue, ...] = field(
         metadata={"serialize_codec": _ORDINAL_VALUES_CODEC}
@@ -1735,8 +1754,11 @@ class OrdinalDomain(ParamDomain):
                     "Ordinal values must satisfy orderable semantics and be "
                     "serializable, or be primitive bool/int/float/str values."
                 )
+        # Sorting is stable, so pre-ordering by ``repr`` decides the position of
+        # values the ascending sort leaves tied (``1`` and ``True``).
+        repr_ordered_values = _order_finite_values_by_repr(values)
         try:
-            canonical = tuple(sorted(values))
+            canonical = tuple(sorted(repr_ordered_values))
         except TypeError as exc:
             raise TypeError(
                 "Ordinal values must be mutually comparable for sorting."
@@ -1872,9 +1894,11 @@ class OrdinalDomain(ParamDomain):
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:
-        return (
-            isinstance(other, OrdinalDomain)
-            and self.sorted_values == other.sorted_values
+        # Values are stored in a canonical order, so compare them index-wise with
+        # the strict value predicate. Native ``tuple ==`` would wrongly equate
+        # ``(1,)`` and ``(True,)`` because ``True == 1``.
+        return isinstance(other, OrdinalDomain) and do_ordered_param_values_match(
+            self.sorted_values, other.sorted_values
         )
 
     @override
@@ -1921,7 +1945,9 @@ class CategoricalDomain(ParamDomain):
         # Categories are unordered; canonicalize by ``repr`` for a deterministic
         # storage order (categorical values are not necessarily mutually
         # orderable).
-        object.__setattr__(self, "categories", tuple(sorted(values, key=repr)))
+        object.__setattr__(
+            self, "categories", tuple(_order_finite_values_by_repr(values))
+        )
 
     @property
     @override
@@ -2218,9 +2244,12 @@ class PermutationDomain(ParamDomain):
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:
-        return (
-            isinstance(other, PermutationDomain)
-            and self.ordered_members == other.ordered_members
+        # Member position is part of a permutation domain's identity, so compare
+        # the members index-wise with the strict value predicate. Native
+        # ``tuple ==`` would wrongly equate ``(1,)`` and ``(True,)`` because
+        # ``True == 1``.
+        return isinstance(other, PermutationDomain) and do_ordered_param_values_match(
+            self.ordered_members, other.ordered_members
         )
 
     @override

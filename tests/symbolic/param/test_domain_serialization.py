@@ -5,6 +5,8 @@ independent of any composing `Param`, so a failure localizes to the domain
 family rather than the parameter container.
 """
 
+from typing import Any
+
 import pytest
 
 from fhy_core.symbolic.param.domains import (
@@ -46,6 +48,27 @@ def test_domain_round_trips_through_family_serialization(domain: ParamDomain) ->
     assert type(restored) is type(domain)
     assert domain.is_structurally_equivalent(restored)
     assert restored.is_structurally_equivalent(domain)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [(1, True), (1, 1.0)],
+    ids=["int-and-bool", "int-and-float"],
+)
+def test_ordinal_domain_serializes_the_same_value_set_identically(
+    values: tuple[Any, ...],
+) -> None:
+    """Test an ordinal domain's serialized form does not depend on construction order.
+
+    ``1`` and ``True`` (or ``1.0``) compare equal, so the ascending sort alone
+    leaves their positions to the caller. The wrapped payload records each value's
+    kind, so without a canonical-order tiebreak one value set would have two
+    serialized forms.
+    """
+    forward = build_ordinal_domain(values).serialize_to_dict()
+    reverse = build_ordinal_domain(tuple(reversed(values))).serialize_to_dict()
+
+    assert forward == reverse
 
 
 def test_categorical_domain_round_trip_preserves_bool_int_distinction() -> None:
