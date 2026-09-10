@@ -2670,3 +2670,138 @@ def test_holds_for_all_free_assignments_needs_no_sort_for_a_considered_constant(
     )
 
     assert result is True
+
+
+# =============================================================================
+# Non-finite literal hazard
+# =============================================================================
+
+
+_NON_FINITE_LITERAL_HAZARD_EXPRESSIONS = [
+    pytest.param(
+        lambda x: IdentifierExpression(x) < LiteralExpression(float("inf")),
+        id="less-than-positive-infinity",
+    ),
+    pytest.param(
+        lambda x: IdentifierExpression(x) > LiteralExpression(float("-inf")),
+        id="greater-than-negative-infinity",
+    ),
+    pytest.param(
+        lambda x: IdentifierExpression(x).equals(LiteralExpression(float("nan"))),
+        id="equals-nan",
+    ),
+]
+
+_LENIENT_Z3_QUESTIONS_WITH_SORTS = [
+    pytest.param(check_expression_satisfiability, id="check_expression_satisfiability"),
+    pytest.param(
+        lambda expression, symbol_types: does_expression_imply(
+            expression, LiteralExpression(True), symbol_types
+        ),
+        id="does_expression_imply_antecedent",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: does_expression_imply(
+            LiteralExpression(True), expression, symbol_types
+        ),
+        id="does_expression_imply_consequent",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: holds_for_all_free_assignments(
+            frozenset(), expression, symbol_types
+        ),
+        id="holds_for_all_free_assignments",
+    ),
+]
+
+_STRICT_Z3_QUESTIONS_WITH_SORTS = [
+    pytest.param(
+        lambda expression, symbol_types: assert_holds_for_all_free_assignments(
+            frozenset(), expression, symbol_types
+        ),
+        id="assert_holds_for_all_free_assignments",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: assert_expression_implies(
+            expression, LiteralExpression(True), symbol_types
+        ),
+        id="assert_expression_implies_antecedent",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: assert_expression_implies(
+            LiteralExpression(True), expression, symbol_types
+        ),
+        id="assert_expression_implies_consequent",
+    ),
+]
+
+
+@pytest.mark.parametrize("query", _LENIENT_Z3_QUESTIONS_WITH_SORTS)
+@pytest.mark.parametrize("build_expression", _NON_FINITE_LITERAL_HAZARD_EXPRESSIONS)
+def test_lenient_z3_question_refuses_a_non_finite_literal(
+    build_expression: Callable[[Identifier], Expression],
+    query: _SortedQuery,
+) -> None:
+    """Test an inf, -inf, or NaN literal anywhere in the tree is refused, not lowered.
+
+    ``as_integer_ratio`` has no rational value for an infinity or a NaN,
+    so the Z3 bridge cannot lower the literal at all; the screen refuses
+    the question before the bridge is tried, the same as it does for a
+    native constant.
+    """
+    x = mock_identifier("x", 0)
+    expression = build_expression(x)
+
+    assert query(expression, {x: SymbolType.REAL}) is None
+
+
+@pytest.mark.parametrize("query", _STRICT_Z3_QUESTIONS_WITH_SORTS)
+@pytest.mark.parametrize("build_expression", _NON_FINITE_LITERAL_HAZARD_EXPRESSIONS)
+def test_strict_z3_question_refuses_a_non_finite_literal_as_screened(
+    build_expression: Callable[[Identifier], Expression],
+    query: _SortedQuery,
+) -> None:
+    """Test the strict companions raise `UndecidableError` with the screen's reason."""
+    x = mock_identifier("x", 0)
+    expression = build_expression(x)
+
+    with pytest.raises(UndecidableError) as exc_info:
+        query(expression, {x: SymbolType.REAL})
+
+    assert exc_info.value.reason == "hazard_screen"
+
+
+def test_non_finite_literal_screen_warns_naming_the_entry_point(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test the refusal is logged with the entry point that asked."""
+    x = mock_identifier("x", 0)
+    expression = IdentifierExpression(x) < LiteralExpression(float("inf"))
+
+    with caplog.at_level(logging.WARNING):
+        result = check_expression_satisfiability(expression, {x: SymbolType.REAL})
+
+    assert result is None
+    messages = _collect_solver_warning_messages(caplog)
+    assert messages, "expected a WARNING naming the non-finite literal"
+    assert "check_expression_satisfiability" in messages[0]
+
+
+def test_z3_question_requires_a_sort_beside_a_non_finite_literal() -> None:
+    """Test a variable's missing sort raises ahead of the non-finite-literal screen."""
+    x = mock_identifier("x", 0)
+    expression = IdentifierExpression(x) < LiteralExpression(float("inf"))
+
+    with pytest.raises(KeyError) as exc_info:
+        check_expression_satisfiability(expression, {})
+
+    assert repr(x) in str(exc_info.value)
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_decides_a_finite_float_literal() -> None:
+    """Test a large but finite float literal is still lowered and decided."""
+    x = mock_identifier("x", 0)
+    expression = IdentifierExpression(x) < LiteralExpression(1e300)
+
+    assert check_expression_satisfiability(expression, {x: SymbolType.REAL}) is True

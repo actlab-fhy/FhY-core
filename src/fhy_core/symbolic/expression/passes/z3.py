@@ -239,10 +239,9 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
         A non-finite ``float`` has no rational value at all:
         ``as_integer_ratio`` raises ``OverflowError`` for an infinity and
         ``ValueError`` for a NaN, and the pass infrastructure surfaces
-        either as a ``PassExecutionError``. The solver seam screens the
-        division-like shapes that can otherwise reach the solver with a
-        non-finite divisor. An unsupported literal type raises
-        ``TypeError``.
+        either as a ``PassExecutionError``. The solver seam refuses every
+        non-finite literal before it reaches this bridge. An unsupported
+        literal type raises ``TypeError``.
         """
         value = literal_expression.value
         if isinstance(value, bool):

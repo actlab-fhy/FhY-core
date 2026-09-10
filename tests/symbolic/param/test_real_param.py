@@ -1,11 +1,12 @@
 """Tests for real-valued parameters (new composition API)."""
 
+import math
 from functools import partial
 from typing import Any
 
 import pytest
 
-from fhy_core.symbolic.constraint import EquationConstraint
+from fhy_core.symbolic.constraint import ConstraintOutcome, EquationConstraint
 from fhy_core.symbolic.param import (
     Param,
     ParamError,
@@ -132,6 +133,32 @@ def test_real_param_validates_an_exact_decimal_beyond_float_range() -> None:
 def test_real_param_str_uses_R_for_param_set() -> None:
     """Test `str` of a real param denotes the param set with ``R``."""
     assert "R" in str(create_real_param())
+
+
+# =============================================================================
+# Non-finite bound feasibility
+# =============================================================================
+
+
+def test_real_param_with_infinite_upper_bound_reports_undecided_feasibility() -> None:
+    """Test an infinite upper bound reports UNDECIDED feasibility instead of raising."""
+    param = create_real_param_with_upper_bound(math.inf)
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+def test_real_param_between_infinite_bound_reports_undecided_feasibility() -> None:
+    """Test an infinite upper bound in `create_real_param_between` reports UNDECIDED."""
+    param = create_real_param_between(0.0, math.inf)
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+def test_real_param_with_infinite_upper_bound_still_validates_a_finite_value() -> None:
+    """Test `is_value_valid` stays decided against an infinite bound."""
+    param = create_real_param_with_upper_bound(math.inf)
+
+    assert param.is_value_valid(1.0) is True
 
 
 # =============================================================================

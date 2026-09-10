@@ -35,12 +35,16 @@ name is an ordinary variable and is lowered like any other.
 The Z3-question entry points (``check_expression_satisfiability``,
 ``does_expression_imply``, ``holds_for_all_free_assignments``, and
 their strict ``assert_*`` companions) additionally screen every
-expression argument before it is lowered, refusing four node shapes
+expression argument before it is lowered, refusing five node shapes
 the Z3 bridge cannot lower soundly: a registered native constant's
-canonical identifier, for the reason above; a Boolean operand reaching a
-numeric context, where the Z3 Python bindings silently rewrite it to
-``If(b, 1, 0)`` and collapse this package's type-strict Boolean/numeric
-distinction; a ``DIVIDE``/``FLOOR_DIVIDE``/``MODULO`` node whose divisor
+canonical identifier, for the reason above; a ``LiteralExpression``
+holding a non-finite float (an infinity or a NaN) anywhere in the
+tree, since ``float.as_integer_ratio`` has no rational value for one
+and that ratio is the only route a float takes to Z3; a Boolean
+operand reaching a numeric context, where the Z3 Python bindings
+silently rewrite it to ``If(b, 1, 0)`` and collapse this package's
+type-strict Boolean/numeric distinction; a
+``DIVIDE``/``FLOOR_DIVIDE``/``MODULO`` node whose divisor
 is not provably safe for its operation -- a finite nonzero literal for
 ``DIVIDE``, since the satisfiability encoding around a possibly-zero
 divisor is unsound, or a finite strictly positive literal for
@@ -271,7 +275,7 @@ def simplify_expression(
 # =============================================================================
 # Lowering hazard screens
 #
-# The Z3 bridge mis-lowers four expression shapes: it cannot be trusted to
+# The Z3 bridge mis-lowers five expression shapes: it cannot be trusted to
 # decide an outcome for them, so every Z3-question entry point below screens
 # its expression argument(s) for these shapes before lowering, rather than
 # letting the bridge decide something it cannot decide soundly.
@@ -312,6 +316,46 @@ def _find_native_constant_identifiers(expression: Expression) -> list[Identifier
         ),
         key=lambda identifier: identifier.id,
     )
+
+
+def _is_non_finite_float_literal(node: Expression) -> bool:
+    """Return whether ``node`` is a ``LiteralExpression`` holding an infinity or a NaN.
+
+    Only a Python ``float`` value is checked: a float-grammar string-form
+    literal is exact decimal text and always finite, and a ``bool`` is not
+    a ``float`` even though it subclasses ``int``.
+
+    """
+    if not isinstance(node, LiteralExpression):
+        return False
+    value = node.value
+    return isinstance(value, float) and not math.isfinite(value)
+
+
+def _find_non_finite_literal_hazard(expression: Expression) -> Expression | None:
+    """Return the first non-finite float literal in ``expression``, if any.
+
+    The Z3 bridge lowers a Python ``float`` through
+    ``float.as_integer_ratio``, which has no rational value for an
+    infinity or a NaN and raises ``OverflowError``/``ValueError`` for
+    one; the pass infrastructure would otherwise surface that as an
+    undocumented ``PassExecutionError``.
+
+    Args:
+        expression: Expression about to be lowered to Z3.
+
+    Returns:
+        The offending literal node, or ``None`` when every literal in the
+        tree is finite.
+
+    """
+    if _is_non_finite_float_literal(expression):
+        return expression
+    for child in expression.get_visit_children():
+        hazard = _find_non_finite_literal_hazard(child)
+        if hazard is not None:
+            return hazard
+    return None
 
 
 class _LoweredSort(Enum):
@@ -1020,6 +1064,17 @@ def _log_native_constant_hazard(constants: list[Identifier], *, context: str) ->
     )
 
 
+def _log_non_finite_literal_hazard(hazard: Expression, *, context: str) -> None:
+    _LOGGER.warning(
+        "%s: node %r holds a non-finite float (an infinity or a NaN), which "
+        "has no rational value for the Z3 bridge to lower it to. The "
+        "expression is not handed to the solver; bounding "
+        "timeout_milliseconds cannot change this outcome.",
+        context,
+        hazard,
+    )
+
+
 def _log_bool_coercion_hazard(
     hazard: Expression,
     symbol_types: Mapping[Identifier, SymbolType],
@@ -1096,11 +1151,12 @@ def _find_and_log_hazard(
 
     Checks, in order, the native-constant hazard (a reference to a
     registered native constant's canonical identifier), the
-    Boolean-coercion hazard, the partial-operation hazard (division and
-    exponentiation off the domain their lowering is sound on), and the
-    int/float ``EQUAL``/``NOT_EQUAL`` sort-mixing hazard; the first one
-    found is logged at ``WARNING`` and short-circuits the remaining
-    checks.
+    non-finite-literal hazard (a ``LiteralExpression`` holding an
+    infinity or a NaN), the Boolean-coercion hazard, the
+    partial-operation hazard (division and exponentiation off the domain
+    their lowering is sound on), and the int/float ``EQUAL``/``NOT_EQUAL``
+    sort-mixing hazard; the first one found is logged at ``WARNING`` and
+    short-circuits the remaining checks.
 
     Args:
         expression: Expression about to be lowered to Z3.
@@ -1116,6 +1172,10 @@ def _find_and_log_hazard(
     constants = _find_native_constant_identifiers(expression)
     if constants:
         _log_native_constant_hazard(constants, context=context)
+        return True
+    non_finite_literal = _find_non_finite_literal_hazard(expression)
+    if non_finite_literal is not None:
+        _log_non_finite_literal_hazard(non_finite_literal, context=context)
         return True
     hazard = _find_bool_sort_hazard(expression, symbol_types)
     if hazard is not None:
