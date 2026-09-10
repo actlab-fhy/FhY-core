@@ -872,7 +872,10 @@ def _raise_if_value_provably_invalid(param: "Param[_T]", value: _T) -> None:
     undecidable from the assignment's own state -- the bindings that proved
     it satisfied at ``Param.assign`` time are not part of the serialized
     payload -- so absence of a provable violation is accepted rather than
-    demanding a proof of satisfaction that cannot exist here.
+    demanding a proof of satisfaction that cannot exist here. Each
+    constraint is decided through ``evaluate_system_outcome``, so an
+    expression bridge failure is also an accepted undecided remainder
+    rather than an escaping exception.
 
     Raises:
         ParamError: If ``value`` is not admissible in the parameter's
@@ -893,7 +896,10 @@ def _raise_if_value_provably_invalid(param: "Param[_T]", value: _T) -> None:
         param.variable: param.domain.normalize_value(value)
     }
     for constraint in param.constraints:
-        if constraint.evaluate_with_bindings(environment) is ConstraintOutcome.VIOLATED:
+        outcome = evaluate_system_outcome(
+            create_constraint_system(constraint), environment
+        )
+        if outcome is ConstraintOutcome.VIOLATED:
             raise ParamError(
                 f"Value {value!r} violates constraint {constraint!r} "
                 f"for parameter {param!r}."

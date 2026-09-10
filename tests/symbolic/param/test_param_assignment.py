@@ -13,7 +13,9 @@ from fhy_core.serialization import (
 from fhy_core.symbolic.constraint import EquationConstraint, NotInSetConstraint
 from fhy_core.symbolic.expression import (
     IdentifierExpression,
+    LiteralExpression,
     NonBooleanLogicalOperandError,
+    piecewise,
 )
 from fhy_core.symbolic.param import (
     Param,
@@ -229,6 +231,33 @@ def test_dependent_assignment_round_trips_through_dict_serialization() -> None:
     restored: ParamAssignment[Any] = ParamAssignment.deserialize_from_dict(dictionary)
 
     assert restored.value == 3
+    assert restored.param.is_structurally_equivalent(param)
+    assert restored.serialize_to_dict() == dictionary
+
+
+def test_dependent_assignment_round_trips_when_bridge_fails_without_bindings() -> None:
+    """Test round-tripping survives a constraint the bridge cannot lower alone.
+
+    The dependent constraint divides by ``x - 5``; substituting the assigned
+    value ``5`` for ``x`` alone, with no binding for the other free
+    identifier, drives the expression bridge to a complex-infinity failure
+    it cannot lift back into an expression. That bridge failure must count
+    as an undecided remainder, the same as any other constraint
+    deserialization cannot fully resolve, rather than escaping the
+    round-trip as a raw bridge exception.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    xe, ye = IdentifierExpression(x), IdentifierExpression(y)
+    guarded = piecewise((ye > 0, LiteralExpression(1) / (xe - 5)), otherwise=1) > 0
+    dependent = EquationConstraint(guarded)
+    param = create_integer_param(name=x, constraints=[dependent])
+    assignment = param.assign(5, bindings={y: -1})
+
+    dictionary = assignment.serialize_to_dict()
+    restored: ParamAssignment[Any] = ParamAssignment.deserialize_from_dict(dictionary)
+
+    assert restored.value == 5
     assert restored.param.is_structurally_equivalent(param)
     assert restored.serialize_to_dict() == dictionary
 
