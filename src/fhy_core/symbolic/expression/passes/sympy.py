@@ -455,6 +455,46 @@ def convert_expression_to_sympy_expression(
     return converter(expression)
 
 
+@register_pass(
+    "fhy_core.symbolic.expression.substitute_sympy_variables",
+    "Replace bound symbols in a SymPy expression via xreplace.",
+)
+class SympyVariableSubstitutionPass(
+    CompilerPass[
+        sympy.Expr | sympy.logic.boolalg.Boolean,
+        sympy.Expr | sympy.logic.boolalg.Boolean,
+    ]
+):
+    """Applies a symbol-to-value replacement, so a bridge failure is wrapped.
+
+    An ``xreplace`` rebuilds every substituted node bottom-up, so a
+    replacement can make SymPy auto-evaluate a relational it cannot
+    represent -- for example a comparison against ``zoo`` (SymPy's complex
+    infinity) or against NaN -- and raise a raw ``TypeError`` from deep
+    inside SymPy. Running the replacement as a pass, rather than calling
+    ``xreplace`` directly, lets the pass infrastructure wrap that failure
+    as ``PassExecutionError`` like every other bridge failure.
+    """
+
+    def __init__(self, replacements: dict[sympy.Symbol, Any]) -> None:
+        super().__init__()
+        self._replacements = replacements
+
+    @override
+    def run_pass(
+        self, ir: sympy.Expr | sympy.logic.boolalg.Boolean
+    ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
+        return ir.xreplace(self._replacements)
+
+    @override
+    def get_noop_output(
+        self, ir: sympy.Expr | sympy.logic.boolalg.Boolean
+    ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
+        raise PassExecutionError(
+            f'Pass "{self.get_pass_name()}" does not define noop output.'
+        )
+
+
 def substitute_sympy_expression_variables(
     sympy_expression: sympy.Expr | sympy.logic.boolalg.Boolean,
     environment: dict[Identifier, Expression],
@@ -480,6 +520,10 @@ def substitute_sympy_expression_variables(
             ``environment`` contains a ``LOGICAL_AND``, ``LOGICAL_OR``, or
             ``LOGICAL_NOT`` node whose operand, or a piecewise whose case
             condition, provably denotes a number.
+        PassExecutionError: Wrapping the originating ``TypeError`` as
+            ``__cause__`` if applying a replacement makes SymPy
+            auto-evaluate a relational it cannot represent, for example a
+            comparison against ``zoo`` or against NaN.
 
     """
     # SymPy can fold boolean-valued subexpressions to plain Python `bool`
@@ -515,7 +559,7 @@ def substitute_sympy_expression_variables(
         ): convert_expression_to_sympy_expression(v)
         for k, v in environment.items()
     }
-    return sympy_expression.xreplace(replacements)
+    return SympyVariableSubstitutionPass(replacements)(sympy_expression)
 
 
 @register_pass(
@@ -955,11 +999,14 @@ def simplify_expression(
             condition, provably denotes a number, counting an operand
             ``environment`` binds to one. Simplification refuses the shape
             rather than folding it with SymPy's bitwise ``&``/``|``.
-        PassExecutionError: Wrapping :class:`PartialPiecewiseError` as
-            ``__cause__`` if simplification yields a ``sympy.Piecewise``
-            whose final branch condition is not ``sympy.true``, or
-            :class:`ComplexInfinityLiftError` if it yields ``sympy.zoo``,
-            which a quotient by zero folds to.
+        PassExecutionError: Wrapping the originating exception as
+            ``__cause__``: a ``TypeError`` if substituting ``environment``
+            makes SymPy auto-evaluate a relational it cannot represent
+            (for example a comparison against ``zoo`` or against NaN);
+            :class:`PartialPiecewiseError` if simplification yields a
+            ``sympy.Piecewise`` whose final branch condition is not
+            ``sympy.true``; or :class:`ComplexInfinityLiftError` if it
+            yields ``sympy.zoo``, which a quotient by zero folds to.
 
     """
     validate_logical_operands(expression, environment)

@@ -1,6 +1,7 @@
 """Tests for `fhy_core.symbolic.expression.passes.sympy`."""
 
 import logging
+import math
 from collections.abc import Callable
 from unittest.mock import Mock
 
@@ -285,6 +286,62 @@ def test_substitute_sympy_variables_replaces_piecewise_condition_symbol() -> Non
     assert isinstance(result, sympy.Piecewise)
     assert result.args[0] == (sympy.Integer(1), sympy.Symbol("y_1") > 0)
     assert result.args[1] == (sympy.Integer(2), True)
+
+
+def test_substitute_sympy_expression_variables_raises_for_a_non_real_comparison() -> (
+    None
+):
+    """Test a substitution reducing a comparison to `zoo` raises `PassExecutionError`.
+
+    Substituting a zero divisor rebuilds the comparison against SymPy's
+    complex infinity, which auto-evaluation cannot compare and raises a
+    raw `TypeError`; that has to surface as `PassExecutionError` rather
+    than escaping the bridge unwrapped.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    sympy_expression = (sympy.Symbol("x_0") / sympy.Symbol("y_1")) > 1
+    substitutions: dict[Identifier, Expression] = {
+        x: LiteralExpression(1),
+        y: LiteralExpression(0),
+    }
+
+    with pytest.raises(PassExecutionError) as exc_info:
+        substitute_sympy_expression_variables(sympy_expression, substitutions)
+
+    assert isinstance(exc_info.value.__cause__, TypeError)
+
+
+def test_substitute_sympy_expression_variables_raises_for_a_nan_comparison() -> None:
+    """Test a NaN substitution into a strict comparison raises the same error."""
+    x = mock_identifier("x", 0)
+    sympy_expression = sympy.Symbol("x_0") < 5
+    substitutions: dict[Identifier, Expression] = {x: LiteralExpression(math.nan)}
+
+    with pytest.raises(PassExecutionError) as exc_info:
+        substitute_sympy_expression_variables(sympy_expression, substitutions)
+
+    assert isinstance(exc_info.value.__cause__, TypeError)
+
+
+def test_substitute_sympy_variables_still_decides_a_well_defined_comparison() -> None:
+    """Test a substitution with a nonzero divisor still decides the comparison.
+
+    Confirms the `PassExecutionError` wrapping above is specific to the
+    unrepresentable shapes, not a regression that makes every comparison
+    substitution fail.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    sympy_expression = (sympy.Symbol("x_0") / sympy.Symbol("y_1")) > 1
+    substitutions: dict[Identifier, Expression] = {
+        x: LiteralExpression(4),
+        y: LiteralExpression(2),
+    }
+
+    result = substitute_sympy_expression_variables(sympy_expression, substitutions)
+
+    assert result is sympy.true
 
 
 # =============================================================================
@@ -823,6 +880,68 @@ def test_simplify_expression_boolean_expression_binding_avoids_sympy_deprecation
         BinaryOperation.GREATER, IdentifierExpression(y), LiteralExpression(0)
     )
     assert result.is_structurally_equivalent(expected)
+
+
+def test_simplify_expression_raises_for_a_zero_divisor_under_a_comparison() -> None:
+    """Test a zero-divisor binding under a comparison raises `PassExecutionError`.
+
+    Substituting ``y = 0`` rebuilds ``(x / y) > 1`` against SymPy's
+    complex infinity, which raises a raw `TypeError` from inside SymPy's
+    relational auto-evaluation; the bridge has to surface that as
+    `PassExecutionError` rather than let it escape unwrapped.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER,
+        BinaryExpression(
+            BinaryOperation.DIVIDE, IdentifierExpression(x), IdentifierExpression(y)
+        ),
+        LiteralExpression(1),
+    )
+
+    with pytest.raises(PassExecutionError) as exc_info:
+        simplify_expression(
+            expression, {x: LiteralExpression(1), y: LiteralExpression(0)}
+        )
+
+    assert isinstance(exc_info.value.__cause__, TypeError)
+
+
+def test_simplify_expression_raises_when_a_nan_binding_reaches_a_comparison() -> None:
+    """Test a NaN binding under a strict comparison raises `PassExecutionError`."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.LESS, IdentifierExpression(x), LiteralExpression(5)
+    )
+
+    with pytest.raises(PassExecutionError) as exc_info:
+        simplify_expression(expression, {x: LiteralExpression(math.nan)})
+
+    assert isinstance(exc_info.value.__cause__, TypeError)
+
+
+def test_simplify_expression_still_decides_a_well_defined_divided_comparison() -> None:
+    """Test a nonzero-divisor binding still decides the comparison as a literal.
+
+    Confirms the `PassExecutionError` wrapping above is specific to the
+    unrepresentable shapes, not a regression over ordinary division.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER,
+        BinaryExpression(
+            BinaryOperation.DIVIDE, IdentifierExpression(x), IdentifierExpression(y)
+        ),
+        LiteralExpression(1),
+    )
+
+    result = simplify_expression(
+        expression, {x: LiteralExpression(4), y: LiteralExpression(2)}
+    )
+
+    assert result.is_structurally_equivalent(LiteralExpression(True))
 
 
 # =============================================================================

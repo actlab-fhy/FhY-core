@@ -1,10 +1,12 @@
 """Behavioral tests for `EquationConstraint`."""
 
 import logging
+import math
 from typing import Any
 
 import pytest
 
+from fhy_core.pass_infrastructure import PassExecutionError
 from fhy_core.symbolic.constraint import (
     ConstraintError,
     ConstraintOutcome,
@@ -336,6 +338,84 @@ def test_is_satisfied_with_bindings_refuses_an_arithmetic_root() -> None:
 
     with pytest.raises(NonBooleanLogicalOperandError):
         constraint.is_satisfied_with_bindings({x: 0})
+
+
+def test_evaluate_with_bindings_raises_when_a_binding_divides_by_zero() -> None:
+    """Test a zero-divisor binding under a comparison raises `PassExecutionError`.
+
+    Substituting a zero divisor rebuilds ``(x / y) > 1`` against SymPy's
+    complex infinity, which the SymPy bridge cannot compare and raises a
+    raw `TypeError`; that must surface as `PassExecutionError`, like
+    every other bridge failure, rather than escaping unwrapped.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER,
+        BinaryExpression(
+            BinaryOperation.DIVIDE, IdentifierExpression(x), IdentifierExpression(y)
+        ),
+        LiteralExpression(1),
+    )
+    constraint = EquationConstraint(expression)
+
+    with pytest.raises(PassExecutionError) as exc_info:
+        constraint.evaluate_with_bindings({x: 1, y: 0})
+
+    assert isinstance(exc_info.value.__cause__, TypeError)
+
+
+def test_evaluate_with_bindings_raises_when_a_nan_binding_reaches_a_comparison() -> (
+    None
+):
+    """Test a NaN binding under a strict comparison raises `PassExecutionError`."""
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 5))
+
+    with pytest.raises(PassExecutionError) as exc_info:
+        constraint.evaluate_with_bindings({x: math.nan})
+
+    assert isinstance(exc_info.value.__cause__, TypeError)
+
+
+def test_evaluate_with_bindings_still_decides_a_well_defined_divided_comparison() -> (
+    None
+):
+    """Test a nonzero-divisor binding still decides the comparison as SATISFIED.
+
+    Confirms the `PassExecutionError` wrapping above is specific to the
+    unrepresentable shapes, not a regression over ordinary division.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER,
+        BinaryExpression(
+            BinaryOperation.DIVIDE, IdentifierExpression(x), IdentifierExpression(y)
+        ),
+        LiteralExpression(1),
+    )
+    constraint = EquationConstraint(expression)
+
+    outcome = constraint.evaluate_with_bindings({x: 4, y: 2})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+
+
+def test_evaluate_with_bindings_equality_of_two_nan_bindings_is_violated() -> None:
+    """Test an equality comparison between two NaN bindings decides VIOLATED.
+
+    Unlike a strict inequality, SymPy's ``Eq`` does not raise for a NaN
+    operand; it decides ``False``, matching IEEE-754 NaN-is-never-equal
+    semantics, so this must stay a decided outcome rather than degrade.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    constraint = EquationConstraint(make_binary_expression(BinaryOperation.EQUAL, x, y))
+
+    outcome = constraint.evaluate_with_bindings({x: math.nan, y: math.nan})
+
+    assert outcome is ConstraintOutcome.VIOLATED
 
 
 def test_construction_still_accepts_a_numeric_literal_expression() -> None:

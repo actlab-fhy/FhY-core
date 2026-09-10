@@ -10,6 +10,7 @@ the checker leaves undecided answers `False` rather than a provably wrong
 decided answer.
 """
 
+import math
 from typing import cast
 
 import pytest
@@ -688,6 +689,61 @@ def test_bridge_failure_degrades_instead_of_escaping_a_boolean_api() -> None:
     assert param.is_value_valid(2) is False
     with pytest.raises(ParamError, match="could not be verified"):
         param.validate_value(2)
+
+
+def test_is_value_valid_degrades_instead_of_raising_for_a_nan_dependent_binding() -> (
+    None
+):
+    """Test a NaN dependent binding reports `False` rather than raising.
+
+    Substituting NaN for `y` under a strict comparison makes the SymPy
+    bridge raise `PassExecutionError` from deep inside substitution;
+    `evaluate_system_outcome` degrades that to `UNDECIDED`, and
+    `is_value_valid` reports `False` for an undecided answer rather than
+    propagating the exception.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    param = create_real_param(
+        name=x,
+        constraints=[
+            EquationConstraint(
+                BinaryExpression(
+                    BinaryOperation.LESS,
+                    IdentifierExpression(x),
+                    IdentifierExpression(y),
+                )
+            )
+        ],
+    )
+
+    assert param.is_value_valid(1.0, bindings={y: math.nan}) is False
+
+
+def test_is_value_valid_degrades_instead_of_raising_for_a_zero_divisor_binding() -> (
+    None
+):
+    """Test a zero-divisor dependent binding reports `False` rather than raising."""
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    param = create_real_param(
+        name=x,
+        constraints=[
+            EquationConstraint(
+                BinaryExpression(
+                    BinaryOperation.GREATER,
+                    BinaryExpression(
+                        BinaryOperation.DIVIDE,
+                        IdentifierExpression(x),
+                        IdentifierExpression(y),
+                    ),
+                    LiteralExpression(1),
+                )
+            )
+        ],
+    )
+
+    assert param.is_value_valid(1.0, bindings={y: 0.0}) is False
 
 
 # =============================================================================
