@@ -6,12 +6,16 @@ selection is explicit: asking a backend for a query kind it cannot
 answer raises ``SolverCapabilityError``. Each query kind currently has
 exactly one capable backend.
 
-The two bridges agree on what a literal denotes. Each of
+The two bridges agree on what a single literal denotes. Each of
 ``LiteralExpression``'s numeric forms carries its own precision contract
 -- a Python ``float`` is IEEE-754 binary, a float-grammar ``str`` is
-exact decimal -- and both bridges lower each form to that exact value, so
-no ground comparison is decided one way by ``simplify_expression`` and the
-other way by the Z3 questions below.
+exact decimal -- and both bridges lower each form to that exact value.
+Past a single literal the two diverge: ``simplify_expression`` evaluates
+binary-float arithmetic in SymPy's binary floating point, while the Z3
+questions below reason over it in exact rational arithmetic, so a
+ground comparison that does float arithmetic on both sides can come out
+differently -- for example, ``(1e16 + 1.0) == 1e16`` simplifies to
+``True`` but the Z3 questions find it ``False``.
 
 Known divergences: the Z3 and SymPy bridges disagree with each other and
 with the type checker on integer division and floor-division/modulo
@@ -262,9 +266,9 @@ def simplify_expression(
         NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
             condition, provably denotes a number, counting an operand
-            ``environment`` binds to one. SymPy's ``&``/``|`` are bitwise on
-            ``sympy.Integer``, so the shape is refused rather than folded to
-            a numerically wrong literal.
+            ``environment`` binds to one. Left unscreened, SymPy's
+            ``And``/``Or`` raise a raw ``TypeError`` on such an operand,
+            so the shape is refused before lowering instead.
         PassExecutionError: If the SymPy bridge's lowering or lifting pass
             fails internally, for example when simplification yields a
             ``sympy.Piecewise`` whose final branch condition is not

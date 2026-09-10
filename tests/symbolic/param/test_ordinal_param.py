@@ -46,11 +46,10 @@ def test_ordinal_param_init_rejects_empty_values() -> None:
 
 
 def test_ordinal_param_init_detects_duplicate_in_middle() -> None:
-    """Test ordinal param detects a duplicate that lands adjacent after sorting.
+    """Test ordinal param rejects a value set with a duplicate.
 
-    Pins down the adjacency-pair walk in the uniqueness check: a sequence that
-    sorts to ``(1, 2, 2)`` must be rejected, killing both off-by-one and
-    range-shrinking mutations on the inner ``range(len(values) - 1)`` walk.
+    ``[1, 2, 2]`` holds a duplicate; the uniqueness check must reject it
+    regardless of where the repeated value falls in the input sequence.
     """
     with pytest.raises(ParamError):
         create_ordinal_param([1, 2, 2])
@@ -59,9 +58,9 @@ def test_ordinal_param_init_detects_duplicate_in_middle() -> None:
 def test_ordinal_param_init_detects_duplicate_in_two_value_sequence() -> None:
     """Test ordinal param rejects a two-value sequence whose values are equal.
 
-    Pins down the uniqueness check on the smallest non-trivial input, killing
-    mutations that shrink the comparison range to zero iterations (such as
-    ``range(len(values) - 2)`` when ``len(values) == 2``).
+    Exercises the uniqueness check on the smallest input that can hold a
+    duplicate: a two-element sequence must still be rejected when both
+    elements are equal.
     """
     with pytest.raises(ParamError):
         create_ordinal_param([1, 1])
@@ -73,7 +72,7 @@ def test_ordinal_param_init_detects_distinct_float_objects_as_duplicates() -> No
     Constructs the two duplicates via ``float("1.5")`` so they are distinct
     objects (CPython folds repeated ``1.5`` literals to a single object,
     which would mask an identity-based comparison). The uniqueness check
-    must use ``==``, not ``is``, on adjacent sorted values.
+    must compare values with ``==``, not ``is``.
     """
     with pytest.raises(ParamError):
         create_ordinal_param([float("1.5"), float("1.5")])

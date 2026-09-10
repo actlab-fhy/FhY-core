@@ -233,8 +233,13 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
           decimal text exactly, so the text goes to Z3 unconverted.
 
         The SymPy bridge lowers each of those forms to the same value, so
-        no ground comparison is decided one way by ``simplify_expression``
-        and the other way by the solver seam.
+        a single literal denotes the same number on both bridges. Past a
+        single literal the two diverge: ``simplify_expression`` evaluates
+        binary-float arithmetic in SymPy's binary floating point, while
+        the solver seam reasons over it in exact rational arithmetic, so
+        a ground comparison that does float arithmetic on both sides can
+        come out differently -- for example, ``(1e16 + 1.0) == 1e16``
+        simplifies to ``True`` but the solver seam finds it ``False``.
 
         A non-finite ``float`` has no rational value at all:
         ``as_integer_ratio`` raises ``OverflowError`` for an infinity and

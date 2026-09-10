@@ -1703,7 +1703,15 @@ def create_interval_natural_param(
 def create_ordinal_param(
     values: Sequence[_OrdinalValueT], *, name: Identifier | None = None
 ) -> Param[_OrdinalValueT]:
-    """Create an ordinal parameter over a finite, ordered value set."""
+    """Create an ordinal parameter over a finite, ordered value set.
+
+    Raises:
+        ParamError: If ``values`` is empty, contains duplicates, or
+            contains NaN.
+        TypeError: If a value is not ordinal or values are not mutually
+            comparable.
+
+    """
     return Param(build_ordinal_domain(values), variable=name or Identifier("param"))
 
 
@@ -1720,7 +1728,14 @@ def create_categorical_param(
 def create_permutation_param(
     members: Sequence[_PermutationMemberValueT], *, name: Identifier | None = None
 ) -> Param[tuple[_PermutationMemberValueT, ...]]:
-    """Create a permutation parameter over a fixed, ordered set of members."""
+    """Create a permutation parameter over a fixed, ordered set of members.
+
+    Raises:
+        ParamError: If ``members`` is empty, contains duplicates, or
+            contains NaN.
+        TypeError: If a member is not a permutation member value.
+
+    """
     return Param(
         build_permutation_domain(members), variable=name or Identifier("param")
     )

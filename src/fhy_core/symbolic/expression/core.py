@@ -1436,12 +1436,12 @@ def validate_logical_operands(
     in a Boolean position additionally puts its case values and
     ``otherwise`` in a Boolean position, since the piecewise's own result
     must then be a Boolean. No symbolic backend gives a number there a
-    faithful meaning: SymPy's ``&``/``|`` are bitwise on
-    ``sympy.Integer``, its ``Not`` coerces by truthiness, and its
-    ``Piecewise`` rejects a numeric condition or, once a substitution has
-    put a number there, reads it as a truth value; Z3 rejects the sort
-    outright. The whole tree is screened, so a numeric operand nested
-    anywhere under the root is found.
+    faithful meaning: SymPy's ``And``/``Or`` raise a raw ``TypeError``,
+    its ``Not`` coerces by truthiness, and its ``Piecewise`` rejects a
+    numeric condition or, once a substitution has put a number there,
+    reads it as a truth value; Z3 rejects the sort outright. The whole
+    tree is screened, so a numeric operand nested anywhere under the
+    root is found.
 
     Only a provably numeric operand is refused. A registered native
     constant's canonical identifier counts as the constant's declared

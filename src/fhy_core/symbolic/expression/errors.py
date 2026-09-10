@@ -107,8 +107,8 @@ class NonBooleanLogicalOperandError(TypeError):
     non-``bool`` literal, an arithmetic node, a piecewise whose every
     branch value is numeric, or an identifier bound to one of those --
     has no meaning in either position. Neither symbolic backend refuses
-    such an operand on its own terms: SymPy's ``&``/``|`` are *bitwise*
-    on ``sympy.Integer``, its ``Not`` coerces by truthiness, and its
+    such an operand on its own terms: SymPy's ``And``/``Or`` raise a raw
+    ``TypeError``, its ``Not`` coerces by truthiness, and its
     ``Piecewise`` reads a substituted number as a truth value, while Z3
     reports the sort mismatch as a backend ``z3.z3types.Z3Exception``.
     Both bridges screen the expression before lowering, and the

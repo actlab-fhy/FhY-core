@@ -439,8 +439,8 @@ def convert_expression_to_sympy_expression(
 
     Screens the expression before lowering: a provably numeric operand of
     a logical connective, or a provably numeric piecewise case condition,
-    is refused here rather than handed to SymPy, whose ``&``/``|`` are
-    bitwise on ``sympy.Integer``.
+    is refused here rather than handed to SymPy, whose ``And``/``Or``
+    raise a raw ``TypeError`` on such an operand.
 
     Args:
         expression: Expression to convert.
@@ -1073,7 +1073,8 @@ def simplify_expression(
             ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
             condition, provably denotes a number, counting an operand
             ``environment`` binds to one. Simplification refuses the shape
-            rather than folding it with SymPy's bitwise ``&``/``|``.
+            before lowering rather than letting SymPy's ``And``/``Or``
+            raise a raw ``TypeError`` on it.
         PassExecutionError: Wrapping the originating exception as
             ``__cause__``: a ``TypeError`` if substituting ``environment``
             makes SymPy auto-evaluate a relational it cannot represent
