@@ -2317,6 +2317,92 @@ def test_validate_predicate_still_screens_a_nested_boolean_position() -> None:
 
 
 # =============================================================================
+# A bound identifier's value is screened in the identifier's own position
+# =============================================================================
+
+
+def test_validate_predicate_screens_a_bound_piecewise_with_a_mixed_branch() -> None:
+    """Test a root identifier bound to a piecewise with a numeric branch is refused.
+
+    The root is itself a Boolean position, so the bound value stands in
+    the identifier's place there: its branches are screened even though
+    the piecewise as a whole is not provably numeric (its ``otherwise``
+    is a Boolean), which is what lets the numeric ``value`` branch slip
+    past a check that only asks whether every branch is numeric.
+    """
+    x = mock_identifier("x", 0)
+    mixed = piecewise(
+        (LiteralExpression(False), LiteralExpression(1)),
+        otherwise=LiteralExpression(True),
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_predicate(IdentifierExpression(x), {x: mixed})
+
+
+@pytest.mark.parametrize("numeric_branch_position", ["value", "otherwise"])
+def test_validate_logical_operands_screens_a_bound_piecewise_with_a_mixed_branch(
+    numeric_branch_position: str,
+) -> None:
+    """Test an operand bound to a piecewise with one numeric branch is refused.
+
+    ``logical_not`` puts its operand in a Boolean position, so the value
+    bound there is screened the same way a literal piecewise operand
+    would be: even one numeric branch beside a Boolean one is ill-typed.
+    """
+    x = mock_identifier("x", 0)
+    if numeric_branch_position == "value":
+        mixed = piecewise(
+            (LiteralExpression(False), LiteralExpression(1)),
+            otherwise=LiteralExpression(True),
+        )
+    else:
+        mixed = piecewise(
+            (LiteralExpression(False), LiteralExpression(True)),
+            otherwise=LiteralExpression(1),
+        )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_logical_operands(logical_not(IdentifierExpression(x)), {x: mixed})
+
+
+def test_validate_predicate_accepts_a_bound_well_typed_boolean_piecewise() -> None:
+    """Test a root identifier bound to an all-Boolean piecewise still passes.
+
+    Every branch here is a Boolean, so walking into the bound value finds
+    nothing to refuse, the same as if the piecewise had been written in
+    place of the identifier.
+    """
+    x = mock_identifier("x", 0)
+    well_typed = piecewise(
+        (LiteralExpression(False), LiteralExpression(False)),
+        otherwise=LiteralExpression(True),
+    )
+
+    validate_predicate(IdentifierExpression(x), {x: well_typed})
+
+
+def test_validate_logical_operands_accepts_a_bound_piecewise_in_numeric_position() -> (
+    None
+):
+    """Test an identifier compared as a number may still bind to a numeric piecewise.
+
+    ``x`` sits in a numeric position (compared, not connected), so only
+    the bound piecewise's condition is a Boolean position; its branch
+    values are numbers and stay legal.
+    """
+    x = mock_identifier("x", 0)
+    numeric_piecewise = piecewise(
+        (LiteralExpression(False), LiteralExpression(1)),
+        otherwise=LiteralExpression(2),
+    )
+
+    validate_logical_operands(
+        IdentifierExpression(x) > LiteralExpression(0), {x: numeric_piecewise}
+    )
+
+
+# =============================================================================
 # Truthiness: an expression is not a Boolean
 # =============================================================================
 

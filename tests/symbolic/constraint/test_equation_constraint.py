@@ -26,6 +26,7 @@ from fhy_core.symbolic.expression import (
     logical_not,
     make_binary_expression,
     pformat_expression,
+    piecewise,
 )
 
 from .conftest import mock_identifier
@@ -318,6 +319,47 @@ def test_evaluate_with_bindings_refuses_an_arithmetic_root() -> None:
 
     with pytest.raises(NonBooleanLogicalOperandError):
         constraint.evaluate_with_bindings({x: 0})
+
+
+def test_evaluate_with_bindings_refuses_a_root_bound_to_a_mixed_piecewise() -> None:
+    """Test a root identifier bound to a piecewise with a numeric branch raises.
+
+    The expression's root is the bound identifier, itself a Boolean
+    position: the numeric ``value`` branch beside the Boolean
+    ``otherwise`` makes the substituted root ill-typed regardless of
+    which case the condition would pick, so this is refused ahead of
+    simplification rather than decided.
+    """
+    x = mock_identifier("x", 0)
+    mixed = piecewise(
+        (LiteralExpression(False), LiteralExpression(1)),
+        otherwise=LiteralExpression(True),
+    )
+    constraint = EquationConstraint(IdentifierExpression(x))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        constraint.evaluate_with_bindings({x: mixed})
+
+
+def test_evaluate_with_bindings_refuses_a_mixed_piecewise_with_unbound_condition() -> (
+    None
+):
+    """Test the mixed-branch refusal holds even when the condition is unbound.
+
+    ``b`` carries no declared sort and no binding, so it cannot itself
+    make the piecewise ill-typed; the numeric ``value`` branch beside the
+    Boolean ``otherwise`` does that on its own.
+    """
+    x = mock_identifier("x", 0)
+    b = mock_identifier("b", 1)
+    mixed = piecewise(
+        (IdentifierExpression(b), LiteralExpression(1)),
+        otherwise=LiteralExpression(True),
+    )
+    constraint = EquationConstraint(IdentifierExpression(x))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        constraint.evaluate_with_bindings({x: mixed})
 
 
 def test_is_satisfied_with_bindings_refuses_a_numeric_result_call_under_not() -> None:

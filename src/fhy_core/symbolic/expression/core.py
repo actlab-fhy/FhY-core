@@ -1343,6 +1343,51 @@ def _get_boolean_position_operands(
     return ()
 
 
+def _find_in_bound_identifier_value(
+    identifier: Identifier,
+    environment: Mapping[Identifier, Expression],
+    symbol_types: Mapping[Identifier, SymbolType],
+    *,
+    is_in_boolean_position: bool,
+) -> tuple[Expression, Expression] | None:
+    """Return a Boolean-position violation found inside ``identifier``'s bound value.
+
+    A bound value stands in the identifier's own place, so it is walked
+    with the identifier's own ``is_in_boolean_position``: a value bound
+    where a Boolean is required has its own case values and
+    ``otherwise`` screened too, not only its connective operands and
+    case conditions, which are screened unconditionally. The recursion
+    uses an empty environment, since a binding does not chain into
+    another binding, matching the non-chaining classification
+    :func:`_is_identifier_provably_non_boolean` already gives the bound
+    value as a whole. A native constant's canonical identifier keeps the
+    constant's own declared sort whatever it is bound to, matching that
+    same function, so its binding is not walked.
+
+    Args:
+        identifier: Identifier the walk reached.
+        environment: As accepted by :func:`validate_logical_operands`.
+        symbol_types: As accepted by :func:`validate_logical_operands`.
+        is_in_boolean_position: Whether ``identifier`` itself sits in a
+            Boolean position.
+
+    Returns:
+        The offending parent node and operand found inside the bound
+        value, or ``None`` if ``identifier`` is unbound, is a native
+        constant's canonical identifier, or its bound value holds no
+        violation.
+
+    """
+    if _get_native_constant_sort(identifier) is not None:
+        return None
+    bound = environment.get(identifier)
+    if bound is None:
+        return None
+    return _find_non_boolean_logical_operand(
+        bound, {}, symbol_types, is_in_boolean_position=is_in_boolean_position
+    )
+
+
 def _find_non_boolean_logical_operand(
     expression: Expression,
     environment: Mapping[Identifier, Expression],
@@ -1351,6 +1396,11 @@ def _find_non_boolean_logical_operand(
     is_in_boolean_position: bool,
 ) -> tuple[Expression, Expression] | None:
     """Return the first numeric Boolean-position operand paired with its parent.
+
+    An ``IdentifierExpression`` the environment binds is not itself a
+    parent with children to recurse into; instead, reaching one hands
+    the search to :func:`_find_in_bound_identifier_value`, which walks
+    the bound value in the identifier's place.
 
     Args:
         expression: Subtree to search.
@@ -1365,6 +1415,13 @@ def _find_non_boolean_logical_operand(
         Boolean position in the subtree holds a Boolean.
 
     """
+    if isinstance(expression, IdentifierExpression):
+        return _find_in_bound_identifier_value(
+            expression.identifier,
+            environment,
+            symbol_types,
+            is_in_boolean_position=is_in_boolean_position,
+        )
     boolean_position_operands = _get_boolean_position_operands(
         expression, is_in_boolean_position
     )
@@ -1454,12 +1511,17 @@ def validate_logical_operands(
     Args:
         expression: Expression about to be lowered to a symbolic backend,
             or to have ``environment`` substituted into it.
-        environment: Values bound to identifiers before lowering, so an
-            identifier bound to a number is screened as one. A binding
-            for a native constant's canonical identifier is not
-            consulted: the identifier names a value rather than a
-            variable. Defaults to ``None``, meaning no identifier is
-            bound.
+        environment: Values bound to identifiers before lowering. A
+            bound value is screened as if it stood in the identifier's
+            own place: a value bound to a number is refused where the
+            identifier itself would be, and a value bound where a
+            Boolean is required has its own connective operands and case
+            conditions screened, plus its own case values and
+            ``otherwise`` when the identifier itself sits in a Boolean
+            position. A binding for a native constant's canonical
+            identifier is not consulted: the identifier names a value
+            rather than a variable. Defaults to ``None``, meaning no
+            identifier is bound.
         symbol_types: Sorts declared for the identifiers left free once
             ``environment`` is substituted, as the Z3 bridge reads them,
             so an identifier declared INT or REAL is screened as a
@@ -1496,14 +1558,20 @@ def validate_predicate(
     additionally treats the root as a Boolean position in its own right,
     which matters when the root is a piecewise: its case values and
     ``otherwise``, not only its conditions, are then screened too, since
-    the piecewise's own result stands for the predicate.
+    the piecewise's own result stands for the predicate. It matters the
+    same way when the root is an identifier ``environment`` binds: the
+    bound value is screened as if it stood in the root's place, so a
+    piecewise bound there has its case values and ``otherwise`` screened
+    too.
 
     Args:
         expression: Expression that is itself supposed to denote a
             Boolean, such as a constraint's expression or a solver
             query's argument, rather than an operand nested under a
             connective.
-        environment: As accepted by :func:`validate_logical_operands`.
+        environment: As accepted by :func:`validate_logical_operands`,
+            with a bound root screened as if the value stood in the
+            root's own (Boolean) place.
         symbol_types: As accepted by :func:`validate_logical_operands`.
 
     Raises:

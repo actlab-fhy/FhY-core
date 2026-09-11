@@ -2870,6 +2870,36 @@ def test_bindings_paths_ignore_a_constant_binding_out_of_scope(
     assert outcome is ConstraintOutcome.SATISFIED
 
 
+# =============================================================================
+# A bound identifier's value is screened in the identifier's own position
+# =============================================================================
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("decide", _BINDINGS_DECISIONS)
+def test_bindings_paths_agree_a_root_bound_to_a_mixed_piecewise_is_refused(
+    decide: _DecideWithBindings,
+) -> None:
+    """Test both bindings paths refuse a root identifier bound to a mixed piecewise.
+
+    The system holds ``EquationConstraint(IdentifierExpression(x))``, so
+    the expression's root is exactly the bound identifier: a Boolean
+    position, walked into the bound piecewise before anything is
+    substituted. The numeric ``value`` branch beside the Boolean
+    ``otherwise`` makes it ill-typed on both paths, which have to agree
+    rather than let one report SATISFIED and the other raise.
+    """
+    x = mock_identifier("x", 0)
+    mixed = piecewise(
+        (LiteralExpression(False), LiteralExpression(1)),
+        otherwise=LiteralExpression(True),
+    )
+    system = create_constraint_system(EquationConstraint(IdentifierExpression(x)))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        decide(system, {x: mixed}, {})
+
+
 _SET_KINDS_OVER_A_CONSTANT = [
     pytest.param(InSetConstraint, id="in_set"),
     pytest.param(NotInSetConstraint, id="not_in_set"),
