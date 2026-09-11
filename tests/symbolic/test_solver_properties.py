@@ -18,13 +18,11 @@ value), so ``include_division=False`` at the root is enough to keep the
 whole tree division-free.
 
 The SymPy-backed properties additionally enable calls, but only to
-:data:`SYMPY_STABLE_CALL_FUNCTIONS` (``floor``, ``ceil``): the other
-member of ``INTEGER_RESULT_NATIVE_FUNCTIONS``, ``round``, cannot be
-lifted back from SymPy (a known finding pinned by a strict xfail in
-``test_sympy_pass_properties.py``), and ``sign``, an expression-bodied
-``RegisteredFunction`` that ``simplify_expression`` could not lower
-without first running ``inline_functions``, is not one of the gate
-grammar's native functions at all.
+:data:`SYMPY_STABLE_CALL_FUNCTIONS` (``floor``, ``ceil``, ``round``),
+the natives that survive the SymPy round trip: ``sign``, an
+expression-bodied ``RegisteredFunction`` that ``simplify_expression``
+could not lower without first running ``inline_functions``, is not one
+of the gate grammar's native functions at all.
 
 The Z3-backed queries keep calls off entirely: the Z3 bridge refuses
 every native function call outright

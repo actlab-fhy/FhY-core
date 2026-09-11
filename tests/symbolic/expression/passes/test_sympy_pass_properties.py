@@ -10,18 +10,17 @@ division-free trees: lowering ``FLOOR_DIVIDE``/``MODULO`` can
 auto-evaluate to a ``Rational`` that lifts to an exact-decimal string
 literal the NumPy oracle then refuses (the same finding
 ``tests/symbolic/test_solver_properties.py`` pins with a strict xfail).
-They enable calls, but restricted to :data:`SYMPY_STABLE_CALL_FUNCTIONS`
-(``floor``, ``ceil``): the other member of
-``INTEGER_RESULT_NATIVE_FUNCTIONS``, ``round``, cannot be lifted back
-from SymPy, the gap ``test_round_call_structural_round_trip_is_unsupported``
-below pins. ``build_numeric_expression_strategy`` and
+They enable calls, restricted to :data:`SYMPY_STABLE_CALL_FUNCTIONS`
+(``floor``, ``ceil``, ``round``), the natives whose SymPy node lifts
+back to the same native name.
+``build_numeric_expression_strategy`` and
 ``build_boolean_expression_strategy`` thread ``include_division``,
 ``include_calls``, and ``native_functions`` through every subtree they
 draw (including a piecewise condition or value), so setting them once at
 the root is enough to govern the whole tree. The structural round trip
 uses the already-restricted ``build_sympy_stable_expression_strategy``
 instead, which excludes arithmetic ``BinaryExpression`` outright (SymPy
-re-associates and folds those) and only ever calls ``floor``/``ceil``.
+re-associates and folds those) and only ever calls those same natives.
 """
 
 from typing import Final
@@ -139,25 +138,21 @@ def test_sympy_round_trip_is_structurally_stable(expression: Expression) -> None
 
 
 # =============================================================================
-# Known SymPy lifting finding -- "round" has no lift dispatch entry
+# "round" round-trips structurally
 # =============================================================================
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "convert_sympy_expression_to_expression has no dispatch entry for "
-        "SymPy's opaque round() Function node: lifting "
-        "call('round', IdentifierExpression(v)) raises PassExecutionError "
-        "wrapping TypeError: Unsupported expression type: round. "
-        "SYMPY_STABLE_CALL_FUNCTIONS therefore lists only floor and ceil."
-    ),
-)
 @given(identifier=st.sampled_from(_POOL))
-def test_round_call_structural_round_trip_is_unsupported(
+def test_round_call_round_trips_structurally(
     identifier: Identifier,
 ) -> None:
-    """Test ``call("round", v)`` fails to round-trip: lifting raises ``TypeError``."""
+    """Test ``call("round", v)`` lifts back to the same call.
+
+    Oracle: structural equivalence. ``round`` is the one native with no
+    SymPy operator of its own, so it lowers to a SymPy function the
+    bridge defines; lifting maps that node back to the native name like
+    every other member of ``SYMPY_STABLE_CALL_FUNCTIONS``.
+    """
     expression = call("round", IdentifierExpression(identifier))
 
     lowered = convert_expression_to_sympy_expression(expression)
@@ -174,8 +169,6 @@ def test_round_call_structural_round_trip_is_unsupported(
 @st.composite
 def _draw_substitution_case(
     draw: st.DrawFn,
-    *,
-    include_piecewise: bool,
 ) -> tuple[Expression, Expression, Expression, dict[Identifier, int]]:
     """Draw ``e``, replacements ``e1``/``e2`` for ``v0``/``v1``, and an environment.
 
@@ -183,13 +176,10 @@ def _draw_substitution_case(
     disjoint set of fresh variables), so a replacement can itself
     reference ``v0`` or ``v1`` and simultaneity actually matters:
     substituting ``{v0: e1, v1: e2}`` must not let ``e1`` see ``v1``'s
-    replacement or vice versa.
-
-    ``include_piecewise`` is a parameter, not always-on, because of the
-    SymPy-bridge lift gap
+    replacement or vice versa. A replacement may itself hold a piecewise
+    whose condition references the identifier it replaces, the shape
     ``test_substitute_agrees_with_sympy_bridge_substitution_on_self_referential_piecewise``
-    below pins: the plain-Python oracle test has no such gap and always
-    draws piecewise, but the SymPy-bridge test excludes it.
+    below covers with a fixed example.
     """
     # Division stays off: see the module docstring for the
     # StringLiteralPrecisionError finding this excludes.
@@ -199,7 +189,7 @@ def _draw_substitution_case(
         include_division=False,
         include_calls=True,
         native_functions=SYMPY_STABLE_CALL_FUNCTIONS,
-        include_piecewise=include_piecewise,
+        include_piecewise=True,
     )
     e = draw(numeric_strategy)
     e1 = draw(numeric_strategy)
@@ -208,7 +198,7 @@ def _draw_substitution_case(
     return e, e1, e2, environment
 
 
-@given(case=_draw_substitution_case(include_piecewise=True))
+@given(case=_draw_substitution_case())
 def test_substitute_matches_simultaneous_python_semantics(
     case: tuple[Expression, Expression, Expression, dict[Identifier, int]],
 ) -> None:
@@ -218,7 +208,7 @@ def test_substitute_matches_simultaneous_python_semantics(
     evaluated under ``env`` must equal ``e`` evaluated under ``env``
     updated with ``v0 -> eval(e1, env)`` and ``v1 -> eval(e2, env)``,
     both computed from the *original* ``env`` (simultaneity). No SymPy
-    bridge is involved, so piecewise stays enabled.
+    bridge is involved.
     """
     e, e1, e2, environment = case
     replacements = {_V0: e1, _V1: e2}
@@ -233,11 +223,7 @@ def test_substitute_matches_simultaneous_python_semantics(
     )
 
 
-# include_piecewise=False: see
-# test_substitute_agrees_with_sympy_bridge_substitution_on_self_referential_piecewise
-# below for the pinned gap a piecewise-holding replacement can trigger
-# through this test's SymPy bridge.
-@given(case=_draw_substitution_case(include_piecewise=False))
+@given(case=_draw_substitution_case())
 def test_substitute_agrees_with_sympy_bridge_substitution(
     case: tuple[Expression, Expression, Expression, dict[Identifier, int]],
 ) -> None:
@@ -261,33 +247,26 @@ def test_substitute_agrees_with_sympy_bridge_substitution(
 
 
 # =============================================================================
-# Second SymPy substitution finding: a piecewise-holding replacement whose
-# own condition reuses the substituted identifier lifts to an unsupported
-# boolean node. Covered by a separate, strict xfail below rather than
-# folded into the general substitution property above, which excludes
-# piecewise from its replacements for exactly this reason.
+# A self-referential piecewise replacement folds to a boolean ITE and
+# still lifts. Kept as its own property, alongside the drawn cases above,
+# because the shape needs a replacement whose piecewise condition reuses
+# the very identifier it replaces.
 # =============================================================================
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Substituting an identifier with a numeric replacement that itself "
-        "holds a piecewise whose own condition references that same "
-        "identifier makes substitute_sympy_expression_variables's sympy.subs "
-        "fold the resulting Eq(0, Piecewise(...)) into a boolean ITE(...) "
-        "node; convert_bool's dispatch table (Not/And/Or/Xor/Nor/Nand/...) "
-        "has no entry for ITE, so lifting raises PassExecutionError wrapping "
-        "TypeError: Unsupported boolean expression type: ITE. Minimal "
-        "example: target = piecewise((0 == v, 0), otherwise=1), replacement "
-        "for v = piecewise((0 == v, 0), otherwise=v)."
-    ),
-)
 @given(identifier=st.sampled_from(_POOL))
 def test_substitute_agrees_with_sympy_bridge_substitution_on_self_referential_piecewise(
     identifier: Identifier,
 ) -> None:
-    """Test a self-referential piecewise replacement fails to lift back."""
+    """Test a self-referential piecewise replacement substitutes identically.
+
+    Oracle: ``evaluate_expression_with_numpy``, comparing the
+    SymPy-bridge substitution against ``Expression.substitute``.
+    Replacing ``v`` in ``piecewise((0 == v, 0), otherwise=1)`` with
+    ``piecewise((0 == v, 0), otherwise=v)`` makes SymPy fold the
+    resulting ``Eq(0, Piecewise(...))`` into a boolean ``ITE`` node,
+    which lifts back as the two-branch piecewise it denotes.
+    """
     condition = make_binary_expression(
         BinaryOperation.EQUAL, LiteralExpression(0), identifier
     )

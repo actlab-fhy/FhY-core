@@ -101,13 +101,11 @@ not) allowed before a draw is forced to pick a leaf-spending kind. Bounds
 recursion depth independently of the leaf budget, since these node kinds
 do not shrink it."""
 
-SYMPY_STABLE_CALL_FUNCTIONS: Final = ("floor", "ceil")
+SYMPY_STABLE_CALL_FUNCTIONS: Final = ("floor", "ceil", "round")
 """Natives whose call on an identifier round-trips through SymPy unchanged.
 
-Of `INTEGER_RESULT_NATIVE_FUNCTIONS`, `round` is excluded: the lifting
-pass does not recognize SymPy's rounding node on the way back
-(`TypeError: Unsupported expression type: round`), a gap the SymPy pass
-property tests pin with a strict xfail.
+Every member of `INTEGER_RESULT_NATIVE_FUNCTIONS` qualifies: each lowers
+to a SymPy node the lifting pass maps back to the same native name.
 The list is explicit on purpose: a probe that dropped whatever failed
 would hide a regression in the bridge instead of surfacing it.
 """

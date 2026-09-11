@@ -68,8 +68,26 @@ def _sympy_log10(value: Any) -> Any:
     return sympy.log(value, 10)
 
 
-def _sympy_round(value: Any) -> Any:
-    return sympy.Function("round")(value)
+def _fold_sympy_round_over_an_integer(value: Any) -> Any:
+    """Return ``value`` when it is a sympy integer, and ``None`` otherwise.
+
+    SymPy calls this to decide whether a ``round`` application evaluates,
+    and a ``None`` result keeps the application unevaluated. Rounding an
+    integer is the identity under every rounding rule, so that case folds;
+    a symbolic or non-integer argument keeps the ``round`` node, which
+    lifts back to a ``round`` call.
+    """
+    if value.is_Integer:
+        return value
+    return None
+
+
+# SymPy has no rounding operator, so ``round`` lowers to a function of its
+# own that folds only over an integer argument. SymPy reads the ``eval``
+# hook off the class, which hands a plain function the argument alone;
+# keeping it a plain function rather than a ``classmethod`` also keeps a
+# lowered ``round`` node picklable, since a ``classmethod`` object is not.
+_SYMPY_ROUND: Any = sympy.Function("round", eval=_fold_sympy_round_over_an_integer)
 
 
 # Native-function name <-> sympy operator. Entries appearing in
@@ -78,8 +96,7 @@ def _sympy_round(value: Any) -> Any:
 # through ``sympy.log(arg, base)`` (sympy rewrites these to a Mul-of-
 # logs and they lift back as that mul rather than as ``log2``/``log10``);
 # ``exp2`` lowers to ``sympy.Pow(2, value)`` and lifts as ``Pow`` (or
-# as ``sqrt`` when the exponent is exactly 1/2); ``round`` lowers to an
-# opaque ``sympy.Function("round")`` and has no inverse lifting entry.
+# as ``sqrt`` when the exponent is exactly 1/2).
 _NATIVE_FUNCTION_LOWER: immutabledict[str, Callable[..., Any]] = immutabledict(
     {
         "exp": sympy.exp,
@@ -98,7 +115,7 @@ _NATIVE_FUNCTION_LOWER: immutabledict[str, Callable[..., Any]] = immutabledict(
         "cosh": sympy.cosh,
         "tanh": sympy.tanh,
         "erf": sympy.erf,
-        "round": _sympy_round,
+        "round": _SYMPY_ROUND,
         "floor": sympy.floor,
         "ceil": sympy.ceiling,
     }
@@ -121,6 +138,7 @@ _NATIVE_FUNCTION_LIFT_DISPATCH: tuple[tuple[type, str], ...] = (
     (sympy.log, "log"),
     (sympy.floor, "floor"),
     (sympy.ceiling, "ceil"),
+    (_SYMPY_ROUND, "round"),
 )
 
 # Native-constant lowering / lifting. SymPy folds a negated ``oo`` into a
@@ -671,6 +689,7 @@ class SymPyToExpressionConverter(
         (sympy.logic.boolalg.Xor, "_convert_xor"),
         (sympy.logic.boolalg.Nor, "_convert_nor"),
         (sympy.logic.boolalg.Nand, "_convert_nand"),
+        (sympy.logic.boolalg.ITE, "_convert_ite"),
         (sympy.core.relational.Relational, "convert_relational"),
         (sympy.logic.boolalg.Implies, "_convert_implies"),
         (sympy.logic.boolalg.BooleanTrue, "_convert_boolean_true"),
@@ -838,6 +857,26 @@ class SymPyToExpressionConverter(
             BinaryOperation.LOGICAL_AND, nand
         )
         return UnaryExpression(UnaryOperation.LOGICAL_NOT, and_statement)
+
+    def _convert_ite(self, ite: sympy.logic.boolalg.ITE) -> PiecewiseExpression:
+        """Lift a boolean ``ITE`` to a total two-branch `PiecewiseExpression`.
+
+        ``ITE(condition, consequent, alternative)`` selects its
+        consequent where the condition holds and its alternative
+        everywhere else, so it lifts to the piecewise holding the single
+        case ``(condition, consequent)`` with the alternative as
+        ``otherwise``, the same total, first-match-wins shape a
+        ``sympy.Piecewise`` lifts to.
+        """
+        NUM_REQUIRED_ARGS = 3
+        if len(ite.args) != NUM_REQUIRED_ARGS:
+            raise ValueError("Expected an ITE to have exactly three arguments.")
+        condition, consequent, alternative = ite.args
+        return PiecewiseExpression(
+            (self.convert(condition),),
+            (self.convert(consequent),),
+            self.convert(alternative),
+        )
 
     def _convert_equality(self, equivalent: sympy.Equality) -> BinaryExpression:
         return self._convert_two_argument_binary_operation(
