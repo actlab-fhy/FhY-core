@@ -2,11 +2,6 @@
 
 Notes on known-equivalent mutants not targeted by this file:
 
-- The ``value == "True"`` / ``value == "False"`` string branches in
-  ``visit_literal_expression`` are unreachable: ``LiteralExpression``'s
-  ``__post_init__`` rejects any non-numeric string at construction, so the
-  comparison-operator mutants there cannot be distinguished from the public
-  surface.
 - ``identifier_type == SymbolType.{REAL, INT, BOOL}`` comparisons are
   ``Enum``-singleton equivalents under ``is``; those mutants are not
   distinguishable in CPython.
@@ -537,22 +532,6 @@ def test_z3_visit_identifier_rejects_invalid_symbol_type() -> None:
 
     with pytest.raises(ValueError, match=r"Unsupported identifier type"):
         converter.visit_identifier_expression(IdentifierExpression(identifier))
-
-
-@pytest.mark.parametrize(
-    "value, expected_bool",
-    [
-        pytest.param("True", True, id="true_string"),
-        pytest.param("False", False, id="false_string"),
-    ],
-)
-def test_z3_visit_literal_bool_string_via_mock(value: str, expected_bool: bool) -> None:
-    """Test the boolean-string branches map to `z3.BoolVal(True)` / `BoolVal(False)`."""
-    converter = ExpressionToZ3Converter({})
-    literal = Mock(spec=LiteralExpression)
-    literal.value = value
-    result = converter.visit_literal_expression(literal)
-    assert result.eq(z3.BoolVal(expected_bool))
 
 
 def test_z3_visit_literal_unsupported_value_raises() -> None:

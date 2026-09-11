@@ -207,8 +207,7 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
             f"Z3 does not support native function calls; {name!r} cannot be lowered"
         )
 
-    # One return per literal kind lowered to Z3; flattening would not help.
-    def visit_literal_expression(  # noqa: PLR0911
+    def visit_literal_expression(
         self, literal_expression: LiteralExpression
     ) -> z3.ExprRef:
         """Lower a literal to the Z3 numeral its IR form denotes exactly.
@@ -256,11 +255,7 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
         elif isinstance(value, float):
             return z3.RatVal(*value.as_integer_ratio())
         elif isinstance(value, str):
-            if value == "True":
-                return z3.BoolVal(True)
-            elif value == "False":
-                return z3.BoolVal(False)
-            elif is_integer_valued_literal(value):
+            if is_integer_valued_literal(value):
                 return z3.IntVal(int(value))
             else:
                 return z3.RealVal(value)

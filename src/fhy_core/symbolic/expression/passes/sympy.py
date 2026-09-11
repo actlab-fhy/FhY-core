@@ -369,8 +369,7 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             )
         return TypeError(f"native function {name!r} has no SymPy lowering registered")
 
-    # One return per literal kind lowered to SymPy; flattening would not help.
-    def visit_literal_expression(  # noqa: PLR0911
+    def visit_literal_expression(
         self, literal_expression: LiteralExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
         """Lower a literal to the SymPy number its IR form denotes exactly.
@@ -393,9 +392,14 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
           making ``"0.1" + "0.1" + "0.1" == "0.3"`` simplify to False for
           the same reason the binary form does.
 
-        The Z3 bridge lowers each of those forms to the same value, so no
-        ground comparison is decided one way by ``simplify_expression``
-        and the other way by the solver seam.
+        The Z3 bridge lowers each of those forms to the same value, so a
+        single literal denotes the same number on both bridges. Past a
+        single literal the two diverge: this bridge evaluates binary-float
+        arithmetic in SymPy's binary floating point, while the solver seam
+        reasons over it in exact rational arithmetic, so a ground
+        comparison that does float arithmetic can come out differently --
+        for example, ``(1e16 + 1.0) == 1e16`` simplifies to ``True`` but
+        the solver seam finds it ``False``.
 
         A float-grammar string whose decimal value is a whole number
         (``"2."``, ``"2.0"``) yields a ``sympy.Integer``, since
@@ -412,10 +416,6 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
         if isinstance(value, float):
             return sympy.Float(value)
         if isinstance(value, str):
-            if value == "True":
-                return sympy.true
-            if value == "False":
-                return sympy.false
             if is_integer_valued_literal(value):
                 return sympy.Integer(int(value))
             return sympy.Rational(value)

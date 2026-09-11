@@ -1073,23 +1073,6 @@ def test_simplify_expression_ignores_an_unreferenced_native_constant_binding() -
 # =============================================================================
 
 
-@pytest.mark.parametrize(
-    "value, expected",
-    [
-        pytest.param("True", sympy.true, id="true_string"),
-        pytest.param("False", sympy.false, id="false_string"),
-    ],
-)
-def test_sympy_converter_visit_literal_bool_string_via_mock(
-    value: str, expected: sympy.logic.boolalg.BooleanAtom
-) -> None:
-    """Test the boolean-string branches map to `sympy.true` / `sympy.false`."""
-    converter = ExpressionToSympyConverter()
-    literal = Mock(spec=LiteralExpression)
-    literal.value = value
-    assert converter.visit_literal_expression(literal) is expected
-
-
 def test_sympy_converter_visit_literal_unsupported_value_raises() -> None:
     """Test `visit_literal_expression` raises on a wholly unsupported literal value."""
     converter = ExpressionToSympyConverter()
