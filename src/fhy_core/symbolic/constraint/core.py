@@ -37,6 +37,7 @@ __all__ = [
     "SymbolicPredicate",
 ]
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -220,6 +221,37 @@ def _find_bound_native_constants(
             and try_get_native_constant_for_identifier(identifier) is not None
         ),
         key=lambda identifier: identifier.id,
+    )
+
+
+def _log_native_constant_binding_refusal(
+    logger: logging.Logger, context: str, identifiers: Iterable[Identifier]
+) -> None:
+    """Log the WARNING refusing bindings for native constants' canonical identifiers.
+
+    Shared by every bindings-aware entry point that refuses such a binding:
+    ``EquationConstraint.evaluate_with_bindings``,
+    ``_evaluate_set_membership_with_bindings``, and
+    ``ConstraintSystem.check_satisfiability_with_bindings``. Each call site
+    still decides on its own that the binding must be refused, reports
+    ``ConstraintOutcome.UNDECIDED`` itself, and passes its own module
+    logger, so the record attributes to the caller's module rather than
+    always to this one.
+
+    Args:
+        logger: The call site's own module logger.
+        context: Label identifying the call site (the class and/or method
+            name), embedded at the start of the message.
+        identifiers: The refused canonical identifiers, named by repr.
+
+    """
+    logger.warning(
+        "%s: identifier(s) %s are the canonical identifier(s) of registered "
+        "native constant(s), which name a value rather than a variable, so "
+        "the supplied binding cannot be honored; reporting UNDECIDED rather "
+        "than a decision the binding did not take part in",
+        context,
+        format_comma_separated_list(tuple(identifiers)),
     )
 
 
@@ -594,15 +626,8 @@ class EquationConstraint(Constraint):
         validate_predicate(self.expression, environment)
         captured = _find_bound_native_constants(scope, environment)
         if captured:
-            _LOGGER.warning(
-                "%s.evaluate_with_bindings: identifier(s) %s are the canonical "
-                "identifiers of registered native constants, so the backend "
-                "bridge resolves them to those constants instead of to "
-                "substitutable symbols and the supplied binding cannot be "
-                "honored; reporting UNDECIDED rather than a decision the "
-                "binding did not take part in",
-                type(self).__name__,
-                format_comma_separated_list(tuple(captured)),
+            _log_native_constant_binding_refusal(
+                _LOGGER, f"{type(self).__name__}.evaluate_with_bindings", captured
             )
             return ConstraintOutcome.UNDECIDED
         result = simplify_expression(self.expression, environment)
@@ -805,14 +830,8 @@ def _evaluate_set_membership_with_bindings(
         return ConstraintOutcome.UNDECIDED
     is_member = _decide_bound_value_membership(variable, value, members)
     if try_get_native_constant_for_identifier(variable) is not None:
-        _LOGGER.warning(
-            "%s.evaluate_with_bindings: identifier %r is the canonical "
-            "identifier of a registered native constant, which names a value "
-            "rather than a variable, so the supplied binding cannot be "
-            "honored; reporting UNDECIDED rather than deciding membership for "
-            "a world where the constant has the bound value",
-            kind_name,
-            variable,
+        _log_native_constant_binding_refusal(
+            _LOGGER, f"{kind_name}.evaluate_with_bindings", (variable,)
         )
         return ConstraintOutcome.UNDECIDED
     if is_member is None:

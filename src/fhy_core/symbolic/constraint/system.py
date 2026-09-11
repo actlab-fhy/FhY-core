@@ -55,6 +55,7 @@ from .core import (
     SymbolicPredicate,
     _coerce_bindings_to_environment,
     _find_bound_native_constants,
+    _log_native_constant_binding_refusal,
 )
 from .errors import ConstraintError, MissingSymbolTypeError
 
@@ -225,11 +226,13 @@ def _decide_satisfiability(
 def _convert_members_to_conjunction(members: Sequence[Constraint]) -> Expression:
     """Return the conjunction of ``members``' own expression forms.
 
-    Mirrors ``ConstraintSystem.convert_to_expression``, but over a
-    caller-chosen subset of a system's members rather than the whole
-    system: an empty sequence yields ``LiteralExpression(True)``, a
-    single member yields that member's expression unwrapped, and
-    otherwise a ``logical_and`` over the members in the given order.
+    Shared by ``ConstraintSystem.convert_to_expression``, which calls this
+    with the whole system's members, and
+    ``check_satisfiability_with_bindings``, which calls it with a
+    caller-chosen residual subset: an empty sequence yields
+    ``LiteralExpression(True)``, a single member yields that member's
+    expression unwrapped, and otherwise a ``logical_and`` over the members
+    in the given order.
 
     Args:
         members: Constraints to conjoin.
@@ -505,14 +508,7 @@ class ConstraintSystem(
             ConstraintError: If any member cannot be expressed.
 
         """
-        if not self.constraints:
-            return LiteralExpression(True)
-        expressions = [
-            constraint.convert_to_expression() for constraint in self.constraints
-        ]
-        if len(expressions) == 1:
-            return expressions[0]
-        return Expression.logical_and(*expressions)
+        return _convert_members_to_conjunction(self.constraints)
 
     def check_satisfiability(
         self,
@@ -747,14 +743,10 @@ class ConstraintSystem(
         }
         captured = _find_bound_native_constants(scope, environment)
         if captured:
-            _LOGGER.warning(
-                "ConstraintSystem.check_satisfiability_with_bindings: "
-                "identifier(s) %s are the canonical identifiers of registered "
-                "native constants, which name values rather than variables, so "
-                "the supplied binding cannot be honored; reporting UNDECIDED "
-                "rather than deciding for a world where the constant has the "
-                "bound value",
-                format_comma_separated_list(tuple(captured)),
+            _log_native_constant_binding_refusal(
+                _LOGGER,
+                "ConstraintSystem.check_satisfiability_with_bindings",
+                captured,
             )
             return ConstraintOutcome.UNDECIDED
         leaves_outcome = _decide_leaves_with_bindings(decided_leaves, bindings)
