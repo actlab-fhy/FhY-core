@@ -38,7 +38,7 @@ constraint and solver layers raise for it propagates instead.
 import itertools
 import math
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias
 
@@ -2183,7 +2183,7 @@ class OrdinalDomain(ParamDomain):
 
     @classmethod
     @override
-    def construct_from_fields(cls, fields: dict[str, Any]) -> "OrdinalDomain":
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> "OrdinalDomain":
         return build_ordinal_domain(fields["sorted_values"])
 
 
@@ -2372,7 +2372,7 @@ class CategoricalDomain(ParamDomain):
 
     @classmethod
     @override
-    def construct_from_fields(cls, fields: dict[str, Any]) -> "CategoricalDomain":
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> "CategoricalDomain":
         return build_categorical_domain(tuple(fields["categories"]))
 
 
@@ -2539,7 +2539,7 @@ class PermutationDomain(ParamDomain):
 
     @classmethod
     @override
-    def construct_from_fields(cls, fields: dict[str, Any]) -> "PermutationDomain":
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> "PermutationDomain":
         return build_permutation_domain(fields["ordered_members"])
 
 

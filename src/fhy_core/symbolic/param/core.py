@@ -12,7 +12,7 @@ domain.
 """
 
 import operator
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar, cast
 
@@ -979,7 +979,7 @@ class ParamAssignment(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generi
 
     @classmethod
     @override
-    def construct_from_fields(cls, fields: dict[str, Any]) -> "ParamAssignment[Any]":
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> "ParamAssignment[Any]":
         """Rebuild an assignment, rejecting only provable invalidity.
 
         The constructor path demands full proof of satisfaction, which a

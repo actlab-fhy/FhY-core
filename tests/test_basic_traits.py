@@ -647,6 +647,17 @@ def test_interned_construct_from_fields_returns_canonical_for_existing_key() -> 
     assert restored is canonical
 
 
+def test_interned_construct_from_fields_accepts_an_immutabledict() -> None:
+    """Test the reconstruction hook accepts an `immutabledict` field mapping."""
+    _DataclassInternedValue.clear_interned_registry()
+
+    restored = _DataclassInternedValue.construct_from_fields(
+        immutabledict({"key": "imm", "value": 3})
+    )
+
+    assert restored == _DataclassInternedValue("imm", 3)
+
+
 def test_interned_construct_from_fields_warns_on_ignored_metadata(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

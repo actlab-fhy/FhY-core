@@ -6,7 +6,7 @@ __all__ = ["Interned", "InternedMixin"]
 
 import dataclasses
 from abc import ABC, abstractmethod
-from collections.abc import Hashable
+from collections.abc import Hashable, Mapping
 from functools import wraps
 from typing import Any, ClassVar, Generic, Protocol, TypeVar, cast, runtime_checkable
 
@@ -195,7 +195,7 @@ class InternedMixin(Generic[_K], ABC):
         """
 
     @classmethod
-    def construct_from_fields(cls: type[_I], fields: dict[str, Any]) -> _I:
+    def construct_from_fields(cls: type[_I], fields: Mapping[str, Any]) -> _I:
         """Reconstruct an interned instance, returning the canonical entry.
 
         Serves as the serialization reconstruction hook (see

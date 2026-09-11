@@ -833,7 +833,7 @@ class ConstraintSystem(
 
     @classmethod
     @override
-    def construct_from_fields(cls, fields: dict[str, Any]) -> "ConstraintSystem":
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> "ConstraintSystem":
         """Route deserialized fields through the constructor for re-validation."""
         return cls(fields["constraints"])
 

@@ -8,11 +8,15 @@ family rather than the parameter container.
 from typing import Any
 
 import pytest
+from immutabledict import immutabledict
 
 from fhy_core.symbolic.param.domains import (
+    CategoricalDomain,
     IntegerDomain,
     IntervalIntegerDomain,
+    OrdinalDomain,
     ParamDomain,
+    PermutationDomain,
     RealDomain,
     build_categorical_domain,
     build_ordinal_domain,
@@ -79,3 +83,38 @@ def test_categorical_domain_round_trip_preserves_bool_int_distinction() -> None:
 
     assert restored.is_value_admissible(True)
     assert restored.is_value_admissible(1)
+
+
+# =============================================================================
+# construct_from_fields accepts any Mapping, not only dict
+# =============================================================================
+
+
+def test_ordinal_domain_construct_from_fields_accepts_an_immutabledict() -> None:
+    """Test `OrdinalDomain`'s reconstruction hook accepts an `immutabledict`."""
+    domain = build_ordinal_domain((1, 2, 3))
+    fields = immutabledict({"sorted_values": domain.sorted_values})
+
+    rebuilt = OrdinalDomain.construct_from_fields(fields)
+
+    assert rebuilt.is_structurally_equivalent(domain)
+
+
+def test_categorical_domain_construct_from_fields_accepts_an_immutabledict() -> None:
+    """Test `CategoricalDomain`'s reconstruction hook accepts an `immutabledict`."""
+    domain = build_categorical_domain((True, 1, "a"))
+    fields = immutabledict({"categories": domain.categories})
+
+    rebuilt = CategoricalDomain.construct_from_fields(fields)
+
+    assert rebuilt.is_structurally_equivalent(domain)
+
+
+def test_permutation_domain_construct_from_fields_accepts_an_immutabledict() -> None:
+    """Test `PermutationDomain`'s reconstruction hook accepts an `immutabledict`."""
+    domain = build_permutation_domain((1, 2, 3))
+    fields = immutabledict({"ordered_members": domain.ordered_members})
+
+    rebuilt = PermutationDomain.construct_from_fields(fields)
+
+    assert rebuilt.is_structurally_equivalent(domain)

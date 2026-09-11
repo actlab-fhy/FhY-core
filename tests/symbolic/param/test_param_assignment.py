@@ -3,6 +3,7 @@
 from typing import Any
 
 import pytest
+from immutabledict import immutabledict
 
 from fhy_core.serialization import (
     DeserializationDictStructureError,
@@ -472,6 +473,19 @@ def test_construct_from_fields_stores_the_domain_canonical_value() -> None:
     constructed = ParamAssignment(param, members)
 
     assert from_fields.value == (1, 2, 3)
+    assert from_fields.is_structurally_equivalent(constructed)
+
+
+def test_construct_from_fields_accepts_an_immutabledict() -> None:
+    """Test `construct_from_fields` accepts an `immutabledict` field mapping."""
+    param = create_permutation_param([1, 2, 3])
+    members: Any = [1, 2, 3]
+
+    from_fields = ParamAssignment.construct_from_fields(
+        immutabledict({"param": param, "value": members})
+    )
+    constructed = ParamAssignment(param, members)
+
     assert from_fields.is_structurally_equivalent(constructed)
 
 

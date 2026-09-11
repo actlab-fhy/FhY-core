@@ -989,7 +989,7 @@ class _SetConstraint(Constraint):
 
     @classmethod
     @override
-    def construct_from_fields(cls, fields: dict[str, Any]) -> Self:
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> Self:
         return cls(fields["variable"], fields["values"])
 
     @override
