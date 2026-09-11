@@ -1756,7 +1756,7 @@ def create_single_valid_value_param(
     value: _CategoricalValueT, *, name: Identifier | None = None
 ) -> Param[_CategoricalValueT]:
     """Create a parameter that admits only a single value."""
-    return create_categorical_param([value], name=name)
+    return create_categorical_param((value,), name=name)
 
 
 # ---------------------------------------------------------------------------

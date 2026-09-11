@@ -96,7 +96,7 @@ __all__ = [
 ]
 
 import math
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from enum import Enum, auto
 
@@ -473,7 +473,7 @@ def _classify_lowered_sort(  # noqa: PLR0911
     return _LoweredSort.UNDETERMINED
 
 
-def _join_lowered_sorts(sorts: Iterator[_LoweredSort]) -> _LoweredSort:
+def _join_lowered_sorts(sorts: Iterable[_LoweredSort]) -> _LoweredSort:
     """Return the sort every input agrees on, or ``UNDETERMINED`` if they differ."""
     distinct = set(sorts)
     if len(distinct) == 1:
@@ -1061,7 +1061,9 @@ def _find_int_float_equality_hazard(
     return None
 
 
-def _log_native_constant_hazard(constants: list[Identifier], *, context: str) -> None:
+def _log_native_constant_hazard(
+    constants: Sequence[Identifier], *, context: str
+) -> None:
     _LOGGER.warning(
         "%s: the expression references the native constant(s) %s, which the "
         "Z3 bridge has no term for (the built-in pi and e are "

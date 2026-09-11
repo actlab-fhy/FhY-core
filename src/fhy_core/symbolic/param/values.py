@@ -166,7 +166,7 @@ def do_param_values_match(candidate: Any, allowed_value: Any) -> bool:
 
 
 def does_collection_contain_param_value(
-    allowed_values: Collection[Any] | Sequence[Any], candidate: Any
+    allowed_values: Collection[Any], candidate: Any
 ) -> bool:
     """Return whether ``candidate`` matches any element of ``allowed_values``."""
     return any(

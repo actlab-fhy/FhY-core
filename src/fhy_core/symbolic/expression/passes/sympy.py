@@ -10,7 +10,7 @@ __all__ = [
 ]
 
 import operator
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import Any, ClassVar
 
@@ -507,7 +507,7 @@ class SympyVariableSubstitutionPass(
         )
 
 
-def _raise_for_bound_native_constants(bound_constants: list[Identifier]) -> None:
+def _raise_for_bound_native_constants(bound_constants: Sequence[Identifier]) -> None:
     """Raise ``NativeConstantBindingError`` naming each already-sorted identifier."""
     if not bound_constants:
         return
