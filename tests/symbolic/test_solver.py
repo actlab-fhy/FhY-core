@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 import pytest
 import z3  # type: ignore[import-untyped]
+from immutabledict import immutabledict
 
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
@@ -444,6 +445,101 @@ def test_assert_holds_for_all_free_assignments_raises_undecidable_error_on_unkno
         )
 
     assert exc_info.value.reason == "timeout"
+
+
+# =============================================================================
+# `symbol_types` accepts any `Mapping`, not only `dict`
+# =============================================================================
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_accepts_an_immutabledict() -> None:
+    """Test the satisfiability seam accepts an `immutabledict` `symbol_types`."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+    )
+    symbol_types = immutabledict({x: SymbolType.INT})
+
+    assert check_expression_satisfiability(expression, symbol_types) is True
+
+
+@pytest.mark.z3
+def test_does_expression_imply_accepts_an_immutabledict_symbol_types() -> None:
+    """Test the implication seam accepts an `immutabledict` `symbol_types`."""
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL, IdentifierExpression(x), LiteralExpression(5)
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(3)
+    )
+    symbol_types = immutabledict({x: SymbolType.INT})
+
+    assert does_expression_imply(antecedent, consequent, symbol_types) is True
+
+
+@pytest.mark.z3
+def test_holds_for_all_free_assignments_accepts_an_immutabledict() -> None:
+    """Test the universal-validity seam accepts an `immutabledict` `symbol_types`."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL,
+        BinaryExpression(
+            BinaryOperation.MULTIPLY, IdentifierExpression(x), IdentifierExpression(x)
+        ),
+        LiteralExpression(0),
+    )
+    symbol_types = immutabledict({x: SymbolType.REAL})
+
+    assert holds_for_all_free_assignments(frozenset(), expression, symbol_types) is True
+
+
+@pytest.mark.z3
+def test_assert_holds_for_all_free_assignments_with_immutabledict_raises_on_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test the strict variant raises when undecided, given an `immutabledict`.
+
+    Z3 is forced to answer ``unknown``, so the claim's truth does not
+    matter; the test pins that a `Mapping` other than `dict` reaches the
+    raising path.
+    """
+    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+    monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+    )
+    symbol_types = immutabledict({x: SymbolType.INT})
+
+    with pytest.raises(UndecidableError, match="timeout"):
+        assert_holds_for_all_free_assignments(frozenset(), expression, symbol_types)
+
+
+@pytest.mark.z3
+def test_assert_expression_implies_with_immutabledict_symbol_types_raises_on_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test the strict variant raises when undecided, given an `immutabledict`.
+
+    Z3 is forced to answer ``unknown``, so the claim's truth does not
+    matter; the test pins that a `Mapping` other than `dict` reaches the
+    raising path.
+    """
+    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+    monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(5)
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(10)
+    )
+    symbol_types = immutabledict({x: SymbolType.INT})
+
+    with pytest.raises(UndecidableError, match="timeout"):
+        assert_expression_implies(antecedent, consequent, symbol_types)
 
 
 # =============================================================================

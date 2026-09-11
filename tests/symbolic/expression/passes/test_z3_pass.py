@@ -12,6 +12,7 @@ from unittest.mock import Mock
 
 import pytest
 import z3  # type: ignore[import-untyped]
+from immutabledict import immutabledict
 
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
@@ -548,6 +549,129 @@ def test_z3_converter_get_noop_output_raises() -> None:
     """Test `ExpressionToZ3Converter.get_noop_output` raises `PassExecutionError`."""
     with pytest.raises(PassExecutionError, match=r"does not define noop output"):
         ExpressionToZ3Converter({}).get_noop_output(LiteralExpression(0))
+
+
+# =============================================================================
+# `symbol_types` accepts any `Mapping`, not only `dict`
+# =============================================================================
+
+
+def test_expression_to_z3_converter_accepts_an_immutabledict_symbol_types() -> None:
+    """Test constructing the converter from an `immutabledict` lowers correctly."""
+    x = mock_identifier("x", 0)
+    converter = ExpressionToZ3Converter(immutabledict({x: SymbolType.INT}))
+
+    result = converter(IdentifierExpression(x))
+
+    assert result.sort().is_int()
+
+
+def test_convert_expression_to_z3_expression_accepts_an_immutabledict() -> None:
+    """Test the bridge's converter entry point accepts an `immutabledict`."""
+    x = mock_identifier("x", 0)
+    symbol_types = immutabledict({x: SymbolType.REAL})
+
+    result, _ = convert_expression_to_z3_expression(
+        IdentifierExpression(x), symbol_types
+    )
+
+    assert result.sort().is_real()
+
+
+def test_z3_holds_for_all_free_assignments_accepts_an_immutabledict() -> None:
+    """Test the bridge's universal-validity entry point accepts an `immutabledict`."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL,
+        BinaryExpression(
+            BinaryOperation.MULTIPLY, IdentifierExpression(x), IdentifierExpression(x)
+        ),
+        LiteralExpression(0),
+    )
+    symbol_types = immutabledict({x: SymbolType.REAL})
+
+    assert (
+        z3_holds_for_all_free_assignments(frozenset(), expression, symbol_types) is True
+    )
+
+
+def test_z3_does_expression_imply_accepts_an_immutabledict_symbol_types() -> None:
+    """Test the bridge's implication entry point accepts an `immutabledict`."""
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL, IdentifierExpression(x), LiteralExpression(5)
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(3)
+    )
+    symbol_types = immutabledict({x: SymbolType.INT})
+
+    assert z3_does_expression_imply(antecedent, consequent, symbol_types) is True
+
+
+def test_z3_assert_holds_for_all_free_assignments_with_immutabledict_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test the strict variant raises when undecided, given an `immutabledict`.
+
+    Z3 is forced to answer ``unknown``, so the claim's truth does not
+    matter; the test pins that a `Mapping` other than `dict` reaches the
+    raising path.
+    """
+    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+    monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+    )
+    symbol_types = immutabledict({x: SymbolType.INT})
+
+    with pytest.raises(UndecidableError, match="timeout"):
+        assert_holds_for_all_free_assignments(frozenset(), expression, symbol_types)
+
+
+def test_z3_assert_expression_implies_with_immutabledict_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test the strict variant raises when undecided, given an `immutabledict`.
+
+    Z3 is forced to answer ``unknown``, so the claim's truth does not
+    matter; the test pins that a `Mapping` other than `dict` reaches the
+    raising path.
+    """
+    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+    monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(5)
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(10)
+    )
+    symbol_types = immutabledict({x: SymbolType.INT})
+
+    with pytest.raises(UndecidableError, match="timeout"):
+        assert_expression_implies(antecedent, consequent, symbol_types)
+
+
+def test_expression_to_z3_converter_snapshots_symbol_types_at_construction() -> None:
+    """Test the converter's lowering is unaffected by mutating the caller's dict.
+
+    Builds the converter from a plain, still-mutable ``dict`` binding
+    ``x`` to ``REAL``, then rebinds ``x`` to ``INT`` in that same dict
+    after construction. The converter must keep lowering ``x`` as the
+    ``REAL`` term it was constructed with, guarding against it aliasing
+    the caller's dict instead of snapshotting it.
+    """
+    x = mock_identifier("x", 0)
+    symbol_types = {x: SymbolType.REAL}
+    converter = ExpressionToZ3Converter(symbol_types)
+
+    symbol_types[x] = SymbolType.INT
+
+    result = converter(IdentifierExpression(x))
+
+    assert result.sort().is_real()
 
 
 def test_holds_for_all_free_assignments_raises_on_unexpected_solver_result(

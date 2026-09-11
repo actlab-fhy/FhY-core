@@ -1308,7 +1308,7 @@ def _screen_z3_question(
 
 def check_expression_satisfiability(
     expression: Expression,
-    symbol_types: dict[Identifier, SymbolType],
+    symbol_types: Mapping[Identifier, SymbolType],
     *,
     backend: SolverBackend = SolverBackend.Z3,
     timeout_milliseconds: int | None = None,
@@ -1383,7 +1383,7 @@ def check_expression_satisfiability(
 def does_expression_imply(
     antecedent: Expression,
     consequent: Expression,
-    symbol_types: dict[Identifier, SymbolType],
+    symbol_types: Mapping[Identifier, SymbolType],
     *,
     backend: SolverBackend = SolverBackend.Z3,
     timeout_milliseconds: int | None = None,
@@ -1457,7 +1457,7 @@ def does_expression_imply(
 def holds_for_all_free_assignments(
     considered_identifiers: AbstractSet[Identifier],
     expression: Expression,
-    symbol_types: dict[Identifier, SymbolType],
+    symbol_types: Mapping[Identifier, SymbolType],
     *,
     backend: SolverBackend = SolverBackend.Z3,
     timeout_milliseconds: int | None = None,
@@ -1532,7 +1532,7 @@ def holds_for_all_free_assignments(
 def assert_holds_for_all_free_assignments(
     considered_identifiers: AbstractSet[Identifier],
     expression: Expression,
-    symbol_types: dict[Identifier, SymbolType],
+    symbol_types: Mapping[Identifier, SymbolType],
     *,
     backend: SolverBackend = SolverBackend.Z3,
     timeout_milliseconds: int | None = None,
@@ -1609,7 +1609,7 @@ def assert_holds_for_all_free_assignments(
 def assert_expression_implies(
     antecedent: Expression,
     consequent: Expression,
-    symbol_types: dict[Identifier, SymbolType],
+    symbol_types: Mapping[Identifier, SymbolType],
     *,
     backend: SolverBackend = SolverBackend.Z3,
     timeout_milliseconds: int | None = None,

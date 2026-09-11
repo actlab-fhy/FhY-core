@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 import pytest
+from immutabledict import immutabledict
 
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import (
@@ -775,6 +776,26 @@ def test_check_satisfiability_is_satisfied_for_a_satisfiable_system() -> None:
     )
 
     outcome = system.check_satisfiability({x: SymbolType.INT, y: SymbolType.INT})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+
+
+@pytest.mark.z3
+def test_check_satisfiability_accepts_an_immutabledict_symbol_types() -> None:
+    """Test `check_satisfiability` accepts an `immutabledict` `symbol_types`.
+
+    Guards the removal of the seam's defensive ``dict(symbol_types)``
+    copy: the solver call it forwards to now accepts any `Mapping`
+    directly, so an `immutabledict` needs no such copy.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    system = create_constraint_system(
+        EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, y))
+    )
+    symbol_types = immutabledict({x: SymbolType.INT, y: SymbolType.INT})
+
+    outcome = system.check_satisfiability(symbol_types)
 
     assert outcome is ConstraintOutcome.SATISFIED
 
@@ -2515,6 +2536,23 @@ def test_check_implication_proven_entailment_is_satisfied() -> None:
     consequent = create_constraint_system(InSetConstraint(x, {1, 2, 3}))
 
     outcome = antecedent.check_implication(consequent, {x: SymbolType.INT})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+
+
+@pytest.mark.z3
+def test_check_implication_accepts_an_immutabledict_symbol_types() -> None:
+    """Test `check_implication` accepts an `immutabledict` `symbol_types`.
+
+    Mirrors `test_check_satisfiability_accepts_an_immutabledict_symbol_types`
+    for the implication seam's own removed defensive ``dict()`` copy.
+    """
+    x = mock_identifier("x", 0)
+    antecedent = create_constraint_system(InSetConstraint(x, {1, 2}))
+    consequent = create_constraint_system(InSetConstraint(x, {1, 2, 3}))
+    symbol_types = immutabledict({x: SymbolType.INT})
+
+    outcome = antecedent.check_implication(consequent, symbol_types)
 
     assert outcome is ConstraintOutcome.SATISFIED
 

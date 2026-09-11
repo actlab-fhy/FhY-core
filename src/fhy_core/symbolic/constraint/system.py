@@ -217,7 +217,7 @@ def _decide_satisfiability(
     return _classify_solver_answer(
         check_expression_satisfiability(
             expression,
-            dict(symbol_types),
+            symbol_types,
             timeout_milliseconds=timeout_milliseconds,
         )
     )
@@ -826,7 +826,7 @@ class ConstraintSystem(
             does_expression_imply(
                 antecedent,
                 consequent,
-                dict(symbol_types),
+                symbol_types,
                 timeout_milliseconds=timeout_milliseconds,
             )
         )

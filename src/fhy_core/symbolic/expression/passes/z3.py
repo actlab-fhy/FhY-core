@@ -11,7 +11,7 @@ __all__ = [
 ]
 
 import operator
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from collections.abc import Set as AbstractSet
 from typing import Any
 
@@ -118,12 +118,12 @@ class ExpressionToZ3Converter(VisitablePass[Expression, z3.ExprRef]):
         }
     )
 
-    _symbol_types: dict[Identifier, SymbolType]
+    _symbol_types: immutabledict[Identifier, SymbolType]
     _identifier_to_z3_expression: dict[Identifier, z3.ExprRef]
 
-    def __init__(self, symbol_types: dict[Identifier, SymbolType]) -> None:
+    def __init__(self, symbol_types: Mapping[Identifier, SymbolType]) -> None:
         super().__init__()
-        self._symbol_types = symbol_types
+        self._symbol_types = immutabledict(symbol_types)
         self._identifier_to_z3_expression = {}
 
     @property
@@ -295,7 +295,7 @@ def _find_referenced_native_constant_identifiers(
 
 def _raise_if_missing_z3_symbol_types(
     expression: Expression,
-    symbol_types: dict[Identifier, SymbolType],
+    symbol_types: Mapping[Identifier, SymbolType],
     constant_identifiers: AbstractSet[Identifier],
 ) -> None:
     """Raise unless ``symbol_types`` covers every non-constant free identifier.
@@ -327,7 +327,8 @@ def _raise_if_missing_z3_symbol_types(
 
 
 def convert_expression_to_z3_expression(
-    expression: Expression, symbol_types: dict[Identifier, SymbolType] | None = None
+    expression: Expression,
+    symbol_types: Mapping[Identifier, SymbolType] | None = None,
 ) -> tuple[z3.ExprRef, immutabledict[Identifier, z3.ExprRef]]:
     """Convert an expression to a Z3 expression.
 
@@ -388,7 +389,7 @@ def convert_expression_to_z3_expression(
 def holds_for_all_free_assignments(
     considered_identifiers: AbstractSet[Identifier],
     expression: Expression,
-    symbol_types: dict[Identifier, SymbolType],
+    symbol_types: Mapping[Identifier, SymbolType],
     *,
     timeout_milliseconds: int | None = None,
 ) -> bool | None:
@@ -453,7 +454,7 @@ def holds_for_all_free_assignments(
 def _holds_for_all_free_assignments_with_reason(
     considered_identifiers: AbstractSet[Identifier],
     expression: Expression,
-    symbol_types: dict[Identifier, SymbolType],
+    symbol_types: Mapping[Identifier, SymbolType],
     *,
     timeout_milliseconds: int | None = None,
 ) -> tuple[bool | None, str | None]:
@@ -534,7 +535,7 @@ def _holds_for_all_free_assignments_with_reason(
 def does_expression_imply(
     antecedent: Expression,
     consequent: Expression,
-    symbol_types: dict[Identifier, SymbolType],
+    symbol_types: Mapping[Identifier, SymbolType],
     *,
     timeout_milliseconds: int | None = None,
 ) -> bool | None:
@@ -581,7 +582,7 @@ def does_expression_imply(
 def _does_expression_imply_with_reason(
     antecedent: Expression,
     consequent: Expression,
-    symbol_types: dict[Identifier, SymbolType],
+    symbol_types: Mapping[Identifier, SymbolType],
     *,
     timeout_milliseconds: int | None = None,
 ) -> tuple[bool | None, str | None]:
@@ -611,7 +612,7 @@ def _does_expression_imply_with_reason(
 def assert_holds_for_all_free_assignments(
     considered_identifiers: AbstractSet[Identifier],
     expression: Expression,
-    symbol_types: dict[Identifier, SymbolType],
+    symbol_types: Mapping[Identifier, SymbolType],
     *,
     timeout_milliseconds: int | None = None,
 ) -> bool:
@@ -668,7 +669,7 @@ def assert_holds_for_all_free_assignments(
 def assert_expression_implies(
     antecedent: Expression,
     consequent: Expression,
-    symbol_types: dict[Identifier, SymbolType],
+    symbol_types: Mapping[Identifier, SymbolType],
     *,
     timeout_milliseconds: int | None = None,
 ) -> bool:
