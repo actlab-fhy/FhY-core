@@ -623,7 +623,7 @@ class ConstraintSystem(
         Every other member -- an equation, or a set leaf left unbound or
         bound to a symbolic (non-literal) expression -- is the residual:
         it is substituted and decided over the remaining free identifiers
-        via the z3 bridge, exactly as today. ``symbol_types`` needs
+        via the z3 bridge. ``symbol_types`` needs
         entries only for the identifiers the residual leaves free.
         Answers questions of the form "given x = 4, can y and z still be
         chosen?".

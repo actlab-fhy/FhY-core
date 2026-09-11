@@ -1346,7 +1346,8 @@ def check_expression_satisfiability(
             identifier here and needs no entry; the screen refuses it.
         NonBooleanLogicalOperandError: If ``expression``'s root, an
             operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
-            ``LOGICAL_NOT`` node, or a piecewise case condition, provably
+            ``LOGICAL_NOT`` node, a piecewise case condition, or a branch of a
+            piecewise in a Boolean position, provably
             denotes a number, counting an identifier ``symbol_types``
             declares INT or REAL. Such an expression is ill-typed rather
             than undecidable, so it raises instead of reporting ``None``.
@@ -1422,7 +1423,8 @@ def does_expression_imply(
             refuses it.
         NonBooleanLogicalOperandError: If either expression's root, an
             operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
-            ``LOGICAL_NOT`` node, or a piecewise case condition, provably
+            ``LOGICAL_NOT`` node, a piecewise case condition, or a branch of a
+            piecewise in a Boolean position, provably
             denotes a number, counting an identifier ``symbol_types``
             declares INT or REAL. Such a pair is ill-typed rather than
             undecidable, so it raises instead of reporting ``None``.
@@ -1493,7 +1495,8 @@ def holds_for_all_free_assignments(
             needs no entry; the screen refuses it.
         NonBooleanLogicalOperandError: If ``expression``'s root, an
             operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
-            ``LOGICAL_NOT`` node, or a piecewise case condition, provably
+            ``LOGICAL_NOT`` node, a piecewise case condition, or a branch of a
+            piecewise in a Boolean position, provably
             denotes a number, counting an identifier ``symbol_types``
             declares INT or REAL. Such an expression is ill-typed rather
             than undecidable, so it raises instead of reporting ``None``.
@@ -1561,7 +1564,8 @@ def assert_holds_for_all_free_assignments(
             needs no entry; the screen refuses it.
         NonBooleanLogicalOperandError: If ``expression``'s root, an
             operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
-            ``LOGICAL_NOT`` node, or a piecewise case condition, provably
+            ``LOGICAL_NOT`` node, a piecewise case condition, or a branch of a
+            piecewise in a Boolean position, provably
             denotes a number, counting an identifier ``symbol_types``
             declares INT or REAL. Reported as its own error rather than
             as ``UndecidableError``: the expression is ill-typed, so no
@@ -1640,7 +1644,8 @@ def assert_expression_implies(
             refuses it.
         NonBooleanLogicalOperandError: If either expression's root, an
             operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
-            ``LOGICAL_NOT`` node, or a piecewise case condition, provably
+            ``LOGICAL_NOT`` node, a piecewise case condition, or a branch of a
+            piecewise in a Boolean position, provably
             denotes a number, counting an identifier ``symbol_types``
             declares INT or REAL. Reported as its own error rather than
             as ``UndecidableError``: the pair is ill-typed, so no
