@@ -2,7 +2,10 @@
 
 Covers ordinal, categorical, and width-bounded plain-integer parameters,
 each carrying zero to two extra constraints, against a brute-force
-oracle that enumerates the finite domain directly.
+oracle that enumerates the finite domain directly. A regression test at
+the bottom pins the smallest solver-backed shape the property draws: a
+singleton integer parameter whose only extra constraint is a not-in-set
+constraint over a value outside its domain.
 """
 
 from collections.abc import Sequence
@@ -64,8 +67,7 @@ def draw_param_with_extra_constraints(
     domain), or a bound equation ``variable <cmp> literal``. Callers
     choose which of ``"in_set"``, ``"not_in_set"``, and ``"bound"`` are
     admissible for their own domain kind: ordinal and categorical
-    domains permit only the first two; see the module docstring's linked
-    xfail for why the numeric branch below excludes ``"not_in_set"``.
+    domains permit only the first two.
     """
     num_constraints = draw(st.integers(min_value=0, max_value=2))
     for _ in range(num_constraints):
@@ -129,10 +131,6 @@ def draw_finite_bounded_integer_case(
 
     Uses the plain integer domain rather than the interval-integer one:
     only the plain domain permits in-set and bound constraints together.
-    Draws only ``"in_set"`` and ``"bound"``, never ``"not_in_set"``: see
-    the module-level comment above the xfail near the bottom of this
-    file for why a not-in-set constraint on this solver-backed path is
-    excluded rather than covered here.
     """
     lower = draw(st.integers(min_value=-20, max_value=20))
     width = draw(st.integers(min_value=0, max_value=_WIDTH_LIMIT))
@@ -144,7 +142,7 @@ def draw_finite_bounded_integer_case(
         draw_param_with_extra_constraints(
             param,
             list(domain) + outside,
-            constraint_kinds=("in_set", "bound"),
+            constraint_kinds=("in_set", "not_in_set", "bound"),
             bound_limit=max(abs(lower), abs(upper)) + 5,
         )
     )
@@ -200,45 +198,25 @@ def test_check_feasibility_matches_brute_force_over_finite_domains(
 
 
 # =============================================================================
-# Known discrepancy: any not-in-set constraint spuriously undecides
+# Regression: a not-in-set constraint excluding nothing still decides
 # =============================================================================
 #
-# A plain-integer parameter carrying any `NotInSetConstraint` -- even one
-# whose member lies entirely outside the domain -- and no `InSetConstraint`
-# (which would force enumeration instead) goes to the Z3-screening path
-# (`fhy_core.symbolic.param.domains._numeric_has_feasible_value`). There,
-# `_build_screened_constraint_system_with_fidelity` compares the screened
-# constraint to the original with `is not` to decide whether the screen
-# excluded anything. `_screen_not_in_set_constraint` always returns a
-# *freshly constructed* `NotInSetConstraint`, even when every member lifted
-# and nothing was excluded, so that comparison is `True` unconditionally and
-# the system is marked inexact for every not-in-set constraint. The
-# solver's own SATISFIED answer is then conservatively downgraded to
-# UNDECIDED. The parameter below is, in fact, provably feasible.
-# `draw_finite_bounded_integer_case` draws only "in_set" and "bound" extra
-# constraints so the property above never trips this discrepancy; this test
-# covers the excluded not-in-set shape on its own.
+# A plain-integer parameter carrying a `NotInSetConstraint` and no
+# `InSetConstraint` (which would force enumeration instead) goes to the
+# Z3-screening path
+# (`fhy_core.symbolic.param.domains._numeric_has_feasible_value`), where a
+# screened system that lost nothing keeps the solver's decided answer. The
+# property above draws this shape among many others; the test below pins its
+# smallest instance directly.
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "domains._build_screened_constraint_system_with_fidelity compares "
-        "a screened NotInSetConstraint to the original with `is not`, but "
-        "_screen_not_in_set_constraint always rebuilds a fresh object even "
-        "when no member was excluded, so fidelity is False -- and the "
-        "solver's SATISFIED answer is downgraded to UNDECIDED -- for every "
-        "not-in-set constraint, not only one whose screen actually "
-        "excluded a member."
-    ),
-)
 def test_check_feasibility_decides_singleton_with_a_harmless_constraint() -> None:
     """Test a satisfiable singleton with an irrelevant not-in-set constraint decides.
 
     ``create_integer_param_between(0, 0)`` constrained by
-    ``NotInSetConstraint(variable, [5])`` is provably ``SATISFIED``: ``5``
-    is outside the domain entirely, so the constraint excludes nothing
-    ``0`` needed. ``check_feasibility`` instead reports ``UNDECIDED``.
+    ``NotInSetConstraint(variable, [5])`` is ``SATISFIED``: ``5`` is
+    outside the domain entirely, so the constraint excludes nothing
+    ``0`` needed.
     """
     param = create_integer_param_between(0, 0)
     param = param.add_constraint(NotInSetConstraint(param.variable, [5]))
