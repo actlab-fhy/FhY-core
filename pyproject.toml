@@ -47,7 +47,7 @@ test = ["pytest", "coverage[toml]", "pytest-xdist", "numpy"]
 property = ["hypothesis", {include-group = "test"}]
 lint = ["ruff"]
 type = ["ty", "mypy", {include-group = "property"}]
-mutation = ["cosmic-ray", {include-group = "test"}]
+mutation = ["cosmic-ray", {include-group = "property"}]
 dev = [
    {include-group = "test"},
    {include-group = "property"},

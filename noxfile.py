@@ -88,17 +88,29 @@ def coverage(session: nox.Session) -> None:
 
 @nox.session
 def property(session: nox.Session) -> None:
-    """Run hypothesis-based property tests (CI release gate; opt-in locally)."""
+    """Run hypothesis-based property tests under the thorough profile.
+
+    This is the CI release gate (opt-in locally); it forces
+    ``HYPOTHESIS_PROFILE=thorough`` regardless of the caller's environment.
+    """
     _sync(session, "property")
     # No success_codes override: exit 5 (nothing collected) must fail, so a
     # marker typo or a collection error cannot pass as a clean run.
-    session.run("pytest", "-m", "property", *session.posargs)
+    session.run(
+        "pytest",
+        "-m",
+        "property",
+        *session.posargs,
+        env={"HYPOTHESIS_PROFILE": "thorough"},
+    )
 
 
 @nox.session
 def mutation(session: nox.Session) -> None:
-    """Run cosmic-ray mutation testing (opt-in)."""
+    """Run cosmic-ray mutation testing for one module (opt-in).
+
+    `nox -s mutation -- lattice`.
+    """
     _sync(session, "mutation")
-    session.run("cosmic-ray", "init", "cosmic-ray.toml", "cosmic-ray.sqlite")
-    session.run("cosmic-ray", "exec", "cosmic-ray.toml", "cosmic-ray.sqlite")
-    session.run("cr-report", "cosmic-ray.sqlite")
+    module = session.posargs[0] if session.posargs else "lattice"
+    session.run("bash", "scripts/run-mutation.sh", module, external=True)

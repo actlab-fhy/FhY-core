@@ -2,7 +2,7 @@
 module-path = "src/fhy_core/lattice.py"
 timeout = 30.0
 excluded-modules = []
-test-command = "pytest -x -m 'not slow' -q"
+test-command = "pytest -x --no-header -q -o addopts='' -m 'not slow' tests"
 
 [cosmic-ray.distributor]
 name = "local"

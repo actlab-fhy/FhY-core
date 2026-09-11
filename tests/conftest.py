@@ -1,5 +1,6 @@
 """Testing utilitiy functions."""
 
+import os
 from collections.abc import Iterator
 from importlib.util import find_spec
 from typing import Any
@@ -17,6 +18,26 @@ __all__ = [
     "SerializableEqualHashable",
     "mock_identifier",
 ]
+
+# Hypothesis settings profiles. `dev` is the local inner loop; `thorough` is
+# the release gate that `nox -s property` selects through HYPOTHESIS_PROFILE.
+# Every profile runs without a deadline: under xdist, scheduler contention
+# rather than test cost is what trips one. `hypothesis` is an optional test
+# dependency (the `property` group), so the registration is guarded the same
+# way the z3 skip below is.
+if find_spec("hypothesis") is not None:
+    from hypothesis import settings as _hypothesis_settings
+
+    _hypothesis_settings.register_profile("dev", max_examples=25, deadline=None)
+    _hypothesis_settings.register_profile(
+        "thorough",
+        max_examples=400,
+        deadline=None,
+        derandomize=True,
+        database=None,
+        print_blob=True,
+    )
+    _hypothesis_settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "dev"))
 
 
 def pytest_collection_modifyitems(
