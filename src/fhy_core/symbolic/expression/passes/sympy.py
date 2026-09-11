@@ -80,27 +80,29 @@ def _sympy_round(value: Any) -> Any:
 # ``exp2`` lowers to ``sympy.Pow(2, value)`` and lifts as ``Pow`` (or
 # as ``sqrt`` when the exponent is exactly 1/2); ``round`` lowers to an
 # opaque ``sympy.Function("round")`` and has no inverse lifting entry.
-_NATIVE_FUNCTION_LOWER: dict[str, Callable[..., Any]] = {
-    "exp": sympy.exp,
-    "exp2": _sympy_exp2,
-    "log": sympy.log,
-    "log2": _sympy_log2,
-    "log10": _sympy_log10,
-    "sqrt": sympy.sqrt,
-    "sin": sympy.sin,
-    "cos": sympy.cos,
-    "tan": sympy.tan,
-    "arcsin": sympy.asin,
-    "arccos": sympy.acos,
-    "arctan": sympy.atan,
-    "sinh": sympy.sinh,
-    "cosh": sympy.cosh,
-    "tanh": sympy.tanh,
-    "erf": sympy.erf,
-    "round": _sympy_round,
-    "floor": sympy.floor,
-    "ceil": sympy.ceiling,
-}
+_NATIVE_FUNCTION_LOWER: immutabledict[str, Callable[..., Any]] = immutabledict(
+    {
+        "exp": sympy.exp,
+        "exp2": _sympy_exp2,
+        "log": sympy.log,
+        "log2": _sympy_log2,
+        "log10": _sympy_log10,
+        "sqrt": sympy.sqrt,
+        "sin": sympy.sin,
+        "cos": sympy.cos,
+        "tan": sympy.tan,
+        "arcsin": sympy.asin,
+        "arccos": sympy.acos,
+        "arctan": sympy.atan,
+        "sinh": sympy.sinh,
+        "cosh": sympy.cosh,
+        "tanh": sympy.tanh,
+        "erf": sympy.erf,
+        "round": _sympy_round,
+        "floor": sympy.floor,
+        "ceil": sympy.ceiling,
+    }
+)
 
 # Native-function lift dispatch: each sympy function class maps to the
 # native name it lifts to.
@@ -123,18 +125,22 @@ _NATIVE_FUNCTION_LIFT_DISPATCH: tuple[tuple[type, str], ...] = (
 
 # Native-constant lowering / lifting. SymPy folds a negated ``oo`` into a
 # separate ``-oo`` atom, which ``_try_lift_native_constant`` handles.
-_NATIVE_CONSTANT_LOWER: dict[str, Any] = {
-    "pi": sympy.pi,
-    "e": sympy.E,
-    "inf": sympy.oo,
-    "nan": sympy.nan,
-}
-_NATIVE_CONSTANT_LIFT: dict[Any, str] = {
-    sympy.pi: "pi",
-    sympy.E: "e",
-    sympy.oo: "inf",
-    sympy.nan: "nan",
-}
+_NATIVE_CONSTANT_LOWER: immutabledict[str, Any] = immutabledict(
+    {
+        "pi": sympy.pi,
+        "e": sympy.E,
+        "inf": sympy.oo,
+        "nan": sympy.nan,
+    }
+)
+_NATIVE_CONSTANT_LIFT: immutabledict[Any, str] = immutabledict(
+    {
+        sympy.pi: "pi",
+        sympy.E: "e",
+        sympy.oo: "inf",
+        sympy.nan: "nan",
+    }
+)
 
 
 def _try_get_native_constant_sympy_value(identifier: Identifier) -> Any | None:

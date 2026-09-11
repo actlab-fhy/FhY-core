@@ -2,7 +2,8 @@
 
 import logging
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, MutableMapping
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
@@ -37,6 +38,9 @@ from fhy_core.symbolic.expression import (
 )
 from fhy_core.symbolic.expression.core import LiteralType
 from fhy_core.symbolic.expression.passes.sympy import (
+    _NATIVE_CONSTANT_LIFT,
+    _NATIVE_CONSTANT_LOWER,
+    _NATIVE_FUNCTION_LOWER,
     ExpressionToSympyConverter,
     SymPyToExpressionConverter,
 )
@@ -2161,3 +2165,24 @@ def test_complex_infinity_is_refused_by_the_lifter_directly() -> None:
         convert_sympy_expression_to_expression(sympy.zoo)
 
     assert isinstance(exception_info.value.__cause__, ComplexInfinityLiftError)
+
+
+# =============================================================================
+# Native lookup tables are read-only
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "table",
+    [_NATIVE_FUNCTION_LOWER, _NATIVE_CONSTANT_LOWER, _NATIVE_CONSTANT_LIFT],
+    ids=["function-lower", "constant-lower", "constant-lift"],
+)
+def test_native_lookup_table_item_assignment_raises_type_error(
+    table: Mapping[Any, Any],
+) -> None:
+    """Test assigning to an existing key in a native lookup table raises TypeError."""
+    mutable_table = cast(MutableMapping[Any, Any], table)
+    existing_key = next(iter(table))
+
+    with pytest.raises(TypeError):
+        mutable_table[existing_key] = table[existing_key]

@@ -127,14 +127,14 @@ class BuiltinConstants(TypedDict):
     nan: ReadOnly[NativeConstant]
 
 
-_REAL_PARAMS_1: list[FunctionSort] = [FunctionSort.REAL]
-_REAL_PARAMS_2: list[FunctionSort] = [FunctionSort.REAL, FunctionSort.REAL]
-_REAL_PARAMS_3: list[FunctionSort] = [
+_REAL_PARAMS_1: tuple[FunctionSort, ...] = (FunctionSort.REAL,)
+_REAL_PARAMS_2: tuple[FunctionSort, ...] = (FunctionSort.REAL, FunctionSort.REAL)
+_REAL_PARAMS_3: tuple[FunctionSort, ...] = (
     FunctionSort.REAL,
     FunctionSort.REAL,
     FunctionSort.REAL,
-]
-_BOOL_PARAMS_2: list[FunctionSort] = [FunctionSort.BOOL, FunctionSort.BOOL]
+)
+_BOOL_PARAMS_2: tuple[FunctionSort, ...] = (FunctionSort.BOOL, FunctionSort.BOOL)
 
 
 def _exp2(value: int | float) -> float:
@@ -402,7 +402,9 @@ def _register_all_constants() -> BuiltinConstants:
 # reference them without triggering the captured-free-identifier check.
 BUILTIN_CONSTANTS: BuiltinConstants = _register_all_constants()
 
-_BUILTIN_NATIVE_FUNCTIONS: dict[str, NativeFunction] = _register_all_natives()
+_BUILTIN_NATIVE_FUNCTIONS: immutabledict[str, NativeFunction] = immutabledict(
+    _register_all_natives()
+)
 
 
 def _build_builtin_functions() -> BuiltinFunctions:
