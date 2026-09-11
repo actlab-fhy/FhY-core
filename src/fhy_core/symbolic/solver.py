@@ -231,7 +231,7 @@ def validate_timeout_milliseconds(timeout_milliseconds: int | None) -> None:
 
 def simplify_expression(
     expression: Expression,
-    environment: dict[Identifier, Expression] | None = None,
+    environment: Mapping[Identifier, Expression] | None = None,
     *,
     backend: SolverBackend = SolverBackend.SYMPY,
 ) -> Expression:

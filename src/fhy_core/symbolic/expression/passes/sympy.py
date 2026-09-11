@@ -10,7 +10,7 @@ __all__ = [
 ]
 
 import operator
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 from typing import Any, ClassVar
 
@@ -486,9 +486,11 @@ class SympyVariableSubstitutionPass(
     as ``PassExecutionError`` like every other bridge failure.
     """
 
-    def __init__(self, replacements: dict[sympy.Symbol, Any]) -> None:
+    def __init__(self, replacements: Mapping[sympy.Symbol, Any]) -> None:
         super().__init__()
-        self._replacements = replacements
+        self._replacements: immutabledict[sympy.Symbol, Any] = immutabledict(
+            replacements
+        )
 
     @override
     def run_pass(
@@ -519,7 +521,7 @@ def _raise_for_bound_native_constants(bound_constants: list[Identifier]) -> None
 
 
 def _raise_if_environment_binds_a_referenced_native_constant(
-    expression: Expression, environment: dict[Identifier, Expression]
+    expression: Expression, environment: Mapping[Identifier, Expression]
 ) -> None:
     """Raise if ``environment`` binds a native constant ``expression`` references."""
     referenced = expression.get_free_identifiers()
@@ -537,7 +539,7 @@ def _raise_if_environment_binds_a_referenced_native_constant(
 
 def _raise_if_sympy_expression_binds_a_referenced_native_constant(
     sympy_expression: sympy.Expr | sympy.logic.boolalg.Boolean,
-    environment: dict[Identifier, Expression],
+    environment: Mapping[Identifier, Expression],
 ) -> None:
     """Raise if ``environment`` binds a native constant free in ``sympy_expression``.
 
@@ -566,7 +568,7 @@ def _raise_if_sympy_expression_binds_a_referenced_native_constant(
 
 def substitute_sympy_expression_variables(
     sympy_expression: sympy.Expr | sympy.logic.boolalg.Boolean,
-    environment: dict[Identifier, Expression],
+    environment: Mapping[Identifier, Expression],
 ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
     """Substitute variables in a SymPy expression.
 
@@ -1057,7 +1059,8 @@ def convert_sympy_expression_to_expression(
 
 
 def simplify_expression(
-    expression: Expression, environment: dict[Identifier, Expression] | None = None
+    expression: Expression,
+    environment: Mapping[Identifier, Expression] | None = None,
 ) -> Expression:
     """Simplify an expression.
 

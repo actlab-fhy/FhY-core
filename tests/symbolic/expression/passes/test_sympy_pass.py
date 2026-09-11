@@ -8,6 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 import sympy  # type: ignore[import-untyped]
+from immutabledict import immutabledict
 
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
@@ -43,6 +44,10 @@ from fhy_core.symbolic.expression.passes.sympy import (
     _NATIVE_FUNCTION_LOWER,
     ExpressionToSympyConverter,
     SymPyToExpressionConverter,
+    SympyVariableSubstitutionPass,
+)
+from fhy_core.symbolic.expression.passes.sympy import (
+    simplify_expression as sympy_simplify_expression,
 )
 from fhy_core.symbolic.solver import simplify_expression
 
@@ -2186,3 +2191,54 @@ def test_native_lookup_table_item_assignment_raises_type_error(
 
     with pytest.raises(TypeError):
         mutable_table[existing_key] = table[existing_key]
+
+
+# =============================================================================
+# `environment`/`replacements` accept any `Mapping`, not only `dict`
+# =============================================================================
+
+
+def test_sympy_simplify_expression_accepts_an_immutabledict_environment() -> None:
+    """Test the bridge's own `simplify_expression` accepts an `immutabledict`."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(x), LiteralExpression(1)
+    )
+    environment = immutabledict({x: LiteralExpression(2)})
+
+    result = sympy_simplify_expression(expression, environment)
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == 3
+
+
+def test_substitute_sympy_expression_variables_accepts_an_immutabledict() -> None:
+    """Test substituting an `immutabledict` environment folds to a scalar."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    sympy_expression = sympy.Symbol("x_0") + sympy.Symbol("y_1")
+    substitutions = immutabledict({x: LiteralExpression(5), y: LiteralExpression(10)})
+
+    assert substitute_sympy_expression_variables(sympy_expression, substitutions) == 15
+
+
+def test_sympy_variable_substitution_pass_snapshots_replacements_at_construction() -> (
+    None
+):
+    """Test the pass's substitution is unaffected by mutating the caller's dict.
+
+    Builds the pass from a plain, still-mutable ``dict`` mapping the
+    SymPy symbol ``x`` to ``1``, then rebinds ``x`` to ``2`` in that same
+    dict after construction. Running the pass on ``x`` must still give
+    ``1``, guarding against it aliasing the caller's dict instead of
+    snapshotting it.
+    """
+    x = sympy.Symbol("x")
+    replacements = {x: sympy.Integer(1)}
+    pass_instance = SympyVariableSubstitutionPass(replacements)
+
+    replacements[x] = sympy.Integer(2)
+
+    result = pass_instance(x)
+
+    assert result == sympy.Integer(1)

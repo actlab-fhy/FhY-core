@@ -191,6 +191,20 @@ def test_simplify_expression_with_residual_variable_reduces_to_the_identifier() 
     assert result.is_structurally_equivalent(IdentifierExpression(x))
 
 
+def test_simplify_expression_accepts_an_immutabledict_environment() -> None:
+    """Test the seam's simplification accepts an `immutabledict` environment."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(x), LiteralExpression(1)
+    )
+    environment = immutabledict({x: LiteralExpression(2)})
+
+    result = simplify_expression(expression, environment)
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == 3
+
+
 # =============================================================================
 # check_expression_satisfiability
 # =============================================================================
