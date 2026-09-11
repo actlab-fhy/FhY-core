@@ -33,9 +33,19 @@ __all__ = [
     "draw_bounded_real_param",
     "draw_categorical_param",
     "draw_interval_integer_param",
+    "draw_interval_integer_param_with_bounds",
     "draw_natural_param",
     "draw_ordered_optional_bounds",
     "draw_ordinal_param",
+    "draw_overlapping_bounded_integer_group",
+    "draw_overlapping_categorical_group",
+    "draw_overlapping_intersection_eligible_group",
+    "draw_overlapping_interval_integer_group",
+    "draw_overlapping_natural_group",
+    "draw_overlapping_ordinal_group",
+    "draw_overlapping_permutation_group",
+    "draw_overlapping_real_group",
+    "draw_overlapping_union_eligible_group",
     "draw_param_over_any_domain",
     "draw_param_with_candidate",
     "draw_permutation_param",
@@ -69,10 +79,24 @@ def draw_ordered_optional_bounds(
 
 
 @st.composite
+def draw_interval_integer_param_with_bounds(
+    draw: st.DrawFn, limit: int = 25
+) -> tuple[Param[int], int | None, int | None]:
+    """Draw an interval-integer param together with the bounds it was built from.
+
+    For a property that needs the raw ``(lower, upper)`` endpoints to
+    compute an expected result alongside the param itself, such as an
+    interval-arithmetic hull.
+    """
+    lower, upper = draw(draw_ordered_optional_bounds(limit))
+    return build_interval_integer_param(lower, upper), lower, upper
+
+
+@st.composite
 def draw_interval_integer_param(draw: st.DrawFn, limit: int = 25) -> Param[int]:
     """Draw an interval-integer param over optional, ordered bounds."""
-    lower, upper = draw(draw_ordered_optional_bounds(limit))
-    return build_interval_integer_param(lower, upper)
+    param, _, _ = draw(draw_interval_integer_param_with_bounds(limit))
+    return param
 
 
 def build_ordinal_value_set_strategy(
@@ -288,3 +312,186 @@ def draw_same_kind_param_pair_with_candidate(
         right = draw(draw_categorical_param())
         candidate = draw(st.sampled_from(_CATEGORICAL_ALPHABET))
     return left, right, candidate
+
+
+# =============================================================================
+# Overlapping groups: guaranteed non-empty intersection, for the set-algebra
+# properties. `create_intersection_param` raises `ParamError` on an empty
+# result, so every group below shares a pivot value (or, for permutation, a
+# member set) across all of its params by construction, rather than drawing
+# independently and discarding disjoint groups.
+# =============================================================================
+
+_OVERLAP_SPAN: Final = 10
+
+
+@st.composite
+def draw_overlapping_ordinal_group(
+    draw: st.DrawFn, size: int = 2, limit: int = 12
+) -> tuple[tuple[Param[int], ...], int]:
+    """Draw ``size`` ordinal params sharing a pivot value, plus a candidate."""
+    pivot = draw(st.integers(min_value=-limit, max_value=limit))
+    members = tuple(
+        create_ordinal_param(
+            sorted({pivot} | draw(st.sets(st.integers(-limit, limit), max_size=5)))
+        )
+        for _ in range(size)
+    )
+    candidate = draw(st.integers(min_value=-limit - 5, max_value=limit + 5))
+    return members, candidate
+
+
+@st.composite
+def draw_overlapping_categorical_group(
+    draw: st.DrawFn, size: int = 2
+) -> tuple[tuple[Param[str], ...], str]:
+    """Draw ``size`` categorical params sharing a pivot category, plus a candidate."""
+    pivot = draw(st.sampled_from(_CATEGORICAL_ALPHABET))
+    members = tuple(
+        create_categorical_param(
+            {pivot}
+            | set(draw(build_categorical_value_set_strategy(min_size=0, max_size=4)))
+        )
+        for _ in range(size)
+    )
+    candidate = draw(st.sampled_from(_CATEGORICAL_ALPHABET))
+    return members, candidate
+
+
+@st.composite
+def draw_overlapping_permutation_group(
+    draw: st.DrawFn, size: int = 2
+) -> tuple[tuple[Param[tuple[str, ...]], ...], tuple[str, ...]]:
+    """Draw ``size`` permutation params over one member set, each reordered.
+
+    Two permutation domains intersect only when they range over the same
+    member set (order-independent), so every member here is built from
+    one shared set shuffled independently, which keeps every pairing's
+    intersection non-empty without making the params identical.
+    """
+    base_members = draw(build_permutation_member_set_strategy())
+    members = tuple(
+        create_permutation_param(draw(st.permutations(base_members)))
+        for _ in range(size)
+    )
+    candidate = tuple(draw(st.permutations(base_members)))
+    return members, candidate
+
+
+@st.composite
+def draw_overlapping_bounded_integer_group(
+    draw: st.DrawFn, size: int = 2, limit: int = 20
+) -> tuple[tuple[Param[int], ...], int]:
+    """Draw ``size`` bounded-integer params whose ranges all contain a pivot."""
+    pivot = draw(st.integers(min_value=-limit, max_value=limit))
+    members = tuple(
+        create_integer_param_between(
+            pivot - draw(st.integers(min_value=0, max_value=_OVERLAP_SPAN)),
+            pivot + draw(st.integers(min_value=0, max_value=_OVERLAP_SPAN)),
+        )
+        for _ in range(size)
+    )
+    candidate = draw(
+        st.integers(min_value=-limit - _OVERLAP_SPAN, max_value=limit + _OVERLAP_SPAN)
+    )
+    return members, candidate
+
+
+@st.composite
+def draw_overlapping_natural_group(
+    draw: st.DrawFn, size: int = 2, limit: int = 20
+) -> tuple[tuple[Param[int], ...], int]:
+    """Draw ``size`` natural-number params; any such group already overlaps.
+
+    Every natural-number domain admits infinitely many shared values (at
+    least every sufficiently large integer), so no pivot construction is
+    needed to keep the intersection non-empty.
+    """
+    members = tuple(draw(draw_natural_param()) for _ in range(size))
+    candidate = draw(st.integers(min_value=-5, max_value=limit))
+    return members, candidate
+
+
+@st.composite
+def draw_overlapping_real_group(
+    draw: st.DrawFn, size: int = 2, limit: int = 20
+) -> tuple[tuple[Param[str | float], ...], float]:
+    """Draw ``size`` bounded-real params whose ranges all contain a pivot."""
+    pivot = draw(st.integers(min_value=-limit, max_value=limit))
+    members = tuple(
+        create_real_param_between(
+            float(pivot - draw(st.integers(min_value=0, max_value=_OVERLAP_SPAN))),
+            float(pivot + draw(st.integers(min_value=0, max_value=_OVERLAP_SPAN))),
+        )
+        for _ in range(size)
+    )
+    candidate = float(
+        draw(
+            st.integers(
+                min_value=-limit - _OVERLAP_SPAN, max_value=limit + _OVERLAP_SPAN
+            )
+        )
+    )
+    return members, candidate
+
+
+@st.composite
+def draw_overlapping_interval_integer_group(
+    draw: st.DrawFn, size: int = 2, limit: int = 20
+) -> tuple[tuple[Param[int], ...], int]:
+    """Draw ``size`` interval-integer params whose ranges all contain a pivot."""
+    pivot = draw(st.integers(min_value=-limit, max_value=limit))
+    lower_choice = st.one_of(
+        st.none(), st.integers(min_value=pivot - _OVERLAP_SPAN, max_value=pivot)
+    )
+    upper_choice = st.one_of(
+        st.none(), st.integers(min_value=pivot, max_value=pivot + _OVERLAP_SPAN)
+    )
+    members = tuple(
+        build_interval_integer_param(draw(lower_choice), draw(upper_choice))
+        for _ in range(size)
+    )
+    candidate = draw(
+        st.integers(min_value=-limit - _OVERLAP_SPAN, max_value=limit + _OVERLAP_SPAN)
+    )
+    return members, candidate
+
+
+@st.composite
+def draw_overlapping_union_eligible_group(
+    draw: st.DrawFn, size: int = 2
+) -> tuple[tuple[Param[Any], ...], Any]:
+    """Draw ``size`` overlapping params of a kind ``create_union_param`` accepts.
+
+    Ordinal and categorical are the two domain kinds it accepts.
+    """
+    result: tuple[tuple[Param[Any], ...], Any] = draw(
+        st.one_of(
+            draw_overlapping_ordinal_group(size),
+            draw_overlapping_categorical_group(size),
+        )
+    )
+    return result
+
+
+@st.composite
+def draw_overlapping_intersection_eligible_group(
+    draw: st.DrawFn, size: int = 2
+) -> tuple[tuple[Param[Any], ...], Any]:
+    """Draw ``size`` overlapping params of a kind ``create_intersection_param`` accepts.
+
+    Every domain kind it accepts: ordinal, categorical, permutation,
+    bounded integer, natural, bounded real, and interval-integer.
+    """
+    result: tuple[tuple[Param[Any], ...], Any] = draw(
+        st.one_of(
+            draw_overlapping_ordinal_group(size),
+            draw_overlapping_categorical_group(size),
+            draw_overlapping_permutation_group(size),
+            draw_overlapping_bounded_integer_group(size),
+            draw_overlapping_natural_group(size),
+            draw_overlapping_real_group(size),
+            draw_overlapping_interval_integer_group(size),
+        )
+    )
+    return result

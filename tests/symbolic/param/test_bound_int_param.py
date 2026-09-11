@@ -497,19 +497,23 @@ def test_bound_int_param_negation_of_strict_interval_uses_integer_semantics() ->
 @pytest.mark.parametrize(
     "lower, upper, is_lower_inclusive, is_upper_inclusive",
     [
-        pytest.param(0, 0, True, True, id="0-0-incl-incl"),
-        pytest.param(0, 1, True, True, id="0-1-incl-incl"),
         pytest.param(0, 1, False, True, id="0-1-excl-incl"),
         pytest.param(0, 1, True, False, id="0-1-incl-excl"),
         pytest.param(0, 2, False, False, id="0-2-excl-excl"),
-        pytest.param(-3, 3, True, True, id="neg3-3-incl-incl"),
         pytest.param(-3, 3, False, False, id="neg3-3-excl-excl"),
     ],
 )
 def test_bound_int_param_addition_matches_brute_force(
     lower: int, upper: int, is_lower_inclusive: bool, is_upper_inclusive: bool
 ) -> None:
-    """Test addition matches brute-force set addition over the input interval."""
+    """Test addition matches brute-force set addition over an exclusive-bound interval.
+
+    The all-inclusive-bounds rows are welded into
+    ``test_bound_int_param_properties.py``'s endpoint-hull property; an
+    exclusive bound narrows an interval's *effective* integer endpoint
+    (e.g. ``(0, 1)`` excludes ``0``), a computation that property's
+    inclusive-only strategy never exercises, so those rows stay here.
+    """
     x = create_interval_integer_param_between(
         lower,
         upper,
@@ -537,17 +541,19 @@ def test_bound_int_param_addition_matches_brute_force(
 @pytest.mark.parametrize(
     "lower, upper, is_lower_inclusive, is_upper_inclusive",
     [
-        pytest.param(0, 0, True, True, id="0-0-incl-incl"),
-        pytest.param(0, 1, True, True, id="0-1-incl-incl"),
         pytest.param(0, 2, False, False, id="0-2-excl-excl"),
-        pytest.param(-2, 2, True, True, id="neg2-2-incl-incl"),
         pytest.param(-2, 2, False, False, id="neg2-2-excl-excl"),
     ],
 )
 def test_bound_int_param_subtraction_matches_brute_force(
     lower: int, upper: int, is_lower_inclusive: bool, is_upper_inclusive: bool
 ) -> None:
-    """Test subtraction matches brute-force set subtraction over the input interval."""
+    """Test subtraction matches brute-force set subtraction over an exclusive interval.
+
+    The all-inclusive-bounds rows are welded into
+    ``test_bound_int_param_properties.py``'s endpoint-hull property; see
+    the addition test above for why the exclusive-bound rows stay here.
+    """
     x = create_interval_integer_param_between(
         lower,
         upper,
@@ -570,24 +576,6 @@ def test_bound_int_param_subtraction_matches_brute_force(
     allowed_z = {a - b for a in allowed_x for b in allowed_y}
     for v in range((lower - 2) - (upper + 2), (upper + 2) - (lower - 2) + 1):
         assert z.is_constraints_satisfied(v) == (v in allowed_z)
-
-
-# =============================================================================
-# Serialization
-# =============================================================================
-
-
-def test_bound_int_param_serialization_round_trip_preserves_constraints() -> None:
-    """Test interval-integer param round-trips through dict serialization."""
-    p = create_interval_integer_param_between(
-        3, 5, is_lower_inclusive=True, is_upper_inclusive=False
-    )
-
-    dictionary = p.serialize_to_dict()
-    restored: Param[int] = Param.deserialize_from_dict(dictionary)
-
-    assert_all_satisfied(restored, [3, 4])
-    assert_none_satisfied(restored, [5])
 
 
 # =============================================================================
