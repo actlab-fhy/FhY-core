@@ -1679,3 +1679,28 @@ def test_every_builtin_native_function_has_a_lowering() -> None:
     )
 
     assert not unmapped
+
+
+# =============================================================================
+# Environment is snapshotted at construction
+# =============================================================================
+
+
+def test_numpy_expression_evaluator_snapshots_environment_at_construction() -> None:
+    """Test the evaluator's resolution is unaffected by mutating the caller's dict.
+
+    Builds the evaluator from a plain, still-mutable ``dict`` binding
+    ``x`` to ``1``, then rebinds ``x`` to ``2`` in that same dict after
+    construction. Evaluating the bare identifier must still give ``1``,
+    guarding against the evaluator aliasing the caller's dict instead of
+    snapshotting it.
+    """
+    x = mock_identifier("x", 0)
+    environment = {x: 1}
+    evaluator = NumpyExpressionEvaluator(environment, np)
+
+    environment[x] = 2
+
+    result = evaluator(IdentifierExpression(x))
+
+    assert result == 1

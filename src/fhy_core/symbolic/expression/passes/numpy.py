@@ -320,7 +320,7 @@ class NumpyExpressionEvaluator(VisitablePass[Expression, "NumpyResult"]):
     first, so only native calls reach :meth:`visit_call_expression`.
     """
 
-    _environment: "NumpyEnvironment"
+    _environment: "immutabledict[Identifier, npt.ArrayLike]"
     # NumPy is optional, so its module and result values are typed ``Any``
     # rather than referencing NumPy types at import time.
     _numpy: Any
@@ -331,7 +331,7 @@ class NumpyExpressionEvaluator(VisitablePass[Expression, "NumpyResult"]):
 
     def __init__(self, environment: "NumpyEnvironment", numpy_module: Any) -> None:
         super().__init__()
-        self._environment = environment
+        self._environment = immutabledict(environment)
         self._numpy = numpy_module
         self._deferred_non_finite = None
 
