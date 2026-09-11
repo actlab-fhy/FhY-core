@@ -1219,13 +1219,9 @@ def _get_call_result_sort(function_name: str) -> FunctionSort | None:
     """
     # Deferred import: the registry's entry types import this module, so
     # importing the registry at module scope here would form a cycle.
-    from .registry import EntryLookupError, get_registered_entry  # noqa: PLC0415
+    from .registry import try_get_registered_result_sort  # noqa: PLC0415
 
-    try:
-        entry = get_registered_entry(function_name)
-    except EntryLookupError:
-        return None
-    return getattr(entry, "result_sort", None)
+    return try_get_registered_result_sort(function_name)
 
 
 def _is_identifier_provably_non_boolean(

@@ -43,6 +43,7 @@ from fhy_core.symbolic.expression import (
     register_native_constant,
     register_native_function,
     try_get_native_constant_for_identifier,
+    try_get_registered_result_sort,
 )
 from fhy_core.symbolic.expression.builtins import BUILTIN_CONSTANTS
 from fhy_core.symbolic.expression.registry import set_registry_state_for_tests
@@ -901,6 +902,65 @@ def test_get_registered_entries_snapshot_includes_all_entry_kinds(
     assert snapshot.get("test_snapshot_function") == expression_function
     assert snapshot.get("test_snapshot_native") == native_function
     assert snapshot.get("test_snapshot_const") == constant
+
+
+# =============================================================================
+# try_get_registered_result_sort
+# =============================================================================
+
+
+def test_try_get_registered_result_sort_returns_native_function_result_sort(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the lookup returns a registered native function's result sort."""
+    register_native_function(
+        "test_result_sort_native",
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        implementation=math.sqrt,
+    )
+
+    result_sort = try_get_registered_result_sort("test_result_sort_native")
+
+    assert result_sort == FunctionSort.REAL
+
+
+def test_try_get_registered_result_sort_returns_expression_function_result_sort(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the lookup returns a registered expression-bodied function's result sort."""
+    parameter = mock_identifier("x", 0)
+    register_function(
+        "test_result_sort_function",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=IdentifierExpression(parameter),
+    )
+
+    result_sort = try_get_registered_result_sort("test_result_sort_function")
+
+    assert result_sort == FunctionSort.INT
+
+
+def test_try_get_registered_result_sort_returns_none_for_unregistered_name(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the lookup returns None for a name with no registered entry."""
+    assert try_get_registered_result_sort("never_registered") is None
+
+
+def test_try_get_registered_result_sort_returns_none_for_native_constant(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the lookup returns None for a constant, which declares no result sort."""
+    register_native_constant(
+        "test_result_sort_const", sort=FunctionSort.REAL, value=1.0
+    )
+
+    result_sort = try_get_registered_result_sort("test_result_sort_const")
+
+    assert result_sort is None
 
 
 # =============================================================================

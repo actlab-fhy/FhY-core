@@ -42,6 +42,7 @@ __all__ = [
     "register_native_function",
     "set_registry_state_for_tests",
     "try_get_native_constant_for_identifier",
+    "try_get_registered_result_sort",
 ]
 
 from ..errors import EntryLookupError, EntryRegistrationError
@@ -49,6 +50,7 @@ from .api import (
     register_function,
     register_native_constant,
     register_native_function,
+    try_get_registered_result_sort,
 )
 from .entries import (
     CallTargetResolver,

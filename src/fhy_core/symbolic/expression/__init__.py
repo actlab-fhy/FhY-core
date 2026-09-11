@@ -88,6 +88,7 @@ __all__ = [
     "register_native_function",
     "substitute_sympy_expression_variables",
     "try_get_native_constant_for_identifier",
+    "try_get_registered_result_sort",
     "validate_logical_operands",
     "validate_predicate",
 ]
@@ -180,5 +181,6 @@ from .registry import (
     register_native_constant,
     register_native_function,
     try_get_native_constant_for_identifier,
+    try_get_registered_result_sort,
 )
 from .sort import FunctionSort, is_python_value_compatible_with_sort

@@ -2,8 +2,10 @@
 
 Exposes ``register_function`` / ``register_native_function`` /
 ``register_native_constant``: the write-side surface that mutates the
-process-wide registry. Read-side accessors and the underlying storage
-live in :mod:`fhy_core.symbolic.expression.registry.storage`.
+process-wide registry. Most read-side accessors and the underlying
+storage live in :mod:`fhy_core.symbolic.expression.registry.storage`;
+``try_get_registered_result_sort`` lives here instead because it reads
+the function entry types this module already imports.
 
 Registration records an entry; it does not type-check it. Checking a
 function body against its declared sorts needs the IR type system, which
@@ -18,6 +20,7 @@ __all__ = [
     "register_function",
     "register_native_constant",
     "register_native_function",
+    "try_get_registered_result_sort",
 ]
 
 from collections.abc import Callable, Sequence
@@ -25,10 +28,14 @@ from collections.abc import Callable, Sequence
 from fhy_core.identifier import Identifier
 
 from ..core import Expression
-from ..errors import EntryRegistrationError
+from ..errors import EntryLookupError, EntryRegistrationError
 from ..sort import FunctionSort
 from .entries import NativeConstant, NativeFunction, RegisteredFunction
-from .storage import _insert_unique_entry, _insert_unique_native_constant
+from .storage import (
+    _insert_unique_entry,
+    _insert_unique_native_constant,
+    get_registered_entry,
+)
 
 
 def register_function(
@@ -168,3 +175,25 @@ def register_native_constant(
         raise EntryRegistrationError(str(exc)) from exc
     _insert_unique_native_constant(registered)
     return registered
+
+
+def try_get_registered_result_sort(function_name: str) -> FunctionSort | None:
+    """Return the declared result sort of a registered call target, or None.
+
+    Args:
+        function_name: Registry key to look up.
+
+    Returns:
+        The entry's declared ``result_sort`` when ``function_name``
+        names a ``RegisteredFunction`` or a ``NativeFunction``; None
+        when the name is unregistered, or when it names a
+        ``NativeConstant``, which declares no result sort of its own.
+
+    """
+    try:
+        entry = get_registered_entry(function_name)
+    except EntryLookupError:
+        return None
+    if isinstance(entry, (RegisteredFunction, NativeFunction)):
+        return entry.result_sort
+    return None

@@ -96,7 +96,7 @@ __all__ = [
 ]
 
 import math
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from enum import Enum, auto
 
@@ -111,7 +111,6 @@ from .expression import (
     BinaryExpression,
     BinaryOperation,
     CallExpression,
-    EntryLookupError,
     Expression,
     FunctionSort,
     IdentifierExpression,
@@ -120,9 +119,9 @@ from .expression import (
     UnaryExpression,
     UnaryOperation,
     UndecidableError,
-    get_registered_entry,
     is_integer_valued_literal,
     try_get_native_constant_for_identifier,
+    try_get_registered_result_sort,
     validate_predicate,
 )
 from .expression.passes.sympy import simplify_expression as _sympy_simplify_expression
@@ -629,26 +628,32 @@ sign-dependent divergence).
 """
 
 
-def _is_safe_nonzero_divisor(node: Expression) -> bool:
-    """Return whether ``node`` is provably a finite nonzero numeric literal.
+def _get_finite_divisor_literal_value(node: Expression) -> int | float | None:
+    """Return a divisor literal's value as an int or a finite float, or None.
 
     A ``bool`` value, a float-grammar string-form literal, and a
-    non-finite float (``nan``/``inf``) are not safe divisors: none
-    carries the provably-nonzero, finite guarantee the division hazard
-    screen requires, even when the float is a constructible
-    ``LiteralExpression`` value. An integer-valued literal is safe in
-    either of its forms, so the screen answers alike for every member of
-    one equivalence class.
+    non-finite float (``nan``/``inf``) carry none of the finite,
+    provably-numeric guarantee the two divisor-safety checks below
+    require, even when the float is a constructible
+    ``LiteralExpression`` value; this returns ``None`` for all of them.
+    An integer-valued literal is safe in either of its forms, so this
+    returns the same ``int`` for every member of one equivalence class.
 
     """
     if not isinstance(node, LiteralExpression):
-        return False
+        return None
     value = node.value
     if is_integer_valued_literal(value):
-        return int(value) != 0
-    if isinstance(value, float):
-        return math.isfinite(value) and value != 0
-    return False
+        return int(value)
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    return None
+
+
+def _is_safe_nonzero_divisor(node: Expression) -> bool:
+    """Return whether ``node`` is provably a finite nonzero numeric literal."""
+    value = _get_finite_divisor_literal_value(node)
+    return value is not None and value != 0
 
 
 def _is_safe_positive_divisor(node: Expression) -> bool:
@@ -660,14 +665,8 @@ def _is_safe_positive_divisor(node: Expression) -> bool:
     semantics whenever the divisor is not positive.
 
     """
-    if not isinstance(node, LiteralExpression):
-        return False
-    value = node.value
-    if is_integer_valued_literal(value):
-        return int(value) > 0
-    if isinstance(value, float):
-        return math.isfinite(value) and value > 0
-    return False
+    value = _get_finite_divisor_literal_value(node)
+    return value is not None and value > 0
 
 
 def _does_operand_lower_to_real_sort(
@@ -838,11 +837,7 @@ def _get_call_result_numeric_kind(function_name: str) -> SymbolType | None:
     Returns ``None`` when the name is unregistered or its registered
     entry declares a non-numeric (or no) result sort.
     """
-    try:
-        entry = get_registered_entry(function_name)
-    except EntryLookupError:
-        return None
-    result_sort = getattr(entry, "result_sort", None)
+    result_sort = try_get_registered_result_sort(function_name)
     if result_sort in (FunctionSort.INT, FunctionSort.NAT):
         return SymbolType.INT
     if result_sort is FunctionSort.REAL:
@@ -1256,6 +1251,61 @@ def _validate_symbol_types_cover_free_identifiers(
     raise KeyError(f"symbol_types is missing entries for identifiers: {sorted_missing}")
 
 
+def _screen_z3_question(
+    expressions: Sequence[Expression],
+    symbol_types: Mapping[Identifier, SymbolType],
+    *,
+    context: str,
+    considered_identifiers: AbstractSet[Identifier] = frozenset(),
+) -> bool:
+    """Run the shared precondition and hazard checks for a Z3-question entry point.
+
+    Runs, in order: the ``symbol_types`` coverage check over the union
+    of every expression's free identifiers and
+    ``considered_identifiers``; ``validate_predicate`` on each
+    expression in ``expressions``, in order; and the lowering hazard
+    screen on each expression in ``expressions``, in order,
+    short-circuiting at the first hazard found. Each expression is
+    screened on its own; expressions are never combined into one
+    formula before screening.
+
+    Args:
+        expressions: Expressions about to be lowered to Z3, checked in
+            order.
+        symbol_types: Z3 sort to use for each identifier.
+        context: Name of the calling entry point, used to attribute a
+            hazard warning.
+        considered_identifiers: Identifiers that must also carry a
+            ``symbol_types`` entry, beyond each expression's free
+            identifiers. Defaults to an empty set.
+
+    Returns:
+        True if any expression in ``expressions`` was refused by the
+        hazard screen; False if every expression lowers soundly.
+
+    Raises:
+        KeyError: If ``symbol_types`` lacks an entry for a free
+            identifier of any expression, or for a considered
+            identifier, that is not a native constant's canonical
+            identifier.
+        NonBooleanLogicalOperandError: If any expression's root, an
+            operand of a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            ``LOGICAL_NOT`` node, or a piecewise case condition,
+            provably denotes a number.
+
+    """
+    free_identifiers: frozenset[Identifier] = frozenset(considered_identifiers)
+    for expression in expressions:
+        free_identifiers |= expression.get_free_identifiers()
+    _validate_symbol_types_cover_free_identifiers(free_identifiers, symbol_types)
+    for expression in expressions:
+        validate_predicate(expression, symbol_types=symbol_types)
+    return any(
+        _find_and_log_hazard(expression, symbol_types, context=context)
+        for expression in expressions
+    )
+
+
 def check_expression_satisfiability(
     expression: Expression,
     symbol_types: dict[Identifier, SymbolType],
@@ -1310,12 +1360,8 @@ def check_expression_satisfiability(
     """
     _validate_backend_capability(backend, SolverQueryKind.SATISFIABILITY)
     validate_timeout_milliseconds(timeout_milliseconds)
-    _validate_symbol_types_cover_free_identifiers(
-        expression.get_free_identifiers(), symbol_types
-    )
-    validate_predicate(expression, symbol_types=symbol_types)
-    if _find_and_log_hazard(
-        expression, symbol_types, context="check_expression_satisfiability"
+    if _screen_z3_question(
+        (expression,), symbol_types, context="check_expression_satisfiability"
     ):
         return None
     # INVARIANT: _BACKEND_CAPABILITIES grants SATISFIABILITY to exactly one
@@ -1390,16 +1436,8 @@ def does_expression_imply(
     """
     _validate_backend_capability(backend, SolverQueryKind.IMPLICATION)
     validate_timeout_milliseconds(timeout_milliseconds)
-    _validate_symbol_types_cover_free_identifiers(
-        antecedent.get_free_identifiers() | consequent.get_free_identifiers(),
-        symbol_types,
-    )
-    validate_predicate(antecedent, symbol_types=symbol_types)
-    validate_predicate(consequent, symbol_types=symbol_types)
-    if _find_and_log_hazard(
-        antecedent, symbol_types, context="does_expression_imply"
-    ) or _find_and_log_hazard(
-        consequent, symbol_types, context="does_expression_imply"
+    if _screen_z3_question(
+        (antecedent, consequent), symbol_types, context="does_expression_imply"
     ):
         return None
     # INVARIANT: _BACKEND_CAPABILITIES grants IMPLICATION to exactly one
@@ -1469,12 +1507,11 @@ def holds_for_all_free_assignments(
     """
     _validate_backend_capability(backend, SolverQueryKind.UNIVERSAL_VALIDITY)
     validate_timeout_milliseconds(timeout_milliseconds)
-    _validate_symbol_types_cover_free_identifiers(
-        expression.get_free_identifiers() | set(considered_identifiers), symbol_types
-    )
-    validate_predicate(expression, symbol_types=symbol_types)
-    if _find_and_log_hazard(
-        expression, symbol_types, context="holds_for_all_free_assignments"
+    if _screen_z3_question(
+        (expression,),
+        symbol_types,
+        context="holds_for_all_free_assignments",
+        considered_identifiers=considered_identifiers,
     ):
         return None
     # INVARIANT: _BACKEND_CAPABILITIES grants UNIVERSAL_VALIDITY to exactly
@@ -1539,12 +1576,11 @@ def assert_holds_for_all_free_assignments(
     """
     _validate_backend_capability(backend, SolverQueryKind.UNIVERSAL_VALIDITY)
     validate_timeout_milliseconds(timeout_milliseconds)
-    _validate_symbol_types_cover_free_identifiers(
-        expression.get_free_identifiers() | set(considered_identifiers), symbol_types
-    )
-    validate_predicate(expression, symbol_types=symbol_types)
-    if _find_and_log_hazard(
-        expression, symbol_types, context="assert_holds_for_all_free_assignments"
+    if _screen_z3_question(
+        (expression,),
+        symbol_types,
+        context="assert_holds_for_all_free_assignments",
+        considered_identifiers=considered_identifiers,
     ):
         raise UndecidableError(
             "assert_holds_for_all_free_assignments: the expression was "
@@ -1619,16 +1655,8 @@ def assert_expression_implies(
     """
     _validate_backend_capability(backend, SolverQueryKind.IMPLICATION)
     validate_timeout_milliseconds(timeout_milliseconds)
-    _validate_symbol_types_cover_free_identifiers(
-        antecedent.get_free_identifiers() | consequent.get_free_identifiers(),
-        symbol_types,
-    )
-    validate_predicate(antecedent, symbol_types=symbol_types)
-    validate_predicate(consequent, symbol_types=symbol_types)
-    if _find_and_log_hazard(
-        antecedent, symbol_types, context="assert_expression_implies"
-    ) or _find_and_log_hazard(
-        consequent, symbol_types, context="assert_expression_implies"
+    if _screen_z3_question(
+        (antecedent, consequent), symbol_types, context="assert_expression_implies"
     ):
         raise UndecidableError(
             "assert_expression_implies: the expression was refused by the "
