@@ -41,17 +41,24 @@ the selected branch actually returns, so guarding a domain error with a
 condition -- ``{floor(sqrt(x)) if x >= 0; 0 otherwise}`` -- yields the
 guarded value rather than an error. Each condition must be
 boolean-dtyped: ``numpy.where`` would otherwise silently treat a nonzero
-numeric condition as true, so a non-boolean condition raises
-``TypeError``.
+numeric condition as true, exactly like a
+``logical_and``/``logical_or``/``logical_not`` operand below. A static
+check ahead of the walk reads a sort from each bound value's declared
+NumPy dtype and refuses a provably numeric condition with an unwrapped
+``NonBooleanLogicalOperandError``; a condition the static check cannot
+classify (for example an object dtype) is still caught by a runtime
+guard during the walk, and raises ``TypeError`` wrapped in
+``PassExecutionError`` instead.
 
 A ``logical_and``/``logical_or``/``logical_not`` operand must be
 boolean-dtyped: NumPy would otherwise treat a nonzero numeric value as
-true, exactly the piecewise-condition hazard above. A static check ahead
-of the walk reads a sort from each bound value's declared NumPy dtype
-and refuses a provably numeric operand with an unwrapped
+true, exactly the piecewise-condition hazard above. The same static
+check refuses a provably numeric operand with an unwrapped
 ``NonBooleanLogicalOperandError``, mirroring the SymPy and Z3 bridges; a
 value the static check cannot classify (for example an object dtype) is
-still caught by a runtime guard during the walk.
+still caught by a runtime guard during the walk, and raises
+``NonBooleanLogicalOperandError`` wrapped in ``PassExecutionError``
+instead.
 
 Expression-bodied built-ins (``relu``, ``sigmoid``, ``clamp``, ...) are
 inlined automatically before the walk via ``inline_functions``, so the
@@ -222,30 +229,38 @@ _DTYPE_KIND_SYMBOL_TYPES: immutabledict[str, SymbolType] = immutabledict(
 
 
 def _derive_symbol_types_from_environment(
-    environment: "NumpyEnvironment", numpy_module: Any
+    expression: Expression, environment: "NumpyEnvironment", numpy_module: Any
 ) -> "dict[Identifier, SymbolType]":
-    """Return the sort each bound value's NumPy dtype declares.
+    """Return the sort each dtype declares for a value bound to a referenced identifier.
 
     Read by :func:`evaluate_expression_with_numpy` ahead of the pass, so
     ``validate_logical_operands`` can screen a connective or piecewise
     condition bound to a numeric value the same way the SymPy and Z3
     bridges do, using ``symbol_types`` rather than an ``Expression``
-    environment.
+    environment. Coercing a binding with ``numpy.asarray`` to read its
+    dtype is skipped for an identifier ``expression`` does not reference,
+    since such a binding is ignored and may not even be NumPy-consumable
+    (for example a ragged nested sequence).
 
     Args:
+        expression: Expression whose free identifiers select which
+            bindings to read.
         environment: Binding of each free identifier to a
             NumPy-consumable value.
         numpy_module: The imported NumPy module.
 
     Returns:
-        The sort declared by each bound value's dtype kind
-        (``bool_``/``int``/``uint`` families, or floating-point);
-        an identifier bound to any other dtype (for example ``object``)
-        is omitted, leaving its sort undeclared.
+        The sort declared by each referenced identifier's bound value's
+        dtype kind (``bool_``/``int``/``uint`` families, or
+        floating-point); an identifier bound to any other dtype (for
+        example ``object``) is omitted, leaving its sort undeclared.
 
     """
+    referenced = expression.get_free_identifiers()
     derived: dict[Identifier, SymbolType] = {}
     for identifier, value in environment.items():
+        if identifier not in referenced:
+            continue
         kind = numpy_module.asarray(value).dtype.kind
         symbol_type = _DTYPE_KIND_SYMBOL_TYPES.get(kind)
         if symbol_type is not None:
@@ -446,8 +461,14 @@ class NumpyExpressionEvaluator(VisitablePass[Expression, "NumpyResult"]):
         The chain is right-folded from ``otherwise``, so the first case's
         ``numpy.where`` is outermost and first-match-wins holds. Each
         condition must be boolean-dtyped: ``numpy.where`` would otherwise
-        silently treat a nonzero numeric condition as true, so a
-        non-boolean condition raises ``TypeError`` instead.
+        silently treat a nonzero numeric condition as true. A condition
+        provably numeric from its declared NumPy dtype is already refused
+        by the static pre-check in
+        :func:`evaluate_expression_with_numpy`, with a bare
+        :class:`NonBooleanLogicalOperandError` raised before this method
+        runs; this check is the backstop for a condition whose dtype the
+        static check cannot classify (for example an object dtype), and
+        raises ``TypeError`` here instead.
         """
         lowered_cases: list[tuple[Any, Any, Any]] = []
         for index, (condition, value) in enumerate(expression.get_cases()):
@@ -634,15 +655,15 @@ def evaluate_expression_with_numpy(
             before checking for a constant and would silently prefer the
             caller's bound value over the constant's.
         NonBooleanLogicalOperandError: If a ``LOGICAL_AND``, ``LOGICAL_OR``,
-            or ``LOGICAL_NOT`` operand provably denotes a number. Raised
-            directly, before any evaluation, from a static check over the
-            inlined tree that reads a sort from each bound value's NumPy
-            dtype (boolean, integer/unsigned, or floating-point; any
-            other dtype is left undeclared). An operand the static check
-            cannot prove numeric from a declared dtype -- for example one
-            bound with an object dtype -- is still caught at evaluation
-            time and surfaces as ``PassExecutionError.__cause__`` instead,
-            below.
+            or ``LOGICAL_NOT`` operand, or a piecewise case condition,
+            provably denotes a number. Raised directly, before any
+            evaluation, from a static check over the inlined tree that
+            reads a sort from each bound value's NumPy dtype (boolean,
+            integer/unsigned, or floating-point; any other dtype is left
+            undeclared). An operand or condition the static check cannot
+            prove numeric from a declared dtype -- for example one bound
+            with an object dtype -- is still caught at evaluation time and
+            surfaces as ``PassExecutionError.__cause__`` instead, below.
         PassExecutionError: Wraps each domain failure below, with the
             underlying typed error attached as ``__cause__`` (matching the
             sibling expression passes). The underlying errors are:
@@ -664,7 +685,10 @@ def evaluate_expression_with_numpy(
               ``LOGICAL_OR``, or ``LOGICAL_NOT`` operand's lowered value
               is not boolean-dtyped, and the static check above could not
               prove it numeric ahead of evaluation.
-            - ``TypeError``: a piecewise condition is not boolean-dtyped.
+            - ``TypeError``: a piecewise condition's lowered value is not
+              boolean-dtyped, and the static check above could not prove
+              it numeric ahead of evaluation (for example one bound with
+              an object dtype).
             - :class:`EntryLookupError`: a call references an
               unregistered function name.
             - :class:`FunctionArityError`: a call's argument count does
@@ -681,7 +705,7 @@ def evaluate_expression_with_numpy(
     numpy_module = _import_numpy()
     inlined_expression = inline_functions(expression)
     derived_symbol_types = _derive_symbol_types_from_environment(
-        environment, numpy_module
+        inlined_expression, environment, numpy_module
     )
     validate_logical_operands(inlined_expression, symbol_types=derived_symbol_types)
     _raise_if_environment_binds_a_referenced_native_constant(

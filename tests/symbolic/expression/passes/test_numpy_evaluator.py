@@ -1441,6 +1441,26 @@ def test_ignores_environment_bindings_not_free_in_expression() -> None:
     assert np.allclose(result, values + 1.0)
 
 
+def test_ignores_a_ragged_binding_not_free_in_expression() -> None:
+    """Test a ragged, non-array-convertible binding is ignored when unreferenced.
+
+    An unreferenced binding is documented to be ignored, so it must not be
+    coerced with ``numpy.asarray`` at all: a ragged nested sequence raises
+    ``ValueError`` from that coercion alone, regardless of whether anything
+    in the expression ever reads it.
+    """
+    x = mock_identifier("x", 0)
+    unused = mock_identifier("unused", 1)
+    expression = IdentifierExpression(x) + LiteralExpression(1)
+    values = np.array([1, 2])
+
+    result = evaluate_expression_with_numpy(
+        expression, {x: values, unused: [[1, 2], [3]]}
+    )
+
+    assert np.array_equal(result, np.array([2, 3]))
+
+
 # =============================================================================
 # Adversarial cases
 # =============================================================================
