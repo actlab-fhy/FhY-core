@@ -3,10 +3,12 @@
 Checks that `check_expression_type(e, t, lookup)` succeeds and reproduces
 `t` when `t` is exactly what `synthesize_expression_type(e, lookup)` just
 returned, for numeric and boolean gate-grammar trees over a pool of
-identifiers all bound to a concrete `int32` scalar. Numeric gate trees are
-built to always include a concrete-typed identifier (see the composite
-strategy's docstring for why); the excluded, weak-literal-only shape is
-covered separately by the strict xfail at the bottom.
+identifiers all bound to a concrete `int32` scalar. A numeric tree with
+no identifier and no call anywhere synthesizes a *weak*, unresolved-width
+type (plain `uint`, `int`, or `float`); the round trip holds for those
+too, since a literal checked against a weak expected type keeps the weak
+type it synthesizes on its own instead of resolving to a width. The
+bare-literal case is pinned on its own at the bottom of this file.
 """
 
 import pytest
@@ -16,15 +18,11 @@ pytest.importorskip("hypothesis")
 from collections.abc import Callable
 
 from hypothesis import given
-from hypothesis import strategies as st
 
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
-    BinaryOperation,
     Expression,
-    IdentifierExpression,
     LiteralExpression,
-    make_binary_expression,
 )
 from fhy_core.types import (
     CoreDataType,
@@ -43,7 +41,7 @@ from ...strategies.expressions import (
     build_boolean_expression_strategy,
     build_numeric_expression_strategy,
 )
-from ...strategies.identifiers import build_identifier_pool, build_identifier_strategy
+from ...strategies.identifiers import build_identifier_pool
 
 pytestmark = pytest.mark.property
 
@@ -74,31 +72,7 @@ def build_pool_lookup(
 _LOOKUP = build_pool_lookup(dict.fromkeys(_POOL, (_INT32_SCALAR, TypeQualifier.PARAM)))
 
 
-@st.composite
-def draw_numeric_gate_tree_with_a_concrete_anchor(draw: st.DrawFn) -> Expression:
-    """Draw a numeric gate tree summed with a pool identifier.
-
-    A numeric gate tree built entirely from literals (no identifier and
-    no call to a fixed-result native anywhere) synthesizes a *weak*,
-    unresolved-width `NumericalType` (e.g. plain `uint`, not `uint8`);
-    `check_expression_type` then re-infers the same literal-only
-    expression *with* that weak type as context, which resolves it to a
-    concrete width and rejects the mismatch against the weak type it was
-    just handed back. Summing with a pool identifier (bound to a concrete
-    `int32`) forces the whole tree's synthesized type to be concrete by
-    construction, sidestepping the gap; the excluded weak-literal shape
-    is covered on its own by the strict xfail at the bottom of this file.
-    """
-    tree = draw(
-        build_numeric_expression_strategy(_POOL, _MAX_LEAVES, include_calls=True)
-    )
-    anchor = draw(build_identifier_strategy(_POOL))
-    return make_binary_expression(
-        BinaryOperation.ADD, tree, IdentifierExpression(anchor)
-    )
-
-
-@given(draw_numeric_gate_tree_with_a_concrete_anchor())
+@given(build_numeric_expression_strategy(_POOL, _MAX_LEAVES, include_calls=True))
 def test_synthesize_then_check_round_trips_for_numeric_gate_trees(
     expression: Expression,
 ) -> None:
@@ -123,9 +97,8 @@ def test_synthesize_then_check_round_trips_for_boolean_gate_trees(
 ) -> None:
     """Test checking a boolean gate tree against its own synthesized type succeeds.
 
-    Oracle: same round trip as the numeric case; boolean gate trees need
-    no anchor identifier because `BOOL` is always concrete (there is no
-    weak boolean type to fall back to).
+    Oracle: same round trip as the numeric case; a boolean gate tree is
+    always concrete, since `BOOL` has no weak counterpart.
     """
     synthesized_type, _ = synthesize_expression_type(expression, _LOOKUP)
     assert isinstance(synthesized_type, NumericalType)
@@ -136,24 +109,14 @@ def test_synthesize_then_check_round_trips_for_boolean_gate_trees(
     assert is_structurally_equivalent(checked_type, synthesized_type)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "check_expression_type re-infers a bare weak-typed literal (e.g. "
-        "LiteralExpression(0)) using its own weak synthesized type as the "
-        "expected type, then rejects the now-concrete inferred type (e.g. "
-        "UINT8) as wider than that weak type (e.g. UINT). "
-        "src/fhy_core/types/checking/type_checker.py: bare-literal "
-        "inference and expected-type-directed inference disagree on "
-        "concreteness."
-    ),
-)
 def test_synthesize_then_check_round_trips_for_a_bare_weak_literal() -> None:
-    """Test (expected to fail) the round trip for a tree with no concrete anchor.
+    """Test the round trip for the smallest tree whose synthesized type is weak.
 
-    Documents the shape excluded from
+    A bare literal is the shape
     `test_synthesize_then_check_round_trips_for_numeric_gate_trees` above
-    by `draw_numeric_gate_tree_with_a_concrete_anchor`'s forced anchor.
+    shrinks to: `LiteralExpression(0)` synthesizes plain `uint`, and
+    checking it against that weak type returns `uint` rather than
+    resolving to a concrete width.
     """
     expression: Expression = LiteralExpression(0)
     synthesized_type, _ = synthesize_expression_type(expression, _LOOKUP)

@@ -6,6 +6,15 @@ into the expression so weak literals can adopt the surrounding context,
 then verifies the synthesized result is assignment-compatible with the
 expected type. Both entry points return ``(Type, TypeQualifier)``.
 
+A weak core data type (``UINT``, ``INT``, ``FLOAT``) names a family, not
+a width, so it carries nothing for a literal to adopt: a literal checked
+against a weak expected type keeps the weak type it synthesizes on its
+own, and only a concrete expected type gives it a width. Checking against
+a weak expected type therefore reduces to synthesis followed by the
+assignment-compatibility check, which is what makes checking an
+expression against the type :func:`synthesize_expression_type` returned
+for it succeed and yield that same type.
+
 This module raises :class:`FhYCoreTypeError` for type-rule violations and
 :class:`NotImplementedError` for expression shapes / operations that are
 not yet supported (string literals, tensor operands, unknown
@@ -449,7 +458,12 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
     def check(
         self, expression: Expression, expected_type: Type
     ) -> tuple[Type, TypeQualifier]:
-        """Check an expression against an expected type."""
+        """Check an expression against an expected type.
+
+        A literal keeps the weak type it synthesizes on its own when the
+        expected core data type is weak (``UINT``, ``INT``, ``FLOAT``);
+        only a concrete expected type gives it a width.
+        """
         actual_type, actual_qualifier = self._infer(expression, expected_type)
         # `_infer` unwinds any `entering` scopes it opens before returning.
         # Re-enter `expression` here so `_check_expected_type` is framed
@@ -592,6 +606,13 @@ class ExpressionTypeChecker(VisitablePass[Expression, tuple[Type, TypeQualifier]
             expected_core_data_type = _get_primitive_data_type(
                 expected_value_type
             ).core_data_type
+            if is_weak_core_data_type(expected_core_data_type):
+                # A weak expected core data type names a family, not a
+                # width, so it carries nothing for the literal to adopt:
+                # the literal keeps the weak type it synthesizes on its
+                # own, and `_check_expected_type` decides whether the two
+                # are compatible.
+                return self.visit_literal_expression(literal_expression)
             literal_value = literal_expression.value
             if isinstance(literal_value, bool):
                 resolved_core_data_type = resolve_literal_core_data_type(

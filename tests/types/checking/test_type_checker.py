@@ -209,6 +209,33 @@ def test_check_literal_against_expected_type_resolves_weak_literal() -> None:
     assert result_qualifier is TypeQualifier.PARAM
 
 
+def test_check_literal_against_weak_expected_type_keeps_weak_literal_type() -> None:
+    """Test `check` against a weak integer type leaves the literal weak.
+
+    A weak core data type names a family, not a width, so there is no
+    width for the literal to adopt.
+    """
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    result_type, result_qualifier = checker.check(
+        LiteralExpression(256), _make_scalar(CoreDataType.UINT)
+    )
+
+    assert result_type.is_structurally_equivalent(_make_scalar(CoreDataType.UINT))
+    assert result_qualifier is TypeQualifier.PARAM
+
+
+def test_check_negative_literal_against_weak_unsigned_expected_raises() -> None:
+    """Test `check` rejects a negative literal against a weak unsigned type."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    with pytest.raises(
+        FhYCoreTypeError,
+        match=r"synthesized type int\[\] is wider than the expected type uint\[\]",
+    ):
+        checker.check(LiteralExpression(-1), _make_scalar(CoreDataType.UINT))
+
+
 def test_check_integer_literal_against_float_context_uses_context_type() -> None:
     """Test `check` preserves a concrete float context when given an integer literal."""
     checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
