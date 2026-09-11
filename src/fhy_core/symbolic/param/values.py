@@ -89,17 +89,6 @@ def is_sequence_unique_without_set(values: Sequence[Any]) -> bool:
     return True
 
 
-def is_sorted_sequence_unique(values: Sequence[Any]) -> bool:
-    """Return whether a pre-sorted ``values`` has no adjacent strictly matching pair.
-
-    Adjacent values are compared through :func:`do_param_values_match`, so a pair
-    such as ``1`` and ``1.0`` that sorts adjacently is treated as distinct.
-    """
-    return not any(
-        do_param_values_match(values[i], values[i + 1]) for i in range(len(values) - 1)
-    )
-
-
 def supports_equal_value_semantics(value: Any) -> bool:
     """Return whether ``value`` defines usable equality (``__eq__`` + ``__hash__``)."""
     if isinstance(value, Equal):

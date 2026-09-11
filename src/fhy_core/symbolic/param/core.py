@@ -733,15 +733,35 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
             return None
         return _coerce_to_interval_param(other_profile, self)
 
-    def __add__(self, other: Any) -> "Param[int]":
+    def _resolve_interval_operands(
+        self, other: Any
+    ) -> "tuple[Param[int], Param[int], IntervalProfile] | None":
+        """Resolve interval-arithmetic operands for ``self`` and ``other``.
+
+        Returns ``None`` where ``__add__``, ``__sub__``, and ``__mul__``
+        return ``NotImplemented``: ``other`` is not a ``Param``, or neither
+        operand is an interval operand as it stands. Otherwise returns the
+        left operand, ``other`` coerced against the left operand's profile,
+        and that profile. When ``self`` is not an interval operand as it
+        stands, resolution recurses exactly once against ``self`` coerced to
+        ``other``'s profile, matching the one level of re-dispatch those
+        operators perform.
+        """
         profile = _get_interval_operand_profile(self)
         if profile is None:
             coerced_self = self._coerce_interval_operand(other)
             if coerced_self is None:
-                return NotImplemented
-            return coerced_self.__add__(other)
+                return None
+            return coerced_self._resolve_interval_operands(other)
         coerced = _coerce_to_interval_param(profile, other)
-        self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
+        return cast("Param[int]", self), coerced, profile
+
+    def __add__(self, other: Any) -> "Param[int]":
+        resolved = self._resolve_interval_operands(other)
+        if resolved is None:
+            return NotImplemented
+        left, coerced, profile = resolved
+        self_min, self_max = _get_effective_min_max(left.constraints, left.variable)
         other_min, other_max = _get_effective_min_max(
             coerced.constraints, coerced.variable
         )
@@ -759,14 +779,11 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         return self.__add__(other)
 
     def __sub__(self, other: Any) -> "Param[int]":
-        profile = _get_interval_operand_profile(self)
-        if profile is None:
-            coerced_self = self._coerce_interval_operand(other)
-            if coerced_self is None:
-                return NotImplemented
-            return coerced_self.__sub__(other)
-        coerced = _coerce_to_interval_param(profile, other)
-        self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
+        resolved = self._resolve_interval_operands(other)
+        if resolved is None:
+            return NotImplemented
+        left, coerced, profile = resolved
+        self_min, self_max = _get_effective_min_max(left.constraints, left.variable)
         other_min, other_max = _get_effective_min_max(
             coerced.constraints, coerced.variable
         )
@@ -781,15 +798,12 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
         return _coerce_to_interval_param(profile, other).__sub__(self)
 
     def __mul__(self, other: Any) -> "Param[int]":
-        profile = _get_interval_operand_profile(self)
-        if profile is None:
-            coerced_self = self._coerce_interval_operand(other)
-            if coerced_self is None:
-                return NotImplemented
-            return coerced_self.__mul__(other)
-        coerced = _coerce_to_interval_param(profile, other)
+        resolved = self._resolve_interval_operands(other)
+        if resolved is None:
+            return NotImplemented
+        left, coerced, profile = resolved
         coerced_profile = _require_interval_operand_profile(coerced)
-        self_min, self_max = _get_effective_min_max(self.constraints, self.variable)
+        self_min, self_max = _get_effective_min_max(left.constraints, left.variable)
         other_min, other_max = _get_effective_min_max(
             coerced.constraints, coerced.variable
         )
@@ -1338,15 +1352,16 @@ def _multiply_optional_bounds(
 
 def _apply_interval_bounds(
     param: "Param[int]",
-    profile: IntervalProfile,
+    domain: IntervalIntegerDomain,
     min_int: int | None,
     max_int: int | None,
 ) -> "Param[int]":
-    """Bound ``param`` to ``[min_int, max_int]``, rendered as ``profile`` prefers.
+    """Bound ``param`` to ``[min_int, max_int]``, rendered as ``domain`` prefers.
 
-    ``profile`` is the interval profile of ``param``'s domain; a ``None``
-    bound leaves that end unbounded.
+    ``domain`` is ``param``'s domain; a ``None`` bound leaves that end
+    unbounded.
     """
+    profile = domain.get_interval_profile()
     if min_int is not None:
         if _is_exclusive_lower_rendering_valid(profile, min_int):
             param = param.add_lower_bound_constraint(min_int - 1, is_inclusive=False)
@@ -1396,9 +1411,7 @@ def _create_widened_interval_param(
 ) -> "Param[int]":
     domain = IntervalIntegerDomain(prefer_inclusive=template.prefer_inclusive)
     param: Param[int] = Param(domain)
-    return _apply_interval_bounds(
-        param, domain.get_interval_profile(), min_int, max_int
-    )
+    return _apply_interval_bounds(param, domain, min_int, max_int)
 
 
 def _create_class_preserved_interval_param(
@@ -1421,9 +1434,7 @@ def _create_class_preserved_interval_param(
             zero_included=zero_included,
         )
         param: Param[int] = Param(domain)
-        return _apply_interval_bounds(
-            param, domain.get_interval_profile(), min_int, max_int
-        )
+        return _apply_interval_bounds(param, domain, min_int, max_int)
     return _create_widened_interval_param(min_int, max_int, template)
 
 
