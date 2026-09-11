@@ -95,7 +95,7 @@ LOGICAL_BINARY_OPERATIONS: Final = (
     BinaryOperation.LOGICAL_AND,
     BinaryOperation.LOGICAL_OR,
 )
-INTEGER_RESULT_NATIVE_FUNCTIONS: Final = ("floor", "ceil", "round", "sign")
+INTEGER_RESULT_NATIVE_FUNCTIONS: Final = ("floor", "ceil", "round")
 
 _STRUCTURAL_NUMERIC_BINARY_OPERATIONS: Final = (
     *NUMERIC_GATE_OPERATIONS,
@@ -138,11 +138,10 @@ _STRUCTURAL_BOOLEAN_CALL_SIGNATURES: Final = tuple(
 SYMPY_STABLE_CALL_FUNCTIONS: Final = ("floor", "ceil")
 """Natives whose call on an identifier round-trips through SymPy unchanged.
 
-Of `INTEGER_RESULT_NATIVE_FUNCTIONS`, `sign` is an expression-bodied
-`RegisteredFunction`, which the SymPy lowering refuses by design (inline
-first), and `round` is a `NativeFunction` the lifting pass does not
-recognize on the way back (`TypeError: Unsupported expression type:
-round`); the SymPy pass property tests pin that gap with a strict xfail.
+Of `INTEGER_RESULT_NATIVE_FUNCTIONS`, `round` is excluded: the lifting
+pass does not recognize SymPy's rounding node on the way back
+(`TypeError: Unsupported expression type: round`), a gap the SymPy pass
+property tests pin with a strict xfail.
 The list is explicit on purpose: a probe that dropped whatever failed
 would hide a regression in the bridge instead of surfacing it.
 """

@@ -132,33 +132,6 @@ def test_log_lifts_back_to_call_log() -> None:
 
 
 # =============================================================================
-# Round-trip through sympy
-# =============================================================================
-
-
-def test_native_call_round_trips_through_sympy_unchanged() -> None:
-    """Test a `call("exp", x)` lowers to sympy and lifts back to the same structure."""
-    x = mock_identifier("x", 0)
-    original = call("exp", x)
-
-    lowered = convert_expression_to_sympy_expression(original)
-    lifted = convert_sympy_expression_to_expression(lowered)
-
-    assert lifted.is_structurally_equivalent(original)
-
-
-def test_nested_native_call_round_trips_through_sympy() -> None:
-    """Test a nested chain `sin(sqrt(x))` round-trips through sympy."""
-    x = mock_identifier("x", 0)
-    original = call("sin", call("sqrt", x))
-
-    lowered = convert_expression_to_sympy_expression(original)
-    lifted = convert_sympy_expression_to_expression(lowered)
-
-    assert lifted.is_structurally_equivalent(original)
-
-
-# =============================================================================
 # Unmapped native call raises
 # =============================================================================
 

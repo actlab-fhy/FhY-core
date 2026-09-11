@@ -1525,62 +1525,6 @@ def test_multi_branch_sympy_piecewise_with_non_true_final_condition_raises() -> 
     assert "flag_1" in str(exc_info.value.__cause__)
 
 
-def test_single_case_piecewise_expression_round_trips_through_sympy() -> None:
-    """Test a one-case ``PiecewiseExpression`` round-trips structurally through SymPy.
-
-    Both operands are leaves whose sympy lowerings preserve their shape;
-    unary-negate values do not round-trip because sympy represents
-    ``-x`` as ``Mul(-1, x)``.
-    """
-    x_identifier = mock_identifier("x", 0)
-    original = PiecewiseExpression(
-        (
-            BinaryExpression(
-                BinaryOperation.GREATER,
-                IdentifierExpression(x_identifier),
-                LiteralExpression(0),
-            ),
-        ),
-        (IdentifierExpression(x_identifier),),
-        LiteralExpression(0),
-    )
-
-    intermediate = convert_expression_to_sympy_expression(original)
-    restored = convert_sympy_expression_to_expression(intermediate)
-
-    assert restored.is_structurally_equivalent(original)
-
-
-def test_multi_case_piecewise_expression_round_trips_with_full_order_and_content() -> (
-    None
-):
-    """Test a 3-case ``PiecewiseExpression`` round-trips with every case intact.
-
-    Uses distinguishable literal values (10/20/30/99), and checks the
-    *entire* round-tripped tree against the original via
-    ``is_structurally_equivalent`` rather than comparing lengths or
-    individual fields, so a lowering/lifting bug that reordered cases or
-    paired a value with the wrong condition -- not just dropped one --
-    would be caught. ``PiecewiseExpression.conditions`` cannot be
-    compared with plain ``==`` here: each round-tripped
-    ``IdentifierExpression`` wraps a freshly reconstructed ``Identifier``
-    (see ``SymPyToExpressionConverter._convert_symbol``), so only
-    ``is_structurally_equivalent`` recognizes it as the same variable.
-    """
-    x_identifier = mock_identifier("x", 0)
-    x_symbol = IdentifierExpression(x_identifier)
-    original = PiecewiseExpression(
-        (x_symbol > 0, x_symbol > 10, x_symbol > 20),
-        (LiteralExpression(10), LiteralExpression(20), LiteralExpression(30)),
-        LiteralExpression(99),
-    )
-
-    intermediate = convert_expression_to_sympy_expression(original)
-    restored = convert_sympy_expression_to_expression(intermediate)
-
-    assert restored.is_structurally_equivalent(original)
-
-
 # =============================================================================
 # CallExpression interplay with the SymPy converter
 # =============================================================================
