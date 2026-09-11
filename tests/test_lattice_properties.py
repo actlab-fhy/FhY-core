@@ -1,4 +1,4 @@
-"""Hypothesis property tests for `Lattice` (P32).
+"""Hypothesis property tests for `Lattice`.
 
 Generates finite structures that are lattices by construction --- powersets
 under inclusion, divisor sets under divisibility, chains, and the product
@@ -8,8 +8,8 @@ of two chains --- each paired with an independent, family-specific
 search over the element list for meet/join and bounds, which is the
 external check the algebraic laws (commutative, associative, idempotent,
 absorbing) are verified against. A separate case wraps an arbitrary random
-poset (mirroring the P31 generator in `test_poset_properties.py`, which may
-or may not be a lattice) as a `Lattice` to check `verify` against
+poset (drawn with the same generator `test_poset_properties.py` uses, which
+may or may not be a lattice) as a `Lattice` to check `verify` against
 `is_lattice` directly.
 """
 
@@ -27,15 +27,14 @@ from hypothesis import strategies as st
 
 from fhy_core.lattice import Lattice
 
+from .strategies.orders import draw_random_dag
+
 pytestmark = pytest.mark.property
 
 _POWERSET_SIZES: Final = (1, 2, 3)
 _DIVISOR_NUMBERS: Final = (6, 12, 30, 36)
 _CHAIN_LENGTHS: Final = (1, 2, 3, 4, 5)
 _PRODUCT_CHAIN_LENGTHS: Final = (1, 2, 3)
-
-_MIN_POSET_NODES = 2
-_MAX_POSET_NODES = 6
 
 
 @dataclass(frozen=True)
@@ -372,21 +371,12 @@ def test_verify_reports_no_errors_for_a_generated_lattice(case: LatticeCase) -> 
 def draw_arbitrary_poset_as_lattice(draw: st.DrawFn) -> Lattice[int]:
     """Draw a random DAG and build it directly as a `Lattice`, valid or not.
 
-    Mirrors the random-DAG generator in `test_poset_properties.py` (P31):
+    Uses the same random-DAG generator as `test_poset_properties.py`:
     nodes `0..n-1`, edges only from a smaller node to a larger one (acyclic
-    by construction), added in a drawn order. Unlike the P32 families
-    above, nothing here guarantees the result is a valid lattice.
+    by construction), added in a drawn order. Unlike the families above,
+    nothing here guarantees the result is a valid lattice.
     """
-    node_count = draw(
-        st.integers(min_value=_MIN_POSET_NODES, max_value=_MAX_POSET_NODES)
-    )
-    candidate_edges = [
-        (lower, upper)
-        for lower in range(node_count)
-        for upper in range(lower + 1, node_count)
-    ]
-    included_edges = [edge for edge in candidate_edges if draw(st.booleans())]
-    ordered_edges = draw(st.permutations(included_edges))
+    node_count, ordered_edges = draw(draw_random_dag())
 
     lattice: Lattice[int] = Lattice()
     for node in range(node_count):

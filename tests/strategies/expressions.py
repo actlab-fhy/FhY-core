@@ -33,16 +33,12 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     CallExpression,
     Expression,
-    FunctionSort,
     IdentifierExpression,
     LiteralExpression,
-    NativeFunction,
     PiecewiseExpression,
-    RegisteredFunction,
     UnaryExpression,
     UnaryOperation,
     call,
-    get_registered_entries,
     make_binary_expression,
     make_unary_expression,
     piecewise,
@@ -51,8 +47,6 @@ from fhy_core.symbolic.expression import (
 from .identifiers import build_identifier_strategy
 from .literals import (
     build_boolean_literal_strategy,
-    build_decimal_string_literal_strategy,
-    build_finite_float_literal_strategy,
     build_integer_literal_strategy,
 )
 
@@ -62,11 +56,11 @@ __all__ = [
     "LOGICAL_BINARY_OPERATIONS",
     "NUMERIC_DIVISION_OPERATIONS",
     "NUMERIC_GATE_OPERATIONS",
+    "SYMPY_STABLE_CALL_FUNCTIONS",
     "build_any_sort_expression_strategy",
     "build_boolean_expression_strategy",
     "build_integer_environment_strategy",
     "build_numeric_expression_strategy",
-    "build_structural_expression_strategy",
     "build_sympy_stable_expression_strategy",
     "count_expression_leaves",
     "draw_boolean_tree_with_environment",
@@ -97,12 +91,6 @@ LOGICAL_BINARY_OPERATIONS: Final = (
 )
 INTEGER_RESULT_NATIVE_FUNCTIONS: Final = ("floor", "ceil", "round")
 
-_STRUCTURAL_NUMERIC_BINARY_OPERATIONS: Final = (
-    *NUMERIC_GATE_OPERATIONS,
-    *NUMERIC_DIVISION_OPERATIONS,
-    BinaryOperation.DIVIDE,
-    BinaryOperation.POWER,
-)
 _NONZERO_DIVISORS: Final = (*range(-8, 0), *range(1, 9))
 _MIN_LEAVES_FOR_TWO_CHILDREN: Final = 2
 _MIN_PIECEWISE_LEAVES: Final = 3
@@ -112,28 +100,6 @@ _MAX_CONSECUTIVE_WRAPS: Final = 4
 not) allowed before a draw is forced to pick a leaf-spending kind. Bounds
 recursion depth independently of the leaf budget, since these node kinds
 do not shrink it."""
-
-# (function name, parameter sorts) for every registered entry callable from
-# an expression tree (a `RegisteredFunction` or `NativeFunction`; a
-# `NativeConstant` has no parameters and is never called). Computed once:
-# the builtin registrations run at `fhy_core.symbolic.expression` import
-# time, which has already happened by the time this module is imported.
-_CALLABLE_SIGNATURES: Final = tuple(
-    (name, entry.parameter_sorts, entry.result_sort)
-    for name, entry in get_registered_entries().items()
-    if isinstance(entry, (RegisteredFunction, NativeFunction))
-)
-_STRUCTURAL_NUMERIC_CALL_SIGNATURES: Final = tuple(
-    (name, sorts)
-    for name, sorts, result_sort in _CALLABLE_SIGNATURES
-    if result_sort is not FunctionSort.BOOL
-)
-_STRUCTURAL_BOOLEAN_CALL_SIGNATURES: Final = tuple(
-    (name, sorts)
-    for name, sorts, result_sort in _CALLABLE_SIGNATURES
-    if result_sort is FunctionSort.BOOL
-)
-
 
 SYMPY_STABLE_CALL_FUNCTIONS: Final = ("floor", "ceil")
 """Natives whose call on an identifier round-trips through SymPy unchanged.
@@ -247,6 +213,7 @@ def _draw_numeric_expression(
     max_leaves: int,
     include_division: bool,
     include_calls: bool,
+    native_functions: Sequence[str],
     include_piecewise: bool,
     wraps_remaining: int,
 ) -> Expression:
@@ -254,7 +221,7 @@ def _draw_numeric_expression(
     kinds: list[str] = ["leaf"]
     if wraps_remaining > 0:
         kinds.append("unary")
-        if include_calls:
+        if include_calls and native_functions:
             kinds.append("call")
     if max_leaves >= _MIN_LEAVES_FOR_TWO_CHILDREN:
         kinds.append("binary")
@@ -276,19 +243,21 @@ def _draw_numeric_expression(
                 max_leaves,
                 include_division,
                 include_calls,
+                native_functions,
                 include_piecewise,
                 wraps_remaining - 1,
             )
         )
         return make_unary_expression(unary_operation, operand)
     if kind == "call":
-        function_name = draw(st.sampled_from(INTEGER_RESULT_NATIVE_FUNCTIONS))
+        function_name = draw(st.sampled_from(native_functions))
         argument = draw(
             _draw_numeric_expression(
                 identifiers,
                 max_leaves,
                 include_division,
                 include_calls,
+                native_functions,
                 include_piecewise,
                 wraps_remaining - 1,
             )
@@ -304,6 +273,7 @@ def _draw_numeric_expression(
                     budget,
                     include_division=include_division,
                     include_calls=include_calls,
+                    native_functions=native_functions,
                     include_piecewise=include_piecewise,
                 ),
                 lambda budget: build_numeric_expression_strategy(
@@ -311,6 +281,7 @@ def _draw_numeric_expression(
                     budget,
                     include_division=include_division,
                     include_calls=include_calls,
+                    native_functions=native_functions,
                     include_piecewise=include_piecewise,
                 ),
             ),
@@ -327,6 +298,7 @@ def _draw_numeric_expression(
                     budget,
                     include_division=include_division,
                     include_calls=include_calls,
+                    native_functions=native_functions,
                     include_piecewise=include_piecewise,
                 ),
                 lambda _budget: _build_nonzero_divisor_strategy(),
@@ -339,7 +311,12 @@ def _draw_numeric_expression(
         max_leaves,
         lambda budget: st.deferred(
             lambda: build_boolean_expression_strategy(
-                identifiers, budget, include_piecewise=include_piecewise
+                identifiers,
+                budget,
+                include_calls=include_calls,
+                include_division=include_division,
+                native_functions=native_functions,
+                include_piecewise=include_piecewise,
             )
         ),
         lambda budget: build_numeric_expression_strategy(
@@ -347,6 +324,7 @@ def _draw_numeric_expression(
             budget,
             include_division=include_division,
             include_calls=include_calls,
+            native_functions=native_functions,
             include_piecewise=include_piecewise,
         ),
     )
@@ -357,6 +335,9 @@ def _draw_boolean_expression(
     draw: st.DrawFn,
     identifiers: Sequence[Identifier],
     max_leaves: int,
+    include_calls: bool,
+    include_division: bool,
+    native_functions: Sequence[str],
     include_piecewise: bool,
     wraps_remaining: int,
 ) -> Expression:
@@ -379,10 +360,24 @@ def _draw_boolean_expression(
             draw,
             (
                 lambda budget: st.deferred(
-                    lambda: build_numeric_expression_strategy(identifiers, budget)
+                    lambda: build_numeric_expression_strategy(
+                        identifiers,
+                        budget,
+                        include_division=include_division,
+                        include_calls=include_calls,
+                        native_functions=native_functions,
+                        include_piecewise=include_piecewise,
+                    )
                 ),
                 lambda budget: st.deferred(
-                    lambda: build_numeric_expression_strategy(identifiers, budget)
+                    lambda: build_numeric_expression_strategy(
+                        identifiers,
+                        budget,
+                        include_division=include_division,
+                        include_calls=include_calls,
+                        native_functions=native_functions,
+                        include_piecewise=include_piecewise,
+                    )
                 ),
             ),
             max_leaves,
@@ -391,7 +386,13 @@ def _draw_boolean_expression(
     if kind == "not":
         operand = draw(
             _draw_boolean_expression(
-                identifiers, max_leaves, include_piecewise, wraps_remaining - 1
+                identifiers,
+                max_leaves,
+                include_calls,
+                include_division,
+                native_functions,
+                include_piecewise,
+                wraps_remaining - 1,
             )
         )
         return make_unary_expression(UnaryOperation.LOGICAL_NOT, operand)
@@ -401,10 +402,20 @@ def _draw_boolean_expression(
             draw,
             (
                 lambda budget: build_boolean_expression_strategy(
-                    identifiers, budget, include_piecewise=include_piecewise
+                    identifiers,
+                    budget,
+                    include_calls=include_calls,
+                    include_division=include_division,
+                    native_functions=native_functions,
+                    include_piecewise=include_piecewise,
                 ),
                 lambda budget: build_boolean_expression_strategy(
-                    identifiers, budget, include_piecewise=include_piecewise
+                    identifiers,
+                    budget,
+                    include_calls=include_calls,
+                    include_division=include_division,
+                    native_functions=native_functions,
+                    include_piecewise=include_piecewise,
                 ),
             ),
             max_leaves,
@@ -414,10 +425,20 @@ def _draw_boolean_expression(
         draw,
         max_leaves,
         lambda budget: build_boolean_expression_strategy(
-            identifiers, budget, include_piecewise=include_piecewise
+            identifiers,
+            budget,
+            include_calls=include_calls,
+            include_division=include_division,
+            native_functions=native_functions,
+            include_piecewise=include_piecewise,
         ),
         lambda budget: build_boolean_expression_strategy(
-            identifiers, budget, include_piecewise=include_piecewise
+            identifiers,
+            budget,
+            include_calls=include_calls,
+            include_division=include_division,
+            native_functions=native_functions,
+            include_piecewise=include_piecewise,
         ),
     )
 
@@ -428,17 +449,26 @@ def build_numeric_expression_strategy(
     *,
     include_division: bool = True,
     include_calls: bool = True,
+    native_functions: Sequence[str] = INTEGER_RESULT_NATIVE_FUNCTIONS,
     include_piecewise: bool = True,
 ) -> st.SearchStrategy[Expression]:
     """Return a strategy for numeric-sorted expression trees within a leaf budget.
+
+    Every option is forwarded to every numeric and boolean subtree the
+    tree draws (binary and division operands, call arguments, and both
+    the condition and value parts of a nested piecewise), so one setting
+    governs the whole tree, not just its root.
 
     Args:
         identifiers: Pool identifiers may be drawn from as leaves.
         max_leaves: Most literal and identifier leaves the tree may hold.
         include_division: Whether ``FLOOR_DIVIDE``/``MODULO`` nodes (with
             a non-zero literal divisor) may appear.
-        include_calls: Whether calls to
-            :data:`INTEGER_RESULT_NATIVE_FUNCTIONS` may appear.
+        include_calls: Whether a call node may appear at all. A call
+            always targets one of ``native_functions``; false or an
+            empty ``native_functions`` both mean no call node is drawn.
+        native_functions: The only function names a call node may
+            target. Defaults to :data:`INTEGER_RESULT_NATIVE_FUNCTIONS`.
         include_piecewise: Whether piecewise nodes may appear.
 
     Returns:
@@ -450,6 +480,7 @@ def build_numeric_expression_strategy(
         max_leaves,
         include_division,
         include_calls,
+        native_functions,
         include_piecewise,
         _MAX_CONSECUTIVE_WRAPS,
     )
@@ -459,14 +490,29 @@ def build_boolean_expression_strategy(
     identifiers: Sequence[Identifier],
     max_leaves: int = 8,
     *,
+    include_calls: bool = True,
+    include_division: bool = True,
+    native_functions: Sequence[str] = INTEGER_RESULT_NATIVE_FUNCTIONS,
     include_piecewise: bool = True,
 ) -> st.SearchStrategy[Expression]:
     """Return a strategy for boolean-sorted expression trees within a leaf budget.
+
+    ``include_calls``, ``include_division``, and ``native_functions`` are
+    forwarded to every numeric subtree this strategy draws (a
+    comparison's two operands, and any numeric piecewise value nested
+    under a boolean piecewise condition), so they govern the whole tree,
+    not only its own boolean nodes.
 
     Args:
         identifiers: Pool identifiers a nested numeric comparison operand
             may be drawn from.
         max_leaves: Most literal and identifier leaves the tree may hold.
+        include_calls: Whether a numeric comparison operand may hold a
+            call node. Forwarded to every numeric subtree.
+        include_division: Whether a numeric comparison operand may hold
+            a division node. Forwarded to every numeric subtree.
+        native_functions: The only function names a numeric comparison
+            operand's call node may target.
         include_piecewise: Whether piecewise nodes may appear.
 
     Returns:
@@ -474,244 +520,47 @@ def build_boolean_expression_strategy(
 
     """
     return _draw_boolean_expression(
-        identifiers, max_leaves, include_piecewise, _MAX_CONSECUTIVE_WRAPS
+        identifiers,
+        max_leaves,
+        include_calls,
+        include_division,
+        native_functions,
+        include_piecewise,
+        _MAX_CONSECUTIVE_WRAPS,
     )
 
 
 def build_any_sort_expression_strategy(
-    identifiers: Sequence[Identifier], max_leaves: int = 8
-) -> st.SearchStrategy[Expression]:
-    """Return a strategy drawing either a numeric-sorted or a boolean-sorted tree."""
-    return st.one_of(
-        build_numeric_expression_strategy(identifiers, max_leaves),
-        build_boolean_expression_strategy(identifiers, max_leaves),
-    )
-
-
-def _build_structural_numeric_leaf_strategy(
     identifiers: Sequence[Identifier],
+    max_leaves: int = 8,
+    *,
+    include_division: bool = True,
+    include_calls: bool = True,
+    native_functions: Sequence[str] = INTEGER_RESULT_NATIVE_FUNCTIONS,
+    include_piecewise: bool = True,
 ) -> st.SearchStrategy[Expression]:
-    """Return a strategy for a wide numeric leaf: a numeric literal or an identifier."""
-    leaves: list[st.SearchStrategy[Expression]] = [
-        build_integer_literal_strategy(),
-        build_finite_float_literal_strategy(),
-        build_decimal_string_literal_strategy(),
-    ]
-    if identifiers:
-        leaves.append(build_identifier_strategy(identifiers).map(IdentifierExpression))
-    return st.one_of(*leaves)
+    """Return a strategy drawing either a numeric-sorted or a boolean-sorted tree.
 
-
-def _build_structural_boolean_leaf_strategy(
-    identifiers: Sequence[Identifier],
-) -> st.SearchStrategy[Expression]:
-    """Return a strategy for a boolean leaf: a boolean literal or an identifier."""
-    leaves: list[st.SearchStrategy[Expression]] = [build_boolean_literal_strategy()]
-    if identifiers:
-        leaves.append(build_identifier_strategy(identifiers).map(IdentifierExpression))
-    return st.one_of(*leaves)
-
-
-def _filter_signatures_by_arity(
-    signatures: Sequence[tuple[str, tuple[FunctionSort, ...]]], max_leaves: int
-) -> tuple[tuple[str, tuple[FunctionSort, ...]], ...]:
-    """Return the signatures whose arity fits within ``max_leaves`` leaves."""
-    return tuple(
-        signature for signature in signatures if len(signature[1]) <= max_leaves
-    )
-
-
-def _build_structural_argument_strategy(
-    identifiers: Sequence[Identifier], sort: FunctionSort
-) -> Callable[[int], st.SearchStrategy[Expression]]:
-    """Return a per-budget strategy factory for a call argument of the given sort."""
-    if sort is FunctionSort.BOOL:
-        return lambda budget: _build_structural_boolean_strategy(identifiers, budget)
-    return lambda budget: _build_structural_numeric_strategy(identifiers, budget)
-
-
-def _draw_structural_call(
-    draw: st.DrawFn,
-    identifiers: Sequence[Identifier],
-    max_leaves: int,
-    signatures: Sequence[tuple[str, tuple[FunctionSort, ...]]],
-) -> Expression:
-    """Draw a call to one of ``signatures``, one argument per parameter sort."""
-    name, parameter_sorts = draw(st.sampled_from(signatures))
-    factories = tuple(
-        _build_structural_argument_strategy(identifiers, sort)
-        for sort in parameter_sorts
-    )
-    arguments = _draw_parts_within_leaf_budget(draw, factories, max_leaves)
-    return call(name, *arguments)
-
-
-@st.composite
-def _draw_structural_numeric_expression(
-    draw: st.DrawFn,
-    identifiers: Sequence[Identifier],
-    max_leaves: int,
-    wraps_remaining: int,
-) -> Expression:
-    """Draw a wide numeric-sorted structural expression tree within a leaf budget."""
-    eligible_calls = _filter_signatures_by_arity(
-        _STRUCTURAL_NUMERIC_CALL_SIGNATURES, max_leaves
-    )
-    kinds: list[str] = ["leaf"]
-    if wraps_remaining > 0:
-        kinds.append("unary")
-        if eligible_calls:
-            kinds.append("call")
-    if max_leaves >= _MIN_LEAVES_FOR_TWO_CHILDREN:
-        kinds.append("binary")
-    if max_leaves >= _MIN_PIECEWISE_LEAVES:
-        kinds.append("piecewise")
-    kind = draw(st.sampled_from(kinds))
-
-    if kind == "leaf":
-        return draw(_build_structural_numeric_leaf_strategy(identifiers))
-    if kind == "unary":
-        unary_operation = draw(
-            st.sampled_from((UnaryOperation.NEGATE, UnaryOperation.POSITIVE))
-        )
-        operand = draw(
-            _draw_structural_numeric_expression(
-                identifiers, max_leaves, wraps_remaining - 1
-            )
-        )
-        return make_unary_expression(unary_operation, operand)
-    if kind == "call":
-        return _draw_structural_call(draw, identifiers, max_leaves, eligible_calls)
-    if kind == "binary":
-        binary_operation = draw(st.sampled_from(_STRUCTURAL_NUMERIC_BINARY_OPERATIONS))
-        left, right = _draw_parts_within_leaf_budget(
-            draw,
-            (
-                lambda budget: _build_structural_numeric_strategy(identifiers, budget),
-                lambda budget: _build_structural_numeric_strategy(identifiers, budget),
-            ),
-            max_leaves,
-        )
-        return make_binary_expression(binary_operation, left, right)
-    return _draw_piecewise_expression(
-        draw,
-        max_leaves,
-        lambda budget: st.deferred(
-            lambda: _build_structural_boolean_strategy(identifiers, budget)
-        ),
-        lambda budget: _build_structural_numeric_strategy(identifiers, budget),
-    )
-
-
-@st.composite
-def _draw_structural_boolean_expression(
-    draw: st.DrawFn,
-    identifiers: Sequence[Identifier],
-    max_leaves: int,
-    wraps_remaining: int,
-) -> Expression:
-    """Draw a wide boolean-sorted structural expression tree within a leaf budget."""
-    eligible_calls = _filter_signatures_by_arity(
-        _STRUCTURAL_BOOLEAN_CALL_SIGNATURES, max_leaves
-    )
-    kinds: list[str] = ["bool_literal"]
-    if max_leaves >= _MIN_LEAVES_FOR_TWO_CHILDREN:
-        kinds.append("comparison")
-        kinds.append("and_or")
-        if eligible_calls:
-            kinds.append("call")
-    if wraps_remaining > 0:
-        kinds.append("not")
-    if max_leaves >= _MIN_PIECEWISE_LEAVES:
-        kinds.append("piecewise")
-    kind = draw(st.sampled_from(kinds))
-
-    if kind == "bool_literal":
-        return draw(_build_structural_boolean_leaf_strategy(identifiers))
-    if kind == "comparison":
-        operation = draw(st.sampled_from(COMPARISON_OPERATIONS))
-        left, right = _draw_parts_within_leaf_budget(
-            draw,
-            (
-                lambda budget: st.deferred(
-                    lambda: _build_structural_numeric_strategy(identifiers, budget)
-                ),
-                lambda budget: st.deferred(
-                    lambda: _build_structural_numeric_strategy(identifiers, budget)
-                ),
-            ),
-            max_leaves,
-        )
-        return make_binary_expression(operation, left, right)
-    if kind == "call":
-        return _draw_structural_call(draw, identifiers, max_leaves, eligible_calls)
-    if kind == "not":
-        operand = draw(
-            _draw_structural_boolean_expression(
-                identifiers, max_leaves, wraps_remaining - 1
-            )
-        )
-        return make_unary_expression(UnaryOperation.LOGICAL_NOT, operand)
-    if kind == "and_or":
-        operation = draw(st.sampled_from(LOGICAL_BINARY_OPERATIONS))
-        left, right = _draw_parts_within_leaf_budget(
-            draw,
-            (
-                lambda budget: _build_structural_boolean_strategy(identifiers, budget),
-                lambda budget: _build_structural_boolean_strategy(identifiers, budget),
-            ),
-            max_leaves,
-        )
-        return make_binary_expression(operation, left, right)
-    return _draw_piecewise_expression(
-        draw,
-        max_leaves,
-        lambda budget: _build_structural_boolean_strategy(identifiers, budget),
-        lambda budget: _build_structural_boolean_strategy(identifiers, budget),
-    )
-
-
-def _build_structural_numeric_strategy(
-    identifiers: Sequence[Identifier], max_leaves: int
-) -> st.SearchStrategy[Expression]:
-    """Return a strategy for a wide numeric-sorted structural tree within a budget."""
-    return _draw_structural_numeric_expression(
-        identifiers, max_leaves, _MAX_CONSECUTIVE_WRAPS
-    )
-
-
-def _build_structural_boolean_strategy(
-    identifiers: Sequence[Identifier], max_leaves: int
-) -> st.SearchStrategy[Expression]:
-    """Return a strategy for a wide boolean-sorted structural tree within a budget."""
-    return _draw_structural_boolean_expression(
-        identifiers, max_leaves, _MAX_CONSECUTIVE_WRAPS
-    )
-
-
-def build_structural_expression_strategy(
-    identifiers: Sequence[Identifier], max_leaves: int = 10
-) -> st.SearchStrategy[Expression]:
-    """Return a strategy for wide, sort-correct trees for round-trip and pattern tests.
-
-    Wider than :func:`build_numeric_expression_strategy` and
-    :func:`build_boolean_expression_strategy`: numeric leaves draw from
-    every numeric literal kind, binary nodes include ``DIVIDE`` and
-    ``POWER``, and calls reach any registered function whose declared
-    sorts fit the position. The tree is never evaluated, so an
-    unrestricted (possibly zero) divisor is fine.
-
-    Args:
-        identifiers: Pool identifiers may be drawn from as leaves.
-        max_leaves: Most literal and identifier leaves the tree may hold.
-
-    Returns:
-        A strategy drawing a sort-correct :class:`Expression`.
-
+    Every keyword is forwarded to both the numeric and the boolean
+    strategy; see their docstrings for what each option controls.
     """
     return st.one_of(
-        _build_structural_numeric_strategy(identifiers, max_leaves),
-        _build_structural_boolean_strategy(identifiers, max_leaves),
+        build_numeric_expression_strategy(
+            identifiers,
+            max_leaves,
+            include_division=include_division,
+            include_calls=include_calls,
+            native_functions=native_functions,
+            include_piecewise=include_piecewise,
+        ),
+        build_boolean_expression_strategy(
+            identifiers,
+            max_leaves,
+            include_calls=include_calls,
+            include_division=include_division,
+            native_functions=native_functions,
+            include_piecewise=include_piecewise,
+        ),
     )
 
 
@@ -864,20 +713,58 @@ def build_integer_environment_strategy(
 
 @st.composite
 def draw_numeric_tree_with_environment(
-    draw: st.DrawFn, identifiers: Sequence[Identifier], max_leaves: int = 8
+    draw: st.DrawFn,
+    identifiers: Sequence[Identifier],
+    max_leaves: int = 8,
+    *,
+    include_division: bool = True,
+    include_calls: bool = True,
+    native_functions: Sequence[str] = INTEGER_RESULT_NATIVE_FUNCTIONS,
+    include_piecewise: bool = True,
 ) -> tuple[Expression, dict[Identifier, int]]:
-    """Draw a numeric gate-grammar tree together with bindings for every identifier."""
-    expression = draw(build_numeric_expression_strategy(identifiers, max_leaves))
+    """Draw a numeric gate-grammar tree together with bindings for every identifier.
+
+    Every keyword is forwarded to :func:`build_numeric_expression_strategy`.
+    """
+    expression = draw(
+        build_numeric_expression_strategy(
+            identifiers,
+            max_leaves,
+            include_division=include_division,
+            include_calls=include_calls,
+            native_functions=native_functions,
+            include_piecewise=include_piecewise,
+        )
+    )
     environment = draw(build_integer_environment_strategy(identifiers))
     return expression, environment
 
 
 @st.composite
 def draw_boolean_tree_with_environment(
-    draw: st.DrawFn, identifiers: Sequence[Identifier], max_leaves: int = 8
+    draw: st.DrawFn,
+    identifiers: Sequence[Identifier],
+    max_leaves: int = 8,
+    *,
+    include_calls: bool = True,
+    include_division: bool = True,
+    native_functions: Sequence[str] = INTEGER_RESULT_NATIVE_FUNCTIONS,
+    include_piecewise: bool = True,
 ) -> tuple[Expression, dict[Identifier, int]]:
-    """Draw a boolean gate-grammar tree together with bindings for every identifier."""
-    expression = draw(build_boolean_expression_strategy(identifiers, max_leaves))
+    """Draw a boolean gate-grammar tree together with bindings for every identifier.
+
+    Every keyword is forwarded to :func:`build_boolean_expression_strategy`.
+    """
+    expression = draw(
+        build_boolean_expression_strategy(
+            identifiers,
+            max_leaves,
+            include_calls=include_calls,
+            include_division=include_division,
+            native_functions=native_functions,
+            include_piecewise=include_piecewise,
+        )
+    )
     environment = draw(build_integer_environment_strategy(identifiers))
     return expression, environment
 
@@ -918,8 +805,6 @@ def _evaluate_native_call_with_python(function_name: str, argument: int) -> int:
     """Evaluate a call to one of ``INTEGER_RESULT_NATIVE_FUNCTIONS`` on an int."""
     if function_name in ("floor", "ceil", "round"):
         return argument
-    if function_name == "sign":
-        return (argument > 0) - (argument < 0)
     raise NotImplementedError(
         f"evaluate_with_python does not support call to {function_name!r}."
     )
@@ -985,8 +870,8 @@ def evaluate_with_python(
     Supports literals, identifiers, ``NEGATE``/``POSITIVE``/
     ``LOGICAL_NOT``, the arithmetic and logical ``BinaryOperation``s,
     comparisons, piecewise (first true condition wins, else
-    ``otherwise``), and floor/ceil/round/sign on ints (floor/ceil/round
-    of an int is the int itself; sign is -1, 0, or 1).
+    ``otherwise``), and floor/ceil/round on ints (floor/ceil/round of an
+    int is the int itself).
 
     Args:
         expression: A gate-grammar expression: no ``DIVIDE``, ``POWER``,

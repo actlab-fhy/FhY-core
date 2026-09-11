@@ -1,7 +1,7 @@
 """Property test for ``DerivedEquivalenceMixin`` against a hand-written oracle.
 
-Covers P30: over four small synthetic dataclasses exercising a value field,
-a reference-identifier field, a sequence field, and an optional field, the
+Over four small synthetic dataclasses exercising a value field, a
+reference-identifier field, a sequence field, and an optional field, the
 mixin's derived ``is_structurally_equivalent`` must agree with a
 hand-written comparator written independently of the field-walk under test
 (``==`` for value fields, identifier ``id`` for reference fields, elementwise

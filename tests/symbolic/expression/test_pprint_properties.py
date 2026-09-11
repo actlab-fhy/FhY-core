@@ -1,4 +1,4 @@
-"""Hypothesis property tests for the expression pretty-printer (P12).
+"""Hypothesis property tests for the expression pretty-printer.
 
 Covers two cheap invariants of ``pformat_expression``: a DICT
 serialization round trip formats identically to the original tree, and
@@ -14,8 +14,8 @@ from hypothesis import given
 
 from fhy_core.symbolic.expression import Expression, pformat_expression
 
-from ...strategies.expressions import build_structural_expression_strategy
 from ...strategies.identifiers import build_identifier_pool
+from ...strategies.structural_expressions import build_structural_expression_strategy
 
 pytestmark = pytest.mark.property
 

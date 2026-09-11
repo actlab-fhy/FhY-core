@@ -131,6 +131,7 @@ def test_is_subset_matches_enumerated_value_set_inclusion_for_finite_kinds(
 
 
 @pytest.mark.z3
+# Z3-backed: numeric operands may route check_subset through the solver.
 @settings(max_examples=50)
 @given(
     case=st.one_of(

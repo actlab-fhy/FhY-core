@@ -56,7 +56,7 @@ _MIN_PIECEWISE_LEAVES = 3
 """Leaves the smallest piecewise node needs: a condition, a value, ``otherwise``."""
 
 
-def _leaf_expressions() -> st.SearchStrategy[Expression]:
+def _build_leaf_expression_strategy() -> st.SearchStrategy[Expression]:
     """Return a strategy for scalar leaf expressions (int or bool literals)."""
     return st.one_of(
         build_integer_literal_strategy(min_value=-1000, max_value=1000),
@@ -94,7 +94,7 @@ def _draw_expression(draw: st.DrawFn, max_leaves: int) -> Expression:
     """Draw a leaf or, when ``max_leaves`` affords one, a piecewise node."""
     if max_leaves >= _MIN_PIECEWISE_LEAVES and draw(st.booleans()):
         return draw(_draw_piecewise(max_leaves))
-    return draw(_leaf_expressions())
+    return draw(_build_leaf_expression_strategy())
 
 
 @st.composite
@@ -132,7 +132,8 @@ def _draw_piecewise(
 # =============================================================================
 
 
-@settings(max_examples=50, deadline=None)
+# Tree-heavy: _draw_piecewise builds trees with up to _MAX_TREE_LEAVES leaves.
+@settings(max_examples=50)
 @given(_draw_piecewise())
 def test_random_piecewise_tree_round_trips_through_dict_serialization(
     expression: PiecewiseExpression,
@@ -148,25 +149,24 @@ def test_random_piecewise_tree_round_trips_through_dict_serialization(
 # =============================================================================
 
 
-def _create_bounded_float_strategy() -> st.SearchStrategy[float]:
+def _build_bounded_float_strategy() -> st.SearchStrategy[float]:
     """Return a strategy for finite floats bounded to [-1000.0, 1000.0]."""
     return st.floats(
         min_value=-1000.0, max_value=1000.0, allow_nan=False, allow_infinity=False
     )
 
 
-@settings(max_examples=50, deadline=None)
 @given(
     cases=st.lists(
         st.tuples(
-            _create_bounded_float_strategy(),
+            _build_bounded_float_strategy(),
             st.integers(min_value=-1000, max_value=1000),
         ),
         min_size=1,
         max_size=4,
     ),
     otherwise_value=st.integers(min_value=-1000, max_value=1000),
-    sample_values=st.lists(_create_bounded_float_strategy(), min_size=1, max_size=20),
+    sample_values=st.lists(_build_bounded_float_strategy(), min_size=1, max_size=20),
 )
 def test_numpy_evaluation_matches_pointwise_first_match_fold(
     cases: list[tuple[float, int]],
@@ -189,13 +189,13 @@ def test_numpy_evaluation_matches_pointwise_first_match_fold(
 
     result = evaluate_expression_with_numpy(expression, {x: xs})
 
-    def _reference_fold(sample: float) -> int:
+    def _compute_reference_fold(sample: float) -> int:
         for threshold, value in cases:
             if sample > threshold:
                 return value
         return otherwise_value
 
-    expected = np.array([_reference_fold(sample) for sample in sample_values])
+    expected = np.array([_compute_reference_fold(sample) for sample in sample_values])
     assert np.array_equal(result, expected)
 
 
@@ -247,16 +247,15 @@ def _draw_piecewise_with_distinct_case_values(draw: st.DrawFn) -> PiecewiseExpre
     )
 
 
-# Welded from test_sympy_pass.py, deleted there in the same change: both
-# use a comparison (rather than a bare identifier) as a case condition,
-# which _draw_piecewise_with_distinct_case_values never draws.
+# Shared building block for the two pinned examples below: both use a
+# comparison (rather than a bare identifier) as a case condition, a shape
+# _draw_piecewise_with_distinct_case_values never draws.
 _COMPARISON_CONDITION_IDENTIFIER: Final = mock_identifier("x", 0)
 _COMPARISON_CONDITION_SYMBOL: Final = IdentifierExpression(
     _COMPARISON_CONDITION_IDENTIFIER
 )
-# Welded from
-# test_sympy_pass.py::test_single_case_piecewise_expression_round_trips_through_sympy:
-# both operands are leaves whose SymPy lowerings preserve their shape.
+# A single-case piecewise pinned as an example: both operands are leaves
+# whose SymPy lowerings preserve their shape.
 _SINGLE_COMPARISON_CASE_PIECEWISE: Final = PiecewiseExpression(
     (
         BinaryExpression(
@@ -266,9 +265,8 @@ _SINGLE_COMPARISON_CASE_PIECEWISE: Final = PiecewiseExpression(
     (_COMPARISON_CONDITION_SYMBOL,),
     LiteralExpression(0),
 )
-# Welded from test_sympy_pass.py::
-# test_multi_case_piecewise_expression_round_trips_with_full_order_and_content:
-# a 3-case chain of comparisons with distinguishable literal values.
+# A 3-case chain of comparisons with distinguishable literal values, pinned
+# as an example.
 _MULTI_COMPARISON_CASE_PIECEWISE: Final = PiecewiseExpression(
     (
         _COMPARISON_CONDITION_SYMBOL > 0,
@@ -280,6 +278,8 @@ _MULTI_COMPARISON_CASE_PIECEWISE: Final = PiecewiseExpression(
 )
 
 
+# Tree-heavy: exercises the SymPy bridge over piecewise trees with up to
+# four cases.
 @settings(max_examples=50)
 @example(expression=_SINGLE_COMPARISON_CASE_PIECEWISE)
 @example(expression=_MULTI_COMPARISON_CASE_PIECEWISE)

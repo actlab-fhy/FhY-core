@@ -1,4 +1,4 @@
-"""Hypothesis property tests for the solver seam (P2, P3, P7).
+"""Hypothesis property tests for the solver seam.
 
 Covers ``simplify_expression`` (SymPy backend: evaluation-preserving,
 evaluates fully under a total literal environment, structural
@@ -6,35 +6,33 @@ idempotence) and the Z3-backed query trio -- satisfiability, implication,
 and universal validity -- cross-checked against brute-force enumeration
 over a small bounded integer domain.
 
-Every strategy here draws no native-function call, no division, and no
-piecewise node, all for reasons specific to this seam rather than to the
-gate grammar in general:
+Every strategy here draws division-free trees: a symbolic
+``FLOOR_DIVIDE``/``MODULO`` is one of the solver module's documented
+divergences, and SymPy lifts a resulting ``Rational`` such as ``1/5`` to
+the exact-decimal string literal ``"0.2"``, which the NumPy oracle then
+refuses with ``StringLiteralPrecisionError`` (no binary float equals
+``0.2`` exactly); see the pinned xfail below. ``build_numeric_expression_strategy``
+and ``build_boolean_expression_strategy`` thread ``include_division``
+through every subtree they draw (including a piecewise condition or
+value), so ``include_division=False`` at the root is enough to keep the
+whole tree division-free.
 
-- ``simplify_expression`` cannot lower a call to an expression-bodied
-  ``RegisteredFunction`` (for example ``sign``, one of
-  ``INTEGER_RESULT_NATIVE_FUNCTIONS``) without first running
-  ``inline_functions`` (it raises ``TypeError: Cannot lower an
-  expression-bodied function call to SymPy``), and the Z3 bridge refuses
-  every call outright (``TypeError: Z3 does not support native function
-  calls``).
-- A symbolic ``FLOOR_DIVIDE``/``MODULO`` is one of the solver module's
-  documented divergences: SymPy lifts a resulting ``Rational`` such as
-  ``1/5`` to the exact-decimal string literal ``"0.2"``, which the NumPy
-  oracle then refuses with ``StringLiteralPrecisionError`` (no binary
-  float equals ``0.2`` exactly); the Z3 bridge separately hazard-screens
-  a non-positive divisor.
-- The shared ``build_boolean_expression_strategy`` (reached from a
-  piecewise condition, direct or nested) draws each comparison's numeric
-  operands with every option at its default -- calls, division, and
-  piecewise all enabled -- with no parameter to thread this module's
-  restrictions through. Excluding piecewise here is what keeps a call or
-  a division from re-entering through that path.
+The SymPy-backed properties additionally enable calls, but only to
+:data:`SYMPY_STABLE_CALL_FUNCTIONS` (``floor``, ``ceil``): the other
+member of ``INTEGER_RESULT_NATIVE_FUNCTIONS``, ``round``, cannot be
+lifted back from SymPy (a known finding pinned by a strict xfail in
+``test_sympy_pass_properties.py``), and ``sign``, an expression-bodied
+``RegisteredFunction`` that ``simplify_expression`` could not lower
+without first running ``inline_functions``, is not one of the gate
+grammar's native functions at all.
 
-This module therefore builds its own call-free, division-free,
-piecewise-free numeric strategy from the shared building blocks, and its
-own boolean-tree strategy (comparisons, ``LOGICAL_NOT``,
-``LOGICAL_AND``/``LOGICAL_OR``) over that numeric strategy, rather than
-filtering draws after the fact.
+The Z3-backed queries keep calls off entirely: the Z3 bridge refuses
+every native function call outright
+(``TypeError: Z3 does not support native function calls; {name!r} cannot
+be lowered``, from ``ExpressionToZ3Converter.visit_call_expression``),
+so a call anywhere in one of their trees would raise before the query
+could run. Piecewise stays enabled for them: ``ExpressionToZ3Converter``
+lowers it to a right-folded ``z3.If`` chain with no such restriction.
 """
 
 import itertools
@@ -70,14 +68,14 @@ from fhy_core.symbolic.solver import (
 from fhy_core.symbolic.symbol_type import SymbolType
 
 from ..strategies.expressions import (
-    COMPARISON_OPERATIONS,
-    LOGICAL_BINARY_OPERATIONS,
-    build_integer_environment_strategy,
+    SYMPY_STABLE_CALL_FUNCTIONS,
+    build_boolean_expression_strategy,
     build_numeric_expression_strategy,
+    draw_boolean_tree_with_environment,
+    draw_numeric_tree_with_environment,
     evaluate_with_python,
 )
 from ..strategies.identifiers import build_identifier_pool
-from ..strategies.literals import build_boolean_literal_strategy
 
 pytestmark = pytest.mark.property
 
@@ -125,87 +123,30 @@ _NON_IDEMPOTENT_SIMPLIFICATION: Final[Expression] = make_unary_expression(
 )
 
 
-def _build_call_free_numeric_strategy(
-    identifiers: Sequence[Identifier], max_leaves: int = 6
-) -> st.SearchStrategy[Expression]:
-    """Return a numeric gate-tree strategy with no call, division, or piecewise.
+# Division stays off everywhere in this module: see the module docstring
+# for the StringLiteralPrecisionError finding this excludes, pinned below
+# by test_simplify_expression_preserves_evaluation_on_boolean_trees.
+# The SymPy-backed properties additionally enable calls restricted to
+# SYMPY_STABLE_CALL_FUNCTIONS and piecewise; see
+# test_check_expression_satisfiability_agrees_with_brute_force et al.
+# below for why the Z3-backed properties keep calls off.
 
-    See the module docstring for why all three are excluded rather than
-    only the native call.
-    """
-    return build_numeric_expression_strategy(
-        identifiers,
-        max_leaves,
+
+# =============================================================================
+# simplify_expression preserves evaluation
+# =============================================================================
+
+
+@given(
+    tree_and_environment=draw_numeric_tree_with_environment(
+        _POOL,
+        6,
         include_division=False,
-        include_calls=False,
-        include_piecewise=False,
+        include_calls=True,
+        native_functions=SYMPY_STABLE_CALL_FUNCTIONS,
+        include_piecewise=True,
     )
-
-
-def _build_call_free_boolean_strategy(
-    identifiers: Sequence[Identifier], max_leaves: int = 4
-) -> st.SearchStrategy[Expression]:
-    """Return a boolean gate-tree strategy whose comparisons never call.
-
-    Built with ``st.recursive`` rather than the shared leaf-budget
-    machinery: the base case is a boolean literal or a comparison of two
-    call-free numeric subtrees, and ``extend`` adds ``LOGICAL_NOT`` and
-    ``LOGICAL_AND``/``LOGICAL_OR`` nodes over already-drawn boolean
-    subtrees. ``max_leaves`` bounds the recursive expansion, not a
-    counted AST leaf total.
-    """
-    numeric = _build_call_free_numeric_strategy(identifiers, max_leaves=3)
-    comparisons = st.builds(
-        make_binary_expression,
-        st.sampled_from(COMPARISON_OPERATIONS),
-        numeric,
-        numeric,
-    )
-    base = st.one_of(build_boolean_literal_strategy(), comparisons)
-
-    def _extend(
-        children: st.SearchStrategy[Expression],
-    ) -> st.SearchStrategy[Expression]:
-        negations = children.map(
-            lambda operand: make_unary_expression(UnaryOperation.LOGICAL_NOT, operand)
-        )
-        binary = st.builds(
-            make_binary_expression,
-            st.sampled_from(LOGICAL_BINARY_OPERATIONS),
-            children,
-            children,
-        )
-        return st.one_of(negations, binary)
-
-    return st.recursive(base, _extend, max_leaves=max_leaves)
-
-
-@st.composite
-def _draw_call_free_numeric_tree_with_environment(
-    draw: st.DrawFn, identifiers: Sequence[Identifier]
-) -> tuple[Expression, dict[Identifier, int]]:
-    """Draw a call-free numeric gate tree with an int binding for each identifier."""
-    expression = draw(_build_call_free_numeric_strategy(identifiers))
-    environment = draw(build_integer_environment_strategy(identifiers))
-    return expression, environment
-
-
-@st.composite
-def _draw_call_free_boolean_tree_with_environment(
-    draw: st.DrawFn, identifiers: Sequence[Identifier]
-) -> tuple[Expression, dict[Identifier, int]]:
-    """Draw a call-free boolean gate tree with an int binding for each identifier."""
-    expression = draw(_build_call_free_boolean_strategy(identifiers))
-    environment = draw(build_integer_environment_strategy(identifiers))
-    return expression, environment
-
-
-# =============================================================================
-# P2a, P2c: simplify_expression preserves evaluation
-# =============================================================================
-
-
-@given(tree_and_environment=_draw_call_free_numeric_tree_with_environment(_POOL))
+)
 def test_simplify_expression_preserves_evaluation_on_integer_trees(
     tree_and_environment: tuple[Expression, dict[Identifier, int]],
 ) -> None:
@@ -227,13 +168,11 @@ def test_simplify_expression_preserves_evaluation_on_integer_trees(
     strict=True,
     reason=(
         "simplify_expression normalizes an equation like '21 == 15 * v0' to "
-        "'v0 == 21/15', and 21/15 reduces to the terminating decimal 1.4, "
-        "which SymPy lifting turns into the exact-decimal string literal "
-        "'1.4'; evaluate_expression_with_numpy's coerce_literal_value then "
-        "raises StringLiteralPrecisionError because no binary float equals "
-        "1.4 exactly. Integer-only input, non-integer-exact output: a real "
-        "tension between simplify_expression's exact-rational semantics and "
-        "the NumPy oracle's refusal to round a decimal literal."
+        "'v0 == 21/15' (21/15 reduces to 1.4), which SymPy lifting turns "
+        "into the exact-decimal string literal '1.4'; "
+        "evaluate_expression_with_numpy's coerce_literal_value then raises "
+        "StringLiteralPrecisionError because no binary float equals 1.4 "
+        "exactly. Integer-only input, non-integer-exact output."
     ),
 )
 @example(
@@ -242,7 +181,16 @@ def test_simplify_expression_preserves_evaluation_on_integer_trees(
         _RATIONAL_COEFFICIENT_ENVIRONMENT,
     )
 )
-@given(tree_and_environment=_draw_call_free_boolean_tree_with_environment(_POOL))
+@given(
+    tree_and_environment=draw_boolean_tree_with_environment(
+        _POOL,
+        6,
+        include_calls=True,
+        include_division=False,
+        native_functions=SYMPY_STABLE_CALL_FUNCTIONS,
+        include_piecewise=True,
+    )
+)
 def test_simplify_expression_preserves_evaluation_on_boolean_trees(
     tree_and_environment: tuple[Expression, dict[Identifier, int]],
 ) -> None:
@@ -260,11 +208,20 @@ def test_simplify_expression_preserves_evaluation_on_boolean_trees(
 
 
 # =============================================================================
-# P2b: a total literal environment makes simplification evaluation
+# A total literal environment makes simplification evaluate fully
 # =============================================================================
 
 
-@given(tree_and_environment=_draw_call_free_numeric_tree_with_environment(_POOL))
+@given(
+    tree_and_environment=draw_numeric_tree_with_environment(
+        _POOL,
+        6,
+        include_division=False,
+        include_calls=True,
+        native_functions=SYMPY_STABLE_CALL_FUNCTIONS,
+        include_piecewise=True,
+    )
+)
 def test_simplify_expression_with_full_environment_evaluates(
     tree_and_environment: tuple[Expression, dict[Identifier, int]],
 ) -> None:
@@ -287,7 +244,7 @@ def test_simplify_expression_with_full_environment_evaluates(
 
 
 # =============================================================================
-# P3: structural idempotence of simplify_expression
+# Structural idempotence of simplify_expression
 # =============================================================================
 
 
@@ -297,14 +254,22 @@ def test_simplify_expression_with_full_environment_evaluates(
         "simplify_expression is not structurally idempotent for every tree: "
         "simplifying '-((0 - v0 * -v0) + v0)' once yields one Mul/Add "
         "association, and simplifying that result again re-associates it "
-        "differently, so the two are not is_structurally_equivalent. Per "
-        "docs/design/property-based-testing.md Decision 6, this documents "
-        "the current behavior and flips loudly if SymPy simplification ever "
-        "becomes a structural fixed point."
+        "differently, so the two are not is_structurally_equivalent. This "
+        "documents the current behavior and flips loudly if SymPy "
+        "simplification ever becomes a structural fixed point."
     ),
 )
 @example(expression=_NON_IDEMPOTENT_SIMPLIFICATION)
-@given(expression=_build_call_free_numeric_strategy(_POOL))
+@given(
+    expression=build_numeric_expression_strategy(
+        _POOL,
+        6,
+        include_division=False,
+        include_calls=True,
+        native_functions=SYMPY_STABLE_CALL_FUNCTIONS,
+        include_piecewise=True,
+    )
+)
 def test_simplify_expression_is_structurally_idempotent(expression: Expression) -> None:
     """Test simplifying twice is structurally the same as simplifying once.
 
@@ -319,7 +284,7 @@ def test_simplify_expression_is_structurally_idempotent(expression: Expression) 
 
 
 # =============================================================================
-# P7: the Z3-backed query trio agrees with brute-force enumeration
+# The Z3-backed query trio agrees with brute-force enumeration
 # =============================================================================
 
 
@@ -355,10 +320,22 @@ def _enumerate_domain_assignments(
         yield dict(zip(identifiers, combination, strict=True))
 
 
+# Z3 refuses every native function call outright (see the module
+# docstring for the exact TypeError), so include_calls stays off for all
+# three Z3-backed properties below; include_division stays off for the
+# reason given at the top of this module. Piecewise lowers to a
+# right-folded z3.If chain with no such restriction, so it stays on.
+# Z3-backed: this query routes through the solver.
 @pytest.mark.z3
 @settings(max_examples=50)
 @given(
-    expression=_build_call_free_boolean_strategy(_POOL, max_leaves=6),
+    expression=build_boolean_expression_strategy(
+        _POOL,
+        6,
+        include_calls=False,
+        include_division=False,
+        include_piecewise=True,
+    ),
     domain=_draw_domain(),
 )
 def test_check_expression_satisfiability_agrees_with_brute_force(
@@ -389,11 +366,24 @@ def test_check_expression_satisfiability_agrees_with_brute_force(
     assert result == brute_force
 
 
+# Z3-backed: this query routes through the solver.
 @pytest.mark.z3
 @settings(max_examples=50)
 @given(
-    antecedent=_build_call_free_boolean_strategy(_POOL, max_leaves=6),
-    consequent=_build_call_free_boolean_strategy(_POOL, max_leaves=6),
+    antecedent=build_boolean_expression_strategy(
+        _POOL,
+        6,
+        include_calls=False,
+        include_division=False,
+        include_piecewise=True,
+    ),
+    consequent=build_boolean_expression_strategy(
+        _POOL,
+        6,
+        include_calls=False,
+        include_division=False,
+        include_piecewise=True,
+    ),
     domain=_draw_domain(),
 )
 def test_does_expression_imply_agrees_with_brute_force(
@@ -419,10 +409,17 @@ def test_does_expression_imply_agrees_with_brute_force(
     assert result == brute_force
 
 
+# Z3-backed: this query routes through the solver.
 @pytest.mark.z3
 @settings(max_examples=50)
 @given(
-    expression=_build_call_free_boolean_strategy(_POOL, max_leaves=6),
+    expression=build_boolean_expression_strategy(
+        _POOL,
+        6,
+        include_calls=False,
+        include_division=False,
+        include_piecewise=True,
+    ),
     domain=_draw_domain(),
 )
 def test_holds_for_all_free_assignments_agrees_with_brute_force(

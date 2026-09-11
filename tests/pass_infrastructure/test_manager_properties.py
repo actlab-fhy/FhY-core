@@ -1,7 +1,7 @@
 """Hypothesis property tests for `PassManager` run-order and fixpoint termination.
 
-Kept intentionally small (priority C): a handful of toy identity passes over
-a `list[int]` IR, registered once at import time, cover the run-order law;
+Kept intentionally small: a handful of toy identity passes over a
+`list[int]` IR, registered once at import time, cover the run-order law;
 one toy decrementing pass covers fixpoint termination. Both laws are
 independent of `PassManager`'s internals: the first compares against the
 sequence the test itself chose to add, the second against the arithmetic

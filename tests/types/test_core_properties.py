@@ -1,9 +1,9 @@
-"""Hypothesis property tests for `fhy_core.types.core` (P33, P35).
+"""Hypothesis property tests for `fhy_core.types.core`.
 
-P33 checks that `promote_core_data_types`, `promote_primitive_data_types`,
+Checks that `promote_core_data_types`, `promote_primitive_data_types`,
 and `promote_type_qualifiers` are commutative, associative, and (mostly)
 idempotent; where a promotion raises, the law relaxes to "both orders (or
-both associations) raise the same exception type". P35 checks that
+both associations) raise the same exception type". Also checks that
 `is_structurally_equivalent` is reflexive and symmetric on drawn `Type`
 trees, and that a DICT serialization round trip preserves it (entry
 points read from `tests/types/test_serialization.py`).
@@ -144,7 +144,7 @@ def assert_associative_or_consistent_raise(
         assert left_exception == right_exception
 
 
-def _primitive_data_types_are_equivalent(
+def _are_primitive_data_types_equivalent(
     left: PrimitiveDataType, right: PrimitiveDataType
 ) -> bool:
     """Return whether two `PrimitiveDataType` values are structurally equivalent.
@@ -156,7 +156,7 @@ def _primitive_data_types_are_equivalent(
 
 
 # =============================================================================
-# P33: `promote_core_data_types`
+# Commutativity, associativity, and idempotence of promote_core_data_types
 # =============================================================================
 
 
@@ -200,7 +200,7 @@ def test_promote_core_data_types_is_idempotent(core_data_type: CoreDataType) -> 
 
 
 # =============================================================================
-# P33: `promote_primitive_data_types`
+# Commutativity, associativity, and idempotence of promote_primitive_data_types
 # =============================================================================
 
 
@@ -217,7 +217,7 @@ def test_promote_primitive_data_types_is_commutative_or_raises_consistently(
         promote_primitive_data_types,
         left,
         right,
-        _primitive_data_types_are_equivalent,
+        _are_primitive_data_types_equivalent,
     )
 
 
@@ -235,7 +235,7 @@ def test_promote_primitive_data_types_is_associative_or_raises_consistently(
         first,
         second,
         third,
-        _primitive_data_types_are_equivalent,
+        _are_primitive_data_types_equivalent,
     )
 
 
@@ -249,7 +249,7 @@ def test_promote_primitive_data_types_is_idempotent(
 
 
 # =============================================================================
-# P33: `promote_type_qualifiers`
+# Commutativity, associativity, and idempotence of promote_type_qualifiers
 # =============================================================================
 
 
@@ -295,7 +295,7 @@ def test_promote_type_qualifiers_is_idempotent_for_param_and_temp(
 
 
 # =============================================================================
-# P35: `is_structurally_equivalent` on `Type` trees
+# Equivalence-relation laws for is_structurally_equivalent on Type trees
 # =============================================================================
 
 

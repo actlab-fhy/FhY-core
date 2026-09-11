@@ -1,4 +1,4 @@
-"""Hypothesis property tests for expression-tree pattern matching (P9).
+"""Hypothesis property tests for expression-tree pattern matching.
 
 Covers a pattern built to mirror an expression tree's exact shape
 (``build_mirroring_pattern``, defined below): it matches the tree it
@@ -42,8 +42,8 @@ from fhy_core.symbolic.expression.pattern import (
     match_pattern,
 )
 
-from ....strategies.expressions import build_structural_expression_strategy
 from ....strategies.identifiers import build_identifier_pool
+from ....strategies.structural_expressions import build_structural_expression_strategy
 
 pytestmark = pytest.mark.property
 
@@ -109,7 +109,7 @@ def build_mirroring_pattern(
 
 
 # =============================================================================
-# P9a: the mirror pattern matches and binds every recorded leaf
+# The mirror pattern matches and binds every recorded leaf
 # =============================================================================
 
 
@@ -134,7 +134,7 @@ def test_mirroring_pattern_matches_and_binds_recorded_leaves(
 
 
 # =============================================================================
-# P9b: WildcardPattern matches every expression
+# WildcardPattern matches every expression
 # =============================================================================
 
 
@@ -145,7 +145,7 @@ def test_wildcard_pattern_matches_every_expression(expression: Expression) -> No
 
 
 # =============================================================================
-# P9c: does_pattern_match agrees with match_pattern(...) is not None
+# does_pattern_match agrees with match_pattern(...) is not None
 # =============================================================================
 
 
@@ -165,7 +165,7 @@ def test_does_pattern_match_agrees_with_match_pattern(expression: Expression) ->
 
 
 # =============================================================================
-# P9d: a mirror pattern with a different root BinaryOperation does not match
+# A mirror pattern with a different root BinaryOperation does not match
 # =============================================================================
 
 

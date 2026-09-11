@@ -1,12 +1,12 @@
 """Hypothesis property tests for expression-tree core laws.
 
-Covers ``Expression.substitute``'s free-identifier specification (P6);
-that ``is_structurally_equivalent`` and ``is_alpha_equivalent`` are
+Covers ``Expression.substitute``'s free-identifier specification; that
+``is_structurally_equivalent`` and ``is_alpha_equivalent`` are
 equivalence-relation-shaped (reflexive, symmetric), that structural
 equivalence (a DICT round trip) implies alpha equivalence, that
 renaming every free identifier breaks both unless declared through an
 explicit free-renaming bijection; and that ``build_literal_equivalence_key``
-is constant on the weak literal classes its docstring documents (P11).
+is constant on the weak literal classes its docstring documents.
 """
 
 import pytest
@@ -26,12 +26,10 @@ from fhy_core.symbolic.expression import (
 )
 from fhy_core.term import AlphaRenaming
 
-from ...strategies.expressions import (
-    build_numeric_expression_strategy,
-    build_structural_expression_strategy,
-)
+from ...strategies.expressions import build_numeric_expression_strategy
 from ...strategies.identifiers import build_identifier_pool
 from ...strategies.literals import build_decimal_string_value_strategy
+from ...strategies.structural_expressions import build_structural_expression_strategy
 from .conftest import mock_identifier
 
 pytestmark = pytest.mark.property
@@ -47,7 +45,7 @@ _FRESH_POOL = tuple(mock_identifier(f"w{index}", 20_000 + index) for index in ra
 
 
 # =============================================================================
-# P6: substitute's free-identifier specification
+# Substitute's free-identifier specification
 # =============================================================================
 
 
@@ -102,8 +100,8 @@ def test_substitute_updates_free_identifiers_per_specification(
 
 
 # =============================================================================
-# P11a/b: is_structurally_equivalent and is_alpha_equivalent are reflexive
-# and symmetric
+# is_structurally_equivalent and is_alpha_equivalent are reflexive and
+# symmetric
 # =============================================================================
 
 
@@ -134,7 +132,7 @@ def test_structural_and_alpha_equivalence_are_symmetric(
 
 
 # =============================================================================
-# P11c: structural equivalence (a DICT round trip) implies alpha equivalence
+# Structural equivalence (a DICT round trip) implies alpha equivalence
 # =============================================================================
 
 
@@ -154,7 +152,7 @@ def test_dict_round_trip_is_structurally_and_therefore_alpha_equivalent(
 
 
 # =============================================================================
-# P11d: renaming every free identifier
+# Renaming every free identifier
 # =============================================================================
 
 
@@ -196,7 +194,7 @@ def test_renaming_free_identifiers_holds_only_under_a_declared_free_renaming(
 
 
 # =============================================================================
-# P11e: build_literal_equivalence_key is constant on weak literal classes
+# build_literal_equivalence_key is constant on weak literal classes
 # =============================================================================
 
 

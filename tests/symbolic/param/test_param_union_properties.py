@@ -81,7 +81,7 @@ def test_union_membership_law_holds_across_every_supported_domain_kind(
     Holds over both domain kinds ``create_union_param`` accepts (ordinal
     and categorical), and over each operand's own admissibility and
     constraints via ``is_value_valid`` rather than its raw value set, so
-    a narrowed operand is covered the same way an unconstrained one is.
+    a constrained operand is covered the same way an unconstrained one is.
     """
     left, right, candidate = case
 

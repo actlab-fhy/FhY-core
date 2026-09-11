@@ -78,4 +78,6 @@ class StackStateMachine(RuleBasedStateMachine):
 
 
 TestStackStateMachine = StackStateMachine.TestCase
+# Capped like a tree-heavy property: each example already runs a whole
+# sequence of rules, so the profile's example count would multiply out.
 TestStackStateMachine.settings = settings(max_examples=50)

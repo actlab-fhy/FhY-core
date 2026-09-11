@@ -6,8 +6,6 @@ can still collect this package cleanly: the `pytest.importorskip` below
 skips the whole module before the `hypothesis` import is attempted.
 """
 
-from typing import Any
-
 import pytest
 
 pytest.importorskip("hypothesis")
@@ -50,17 +48,19 @@ pytestmark = pytest.mark.property
 # Conjunction outcome folds each member's own outcome
 # =============================================================================
 
-_FOLD_WELD_X = mock_identifier("x", 0)
-_FOLD_WELD_Y = mock_identifier("y", 1)
-_FOLD_WELD_MEMBERS: tuple[Constraint, ...] = (
-    InSetConstraint(_FOLD_WELD_X, {1, 2, 3, 4}),
-    InSetConstraint(_FOLD_WELD_Y, {0, 1, 2}),
+_PINNED_CONJUNCTION_X = mock_identifier("x", 0)
+_PINNED_CONJUNCTION_Y = mock_identifier("y", 1)
+_PINNED_CONJUNCTION_MEMBERS: tuple[Constraint, ...] = (
+    InSetConstraint(_PINNED_CONJUNCTION_X, {1, 2, 3, 4}),
+    InSetConstraint(_PINNED_CONJUNCTION_Y, {0, 1, 2}),
     EquationConstraint(
-        make_binary_expression(BinaryOperation.LESS, _FOLD_WELD_X, _FOLD_WELD_Y)
+        make_binary_expression(
+            BinaryOperation.LESS, _PINNED_CONJUNCTION_X, _PINNED_CONJUNCTION_Y
+        )
     ),
 )
-_FOLD_WELD_SYSTEM = create_constraint_system(*_FOLD_WELD_MEMBERS)
-"""The fixed system the pre-generalization version of this test exercised."""
+_PINNED_CONJUNCTION_SYSTEM = create_constraint_system(*_PINNED_CONJUNCTION_MEMBERS)
+"""A hand-picked system pinned as an example for the fold law below."""
 
 
 @st.composite
@@ -80,10 +80,18 @@ def _draw_system_and_bindings(
 
 
 @example(
-    drawn=(_FOLD_WELD_SYSTEM, _FOLD_WELD_MEMBERS, {_FOLD_WELD_X: 1, _FOLD_WELD_Y: 2})
+    drawn=(
+        _PINNED_CONJUNCTION_SYSTEM,
+        _PINNED_CONJUNCTION_MEMBERS,
+        {_PINNED_CONJUNCTION_X: 1, _PINNED_CONJUNCTION_Y: 2},
+    )
 )
 @example(
-    drawn=(_FOLD_WELD_SYSTEM, _FOLD_WELD_MEMBERS, {_FOLD_WELD_X: 5, _FOLD_WELD_Y: 2})
+    drawn=(
+        _PINNED_CONJUNCTION_SYSTEM,
+        _PINNED_CONJUNCTION_MEMBERS,
+        {_PINNED_CONJUNCTION_X: 5, _PINNED_CONJUNCTION_Y: 2},
+    )
 )
 @given(drawn=_draw_system_and_bindings())
 def test_evaluate_with_bindings_matches_fold_of_member_outcomes(
@@ -114,20 +122,20 @@ def test_evaluate_with_bindings_matches_fold_of_member_outcomes(
 _SAT_DOMAIN_LIMIT = 6
 _SAT_V0, _SAT_V1 = build_identifier_pool(2, name_prefix="sat_v")
 
-_SAT_WELD_DOMAIN = tuple(range(_SAT_DOMAIN_LIMIT))
-_SAT_WELD_THRESHOLD = 3
-_SAT_WELD_SYSTEM = create_constraint_system(
-    InSetConstraint(_SAT_V0, set(_SAT_WELD_DOMAIN)),
-    InSetConstraint(_SAT_V1, set(_SAT_WELD_DOMAIN)),
+_PINNED_THRESHOLD_LINKED_DOMAIN = tuple(range(_SAT_DOMAIN_LIMIT))
+_PINNED_THRESHOLD = 3
+_PINNED_THRESHOLD_LINKED_SYSTEM = create_constraint_system(
+    InSetConstraint(_SAT_V0, set(_PINNED_THRESHOLD_LINKED_DOMAIN)),
+    InSetConstraint(_SAT_V1, set(_PINNED_THRESHOLD_LINKED_DOMAIN)),
     EquationConstraint(
         make_binary_expression(
             BinaryOperation.EQUAL,
-            make_binary_expression(BinaryOperation.ADD, _SAT_V0, _SAT_WELD_THRESHOLD),
+            make_binary_expression(BinaryOperation.ADD, _SAT_V0, _PINNED_THRESHOLD),
             _SAT_V1,
         )
     ),
 )
-"""The fixed threshold-linked system the pre-generalization version exercised."""
+"""A hand-picked threshold-linked system pinned as an example below."""
 
 
 def _build_domain_strategy() -> st.SearchStrategy[tuple[int, ...]]:
@@ -145,7 +153,8 @@ def _draw_further_member(draw: st.DrawFn) -> Constraint:
     """Draw one extra member: a bound equation, an integer set constraint, or a link.
 
     The link is an equation of the form ``_SAT_V0 + c == _SAT_V1``, the
-    shape the pre-generalization test hard-coded with ``threshold``.
+    same shape as the pinned threshold-linked example below, with ``c``
+    drawn here instead of fixed.
     """
     kind = draw(st.integers(min_value=0, max_value=2))
     if kind == 0:
@@ -190,8 +199,15 @@ def _draw_domain_bound_system(
 
 
 @pytest.mark.z3
+# Z3-backed: check_satisfiability routes through the solver.
 @settings(max_examples=50)
-@example(drawn=(_SAT_WELD_SYSTEM, _SAT_WELD_DOMAIN, _SAT_WELD_DOMAIN))
+@example(
+    drawn=(
+        _PINNED_THRESHOLD_LINKED_SYSTEM,
+        _PINNED_THRESHOLD_LINKED_DOMAIN,
+        _PINNED_THRESHOLD_LINKED_DOMAIN,
+    )
+)
 @given(drawn=_draw_domain_bound_system())
 def test_check_satisfiability_matches_brute_force_enumeration(
     drawn: tuple[ConstraintSystem, tuple[int, ...], tuple[int, ...]],
@@ -258,7 +274,7 @@ _SET_KINDS = (InSetConstraint, NotInSetConstraint)
 
 
 def _build_literal_equation(
-    variable: Any, form: LiteralType, wrap_in_comparison: bool
+    variable: Identifier, form: LiteralType, wrap_in_comparison: bool
 ) -> Constraint:
     expression: Expression = LiteralExpression(form)
     if wrap_in_comparison:
@@ -267,7 +283,7 @@ def _build_literal_equation(
 
 
 @st.composite
-def _draw_constraint_pair(draw: Any) -> tuple[Constraint, Constraint]:
+def _draw_constraint_pair(draw: st.DrawFn) -> tuple[Constraint, Constraint]:
     """Draw two constraints of one shape, built from independently chosen forms.
 
     Both sides get their own ``mock_identifier`` for the drawn id, so the
@@ -296,7 +312,6 @@ def _draw_constraint_pair(draw: Any) -> tuple[Constraint, Constraint]:
     return kind(left_variable, members), kind(right_variable, shuffled)
 
 
-@settings(max_examples=50, deadline=None)
 @given(pair=_draw_constraint_pair())
 def test_ordering_key_is_constant_on_structural_equivalence_classes(
     pair: tuple[Constraint, Constraint],

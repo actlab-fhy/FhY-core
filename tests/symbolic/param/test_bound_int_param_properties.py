@@ -157,11 +157,11 @@ def test_interval_addition_subtraction_negation_admit_exactly_the_endpoint_hull(
     endpoints of each hull must be admitted and one step beyond each
     finite endpoint must not be, which subsumes checking a concrete pair.
 
-    Welds the brute-force checks over identical-bound operands from
-    ``test_bound_int_param.py`` (inclusive bounds only; the exclusive-bound
-    rows there exercise the effective-bound computation for a strict
-    interval, which this property's inclusive-only strategy does not
-    reach, and stay as their own test).
+    The brute-force checks over identical-bound operands in
+    ``test_bound_int_param.py`` are inclusive-bound instances of this same
+    law; the exclusive-bound rows there exercise the effective-bound
+    computation for a strict interval, which this property's
+    inclusive-only strategy does not reach, and stay as their own test.
     """
     sum_result = case.x + case.y
     difference_result = case.x - case.y

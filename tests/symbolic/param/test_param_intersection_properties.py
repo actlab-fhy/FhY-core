@@ -55,13 +55,13 @@ _ORDINAL_LIMIT: Final = 12
 
 
 @st.composite
-def draw_overlapping_narrowed_ordinal_pair_with_candidate(
+def draw_overlapping_constrained_ordinal_pair_with_candidate(
     draw: st.DrawFn,
 ) -> tuple[Param[int], Param[int], int]:
-    """Draw two ordinal params narrowed by an in-set constraint, sharing a pivot.
+    """Draw two ordinal params each further restricted by an in-set constraint.
 
-    Both the declared value sets and the in-set narrowings share one
-    pivot member, so the narrowed intersection stays non-empty by
+    Both the declared value sets and the added in-set constraints share
+    one pivot member, so the restricted intersection stays non-empty by
     construction rather than by filtering for overlap.
     """
     pivot = draw(st.integers(min_value=-_ORDINAL_LIMIT, max_value=_ORDINAL_LIMIT))
@@ -70,15 +70,15 @@ def draw_overlapping_narrowed_ordinal_pair_with_candidate(
     right_values = sorted({pivot} | draw(st.sets(integers, max_size=5)))
     left = create_ordinal_param(left_values)
     right = create_ordinal_param(right_values)
-    left_narrowed = {pivot} | draw(
+    left_restricted = {pivot} | draw(
         st.sets(st.sampled_from(left_values), max_size=len(left_values))
     )
-    right_narrowed = {pivot} | draw(
+    right_restricted = {pivot} | draw(
         st.sets(st.sampled_from(right_values), max_size=len(right_values))
     )
-    left = left.add_constraint(InSetConstraint(left.variable, sorted(left_narrowed)))
+    left = left.add_constraint(InSetConstraint(left.variable, sorted(left_restricted)))
     right = right.add_constraint(
-        InSetConstraint(right.variable, sorted(right_narrowed))
+        InSetConstraint(right.variable, sorted(right_restricted))
     )
     candidate = draw(
         st.integers(min_value=-_ORDINAL_LIMIT - 5, max_value=_ORDINAL_LIMIT + 5)
@@ -113,15 +113,16 @@ def test_intersection_membership_law_holds_across_every_supported_domain_kind(
     )
 
 
-@given(case=draw_overlapping_narrowed_ordinal_pair_with_candidate())
-def test_intersection_membership_law_follows_each_operands_narrowed_set(
+@given(case=draw_overlapping_constrained_ordinal_pair_with_candidate())
+def test_intersection_membership_law_follows_each_operands_constrained_set(
     case: tuple[Param[int], Param[int], int],
 ) -> None:
-    """Test intersection membership follows each operand's own narrowed set.
+    """Test intersection membership follows each operand's own constrained set.
 
-    Each operand carries its own in-set narrowing, so a value is valid
-    for the intersection iff it is valid for both operands' declared
-    value sets *and* their narrowings, not merely their declared sets.
+    Each operand carries its own added in-set constraint, so a value is
+    valid for the intersection iff it is valid for both operands'
+    declared value sets *and* their added constraints, not merely their
+    declared sets.
     """
     left, right, candidate = case
 

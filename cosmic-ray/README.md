@@ -20,3 +20,9 @@ uv run nox -s mutation -- lattice
 Both default to `lattice` when no module name is given. See the script and
 the `mutation` nox session for the exact `cosmic-ray init` / `exec` / report
 pipeline.
+
+Cosmic-ray applies each mutant to the source file in place and restores it
+after the mutant's test run, so do not run any other test command, commit,
+or edit files under `src/` while a mutation run is active; a run that is
+killed mid-mutant can also leave the mutated file behind, so check
+`git status` afterwards.

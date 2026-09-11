@@ -125,4 +125,6 @@ class ScopeStateMachine(RuleBasedStateMachine):
 
 
 TestScopeStateMachine = ScopeStateMachine.TestCase
+# Capped like a tree-heavy property: each example already runs a whole
+# sequence of rules, so the profile's example count would multiply out.
 TestScopeStateMachine.settings = settings(max_examples=50)

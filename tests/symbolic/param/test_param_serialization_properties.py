@@ -157,8 +157,8 @@ def test_param_over_any_domain_round_trips_through_every_format(
     """Test a param over any domain kind round-trips through DICT, JSON, and BINARY.
 
     Oracle: ``assert_param_round_trips_in_all_formats``, the same
-    structural-equivalence-based round-trip check the example tests this
-    welds already used.
+    structural-equivalence-based round-trip helper the sibling example
+    tests use.
     """
     assert_param_round_trips_in_all_formats(param)
 

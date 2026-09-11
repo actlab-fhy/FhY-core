@@ -41,9 +41,9 @@ from .constraints import (
     draw_in_set_constraint,
     draw_not_in_set_constraint,
 )
-from .expressions import build_structural_expression_strategy
 from .identifiers import build_identifier_pool, build_identifier_strategy
 from .params import draw_param_over_any_domain
+from .structural_expressions import build_structural_expression_strategy
 from .types import draw_template_data_type, draw_template_free_type
 
 __all__ = [

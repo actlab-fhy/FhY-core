@@ -1,7 +1,7 @@
 """Property tests for the basic trait laws: equality, ordering, and freezing.
 
-Covers three algebraic-law properties (P29): hash-equality consistency and
-the reflexive/symmetric laws for an ``EqualMixin``-shaped value
+Covers three algebraic-law properties: hash-equality consistency and the
+reflexive/symmetric laws for an ``EqualMixin``-shaped value
 (``SerializableEqualHashable``); the total-order laws (trichotomy,
 transitivity, sort consistency) for a hand-rolled ``OrderableMixin``
 implementor; and the ``FrozenMixin`` contract that every attribute write on a

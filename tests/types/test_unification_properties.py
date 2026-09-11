@@ -1,12 +1,11 @@
-"""Hypothesis property tests for the type-unification dispatchers (P34).
+"""Hypothesis property tests for the type-unification dispatchers.
 
 Covers `unify`: reflexivity of unifying a type with itself against the
 empty environment, symmetry of unifying two distinct types, and that
 binding a template pattern and substituting the result reproduces the
-concrete actual it was bound against. Welds and replaces the two
-hand-built round-trip examples in `tests/types/test_unification.py`
-(`test_bind_template_then_substitute_round_trips_for_numerical_type` and
-`test_bind_template_then_substitute_round_trips_for_index_type`).
+concrete actual it was bound against. A hand-built numerical-type and a
+hand-built index-type pattern/actual pair are pinned as examples on the
+bind-then-substitute property below.
 """
 
 import pytest
@@ -140,8 +139,8 @@ def draw_numerical_bind_case(draw: st.DrawFn) -> tuple[Type, Type]:
     placeholder; each shape dimension is either a fresh placeholder
     identifier (which the actual's corresponding literal dimension binds
     freely) or a literal value that the actual repeats exactly, so
-    `bind_template` always succeeds. Mirrors the shape of the deleted
-    `test_bind_template_then_substitute_round_trips_for_numerical_type`.
+    `bind_template` always succeeds. Mirrors the shape of the numerical-type
+    pattern/actual pair pinned as an example below.
     """
     permutation = draw(st.permutations(_POOL))
     rank = draw(st.integers(min_value=0, max_value=_MAX_BIND_RANK))
@@ -177,8 +176,8 @@ def draw_index_bind_case(draw: st.DrawFn) -> tuple[Type, Type]:
 
     Each of the lower bound, upper bound, and stride is either a fresh
     placeholder identifier or a literal the actual repeats exactly, so
-    `bind_template` always succeeds. Mirrors the shape of the deleted
-    `test_bind_template_then_substitute_round_trips_for_index_type`.
+    `bind_template` always succeeds. Mirrors the shape of the index-type
+    pattern/actual pair pinned as an example below.
     """
     permutation = draw(st.permutations(_POOL))
     part_identifiers = permutation[:3]
@@ -210,42 +209,38 @@ def draw_bind_and_substitute_case() -> st.SearchStrategy[tuple[Type, Type]]:
     return st.one_of(draw_numerical_bind_case(), draw_index_bind_case())
 
 
-_WELD_NUMERICAL_TEMPLATE_IDENTIFIER = mock_identifier(
+_PINNED_NUMERICAL_TEMPLATE_IDENTIFIER = mock_identifier(
     "T", MOCK_IDENTIFIER_ID_BASE + 910
 )
-_WELD_NUMERICAL_N_IDENTIFIER = mock_identifier("N", MOCK_IDENTIFIER_ID_BASE + 911)
-_WELD_NUMERICAL_M_IDENTIFIER = mock_identifier("M", MOCK_IDENTIFIER_ID_BASE + 912)
-_WELD_NUMERICAL_PATTERN: Type = NumericalType(
-    TemplateDataType(_WELD_NUMERICAL_TEMPLATE_IDENTIFIER),
+_PINNED_NUMERICAL_N_IDENTIFIER = mock_identifier("N", MOCK_IDENTIFIER_ID_BASE + 911)
+_PINNED_NUMERICAL_M_IDENTIFIER = mock_identifier("M", MOCK_IDENTIFIER_ID_BASE + 912)
+_PINNED_NUMERICAL_PATTERN: Type = NumericalType(
+    TemplateDataType(_PINNED_NUMERICAL_TEMPLATE_IDENTIFIER),
     [
-        IdentifierExpression(_WELD_NUMERICAL_N_IDENTIFIER),
-        IdentifierExpression(_WELD_NUMERICAL_M_IDENTIFIER),
+        IdentifierExpression(_PINNED_NUMERICAL_N_IDENTIFIER),
+        IdentifierExpression(_PINNED_NUMERICAL_M_IDENTIFIER),
     ],
 )
-_WELD_NUMERICAL_ACTUAL: Type = NumericalType(
+_PINNED_NUMERICAL_ACTUAL: Type = NumericalType(
     PrimitiveDataType(CoreDataType.FLOAT32),
     [LiteralExpression(10), LiteralExpression(20)],
 )
-"""The pattern/actual pair the deleted
-`test_bind_template_then_substitute_round_trips_for_numerical_type`
-hand-built in `test_unification.py`."""
+"""A hand-built numerical-type pattern/actual pair, pinned as an example."""
 
-_WELD_INDEX_N_IDENTIFIER = mock_identifier("N", MOCK_IDENTIFIER_ID_BASE + 913)
-_WELD_INDEX_PATTERN: Type = IndexType(
+_PINNED_INDEX_N_IDENTIFIER = mock_identifier("N", MOCK_IDENTIFIER_ID_BASE + 913)
+_PINNED_INDEX_PATTERN: Type = IndexType(
     LiteralExpression(0),
-    IdentifierExpression(_WELD_INDEX_N_IDENTIFIER),
+    IdentifierExpression(_PINNED_INDEX_N_IDENTIFIER),
     LiteralExpression(1),
 )
-_WELD_INDEX_ACTUAL: Type = IndexType(
+_PINNED_INDEX_ACTUAL: Type = IndexType(
     LiteralExpression(0), LiteralExpression(64), LiteralExpression(1)
 )
-"""The pattern/actual pair the deleted
-`test_bind_template_then_substitute_round_trips_for_index_type`
-hand-built in `test_unification.py`."""
+"""A hand-built index-type pattern/actual pair, pinned as an example."""
 
 
-@example(case=(_WELD_NUMERICAL_PATTERN, _WELD_NUMERICAL_ACTUAL))
-@example(case=(_WELD_INDEX_PATTERN, _WELD_INDEX_ACTUAL))
+@example(case=(_PINNED_NUMERICAL_PATTERN, _PINNED_NUMERICAL_ACTUAL))
+@example(case=(_PINNED_INDEX_PATTERN, _PINNED_INDEX_ACTUAL))
 @given(draw_bind_and_substitute_case())
 def test_bind_template_then_substitute_reproduces_the_actual_type(
     case: tuple[Type, Type],

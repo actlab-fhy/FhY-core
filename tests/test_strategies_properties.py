@@ -5,7 +5,11 @@ numeric and boolean gate trees respect their leaf budget and pass
 `validate_logical_operands`; the plain-Python oracle agrees with the
 NumPy evaluator on gate trees; every `SerializableCase` round-trips
 through DICT; and `build_identifier_pool` is deterministic with
-distinct ids.
+distinct ids. Also pins the numeric/boolean gate strategies'
+`include_calls`, `native_functions`, and `include_division` options: a
+tree drawn with the option off (or restricted to a subset) never holds
+the excluded shape anywhere in it, including inside subtrees reached
+through a comparison operand or a piecewise condition/value.
 
 `draw_serializable_case` does not cover mock identifiers, even though
 `tests.conftest.mock_identifier` is itself `Serializable`: its
@@ -21,12 +25,17 @@ import pytest
 
 pytest.importorskip("hypothesis")
 
+from collections.abc import Iterator
 from typing import Any
 
 from hypothesis import given
 from hypothesis import strategies as st
 
+from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
+    BinaryExpression,
+    CallExpression,
+    Expression,
     evaluate_expression_with_numpy,
     validate_logical_operands,
 )
@@ -41,11 +50,11 @@ from .strategies.constraints import (
     draw_not_in_set_constraint,
 )
 from .strategies.expressions import (
+    NUMERIC_DIVISION_OPERATIONS,
     build_any_sort_expression_strategy,
     build_boolean_expression_strategy,
     build_integer_environment_strategy,
     build_numeric_expression_strategy,
-    build_structural_expression_strategy,
     build_sympy_stable_expression_strategy,
     count_expression_leaves,
     draw_boolean_tree_with_environment,
@@ -83,6 +92,7 @@ from .strategies.params import (
     draw_single_valid_value_param,
 )
 from .strategies.serializables import SerializableCase, draw_serializable_case
+from .strategies.structural_expressions import build_structural_expression_strategy
 from .strategies.types import (
     build_core_data_type_strategy,
     build_primitive_data_type_strategy,
@@ -264,7 +274,7 @@ def test_serializables_strategy_draws_without_raising(
 
 @given(draw_numeric_tree_with_environment(_POOL))
 def test_numeric_gate_tree_respects_its_leaf_budget(
-    pair: tuple[Any, dict[Any, int]],
+    pair: tuple[Expression, dict[Identifier, int]],
 ) -> None:
     """Test a numeric gate tree never exceeds the leaf budget it was drawn with."""
     expression, _environment = pair
@@ -273,7 +283,7 @@ def test_numeric_gate_tree_respects_its_leaf_budget(
 
 @given(draw_boolean_tree_with_environment(_POOL))
 def test_boolean_gate_tree_respects_its_leaf_budget(
-    pair: tuple[Any, dict[Any, int]],
+    pair: tuple[Expression, dict[Identifier, int]],
 ) -> None:
     """Test a boolean gate tree never exceeds the leaf budget it was drawn with."""
     expression, _environment = pair
@@ -282,7 +292,7 @@ def test_boolean_gate_tree_respects_its_leaf_budget(
 
 @given(draw_numeric_tree_with_environment(_POOL))
 def test_numeric_gate_tree_passes_validate_logical_operands(
-    pair: tuple[Any, dict[Any, int]],
+    pair: tuple[Expression, dict[Identifier, int]],
 ) -> None:
     """Test a numeric gate tree never trips validate_logical_operands."""
     expression, _environment = pair
@@ -291,7 +301,7 @@ def test_numeric_gate_tree_passes_validate_logical_operands(
 
 @given(draw_boolean_tree_with_environment(_POOL))
 def test_boolean_gate_tree_passes_validate_logical_operands(
-    pair: tuple[Any, dict[Any, int]],
+    pair: tuple[Expression, dict[Identifier, int]],
 ) -> None:
     """Test a boolean gate tree never trips validate_logical_operands."""
     expression, _environment = pair
@@ -300,7 +310,7 @@ def test_boolean_gate_tree_passes_validate_logical_operands(
 
 @given(draw_numeric_tree_with_environment(_POOL))
 def test_python_oracle_agrees_with_numpy_on_numeric_gate_trees(
-    pair: tuple[Any, dict[Any, int]],
+    pair: tuple[Expression, dict[Identifier, int]],
 ) -> None:
     """Test the Python oracle agrees with the NumPy evaluator on numeric trees."""
     expression, environment = pair
@@ -311,7 +321,7 @@ def test_python_oracle_agrees_with_numpy_on_numeric_gate_trees(
 
 @given(draw_boolean_tree_with_environment(_POOL))
 def test_python_oracle_agrees_with_numpy_on_boolean_gate_trees(
-    pair: tuple[Any, dict[Any, int]],
+    pair: tuple[Expression, dict[Identifier, int]],
 ) -> None:
     """Test the Python oracle agrees with the NumPy evaluator on boolean trees."""
     expression, environment = pair
@@ -337,3 +347,76 @@ def test_build_identifier_pool_is_deterministic_with_distinct_ids(size: int) -> 
     assert len(pool_a) == size
     assert len({identifier.id for identifier in pool_a}) == size
     assert all(a == b for a, b in zip(pool_a, pool_b, strict=True))
+
+
+def _iter_expression_nodes(expression: Expression) -> Iterator[Expression]:
+    """Yield expression and every descendant, walked via get_visit_children."""
+    yield expression
+    for child in expression.get_visit_children():
+        yield from _iter_expression_nodes(child)
+
+
+@given(draw_numeric_tree_with_environment(_POOL, include_calls=False))
+def test_numeric_gate_tree_excludes_calls_when_include_calls_is_false(
+    pair: tuple[Expression, dict[Identifier, int]],
+) -> None:
+    """Test include_calls=False draws a numeric tree with no CallExpression."""
+    expression, _environment = pair
+    assert not any(
+        isinstance(node, CallExpression) for node in _iter_expression_nodes(expression)
+    )
+
+
+# A comparison operand is a numeric subtree, so this also checks that
+# include_calls reaches through that subtree, not only the boolean root.
+@given(draw_boolean_tree_with_environment(_POOL, include_calls=False))
+def test_boolean_gate_tree_excludes_calls_when_include_calls_is_false(
+    pair: tuple[Expression, dict[Identifier, int]],
+) -> None:
+    """Test include_calls=False draws a boolean tree with no CallExpression."""
+    expression, _environment = pair
+    assert not any(
+        isinstance(node, CallExpression) for node in _iter_expression_nodes(expression)
+    )
+
+
+@given(draw_numeric_tree_with_environment(_POOL, native_functions=("floor",)))
+def test_numeric_gate_tree_calls_only_the_native_functions_option(
+    pair: tuple[Expression, dict[Identifier, int]],
+) -> None:
+    """Test native_functions=("floor",) draws a numeric tree that calls only floor."""
+    expression, _environment = pair
+    assert all(
+        node.function_name == "floor"
+        for node in _iter_expression_nodes(expression)
+        if isinstance(node, CallExpression)
+    )
+
+
+@given(draw_boolean_tree_with_environment(_POOL, native_functions=("floor",)))
+def test_boolean_gate_tree_calls_only_the_native_functions_option(
+    pair: tuple[Expression, dict[Identifier, int]],
+) -> None:
+    """Test native_functions=("floor",) draws a boolean tree that calls only floor."""
+    expression, _environment = pair
+    assert all(
+        node.function_name == "floor"
+        for node in _iter_expression_nodes(expression)
+        if isinstance(node, CallExpression)
+    )
+
+
+# build_boolean_expression_strategy forwards include_division to every
+# numeric subtree it draws for a comparison, so this walks the whole tree
+# with get_visit_children rather than checking only the root.
+@given(draw_boolean_tree_with_environment(_POOL, include_division=False))
+def test_boolean_gate_tree_excludes_division_when_include_division_is_false(
+    pair: tuple[Expression, dict[Identifier, int]],
+) -> None:
+    """Test include_division=False draws a boolean tree with no FLOOR_DIVIDE/MODULO."""
+    expression, _environment = pair
+    assert not any(
+        isinstance(node, BinaryExpression)
+        and node.operation in NUMERIC_DIVISION_OPERATIONS
+        for node in _iter_expression_nodes(expression)
+    )

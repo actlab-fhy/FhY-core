@@ -1,4 +1,4 @@
-"""Hypothesis property tests for ``evaluate_expression`` (P1).
+"""Hypothesis property tests for ``evaluate_expression``.
 
 Covers three invariants of the bottom-up native-call/native-constant
 folding pass: folding never changes what a tree evaluates to (oracle:
@@ -55,7 +55,7 @@ def _find_foldable_call(expression: Expression) -> CallExpression | None:
 
 
 # =============================================================================
-# P1a: evaluate_expression never changes what a tree evaluates to
+# evaluate_expression never changes what a tree evaluates to
 # =============================================================================
 
 
@@ -78,7 +78,7 @@ def test_evaluate_expression_preserves_evaluation(
 
 
 # =============================================================================
-# P1b: folding is idempotent
+# folding is idempotent
 # =============================================================================
 
 
@@ -93,24 +93,22 @@ def test_evaluate_expression_is_idempotent(expression: Expression) -> None:
 
 
 # =============================================================================
-# P1c: no literal-argument native call survives a fold -- except a call
-# to an expression-bodied function, which evaluate_expression documents
-# it leaves alone (see the module docstring on
+# No literal-argument native call survives a fold -- except a call to an
+# expression-bodied function, which evaluate_expression documents it
+# leaves alone (see the module docstring on
 # fhy_core.symbolic.expression.passes.evaluate: "run inline_functions
 # before evaluate_expression" is the prescribed remedy).
 # =============================================================================
 
 
+# Walks the folded tree with get_visit_children. Every call the gate
+# grammar draws targets a NativeFunction, which is exactly the kind
+# evaluate_expression promises to fold.
 @given(expression=build_numeric_expression_strategy(_POOL))
 def test_evaluate_expression_folds_every_literal_argument_call(
     expression: Expression,
 ) -> None:
-    """Test no ``CallExpression`` with all-``LiteralExpression`` arguments survives.
-
-    Walks the folded tree with ``get_visit_children``. Every call the gate
-    grammar draws targets a ``NativeFunction``, which is exactly the kind
-    ``evaluate_expression`` promises to fold.
-    """
+    """Test no ``CallExpression`` with all-``LiteralExpression`` arguments survives."""
     folded = evaluate_expression(expression)
 
     survivor = _find_foldable_call(folded)

@@ -1,4 +1,4 @@
-"""Hypothesis property tests for ``inline_functions`` (P8).
+"""Hypothesis property tests for ``inline_functions``.
 
 Covers the expression-bodied ``RegisteredFunction`` builtins registered in
 ``fhy_core.symbolic.expression.builtins`` (``relu``, ``clamp``,
@@ -47,19 +47,19 @@ np = pytest.importorskip("numpy")
 # =============================================================================
 
 
-def _reference_max(a: float, b: float) -> float:
+def _compute_reference_max(a: float, b: float) -> float:
     return a if a > b else b
 
 
-def _reference_min(a: float, b: float) -> float:
+def _compute_reference_min(a: float, b: float) -> float:
     return a if a < b else b
 
 
-def _reference_abs(x: float) -> float:
+def _compute_reference_abs(x: float) -> float:
     return x if x >= 0.0 else -x
 
 
-def _reference_sign(x: float) -> int:
+def _compute_reference_sign(x: float) -> int:
     if x > 0.0:
         return 1
     if x < 0.0:
@@ -67,71 +67,71 @@ def _reference_sign(x: float) -> int:
     return 0
 
 
-def _reference_clamp(x: float, lo: float, hi: float) -> float:
-    return _reference_min(_reference_max(x, lo), hi)
+def _compute_reference_clamp(x: float, lo: float, hi: float) -> float:
+    return _compute_reference_min(_compute_reference_max(x, lo), hi)
 
 
-def _reference_clamp_symmetric(x: float, bound: float) -> float:
-    return _reference_clamp(x, -bound, bound)
+def _compute_reference_clamp_symmetric(x: float, bound: float) -> float:
+    return _compute_reference_clamp(x, -bound, bound)
 
 
-def _reference_relu(x: float) -> float:
-    return _reference_max(x, 0)
+def _compute_reference_relu(x: float) -> float:
+    return _compute_reference_max(x, 0)
 
 
-def _reference_leaky_relu(x: float, slope: float) -> float:
+def _compute_reference_leaky_relu(x: float, slope: float) -> float:
     return x if x > 0.0 else x * slope
 
 
-def _reference_xor(a: bool, b: bool) -> bool:
+def _compute_reference_xor(a: bool, b: bool) -> bool:
     return (a or b) and not (a and b)
 
 
-def _reference_nand(a: bool, b: bool) -> bool:
+def _compute_reference_nand(a: bool, b: bool) -> bool:
     return not (a and b)
 
 
-def _reference_nor(a: bool, b: bool) -> bool:
+def _compute_reference_nor(a: bool, b: bool) -> bool:
     return not (a or b)
 
 
-def _reference_implies(a: bool, b: bool) -> bool:
+def _compute_reference_implies(a: bool, b: bool) -> bool:
     return (not a) or b
 
 
-def _reference_iff(a: bool, b: bool) -> bool:
+def _compute_reference_iff(a: bool, b: bool) -> bool:
     return a == b
 
 
-def _reference_sigmoid(x: float) -> float:
+def _compute_reference_sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))
 
 
-def _reference_silu(x: float) -> float:
-    return x * _reference_sigmoid(x)
+def _compute_reference_silu(x: float) -> float:
+    return x * _compute_reference_sigmoid(x)
 
 
-def _reference_gelu(x: float) -> float:
+def _compute_reference_gelu(x: float) -> float:
     return 0.5 * x * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
 _REFERENCE_FUNCTIONS: Final[dict[str, Callable[..., float | int | bool]]] = {
-    "max": _reference_max,
-    "min": _reference_min,
-    "abs": _reference_abs,
-    "sign": _reference_sign,
-    "clamp": _reference_clamp,
-    "clamp_symmetric": _reference_clamp_symmetric,
-    "relu": _reference_relu,
-    "leaky_relu": _reference_leaky_relu,
-    "xor": _reference_xor,
-    "nand": _reference_nand,
-    "nor": _reference_nor,
-    "implies": _reference_implies,
-    "iff": _reference_iff,
-    "sigmoid": _reference_sigmoid,
-    "silu": _reference_silu,
-    "gelu": _reference_gelu,
+    "max": _compute_reference_max,
+    "min": _compute_reference_min,
+    "abs": _compute_reference_abs,
+    "sign": _compute_reference_sign,
+    "clamp": _compute_reference_clamp,
+    "clamp_symmetric": _compute_reference_clamp_symmetric,
+    "relu": _compute_reference_relu,
+    "leaky_relu": _compute_reference_leaky_relu,
+    "xor": _compute_reference_xor,
+    "nand": _compute_reference_nand,
+    "nor": _compute_reference_nor,
+    "implies": _compute_reference_implies,
+    "iff": _compute_reference_iff,
+    "sigmoid": _compute_reference_sigmoid,
+    "silu": _compute_reference_silu,
+    "gelu": _compute_reference_gelu,
 }
 
 # Declared parameter arity for every expression-bodied builtin (matches
@@ -291,7 +291,7 @@ def _collect_call_expressions(expression: Expression) -> list[CallExpression]:
 
 
 # =============================================================================
-# P8a: inlining removes every call to a RegisteredFunction
+# Inlining removes every call to a RegisteredFunction
 # =============================================================================
 
 
@@ -313,7 +313,7 @@ def test_inline_functions_leaves_no_registered_function_call(
 
 
 # =============================================================================
-# P8b: the inlined tree evaluates identically to the reference table
+# The inlined tree evaluates identically to the reference table
 # =============================================================================
 
 
@@ -349,7 +349,7 @@ def test_inline_functions_evaluates_like_the_reference_table_for_bool_builtins(
 
 
 # =============================================================================
-# P8c: inline_functions is idempotent
+# inline_functions is idempotent
 # =============================================================================
 
 

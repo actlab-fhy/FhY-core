@@ -1,4 +1,4 @@
-"""Hypothesis property tests for `PartiallyOrderedSet` (P31).
+"""Hypothesis property tests for `PartiallyOrderedSet`.
 
 Builds a random DAG on a handful of integer nodes, with edges only from a
 smaller node to a larger one (acyclic by construction), added to the poset
@@ -17,31 +17,9 @@ from hypothesis import strategies as st
 
 from fhy_core.utils.poset import PartiallyOrderedSet
 
+from .strategies.orders import draw_random_dag
+
 pytestmark = pytest.mark.property
-
-_MIN_NODES = 2
-_MAX_NODES = 6
-
-
-@st.composite
-def draw_dag_edges(draw: st.DrawFn) -> tuple[int, tuple[tuple[int, int], ...]]:
-    """Draw a random DAG: nodes `0..n-1`, edges only from a smaller node to
-    a larger one, in a drawn add order.
-
-    Restricting candidate edges to `(i, j)` with `i < j` makes the graph
-    acyclic by construction, so `add_order` never sees a candidate edge
-    that would close a cycle; the add order is still shuffled so the poset
-    is not always built in a topologically sorted sequence.
-    """
-    node_count = draw(st.integers(min_value=_MIN_NODES, max_value=_MAX_NODES))
-    candidate_edges = [
-        (lower, upper)
-        for lower in range(node_count)
-        for upper in range(lower + 1, node_count)
-    ]
-    included_edges = [edge for edge in candidate_edges if draw(st.booleans())]
-    ordered_edges = draw(st.permutations(included_edges))
-    return node_count, tuple(ordered_edges)
 
 
 def build_poset_and_graph(
@@ -64,7 +42,7 @@ def build_poset_and_graph(
     return poset, graph
 
 
-@given(draw_dag_edges())
+@given(draw_random_dag())
 def test_is_less_than_matches_reachability_in_the_added_edges(
     dag: tuple[int, tuple[tuple[int, int], ...]],
 ) -> None:
@@ -81,7 +59,7 @@ def test_is_less_than_matches_reachability_in_the_added_edges(
             assert poset.is_less_than(lower, upper) == nx.has_path(graph, lower, upper)
 
 
-@given(draw_dag_edges())
+@given(draw_random_dag())
 def test_is_greater_than_is_the_converse_of_is_less_than(
     dag: tuple[int, tuple[tuple[int, int], ...]],
 ) -> None:
@@ -101,7 +79,7 @@ def draw_dag_edges_with_pair(
     draw: st.DrawFn,
 ) -> tuple[int, tuple[tuple[int, int], ...], int, int]:
     """Draw a DAG together with a pair of its nodes to try reversing an order on."""
-    node_count, edges = draw(draw_dag_edges())
+    node_count, edges = draw(draw_random_dag())
     first = draw(st.integers(min_value=0, max_value=node_count - 1))
     second = draw(st.integers(min_value=0, max_value=node_count - 1))
     return node_count, edges, first, second

@@ -1,4 +1,4 @@
-"""Hypothesis property tests for rule-driven rewriting (P10).
+"""Hypothesis property tests for rule-driven rewriting.
 
 Covers ``apply_rewrite_rules`` with an empty rule set (identity, by
 object identity); a semantics-preserving rule set (``x + 0 -> x``,
@@ -256,7 +256,7 @@ def _build_counting_rewrite_rules() -> tuple[list[int], tuple[RewriteRule, ...]]
 
 
 # =============================================================================
-# P10a: an empty rule set is the identity, by object identity
+# An empty rule set is the identity, by object identity
 # =============================================================================
 
 
@@ -267,7 +267,7 @@ def test_apply_rewrite_rules_with_no_rules_is_identity(expression: Expression) -
 
 
 # =============================================================================
-# P10b: the rule set preserves evaluation
+# The rule set preserves evaluation
 # =============================================================================
 
 
@@ -291,7 +291,7 @@ def test_rewrite_rules_preserve_evaluation(
 
 
 # =============================================================================
-# P10c: identity holds iff zero rules fired (the documented contract)
+# Identity holds iff zero rules fired (the documented contract)
 # =============================================================================
 
 

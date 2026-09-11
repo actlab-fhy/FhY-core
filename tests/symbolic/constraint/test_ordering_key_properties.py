@@ -34,15 +34,17 @@ pytestmark = pytest.mark.property
 
 _POOL = build_identifier_pool(2)
 
-_WELD_X = mock_identifier("x", 0)
-_WELD_Y = mock_identifier("y", 1)
-_WELD_Z = mock_identifier("z", 2)
-_WELD_MEMBERS: list[Constraint] = [
-    NotInSetConstraint(_WELD_Z, {5, 6}),
-    EquationConstraint(make_binary_expression(BinaryOperation.LESS, _WELD_X, _WELD_Y)),
-    InSetConstraint(_WELD_X, {1, 2}),
+_PINNED_X = mock_identifier("x", 0)
+_PINNED_Y = mock_identifier("y", 1)
+_PINNED_Z = mock_identifier("z", 2)
+_PINNED_MIXED_KIND_MEMBERS: list[Constraint] = [
+    NotInSetConstraint(_PINNED_Z, {5, 6}),
+    EquationConstraint(
+        make_binary_expression(BinaryOperation.LESS, _PINNED_X, _PINNED_Y)
+    ),
+    InSetConstraint(_PINNED_X, {1, 2}),
 ]
-"""The fixed member list the deleted `test_ordering_key.py` test exercised."""
+"""A hand-picked list mixing a not-in-set, an equation, and an in-set constraint."""
 
 
 @st.composite
@@ -64,7 +66,7 @@ def _draw_member_list(draw: st.DrawFn) -> list[Constraint]:
     return [draw(_draw_constraint_over_pool()) for _ in range(count)]
 
 
-@example(members=_WELD_MEMBERS)
+@example(members=_PINNED_MIXED_KIND_MEMBERS)
 @given(members=_draw_member_list())
 def test_constraint_system_member_order_matches_sorting_by_the_public_key(
     members: list[Constraint],

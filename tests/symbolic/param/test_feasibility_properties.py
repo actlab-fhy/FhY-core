@@ -1,7 +1,7 @@
 """Hypothesis property tests for `Param.check_feasibility` over finite domains.
 
 Covers ordinal, categorical, and width-bounded plain-integer parameters,
-each narrowed by zero to two extra constraints, against a brute-force
+each carrying zero to two extra constraints, against a brute-force
 oracle that enumerates the finite domain directly.
 """
 
@@ -87,7 +87,7 @@ def draw_param_with_extra_constraints(
 
 @st.composite
 def draw_finite_ordinal_case(draw: st.DrawFn) -> tuple[Param[int], tuple[int, ...]]:
-    """Draw an ordinal param, narrowed by 0-2 extra constraints, with its domain."""
+    """Draw an ordinal param carrying 0-2 extra constraints, with its domain."""
     values = draw(build_ordinal_value_set_strategy())
     param: Param[int] = create_ordinal_param(values)
     outside = [
@@ -106,7 +106,7 @@ def draw_finite_ordinal_case(draw: st.DrawFn) -> tuple[Param[int], tuple[int, ..
 
 @st.composite
 def draw_finite_categorical_case(draw: st.DrawFn) -> tuple[Param[str], tuple[str, ...]]:
-    """Draw a categorical param, narrowed by 0-2 extra constraints, with its domain."""
+    """Draw a categorical param carrying 0-2 extra constraints, with its domain."""
     values = draw(build_categorical_value_set_strategy())
     param: Param[str] = create_categorical_param(values)
     outside = [letter for letter in _CATEGORICAL_ALPHABET if letter not in values]
@@ -169,6 +169,7 @@ def draw_finite_domain_case(draw: st.DrawFn) -> tuple[Param[Any], tuple[Any, ...
 # =============================================================================
 
 
+# Z3-backed: some drawn cases route check_feasibility through the solver.
 @settings(max_examples=50)
 @given(case=draw_finite_domain_case())
 def test_check_feasibility_matches_brute_force_over_finite_domains(
@@ -202,21 +203,21 @@ def test_check_feasibility_matches_brute_force_over_finite_domains(
 # Known discrepancy: any not-in-set constraint spuriously undecides
 # =============================================================================
 #
-# Hypothesis found this shrinking the property above, before
-# `draw_finite_bounded_integer_case` was narrowed to exclude the "not_in_set"
-# constraint kind: a plain-integer parameter carrying *any*
-# `NotInSetConstraint` -- liftable, non-empty, even one whose member is
-# outside the domain entirely -- and no `InSetConstraint` (which would force
-# enumeration instead), goes to the Z3-screening path
+# A plain-integer parameter carrying any `NotInSetConstraint` -- even one
+# whose member lies entirely outside the domain -- and no `InSetConstraint`
+# (which would force enumeration instead) goes to the Z3-screening path
 # (`fhy_core.symbolic.param.domains._numeric_has_feasible_value`). There,
 # `_build_screened_constraint_system_with_fidelity` compares the screened
-# constraint to the original with `is not` to decide whether narrowing
-# happened. `_screen_not_in_set_constraint` always returns a *freshly
-# constructed* `NotInSetConstraint`, even when every member lifted and
-# nothing was excluded, so that comparison is `True` unconditionally and the
-# system is marked inexact for every not-in-set constraint, narrowed or not.
-# The solver's own SATISFIED answer is then conservatively downgraded to
+# constraint to the original with `is not` to decide whether the screen
+# excluded anything. `_screen_not_in_set_constraint` always returns a
+# *freshly constructed* `NotInSetConstraint`, even when every member lifted
+# and nothing was excluded, so that comparison is `True` unconditionally and
+# the system is marked inexact for every not-in-set constraint. The
+# solver's own SATISFIED answer is then conservatively downgraded to
 # UNDECIDED. The parameter below is, in fact, provably feasible.
+# `draw_finite_bounded_integer_case` draws only "in_set" and "bound" extra
+# constraints so the property above never trips this discrepancy; this test
+# covers the excluded not-in-set shape on its own.
 
 
 @pytest.mark.xfail(
@@ -227,13 +228,14 @@ def test_check_feasibility_matches_brute_force_over_finite_domains(
         "_screen_not_in_set_constraint always rebuilds a fresh object even "
         "when no member was excluded, so fidelity is False -- and the "
         "solver's SATISFIED answer is downgraded to UNDECIDED -- for every "
-        "not-in-set constraint, not only one that was actually narrowed."
+        "not-in-set constraint, not only one whose screen actually "
+        "excluded a member."
     ),
 )
 def test_check_feasibility_decides_singleton_with_a_harmless_constraint() -> None:
     """Test a satisfiable singleton with an irrelevant not-in-set constraint decides.
 
-    ``create_integer_param_between(0, 0)`` narrowed by
+    ``create_integer_param_between(0, 0)`` constrained by
     ``NotInSetConstraint(variable, [5])`` is provably ``SATISFIED``: ``5``
     is outside the domain entirely, so the constraint excludes nothing
     ``0`` needed. ``check_feasibility`` instead reports ``UNDECIDED``.

@@ -10,7 +10,7 @@ shared on the way through.
 
 A test identifier is a ``Mock(spec=Identifier)``, which pickle refuses to
 serialize. Handing every identifier to the pickler as a persistent reference
-keeps the object under test itself on the real ``dumps``/``loads`` path (P28).
+keeps the object under test itself on the real ``dumps``/``loads`` path.
 """
 
 import copy
@@ -53,6 +53,7 @@ from ..strategies.params import (
     build_ordinal_value_set_strategy,
     build_permutation_member_set_strategy,
     draw_ordered_optional_bounds,
+    draw_param_over_any_domain,
 )
 from .conftest import mock_identifier
 from .param.conftest import build_interval_integer_param
@@ -118,7 +119,7 @@ _DUPLICATORS = [
 
 
 # =============================================================================
-# Constraints
+# Constraints: duplication stays frozen and equivalent
 # =============================================================================
 
 _CONSTRAINT_POOL: Final = build_identifier_pool(4, name_prefix="k")
@@ -138,24 +139,24 @@ def draw_constraint_over_one_identifier(draw: st.DrawFn) -> Constraint:
     return result
 
 
-_WELD_CONSTRAINT_VARIABLE = mock_identifier("x", 0)
-_WELD_CONSTRAINT = EquationConstraint(
-    IdentifierExpression(_WELD_CONSTRAINT_VARIABLE) < LiteralExpression(5)
+_PINNED_CONSTRAINT_VARIABLE = mock_identifier("x", 0)
+_PINNED_CONSTRAINT = EquationConstraint(
+    IdentifierExpression(_PINNED_CONSTRAINT_VARIABLE) < LiteralExpression(5)
 )
-"""The hand-built constraint the pre-generalization version of this test used."""
+"""A hand-picked equation constraint pinned as an example."""
 
 
 @pytest.mark.parametrize("duplicate", _DUPLICATORS)
-@example(constraint=_WELD_CONSTRAINT)
+@example(constraint=_PINNED_CONSTRAINT)
 @given(constraint=draw_constraint_over_one_identifier())
 def test_constraint_survives_duplication(
     constraint: Constraint, duplicate: Duplicator
 ) -> None:
     """Test a constraint reaching an identifier duplicates frozen and equivalent.
 
-    Oracle: the deleted ``tests/symbolic/test_pickle_round_trips.py``
-    assertions, generalized from one hand-built ``EquationConstraint`` to
-    every constraint kind the shared strategies draw.
+    Oracle: the constraint itself, compared field-by-field with its
+    duplicate across free identifiers, structural equivalence, and alpha
+    equivalence.
     """
     duplicated = duplicate(constraint)
 
@@ -167,104 +168,26 @@ def test_constraint_survives_duplication(
 
 
 # =============================================================================
-# Params
+# Params: duplication stays frozen and equivalent
 # =============================================================================
 
 
 _CATEGORICAL_ALPHABET: Final = tuple("abcdefgh")
 
 
-@st.composite
-def draw_interval_integer_param(draw: st.DrawFn, limit: int = 25) -> Param[int]:
-    """Draw an interval-integer param over optional, ordered bounds."""
-    lower, upper = draw(draw_ordered_optional_bounds(limit))
-    return build_interval_integer_param(lower, upper)
-
-
-@st.composite
-def draw_bounded_integer_param(draw: st.DrawFn, limit: int = 25) -> Param[int]:
-    """Draw an integer param bounded to ``[lower, upper]``, ``lower <= upper``."""
-    lower = draw(st.integers(min_value=-limit, max_value=limit))
-    extra = draw(st.integers(min_value=0, max_value=2 * limit))
-    upper = min(lower + extra, limit)
-    return create_integer_param_between(lower, upper)
-
-
-@st.composite
-def draw_natural_param(draw: st.DrawFn) -> Param[int]:
-    """Draw a natural-number param, with or without zero included."""
-    zero_included = draw(st.booleans())
-    return create_natural_param(zero_included=zero_included)
-
-
-@st.composite
-def draw_ordinal_param(draw: st.DrawFn) -> Param[int]:
-    """Draw an ordinal param over a finite, sorted set of ints."""
-    values = draw(build_ordinal_value_set_strategy())
-    return create_ordinal_param(values)
-
-
-@st.composite
-def draw_categorical_param(draw: st.DrawFn) -> Param[str]:
-    """Draw a categorical param over a finite set of letters."""
-    categories = draw(build_categorical_value_set_strategy())
-    return create_categorical_param(categories)
-
-
-@st.composite
-def draw_permutation_param(draw: st.DrawFn) -> Param[tuple[str, ...]]:
-    """Draw a permutation param over a fixed, ordered set of letters."""
-    members = draw(build_permutation_member_set_strategy())
-    return create_permutation_param(members)
-
-
-@st.composite
-def draw_bounded_real_param(draw: st.DrawFn, limit: int = 25) -> Param[str | float]:
-    """Draw a real param bounded to ``[lower, upper]`` with integer-valued bounds."""
-    lower = draw(st.integers(min_value=-limit, max_value=limit))
-    extra = draw(st.integers(min_value=0, max_value=2 * limit))
-    upper = lower + extra
-    return create_real_param_between(float(lower), float(upper))
-
-
-@st.composite
-def draw_single_valid_value_param(draw: st.DrawFn) -> Param[str]:
-    """Draw a param admitting exactly one letter from a fixed alphabet."""
-    value = draw(st.sampled_from(_CATEGORICAL_ALPHABET))
-    return create_single_valid_value_param(value)
-
-
-@st.composite
-def draw_param_over_any_domain(draw: st.DrawFn) -> Param[Any]:
-    """Draw a param over any of this module's domain kinds."""
-    result: Param[Any] = draw(
-        st.one_of(
-            draw_interval_integer_param(),
-            draw_bounded_integer_param(),
-            draw_natural_param(),
-            draw_ordinal_param(),
-            draw_categorical_param(),
-            draw_permutation_param(),
-            draw_bounded_real_param(),
-            draw_single_valid_value_param(),
-        )
-    )
-    return result
-
-
-_WELD_PARAM = create_integer_param(name=mock_identifier("p", 1))
-"""The hand-built parameter the pre-generalization version of this test used."""
+_PINNED_PARAM = create_integer_param(name=mock_identifier("p", 1))
+"""A hand-picked integer parameter pinned as an example."""
 
 
 @pytest.mark.parametrize("duplicate", _DUPLICATORS)
-@example(param=_WELD_PARAM)
+@example(param=_PINNED_PARAM)
 @given(param=draw_param_over_any_domain())
 def test_param_survives_duplication(param: Param[Any], duplicate: Duplicator) -> None:
     """Test a parameter duplicates frozen, with its binder and domain intact.
 
-    Oracle: the deleted ``tests/symbolic/test_pickle_round_trips.py``
-    assertions, generalized from one integer param to every domain kind the
-    shared strategies draw.
+    Oracle: the parameter itself, compared field-by-field with its
+    duplicate across its binder, domain, structural equivalence, and alpha
+    equivalence.
     """
     duplicated = duplicate(param)
 
@@ -277,7 +200,7 @@ def test_param_survives_duplication(param: Param[Any], duplicate: Duplicator) ->
 
 
 # =============================================================================
-# Param assignments
+# Param assignments: duplication stays frozen and equivalent
 # =============================================================================
 #
 # ``ParamAssignment.__post_init__`` re-validates its value against the
@@ -392,22 +315,22 @@ def draw_param_assignment(draw: st.DrawFn) -> ParamAssignment[Any]:
     return param.assign(value)
 
 
-_WELD_ASSIGNMENT_PARAM = create_integer_param(name=mock_identifier("p", 2))
-_WELD_ASSIGNMENT = ParamAssignment(_WELD_ASSIGNMENT_PARAM, 5)
-"""The hand-built assignment the pre-generalization version of this test used."""
+_PINNED_ASSIGNMENT_PARAM = create_integer_param(name=mock_identifier("p", 2))
+_PINNED_ASSIGNMENT = ParamAssignment(_PINNED_ASSIGNMENT_PARAM, 5)
+"""A hand-picked integer assignment pinned as an example."""
 
 
 @pytest.mark.parametrize("duplicate", _DUPLICATORS)
-@example(assignment=_WELD_ASSIGNMENT)
+@example(assignment=_PINNED_ASSIGNMENT)
 @given(assignment=draw_param_assignment())
 def test_param_assignment_survives_duplication(
     assignment: ParamAssignment[Any], duplicate: Duplicator
 ) -> None:
     """Test an assignment duplicates frozen, keeping its parameter and value.
 
-    Oracle: the deleted ``tests/symbolic/test_pickle_round_trips.py``
-    assertions, generalized from one integer assignment to every domain kind
-    the shared strategies draw.
+    Oracle: the assignment itself, compared field-by-field with its
+    duplicate across its value, parameter, structural equivalence, and
+    alpha equivalence.
     """
     duplicated = duplicate(assignment)
 

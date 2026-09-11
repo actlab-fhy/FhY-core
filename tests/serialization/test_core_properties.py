@@ -2,12 +2,12 @@
 
 Covers every serializable family drawn from ``tests/strategies/serializables.py``:
 round-tripping through DICT, JSON, and BINARY under each family's own
-equivalence check, and JSON output stability after one round trip (P26).
+equivalence check, and JSON output stability after one round trip.
 Also covers the adversarial contract that a malformed dict -- one missing a
 top-level key, or carrying an unresolvable type id -- always surfaces
 through the ``SerializationError`` hierarchy rather than a raw
-``KeyError``/``TypeError``/``ValueError``/``AttributeError`` (P27),
-generalizing the hand-picked cases in ``test_malformed_input.py``.
+``KeyError``/``TypeError``/``ValueError``/``AttributeError``, generalizing
+the hand-picked cases in ``test_malformed_input.py``.
 """
 
 import pytest
@@ -83,10 +83,10 @@ def test_deserialize_from_dict_never_escapes_hierarchy_on_a_missing_key(
     ``SerializationError``)/``AttributeError`` escaping fails the property,
     naming the offending family and key.
 
-    Empirically (see the module's welding commit), every family raises for
-    every key: the derived engine requires an exact key set, and every
-    hand-written ``deserialize_data_from_dict`` checks each key with an
-    explicit membership test. No family tolerates a missing key.
+    Empirically, every family raises for every key: the derived engine
+    requires an exact key set, and every hand-written
+    ``deserialize_data_from_dict`` checks each key with an explicit
+    membership test. No family tolerates a missing key.
     """
     cls = type(case.instance)
     data = case.instance.serialize_to_dict()

@@ -1,10 +1,10 @@
-"""Hypothesis property tests for the expression type checker (P36).
+"""Hypothesis property tests for the expression type checker.
 
 Checks that `check_expression_type(e, t, lookup)` succeeds and reproduces
 `t` when `t` is exactly what `synthesize_expression_type(e, lookup)` just
 returned, for numeric and boolean gate-grammar trees over a pool of
 identifiers all bound to a concrete `int32` scalar. Numeric gate trees are
-narrowed to always include a concrete-typed identifier (see the composite
+built to always include a concrete-typed identifier (see the composite
 strategy's docstring for why); the excluded, weak-literal-only shape is
 covered separately by the strict xfail at the bottom.
 """
@@ -139,21 +139,13 @@ def test_synthesize_then_check_round_trips_for_boolean_gate_trees(
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "synthesize_expression_type on a numeric gate tree with no "
-        "identifier and no native call anywhere (so nothing forces a "
-        "concrete width) returns a weak core data type (e.g. plain "
-        "CoreDataType.UINT for a bare non-negative integer literal). "
-        "check_expression_type then re-infers the same expression *with* "
-        "that weak type as the expected type, which resolves the literal "
-        "concretely (e.g. to UINT8) and rejects it as 'wider than the "
-        "expected type' against the weak type it was just given. "
+        "check_expression_type re-infers a bare weak-typed literal (e.g. "
+        "LiteralExpression(0)) using its own weak synthesized type as the "
+        "expected type, then rejects the now-concrete inferred type (e.g. "
+        "UINT8) as wider than that weak type (e.g. UINT). "
         "src/fhy_core/types/checking/type_checker.py: bare-literal "
-        "inference and expected-type-directed inference disagree on how "
-        "concrete a literal's type should be. Minimal example: "
-        "e = LiteralExpression(0); synthesize_expression_type(e, lookup) "
-        "returns a weak uint[] NumericalType, and "
-        "check_expression_type(e, that_type, lookup) raises "
-        "FhYCoreTypeError instead of reproducing it."
+        "inference and expected-type-directed inference disagree on "
+        "concreteness."
     ),
 )
 def test_synthesize_then_check_round_trips_for_a_bare_weak_literal() -> None:
