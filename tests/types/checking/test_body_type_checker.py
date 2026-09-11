@@ -13,6 +13,7 @@ from fhy_core.symbolic.expression import (
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
+    get_native_constant_identifier,
     get_registered_entry,
 )
 from fhy_core.types import (
@@ -272,3 +273,52 @@ def test_check_rejects_body_synthesizing_non_primitive_data_type(
     cause = exc_info.value.__cause__
     assert isinstance(cause, EntryRegistrationError)
     assert "must synthesize a scalar numerical type" in str(cause)
+
+
+def test_check_accepts_body_referencing_a_native_constant(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a body may reference a constant through its canonical identifier.
+
+    The constant is not a declared parameter, so the body checker's
+    identifier lookup misses and the registry fallback has to resolve it
+    by identity for the body to type at all. Passing is not raising.
+    """
+    x = mock_identifier("x", 0)
+    pi = get_native_constant_identifier("pi")
+
+    check_registered_function_body(
+        name="scaled_by_pi",
+        parameters=(x,),
+        parameter_sorts=(FunctionSort.REAL,),
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(x) * pi,
+        resolve_call_target=get_registered_entry,
+    )
+
+
+def test_check_rejects_body_identifier_merely_named_like_a_constant(
+    function_registry_snapshot: None,
+) -> None:
+    """Test an identifier that only shares ``pi``'s name is an undeclared identifier.
+
+    The registry fallback resolves the canonical identifier alone, so
+    this body captures a free variable and fails the check rather than
+    silently typing as the constant.
+    """
+    x = mock_identifier("x", 0)
+    pi_lookalike = mock_identifier("pi", 1152)
+
+    with pytest.raises(PassExecutionError) as exc_info:
+        check_registered_function_body(
+            name="scaled_by_a_pi_lookalike",
+            parameters=(x,),
+            parameter_sorts=(FunctionSort.REAL,),
+            result_sort=FunctionSort.REAL,
+            body=IdentifierExpression(x) * pi_lookalike,
+            resolve_call_target=get_registered_entry,
+        )
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, EntryRegistrationError)
+    assert "pi" in str(cause)

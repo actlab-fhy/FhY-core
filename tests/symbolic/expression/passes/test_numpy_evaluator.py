@@ -20,7 +20,9 @@ from fhy_core.symbolic.expression import (
     FunctionSort,
     IdentifierExpression,
     LiteralExpression,
+    NativeConstantBindingError,
     NativeFunction,
+    NonBooleanLogicalOperandError,
     NonFiniteCastError,
     StringLiteralPrecisionError,
     UnaryExpression,
@@ -29,6 +31,7 @@ from fhy_core.symbolic.expression import (
     UnsupportedNumpyLoweringError,
     call,
     evaluate_expression_with_numpy,
+    get_native_constant_identifier,
     get_registered_entries,
     piecewise,
     register_function,
@@ -40,6 +43,7 @@ from fhy_core.symbolic.expression.passes.numpy import (
     _UNARY_UFUNC_NAMES,
     NumpyExpressionEvaluator,
 )
+from fhy_core.symbolic.solver import simplify_expression
 
 from ..conftest import mock_identifier
 
@@ -181,6 +185,106 @@ def test_evaluates_chained_comparison_with_logical_and() -> None:
     assert isinstance(result, np.ndarray)
     assert result.dtype == np.bool_
     assert np.array_equal(result, (values > 0.0) & (values < 10.0))
+
+
+# =============================================================================
+# A provably numeric connective operand is refused, not read by truthiness
+# =============================================================================
+
+
+def test_logical_and_of_two_int_literals_raises_directly() -> None:
+    """Test `logical_and(2, 4)` raises rather than being read as `True`.
+
+    `numpy.logical_and` treats any nonzero value as true, so an
+    unscreened lowering would silently accept two ill-typed integer
+    operands and hand back a `True`-valued answer that means nothing.
+    """
+    expression = BinaryExpression(
+        BinaryOperation.LOGICAL_AND, LiteralExpression(2), LiteralExpression(4)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        evaluate_expression_with_numpy(expression, {})
+
+
+def test_logical_not_of_a_falsy_int_literal_raises_directly() -> None:
+    """Test `logical_not(0)` raises rather than being read as `True`."""
+    expression = UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(0))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        evaluate_expression_with_numpy(expression, {})
+
+
+def test_logical_and_of_two_int_bound_identifiers_raises_directly() -> None:
+    """Test an int-dtype binding is screened as `INT`, not treated as boolean.
+
+    The static check reads a bound Python `int`'s dtype the same way it
+    would read an int-dtype array's, so a scalar binding is screened
+    exactly like an array one.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.LOGICAL_AND, IdentifierExpression(x), IdentifierExpression(y)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        evaluate_expression_with_numpy(expression, {x: 2, y: 4})
+
+
+def test_logical_and_of_two_float_arrays_raises_directly() -> None:
+    """Test a float-dtype array binding under `logical_and` is refused."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.LOGICAL_AND, IdentifierExpression(x), IdentifierExpression(y)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        evaluate_expression_with_numpy(
+            expression, {x: np.array([1.0, 0.0]), y: np.array([1.0, 1.0])}
+        )
+
+
+def test_logical_not_of_an_object_dtype_array_raises_as_a_runtime_backstop() -> None:
+    """Test an operand the static check cannot classify still raises at runtime.
+
+    An object-dtype array carries no numeric or boolean dtype the static
+    pre-check can read from the environment, so the refusal has to come
+    from a runtime guard instead -- the same mechanism, and the same
+    `PassExecutionError`-wrapped surfacing, as the existing dtype guard on
+    a piecewise condition.
+    """
+    x = mock_identifier("x", 0)
+    expression = UnaryExpression(UnaryOperation.LOGICAL_NOT, IdentifierExpression(x))
+
+    with pytest.raises(PassExecutionError) as exc_info:
+        evaluate_expression_with_numpy(expression, {x: np.array([1, 2], dtype=object)})
+
+    assert isinstance(exc_info.value.__cause__, NonBooleanLogicalOperandError)
+
+
+def test_logical_connectives_still_evaluate_boolean_literals() -> None:
+    """Test bare Python bool literals under `logical_and`/`logical_not` still work."""
+    conjunction = BinaryExpression(
+        BinaryOperation.LOGICAL_AND, LiteralExpression(True), LiteralExpression(False)
+    )
+    negation = UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(True))
+
+    assert bool(evaluate_expression_with_numpy(conjunction, {})) is False
+    assert bool(evaluate_expression_with_numpy(negation, {})) is False
+
+
+def test_arithmetic_is_unaffected_by_the_connective_dtype_screen() -> None:
+    """Test plain arithmetic over an int-bound identifier is unaffected by the guard."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(x), LiteralExpression(1)
+    )
+
+    result = evaluate_expression_with_numpy(expression, {x: 2})
+
+    assert result == 3
 
 
 # =============================================================================
@@ -629,9 +733,64 @@ def test_evaluates_literal_leaf(
     assert result == expected
 
 
-def test_raises_for_float_grammar_string_literal() -> None:
-    """Test a float-grammar string literal is refused to avoid precision loss."""
-    expression = LiteralExpression("1.5")
+EXACT_BINARY_FLOAT_STRING_CASES = [
+    ("0.5", 0.5),
+    ("0.25", 0.25),
+]
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    EXACT_BINARY_FLOAT_STRING_CASES,
+    ids=[value for value, _ in EXACT_BINARY_FLOAT_STRING_CASES],
+)
+def test_evaluates_float_grammar_string_literal_with_exact_binary_value(
+    value: str, expected: float
+) -> None:
+    """Test a float-grammar string literal that is exactly a binary float."""
+    result = evaluate_expression_with_numpy(LiteralExpression(value), {})
+
+    assert result == expected
+
+
+def test_evaluates_negated_float_grammar_string_literal_with_exact_binary_value() -> (
+    None
+):
+    """Test negating an exact-binary-value string literal evaluates to its negative."""
+    expression = -LiteralExpression("0.5")
+
+    result = evaluate_expression_with_numpy(expression, {})
+
+    assert result == -0.5
+
+
+def test_evaluates_simplified_half_division_of_a_bound_variable() -> None:
+    """Test a simplified division-by-two literal evaluates without precision loss."""
+    x = mock_identifier("x", 0)
+    expression = simplify_expression(IdentifierExpression(x) / LiteralExpression(2))
+
+    result = evaluate_expression_with_numpy(expression, {x: 3.0})
+
+    assert result == 1.5
+
+
+LOSSY_FLOAT_GRAMMAR_STRING_CASES = [
+    "0.1",
+    "0.3",
+    "0.1000000000000000055511151231257827",
+]
+
+
+@pytest.mark.parametrize(
+    "value",
+    LOSSY_FLOAT_GRAMMAR_STRING_CASES,
+    ids=["repeating-tenth", "repeating-third", "long-inexact-decimal"],
+)
+def test_raises_for_float_grammar_string_literal_with_no_exact_binary_value(
+    value: str,
+) -> None:
+    """Test a float-grammar string literal with no exact binary value is refused."""
+    expression = LiteralExpression(value)
 
     with pytest.raises(PassExecutionError) as exception_info:
         evaluate_expression_with_numpy(expression, {})
@@ -659,7 +818,7 @@ def test_resolves_native_constant_without_binding(
     constant_name: str, expected: float
 ) -> None:
     """Test a native-constant reference resolves without an environment entry."""
-    constant = mock_identifier(constant_name, 0)
+    constant = get_native_constant_identifier(constant_name)
     expression = IdentifierExpression(constant)
 
     result = evaluate_expression_with_numpy(expression, {})
@@ -669,7 +828,7 @@ def test_resolves_native_constant_without_binding(
 
 def test_resolves_nan_constant_without_binding() -> None:
     """Test the ``nan`` constant resolves to a NaN value."""
-    constant = mock_identifier("nan", 0)
+    constant = get_native_constant_identifier("nan")
     expression = IdentifierExpression(constant)
 
     result = evaluate_expression_with_numpy(expression, {})
@@ -680,13 +839,97 @@ def test_resolves_nan_constant_without_binding() -> None:
 def test_resolves_native_constant_within_expression() -> None:
     """Test a native constant is usable as an operand alongside a bound array."""
     x = mock_identifier("x", 0)
-    pi = mock_identifier("pi", 1)
+    pi = get_native_constant_identifier("pi")
     expression = IdentifierExpression(x) / IdentifierExpression(pi)
     values = np.array([math.pi, 2.0 * math.pi])
 
     result = evaluate_expression_with_numpy(expression, {x: values})
 
     assert np.allclose(result, [1.0, 2.0])
+
+
+def test_binds_an_identifier_merely_named_like_a_constant_from_environment() -> None:
+    """Test an identifier that only shares ``pi``'s name takes the bound value.
+
+    Constant resolution keys on the canonical identifier, so this
+    identifier is an ordinary variable and the environment binding is
+    what decides its value.
+    """
+    pi_lookalike = mock_identifier("pi", 832)
+    expression = IdentifierExpression(pi_lookalike) * 2.0
+
+    result = evaluate_expression_with_numpy(
+        expression, {pi_lookalike: np.array([1.0, 3.0])}
+    )
+
+    assert np.allclose(result, [2.0, 6.0])
+
+
+def test_raises_for_unbound_identifier_merely_named_like_a_native_constant() -> None:
+    """Test an unbound identifier that shares a constant's name is not resolved.
+
+    The message says the identifier is distinct from the constant it is
+    named after, rather than claiming the name is a registered function.
+    """
+    pi_lookalike = mock_identifier("pi", 833)
+    expression = IdentifierExpression(pi_lookalike) + 1.0
+
+    with pytest.raises(PassExecutionError) as exception_info:
+        evaluate_expression_with_numpy(expression, {})
+
+    cause = exception_info.value.__cause__
+    assert isinstance(cause, UnboundVariableError)
+    assert "shares its name with the native constant" in str(cause)
+
+
+def test_raises_for_a_binding_that_shadows_a_referenced_native_constant() -> None:
+    """Test binding pi's canonical identifier is refused when pi is referenced.
+
+    Without the refusal, the evaluator would read the environment before
+    checking for a constant and silently prefer the caller's value over
+    the constant's, unlike the SymPy bridge, which resolves the constant
+    by identity and never consults the environment for it.
+    """
+    pi = get_native_constant_identifier("pi")
+    expression = IdentifierExpression(pi) + 1.0
+
+    with pytest.raises(NativeConstantBindingError, match="pi"):
+        evaluate_expression_with_numpy(expression, {pi: 3.0})
+
+
+def test_ignores_a_binding_for_an_unreferenced_native_constant() -> None:
+    """Test a binding for pi is ignored when the expression does not reference pi."""
+    x = mock_identifier("x", 0)
+    pi = get_native_constant_identifier("pi")
+    expression = IdentifierExpression(x) + 1.0
+
+    result = evaluate_expression_with_numpy(expression, {x: 2.0, pi: 3.0})
+
+    assert result == 3.0
+
+
+def test_raises_for_a_binding_shadowing_a_constant_referenced_inside_an_inlined_body(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the refusal accounts for a constant referenced only inside an inlined body.
+
+    The evaluator inlines expression-bodied function calls before
+    walking the tree, so a constant reference hidden inside a called
+    function's body must still be caught even though it is absent from
+    the un-inlined call expression.
+    """
+    pi = get_native_constant_identifier("pi")
+    register_function(
+        "np_eval_scaled_by_pi",
+        parameters=[],
+        parameter_sorts=[],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(pi),
+    )
+    expression = call("np_eval_scaled_by_pi")
+
+    with pytest.raises(NativeConstantBindingError, match="pi"):
+        evaluate_expression_with_numpy(expression, {pi: 3.0})
 
 
 # =============================================================================
@@ -876,6 +1119,19 @@ def test_piecewise_with_non_boolean_condition_array_raises() -> None:
         otherwise=LiteralExpression(0),
     )
     values = np.array([0, 1, 2])
+
+    with pytest.raises(NonBooleanLogicalOperandError, match="case condition"):
+        evaluate_expression_with_numpy(expression, {condition: values})
+
+
+def test_piecewise_with_object_dtype_condition_array_raises_during_evaluation() -> None:
+    """Test a condition whose dtype declares no sort still raises during evaluation."""
+    condition = mock_identifier("c", 0)
+    expression = piecewise(
+        (IdentifierExpression(condition), LiteralExpression(1)),
+        otherwise=LiteralExpression(0),
+    )
+    values = np.array([0, 1, 2], dtype=object)
 
     with pytest.raises(PassExecutionError, match=r"(?i)boolean") as exception_info:
         evaluate_expression_with_numpy(expression, {condition: values})
@@ -1185,6 +1441,26 @@ def test_ignores_environment_bindings_not_free_in_expression() -> None:
     assert np.allclose(result, values + 1.0)
 
 
+def test_ignores_a_ragged_binding_not_free_in_expression() -> None:
+    """Test a ragged, non-array-convertible binding is ignored when unreferenced.
+
+    An unreferenced binding is documented to be ignored, so it must not be
+    coerced with ``numpy.asarray`` at all: a ragged nested sequence raises
+    ``ValueError`` from that coercion alone, regardless of whether anything
+    in the expression ever reads it.
+    """
+    x = mock_identifier("x", 0)
+    unused = mock_identifier("unused", 1)
+    expression = IdentifierExpression(x) + LiteralExpression(1)
+    values = np.array([1, 2])
+
+    result = evaluate_expression_with_numpy(
+        expression, {x: values, unused: [[1, 2], [3]]}
+    )
+
+    assert np.array_equal(result, np.array([2, 3]))
+
+
 # =============================================================================
 # Adversarial cases
 # =============================================================================
@@ -1403,3 +1679,28 @@ def test_every_builtin_native_function_has_a_lowering() -> None:
     )
 
     assert not unmapped
+
+
+# =============================================================================
+# Environment is snapshotted at construction
+# =============================================================================
+
+
+def test_numpy_expression_evaluator_snapshots_environment_at_construction() -> None:
+    """Test the evaluator's resolution is unaffected by mutating the caller's dict.
+
+    Builds the evaluator from a plain, still-mutable ``dict`` binding
+    ``x`` to ``1``, then rebinds ``x`` to ``2`` in that same dict after
+    construction. Evaluating the bare identifier must still give ``1``,
+    guarding against the evaluator aliasing the caller's dict instead of
+    snapshotting it.
+    """
+    x = mock_identifier("x", 0)
+    environment = {x: 1}
+    evaluator = NumpyExpressionEvaluator(environment, np)
+
+    environment[x] = 2
+
+    result = evaluator(IdentifierExpression(x))
+
+    assert result == 1

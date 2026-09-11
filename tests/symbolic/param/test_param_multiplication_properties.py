@@ -12,7 +12,7 @@ import pytest
 
 pytest.importorskip("hypothesis")
 
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fhy_core.symbolic.param import create_interval_integer_param_between
@@ -20,6 +20,13 @@ from fhy_core.symbolic.param import create_interval_integer_param_between
 from .conftest import build_interval_integer_param
 
 pytestmark = pytest.mark.property
+
+# Both properties run without a hypothesis deadline. Every example takes
+# about a millisecond, no input is reliably slower than another, and no draw
+# is filtered, so a deadline here would time only the scheduler: on a
+# contended machine one example can be descheduled for hundreds of
+# milliseconds, failing a property about which values a product admits for a
+# reason unrelated to it.
 
 # A finite stand-in for an unbounded end: far beyond any product of the
 # bounded endpoints drawn below, so an unbounded result end must admit it.
@@ -111,6 +118,7 @@ def _build_integer_strategy_within(
 # =============================================================================
 
 
+@settings(deadline=None)
 @given(
     bound_1=st.integers(min_value=-25, max_value=25),
     bound_2=st.integers(min_value=-25, max_value=25),
@@ -144,6 +152,7 @@ def test_multiplication_is_sound_for_every_concrete_pair_in_range(
 # =============================================================================
 
 
+@settings(deadline=None)
 @given(
     left_bound_1=_optional_bound,
     left_bound_2=_optional_bound,

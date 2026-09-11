@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 import pytest
 import z3  # type: ignore[import-untyped]
+from immutabledict import immutabledict
 
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.expression import (
@@ -14,8 +15,11 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    NonBooleanLogicalOperandError,
+    PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
+    get_native_constant_identifier,
 )
 from fhy_core.symbolic.expression.errors import UndecidableError
 from fhy_core.symbolic.expression.passes.sympy import (
@@ -185,6 +189,20 @@ def test_simplify_expression_with_residual_variable_reduces_to_the_identifier() 
     result = simplify_expression(expression)
 
     assert result.is_structurally_equivalent(IdentifierExpression(x))
+
+
+def test_simplify_expression_accepts_an_immutabledict_environment() -> None:
+    """Test the seam's simplification accepts an `immutabledict` environment."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(x), LiteralExpression(1)
+    )
+    environment = immutabledict({x: LiteralExpression(2)})
+
+    result = simplify_expression(expression, environment)
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == 3
 
 
 # =============================================================================
@@ -441,6 +459,101 @@ def test_assert_holds_for_all_free_assignments_raises_undecidable_error_on_unkno
         )
 
     assert exc_info.value.reason == "timeout"
+
+
+# =============================================================================
+# `symbol_types` accepts any `Mapping`, not only `dict`
+# =============================================================================
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_accepts_an_immutabledict() -> None:
+    """Test the satisfiability seam accepts an `immutabledict` `symbol_types`."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+    )
+    symbol_types = immutabledict({x: SymbolType.INT})
+
+    assert check_expression_satisfiability(expression, symbol_types) is True
+
+
+@pytest.mark.z3
+def test_does_expression_imply_accepts_an_immutabledict_symbol_types() -> None:
+    """Test the implication seam accepts an `immutabledict` `symbol_types`."""
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL, IdentifierExpression(x), LiteralExpression(5)
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(3)
+    )
+    symbol_types = immutabledict({x: SymbolType.INT})
+
+    assert does_expression_imply(antecedent, consequent, symbol_types) is True
+
+
+@pytest.mark.z3
+def test_holds_for_all_free_assignments_accepts_an_immutabledict() -> None:
+    """Test the universal-validity seam accepts an `immutabledict` `symbol_types`."""
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL,
+        BinaryExpression(
+            BinaryOperation.MULTIPLY, IdentifierExpression(x), IdentifierExpression(x)
+        ),
+        LiteralExpression(0),
+    )
+    symbol_types = immutabledict({x: SymbolType.REAL})
+
+    assert holds_for_all_free_assignments(frozenset(), expression, symbol_types) is True
+
+
+@pytest.mark.z3
+def test_assert_holds_for_all_free_assignments_with_immutabledict_raises_on_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test the strict variant raises when undecided, given an `immutabledict`.
+
+    Z3 is forced to answer ``unknown``, so the claim's truth does not
+    matter; the test pins that a `Mapping` other than `dict` reaches the
+    raising path.
+    """
+    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+    monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+    )
+    symbol_types = immutabledict({x: SymbolType.INT})
+
+    with pytest.raises(UndecidableError, match="timeout"):
+        assert_holds_for_all_free_assignments(frozenset(), expression, symbol_types)
+
+
+@pytest.mark.z3
+def test_assert_expression_implies_with_immutabledict_symbol_types_raises_on_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test the strict variant raises when undecided, given an `immutabledict`.
+
+    Z3 is forced to answer ``unknown``, so the claim's truth does not
+    matter; the test pins that a `Mapping` other than `dict` reaches the
+    raising path.
+    """
+    monkeypatch.setattr(z3.Solver, "check", lambda self: z3.unknown)
+    monkeypatch.setattr(z3.Solver, "reason_unknown", lambda self: "timeout")
+    x = mock_identifier("x", 0)
+    antecedent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(5)
+    )
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(10)
+    )
+    symbol_types = immutabledict({x: SymbolType.INT})
+
+    with pytest.raises(UndecidableError, match="timeout"):
+        assert_expression_implies(antecedent, consequent, symbol_types)
 
 
 # =============================================================================
@@ -930,17 +1043,17 @@ def test_check_expression_satisfiability_negative_exponent_is_screened() -> None
 @pytest.mark.z3
 @pytest.mark.parametrize(
     "exponent",
-    [0, 0.5, "2"],
-    ids=["zero", "non_integer", "string_form"],
+    [0, 0.5, "2.0"],
+    ids=["zero", "non_integer", "float_grammar_string"],
 )
 def test_check_expression_satisfiability_unsafe_exponent_is_screened(
     exponent: str | float | int | bool,
 ) -> None:
-    """Test an exponent that is not a literal integer of at least one is screened.
+    """Test an exponent that is not an integer literal of at least one is screened.
 
-    A zero exponent leaves `0 ** 0` reachable, a non-integer exponent
-    lowers to a real power undefined for a negative base, and a
-    string-form literal carries no sort guarantee.
+    A zero exponent leaves `0 ** 0` reachable, and a non-integer
+    exponent -- whether a Python `float` or a float-grammar string --
+    lowers to a real power undefined for a negative base.
     """
     x = mock_identifier("x", 0)
     power = BinaryExpression(
@@ -954,17 +1067,23 @@ def test_check_expression_satisfiability_unsafe_exponent_is_screened(
 
 
 @pytest.mark.z3
-def test_check_expression_satisfiability_positive_integer_exponent_stays_decided() -> (
-    None
-):
-    """Test a literal positive integer exponent is not screened.
+@pytest.mark.parametrize(
+    "exponent", [2, "2", "02"], ids=["int", "string", "leading_zero"]
+)
+def test_check_expression_satisfiability_positive_integer_exponent_stays_decided(
+    exponent: str | int,
+) -> None:
+    """Test a literal positive integer exponent is not screened, in every form.
 
     Contrasts the refused exponents: `x ** 2` is total on every integer,
-    so the screen must leave it decidable.
+    so the screen must leave it decidable. The integer-grammar strings
+    `"2"` and `"02"` are structurally equivalent to the integer `2`, so
+    the screen has to admit all three or the same question would be
+    decided for one member of that class and refused for another.
     """
     x = mock_identifier("x", 0)
     power = BinaryExpression(
-        BinaryOperation.POWER, IdentifierExpression(x), LiteralExpression(2)
+        BinaryOperation.POWER, IdentifierExpression(x), LiteralExpression(exponent)
     )
     expression = BinaryExpression(BinaryOperation.EQUAL, power, LiteralExpression(4))
 
@@ -1098,6 +1217,281 @@ def test_check_expression_satisfiability_int_identifier_lt_float_not_screened() 
     )
 
     assert check_expression_satisfiability(expression, {x: SymbolType.INT}) is True
+
+
+# -----------------------------------------------------------------------
+# The numeric-kind classifier follows the IR's evaluated int/float kind,
+# not Z3's sort, through arithmetic, NEGATE, POWER, and piecewise
+# -----------------------------------------------------------------------
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "operation",
+    [BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL],
+    ids=["equal", "not_equal"],
+)
+def test_check_expression_satisfiability_int_addition_against_float_literal_is_screened(
+    operation: BinaryOperation,
+) -> None:
+    """Test EQUAL/NOT_EQUAL between INT arithmetic and a float literal is screened.
+
+    `y + 1` stays INT-valued whenever `y` is, so comparing it to the
+    float literal `3.0` hits the same Z3 rationalization hazard as
+    comparing a bare INT identifier to a float literal.
+    """
+    y = mock_identifier("y", 0)
+    addition = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(y), LiteralExpression(1)
+    )
+    expression = BinaryExpression(operation, addition, LiteralExpression(3.0))
+
+    result = check_expression_satisfiability(expression, {y: SymbolType.INT})
+
+    assert result is None
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_literal_left_of_int_addition_screened() -> (
+    None
+):
+    """Test the screen catches the hazard with the float literal on the left.
+
+    The mixed-kind hazard is symmetric in operand order: `3.0 == y + 1`
+    must be refused exactly as `y + 1 == 3.0` is.
+    """
+    y = mock_identifier("y", 0)
+    addition = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(y), LiteralExpression(1)
+    )
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, LiteralExpression(3.0), addition
+    )
+
+    result = check_expression_satisfiability(expression, {y: SymbolType.INT})
+
+    assert result is None
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_int_multiply_vs_float_literal_screened() -> (
+    None
+):
+    """Test INT multiplication compared to a float literal is screened.
+
+    `y * 2` stays INT-valued for an INT `y`, so it hits the same
+    rationalization hazard as a bare INT operand.
+    """
+    y = mock_identifier("y", 0)
+    multiplication = BinaryExpression(
+        BinaryOperation.MULTIPLY, IdentifierExpression(y), LiteralExpression(2)
+    )
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, multiplication, LiteralExpression(3.0)
+    )
+
+    result = check_expression_satisfiability(expression, {y: SymbolType.INT})
+
+    assert result is None
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_negated_int_vs_float_literal_screened() -> (
+    None
+):
+    """Test NEGATE of an INT identifier compared to a float literal is screened.
+
+    NEGATE keeps its operand's kind, so `-y` is still INT-valued for an
+    INT `y` and hits the same hazard as the bare identifier.
+    """
+    y = mock_identifier("y", 0)
+    negated = UnaryExpression(UnaryOperation.NEGATE, IdentifierExpression(y))
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, negated, LiteralExpression(3.0)
+    )
+
+    result = check_expression_satisfiability(expression, {y: SymbolType.INT})
+
+    assert result is None
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_int_power_vs_float_literal_screened() -> None:
+    """Test INT POWER by an integer exponent compared to a float literal is screened.
+
+    Z3 sorts `Int ** Int` as Real, but the IR evaluates `y ** 2` to an
+    int for an INT `y`, so the type-strict distinction from `4.0` is
+    still live and the comparison must stay refused.
+    """
+    y = mock_identifier("y", 0)
+    power = BinaryExpression(
+        BinaryOperation.POWER, IdentifierExpression(y), LiteralExpression(2)
+    )
+    expression = BinaryExpression(BinaryOperation.EQUAL, power, LiteralExpression(4.0))
+
+    result = check_expression_satisfiability(expression, {y: SymbolType.INT})
+
+    assert result is None
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_int_literal_vs_real_piecewise_screened() -> (
+    None
+):
+    """Test an int literal compared to an all-REAL piecewise is screened.
+
+    Every branch of the piecewise is REAL-valued, so the piecewise as a
+    whole hits the same hazard as a bare REAL-sorted operand compared to
+    the int literal `1`.
+    """
+    y = mock_identifier("y", 0)
+    b = mock_identifier("b", 1)
+    branch = PiecewiseExpression(
+        (IdentifierExpression(b),), (IdentifierExpression(y),), IdentifierExpression(y)
+    )
+    expression = BinaryExpression(BinaryOperation.EQUAL, LiteralExpression(1), branch)
+
+    result = check_expression_satisfiability(
+        expression, {y: SymbolType.REAL, b: SymbolType.BOOL}
+    )
+
+    assert result is None
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_float_vs_mixed_kind_piecewise_screened() -> (
+    None
+):
+    """Test a float literal compared to a piecewise mixing INT and REAL branches.
+
+    The piecewise's branches disagree in kind -- one INT, one REAL -- so
+    its own kind is unknown, and an unknown-kind operand next to a
+    numeric literal is refused exactly as a provable INT/REAL mismatch
+    is.
+    """
+    y = mock_identifier("y", 0)
+    r = mock_identifier("r", 1)
+    b = mock_identifier("b", 2)
+    branch = PiecewiseExpression(
+        (IdentifierExpression(b),), (IdentifierExpression(y),), IdentifierExpression(r)
+    )
+    expression = BinaryExpression(BinaryOperation.EQUAL, LiteralExpression(3.0), branch)
+
+    result = check_expression_satisfiability(
+        expression, {y: SymbolType.INT, r: SymbolType.REAL, b: SymbolType.BOOL}
+    )
+
+    assert result is None
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_int_addition_eq_int_literal_decided() -> None:
+    """Test INT arithmetic compared to an integer literal stays decided.
+
+    Contrasts the hazard: `3` is integer-valued, so no kind mismatch
+    exists against the INT-valued `y + 1`.
+    """
+    y = mock_identifier("y", 0)
+    addition = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(y), LiteralExpression(1)
+    )
+    expression = BinaryExpression(BinaryOperation.EQUAL, addition, LiteralExpression(3))
+
+    assert check_expression_satisfiability(expression, {y: SymbolType.INT}) is True
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_int_times_float_eq_float_decided() -> None:
+    """Test multiplying an INT identifier by a float literal makes the product REAL.
+
+    `y * 1.0` is REAL-valued regardless of `y`'s own sort, matching the
+    float literal `3.0` on the other side, so the comparison stays
+    decided.
+    """
+    y = mock_identifier("y", 0)
+    multiplication = BinaryExpression(
+        BinaryOperation.MULTIPLY, IdentifierExpression(y), LiteralExpression(1.0)
+    )
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, multiplication, LiteralExpression(3.0)
+    )
+
+    assert check_expression_satisfiability(expression, {y: SymbolType.INT}) is True
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_real_addition_eq_float_decided() -> None:
+    """Test REAL arithmetic compared to a float literal stays decided.
+
+    Both sides are REAL-valued, so no kind mismatch exists.
+    """
+    r = mock_identifier("r", 0)
+    addition = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(r), LiteralExpression(1)
+    )
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, addition, LiteralExpression(3.0)
+    )
+
+    assert check_expression_satisfiability(expression, {r: SymbolType.REAL}) is True
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_int_floor_divide_eq_int_decided() -> None:
+    """Test INT floor-division compared to an integer literal stays decided.
+
+    `y // 2` is INT-valued for an INT `y`, matching the integer literal
+    `3` on the other side.
+    """
+    y = mock_identifier("y", 0)
+    floor_divide = BinaryExpression(
+        BinaryOperation.FLOOR_DIVIDE, IdentifierExpression(y), LiteralExpression(2)
+    )
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, floor_divide, LiteralExpression(3)
+    )
+
+    assert check_expression_satisfiability(expression, {y: SymbolType.INT}) is True
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_int_addition_lt_float_not_screened() -> None:
+    """Test `<` between INT arithmetic and a float literal is not screened.
+
+    Only EQUAL/NOT_EQUAL collapse the type-strict int/float distinction;
+    ordering stays mathematically meaningful even when one side is an
+    INT-valued arithmetic expression rather than a bare identifier.
+    """
+    y = mock_identifier("y", 0)
+    addition = BinaryExpression(
+        BinaryOperation.ADD, IdentifierExpression(y), LiteralExpression(1)
+    )
+    expression = BinaryExpression(
+        BinaryOperation.LESS, addition, LiteralExpression(3.0)
+    )
+
+    assert check_expression_satisfiability(expression, {y: SymbolType.INT}) is True
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_int_id_eq_real_id_not_screened() -> None:
+    """Test EQUAL between two non-literal operands is not screened.
+
+    The hazard only applies when one side is a numeric literal; an
+    equality between two bare identifiers is left to the solver even
+    when they are declared different sorts.
+    """
+    y = mock_identifier("y", 0)
+    r = mock_identifier("r", 1)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(y), IdentifierExpression(r)
+    )
+
+    result = check_expression_satisfiability(
+        expression, {y: SymbolType.INT, r: SymbolType.REAL}
+    )
+
+    assert result is True
 
 
 def test_does_expression_imply_hazardous_premise_returns_none(
@@ -1249,6 +1643,30 @@ def test_seam_functions_reject_a_non_positive_timeout(
     )
 
     with pytest.raises(ValueError, match=r"positive"):
+        invoke(x, expression, bad_timeout)
+
+
+@pytest.mark.parametrize("bad_timeout", [True, 1000.0], ids=["bool", "float"])
+@pytest.mark.parametrize(
+    "invoke",
+    [invoke for _, invoke in TIMEOUT_ACCEPTING_SEAM_CALLS],
+    ids=[name for name, _ in TIMEOUT_ACCEPTING_SEAM_CALLS],
+)
+def test_seam_functions_reject_a_timeout_that_is_not_a_strict_integer(
+    invoke: Callable[[Identifier, Expression, object], object], bad_timeout: object
+) -> None:
+    """Test every timeout-accepting seam function rejects a bool or float bound.
+
+    ``True`` equals ``1`` and ``1000.0`` is positive, yet neither is the
+    unsigned integer Z3's timeout parameter takes, so each would otherwise
+    pass validation and fail inside the solver.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.GREATER_EQUAL, IdentifierExpression(x), IdentifierExpression(x)
+    )
+
+    with pytest.raises(ValueError, match=r"positive integer"):
         invoke(x, expression, bad_timeout)
 
 
@@ -1423,3 +1841,1126 @@ def test_check_expression_satisfiability_screens_a_nested_int_float_equality() -
     result = check_expression_satisfiability(expression, {x: SymbolType.INT})
 
     assert result is None
+
+
+# =============================================================================
+# Decidability is constant on literal structural-equivalence classes
+# =============================================================================
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "integer_form", [1, "1", "01"], ids=["int", "string", "leading_zero"]
+)
+def test_int_float_equality_screen_refuses_every_integer_literal_form(
+    integer_form: int | str,
+) -> None:
+    """Test the int/float screen refuses an equality in every integer spelling.
+
+    `LiteralExpression(1)`, `LiteralExpression("1")`, and
+    `LiteralExpression("01")` are one structural-equivalence class, so the
+    screen has to classify all three as integer-valued and refuse each
+    against `1.0`. Deciding the string forms while refusing the `int` form
+    would answer a question for one member of a class that the seam
+    declares undecidable for another.
+    """
+    left = LiteralExpression(integer_form)
+    expression = BinaryExpression(BinaryOperation.EQUAL, left, LiteralExpression(1.0))
+
+    assert left.is_structurally_equivalent(LiteralExpression(1))
+    assert check_expression_satisfiability(expression, {}) is None
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "right_value, expected",
+    [
+        pytest.param(1, True, id="equal_integers"),
+        pytest.param("01", True, id="equal_integers_leading_zero"),
+        pytest.param(2, False, id="distinct_integers"),
+    ],
+)
+def test_equality_of_integer_literal_forms_is_decided_as_an_integer_comparison(
+    right_value: int | str, expected: bool
+) -> None:
+    """Test an integer-grammar string compares as the integer it denotes.
+
+    Both sides lower to the INT sort, so the seam decides the comparison
+    outright rather than screening it: `"1" == 1` is satisfiable and
+    `"1" == 2` is not.
+    """
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, LiteralExpression("1"), LiteralExpression(right_value)
+    )
+
+    assert check_expression_satisfiability(expression, {}) is expected
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "float_form",
+    [1.0, "1.0", 1.5, "1.5"],
+    ids=["float", "decimal", "float_fractional", "decimal_fractional"],
+)
+def test_int_float_equality_screen_refuses_every_float_literal_form(
+    float_form: float | str,
+) -> None:
+    """Test a float-valued literal against an integer literal stays refused.
+
+    The counterpart to the integer-form screen: neither float bucket is
+    integer-valued, so the mixed-sort equality is refused whichever
+    spelling the float side uses.
+    """
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, LiteralExpression(float_form), LiteralExpression(1)
+    )
+
+    assert check_expression_satisfiability(expression, {}) is None
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "operation, result_value",
+    [
+        pytest.param(BinaryOperation.POWER, 4, id="power"),
+        pytest.param(BinaryOperation.FLOOR_DIVIDE, 2, id="floor_divide"),
+        pytest.param(BinaryOperation.MODULO, 1, id="modulo"),
+    ],
+)
+@pytest.mark.parametrize(
+    "operand_form", [2, "2", "02"], ids=["int", "string", "leading_zero"]
+)
+def test_partial_operation_screen_admits_every_integer_operand_form(
+    operation: BinaryOperation, result_value: int, operand_form: int | str
+) -> None:
+    """Test the partial-operation screen admits an integer operand in every spelling.
+
+    The exponent screen wants an integer of at least one and the
+    floor-division and modulo screens want a positive integer divisor.
+    Each holds of `2`, `"2"`, and `"02"` alike, so all three stay
+    decidable: a screen keying off the stored Python type instead would
+    refuse the string spellings of a divisor it accepts as an `int`.
+    """
+    x = mock_identifier("x", 0)
+    applied = BinaryExpression(
+        operation, IdentifierExpression(x), LiteralExpression(operand_form)
+    )
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, applied, LiteralExpression(result_value)
+    )
+
+    result = check_expression_satisfiability(expression, {x: SymbolType.INT})
+
+    assert result is True
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "operation",
+    [
+        pytest.param(BinaryOperation.POWER, id="power"),
+        pytest.param(BinaryOperation.FLOOR_DIVIDE, id="floor_divide"),
+        pytest.param(BinaryOperation.MODULO, id="modulo"),
+    ],
+)
+def test_partial_operation_screen_refuses_a_float_grammar_string_operand(
+    operation: BinaryOperation,
+) -> None:
+    """Test a float-grammar string operand is still refused by the screen.
+
+    A float-grammar string is not integer-valued, so it satisfies neither
+    the integer-exponent nor the positive-integer-divisor requirement and
+    the node stays undecidable.
+    """
+    x = mock_identifier("x", 0)
+    applied = BinaryExpression(
+        operation, IdentifierExpression(x), LiteralExpression("2.0")
+    )
+    expression = BinaryExpression(BinaryOperation.EQUAL, applied, LiteralExpression(1))
+
+    result = check_expression_satisfiability(expression, {x: SymbolType.INT})
+
+    assert result is None
+
+
+# =============================================================================
+# Backend agreement on identifiers named after native constants
+# =============================================================================
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("constant_name", ["pi", "e"])
+def test_backends_agree_on_an_identifier_named_after_a_native_constant(
+    constant_name: str,
+) -> None:
+    """Test Z3 and SymPy treat a variable named ``pi`` the same way.
+
+    Only a constant's canonical identifier denotes the constant, so an
+    identifier that merely shares its name is an ordinary variable to
+    both backends: satisfiability decides `pi == 1` `True` (the variable
+    can be 1) and simplification leaves a residual, where reading it as
+    the constant would fold it to `False` on one side and refuse it on
+    the other.
+    """
+    variable = mock_identifier(constant_name, 1024)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, IdentifierExpression(variable), LiteralExpression(1)
+    )
+
+    satisfiable = check_expression_satisfiability(
+        expression, {variable: SymbolType.INT}
+    )
+    simplified = simplify_expression(expression)
+
+    assert satisfiable is True
+    assert not isinstance(simplified, LiteralExpression)
+    assert simplified.get_free_identifiers() == {variable}
+
+
+# =============================================================================
+# Ill-typed logical connectives are refused, not reported as undecidable
+# =============================================================================
+
+_NUMERIC_CONNECTIVES = [
+    pytest.param(
+        Expression.logical_and(LiteralExpression(2), LiteralExpression(4)), id="and"
+    ),
+    pytest.param(
+        Expression.logical_or(LiteralExpression(2), LiteralExpression(4)), id="or"
+    ),
+    pytest.param(
+        UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(2)), id="not"
+    ),
+]
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("expression", _NUMERIC_CONNECTIVES)
+def test_check_expression_satisfiability_refuses_a_numeric_logical_operand(
+    expression: Expression,
+) -> None:
+    """Test the seam refuses an ill-typed connective with its own typed error.
+
+    Z3 rejects an integer operand of ``z3.And`` with a ``Z3Exception``,
+    which the pass infrastructure wraps into a `PassExecutionError` naming
+    an SMT-LIB declaration. Neither name tells the caller their expression
+    is ill-typed, so the seam reports it as such.
+    """
+    with pytest.raises(NonBooleanLogicalOperandError) as exc_info:
+        check_expression_satisfiability(expression, {})
+
+    assert type(exc_info.value) is NonBooleanLogicalOperandError
+    assert "Sort mismatch" not in str(exc_info.value)
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("expression", _NUMERIC_CONNECTIVES)
+def test_both_backends_refuse_one_ill_typed_expression_with_the_same_error(
+    expression: Expression,
+) -> None:
+    """Test simplification and satisfiability agree on how they refuse.
+
+    The two queries route to different backends whose native complaints
+    differ -- a SymPy ``TypeError`` on one side, a wrapped ``Z3Exception``
+    on the other -- so without a shared screen a caller would have to
+    catch two unrelated error types for the same authoring mistake.
+    """
+    with pytest.raises(NonBooleanLogicalOperandError) as simplify_error:
+        simplify_expression(expression)
+    with pytest.raises(NonBooleanLogicalOperandError) as satisfiability_error:
+        check_expression_satisfiability(expression, {})
+
+    assert type(simplify_error.value) is type(satisfiability_error.value)
+
+
+@pytest.mark.z3
+def test_does_expression_imply_raises_rather_than_reporting_none() -> None:
+    """Test an ill-typed operand raises instead of taking the hazard screen's `None`.
+
+    ``None`` is this seam's report for "the solver could not settle a
+    well-typed question". An ill-typed expression has no answer to settle,
+    so folding it into the same channel would let an authoring bug pass
+    for a solver limitation.
+    """
+    antecedent = Expression.logical_and(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        does_expression_imply(antecedent, LiteralExpression(True), {})
+
+
+@pytest.mark.z3
+def test_holds_for_all_free_assignments_raises_rather_than_reporting_none() -> None:
+    """Test the lenient universal-validity entry point raises on a numeric operand."""
+    expression = Expression.logical_or(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        holds_for_all_free_assignments(frozenset(), expression, {})
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(
+            lambda expression: assert_holds_for_all_free_assignments(
+                frozenset(), expression, {}
+            ),
+            id="assert_holds_for_all_free_assignments",
+        ),
+        pytest.param(
+            lambda expression: assert_expression_implies(
+                expression, LiteralExpression(True), {}
+            ),
+            id="assert_expression_implies",
+        ),
+    ],
+)
+def test_strict_companion_refuses_an_ill_typed_operand_as_a_type_error(
+    query: Callable[[Expression], bool],
+) -> None:
+    """Test the strict companions do not dress an ill-typed shape as undecidability.
+
+    `UndecidableError` carries a ``reason`` a caller can act on -- a
+    timeout invites a larger bound, a hazard-screen marker says to stop
+    asking. An ill-typed expression fits neither: it needs the tree fixed,
+    which is what a `TypeError` says.
+    """
+    expression = Expression.logical_and(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError) as exc_info:
+        query(expression)
+
+    assert not isinstance(exc_info.value, UndecidableError)
+
+
+_Z3_QUESTIONS_OVER_ONE_EXPRESSION = [
+    pytest.param(
+        lambda expression: check_expression_satisfiability(expression, {}),
+        id="check_expression_satisfiability",
+    ),
+    pytest.param(
+        lambda expression: does_expression_imply(
+            expression, LiteralExpression(True), {}
+        ),
+        id="does_expression_imply_antecedent",
+    ),
+    pytest.param(
+        lambda expression: does_expression_imply(
+            LiteralExpression(True), expression, {}
+        ),
+        id="does_expression_imply_consequent",
+    ),
+    pytest.param(
+        lambda expression: holds_for_all_free_assignments(frozenset(), expression, {}),
+        id="holds_for_all_free_assignments",
+    ),
+    pytest.param(
+        lambda expression: assert_holds_for_all_free_assignments(
+            frozenset(), expression, {}
+        ),
+        id="assert_holds_for_all_free_assignments",
+    ),
+    pytest.param(
+        lambda expression: assert_expression_implies(
+            expression, LiteralExpression(True), {}
+        ),
+        id="assert_expression_implies_antecedent",
+    ),
+    pytest.param(
+        lambda expression: assert_expression_implies(
+            LiteralExpression(True), expression, {}
+        ),
+        id="assert_expression_implies_consequent",
+    ),
+]
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
+def test_z3_question_reports_ill_typedness_ahead_of_the_hazard_screen(
+    query: Callable[[Expression], bool | None],
+) -> None:
+    """Test an ill-typed tree the hazard screen would also refuse raises its own error.
+
+    ``logical_and(2, 4) == 1`` is ill-typed, with numbers under ``and``,
+    and hazardous, comparing a Boolean with a number. The screen's refusal
+    -- ``None`` or ``UndecidableError`` -- says a different configuration
+    might decide the question; ill-typedness says none can, so it is the
+    diagnosis the caller gets.
+    """
+    expression = Expression.logical_and(
+        LiteralExpression(2), LiteralExpression(4)
+    ).equals(LiteralExpression(1))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(expression)
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "implies",
+    [
+        pytest.param(does_expression_imply, id="does_expression_imply"),
+        pytest.param(assert_expression_implies, id="assert_expression_implies"),
+    ],
+)
+def test_implication_reports_an_ill_typed_consequent_behind_a_hazardous_antecedent(
+    implies: Callable[[Expression, Expression, dict[Identifier, SymbolType]], object],
+) -> None:
+    """Test both sides are checked for ill-typedness before either hazard screen.
+
+    The antecedent is screened for hazards first, so an ill-typed
+    consequent behind a hazardous antecedent is only reported if both
+    sides are checked before the screen runs.
+    """
+    hazardous = LiteralExpression(True).equals(LiteralExpression(1))
+    ill_typed = Expression.logical_or(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        implies(hazardous, ill_typed, {})
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
+def test_z3_question_raises_a_missing_symbol_type_ahead_of_ill_typedness(
+    query: Callable[[Expression], bool | None],
+) -> None:
+    """Test the ``symbol_types`` precondition still raises before ill-typedness."""
+    x = mock_identifier("x", 0)
+    expression = Expression.logical_and(
+        LiteralExpression(2), IdentifierExpression(x)
+    ).equals(LiteralExpression(1))
+
+    with pytest.raises(KeyError):
+        query(expression)
+
+
+# =============================================================================
+# A numeric root -- not just a numeric operand of a connective -- is refused
+# =============================================================================
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
+def test_z3_question_refuses_a_bare_numeric_root(
+    query: Callable[[Expression], bool | None],
+) -> None:
+    """Test a numeric root, with no connective above it, is refused as ill-typed.
+
+    A predicate is itself a Boolean position, so a bare numeric literal
+    handed to any of these seams is as ill-typed as one nested under a
+    connective -- even though no connective here would otherwise catch
+    it.
+    """
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(LiteralExpression(2))
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_refuses_an_arithmetic_root_before_hazard() -> (
+    None
+):
+    """Test an arithmetic root is refused before the division hazard screen runs.
+
+    ``x / y`` denotes a number, not a predicate. The hazard screen would
+    otherwise catch its unscreened divisor first and report ``None`` --
+    the same signal a solver timeout uses -- hiding that the expression
+    was never a valid satisfiability question to begin with.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.DIVIDE, IdentifierExpression(x), IdentifierExpression(y)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        check_expression_satisfiability(
+            expression, {x: SymbolType.REAL, y: SymbolType.REAL}
+        )
+
+
+@pytest.mark.z3
+def test_does_expression_imply_refuses_a_numeric_antecedent_before_the_hazard() -> None:
+    """Test the antecedent's ill-typedness is reported before the consequent's hazard.
+
+    The consequent references ``pi``, which the native-constant hazard
+    screen would otherwise report as ``None``; the antecedent is screened
+    first, so its own numeric root is what surfaces instead.
+    """
+    pi = get_native_constant_identifier("pi")
+    consequent = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(pi), LiteralExpression(3)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        does_expression_imply(LiteralExpression(2), consequent, {})
+
+
+@pytest.mark.z3
+def test_simplify_expression_refuses_a_number_bound_into_a_connective() -> None:
+    """Test an environment binding a number under a connective is refused too.
+
+    Substitution happens after lowering, so the number would otherwise
+    meet SymPy's Boolean constructor inside the bridge and leak SymPy's
+    own ``TypeError`` out of this entry point.
+    """
+    p = mock_identifier("p", 0)
+    expression = Expression.logical_and(
+        IdentifierExpression(p), LiteralExpression(True)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        simplify_expression(expression, {p: LiteralExpression(2)})
+
+
+@pytest.mark.z3
+def test_simplify_expression_refuses_a_number_bound_into_a_case_condition() -> None:
+    """Test a number bound into a piecewise condition is refused, not read as truth.
+
+    SymPy's ``Piecewise`` takes a substituted ``1`` as a true condition, so
+    the unscreened simplification would select the branch by the number's
+    truthiness and fold to that branch's value.
+    """
+    condition = mock_identifier("c", 0)
+    expression = Expression.piecewise(
+        (IdentifierExpression(condition), LiteralExpression(1)),
+        otherwise=LiteralExpression(0),
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        simplify_expression(expression, {condition: LiteralExpression(1)})
+
+
+@pytest.mark.z3
+def test_both_backends_refuse_an_arithmetic_case_condition_with_one_error() -> None:
+    """Test SymPy and Z3 refuse an arithmetic piecewise condition alike.
+
+    Each backend rejects the shape natively -- SymPy's ``Piecewise`` with
+    a ``TypeError``, Z3's ``If`` with a sort mismatch -- which the pass
+    infrastructure wraps; the shared screen reports it as ill-typedness.
+    """
+    x = mock_identifier("x", 0)
+    expression = Expression.piecewise(
+        (IdentifierExpression(x) + LiteralExpression(1), LiteralExpression(1)),
+        otherwise=LiteralExpression(0),
+    ).equals(LiteralExpression(1))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        simplify_expression(expression)
+    with pytest.raises(NonBooleanLogicalOperandError):
+        check_expression_satisfiability(expression, {x: SymbolType.INT})
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "expression, expected",
+    [
+        pytest.param(
+            Expression.logical_and(LiteralExpression(True), LiteralExpression(False)),
+            False,
+            id="and_true_false_is_unsatisfiable",
+        ),
+        pytest.param(
+            Expression.logical_and(LiteralExpression(True), LiteralExpression(True)),
+            True,
+            id="and_true_true_is_satisfiable",
+        ),
+        pytest.param(
+            Expression.logical_or(LiteralExpression(False), LiteralExpression(True)),
+            True,
+            id="or_false_true_is_satisfiable",
+        ),
+    ],
+)
+def test_check_expression_satisfiability_still_decides_a_ground_boolean_connective(
+    expression: Expression, expected: bool
+) -> None:
+    """Test the seam still decides Boolean connectives after the screen is in place."""
+    assert check_expression_satisfiability(expression, {}) is expected
+
+
+@pytest.mark.z3
+def test_seam_decides_a_connective_mixing_an_identifier_with_a_boolean_literal() -> (
+    None
+):
+    """Test a BOOL-sorted identifier under a connective is decided, not screened.
+
+    An identifier carries its sort in ``symbol_types`` rather than in the
+    tree, so the screen has to leave it alone; this pins that a symbolic
+    Boolean operand still reaches Z3 and gets an answer.
+    """
+    b = mock_identifier("b", 0)
+    conjunction = Expression.logical_and(
+        IdentifierExpression(b), LiteralExpression(True)
+    )
+
+    assert check_expression_satisfiability(conjunction, {b: SymbolType.BOOL}) is True
+    assert (
+        does_expression_imply(
+            conjunction, IdentifierExpression(b), {b: SymbolType.BOOL}
+        )
+        is True
+    )
+
+
+# =============================================================================
+# Both bridges honour each literal form's precision contract
+# =============================================================================
+
+
+def _make_three_tenths_comparison(
+    one_tenth: float | str, three_tenths: float | str
+) -> Expression:
+    """Build ``one_tenth + one_tenth + one_tenth == three_tenths``."""
+    total = BinaryExpression(
+        BinaryOperation.ADD,
+        BinaryExpression(
+            BinaryOperation.ADD,
+            LiteralExpression(one_tenth),
+            LiteralExpression(one_tenth),
+        ),
+        LiteralExpression(one_tenth),
+    )
+    return BinaryExpression(
+        BinaryOperation.EQUAL, total, LiteralExpression(three_tenths)
+    )
+
+
+@pytest.mark.z3
+def test_binary_float_tenths_are_decided_the_same_way_by_both_backends() -> None:
+    """Test `0.1 + 0.1 + 0.1 == 0.3` is false for simplification and the solver.
+
+    A Python `float` is an IEEE-754 binary value, and summing three
+    copies of the nearest binary value to one tenth does not give the
+    nearest binary value to three tenths. Both backends have to say so:
+    reading the literals' shortest reprs as exact decimal instead would
+    let the solver report a witness for a comparison simplification
+    refutes.
+    """
+    expression = _make_three_tenths_comparison(0.1, 0.3)
+
+    simplified = simplify_expression(expression)
+    satisfiable = check_expression_satisfiability(expression, {})
+
+    assert simplified.is_structurally_equivalent(LiteralExpression(False))
+    assert satisfiable is False
+
+
+@pytest.mark.z3
+def test_decimal_string_tenths_are_decided_the_same_way_by_both_backends() -> None:
+    """Test `"0.1" + "0.1" + "0.1" == "0.3"` is true for simplification and the solver.
+
+    A float-grammar string is exact decimal, and three exact tenths sum
+    to exactly three tenths. Both backends have to say so: rounding the
+    decimal text to binary instead would let simplification refute a
+    comparison the solver satisfies.
+    """
+    expression = _make_three_tenths_comparison("0.1", "0.3")
+
+    simplified = simplify_expression(expression)
+    satisfiable = check_expression_satisfiability(expression, {})
+
+    assert simplified.is_structurally_equivalent(LiteralExpression(True))
+    assert satisfiable is True
+
+
+# =============================================================================
+# Native constants are refused rather than lowered as variables
+# =============================================================================
+
+_NATIVE_CONSTANT_NAMES = ["pi", "e", "inf", "nan"]
+
+_LENIENT_Z3_QUESTIONS = [
+    pytest.param(
+        lambda expression: check_expression_satisfiability(expression, {}),
+        id="check_expression_satisfiability",
+    ),
+    pytest.param(
+        lambda expression: does_expression_imply(
+            expression, LiteralExpression(True), {}
+        ),
+        id="does_expression_imply_antecedent",
+    ),
+    pytest.param(
+        lambda expression: does_expression_imply(
+            LiteralExpression(True), expression, {}
+        ),
+        id="does_expression_imply_consequent",
+    ),
+    pytest.param(
+        lambda expression: holds_for_all_free_assignments(frozenset(), expression, {}),
+        id="holds_for_all_free_assignments",
+    ),
+]
+
+_STRICT_Z3_QUESTIONS = [
+    pytest.param(
+        lambda expression: assert_holds_for_all_free_assignments(
+            frozenset(), expression, {}
+        ),
+        id="assert_holds_for_all_free_assignments",
+    ),
+    pytest.param(
+        lambda expression: assert_expression_implies(
+            expression, LiteralExpression(True), {}
+        ),
+        id="assert_expression_implies_antecedent",
+    ),
+    pytest.param(
+        lambda expression: assert_expression_implies(
+            LiteralExpression(True), expression, {}
+        ),
+        id="assert_expression_implies_consequent",
+    ),
+]
+
+
+def _refer_to_constant(constant_name: str) -> IdentifierExpression:
+    """Return a reference to the named native constant's canonical identifier."""
+    return IdentifierExpression(get_native_constant_identifier(constant_name))
+
+
+def _declare_real(constant_name: str) -> dict[Identifier, SymbolType]:
+    """Return ``symbol_types`` giving the named constant's identifier a REAL sort."""
+    return {get_native_constant_identifier(constant_name): SymbolType.REAL}
+
+
+@pytest.mark.parametrize("query", _LENIENT_Z3_QUESTIONS)
+@pytest.mark.parametrize("constant_name", _NATIVE_CONSTANT_NAMES)
+def test_lenient_z3_question_refuses_a_native_constant(
+    constant_name: str, query: Callable[[Expression], bool | None]
+) -> None:
+    """Test a question over a native constant is undecided, with no sort supplied.
+
+    Z3 has no term for the constant, so the only lowering left would be a
+    free variable the solver could set to anything. The canonical
+    identifier names a value rather than a variable, so the question
+    needs no ``symbol_types`` entry to be refused.
+    """
+    expression = _refer_to_constant(constant_name) > 4
+
+    assert query(expression) is None
+
+
+@pytest.mark.parametrize("query", _STRICT_Z3_QUESTIONS)
+@pytest.mark.parametrize("constant_name", _NATIVE_CONSTANT_NAMES)
+def test_strict_z3_question_refuses_a_native_constant_as_screened(
+    constant_name: str, query: Callable[[Expression], bool]
+) -> None:
+    """Test the strict companions refuse a native constant with the screen's reason.
+
+    The refusal is permanent -- no timeout lets Z3 represent ``pi`` -- so
+    the reason is the hazard-screen marker rather than a solver's
+    ``unknown`` text a caller might retry on.
+    """
+    expression = _refer_to_constant(constant_name) > 4
+
+    with pytest.raises(UndecidableError) as exc_info:
+        query(expression)
+
+    assert exc_info.value.reason == "hazard_screen"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(
+            lambda: check_expression_satisfiability(
+                _refer_to_constant("pi") > 4, _declare_real("pi")
+            ),
+            id="pi_above_four_is_satisfiable",
+        ),
+        pytest.param(
+            lambda: does_expression_imply(
+                _refer_to_constant("pi") > 4,
+                _refer_to_constant("pi") > 5,
+                _declare_real("pi"),
+            ),
+            id="pi_above_four_implies_pi_above_five",
+        ),
+        pytest.param(
+            lambda: holds_for_all_free_assignments(
+                frozenset(), _refer_to_constant("pi") > 3, _declare_real("pi")
+            ),
+            id="pi_above_three_holds",
+        ),
+        pytest.param(
+            lambda: check_expression_satisfiability(
+                _refer_to_constant("inf").equals(_refer_to_constant("inf") + 1),
+                _declare_real("inf"),
+            ),
+            id="inf_equals_inf_plus_one_is_satisfiable",
+        ),
+        pytest.param(
+            lambda: holds_for_all_free_assignments(
+                frozenset(),
+                _refer_to_constant("nan").equals(_refer_to_constant("nan")),
+                _declare_real("nan"),
+            ),
+            id="nan_equals_nan_holds",
+        ),
+    ],
+)
+def test_z3_question_over_a_native_constant_with_a_declared_sort_is_refused(
+    query: Callable[[], bool | None],
+) -> None:
+    """Test a sort entry for a constant does not let Z3 decide over it as a variable.
+
+    The constant's value settles each of these questions: ``pi > 4`` is
+    unsatisfiable, it implies ``pi > 5`` vacuously, ``pi > 3`` holds, and
+    in IEEE arithmetic ``inf == inf + 1`` is true and ``nan == nan`` is
+    false. Deciding over a free REAL instead, Z3 answers every one of them
+    the other way, so the sort entry is tolerated but the question is
+    still refused.
+    """
+    assert query() is None
+
+
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
+def test_z3_question_still_requires_a_sort_for_a_variable_beside_a_constant(
+    query: Callable[[Expression], bool | None],
+) -> None:
+    """Test a variable's missing sort raises ahead of the constant screen.
+
+    The constant needs no entry, so the error names only the variable the
+    caller forgot to declare.
+    """
+    x = mock_identifier("x", 0)
+    pi = get_native_constant_identifier("pi")
+    expression = BinaryExpression(
+        BinaryOperation.LESS, IdentifierExpression(pi), IdentifierExpression(x)
+    )
+
+    with pytest.raises(KeyError) as exc_info:
+        query(expression)
+
+    assert repr(x) in str(exc_info.value)
+    assert repr(pi) not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
+def test_z3_question_reports_ill_typedness_ahead_of_a_native_constant(
+    query: Callable[[Expression], bool | None],
+) -> None:
+    """Test an ill-typed tree that also references a constant raises its own error.
+
+    The constant makes the question unanswerable by this backend; the
+    numeric ``and`` operand makes it meaningless to every backend, which
+    is the diagnosis a caller can act on.
+    """
+    expression = Expression.logical_and(
+        LiteralExpression(2), _refer_to_constant("pi") > 3
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(expression)
+
+
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_EXPRESSION)
+@pytest.mark.parametrize("constant_name", _NATIVE_CONSTANT_NAMES)
+def test_z3_question_reports_a_native_constant_under_a_connective_as_ill_typed(
+    constant_name: str, query: Callable[[Expression], bool | None]
+) -> None:
+    """Test a constant under a connective raises the typed error, not a refusal.
+
+    The constant screen would refuse the question as well, but a
+    REAL-sorted constant under ``and`` is meaningless to every backend,
+    not just unanswerable by this one, and that is the diagnosis a caller
+    can act on.
+    """
+    expression = Expression.logical_and(
+        _refer_to_constant(constant_name), LiteralExpression(True)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(expression)
+
+
+_Z3_QUESTIONS_OVER_ONE_SORTED_EXPRESSION = [
+    pytest.param(check_expression_satisfiability, id="check_expression_satisfiability"),
+    pytest.param(
+        lambda expression, symbol_types: does_expression_imply(
+            expression, LiteralExpression(True), symbol_types
+        ),
+        id="does_expression_imply_antecedent",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: does_expression_imply(
+            LiteralExpression(True), expression, symbol_types
+        ),
+        id="does_expression_imply_consequent",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: holds_for_all_free_assignments(
+            frozenset(), expression, symbol_types
+        ),
+        id="holds_for_all_free_assignments",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: assert_holds_for_all_free_assignments(
+            frozenset(), expression, symbol_types
+        ),
+        id="assert_holds_for_all_free_assignments",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: assert_expression_implies(
+            expression, LiteralExpression(True), symbol_types
+        ),
+        id="assert_expression_implies_antecedent",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: assert_expression_implies(
+            LiteralExpression(True), expression, symbol_types
+        ),
+        id="assert_expression_implies_consequent",
+    ),
+]
+
+_SortedQuery = Callable[[Expression, dict[Identifier, SymbolType]], bool | None]
+
+
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_SORTED_EXPRESSION)
+@pytest.mark.parametrize("sort", [SymbolType.INT, SymbolType.REAL])
+@pytest.mark.parametrize(
+    "build_expression",
+    [
+        pytest.param(
+            lambda operand: Expression.logical_and(operand, LiteralExpression(True)),
+            id="and",
+        ),
+        pytest.param(
+            lambda operand: (
+                PiecewiseExpression(
+                    (operand,), (LiteralExpression(1),), LiteralExpression(2)
+                )
+                > 0
+            ),
+            id="case_condition",
+        ),
+    ],
+)
+def test_z3_question_reports_a_numeric_sort_in_a_boolean_position(
+    build_expression: Callable[[Expression], Expression],
+    sort: SymbolType,
+    query: _SortedQuery,
+) -> None:
+    """Test an identifier declared INT or REAL in a Boolean position is ill-typed.
+
+    Z3 rejected the sort mismatch with a raw exception, which surfaced
+    wrapped as ``PassExecutionError``: a failure of the tool, when the
+    question itself has no meaning under any backend.
+    """
+    x = mock_identifier("x", 0)
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(build_expression(IdentifierExpression(x)), {x: sort})
+
+
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_SORTED_EXPRESSION)
+def test_symbol_typed_ill_typedness_is_reported_despite_a_hazard_elsewhere(
+    query: _SortedQuery,
+) -> None:
+    """Test an INT-declared identifier under a connective raises despite a hazard.
+
+    ``y / 0`` is a division hazard the screen alone would report as
+    ``None``, but ``x`` sits directly under ``logical_and`` and is
+    declared INT in ``symbol_types``, so the expression is ill-typed:
+    every entry point that accepts ``symbol_types`` has to read it when
+    classifying a Boolean-position operand, not only when screening a
+    hazard, or a numeric operand there would be reported as merely
+    undecided instead of ill-typed.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    hazardous_division = BinaryExpression(
+        BinaryOperation.DIVIDE, IdentifierExpression(y), LiteralExpression(0)
+    ).equals(LiteralExpression(1))
+    expression = Expression.logical_and(IdentifierExpression(x), hazardous_division)
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(expression, {x: SymbolType.INT, y: SymbolType.REAL})
+
+
+@pytest.mark.parametrize("query", _Z3_QUESTIONS_OVER_ONE_SORTED_EXPRESSION)
+def test_z3_question_decides_a_boolean_sort_in_a_boolean_position(
+    query: _SortedQuery,
+) -> None:
+    """Test an identifier declared BOOL under a connective is still decided."""
+    x = mock_identifier("x", 0)
+    expression = Expression.logical_and(
+        IdentifierExpression(x), LiteralExpression(True)
+    )
+
+    assert isinstance(query(expression, {x: SymbolType.BOOL}), bool)
+
+
+def test_native_constant_screen_warns_naming_the_constant_and_the_entry_point(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test the refusal is logged with the constant it refused and who asked."""
+    pi = get_native_constant_identifier("pi")
+
+    with caplog.at_level(logging.WARNING):
+        result = check_expression_satisfiability(IdentifierExpression(pi) > 4, {})
+
+    assert result is None
+    messages = _collect_solver_warning_messages(caplog)
+    assert messages, "expected a WARNING naming the native constant"
+    assert "check_expression_satisfiability" in messages[0]
+    assert repr(pi) in messages[0]
+
+
+@pytest.mark.z3
+def test_holds_for_all_free_assignments_needs_no_sort_for_a_considered_constant() -> (
+    None
+):
+    """Test a considered constant the expression never references needs no entry.
+
+    Considering a constant quantifies nothing, and with no reference to it
+    in the tree there is nothing to refuse, so the question is decided as
+    though the constant had not been named.
+    """
+    x = mock_identifier("x", 0)
+    pi = get_native_constant_identifier("pi")
+    expression = IdentifierExpression(x).equals(IdentifierExpression(x))
+
+    result = holds_for_all_free_assignments(
+        frozenset({pi}), expression, {x: SymbolType.INT}
+    )
+
+    assert result is True
+
+
+# =============================================================================
+# Non-finite literal hazard
+# =============================================================================
+
+
+_NON_FINITE_LITERAL_HAZARD_EXPRESSIONS = [
+    pytest.param(
+        lambda x: IdentifierExpression(x) < LiteralExpression(float("inf")),
+        id="less-than-positive-infinity",
+    ),
+    pytest.param(
+        lambda x: IdentifierExpression(x) > LiteralExpression(float("-inf")),
+        id="greater-than-negative-infinity",
+    ),
+    pytest.param(
+        lambda x: IdentifierExpression(x).equals(LiteralExpression(float("nan"))),
+        id="equals-nan",
+    ),
+]
+
+_LENIENT_Z3_QUESTIONS_WITH_SORTS = [
+    pytest.param(check_expression_satisfiability, id="check_expression_satisfiability"),
+    pytest.param(
+        lambda expression, symbol_types: does_expression_imply(
+            expression, LiteralExpression(True), symbol_types
+        ),
+        id="does_expression_imply_antecedent",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: does_expression_imply(
+            LiteralExpression(True), expression, symbol_types
+        ),
+        id="does_expression_imply_consequent",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: holds_for_all_free_assignments(
+            frozenset(), expression, symbol_types
+        ),
+        id="holds_for_all_free_assignments",
+    ),
+]
+
+_STRICT_Z3_QUESTIONS_WITH_SORTS = [
+    pytest.param(
+        lambda expression, symbol_types: assert_holds_for_all_free_assignments(
+            frozenset(), expression, symbol_types
+        ),
+        id="assert_holds_for_all_free_assignments",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: assert_expression_implies(
+            expression, LiteralExpression(True), symbol_types
+        ),
+        id="assert_expression_implies_antecedent",
+    ),
+    pytest.param(
+        lambda expression, symbol_types: assert_expression_implies(
+            LiteralExpression(True), expression, symbol_types
+        ),
+        id="assert_expression_implies_consequent",
+    ),
+]
+
+
+@pytest.mark.parametrize("query", _LENIENT_Z3_QUESTIONS_WITH_SORTS)
+@pytest.mark.parametrize("build_expression", _NON_FINITE_LITERAL_HAZARD_EXPRESSIONS)
+def test_lenient_z3_question_refuses_a_non_finite_literal(
+    build_expression: Callable[[Identifier], Expression],
+    query: _SortedQuery,
+) -> None:
+    """Test an inf, -inf, or NaN literal anywhere in the tree is refused, not lowered.
+
+    ``as_integer_ratio`` has no rational value for an infinity or a NaN,
+    so the Z3 bridge cannot lower the literal at all; the screen refuses
+    the question before the bridge is tried, the same as it does for a
+    native constant.
+    """
+    x = mock_identifier("x", 0)
+    expression = build_expression(x)
+
+    assert query(expression, {x: SymbolType.REAL}) is None
+
+
+@pytest.mark.parametrize("query", _STRICT_Z3_QUESTIONS_WITH_SORTS)
+@pytest.mark.parametrize("build_expression", _NON_FINITE_LITERAL_HAZARD_EXPRESSIONS)
+def test_strict_z3_question_refuses_a_non_finite_literal_as_screened(
+    build_expression: Callable[[Identifier], Expression],
+    query: _SortedQuery,
+) -> None:
+    """Test the strict companions raise `UndecidableError` with the screen's reason."""
+    x = mock_identifier("x", 0)
+    expression = build_expression(x)
+
+    with pytest.raises(UndecidableError) as exc_info:
+        query(expression, {x: SymbolType.REAL})
+
+    assert exc_info.value.reason == "hazard_screen"
+
+
+def test_non_finite_literal_screen_warns_naming_the_entry_point(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test the refusal is logged with the entry point that asked."""
+    x = mock_identifier("x", 0)
+    expression = IdentifierExpression(x) < LiteralExpression(float("inf"))
+
+    with caplog.at_level(logging.WARNING):
+        result = check_expression_satisfiability(expression, {x: SymbolType.REAL})
+
+    assert result is None
+    messages = _collect_solver_warning_messages(caplog)
+    assert messages, "expected a WARNING naming the non-finite literal"
+    assert "check_expression_satisfiability" in messages[0]
+
+
+def test_z3_question_requires_a_sort_beside_a_non_finite_literal() -> None:
+    """Test a variable's missing sort raises ahead of the non-finite-literal screen."""
+    x = mock_identifier("x", 0)
+    expression = IdentifierExpression(x) < LiteralExpression(float("inf"))
+
+    with pytest.raises(KeyError) as exc_info:
+        check_expression_satisfiability(expression, {})
+
+    assert repr(x) in str(exc_info.value)
+
+
+@pytest.mark.z3
+def test_check_expression_satisfiability_decides_a_finite_float_literal() -> None:
+    """Test a large but finite float literal is still lowered and decided."""
+    x = mock_identifier("x", 0)
+    expression = IdentifierExpression(x) < LiteralExpression(1e300)
+
+    assert check_expression_satisfiability(expression, {x: SymbolType.REAL}) is True

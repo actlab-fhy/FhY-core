@@ -29,6 +29,8 @@ from fhy_core.symbolic.expression import (
     Expression,
     IdentifierExpression,
     LiteralExpression,
+    NonBooleanLogicalOperandError,
+    get_native_constant_identifier,
 )
 from fhy_core.symbolic.param import (
     Param,
@@ -48,6 +50,7 @@ from fhy_core.symbolic.param import (
     create_ordinal_param,
     create_permutation_param,
     create_real_param,
+    create_real_param_between,
     create_real_param_with_lower_bound,
     create_union_param,
 )
@@ -66,6 +69,7 @@ from .conftest import (
     assert_none_satisfied,
     assert_none_valid,
     assert_param_round_trips_in_all_formats,
+    build_case_condition_constraint,
     mock_identifier,
 )
 
@@ -699,6 +703,16 @@ def test_intersection_result_uses_given_name() -> None:
     assert result.variable is given
 
 
+def test_intersection_result_named_by_native_constant_raises_param_error() -> None:
+    """Test naming an intersection result by a native constant's identifier raises."""
+    left = create_real_param()
+    right = create_real_param_with_lower_bound(0.0)
+    pi = get_native_constant_identifier("pi")
+
+    with pytest.raises(ParamError, match="native constant"):
+        create_intersection_param(left, right, name=pi)
+
+
 # =============================================================================
 # `__and__` dunder delegation
 # =============================================================================
@@ -902,7 +916,7 @@ def test_intersection_result_interoperates_with_is_subset() -> None:
 
     assert result.is_subset(left)
     assert result.is_subset(right)
-    assert not left.is_subset(result)
+    assert left.check_subset(result) is ConstraintOutcome.VIOLATED
 
 
 @pytest.mark.z3
@@ -1136,6 +1150,31 @@ def test_intersection_of_two_undecided_operands_is_returned_live() -> None:
 
 
 # =============================================================================
+# Real domain: a not-in-set constraint's numeric member does not decide emptiness
+# =============================================================================
+
+
+@pytest.mark.z3
+def test_real_intersection_excluding_a_shared_float_value_is_returned_live() -> None:
+    """Test a real intersection narrowed by its own float value is returned live.
+
+    ``c`` is the real singleton `0.5` and ``d`` excludes the `float`
+    member `0.5`; Z3 lowers both to the same rational, so the solver
+    reports the conjunction emptied. Type-strict membership still admits
+    the decimal-string kind of `0.5` for both operands, so the
+    conjunction is not actually empty and the factory must return a live
+    result whose feasibility is UNDECIDED rather than raise `ParamError`.
+    """
+    c = create_real_param_between(0.5, 0.5, name=mock_identifier("c", 1))
+    w = mock_identifier("w", 2)
+    d = create_real_param(name=w, constraints=[NotInSetConstraint(w, {0.5})])
+
+    result = create_intersection_param(c, d)
+
+    assert result.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+# =============================================================================
 # Mixed coercion: a set member that does not lift is a non-bound constraint
 # =============================================================================
 
@@ -1161,3 +1200,27 @@ def test_intersection_with_a_non_liftable_set_member_on_the_plain_operand_raises
         create_intersection_param(left, right)
 
     assert isinstance(excinfo.value.__cause__, ConstraintError)
+
+
+# =============================================================================
+# An ill-typed conjunction raises rather than being returned live
+# =============================================================================
+
+
+def test_intersection_raises_for_a_number_in_a_case_condition() -> None:
+    """Test an ill-typed operand's error propagates from the emptiness check.
+
+    `create_intersection_param` decides emptiness through
+    `check_feasibility`, which refuses a number in a Boolean position.
+    Returning the conjunction live as undecided would hand back a
+    parameter no query can answer.
+    """
+    x = mock_identifier("x", 1)
+    ill_typed = create_integer_param(
+        name=x,
+        constraints=[build_case_condition_constraint(IdentifierExpression(x) + 1)],
+    )
+    well_typed = create_integer_param(name=mock_identifier("y", 2))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        create_intersection_param(ill_typed, well_typed)

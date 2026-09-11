@@ -1426,7 +1426,7 @@ class Serializable(ABC):
         return local or _get_default_type_id(cls)
 
     @classmethod
-    def construct_from_fields(cls: type[_T], fields: dict[str, Any]) -> _T:
+    def construct_from_fields(cls: type[_T], fields: Mapping[str, Any]) -> _T:
         """Build an instance from already-decoded fields.
 
         Default reconstruction for derived ``deserialize_from_dict``. Override

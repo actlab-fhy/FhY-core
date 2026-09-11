@@ -13,7 +13,7 @@ that guards it, following the same pattern as `test_core_internals.py` and
 
 Also covers the `WARNING` logging `_build_screened_constraint_system` and
 its callers emit for every constraint or member excluded, and for every
-solver `UNDECIDED` outcome collapsed to the optimistic default.
+solver `UNDECIDED` outcome, which a boolean wrapper reports as unproven.
 """
 
 import logging
@@ -314,14 +314,14 @@ def test_screening_logs_warning_naming_a_wholly_unliftable_not_in_set_constraint
 
 
 # =============================================================================
-# WARNING content: an UNDECIDED outcome collapsed to the optimistic default
+# WARNING content: an UNDECIDED outcome the boolean wrappers report unproven
 # =============================================================================
 
 
 def test_is_feasible_logs_warning_when_satisfiability_is_undecided(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test the optimistic feasible default logs a WARNING naming the variable."""
+    """Test an unproven feasibility logs a WARNING naming the variable."""
     x = mock_identifier("x", 1)
     hazardous = (IdentifierExpression(x) / IdentifierExpression(x)).not_equals(1)
     param = create_integer_param(name=x, constraints=[EquationConstraint(hazardous)])
@@ -329,7 +329,7 @@ def test_is_feasible_logs_warning_when_satisfiability_is_undecided(
     with caplog.at_level(logging.DEBUG, logger=_DOMAINS_LOGGER):
         result = param.is_feasible()
 
-    assert result is True
+    assert result is False
     warnings = _find_records(caplog, logging.WARNING)
     assert warnings, "expected a WARNING naming the undecided variable"
     assert any(repr(x) in record.getMessage() for record in warnings)
@@ -338,7 +338,7 @@ def test_is_feasible_logs_warning_when_satisfiability_is_undecided(
 def test_is_subset_logs_warning_when_implication_is_undecided(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test the optimistic subset default logs a WARNING naming the variable."""
+    """Test an unproven subset relation logs a WARNING naming the variable."""
     x = mock_identifier("x", 1)
     y = mock_identifier("y", 2)
     hazardous = (IdentifierExpression(x) / IdentifierExpression(x)).not_equals(1)
@@ -348,7 +348,7 @@ def test_is_subset_logs_warning_when_implication_is_undecided(
     with caplog.at_level(logging.DEBUG, logger=_DOMAINS_LOGGER):
         result = own.is_subset(other)
 
-    assert result is True
+    assert result is False
     warnings = _find_records(caplog, logging.WARNING)
     assert warnings, "expected a WARNING naming the undecided comparison"
     assert any(repr(x) in record.getMessage() for record in warnings)

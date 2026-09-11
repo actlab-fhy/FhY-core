@@ -6,9 +6,11 @@ The evaluator performs two narrow rewrites:
    :class:`NativeFunction` and whose arguments are all
    :class:`LiteralExpression` (after recursive evaluation) becomes
    ``LiteralExpression(implementation(*values))``.
-2. An ``IdentifierExpression`` whose identifier name matches a
+2. An ``IdentifierExpression`` carrying the canonical identifier of a
    registered :class:`NativeConstant` becomes
-   ``LiteralExpression(constant.value)``.
+   ``LiteralExpression(constant.value)``. Recognition is by identifier
+   identity, so an identifier that merely shares a constant's
+   ``name_hint`` is left alone as the free variable it is.
 
 Every other node is preserved (with its children recursively evaluated)
 by the :class:`RewritablePass` base class. Literal arithmetic is not
@@ -131,7 +133,7 @@ class ExpressionEvaluator(RewritablePass[Expression]):
         self, expression: IdentifierExpression
     ) -> Expression | None:
         """Resolve a native-constant reference to its literal value."""
-        constant_value = try_get_native_constant_value(expression.identifier.name_hint)
+        constant_value = try_get_native_constant_value(expression.identifier)
         if constant_value is None:
             return None
         return _build_literal_expression(constant_value)
@@ -173,9 +175,9 @@ def evaluate_expression(expression: Expression) -> Expression:
 
     Returns:
         An expression tree where every literal-argument native call is
-        folded to a ``LiteralExpression`` and every identifier reference
-        matching a registered native constant is replaced with its
-        literal value. Other nodes are preserved.
+        folded to a ``LiteralExpression`` and every reference to a
+        registered native constant's canonical identifier is replaced
+        with its literal value. Other nodes are preserved.
 
     Raises:
         PassExecutionError: As for :class:`ExpressionEvaluator`.

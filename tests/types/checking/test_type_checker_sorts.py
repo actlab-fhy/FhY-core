@@ -30,6 +30,7 @@ from fhy_core.symbolic.expression import (
     LiteralExpression,
     NativeFunction,
     call,
+    get_native_constant_identifier,
     register_function,
     register_native_constant,
     register_native_function,
@@ -305,7 +306,9 @@ class TestNativeConstantTypeInference:
         register_native_constant(
             "test_tc_const_real", sort=FunctionSort.REAL, value=math.pi
         )
-        expression = IdentifierExpression(mock_identifier("test_tc_const_real", 0))
+        expression = IdentifierExpression(
+            get_native_constant_identifier("test_tc_const_real")
+        )
 
         # The local lookup is not consulted because the identifier
         # resolves through the registry.
@@ -321,34 +324,53 @@ class TestNativeConstantTypeInference:
     ) -> None:
         """Test an `INT`-sort constant reference yields concrete `INT64`."""
         register_native_constant("test_tc_const_int", sort=FunctionSort.INT, value=42)
-        expression = IdentifierExpression(mock_identifier("test_tc_const_int", 0))
+        expression = IdentifierExpression(
+            get_native_constant_identifier("test_tc_const_int")
+        )
 
         result_type, _ = synthesize_expression_type(expression, _unexpected_lookup)
 
         assert result_type.is_structurally_equivalent(_scalar(CoreDataType.INT64))
 
-    def test_local_identifier_binding_shadows_registered_constant(
+    def test_local_identifier_binding_for_a_registered_constant_is_rejected(
         self, function_registry_snapshot: None
     ) -> None:
-        """Test the local `get_identifier_type` lookup shadows a same-named constant.
+        """Test a local `get_identifier_type` binding for a constant is rejected.
 
-        When the identifier resolves to a value in the local lookup, the
-        local type is used; the registry is consulted only as a fallback.
+        The constant's type is fixed by its registered sort, so a local
+        lookup that supplies some other type for its canonical identifier
+        is a type error rather than a type the checker should honor.
         """
         register_native_constant(
             "test_tc_const_shadow", sort=FunctionSort.REAL, value=math.pi
         )
-        identifier = mock_identifier("test_tc_const_shadow", 0)
+        identifier = get_native_constant_identifier("test_tc_const_shadow")
         expression = IdentifierExpression(identifier)
-
-        # Local lookup returns INT32 — different from the constant's REAL sort.
         lookup = _single_lookup(
             identifier, _scalar(CoreDataType.INT32), TypeQualifier.INPUT
         )
-        result_type, qualifier = synthesize_expression_type(expression, lookup)
 
-        assert result_type.is_structurally_equivalent(_scalar(CoreDataType.INT32))
-        assert qualifier == TypeQualifier.INPUT
+        with pytest.raises(FhYCoreTypeError, match="native constant"):
+            synthesize_expression_type(expression, lookup)
+
+    def test_identifier_merely_named_like_a_constant_is_unbound(
+        self, function_registry_snapshot: None
+    ) -> None:
+        """Test an identifier that only shares a constant's name does not resolve.
+
+        The registry fallback keys on the canonical identifier minted for
+        the constant, so a same-named identifier the local lookup cannot
+        type is an unbound identifier, not a constant reference.
+        """
+        register_native_constant(
+            "test_tc_const_lookalike", sort=FunctionSort.REAL, value=math.pi
+        )
+        expression = IdentifierExpression(
+            mock_identifier("test_tc_const_lookalike", 896)
+        )
+
+        with pytest.raises(FhYCoreTypeError, match="not bound"):
+            synthesize_expression_type(expression, _unexpected_lookup)
 
 
 # =============================================================================

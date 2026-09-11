@@ -6,12 +6,13 @@ substitutions:
 1. ``CallExpression`` whose registered target is a ``NativeFunction``
    and whose arguments are all ``LiteralExpression`` becomes
    ``LiteralExpression(implementation(*values))``.
-2. ``IdentifierExpression`` whose identifier name matches a registered
-   ``NativeConstant`` becomes ``LiteralExpression(constant.value)``.
+2. ``IdentifierExpression`` carrying the canonical identifier of a
+   registered ``NativeConstant`` becomes
+   ``LiteralExpression(constant.value)``.
 
 Every other node kind (arithmetic, comparison, logical, piecewise,
 non-native calls, calls with at least one non-literal argument,
-identifier references that do not match a constant) is reconstructed
+identifier references that do not denote a constant) is reconstructed
 with its evaluated children but otherwise left as-is. The evaluator
 explicitly does **not** fold literal arithmetic — that remains a
 ``simplify_expression`` (sympy) job.
@@ -36,6 +37,7 @@ from fhy_core.symbolic.expression import (
     UnaryOperation,
     call,
     evaluate_expression,
+    get_native_constant_identifier,
     register_function,
     register_native_constant,
     register_native_function,
@@ -211,12 +213,12 @@ def test_evaluate_leaves_expression_bodied_call_alone_even_with_literal_args(
 # =============================================================================
 
 
-def test_evaluate_substitutes_identifier_reference_with_native_constant_value(
+def test_evaluate_substitutes_canonical_constant_identifier_with_its_value(
     function_registry_snapshot: None,
 ) -> None:
-    """Test an identifier whose name matches a registered constant is substituted."""
+    """Test a reference to a constant's canonical identifier is substituted."""
     register_native_constant("test_eval_const", sort=FunctionSort.REAL, value=2.5)
-    expression = IdentifierExpression(mock_identifier("test_eval_const", 0))
+    expression = IdentifierExpression(get_native_constant_identifier("test_eval_const"))
 
     result = evaluate_expression(expression)
 
@@ -235,6 +237,25 @@ def test_evaluate_leaves_identifier_alone_when_name_not_a_constant(
 
     assert isinstance(result, IdentifierExpression)
     assert result.identifier is x
+
+
+def test_evaluate_leaves_an_identifier_merely_named_like_a_constant_alone(
+    function_registry_snapshot: None,
+) -> None:
+    """Test an identifier that only shares a constant's name is not substituted.
+
+    Substitution keys on the canonical identifier the registry minted, so
+    a caller's own variable of the same name survives evaluation as the
+    free variable it is.
+    """
+    register_native_constant("test_eval_const_named", sort=FunctionSort.REAL, value=2.5)
+    lookalike = mock_identifier("test_eval_const_named", 768)
+    expression = IdentifierExpression(lookalike)
+
+    result = evaluate_expression(expression)
+
+    assert isinstance(result, IdentifierExpression)
+    assert result.identifier is lookalike
 
 
 # =============================================================================
@@ -272,7 +293,8 @@ def test_evaluate_folds_native_call_with_constant_argument(
     register_real_unary_native("test_eval_const_native", math.exp)
 
     expression = call(
-        "test_eval_const_native", mock_identifier("test_eval_const_arg", 0)
+        "test_eval_const_native",
+        get_native_constant_identifier("test_eval_const_arg"),
     )
     result = evaluate_expression(expression)
 
@@ -464,16 +486,39 @@ def test_evaluate_rejects_string_form_float_literal_argument(
 ) -> None:
     """Test a native call with a float-grammar string argument is refused.
 
-    A float-grammar string ``LiteralExpression`` preserves an exact
-    decimal value; collapsing it to a binary float for a native call
-    would lose that precision, so evaluation raises instead.
+    A float-grammar string ``LiteralExpression`` with no exact binary
+    ``float`` equivalent would lose precision if collapsed to one, so
+    evaluation raises instead.
     """
     register_real_unary_native("test_eval_str_coerce", math.sqrt)
 
-    expression = CallExpression("test_eval_str_coerce", (LiteralExpression("4.0"),))
+    expression = CallExpression("test_eval_str_coerce", (LiteralExpression("4.1"),))
 
     with pytest.raises(PassExecutionError, match="StringLiteralPrecisionError"):
         evaluate_expression(expression)
+
+
+def test_evaluate_coerces_string_form_float_literal_with_exact_binary_value(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a float-grammar string literal with an exact binary value coerces."""
+    register_real_unary_native("test_eval_str_float_coerce", math.sqrt)
+
+    expression = CallExpression(
+        "test_eval_str_float_coerce", (LiteralExpression("4.0"),)
+    )
+    result = evaluate_expression(expression)
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == 2.0
+
+
+def test_evaluate_folds_native_call_with_exact_binary_float_string_argument() -> None:
+    """Test a call argument that is an exact-binary-value string literal folds."""
+    result = evaluate_expression(call("sin", LiteralExpression("0.5")))
+
+    assert isinstance(result, LiteralExpression)
+    assert result.value == math.sin(0.5)
 
 
 def test_evaluate_coerces_string_form_integer_literal_to_int(

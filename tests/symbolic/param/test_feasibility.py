@@ -87,7 +87,7 @@ def test_permutation_param_with_admitting_constraint_is_feasible() -> None:
 
 def test_categorical_param_with_out_of_domain_in_set_is_empty() -> None:
     """Test a categorical param whose in-set allows only outside values is empty."""
-    param = create_categorical_param(["a", "b"], name=mock_identifier("x", 8))
+    param = create_categorical_param(["a", "b"], name=mock_identifier("x", 101))
     # An in-set constraint that permits only a value the domain does not admit.
     # This constructs without error; the emptiness is only discoverable by query.
     narrowed = param.add_constraint(InSetConstraint(param.variable, {"z"}))
@@ -98,7 +98,7 @@ def test_categorical_param_with_out_of_domain_in_set_is_empty() -> None:
 
 def test_integer_param_with_contradictory_bounds_is_empty() -> None:
     """Test a plain integer param with contradictory bounds is empty."""
-    param = create_integer_param(name=mock_identifier("x", 9))
+    param = create_integer_param(name=mock_identifier("x", 102))
     # A plain integer domain permits arbitrary bound constraints, so these
     # jointly-empty bounds construct without error.
     narrowed = param.add_lower_bound_constraint(10).add_upper_bound_constraint(5)
@@ -109,7 +109,7 @@ def test_integer_param_with_contradictory_bounds_is_empty() -> None:
 
 def test_ordinal_param_excluding_all_members_is_empty() -> None:
     """Test an ordinal param whose not-in-set excludes every member is empty."""
-    param = create_ordinal_param([1, 2, 3], name=mock_identifier("x", 10))
+    param = create_ordinal_param([1, 2, 3], name=mock_identifier("x", 103))
     narrowed = param.add_constraint(NotInSetConstraint(param.variable, {1, 2, 3}))
 
     assert not narrowed.is_feasible()
@@ -118,7 +118,7 @@ def test_ordinal_param_excluding_all_members_is_empty() -> None:
 
 def test_permutation_param_excluding_all_permutations_is_empty() -> None:
     """Test a permutation param excluding every permutation is empty."""
-    param = create_permutation_param(["a", "b"], name=mock_identifier("x", 11))
+    param = create_permutation_param(["a", "b"], name=mock_identifier("x", 104))
     narrowed = param.add_constraint(
         NotInSetConstraint(param.variable, {("a", "b"), ("b", "a")})
     )

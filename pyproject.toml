@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "fhy_core"
-version = "0.1.8"
+version = "0.2.0"
 description = "Core utilities for the FhY compiler infrastructure."
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -32,7 +32,7 @@ dependencies = [
    "networkx",
    "sympy",
    "z3-solver",
-   "typing_extensions; python_version < '3.12'",
+   "typing_extensions; python_version < '3.13'",
 ]
 
 [project.optional-dependencies]
@@ -69,6 +69,7 @@ markers = [
     "integration: exercises multiple modules together",
     "network: requires network access",
     "property: hypothesis-based property test",
+    "import_graph: pins the shape of the package import graph",
 ]
 
 [tool.coverage.run]

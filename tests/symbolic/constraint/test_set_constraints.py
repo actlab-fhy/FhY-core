@@ -8,21 +8,30 @@ parametrized over the constraint factory.
 import copy
 import dataclasses
 import io
+import json
+import math
 import pickle
 from collections.abc import Callable
+from enum import IntEnum
 from typing import Any, cast
 
 import pytest
 
 from fhy_core.identifier import Identifier
+from fhy_core.serialization import (
+    DeserializationValueError,
+    serialize_registry_wrapped_value,
+)
 from fhy_core.symbolic.constraint import (
     Constraint,
     ConstraintError,
     ConstraintOutcome,
     InSetConstraint,
     NotInSetConstraint,
+    create_constraint_system,
 )
 from fhy_core.symbolic.constraint import core as constraint_core_module
+from fhy_core.symbolic.expression import LiteralExpression
 from fhy_core.traits import FrozenMutationError
 from fhy_core.utils.override import override
 
@@ -381,16 +390,6 @@ def test_set_constraint_with_nested_frozenset_uses_strict_inner_equality(
 
     assert constraint.is_satisfied_with_bindings({x: frozenset({True})}) is in_set  # type: ignore[dict-item]  # test: type-strict frozenset member off-union
     assert constraint.is_satisfied_with_bindings({x: frozenset({1})}) is not in_set  # type: ignore[dict-item]  # test: type-strict frozenset member off-union
-
-
-def test_in_set_constraint_with_nan_member_does_not_satisfy_distinct_nan_instance() -> (
-    None
-):
-    """Test a distinct NaN instance is not detected as a member."""
-    x = mock_identifier("x", 0)
-    constraint = InSetConstraint(x, {float("nan")})
-
-    assert not constraint.is_satisfied_with_bindings({x: float("nan")})
 
 
 @pytest.mark.parametrize("factory", SET_KINDS)
@@ -842,3 +841,354 @@ def test_set_constraint_rejects_a_non_identifier_variable(
     """
     with pytest.raises(ConstraintError, match="constrains an identifier"):
         kind("oops", {1})  # type: ignore[arg-type]
+
+
+# =============================================================================
+# Number-subclass members are the exact numbers they denote
+# =============================================================================
+
+
+class _Level(IntEnum):
+    """An ``int`` subclass, which a literal holds as the ``int`` it denotes."""
+
+    LOW = 1
+    HIGH = 3
+
+
+class _Measure(float):
+    """A ``float`` subclass, which a literal holds as the ``float`` it denotes."""
+
+
+_NUMBER_SUBCLASS_MEMBERS = [
+    pytest.param(_Level.HIGH, 3, id="int_subclass"),
+    pytest.param(_Measure(1.5), 1.5, id="float_subclass"),
+]
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_stores_a_number_subclass_member_as_its_exact_value(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test the stored member is the exact number its literal holds.
+
+    A member lifts to a literal holding the exact number, so membership
+    has to accept exactly the values that literal equals. A member kept
+    as its subclass would lift to an expression accepting a value
+    membership refuses, and a solver-backed answer would then disagree
+    with evaluation.
+    """
+    constraint = kind(mock_identifier("x", 0), {member})
+
+    assert constraint.members == (exact_member,)
+    assert [type(value) for value in constraint.values] == [type(exact_member)]
+
+
+@pytest.mark.parametrize(
+    ("kind", "member_outcome", "non_member_outcome"), _KINDS_WITH_EVALUATE_OUTCOMES
+)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_decides_a_number_subclass_as_the_exact_value(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member_outcome: ConstraintOutcome,
+    non_member_outcome: ConstraintOutcome,
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test a subclass and its exact twin are one member, bound either way round."""
+    x = mock_identifier("x", 0)
+
+    assert kind(x, {member}).evaluate_with_bindings({x: exact_member}) is (
+        member_outcome
+    )
+    assert kind(x, {exact_member}).evaluate_with_bindings({x: member}) is (
+        member_outcome
+    )
+    assert kind(x, {exact_member}).evaluate_with_bindings(
+        {x: LiteralExpression(member)}
+    ) is (member_outcome)
+    assert kind(x, {member}).evaluate_with_bindings({x: exact_member + 1}) is (
+        non_member_outcome
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "member_outcome", "non_member_outcome"), _KINDS_WITH_EVALUATE_OUTCOMES
+)
+def test_set_constraint_keeps_a_bool_apart_from_an_int_subclass(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member_outcome: ConstraintOutcome,
+    non_member_outcome: ConstraintOutcome,
+) -> None:
+    """Test an ``int`` subclass is the ``int`` it denotes, never a ``bool``.
+
+    ``_Level.LOW`` carries ``1``, which ``True`` equals, but ``bool`` is a
+    kind of its own for members as it is for literals.
+    """
+    del member_outcome
+    x = mock_identifier("x", 0)
+
+    assert kind(x, {True}).evaluate_with_bindings({x: _Level.LOW}) is (
+        non_member_outcome
+    )
+    assert kind(x, {_Level.LOW}).evaluate_with_bindings({x: True}) is (
+        non_member_outcome
+    )
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_with_a_number_subclass_member_is_its_exact_twin(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test equivalence, the ordering key, and deduplication see one member."""
+    x = mock_identifier("x", 0)
+    constraint = kind(x, {member})
+    twin = kind(x, {exact_member})
+
+    assert constraint.is_structurally_equivalent(twin)
+    assert constraint.is_alpha_equivalent(twin)
+    assert constraint.build_ordering_key() == twin.build_ordering_key()
+    assert len(kind(x, [member, exact_member]).members) == 1
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_with_a_number_subclass_member_round_trips(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test a serialization round trip gives back an equivalent constraint.
+
+    A number goes over the wire as the exact number, so under type-strict
+    equality a member kept as its subclass would come back as a different
+    member.
+    """
+    x = mock_identifier("x", 0)
+    constraint = kind(x, {member})
+
+    data = json.loads(json.dumps(constraint.serialize_to_dict()))
+    restored = kind.deserialize_from_dict(data)
+
+    assert data == kind(x, {exact_member}).serialize_to_dict()
+    assert restored.is_structurally_equivalent(constraint)
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_lifts_a_number_subclass_member_to_its_exact_literal(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test the converted expression is the one the exact twin converts to."""
+    x = mock_identifier("x", 0)
+
+    expression = kind(x, {member}).convert_to_expression()
+
+    assert expression.is_structurally_equivalent(
+        kind(x, {exact_member}).convert_to_expression()
+    )
+
+
+def test_set_constraint_container_member_holds_number_subclass_leaves_exactly() -> None:
+    """Test the leaves of a container member are their exact numbers too."""
+    x = mock_identifier("x", 0)
+    constraint = InSetConstraint(x, {(_Level.HIGH, _Measure(1.5))})
+    bindings: dict[Identifier, Any] = {x: (3, 1.5)}
+
+    leaves = cast(tuple[Any, ...], constraint.members[0])
+
+    assert [type(leaf) for leaf in leaves] == [int, float]
+    assert constraint.evaluate_with_bindings(bindings) is ConstraintOutcome.SATISFIED
+
+
+# =============================================================================
+# NaN set members
+# =============================================================================
+
+_NAN_MEMBER_FORMS = [
+    pytest.param(float("nan"), id="bare_float"),
+    pytest.param(math.nan, id="math_nan"),
+    pytest.param((float("nan"), 1.0), id="nested_in_tuple"),
+    pytest.param(frozenset({float("nan")}), id="nested_in_frozenset"),
+]
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize("nan_member", _NAN_MEMBER_FORMS)
+def test_set_constraint_rejects_a_declared_nan_member(
+    factory: SetConstraintFactory,
+    nan_member: Any,
+) -> None:
+    """Test declaring a NaN member, bare or nested, raises `ConstraintError`."""
+    with pytest.raises(ConstraintError, match="NaN"):
+        factory(mock_identifier("x", 0), {nan_member})
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_rejects_a_declared_numpy_float64_nan_member(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test a NumPy `float64` NaN member is refused like any float NaN."""
+    np = pytest.importorskip("numpy")
+
+    with pytest.raises(ConstraintError, match="NaN"):
+        factory(mock_identifier("x", 0), {np.float64("nan")})
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+def test_set_constraint_deserialize_rejects_a_tampered_nan_member(
+    kind: type[InSetConstraint | NotInSetConstraint],
+) -> None:
+    """Test deserializing a payload carrying a NaN member fails like construction."""
+    payload = kind(mock_identifier("x", 0), {1.0}).serialize_to_dict()
+    payload["__data__"]["values"] = [  # type: ignore[index]  # test: modify serialized
+        serialize_registry_wrapped_value(float("nan")),
+    ]
+
+    with pytest.raises(DeserializationValueError, match="NaN"):
+        kind.deserialize_from_dict(payload)
+
+
+_NAN_BINDING_OUTCOMES = [
+    pytest.param(InSetConstraint, ConstraintOutcome.VIOLATED, id="in_set"),
+    pytest.param(NotInSetConstraint, ConstraintOutcome.SATISFIED, id="not_in_set"),
+]
+
+
+@pytest.mark.parametrize("factory, outcome", _NAN_BINDING_OUTCOMES)
+def test_set_constraint_evaluate_with_bindings_decides_a_nan_binding(
+    factory: SetConstraintFactory,
+    outcome: ConstraintOutcome,
+) -> None:
+    """Test a NaN-bound value against an ordinary member still decides."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1.0})
+
+    assert constraint.evaluate_with_bindings({x: float("nan")}) is outcome
+
+
+@pytest.mark.parametrize("factory, outcome", _NAN_BINDING_OUTCOMES)
+def test_constraint_system_evaluate_with_bindings_decides_a_nan_binding(
+    factory: SetConstraintFactory,
+    outcome: ConstraintOutcome,
+) -> None:
+    """Test a NaN binding decides through the constraint system's bindings path too."""
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(factory(x, {1.0}))
+
+    assert system.evaluate_with_bindings({x: float("nan")}) is outcome
+
+
+@pytest.mark.z3
+@pytest.mark.parametrize("factory, outcome", _NAN_BINDING_OUTCOMES)
+def test_constraint_system_check_satisfiability_with_bindings_decides_a_nan_binding(
+    factory: SetConstraintFactory,
+    outcome: ConstraintOutcome,
+) -> None:
+    """Test a NaN binding decides through the satisfiability-with-bindings path too."""
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(factory(x, {1.0}))
+
+    assert system.check_satisfiability_with_bindings({x: float("nan")}, {}) is outcome
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_still_accepts_an_ordinary_float_member(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test an ordinary, non-NaN float member still constructs and decides."""
+    x = mock_identifier("x", 0)
+    in_set = factory is InSetConstraint
+    constraint = factory(x, {1.5})
+
+    assert constraint.is_satisfied_with_bindings({x: 1.5}) is in_set
+
+
+# =============================================================================
+# -0.0 / 0.0 member normalization
+# =============================================================================
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_stores_a_negative_zero_member_with_a_positive_sign(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test a declared -0.0 member is stored as the positive-signed 0.0."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {-0.0})
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+
+    stored = cast(float, constraint.members[0])
+
+    assert stored == 0.0
+    assert math.copysign(1.0, stored) == 1.0
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_stores_a_nested_negative_zero_leaf_with_a_positive_sign(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test a -0.0 leaf nested in a tuple member is stored as positive-signed 0.0."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, [(-0.0,)])
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+
+    leaf = cast(tuple[Any, ...], constraint.members[0])[0]
+
+    assert leaf == 0.0
+    assert math.copysign(1.0, leaf) == 1.0
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_negative_zero_binding_matches_a_declared_positive_zero_member(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test binding -0.0 against a declared 0.0 member is still a match."""
+    x = mock_identifier("x", 0)
+    in_set = factory is InSetConstraint
+    constraint = factory(x, {0.0})
+
+    assert constraint.is_satisfied_with_bindings({x: -0.0}) is in_set
+
+
+def test_constraint_system_equivalent_for_negative_and_positive_zero() -> None:
+    """Test a two-member system agrees on equivalence regardless of zero's sign.
+
+    Both systems also carry an `InSetConstraint` over `{-1.0}` alongside the
+    signed-zero member. The ordering key that sorts a system's members
+    renders the sign of zero, so pairing the zero member with another member
+    exercises whether that sign leaks into the members' relative order,
+    rather than only into a lone constraint's own equivalence.
+    """
+    x = mock_identifier("x", 0)
+    negative_zero_system = create_constraint_system(
+        InSetConstraint(x, {-0.0}), InSetConstraint(x, {-1.0})
+    )
+    positive_zero_system = create_constraint_system(
+        InSetConstraint(x, {0.0}), InSetConstraint(x, {-1.0})
+    )
+
+    assert negative_zero_system.is_structurally_equivalent(positive_zero_system)
+
+
+def test_constraint_system_serializes_alike_for_negative_and_positive_zero() -> None:
+    """Test the same two-member system serializes alike regardless of zero's sign."""
+    x = mock_identifier("x", 0)
+    negative_zero_system = create_constraint_system(
+        InSetConstraint(x, {-0.0}), InSetConstraint(x, {-1.0})
+    )
+    positive_zero_system = create_constraint_system(
+        InSetConstraint(x, {0.0}), InSetConstraint(x, {-1.0})
+    )
+
+    assert (
+        negative_zero_system.serialize_to_dict()
+        == positive_zero_system.serialize_to_dict()
+    )

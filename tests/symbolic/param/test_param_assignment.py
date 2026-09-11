@@ -3,6 +3,7 @@
 from typing import Any
 
 import pytest
+from immutabledict import immutabledict
 
 from fhy_core.serialization import (
     DeserializationDictStructureError,
@@ -11,7 +12,12 @@ from fhy_core.serialization import (
     serialize_registry_wrapped_value,
 )
 from fhy_core.symbolic.constraint import EquationConstraint, NotInSetConstraint
-from fhy_core.symbolic.expression import IdentifierExpression
+from fhy_core.symbolic.expression import (
+    IdentifierExpression,
+    LiteralExpression,
+    NonBooleanLogicalOperandError,
+    piecewise,
+)
 from fhy_core.symbolic.param import (
     Param,
     ParamAssignment,
@@ -25,7 +31,7 @@ from fhy_core.symbolic.param import (
     create_real_param_with_lower_bound,
 )
 
-from .conftest import mock_identifier
+from .conftest import build_case_condition_constraint, mock_identifier
 
 # =============================================================================
 # Construction & accessors
@@ -226,6 +232,33 @@ def test_dependent_assignment_round_trips_through_dict_serialization() -> None:
     restored: ParamAssignment[Any] = ParamAssignment.deserialize_from_dict(dictionary)
 
     assert restored.value == 3
+    assert restored.param.is_structurally_equivalent(param)
+    assert restored.serialize_to_dict() == dictionary
+
+
+def test_dependent_assignment_round_trips_when_bridge_fails_without_bindings() -> None:
+    """Test round-tripping survives a constraint the bridge cannot lower alone.
+
+    The dependent constraint divides by ``x - 5``; substituting the assigned
+    value ``5`` for ``x`` alone, with no binding for the other free
+    identifier, drives the expression bridge to a complex-infinity failure
+    it cannot lift back into an expression. That bridge failure must count
+    as an undecided remainder, the same as any other constraint
+    deserialization cannot fully resolve, rather than escaping the
+    round-trip as a raw bridge exception.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    xe, ye = IdentifierExpression(x), IdentifierExpression(y)
+    guarded = piecewise((ye > 0, LiteralExpression(1) / (xe - 5)), otherwise=1) > 0
+    dependent = EquationConstraint(guarded)
+    param = create_integer_param(name=x, constraints=[dependent])
+    assignment = param.assign(5, bindings={y: -1})
+
+    dictionary = assignment.serialize_to_dict()
+    restored: ParamAssignment[Any] = ParamAssignment.deserialize_from_dict(dictionary)
+
+    assert restored.value == 5
     assert restored.param.is_structurally_equivalent(param)
     assert restored.serialize_to_dict() == dictionary
 
@@ -441,3 +474,61 @@ def test_construct_from_fields_stores_the_domain_canonical_value() -> None:
 
     assert from_fields.value == (1, 2, 3)
     assert from_fields.is_structurally_equivalent(constructed)
+
+
+def test_construct_from_fields_accepts_an_immutabledict() -> None:
+    """Test `construct_from_fields` accepts an `immutabledict` field mapping."""
+    param = create_permutation_param([1, 2, 3])
+    members: Any = [1, 2, 3]
+
+    from_fields = ParamAssignment.construct_from_fields(
+        immutabledict({"param": param, "value": members})
+    )
+    constructed = ParamAssignment(param, members)
+
+    assert from_fields.is_structurally_equivalent(constructed)
+
+
+# =============================================================================
+# An ill-typed constraint is refused, not accepted as undecided
+# =============================================================================
+
+
+def _create_param_conditioned_on_its_own_value() -> Param[int]:
+    """Create `x` whose constraint takes `x` itself as a case condition.
+
+    Binding any integer value to `x` puts a number in the case condition.
+    """
+    x = mock_identifier("x", 1)
+    return create_integer_param(
+        name=x, constraints=[build_case_condition_constraint(IdentifierExpression(x))]
+    )
+
+
+def test_direct_construction_raises_for_a_number_in_a_case_condition() -> None:
+    """Test constructing an assignment that binds a number into a condition raises."""
+    param = _create_param_conditioned_on_its_own_value()
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        ParamAssignment(param, 3)
+
+
+def test_deserialization_refuses_a_number_in_a_case_condition() -> None:
+    """Test deserialization refuses an ill-typed payload rather than accepting it.
+
+    Deserialization accepts a constraint it cannot decide, since the
+    bindings that proved a dependent constraint are not serialized. An
+    ill-typed constraint is not undecided: binding the value puts a number
+    in a case condition, so the payload is refused, as a
+    `DeserializationValueError` caused by the typed error.
+    """
+    param = _create_param_conditioned_on_its_own_value()
+    payload = {
+        "param": param.serialize_to_dict(),
+        "value": serialize_registry_wrapped_value(3),
+    }
+
+    with pytest.raises(DeserializationValueError) as excinfo:
+        ParamAssignment.deserialize_from_dict(payload)  # type: ignore[arg-type]  # test: dict shape
+
+    assert isinstance(excinfo.value.__cause__, NonBooleanLogicalOperandError)

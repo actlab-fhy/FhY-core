@@ -4,8 +4,9 @@
 parameter domain. It treats ``bool``, ``int``, and ``float`` as mutually
 disjoint value kinds and ``str`` as distinct, so ``True`` never matches ``1`` and
 ``1`` never matches ``1.0`` even though Python considers them ``==``. These tests
-exercise the predicate directly and confirm the four domain builders inherit the
-strict semantics.
+exercise the predicate directly, cover the index-wise sequence form
+`do_ordered_param_values_match` built on it, and confirm the four domain builders
+inherit the strict semantics.
 """
 
 import pytest
@@ -15,7 +16,10 @@ from fhy_core.symbolic.param.domains import (
     build_ordinal_domain,
     build_permutation_domain,
 )
-from fhy_core.symbolic.param.values import do_param_values_match
+from fhy_core.symbolic.param.values import (
+    do_ordered_param_values_match,
+    do_param_values_match,
+)
 
 # =============================================================================
 # `do_param_values_match` strictness
@@ -70,6 +74,33 @@ def test_do_param_values_match_treats_str_as_distinct_from_numbers() -> None:
     """Test a ``str`` never matches a numeric value of equal textual form."""
     assert not do_param_values_match("1", 1)
     assert not do_param_values_match(1, "1")
+
+
+# =============================================================================
+# `do_ordered_param_values_match` strictness
+# =============================================================================
+
+
+def test_do_ordered_param_values_match_accepts_position_wise_equal_sequences() -> None:
+    """Test two sequences holding the same values at the same positions match."""
+    assert do_ordered_param_values_match((1, 2, "a"), (1, 2, "a"))
+
+
+def test_do_ordered_param_values_match_rejects_sequences_of_different_lengths() -> None:
+    """Test a prefix does not match the longer sequence it is a prefix of."""
+    assert not do_ordered_param_values_match((1, 2), (1, 2, 3))
+    assert not do_ordered_param_values_match((1, 2, 3), (1, 2))
+
+
+def test_do_ordered_param_values_match_rejects_cross_kind_value_at_a_position() -> None:
+    """Test one kind-distinct position makes the whole sequence non-matching."""
+    assert not do_ordered_param_values_match((1, 2), (True, 2))
+    assert not do_ordered_param_values_match((1, 2), (1.0, 2))
+
+
+def test_do_ordered_param_values_match_is_order_sensitive() -> None:
+    """Test the same values in a different order do not match."""
+    assert not do_ordered_param_values_match((1, 2), (2, 1))
 
 
 # =============================================================================

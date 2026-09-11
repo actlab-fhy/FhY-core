@@ -2,7 +2,8 @@
 
 A :class:`ParamDomain` captures everything that varies between kinds of
 parameter: admissibility, constraint validation, implied constraints, subset
-semantics, set algebra, structural equivalence, and rendering. A single
+semantics, set algebra, structural equivalence, rendering, and the optional
+:class:`IntervalProfile` interval arithmetic reads. A single
 :class:`~fhy_core.symbolic.param.core.Param` composes one domain rather than being
 subclassed per kind.
 
@@ -28,11 +29,16 @@ system still proves is kept (infeasibility, a counterexample against an exact
 antecedent, an implication into an exact consequent), and an answer it does not
 prove is reported as ``UNDECIDED``. Finite-set domains enumerate their value
 sets and so always decide.
+
+An ill-typed constraint, one holding a provably numeric operand in a Boolean
+position, is not undecided: the ``NonBooleanLogicalOperandError`` the
+constraint and solver layers raise for it propagates instead.
 """
 
 import itertools
+import math
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias
 
@@ -76,12 +82,12 @@ from .values import (
     ParamError,
     PermutationMemberValue,
     deserialize_wrapped_leaf_values,
+    do_ordered_param_values_match,
     does_collection_contain_param_value,
     is_categorical_value,
     is_ordinal_value,
     is_permutation_member_value,
     is_sequence_unique_without_set,
-    is_sorted_sequence_unique,
     serialize_wrapped_leaf_value,
 )
 
@@ -90,6 +96,7 @@ __all__ = [
     "DecidedOutcome",
     "IntegerDomain",
     "IntervalIntegerDomain",
+    "IntervalProfile",
     "OrdinalDomain",
     "ParamDomain",
     "PermutationDomain",
@@ -108,7 +115,16 @@ DecidedOutcome: TypeAlias = Literal[
 def are_all_constraints_satisfied(
     constraints: Sequence[Constraint], variable: Identifier, value: Any
 ) -> bool:
-    """Return whether ``value`` bound to ``variable`` satisfies every constraint."""
+    """Return whether ``value`` bound to ``variable`` satisfies every constraint.
+
+    Raises:
+        ConstraintError: If a constraint cannot lift ``value``, bound to
+            ``variable``, into its substitution environment.
+        NonBooleanLogicalOperandError: If a constraint holds a provably
+            numeric operand in a Boolean position once ``value`` is
+            bound; an ill-typed constraint is not reported unsatisfied.
+
+    """
     return all(
         constraint.is_satisfied_with_bindings({variable: value})
         for constraint in constraints
@@ -193,12 +209,29 @@ def evaluate_system_outcome(
     it degrades to ``UNDECIDED`` (logged at ``WARNING``) rather than
     escaping a parameter-level query as an exception.
 
+    An ill-typed system is not degraded. A number in a Boolean position
+    -- under a logical connective or as a piecewise case condition, a
+    binding that puts one there included -- has a meaning under no
+    backend, so ``UNDECIDED`` would invite a caller to retry a question
+    that cannot succeed; the error propagates, as it does from the
+    constraint and solver layers.
+
     Args:
         system: Constraints to decide.
         bindings: Values for the identifiers the constraints reference.
 
     Returns:
         The system's outcome, or ``UNDECIDED`` when the bridge failed.
+
+    Raises:
+        ConstraintError: If a member refuses the value ``bindings`` binds
+            to an identifier in its scope, as
+            ``ConstraintSystem.evaluate_with_bindings`` raises it. It is
+            not degraded: a value that cannot be lifted is a caller error,
+            not a limit of the bridge.
+        NonBooleanLogicalOperandError: If a member equation holds a
+            provably numeric operand in a Boolean position, counting a
+            binding that puts a number there.
 
     """
     try:
@@ -821,6 +854,12 @@ def _does_own_admit_a_value_outside(
         True only when a value satisfying every one of ``own``'s
         constraints provably lies outside ``permitted_values``.
 
+    Raises:
+        NonBooleanLogicalOperandError: If ``own``'s screened system
+            holds a provably numeric operand in a Boolean position,
+            counting ``own_variable`` itself when ``symbol_type`` is INT
+            or REAL.
+
     """
     own_system, is_exact = _build_screened_constraint_system_with_fidelity(
         own_constraints, own_variable
@@ -851,32 +890,77 @@ def _does_own_admit_a_value_outside(
     return True
 
 
+def _does_set_constraint_hold_a_float_member(
+    constraint: InSetConstraint | NotInSetConstraint, variable: Identifier
+) -> bool:
+    """Return whether constraint is scoped to variable and holds a float member.
+
+    A lifted ``float`` member is the one kind Z3's REAL sort conflates
+    with every other kind denoting the same number (a decimal-grammar
+    ``str``, in particular): type-strict membership treats them as
+    distinct members, but the sort lowers them all to one rational. Reads
+    the public ``members``, scoped to ``variable`` so a constraint scoped
+    elsewhere never triggers a kind-conflation downgrade for it.
+
+    """
+    return constraint.variable == variable and any(
+        isinstance(member, float) for member in constraint.members
+    )
+
+
 def _downgrade_unproven_implication(
     outcome: ConstraintOutcome,
     is_own_exact: bool,
     is_other_exact: bool,
+    own_constraints: Sequence[Constraint],
     own_variable: Identifier,
+    other_constraints: Sequence[Constraint],
     other_variable: Identifier,
+    symbol_type: SymbolType,
 ) -> ConstraintOutcome:
-    """Return ``outcome`` unless a weakened side leaves it unproven, then ``UNDECIDED``.
+    """Return ``outcome`` unless it rests on an unproven side, then ``UNDECIDED``.
 
     Screening only widens a side's admissible set. A ``VIOLATED`` rests on
     a value inside the antecedent and outside the consequent, which an
     inexact antecedent may not actually admit; a ``SATISFIED`` rests on
     every antecedent value lying inside the consequent, which an inexact
-    consequent may not actually admit. Either downgrade is logged at
-    ``WARNING``.
+    consequent may not actually admit. Over the REAL sort, Z3 also
+    conflates a lifted ``float`` member with every other kind denoting the
+    same number: a not-in-set antecedent holding one excludes more than
+    type-strict membership does (the true antecedent is wider), and an
+    in-set consequent holding one admits more than type-strict membership
+    does (the consequent is wider than it should be); either makes a
+    ``SATISFIED`` unproven for the same reason an inexact consequent does.
+    A ``VIOLATED`` is not downgraded for this reason, since its
+    counterexample can take the member's own kind. Every downgrade is
+    logged at ``WARNING``.
 
     """
+    is_own_narrowed_by_kind_conflation = symbol_type is SymbolType.REAL and any(
+        isinstance(constraint, NotInSetConstraint)
+        and _does_set_constraint_hold_a_float_member(constraint, own_variable)
+        for constraint in own_constraints
+    )
+    is_other_widened_by_kind_conflation = symbol_type is SymbolType.REAL and any(
+        isinstance(constraint, InSetConstraint)
+        and _does_set_constraint_hold_a_float_member(constraint, other_variable)
+        for constraint in other_constraints
+    )
     is_unproven = (outcome is ConstraintOutcome.VIOLATED and not is_own_exact) or (
-        outcome is ConstraintOutcome.SATISFIED and not is_other_exact
+        outcome is ConstraintOutcome.SATISFIED
+        and (
+            not is_other_exact
+            or is_own_narrowed_by_kind_conflation
+            or is_other_widened_by_kind_conflation
+        )
     )
     if not is_unproven:
         return outcome
     _LOGGER.warning(
         "compute_constraint_implication_subset: the solver's %s answer to "
         "whether %r implies %r rests on constraints screening dropped or "
-        "narrowed; reporting UNDECIDED.",
+        "narrowed, or on a REAL-sort member Z3 conflates with another kind; "
+        "reporting UNDECIDED.",
         outcome.name,
         own_variable,
         other_variable,
@@ -920,10 +1004,19 @@ def compute_constraint_implication_subset(
     exactly when the weakened systems still prove it: ``SATISFIED`` with
     an exact consequent, or ``VIOLATED`` with an exact antecedent. A
     ``VIOLATED`` from an inexact antecedent (a counterexample the dropped
-    constraints might forbid) and a ``SATISFIED`` into an inexact
-    consequent (an implication the dropped constraints might break) are
-    reported ``UNDECIDED`` (logged at ``WARNING``), as is a solver that
-    gave up.
+    constraints might forbid) is reported ``UNDECIDED`` (logged at
+    ``WARNING``), as is a solver that gave up.
+
+    A ``SATISFIED`` is also downgraded to ``UNDECIDED`` when the
+    consequent is inexact (an implication the dropped constraints might
+    break), and, over the REAL sort, when the antecedent's own not-in-set
+    constraint or the consequent's in-set constraint holds a lifted
+    ``float`` member: Z3 conflates that member with every other kind
+    denoting the same number, narrowing the antecedent or widening the
+    consequent beyond what type-strict membership says (see
+    ``_downgrade_unproven_implication``). A ``VIOLATED`` is not
+    downgraded for the REAL-sort case, since its counterexample can take
+    the member's own kind.
 
     Args:
         own_domain: Domain of the candidate subset parameter.
@@ -939,6 +1032,15 @@ def compute_constraint_implication_subset(
         ``VIOLATED`` when a counterexample is decided, and ``UNDECIDED``
         when neither the solver nor the enumeration could decide, or the
         solver decided only a weakened question.
+
+    Raises:
+        NonBooleanLogicalOperandError: If a constraint either branch
+            evaluates holds a provably numeric operand in a Boolean
+            position -- under a logical connective or as a piecewise
+            case condition -- counting an in-set candidate bound to its
+            variable, or the shared variable itself when ``symbol_type``
+            is INT or REAL. Such a constraint is ill-typed rather than
+            undecided, so it raises instead of reporting ``UNDECIDED``.
 
     """
     if any(isinstance(c, InSetConstraint) for c in own_constraints):
@@ -987,8 +1089,48 @@ def compute_constraint_implication_subset(
             other_variable,
         )
     return _downgrade_unproven_implication(
-        outcome, is_own_exact, is_other_exact, own_variable, other_variable
+        outcome,
+        is_own_exact,
+        is_other_exact,
+        own_constraints,
+        own_variable,
+        other_constraints,
+        other_variable,
+        symbol_type,
     )
+
+
+@dataclass(frozen=True)
+class IntervalProfile:
+    """What interval arithmetic reads from a domain.
+
+    A parameter's interval lives in its bound constraints, not in its
+    domain; the domain contributes only these attributes. Interval
+    arithmetic and the natural-number bound gate dispatch on a domain's
+    profile rather than on its kind, so a domain takes part exactly when
+    :meth:`ParamDomain.get_interval_profile` returns one.
+
+    Attributes:
+        admits_only_bounds: Whether the domain admits only bound
+            constraints, so a parameter over it is an interval operand as
+            it stands. A parameter over a domain that admits other
+            constraints takes part only once each constraint it carries is
+            checked to be a bound, and is then recast over an interval
+            domain carrying its partner's ``prefer_inclusive``.
+        non_negative: Whether the domain admits only non-negative values.
+        zero_included: Whether the domain admits zero, given it is
+            non-negative.
+        prefer_inclusive: Whether bounds that arithmetic derives for a
+            parameter over this domain render in inclusive form. Read only
+            where ``admits_only_bounds`` holds, since a recast parameter
+            renders as its partner prefers.
+
+    """
+
+    admits_only_bounds: bool
+    non_negative: bool
+    zero_included: bool
+    prefer_inclusive: bool = True
 
 
 class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence, ABC):
@@ -1030,6 +1172,20 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
     def get_implied_constraints(self, variable: Identifier) -> tuple[Constraint, ...]:
         """Return constraints this domain imposes implicitly on ``variable``."""
 
+    def get_interval_profile(self) -> IntervalProfile | None:
+        """Return what interval arithmetic reads from this domain, or ``None``.
+
+        A domain answering ``None`` takes no part in interval arithmetic or
+        the natural-number bound gate. Only the integer domains override
+        this.
+
+        Returns:
+            The domain's interval profile, or ``None`` if its values do not
+            form an integer interval.
+
+        """
+        return None
+
     @abstractmethod
     def is_value_set_subset(self, other: "ParamDomain") -> bool:
         """Return whether this domain's value set is a subset of ``other``'s."""
@@ -1051,6 +1207,12 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
             solver could not decide. Finite-set domains enumerate, so
             they never report ``UNDECIDED``.
 
+        Raises:
+            NonBooleanLogicalOperandError: From a numeric domain, if a
+                constraint the query evaluates holds a provably numeric
+                operand in a Boolean position. A finite-set domain
+                carries only set constraints and never raises it.
+
         """
 
     @abstractmethod
@@ -1064,6 +1226,12 @@ class ParamDomain(WrappedFamilySerializable, FrozenMixin, StructuralEquivalence,
             when none can exist, and ``UNDECIDED`` when the solver could
             not decide. Finite-set domains enumerate, so they never report
             ``UNDECIDED``.
+
+        Raises:
+            NonBooleanLogicalOperandError: From a numeric domain, if a
+                constraint the query evaluates holds a provably numeric
+                operand in a Boolean position. A finite-set domain
+                carries only set constraints and never raises it.
 
         """
 
@@ -1283,13 +1451,26 @@ def _numeric_has_feasible_value(
     ``ConstraintSystem`` built from ``variable``-only equation
     constraints and ``NotInSetConstraint``s narrowed to their liftable
     members (see ``_build_screened_constraint_system_with_fidelity``).
-    Screening only widens the admissible set, so ``VIOLATED`` on the
-    screened system is reported as it stands, while ``SATISFIED`` is
+    Screening only widens the admissible set, so ``SATISFIED`` is
     reported only when that system is exact: when a dependent or
     foreign-scoped constraint was dropped or narrowed (logged at
     ``WARNING``), the satisfying value may violate it, and ``UNDECIDED``
-    is reported instead (also logged at ``WARNING``). A solver that gives
-    up reports ``UNDECIDED``.
+    is reported instead (also logged at ``WARNING``).
+
+    ``VIOLATED`` on the screened system is reported as it stands, except
+    over the REAL sort when some not-in-set constraint on ``variable``
+    holds a lifted ``float`` member: Z3 conflates that member with every
+    other kind denoting the same number, so it excludes more than
+    type-strict membership does, and the ``VIOLATED`` is downgraded to
+    ``UNDECIDED`` too (logged at ``WARNING``, naming ``variable``). A
+    solver that gives up reports ``UNDECIDED``.
+
+    Raises:
+        NonBooleanLogicalOperandError: If a constraint the enumeration
+            or the solver evaluates holds a provably numeric operand in a
+            Boolean position, counting an in-set candidate bound to
+            ``variable``, or ``variable`` itself when ``symbol_type`` is
+            INT or REAL.
 
     """
     if any(isinstance(c, InSetConstraint) for c in constraints):
@@ -1303,6 +1484,20 @@ def _numeric_has_feasible_value(
             "_numeric_has_feasible_value: the solver's SATISFIED answer for "
             "variable %r rests on constraints screening dropped or narrowed; "
             "reporting UNDECIDED.",
+            variable,
+        )
+        return ConstraintOutcome.UNDECIDED
+    is_narrowed_by_kind_conflation = symbol_type is SymbolType.REAL and any(
+        isinstance(constraint, NotInSetConstraint)
+        and _does_set_constraint_hold_a_float_member(constraint, variable)
+        for constraint in constraints
+    )
+    if outcome is ConstraintOutcome.VIOLATED and is_narrowed_by_kind_conflation:
+        _LOGGER.warning(
+            "_numeric_has_feasible_value: the solver's VIOLATED answer for "
+            "variable %r rests on a not-in-set constraint whose float "
+            "member the REAL sort conflates with another kind denoting the "
+            "same number; reporting UNDECIDED.",
             variable,
         )
         return ConstraintOutcome.UNDECIDED
@@ -1357,6 +1552,21 @@ class IntegerDomain(ParamDomain):
     def get_implied_constraints(self, variable: Identifier) -> tuple[Constraint, ...]:
         return _build_non_negative_implied_constraints(
             variable,
+            non_negative=self.non_negative,
+            zero_included=self.zero_included,
+        )
+
+    @override
+    def get_interval_profile(self) -> IntervalProfile:
+        """Return a profile that admits constraints other than bounds.
+
+        A parameter over this domain may carry any constraint, so it takes
+        part in interval arithmetic only once its constraints are checked
+        to be bounds. Its sign restriction feeds the natural-number bound
+        gate as it stands.
+        """
+        return IntervalProfile(
+            admits_only_bounds=False,
             non_negative=self.non_negative,
             zero_included=self.zero_included,
         )
@@ -1433,10 +1643,36 @@ class IntegerDomain(ParamDomain):
         return ""
 
 
+def _is_literal_grammar_string(value: str) -> bool:
+    """Return whether ``value`` is a string ``LiteralExpression`` accepts.
+
+    Asks :class:`~fhy_core.symbolic.expression.LiteralExpression` itself
+    rather than restating its integer and float grammar, so admissibility
+    cannot drift from the literal a constraint evaluation lifts a bound
+    value into.
+    """
+    try:
+        LiteralExpression(value)
+    except ValueError:
+        return False
+    return True
+
+
 @register_serializable(type_id="real_domain")
 @dataclass(frozen=True, eq=False)
 class RealDomain(ParamDomain):
-    """Real-valued domain (floats and float-parseable strings)."""
+    """Real-valued domain over finite floats and literal-grammar strings.
+
+    A value is admissible exactly when it is a finite literal: a finite
+    Python ``float``, or a ``str`` in the integer or float grammar
+    :class:`~fhy_core.symbolic.expression.LiteralExpression` accepts, which
+    denotes an exact decimal. NaN and the infinities are refused, as is a
+    string that grammar refuses even where ``float()`` parses it (a sign, an
+    exponent, surrounding whitespace, digit grouping, ``"nan"``, ``"inf"``).
+    Constraint evaluation lifts the candidate into a literal, so no
+    admissible value makes a validator raise. ``bool`` and ``int`` are not
+    admissible.
+    """
 
     @property
     @override
@@ -1445,16 +1681,10 @@ class RealDomain(ParamDomain):
 
     @override
     def is_value_admissible(self, value: Any) -> bool:
-        if isinstance(value, bool):
-            return False
         if isinstance(value, float):
-            return True
+            return math.isfinite(value)
         if isinstance(value, str):
-            try:
-                float(value)
-            except ValueError:
-                return False
-            return True
+            return _is_literal_grammar_string(value)
         return False
 
     @override
@@ -1622,6 +1852,20 @@ class IntervalIntegerDomain(ParamDomain):
         )
 
     @override
+    def get_interval_profile(self) -> IntervalProfile:
+        """Return a profile that admits only bounds, with this rendering preference.
+
+        :meth:`validate_constraint` refuses every constraint but a bound, so
+        a parameter over this domain is an interval operand as it stands.
+        """
+        return IntervalProfile(
+            admits_only_bounds=True,
+            non_negative=self.non_negative,
+            zero_included=self.zero_included,
+            prefer_inclusive=self.prefer_inclusive,
+        )
+
+    @override
     def is_value_set_subset(self, other: ParamDomain) -> bool:
         return _is_numeric_value_set_subset(self.symbol_type, other)
 
@@ -1716,10 +1960,56 @@ def _validate_finite_set_constraint(constraint: Constraint, kind: str) -> None:
         )
 
 
+def _raise_if_any_member_is_nan(values: Sequence[Any], kind: str) -> None:
+    """Raise if any of ``values`` is a NaN float.
+
+    NaN is unequal to itself, so a NaN member could never match a
+    candidate: the domain would silently lack that member, and the
+    uniqueness check could not tell two NaNs apart. An infinity equals
+    itself and orders against every float, so it stays an admissible
+    member.
+
+    Args:
+        values: The domain's members, already checked to be leaf values.
+        kind: How the error message names the members, such as
+            ``"Ordinal values"``.
+
+    Raises:
+        ParamError: If any of ``values`` is a NaN float.
+
+    """
+    if any(isinstance(value, float) and math.isnan(value) for value in values):
+        raise ParamError(
+            f"{kind} must not include NaN: NaN is unequal to itself, so a NaN "
+            "member could never be admitted."
+        )
+
+
+def _order_finite_values_by_repr(values: Sequence[Any]) -> list[Any]:
+    """Return ``values`` ordered by ``repr``.
+
+    Every admissible leaf value has a ``repr``, and a value's ``repr`` depends
+    only on the value, so the order is total and identical in every process.
+    That makes it usable both as the sole order of an unordered value set and as
+    the tiebreak between values whose own comparison cannot separate them (``1``
+    and ``True`` compare equal, yet render as ``"1"`` and ``"True"``).
+    """
+    return sorted(values, key=repr)
+
+
 @register_serializable(type_id="ordinal_domain")
 @dataclass(frozen=True, eq=False)
 class OrdinalDomain(ParamDomain):
-    """Finite, totally-ordered set of admissible values."""
+    """Finite, totally-ordered set of admissible values.
+
+    Values are stored as a strict-unique tuple in ascending order, with ``repr``
+    breaking ties between values the order cannot separate (``1`` and ``True``
+    compare equal). The stored order therefore depends only on the value set, not
+    on the order the values were given in.
+
+    A NaN value is refused: it is unequal to itself, so it could never be
+    admitted, and it has no place in a total order. An infinity is kept.
+    """
 
     sorted_values: tuple[OrdinalValue, ...] = field(
         metadata={"serialize_codec": _ORDINAL_VALUES_CODEC}
@@ -1735,13 +2025,17 @@ class OrdinalDomain(ParamDomain):
                     "Ordinal values must satisfy orderable semantics and be "
                     "serializable, or be primitive bool/int/float/str values."
                 )
+        _raise_if_any_member_is_nan(values, "Ordinal values")
+        # Sorting is stable, so pre-ordering by ``repr`` decides the position of
+        # values the ascending sort leaves tied (``1`` and ``True``).
+        repr_ordered_values = _order_finite_values_by_repr(values)
         try:
-            canonical = tuple(sorted(values))
+            canonical = tuple(sorted(repr_ordered_values))
         except TypeError as exc:
             raise TypeError(
                 "Ordinal values must be mutually comparable for sorting."
             ) from exc
-        if not is_sorted_sequence_unique(canonical):
+        if not is_sequence_unique_without_set(canonical):
             raise ParamError("Values must be unique.")
         object.__setattr__(self, "sorted_values", canonical)
 
@@ -1872,9 +2166,11 @@ class OrdinalDomain(ParamDomain):
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:
-        return (
-            isinstance(other, OrdinalDomain)
-            and self.sorted_values == other.sorted_values
+        # Values are stored in a canonical order, so compare them index-wise with
+        # the strict value predicate. Native ``tuple ==`` would wrongly equate
+        # ``(1,)`` and ``(True,)`` because ``True == 1``.
+        return isinstance(other, OrdinalDomain) and do_ordered_param_values_match(
+            self.sorted_values, other.sorted_values
         )
 
     @override
@@ -1887,7 +2183,7 @@ class OrdinalDomain(ParamDomain):
 
     @classmethod
     @override
-    def construct_from_fields(cls, fields: dict[str, Any]) -> "OrdinalDomain":
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> "OrdinalDomain":
         return build_ordinal_domain(fields["sorted_values"])
 
 
@@ -1921,7 +2217,9 @@ class CategoricalDomain(ParamDomain):
         # Categories are unordered; canonicalize by ``repr`` for a deterministic
         # storage order (categorical values are not necessarily mutually
         # orderable).
-        object.__setattr__(self, "categories", tuple(sorted(values, key=repr)))
+        object.__setattr__(
+            self, "categories", tuple(_order_finite_values_by_repr(values))
+        )
 
     @property
     @override
@@ -2074,14 +2372,18 @@ class CategoricalDomain(ParamDomain):
 
     @classmethod
     @override
-    def construct_from_fields(cls, fields: dict[str, Any]) -> "CategoricalDomain":
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> "CategoricalDomain":
         return build_categorical_domain(tuple(fields["categories"]))
 
 
 @register_serializable(type_id="permutation_domain")
 @dataclass(frozen=True, eq=False)
 class PermutationDomain(ParamDomain):
-    """Admissible permutations of a fixed, ordered set of members."""
+    """Admissible permutations of a fixed, ordered set of members.
+
+    A NaN member is refused: it is unequal to itself, so no permutation
+    could place it and the domain would admit no value at all.
+    """
 
     ordered_members: tuple[PermutationMemberValue, ...] = field(
         metadata={"serialize_codec": _PERMUTATION_MEMBERS_CODEC}
@@ -2097,6 +2399,7 @@ class PermutationDomain(ParamDomain):
                     "Permutation members must satisfy equal semantics and be "
                     "serializable, or be primitive bool/int/float/str values."
                 )
+        _raise_if_any_member_is_nan(values, "Permutation members")
         if not is_sequence_unique_without_set(values):
             raise ParamError("Values must be unique.")
         object.__setattr__(self, "ordered_members", values)
@@ -2218,9 +2521,12 @@ class PermutationDomain(ParamDomain):
 
     @override
     def is_structurally_equivalent(self, other: object) -> bool:
-        return (
-            isinstance(other, PermutationDomain)
-            and self.ordered_members == other.ordered_members
+        # Member position is part of a permutation domain's identity, so compare
+        # the members index-wise with the strict value predicate. Native
+        # ``tuple ==`` would wrongly equate ``(1,)`` and ``(True,)`` because
+        # ``True == 1``.
+        return isinstance(other, PermutationDomain) and do_ordered_param_values_match(
+            self.ordered_members, other.ordered_members
         )
 
     @override
@@ -2233,7 +2539,7 @@ class PermutationDomain(ParamDomain):
 
     @classmethod
     @override
-    def construct_from_fields(cls, fields: dict[str, Any]) -> "PermutationDomain":
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> "PermutationDomain":
         return build_permutation_domain(fields["ordered_members"])
 
 
@@ -2241,14 +2547,15 @@ def build_ordinal_domain(values: Sequence[OrdinalValue]) -> OrdinalDomain:
     """Validate ``values`` and build a sorted :class:`OrdinalDomain`.
 
     Args:
-        values: The admissible ordinal values; must be non-empty, unique, and
-            mutually comparable.
+        values: The admissible ordinal values; must be non-empty, unique,
+            free of NaN, and mutually comparable.
 
     Returns:
         The constructed domain.
 
     Raises:
-        ParamError: If ``values`` is empty or contains duplicates.
+        ParamError: If ``values`` is empty, contains duplicates, or
+            contains NaN.
         TypeError: If a value is not ordinal or values are not mutually
             comparable.
 
@@ -2281,13 +2588,15 @@ def build_permutation_domain(
     """Validate ``members`` and build a :class:`PermutationDomain`.
 
     Args:
-        members: The ordered permutation members; must be non-empty and unique.
+        members: The ordered permutation members; must be non-empty,
+            unique, and free of NaN.
 
     Returns:
         The constructed domain.
 
     Raises:
-        ParamError: If ``members`` is empty or contains duplicates.
+        ParamError: If ``members`` is empty, contains duplicates, or
+            contains NaN.
         TypeError: If a member is not a permutation member value.
 
     """

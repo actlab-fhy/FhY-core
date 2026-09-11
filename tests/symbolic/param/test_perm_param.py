@@ -1,7 +1,13 @@
 """Tests for permutation parameters."""
 
+from typing import Any
+
 import pytest
 
+from fhy_core.serialization import (
+    DeserializationValueError,
+    serialize_registry_wrapped_value,
+)
 from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
 from fhy_core.symbolic.param import ParamError, create_permutation_param
 from fhy_core.symbolic.param.core import Param
@@ -210,6 +216,108 @@ def test_perm_param_is_not_structurally_equivalent_when_member_orders_differ() -
     assert not right.is_structurally_equivalent(left)
 
 
+def test_perm_param_is_structurally_equivalent_to_a_separately_built_equal_param() -> (
+    None
+):
+    """Test equivalence holds in both directions for two equal member tuples.
+
+    Guards the strict index-wise comparison against over-rejection: two params
+    built separately over the same members in the same order must still compare
+    equivalent, and the relation must stay reflexive and symmetric.
+    """
+    left: Param[tuple[int, ...]] = create_permutation_param(
+        [1, 2], name=mock_identifier("x", 1)
+    )
+    right: Param[tuple[int, ...]] = create_permutation_param(
+        [1, 2], name=mock_identifier("x", 1)
+    )
+
+    assert left.is_structurally_equivalent(left)
+    assert left.is_structurally_equivalent(right)
+    assert right.is_structurally_equivalent(left)
+
+
+def test_perm_param_is_not_structurally_equivalent_to_a_reordered_member_pair() -> None:
+    """Test equivalence stays order-sensitive for the smallest member pair.
+
+    Member position is part of a permutation domain's identity, so comparing the
+    members order-independently would be wrong: ``[1, 2]`` and ``[2, 1]`` must
+    compare non-equivalent in both directions.
+    """
+    left: Param[tuple[int, ...]] = create_permutation_param(
+        [1, 2], name=mock_identifier("x", 1)
+    )
+    right: Param[tuple[int, ...]] = create_permutation_param(
+        [2, 1], name=mock_identifier("x", 1)
+    )
+
+    assert not left.is_structurally_equivalent(right)
+    assert not right.is_structurally_equivalent(left)
+
+
+def test_perm_param_bool_and_int_member_sets_are_not_equivalent() -> None:
+    """Test structural equivalence keeps ``bool`` and ``int`` member sets distinct.
+
+    ``[1, 2]`` and ``[True, 2]`` range over different members, so they must compare
+    non-equivalent in both directions. Native ``tuple`` equality would report them
+    equal because ``True == 1``.
+    """
+    int_param: Param[tuple[int, ...]] = create_permutation_param(
+        [1, 2], name=mock_identifier("x", 1)
+    )
+    bool_param: Param[tuple[int, ...]] = create_permutation_param(
+        [True, 2], name=mock_identifier("x", 1)
+    )
+
+    assert not int_param.is_structurally_equivalent(bool_param)
+    assert not bool_param.is_structurally_equivalent(int_param)
+
+
+def test_perm_param_int_and_float_member_sets_are_not_equivalent() -> None:
+    """Test structural equivalence keeps ``int`` and ``float`` member sets distinct.
+
+    ``1`` and ``1.0`` are distinct permutation members, so ``[1, 2]`` and
+    ``[1.0, 2]`` must compare non-equivalent in both directions despite
+    ``1 == 1.0``.
+    """
+    int_param: Param[tuple[int, ...]] = create_permutation_param(
+        [1, 2], name=mock_identifier("x", 1)
+    )
+    float_param: Param[tuple[float, ...]] = create_permutation_param(
+        [1.0, 2], name=mock_identifier("x", 1)
+    )
+
+    assert not int_param.is_structurally_equivalent(float_param)
+    assert not float_param.is_structurally_equivalent(int_param)
+
+
+def test_perm_params_reported_equivalent_agree_on_value_validity() -> None:
+    """Test equivalent permutation params accept exactly the same permutations.
+
+    The downstream contract of structural equivalence: params that report
+    equivalent must not disagree about any value. A value-blind equivalence check
+    breaks it, because ``[1, 2]`` and ``[True, 2]`` would compare equivalent while
+    only one of them accepts ``(True, 2)``.
+    """
+    params: list[Param[Any]] = [
+        create_permutation_param(members, name=mock_identifier("x", 1))
+        for members in ([1, 2], [True, 2], [1.0, 2])
+    ]
+    candidate_values: tuple[tuple[Any, ...], ...] = (
+        (1, 2),
+        (True, 2),
+        (1.0, 2),
+        (2, 1),
+    )
+
+    for left in params:
+        for right in params:
+            if not left.is_structurally_equivalent(right):
+                continue
+            for value in candidate_values:
+                assert left.is_value_valid(value) == right.is_value_valid(value)
+
+
 def test_perm_param_is_not_structurally_equivalent_to_non_perm_object() -> None:
     """Test is_structurally_equivalent is ``False`` for a non-``Param`` object."""
     param = create_permutation_param(["n", "c", "h", "w"])
@@ -238,3 +346,15 @@ def test_perm_param_serialization_round_trip_preserves_constraints(
 
     assert_all_satisfied(restored, [["n", "c", "h", "w"], ["c", "n", "w", "h"]])
     assert_none_satisfied(restored, [["n", "c", "w", "h"]])
+
+
+def test_perm_param_deserialize_rejects_a_nan_member() -> None:
+    """Test a payload carrying a NaN member is refused, as construction refuses it."""
+    payload = create_permutation_param([1.0, 2.0]).serialize_to_dict()
+    payload["domain"]["__data__"]["ordered_members"] = [  # type: ignore[index,call-overload]  # test: modify serialized
+        serialize_registry_wrapped_value(float("nan")),
+        serialize_registry_wrapped_value(1.0),
+    ]
+
+    with pytest.raises(DeserializationValueError, match="NaN"):
+        Param.deserialize_from_dict(payload)

@@ -1,11 +1,11 @@
 """Tests for tri-state `Param.check_feasibility` and `Param.check_subset`.
 
 The tri-state queries are the real implementation; `is_feasible`,
-`is_empty`, and `is_subset` are thin wrappers that fold an `UNDECIDED`
-outcome into the optimistic boolean. These tests pin down all three
-outcomes on the tri-state side and the exact fold on the boolean side, so
-the wrappers' documented optimism cannot drift away from the outcome it is
-derived from.
+`is_empty`, and `is_subset` are thin wrappers that report `True` only for
+a proven answer, so an `UNDECIDED` outcome folds to `False` in all three.
+These tests pin down all three outcomes on the tri-state side and the
+exact fold on the boolean side, so the wrappers cannot drift away from the
+outcome they are derived from.
 """
 
 import logging
@@ -20,7 +20,12 @@ from fhy_core.symbolic.constraint import (
     InSetConstraint,
     NotInSetConstraint,
 )
-from fhy_core.symbolic.expression import IdentifierExpression
+from fhy_core.symbolic.expression import (
+    IdentifierExpression,
+    LiteralExpression,
+    NonBooleanLogicalOperandError,
+    logical_and,
+)
 from fhy_core.symbolic.param import (
     Param,
     create_categorical_param,
@@ -31,7 +36,7 @@ from fhy_core.symbolic.param import (
     create_real_param,
 )
 
-from .conftest import mock_identifier
+from .conftest import build_case_condition_constraint, mock_identifier
 
 
 def _create_undecided_param(name: str = "x", identifier_id: int = 1) -> Param[int]:
@@ -88,16 +93,16 @@ def test_check_feasibility_reports_undecided_when_the_solver_refuses() -> None:
 
 
 # =============================================================================
-# is_feasible / is_empty fold UNDECIDED optimistically
+# is_feasible / is_empty report True only for a proven answer
 # =============================================================================
 
 
-def test_is_feasible_folds_undecided_to_true() -> None:
-    """Test `is_feasible` reads an undecided outcome as "not disproven"."""
+def test_is_feasible_folds_undecided_to_false() -> None:
+    """Test `is_feasible` reads an undecided outcome as "not proven feasible"."""
     param = _create_undecided_param()
 
     assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
-    assert param.is_feasible()
+    assert not param.is_feasible()
 
 
 def test_is_empty_folds_undecided_to_false() -> None:
@@ -109,10 +114,12 @@ def test_is_empty_folds_undecided_to_false() -> None:
 
 
 def test_is_feasible_and_is_empty_are_both_false_only_when_undecided() -> None:
-    """Test the two wrappers are complements, so neither is lost to the fold.
+    """Test the two wrappers are not complements: `UNDECIDED` makes both `False`.
 
-    An undecided parameter reports feasible and not empty, which is the
-    documented optimism; a decided one reports exactly one of the two.
+    Each reports `True` only for its own proof, so an undecided parameter
+    is reported neither feasible nor empty, while a decided one reports
+    exactly one of the two. Deriving either wrapper as the negation of the
+    other would claim a proof the solver never gave.
     """
     undecided = _create_undecided_param()
     feasible = create_integer_param_between(1, 5)
@@ -125,7 +132,7 @@ def test_is_feasible_and_is_empty_are_both_false_only_when_undecided() -> None:
         ],
     )
 
-    assert (undecided.is_feasible(), undecided.is_empty()) == (True, False)
+    assert (undecided.is_feasible(), undecided.is_empty()) == (False, False)
     assert (feasible.is_feasible(), feasible.is_empty()) == (True, False)
     assert (empty.is_feasible(), empty.is_empty()) == (False, True)
 
@@ -181,27 +188,28 @@ def test_check_subset_reports_undecided_when_the_solver_refuses() -> None:
 
 
 # =============================================================================
-# is_subset folds UNDECIDED optimistically
+# is_subset reports True only for a proven relation
 # =============================================================================
 
 
-def test_is_subset_folds_undecided_to_true() -> None:
-    """Test `is_subset` reads an undecided implication as "not disproven"."""
+def test_is_subset_folds_undecided_to_false() -> None:
+    """Test `is_subset` reads an undecided implication as "not proven"."""
     undecided = _create_undecided_param()
     wider = create_integer_param(name=undecided.variable)
 
     assert undecided.check_subset(wider) is ConstraintOutcome.UNDECIDED
-    assert undecided.is_subset(wider)
+    assert not undecided.is_subset(wider)
 
 
-def test_is_subset_reports_false_only_for_a_violated_outcome() -> None:
-    """Test only a reported counterexample folds `is_subset` to `False`."""
+def test_is_subset_reports_true_only_for_a_satisfied_outcome() -> None:
+    """Test only a proven relation folds `is_subset` to `True`."""
     wider = create_integer_param_between(1, 5)
     narrower = create_integer_param_between(2, 3)
 
+    assert narrower.check_subset(wider) is ConstraintOutcome.SATISFIED
+    assert narrower.is_subset(wider)
     assert wider.check_subset(narrower) is ConstraintOutcome.VIOLATED
     assert not wider.is_subset(narrower)
-    assert narrower.is_subset(wider)
 
 
 # =============================================================================
@@ -391,21 +399,25 @@ def test_check_subset_reports_violated_when_own_exceeds_an_undecided_finite_othe
 
 
 def test_is_feasible_and_is_empty_fold_an_undecided_enumeration() -> None:
-    """Test the boolean wrappers read an undecided enumeration as "not disproven"."""
+    """Test the boolean wrappers read an undecided enumeration as unproven.
+
+    No candidate is decided either way, so neither feasibility nor
+    emptiness is proven and both wrappers report `False`.
+    """
     param = _create_in_set_param_with_undecided_members()
 
     assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
-    assert param.is_feasible()
+    assert not param.is_feasible()
     assert not param.is_empty()
 
 
-def test_is_subset_folds_an_undecided_enumeration_to_true() -> None:
-    """Test `is_subset` reads an undecided enumeration as "not disproven"."""
+def test_is_subset_folds_an_undecided_enumeration_to_false() -> None:
+    """Test `is_subset` reads an undecided enumeration as "not proven"."""
     own = _create_in_set_param_with_one_decided_member()
     other = _create_integer_param_with_bound(3, lambda z: z <= 0)
 
     assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
-    assert own.is_subset(other)
+    assert not own.is_subset(other)
 
 
 def test_undecided_feasibility_enumeration_logs_one_warning_naming_the_candidates(
@@ -462,7 +474,7 @@ def test_undecided_subset_enumeration_logs_one_warning_naming_the_candidates(
 
 
 # =============================================================================
-# A weakened screened system cannot carry the optimistic answer
+# A weakened screened system cannot carry an unproven answer
 # =============================================================================
 
 
@@ -580,28 +592,38 @@ def test_check_subset_keeps_violated_when_only_the_consequent_is_weakened() -> N
     assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
-def test_is_feasible_and_is_empty_fold_a_weakened_feasibility_optimistically() -> None:
-    """Test the boolean wrappers fold a weakened-system `UNDECIDED` optimistically."""
+def test_is_feasible_and_is_empty_fold_a_weakened_feasibility_to_false() -> None:
+    """Test the boolean wrappers prove neither answer for a weakened system.
+
+    The solver's `SATISFIED` rests on a dropped constraint, so feasibility
+    is unproven, and nothing proves emptiness either.
+    """
     param = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
 
-    assert param.is_feasible() is True
+    assert param.is_feasible() is False
     assert param.is_empty() is False
 
 
-def test_is_subset_folds_an_untrusted_counterexample_to_true() -> None:
-    """Test `is_subset` reports `True` when the only counterexample is untrusted."""
+def test_is_subset_folds_an_untrusted_counterexample_to_false() -> None:
+    """Test `is_subset` reports `False` when the only counterexample is untrusted.
+
+    An untrusted counterexample leaves the relation `UNDECIDED`, which
+    proves neither that it holds nor that it fails.
+    """
     own = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
     other = create_integer_param_between(0, 5)
 
-    assert own.is_subset(other) is True
+    assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
+    assert own.is_subset(other) is False
 
 
-def test_is_subset_folds_an_untrusted_implication_to_true() -> None:
-    """Test `is_subset` reports `True` for an undecided weakened implication."""
+def test_is_subset_folds_an_untrusted_implication_to_false() -> None:
+    """Test `is_subset` reports `False` for an undecided weakened implication."""
     own = create_integer_param_between(1, 3)
     other = _create_integer_param_with_dependent_constraint(lambda x: x > 0)
 
-    assert own.is_subset(other) is True
+    assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
+    assert own.is_subset(other) is False
 
 
 def test_weakened_feasibility_downgrade_logs_one_warning_naming_the_variable(
@@ -652,3 +674,334 @@ def test_weakened_subset_downgrade_logs_one_warning_naming_both_variables(
     message = downgrades[0].getMessage()
     assert repr(own.variable) in message
     assert repr(other.variable) in message
+
+
+# =============================================================================
+# True means proven, even where a valid value exists
+# =============================================================================
+
+
+def _create_integer_param_with_equation_literal(
+    literal: float | int | str,
+) -> Param[int]:
+    """Create an integer parameter `v` constrained by `v == literal`."""
+    v = mock_identifier("v", 1)
+    return create_integer_param(
+        name=v,
+        constraints=[EquationConstraint(IdentifierExpression(v).equals(literal))],
+    )
+
+
+def _create_integer_param_restricted_to(members: set[float]) -> Param[int]:
+    """Create an integer parameter `v` constrained by `v in members`."""
+    v = mock_identifier("v", 1)
+    return create_integer_param(name=v, constraints=[InSetConstraint(v, members)])
+
+
+@pytest.mark.parametrize(
+    ("build_param", "outcome", "is_feasible", "is_empty"),
+    [
+        pytest.param(
+            lambda: _create_integer_param_with_equation_literal(1.5),
+            ConstraintOutcome.UNDECIDED,
+            False,
+            False,
+            id="equals-float-1.5",
+        ),
+        pytest.param(
+            lambda: _create_integer_param_with_equation_literal("1.5"),
+            ConstraintOutcome.UNDECIDED,
+            False,
+            False,
+            id="equals-decimal-string-1.5",
+        ),
+        pytest.param(
+            lambda: _create_integer_param_with_equation_literal(2.0),
+            ConstraintOutcome.UNDECIDED,
+            False,
+            False,
+            id="equals-float-2.0",
+        ),
+        pytest.param(
+            lambda: _create_integer_param_with_equation_literal(2),
+            ConstraintOutcome.SATISFIED,
+            True,
+            False,
+            id="equals-int-2",
+        ),
+        pytest.param(
+            lambda: _create_integer_param_restricted_to({1.5}),
+            ConstraintOutcome.VIOLATED,
+            False,
+            True,
+            id="in-set-float-1.5",
+        ),
+    ],
+)
+def test_integer_param_wrappers_report_true_only_for_the_outcome_proving_them(
+    build_param: Callable[[], Param[int]],
+    outcome: ConstraintOutcome,
+    is_feasible: bool,
+    is_empty: bool,
+) -> None:
+    """Test each wrapper reports `True` only for the outcome that proves it.
+
+    The solver refuses to compare an integer variable with a float-valued
+    literal, so the three float-literal equations are `UNDECIDED` and are
+    reported neither feasible nor empty. `v == 1.5` and `v == "1.5"` admit
+    no integer at all, while `v == 2.0` admits `2`; reporting that last one
+    not feasible is the accepted cost of `True` meaning proven. The in-set
+    member `1.5` is decided by enumeration: no integer is a float, so the
+    parameter is proven empty.
+    """
+    param = build_param()
+
+    assert param.check_feasibility() is outcome
+    assert param.is_feasible() is is_feasible
+    assert param.is_empty() is is_empty
+
+
+def test_is_feasible_reports_false_for_a_float_equation_an_integer_satisfies() -> None:
+    """Test `v == 2.0` is not reported feasible, though `v = 2` is valid.
+
+    Bound to `2`, evaluation decides `2 == 2.0`; unbound, the solver refuses
+    the int/float comparison, so feasibility is `UNDECIDED`. `is_feasible`
+    therefore reports `False` for a parameter that has a valid value: the
+    accepted cost of never reporting an unproven parameter feasible.
+    """
+    param = _create_integer_param_with_equation_literal(2.0)
+
+    assert param.is_value_valid(2)
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+    assert param.is_feasible() is False
+    assert param.is_empty() is False
+
+
+# =============================================================================
+# An ill-typed constraint raises rather than reporting UNDECIDED
+# =============================================================================
+
+
+def _create_param_conditioned_on_its_own_value() -> Param[int]:
+    """Create `x in {1, 2}` whose other constraint takes `x` as a case condition.
+
+    The in-set constraint makes feasibility an enumeration, which binds
+    each member to `x` and so puts a number in the case condition.
+    """
+    x = mock_identifier("x", 1)
+    return create_integer_param(
+        name=x,
+        constraints=[
+            InSetConstraint(x, (1, 2)),
+            build_case_condition_constraint(IdentifierExpression(x)),
+        ],
+    )
+
+
+def _create_param_conditioned_on_arithmetic() -> Param[int]:
+    """Create `x` whose constraint takes `x + 1` as a case condition.
+
+    With no in-set constraint the question goes to the solver, whose seam
+    refuses `x + 1` in a Boolean position as provably numeric.
+    """
+    x = mock_identifier("x", 1)
+    return create_integer_param(
+        name=x,
+        constraints=[build_case_condition_constraint(IdentifierExpression(x) + 1)],
+    )
+
+
+def _create_unconstrained_param() -> Param[int]:
+    """Create a well-typed integer parameter `y` with no constraints."""
+    return create_integer_param(name=mock_identifier("y", 2))
+
+
+def _create_well_typed_in_set_param() -> Param[int]:
+    """Create a well-typed integer parameter `y in {1, 2}`."""
+    y = mock_identifier("y", 2)
+    return create_integer_param(name=y, constraints=[InSetConstraint(y, (1, 2))])
+
+
+@pytest.mark.parametrize(
+    "build_param",
+    [
+        pytest.param(_create_param_conditioned_on_its_own_value, id="enumeration"),
+        pytest.param(_create_param_conditioned_on_arithmetic, id="solver"),
+    ],
+)
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(Param.check_feasibility, id="check_feasibility"),
+        pytest.param(Param.is_feasible, id="is_feasible"),
+        pytest.param(Param.is_empty, id="is_empty"),
+    ],
+)
+def test_feasibility_raises_for_a_number_in_a_case_condition(
+    build_param: Callable[[], Param[int]], query: Callable[[Param[int]], object]
+) -> None:
+    """Test an ill-typed constraint raises instead of reporting `UNDECIDED`.
+
+    No backend, bound, or timeout gives a number in a Boolean position a
+    meaning, so folding it into an undecided answer would invite a caller
+    to retry a question that cannot succeed. The typed error propagates
+    from the enumeration and the solver path alike.
+    """
+    param = build_param()
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(param)
+
+
+@pytest.mark.parametrize(
+    ("build_own", "build_other"),
+    [
+        pytest.param(
+            _create_param_conditioned_on_its_own_value,
+            _create_unconstrained_param,
+            id="enumerating-own",
+        ),
+        pytest.param(
+            _create_unconstrained_param,
+            _create_param_conditioned_on_its_own_value,
+            id="enumerating-other",
+        ),
+        pytest.param(
+            _create_param_conditioned_on_arithmetic,
+            _create_unconstrained_param,
+            id="solver-antecedent",
+        ),
+        pytest.param(
+            _create_unconstrained_param,
+            _create_param_conditioned_on_arithmetic,
+            id="solver-consequent",
+        ),
+        pytest.param(
+            _create_param_conditioned_on_arithmetic,
+            _create_well_typed_in_set_param,
+            id="solver-witness-outside-a-finite-other",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(Param.check_subset, id="check_subset"),
+        pytest.param(Param.is_subset, id="is_subset"),
+    ],
+)
+def test_subset_raises_for_a_number_in_a_case_condition(
+    build_own: Callable[[], Param[int]],
+    build_other: Callable[[], Param[int]],
+    query: Callable[[Param[int], Param[int]], object],
+) -> None:
+    """Test an ill-typed constraint on either side raises from the subset query.
+
+    Covers each path that evaluates a constraint: enumerating this
+    parameter's candidates, enumerating the other side's, the solver's
+    implication in either direction, and the solver's search for a value
+    outside a finite other side.
+    """
+    own = build_own()
+    other = build_other()
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(own, other)
+
+
+_BOOLEAN_POSITION_CONSTRAINTS = [
+    pytest.param(
+        lambda variable: EquationConstraint(
+            logical_and(IdentifierExpression(variable), LiteralExpression(True))
+        ),
+        id="and",
+    ),
+    pytest.param(
+        lambda variable: build_case_condition_constraint(
+            IdentifierExpression(variable)
+        ),
+        id="case_condition",
+    ),
+]
+
+_NUMERIC_PARAM_FACTORIES = [
+    pytest.param(create_integer_param, id="integer"),
+    pytest.param(create_real_param, id="real"),
+]
+
+
+@pytest.mark.parametrize("create_param", _NUMERIC_PARAM_FACTORIES)
+@pytest.mark.parametrize("build_constraint", _BOOLEAN_POSITION_CONSTRAINTS)
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(Param.check_feasibility, id="check_feasibility"),
+        pytest.param(Param.is_feasible, id="is_feasible"),
+        pytest.param(Param.is_empty, id="is_empty"),
+    ],
+)
+def test_feasibility_raises_for_the_variable_itself_in_a_boolean_position(
+    create_param: Callable[..., Param[Any]],
+    build_constraint: Callable[[Any], EquationConstraint],
+    query: Callable[[Param[Any]], object],
+) -> None:
+    """Test a numeric parameter's own variable in a Boolean position raises.
+
+    The domain declares the variable INT or REAL to the solver, so the
+    variable under a connective or as a case condition is ill-typed. Z3
+    used to reject the sort mismatch itself, which escaped a tri-state
+    query as a `PassExecutionError`.
+    """
+    x = mock_identifier("x", 1)
+    param = create_param(name=x, constraints=[build_constraint(x)])
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(param)
+
+
+@pytest.mark.parametrize("create_param", _NUMERIC_PARAM_FACTORIES)
+@pytest.mark.parametrize("build_constraint", _BOOLEAN_POSITION_CONSTRAINTS)
+@pytest.mark.parametrize(
+    "is_own_ill_typed", [True, False], ids=["antecedent", "consequent"]
+)
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(Param.check_subset, id="check_subset"),
+        pytest.param(Param.is_subset, id="is_subset"),
+    ],
+)
+def test_subset_raises_for_the_variable_itself_in_a_boolean_position(
+    create_param: Callable[..., Param[Any]],
+    build_constraint: Callable[[Any], EquationConstraint],
+    is_own_ill_typed: bool,
+    query: Callable[[Param[Any], Param[Any]], object],
+) -> None:
+    """Test the solver's implication raises for either side's ill-typed variable."""
+    x = mock_identifier("x", 1)
+    ill_typed = create_param(name=x, constraints=[build_constraint(x)])
+    plain = create_param(name=mock_identifier("y", 2))
+    own, other = (ill_typed, plain) if is_own_ill_typed else (plain, ill_typed)
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(own, other)
+
+
+@pytest.mark.parametrize("build_constraint", _BOOLEAN_POSITION_CONSTRAINTS)
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param(Param.check_subset, id="check_subset"),
+        pytest.param(Param.is_subset, id="is_subset"),
+    ],
+)
+def test_subset_witness_search_raises_for_the_variable_in_a_boolean_position(
+    build_constraint: Callable[[Any], EquationConstraint],
+    query: Callable[[Param[int], Param[int]], object],
+) -> None:
+    """Test the search for a value outside a finite other side raises too."""
+    x = mock_identifier("x", 1)
+    own = create_integer_param(name=x, constraints=[build_constraint(x)])
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        query(own, _create_well_typed_in_set_param())

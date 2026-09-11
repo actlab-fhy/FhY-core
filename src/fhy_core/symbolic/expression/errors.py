@@ -8,9 +8,13 @@ from ``fhy_core.symbolic.expression.registry`` and ``fhy_core.symbolic.expressio
 """
 
 __all__ = [
+    "ComplexInfinityLiftError",
     "EntryLookupError",
     "EntryRegistrationError",
+    "NativeConstantBindingError",
+    "NativeConstantLoweringError",
     "NativeResultSortError",
+    "NonBooleanLogicalOperandError",
     "NonFiniteCastError",
     "PartialPiecewiseError",
     "StringLiteralPrecisionError",
@@ -45,6 +49,43 @@ class EntryLookupError(KeyError):
 
 
 @register_error
+class ComplexInfinityLiftError(ValueError):
+    """Raised when SymPy's complex infinity reaches the lifter.
+
+    SymPy folds a quotient by zero to ``sympy.zoo``, its directionless
+    complex infinity. The expression IR has no literal for that value:
+    every :class:`LiteralExpression` denotes a ``bool``, an integer, or
+    a real number, and no real number is the quotient of a nonzero
+    numerator by zero. Lifting therefore refuses the value here instead
+    of reporting it as a node kind the lifter merely has not learned yet,
+    so a caller can tell an ill-defined quotient apart from an
+    unimplemented lifting arm.
+    """
+
+
+@register_error
+class NativeConstantBindingError(ValueError):
+    """Raised when an environment binds a native constant the expression references."""
+
+
+@register_error
+class NativeConstantLoweringError(RuntimeError):
+    """Raised when a registered native constant reaches the Z3 bridge.
+
+    The Z3 bridge has no lowering for a native constant, and the built-in
+    ones have no exact Z3 term at all: ``pi`` and ``e`` are
+    transcendental, and ``inf`` and ``nan`` are not real numbers.
+    Lowering a constant's canonical identifier as a variable instead
+    would let the solver choose the constant's value and answer a
+    question about some other number, so
+    :func:`~fhy_core.symbolic.expression.convert_expression_to_z3_expression`
+    refuses the identifier. The solver seam refuses the same queries
+    before lowering and reports them undecided rather than raising this
+    error.
+    """
+
+
+@register_error
 class NativeResultSortError(RuntimeError):
     """Raised when a native function returns a value of an incompatible sort.
 
@@ -53,6 +94,33 @@ class NativeResultSortError(RuntimeError):
     indicates the native implementation's contract is broken: the
     declared sort promised one runtime type family, but the
     implementation produced another.
+    """
+
+
+@register_error
+class NonBooleanLogicalOperandError(TypeError):
+    """Raised when a Boolean position holds an operand that denotes a number.
+
+    ``LOGICAL_AND``, ``LOGICAL_OR``, and ``LOGICAL_NOT`` denote Boolean
+    connectives, and a piecewise case condition selects its branch by
+    truth, so an operand that provably denotes a number -- a
+    non-``bool`` literal, an arithmetic node, a piecewise whose every
+    branch value is numeric, or an identifier bound to one of those --
+    has no meaning in either position. Neither symbolic backend refuses
+    such an operand on its own terms: SymPy's ``And``/``Or`` raise a raw
+    ``TypeError``, its ``Not`` coerces by truthiness, and its
+    ``Piecewise`` reads a substituted number as a truth value, while Z3
+    reports the sort mismatch as a backend ``z3.z3types.Z3Exception``.
+    Both bridges screen the expression before lowering, and the
+    constraint layer screens its bindings before substituting them, so
+    one ill-typed expression is refused the same way whichever path a
+    caller reaches.
+
+    A ``TypeError`` because such an expression is ill-typed rather than
+    merely hard to settle. Contrast :class:`UndecidableError`, which
+    reports a well-typed query the solver declined to decide and which a
+    different solver configuration might decide; no configuration gives
+    ``logical_and(2, 4)`` a meaning.
     """
 
 

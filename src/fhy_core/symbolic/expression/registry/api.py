@@ -2,8 +2,10 @@
 
 Exposes ``register_function`` / ``register_native_function`` /
 ``register_native_constant``: the write-side surface that mutates the
-process-wide registry. Read-side accessors and the underlying storage
-live in :mod:`fhy_core.symbolic.expression.registry.storage`.
+process-wide registry. Most read-side accessors and the underlying
+storage live in :mod:`fhy_core.symbolic.expression.registry.storage`;
+``try_get_registered_result_sort`` lives here instead because it reads
+the function entry types this module already imports.
 
 Registration records an entry; it does not type-check it. Checking a
 function body against its declared sorts needs the IR type system, which
@@ -18,6 +20,7 @@ __all__ = [
     "register_function",
     "register_native_constant",
     "register_native_function",
+    "try_get_registered_result_sort",
 ]
 
 from collections.abc import Callable, Sequence
@@ -25,10 +28,14 @@ from collections.abc import Callable, Sequence
 from fhy_core.identifier import Identifier
 
 from ..core import Expression
-from ..errors import EntryRegistrationError
+from ..errors import EntryLookupError, EntryRegistrationError
 from ..sort import FunctionSort
 from .entries import NativeConstant, NativeFunction, RegisteredFunction
-from .storage import _insert_unique_entry
+from .storage import (
+    _insert_unique_entry,
+    _insert_unique_native_constant,
+    get_registered_entry,
+)
 
 
 def register_function(
@@ -53,8 +60,8 @@ def register_function(
             as ``parameters``.
         result_sort: Declared result sort.
         body: Body expression. Free identifiers must be a subset of
-            ``parameters`` plus any identifiers whose name matches a
-            registered :class:`NativeConstant`.
+            ``parameters`` plus the canonical identifiers of the
+            registered :class:`NativeConstant` entries.
 
     Returns:
         The newly stored ``RegisteredFunction``.
@@ -136,10 +143,16 @@ def register_native_constant(
 ) -> NativeConstant:
     """Register a named constant in the registry.
 
+    Registration mints one canonical :class:`Identifier` for the
+    constant, retrievable with
+    :func:`get_native_constant_identifier`. An
+    ``IdentifierExpression`` wrapping that identifier is what the type
+    checker and the evaluator treat as a reference to this constant;
+    an unrelated identifier that merely shares ``name`` as its
+    ``name_hint`` is an ordinary free variable.
+
     Args:
-        name: Unique registry key. An ``IdentifierExpression`` whose
-            identifier name matches ``name`` is treated as a reference
-            to this constant by the type checker and the evaluator.
+        name: Unique registry key.
         sort: Declared sort of the constant.
         value: Literal Python value. Must satisfy
             :func:`is_python_value_compatible_with_sort`.
@@ -160,5 +173,27 @@ def register_native_constant(
         registered = NativeConstant(name=name, sort=sort, value=value)
     except ValueError as exc:
         raise EntryRegistrationError(str(exc)) from exc
-    _insert_unique_entry(name, registered)
+    _insert_unique_native_constant(registered)
     return registered
+
+
+def try_get_registered_result_sort(function_name: str) -> FunctionSort | None:
+    """Return the declared result sort of a registered call target, or None.
+
+    Args:
+        function_name: Registry key to look up.
+
+    Returns:
+        The entry's declared ``result_sort`` when ``function_name``
+        names a ``RegisteredFunction`` or a ``NativeFunction``; None
+        when the name is unregistered, or when it names a
+        ``NativeConstant``, which declares no result sort of its own.
+
+    """
+    try:
+        entry = get_registered_entry(function_name)
+    except EntryLookupError:
+        return None
+    if isinstance(entry, (RegisteredFunction, NativeFunction)):
+        return entry.result_sort
+    return None

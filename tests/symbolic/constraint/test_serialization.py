@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any, cast
 
 import pytest
+from immutabledict import immutabledict
 
 from fhy_core.serialization import (
     DeserializationDictStructureError,
@@ -13,9 +14,11 @@ from fhy_core.serialization import (
 )
 from fhy_core.symbolic.constraint import (
     Constraint,
+    ConstraintSystem,
     EquationConstraint,
     InSetConstraint,
     NotInSetConstraint,
+    create_constraint_system,
 )
 from fhy_core.symbolic.expression import (
     BinaryOperation,
@@ -45,7 +48,9 @@ def test_equation_constraint_round_trip_dict_serialization() -> None:
     an ``EquationConstraint``'s only data is its wrapped expression.
     """
     x = mock_identifier("x", 0)
-    expression = make_binary_expression(BinaryOperation.EQUAL, x, True)
+    expression = make_binary_expression(
+        BinaryOperation.EQUAL, x, LiteralExpression(True)
+    )
     constraint = EquationConstraint(expression)
     expected = {
         "__type__": "equation_constraint",
@@ -443,3 +448,31 @@ def test_set_constraint_round_trips_through_every_format(
         assert restored.is_satisfied_with_bindings(
             {x: probe}
         ) == constraint.is_satisfied_with_bindings({x: probe})
+
+
+# =============================================================================
+# construct_from_fields accepts any Mapping, not only dict
+# =============================================================================
+
+
+def test_set_constraint_construct_from_fields_accepts_an_immutabledict() -> None:
+    """Test `_SetConstraint`'s reconstruction hook accepts an `immutabledict`."""
+    x = mock_identifier("x", 0)
+    constraint = InSetConstraint(x, {1, 2})
+    fields = immutabledict({"variable": x, "values": constraint.values})
+
+    rebuilt = InSetConstraint.construct_from_fields(fields)
+
+    assert rebuilt.is_structurally_equivalent(constraint)
+
+
+def test_constraint_system_construct_from_fields_accepts_an_immutabledict() -> None:
+    """Test `ConstraintSystem`'s reconstruction hook accepts an `immutabledict`."""
+    x = mock_identifier("x", 0)
+    constraint = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 10))
+    system = create_constraint_system(constraint)
+    fields = immutabledict({"constraints": system.constraints})
+
+    rebuilt = ConstraintSystem.construct_from_fields(fields)
+
+    assert rebuilt.is_structurally_equivalent(system)

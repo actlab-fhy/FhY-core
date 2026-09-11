@@ -37,6 +37,7 @@ __all__ = [
     "SymbolicPredicate",
 ]
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -52,10 +53,15 @@ from fhy_core.symbolic.expression import (
     Expression,
     LiteralExpression,
     LiteralType,
+    NonBooleanLogicalOperandError,
+    is_integer_valued_literal,
     make_binary_expression,
     pformat_expression,
+    validate_predicate,
 )
-from fhy_core.symbolic.expression.registry import is_native_constant_name
+from fhy_core.symbolic.expression.registry import (
+    try_get_native_constant_for_identifier,
+)
 from fhy_core.symbolic.solver import simplify_expression
 from fhy_core.term import (
     DerivedEquivalenceMixin,
@@ -120,12 +126,44 @@ def _validate_binding_value(identifier: Identifier, value: object) -> None:
     )
 
 
+def _lift_binding_value(identifier: Identifier, value: LiteralType) -> Expression:
+    """Wrap a raw binding value in the ``LiteralExpression`` it denotes.
+
+    Being a ``LiteralType`` is not enough: ``LiteralExpression`` holds a
+    ``str`` only when it matches the integer or float grammar. A number
+    always lifts; one whose type subclasses ``int`` or ``float``, such as
+    an ``IntEnum`` member, lifts to the exact value it denotes.
+
+    Args:
+        identifier: Identifier the value is bound to.
+        value: Raw binding value.
+
+    Returns:
+        The literal the value denotes.
+
+    Raises:
+        ConstraintError: If ``LiteralExpression`` refuses ``value``. The
+            message names the identifier and the value, and the
+            constructor's error is chained as the cause.
+
+    """
+    try:
+        return LiteralExpression(value)
+    except ValueError as exc:
+        raise ConstraintError(
+            f"Binding for identifier {identifier!r} cannot be lifted into a "
+            f"literal: value {value!r} of type {type(value).__name__} is not "
+            f"one a `LiteralExpression` holds ({exc})"
+        ) from exc
+
+
 def _coerce_bindings_to_environment(
     bindings: ConstraintBindings,
 ) -> dict[Identifier, Expression]:
     """Coerce every binding value to the ``Expression`` a substitution consumes.
 
-    A raw ``LiteralType`` value is wrapped in a ``LiteralExpression``. An
+    A raw ``LiteralType`` value is wrapped in a ``LiteralExpression``, which
+    holds a ``str`` only in the integer or float grammar. An
     ``Expression`` value passes through unchanged, including a non-literal,
     symbolic one: substituting a symbolic value is supported, and the
     residual it leaves behind is what the caller's outcome is read from.
@@ -139,16 +177,82 @@ def _coerce_bindings_to_environment(
 
     Raises:
         ConstraintError: If a value falls outside ``Expression |
-            LiteralType``.
+            LiteralType``, or is a literal value ``LiteralExpression``
+            refuses: a ``str`` outside the integer and float grammars.
 
     """
     environment: dict[Identifier, Expression] = {}
     for identifier, value in bindings.items():
         _validate_binding_value(identifier, value)
         environment[identifier] = (
-            value if isinstance(value, Expression) else LiteralExpression(value)
+            value
+            if isinstance(value, Expression)
+            else _lift_binding_value(identifier, value)
         )
     return environment
+
+
+def _find_bound_native_constants(
+    scope: frozenset[Identifier], bindings: Mapping[Identifier, object]
+) -> list[Identifier]:
+    """Return the native constants' canonical identifiers ``bindings`` binds in scope.
+
+    Such a binding cannot take effect: the identifier names the constant's
+    value rather than a variable, and the SymPy bridge lowers it to that
+    value whatever it is bound to. Every bindings-aware path refuses it,
+    reporting ``UNDECIDED``; a set constraint, whose scope is its one
+    variable, asks ``try_get_native_constant_for_identifier`` about that
+    variable directly.
+
+    Args:
+        scope: Identifiers the question references.
+        bindings: Bindings supplied for the question.
+
+    Returns:
+        The bound canonical identifiers in ``scope``, ordered by id so a
+        caller can name them.
+
+    """
+    return sorted(
+        (
+            identifier
+            for identifier in bindings
+            if identifier in scope
+            and try_get_native_constant_for_identifier(identifier) is not None
+        ),
+        key=lambda identifier: identifier.id,
+    )
+
+
+def _log_native_constant_binding_refusal(
+    logger: logging.Logger, context: str, identifiers: Iterable[Identifier]
+) -> None:
+    """Log the WARNING refusing bindings for native constants' canonical identifiers.
+
+    Shared by every bindings-aware entry point that refuses such a binding:
+    ``EquationConstraint.evaluate_with_bindings``,
+    ``_evaluate_set_membership_with_bindings``, and
+    ``ConstraintSystem.check_satisfiability_with_bindings``. Each call site
+    still decides on its own that the binding must be refused, reports
+    ``ConstraintOutcome.UNDECIDED`` itself, and passes its own module
+    logger, so the record attributes to the caller's module rather than
+    always to this one.
+
+    Args:
+        logger: The call site's own module logger.
+        context: Label identifying the call site (the class and/or method
+            name), embedded at the start of the message.
+        identifiers: The refused canonical identifiers, named by repr.
+
+    """
+    logger.warning(
+        "%s: identifier(s) %s are the canonical identifier(s) of registered "
+        "native constant(s), which name a value rather than a variable, so "
+        "the supplied binding cannot be honored; reporting UNDECIDED rather "
+        "than a decision the binding did not take part in",
+        context,
+        format_comma_separated_list(tuple(identifiers)),
+    )
 
 
 class ConstraintOutcome(Enum):
@@ -296,9 +400,18 @@ class Constraint(
             ConstraintError: If a binding value is unusable by this
                 constraint's own evaluation mechanism: for
                 ``EquationConstraint``, a value that is neither an
-                ``Expression`` nor a ``LiteralType``; for a set
-                constraint, a value that is neither an ``Expression``
-                nor a valid ``ConstraintMember``.
+                ``Expression`` nor a ``LiteralType``, or a literal value
+                ``LiteralExpression`` refuses, such as a ``str`` outside
+                the integer and float grammars; for a set constraint, a
+                value that is neither an ``Expression`` nor a valid
+                ``ConstraintMember``.
+            NonBooleanLogicalOperandError: For ``EquationConstraint``, if
+                the expression's root provably denotes a number, if it
+                holds a provably numeric operand in a Boolean position --
+                under a logical connective or as a piecewise case
+                condition -- counting a binding that puts a number there,
+                or if the substituted expression simplifies to a
+                non-bool literal. A set constraint never raises it.
 
         """
 
@@ -315,6 +428,11 @@ class Constraint(
 
         Returns:
             True if the bindings satisfy the constraint; False otherwise.
+
+        Raises:
+            ConstraintError: As ``evaluate_with_bindings`` raises it.
+            NonBooleanLogicalOperandError: As ``evaluate_with_bindings``
+                raises it.
 
         """
         return self.evaluate_with_bindings(bindings) is ConstraintOutcome.SATISFIED
@@ -340,9 +458,11 @@ class Constraint(
     # drives `is_structurally_equivalent` (`fhy_core.term.derived_equivalence`),
     # and this key is a projection of that same plan. Deriving it there would
     # make "the key agrees with equivalence" true by construction rather than
-    # by each leaf keeping the two in step by hand. It is a change in
-    # `fhy_core.term` affecting every `DerivedEquivalenceMixin` user, so it is
-    # not in scope here.
+    # by each leaf keeping the two in step by hand. Literal values already
+    # key that way -- `build_literal_equivalence_key` renders the classifier
+    # `LiteralExpression` compares by -- but the tree and member-set keys do
+    # not. It is a change in `fhy_core.term` affecting every
+    # `DerivedEquivalenceMixin` user, so it is not in scope here.
     @abstractmethod
     def build_ordering_key(self) -> str:
         """Return the canonical ordering key for this constraint.
@@ -385,14 +505,18 @@ class EquationConstraint(Constraint):
     ``SATISFIED`` only when the simplifier reduces it to the ``bool``
     literal ``True``.
 
+    The expression is itself a predicate -- a Boolean position on its
+    own, with no connective or piecewise condition above it -- so
+    ``evaluate_with_bindings`` screens it with ``validate_predicate``
+    before substituting anything: a numeric root, such as
+    ``LiteralExpression(1)`` or ``x + 1``, is ill-typed for every
+    possible binding and raises rather than being decided.
+
     Outcomes:
         - ``SATISFIED``: the substituted expression reduces to the
           ``bool`` literal ``True``.
         - ``VIOLATED``: the substituted expression reduces to the
-          ``bool`` literal ``False``, or to a literal whose value is not
-          a ``bool`` (for example ``LiteralExpression(1)``). A non-bool
-          literal is a decided "no", not an indeterminate case: no
-          warning is emitted.
+          ``bool`` literal ``False``.
         - ``UNDECIDED``: the simplifier cannot reduce the substituted
           expression to a ``LiteralExpression`` at all (for example
           because a free identifier remains unbound, or because the
@@ -400,6 +524,11 @@ class EquationConstraint(Constraint):
           free identifier remains in the residual (ordinary partial
           evaluation), at ``WARNING`` when none does (every identifier
           was bound yet the simplifier still could not decide).
+
+    A substituted expression that reduces to a literal whose value is not
+    a ``bool`` (for example ``LiteralExpression(1)``) raises
+    ``NonBooleanLogicalOperandError`` rather than being decided
+    ``VIOLATED``: the residual denotes a number, not a predicate.
 
     ``is_satisfied_with_bindings`` derives from ``evaluate_with_bindings``
     and treats both ``VIOLATED`` and ``UNDECIDED`` as ``False``, so an
@@ -433,10 +562,10 @@ class EquationConstraint(Constraint):
         Coerces each raw ``LiteralType`` binding value to a
         ``LiteralExpression``, substitutes the full multi-key environment
         through ``simplify_expression``, and reports ``SATISFIED`` for
-        the ``bool`` literal ``True``, ``VIOLATED`` for any other
-        literal, and ``UNDECIDED`` when no literal results. Logging on
-        ``UNDECIDED``: DEBUG when the residual (substituted and
-        simplified) expression still has free identifiers (expected
+        the ``bool`` literal ``True``, ``VIOLATED`` for the ``bool``
+        literal ``False``, and ``UNDECIDED`` when no literal results.
+        Logging on ``UNDECIDED``: DEBUG when the residual (substituted
+        and simplified) expression still has free identifiers (expected
         partial evaluation, including the case where a symbolic binding
         introduces a new free identifier), WARNING when the residual has
         none -- every free identifier was bound yet the simplifier still
@@ -448,16 +577,43 @@ class EquationConstraint(Constraint):
         not depend on which member kinds it holds or where they fall in
         canonical order.
 
+        The expression is screened with ``validate_predicate`` before
+        anything is substituted: it is itself a Boolean position, so a
+        numeric root -- for example ``LiteralExpression(1)`` or ``x + 1``
+        -- is ill-typed for every possible binding and raises rather than
+        being decided.
+
+        A binding whose identifier is a registered native constant's
+        canonical identifier reports ``UNDECIDED`` with a ``WARNING``:
+        the bridge lowers that identifier to the constant's value rather
+        than to a substitutable symbol, so the binding cannot take part
+        in the decision. The refusal comes after the predicate screen,
+        so a provably numeric operand in a Boolean position is reported
+        instead. ``ConstraintSystem.check_satisfiability_with_bindings``
+        and the set constraints refuse the same bindings in the same
+        order. An identifier that merely shares a constant's
+        ``name_hint`` is an ordinary variable and its binding is applied
+        like any other.
+
         Raises:
             ConstraintError: If the value bound to an identifier in this
-                constraint's scope falls outside ``Expression |
-                LiteralType`` and so cannot be lifted into the
-                substitution environment.
-            ValueError: From ``LiteralExpression`` when a ``str`` binding
-                value matches neither the integer nor the float grammar.
+                constraint's scope cannot be lifted into the substitution
+                environment: it falls outside ``Expression |
+                LiteralType``, or ``LiteralExpression`` refuses it, as it
+                refuses a ``str`` matching neither the integer nor the
+                float grammar.
             PassExecutionError: Propagated from ``simplify_expression``
                 when the SymPy bridge fails to lower or lift the
                 substituted expression.
+            NonBooleanLogicalOperandError: If the expression's root
+                provably denotes a number, if it holds a provably
+                numeric operand in a Boolean position -- under a logical
+                connective or as a piecewise case condition -- counting
+                an in-scope binding that puts a number there, or if the
+                substituted expression simplifies to a literal whose
+                value is not a ``bool``. ``ConstraintSystem
+                .check_satisfiability_with_bindings`` refuses the same
+                bindings with the same error.
 
         """
         scope = self.get_free_identifiers()
@@ -466,31 +622,27 @@ class EquationConstraint(Constraint):
             for identifier, value in bindings.items()
             if identifier in scope
         }
-        captured = sorted(
-            (
-                identifier
-                for identifier in in_scope
-                if is_native_constant_name(identifier.name_hint)
-            ),
-            key=lambda identifier: identifier.id,
-        )
+        environment = _coerce_bindings_to_environment(in_scope)
+        validate_predicate(self.expression, environment)
+        captured = _find_bound_native_constants(scope, environment)
         if captured:
-            _LOGGER.warning(
-                "%s.evaluate_with_bindings: identifier(s) %s name a registered "
-                "native constant, so the backend bridge resolves them to that "
-                "constant instead of to a substitutable symbol and the supplied "
-                "binding cannot be honored; reporting UNDECIDED rather than a "
-                "decision the binding did not take part in",
-                type(self).__name__,
-                format_comma_separated_list(tuple(captured)),
+            _log_native_constant_binding_refusal(
+                _LOGGER, f"{type(self).__name__}.evaluate_with_bindings", captured
             )
             return ConstraintOutcome.UNDECIDED
-        environment = _coerce_bindings_to_environment(in_scope)
         result = simplify_expression(self.expression, environment)
         if isinstance(result, LiteralExpression):
-            if isinstance(result.value, bool) and result.value:
-                return ConstraintOutcome.SATISFIED
-            return ConstraintOutcome.VIOLATED
+            if not isinstance(result.value, bool):
+                raise NonBooleanLogicalOperandError(
+                    f"{self.expression!r} simplified to the non-bool literal "
+                    f"{result!r}; a predicate must simplify to a `bool` "
+                    "literal, so the expression is ill-typed."
+                )
+            return (
+                ConstraintOutcome.SATISFIED
+                if result.value
+                else ConstraintOutcome.VIOLATED
+            )
         if result.get_free_identifiers():
             _LOGGER.debug(
                 "%s.evaluate_with_bindings: substituted expression %r did not "
@@ -572,6 +724,51 @@ def _validate_set_binding_value(identifier: Identifier, value: object) -> None:
         ) from exc
 
 
+def _decide_bound_value_membership(
+    variable: Identifier, value: object, members: frozenset[_TypedMember]
+) -> bool | None:
+    """Return whether the value bound to ``variable`` is one of ``members``.
+
+    A ``LiteralExpression`` binding is decided by the value it denotes: an
+    integer-grammar string denotes its ``int`` (matching
+    ``LiteralExpression("5")`` being equivalent to ``LiteralExpression(5)``),
+    a float-grammar string stays a decimal-kind value, and every other
+    value passes through unchanged. Any other ``Expression`` is symbolic,
+    and membership cannot be decided against it.
+
+    Args:
+        variable: The constrained identifier the value is bound to.
+        value: The bound value.
+        members: Type-strict wrapped member set to decide against.
+
+    Returns:
+        Whether the value is a member, or ``None`` for a non-literal
+        ``Expression`` binding.
+
+    Raises:
+        ConstraintError: If the bound value is neither an ``Expression``
+            nor a value that could be a ``ConstraintMember``, or if it is
+            one but is unhashable.
+
+    """
+    if isinstance(value, Expression):
+        if not isinstance(value, LiteralExpression):
+            return None
+        value = value.value
+        if isinstance(value, str) and is_integer_valued_literal(value):
+            value = int(value)
+    else:
+        _validate_set_binding_value(variable, value)
+    try:
+        return _wrap_member(value) in members
+    except TypeError as exc:
+        raise ConstraintError(
+            f"Binding for identifier {variable!r} is unhashable: value "
+            f"{value!r} of type {type(value).__name__} cannot be checked "
+            "for membership."
+        ) from exc
+
+
 def _evaluate_set_membership_with_bindings(
     kind_name: str,
     variable: Identifier,
@@ -585,12 +782,20 @@ def _evaluate_set_membership_with_bindings(
     Shared by ``InSetConstraint`` and ``NotInSetConstraint``: the only
     difference between the two kinds is the outcome polarity a member
     decides to. Looks up ``variable`` in ``bindings``, unwraps a
-    ``LiteralExpression`` binding to its raw value, and decides
+    ``LiteralExpression`` binding to the value it denotes, and decides
     membership by type-strict comparison against ``members``. A missing
     binding or a non-literal ``Expression`` binding yields ``UNDECIDED``
-    (DEBUG-logged, naming the identifier); a membership check against a
-    concrete value is always decidable, so this never reports
-    ``UNDECIDED`` once ``variable`` is bound to a literal.
+    (DEBUG-logged, naming the identifier). A binding of a registered
+    native constant's canonical identifier yields ``UNDECIDED`` with a
+    ``WARNING``: the identifier names the constant's value rather than a
+    variable, so membership decided against the bound value would answer
+    for a world where the constant has that value. The refusal comes after
+    the checks that raise, so an unusable binding value is reported
+    instead, in the order ``EquationConstraint.evaluate_with_bindings``
+    and ``ConstraintSystem.check_satisfiability_with_bindings`` use.
+    Otherwise a membership check against a concrete value is always
+    decidable, so this never reports ``UNDECIDED`` once ``variable`` is
+    bound to a literal.
 
     Args:
         kind_name: Concrete leaf's class name, used to attribute the
@@ -604,7 +809,8 @@ def _evaluate_set_membership_with_bindings(
 
     Returns:
         ``SATISFIED``/``VIOLATED`` when decidable; ``UNDECIDED`` when
-        ``variable`` is unbound or bound to a non-literal expression.
+        ``variable`` is unbound or bound to a non-literal expression, or
+        when it is a registered native constant's canonical identifier.
 
     Raises:
         ConstraintError: If the bound value is neither an ``Expression``
@@ -622,29 +828,23 @@ def _evaluate_set_membership_with_bindings(
             format_comma_separated_list(tuple(bindings)) or "no identifiers",
         )
         return ConstraintOutcome.UNDECIDED
-    if isinstance(value, Expression):
-        if not isinstance(value, LiteralExpression):
-            _LOGGER.debug(
-                "%s.evaluate_with_bindings: the binding for %r is the "
-                "non-literal expression %r; this leaf decides against a "
-                "concrete value and cannot consume a symbolic one; "
-                "reporting UNDECIDED",
-                kind_name,
-                variable,
-                value,
-            )
-            return ConstraintOutcome.UNDECIDED
-        value = value.value
-    else:
-        _validate_set_binding_value(variable, value)
-    try:
-        is_member = _wrap_member(value) in members
-    except TypeError as exc:
-        raise ConstraintError(
-            f"Binding for identifier {variable!r} is unhashable: value "
-            f"{value!r} of type {type(value).__name__} cannot be checked "
-            "for membership."
-        ) from exc
+    is_member = _decide_bound_value_membership(variable, value, members)
+    if try_get_native_constant_for_identifier(variable) is not None:
+        _log_native_constant_binding_refusal(
+            _LOGGER, f"{kind_name}.evaluate_with_bindings", (variable,)
+        )
+        return ConstraintOutcome.UNDECIDED
+    if is_member is None:
+        _LOGGER.debug(
+            "%s.evaluate_with_bindings: the binding for %r is the "
+            "non-literal expression %r; this leaf decides against a "
+            "concrete value and cannot consume a symbolic one; "
+            "reporting UNDECIDED",
+            kind_name,
+            variable,
+            value,
+        )
+        return ConstraintOutcome.UNDECIDED
     if is_member is satisfied_when_member:
         return ConstraintOutcome.SATISFIED
     return ConstraintOutcome.VIOLATED
@@ -708,7 +908,9 @@ class _SetConstraint(Constraint):
     unary. ``evaluate_with_bindings`` resolves ``variable`` from the
     bindings and decides by type-strict membership; a missing binding or
     a non-literal ``Expression`` binding is ``UNDECIDED`` (DEBUG-logged),
-    while a literal binding is always decidable.
+    and so is any binding of a registered native constant's canonical
+    identifier (WARNING-logged), while every other literal binding is
+    decidable.
 
     Determinism:
         ``convert_to_expression`` emits its leaves in ``repr``-sorted
@@ -787,7 +989,7 @@ class _SetConstraint(Constraint):
 
     @classmethod
     @override
-    def construct_from_fields(cls, fields: dict[str, Any]) -> Self:
+    def construct_from_fields(cls, fields: Mapping[str, Any]) -> Self:
         return cls(fields["variable"], fields["values"])
 
     @override
@@ -800,10 +1002,12 @@ class _SetConstraint(Constraint):
         """Decide membership for the bound value of ``variable``.
 
         Missing binding or non-literal ``Expression`` binding ->
-        ``UNDECIDED`` (DEBUG-logged, naming the identifier). A literal
-        binding decides by type-strict membership, polarity given by
-        ``_satisfied_when_member``; never ``UNDECIDED`` once bound to a
-        literal.
+        ``UNDECIDED`` (DEBUG-logged, naming the identifier). A binding of
+        a registered native constant's canonical identifier ->
+        ``UNDECIDED`` (WARNING-logged), after the checks that raise, as
+        ``EquationConstraint.evaluate_with_bindings`` refuses it. Every
+        other literal binding decides by type-strict membership, polarity
+        given by ``_polarity``.
 
         Raises:
             ConstraintError: If the bound value is neither an
@@ -874,9 +1078,13 @@ class InSetConstraint(_SetConstraint):
     ``VIOLATED`` otherwise, comparing by type-strict equality (so
     ``True`` and ``1`` are distinct members, and ``1`` and ``1.0`` are
     distinct members, including inside nested ``tuple`` or ``frozenset``
-    members). A membership check against a concrete value is always
-    decidable, so it never reports ``UNDECIDED`` once ``variable`` is
-    bound to a literal.
+    members; a number whose type subclasses ``int`` or ``float``, such as
+    an ``IntEnum`` member, is the exact value it denotes, both as a member
+    and as a bound value). A membership check against a concrete value is
+    always decidable, so it never reports ``UNDECIDED`` once ``variable``
+    is bound to a literal, unless ``variable`` is a registered native
+    constant's canonical identifier, whose binding it refuses as
+    ``UNDECIDED``.
 
     """
 
@@ -897,7 +1105,9 @@ class NotInSetConstraint(_SetConstraint):
     value is NOT in ``values`` and ``VIOLATED`` otherwise, comparing by
     type-strict equality. A membership check against a concrete value is
     always decidable, so it never reports ``UNDECIDED`` once ``variable``
-    is bound to a literal.
+    is bound to a literal, unless ``variable`` is a registered native
+    constant's canonical identifier, whose binding it refuses as
+    ``UNDECIDED``.
 
     """
 

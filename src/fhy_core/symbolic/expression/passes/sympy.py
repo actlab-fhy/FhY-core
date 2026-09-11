@@ -10,7 +10,8 @@ __all__ = [
 ]
 
 import operator
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+from decimal import Decimal
 from typing import Any, ClassVar
 
 import sympy  # type: ignore
@@ -37,13 +38,21 @@ from ..core import (
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
+    is_integer_valued_literal,
+    validate_logical_operands,
 )
-from ..errors import PartialPiecewiseError
+from ..errors import (
+    ComplexInfinityLiftError,
+    NativeConstantBindingError,
+    PartialPiecewiseError,
+)
 from ..registry import (
     EntryLookupError,
     NativeConstant,
     RegisteredFunction,
+    get_native_constant_identifier,
     get_registered_entry,
+    try_get_native_constant_for_identifier,
 )
 
 
@@ -71,27 +80,29 @@ def _sympy_round(value: Any) -> Any:
 # ``exp2`` lowers to ``sympy.Pow(2, value)`` and lifts as ``Pow`` (or
 # as ``sqrt`` when the exponent is exactly 1/2); ``round`` lowers to an
 # opaque ``sympy.Function("round")`` and has no inverse lifting entry.
-_NATIVE_FUNCTION_LOWER: dict[str, Callable[..., Any]] = {
-    "exp": sympy.exp,
-    "exp2": _sympy_exp2,
-    "log": sympy.log,
-    "log2": _sympy_log2,
-    "log10": _sympy_log10,
-    "sqrt": sympy.sqrt,
-    "sin": sympy.sin,
-    "cos": sympy.cos,
-    "tan": sympy.tan,
-    "arcsin": sympy.asin,
-    "arccos": sympy.acos,
-    "arctan": sympy.atan,
-    "sinh": sympy.sinh,
-    "cosh": sympy.cosh,
-    "tanh": sympy.tanh,
-    "erf": sympy.erf,
-    "round": _sympy_round,
-    "floor": sympy.floor,
-    "ceil": sympy.ceiling,
-}
+_NATIVE_FUNCTION_LOWER: immutabledict[str, Callable[..., Any]] = immutabledict(
+    {
+        "exp": sympy.exp,
+        "exp2": _sympy_exp2,
+        "log": sympy.log,
+        "log2": _sympy_log2,
+        "log10": _sympy_log10,
+        "sqrt": sympy.sqrt,
+        "sin": sympy.sin,
+        "cos": sympy.cos,
+        "tan": sympy.tan,
+        "arcsin": sympy.asin,
+        "arccos": sympy.acos,
+        "arctan": sympy.atan,
+        "sinh": sympy.sinh,
+        "cosh": sympy.cosh,
+        "tanh": sympy.tanh,
+        "erf": sympy.erf,
+        "round": _sympy_round,
+        "floor": sympy.floor,
+        "ceil": sympy.ceiling,
+    }
+)
 
 # Native-function lift dispatch: each sympy function class maps to the
 # native name it lifts to.
@@ -112,27 +123,39 @@ _NATIVE_FUNCTION_LIFT_DISPATCH: tuple[tuple[type, str], ...] = (
     (sympy.ceiling, "ceil"),
 )
 
-# Native-constant lowering / lifting.
-_NATIVE_CONSTANT_LOWER: dict[str, Any] = {
-    "pi": sympy.pi,
-    "e": sympy.E,
-}
-_NATIVE_CONSTANT_LIFT: dict[Any, str] = {
-    sympy.pi: "pi",
-    sympy.E: "e",
-}
+# Native-constant lowering / lifting. SymPy folds a negated ``oo`` into a
+# separate ``-oo`` atom, which ``_try_lift_native_constant`` handles.
+_NATIVE_CONSTANT_LOWER: immutabledict[str, Any] = immutabledict(
+    {
+        "pi": sympy.pi,
+        "e": sympy.E,
+        "inf": sympy.oo,
+        "nan": sympy.nan,
+    }
+)
+_NATIVE_CONSTANT_LIFT: immutabledict[Any, str] = immutabledict(
+    {
+        sympy.pi: "pi",
+        sympy.E: "e",
+        sympy.oo: "inf",
+        sympy.nan: "nan",
+    }
+)
 
 
-def _try_get_native_constant_sympy_value(name: str) -> Any | None:
-    """Return the sympy value for a registered constant, or ``None``."""
-    try:
-        entry = get_registered_entry(name)
-    except EntryLookupError:
+def _try_get_native_constant_sympy_value(identifier: Identifier) -> Any | None:
+    """Return the sympy value for the constant ``identifier`` denotes, or ``None``.
+
+    Resolution is by identifier identity, so an identifier that merely
+    shares a constant's ``name_hint`` lowers to a sympy ``Symbol`` like
+    any other free variable.
+    """
+    entry = try_get_native_constant_for_identifier(identifier)
+    if entry is None:
         return None
-    if not isinstance(entry, NativeConstant):
-        return None
-    if name in _NATIVE_CONSTANT_LOWER:
-        return _NATIVE_CONSTANT_LOWER[name]
+    symbolic_value = _NATIVE_CONSTANT_LOWER.get(entry.name)
+    if symbolic_value is not None:
+        return symbolic_value
     if isinstance(entry.value, bool):
         return sympy.true if entry.value else sympy.false
     if isinstance(entry.value, int):
@@ -140,11 +163,86 @@ def _try_get_native_constant_sympy_value(name: str) -> Any | None:
     return sympy.Float(entry.value)
 
 
+def _split_off_prime_factor(value: int, prime: int) -> tuple[int, int]:
+    """Return the multiplicity of ``prime`` in ``value`` and the remaining cofactor.
+
+    Args:
+        value: Strictly positive integer to factor.
+        prime: Prime to divide out.
+
+    Returns:
+        The exponent of ``prime`` in ``value``, and ``value`` with every
+        factor of ``prime`` removed.
+
+    """
+    exponent = 0
+    while value % prime == 0:
+        value //= prime
+        exponent += 1
+    return exponent, value
+
+
+def _try_format_rational_as_exact_decimal(
+    numerator: int, denominator: int
+) -> str | None:
+    """Return the exact decimal text for a non-negative rational, or ``None``.
+
+    A rational in lowest terms has a terminating decimal expansion
+    exactly when the only prime factors of its denominator are 2 and 5,
+    the prime factors of ten. In that case ``n / (2**a * 5**b)`` equals
+    ``n * 2**(k-a) * 5**(k-b) / 10**k`` for ``k = max(a, b)``, which is
+    written exactly with ``k`` fractional digits; every other rational
+    repeats forever and has no finite decimal text.
+
+    Args:
+        numerator: Non-negative numerator, in lowest terms with
+            ``denominator``.
+        denominator: Strictly positive denominator.
+
+    Returns:
+        Exact fixed-point decimal text, or ``None`` when the expansion
+        does not terminate.
+
+    """
+    two_exponent, cofactor = _split_off_prime_factor(denominator, 2)
+    five_exponent, cofactor = _split_off_prime_factor(cofactor, 5)
+    if cofactor != 1:
+        return None
+    fractional_digits = max(two_exponent, five_exponent)
+    scaled = (
+        numerator
+        * 2 ** (fractional_digits - two_exponent)
+        * 5 ** (fractional_digits - five_exponent)
+    )
+    # Decimal's string constructor is exact regardless of the ambient
+    # context precision, and the ``f`` format never falls back to
+    # scientific notation, which the float grammar does not accept.
+    return format(Decimal(f"{scaled}e-{fractional_digits}"), "f")
+
+
 def _try_lift_native_constant(expr: sympy.Expr) -> Expression | None:
-    """Return the IR expression for a sympy constant atom, or ``None``."""
+    """Return the IR expression for a sympy constant atom, or ``None``.
+
+    Lifts to the registry's canonical identifier for the constant, so a
+    lowered constant lifts back as the same identifier it came from and
+    the round trip is idempotent. ``-oo`` lifts as the ``NEGATE`` of the
+    canonical ``inf``, the IR's own spelling of a negative infinity. A
+    sympy constant whose IR counterpart is not registered has no
+    canonical identifier to lift to and is left to the ordinary
+    dispatch.
+    """
+    if expr == sympy.S.NegativeInfinity:
+        infinity = _try_lift_native_constant(sympy.oo)
+        if infinity is None:
+            return None
+        return UnaryExpression(UnaryOperation.NEGATE, infinity)
     for sympy_value, name in _NATIVE_CONSTANT_LIFT.items():
         if expr == sympy_value:
-            return IdentifierExpression(Identifier(name))
+            try:
+                canonical = get_native_constant_identifier(name)
+            except EntryLookupError:
+                return None
+            return IdentifierExpression(canonical)
     return None
 
 
@@ -182,8 +280,15 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             BinaryOperation.FLOOR_DIVIDE: lambda x, y: sympy.floor(x / y),
             BinaryOperation.MODULO: operator.mod,
             BinaryOperation.POWER: operator.pow,
-            BinaryOperation.LOGICAL_AND: operator.and_,
-            BinaryOperation.LOGICAL_OR: operator.or_,
+            # ``sympy.And``/``sympy.Or``, not ``operator.and_``/``operator.or_``:
+            # the latter two are SymPy's ``&``/``|``, which are *bitwise* on
+            # ``sympy.Integer`` operands, so a numeric operand would fold to a
+            # numerically wrong literal instead of being refused. The sympy
+            # constructors reject a non-Boolean operand; the bridge screens for
+            # that shape before lowering so the refusal is this package's
+            # ``NonBooleanLogicalOperandError`` rather than SymPy's own error.
+            BinaryOperation.LOGICAL_AND: sympy.And,
+            BinaryOperation.LOGICAL_OR: sympy.Or,
             BinaryOperation.EQUAL: sympy.Eq,
             BinaryOperation.NOT_EQUAL: sympy.Ne,
             BinaryOperation.LESS: operator.lt,
@@ -214,7 +319,7 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
         self, identifier_expression: IdentifierExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
         identifier = identifier_expression.identifier
-        constant_value = _try_get_native_constant_sympy_value(identifier.name_hint)
+        constant_value = _try_get_native_constant_sympy_value(identifier)
         if constant_value is not None:
             return constant_value
         return sympy.Symbol(self.format_identifier(identifier))
@@ -270,10 +375,45 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             )
         return TypeError(f"native function {name!r} has no SymPy lowering registered")
 
-    # One return per literal kind lowered to SymPy; flattening would not help.
-    def visit_literal_expression(  # noqa: PLR0911
+    def visit_literal_expression(
         self, literal_expression: LiteralExpression
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
+        """Lower a literal to the SymPy number its IR form denotes exactly.
+
+        ``LiteralExpression`` gives each literal form its own precision
+        contract, and each form reaches SymPy as the exact value that
+        contract names:
+
+        - ``bool`` becomes ``sympy.true``/``sympy.false``.
+        - An integer -- a Python ``int`` or an integer-grammar ``str`` --
+          becomes a ``sympy.Integer``. Both are in one equivalence class,
+          so both have to reach SymPy as one number kind.
+        - A Python ``float`` is an IEEE-754 binary value, and
+          ``sympy.Float`` carries exactly that value. A non-finite one
+          becomes ``oo``, ``-oo``, or ``nan``, which lift back as the
+          registered ``inf``/``nan`` constants rather than as literals.
+        - A float-grammar ``str`` is exact decimal, so it becomes a
+          ``sympy.Rational`` built from the text, which is that decimal
+          exactly. ``sympy.Float`` would instead round the text to binary,
+          making ``"0.1" + "0.1" + "0.1" == "0.3"`` simplify to False for
+          the same reason the binary form does.
+
+        The Z3 bridge lowers each of those forms to the same value, so a
+        single literal denotes the same number on both bridges. Past a
+        single literal the two diverge: this bridge evaluates binary-float
+        arithmetic in SymPy's binary floating point, while the solver seam
+        reasons over it in exact rational arithmetic, so a ground
+        comparison that does float arithmetic can come out differently --
+        for example, ``(1e16 + 1.0) == 1e16`` simplifies to ``True`` but
+        the solver seam finds it ``False``.
+
+        A float-grammar string whose decimal value is a whole number
+        (``"2."``, ``"2.0"``) yields a ``sympy.Integer``, since
+        ``sympy.Rational`` normalizes a unit denominator away; lifting it
+        back therefore lands in the integer bucket rather than the
+        float-decimal one. An unsupported literal type raises
+        ``TypeError``.
+        """
         value = literal_expression.value
         if isinstance(value, bool):
             return sympy.true if value else sympy.false
@@ -282,20 +422,9 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
         if isinstance(value, float):
             return sympy.Float(value)
         if isinstance(value, str):
-            if value == "True":
-                return sympy.true
-            if value == "False":
-                return sympy.false
-            try:
+            if is_integer_valued_literal(value):
                 return sympy.Integer(int(value))
-            except ValueError:
-                # Float-grammar strings: SymPy operates on binary floats,
-                # so the exact-decimal text preserved by
-                # ``LiteralExpression`` is lost here. Round-tripping
-                # ``LiteralExpression("1.5")`` through the SymPy bridge
-                # yields ``LiteralExpression(1.5)`` (float-binary), not
-                # the original float-decimal bucket.
-                return sympy.Float(value)
+            return sympy.Rational(value)
         raise TypeError(f"Unsupported literal type: {type(value)}")
 
     @staticmethod
@@ -314,20 +443,132 @@ def convert_expression_to_sympy_expression(
 ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
     """Convert an expression to a SymPy expression.
 
+    Screens the expression before lowering: a provably numeric operand of
+    a logical connective, or a provably numeric piecewise case condition,
+    is refused here rather than handed to SymPy, whose ``And``/``Or``
+    raise a raw ``TypeError`` on such an operand.
+
     Args:
         expression: Expression to convert.
 
     Returns:
         SymPy expression.
 
+    Raises:
+        NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
+            condition, in ``expression`` provably denotes a number.
+
     """
+    validate_logical_operands(expression)
     converter = ExpressionToSympyConverter()
     return converter(expression)
 
 
+@register_pass(
+    "fhy_core.symbolic.expression.substitute_sympy_variables",
+    "Replace bound symbols in a SymPy expression via xreplace.",
+)
+class SympyVariableSubstitutionPass(
+    CompilerPass[
+        sympy.Expr | sympy.logic.boolalg.Boolean,
+        sympy.Expr | sympy.logic.boolalg.Boolean,
+    ]
+):
+    """Applies a symbol-to-value replacement, so a bridge failure is wrapped.
+
+    An ``xreplace`` rebuilds every substituted node bottom-up, so a
+    replacement can make SymPy auto-evaluate a relational it cannot
+    represent -- for example a comparison against ``zoo`` (SymPy's complex
+    infinity) or against NaN -- and raise a raw ``TypeError`` from deep
+    inside SymPy. Running the replacement as a pass, rather than calling
+    ``xreplace`` directly, lets the pass infrastructure wrap that failure
+    as ``PassExecutionError`` like every other bridge failure.
+    """
+
+    def __init__(self, replacements: Mapping[sympy.Symbol, Any]) -> None:
+        super().__init__()
+        self._replacements: immutabledict[sympy.Symbol, Any] = immutabledict(
+            replacements
+        )
+
+    @override
+    def run_pass(
+        self, ir: sympy.Expr | sympy.logic.boolalg.Boolean
+    ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
+        return ir.xreplace(self._replacements)
+
+    @override
+    def get_noop_output(
+        self, ir: sympy.Expr | sympy.logic.boolalg.Boolean
+    ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
+        raise PassExecutionError(
+            f'Pass "{self.get_pass_name()}" does not define noop output.'
+        )
+
+
+def _raise_for_bound_native_constants(bound_constants: Sequence[Identifier]) -> None:
+    """Raise ``NativeConstantBindingError`` naming each already-sorted identifier."""
+    if not bound_constants:
+        return
+    raise NativeConstantBindingError(
+        f"cannot bind the native constant(s) {bound_constants}: a constant's "
+        "value is fixed by the registry, and a binding for its canonical "
+        "identifier is refused here because the SymPy bridge resolves the "
+        "constant by identity before a substitution ever runs, silently "
+        "dropping the binding rather than applying it."
+    )
+
+
+def _raise_if_environment_binds_a_referenced_native_constant(
+    expression: Expression, environment: Mapping[Identifier, Expression]
+) -> None:
+    """Raise if ``environment`` binds a native constant ``expression`` references."""
+    referenced = expression.get_free_identifiers()
+    bound_constants = sorted(
+        (
+            identifier
+            for identifier in environment
+            if identifier in referenced
+            and try_get_native_constant_for_identifier(identifier) is not None
+        ),
+        key=lambda identifier: identifier.id,
+    )
+    _raise_for_bound_native_constants(bound_constants)
+
+
+def _raise_if_sympy_expression_binds_a_referenced_native_constant(
+    sympy_expression: sympy.Expr | sympy.logic.boolalg.Boolean,
+    environment: Mapping[Identifier, Expression],
+) -> None:
+    """Raise if ``environment`` binds a native constant free in ``sympy_expression``.
+
+    A native constant's canonical identifier never lowers to a ``Symbol``:
+    ``visit_identifier_expression`` resolves it to the constant's own
+    SymPy value instead, so this checks the symbol name a caller's
+    binding would target against ``sympy_expression``'s free symbols,
+    which only matches a hand-built SymPy expression that still carries
+    such a symbol.
+    """
+    referenced_symbol_names = frozenset(
+        symbol.name for symbol in sympy_expression.free_symbols
+    )
+    bound_constants = sorted(
+        (
+            identifier
+            for identifier in environment
+            if ExpressionToSympyConverter.format_identifier(identifier)
+            in referenced_symbol_names
+            and try_get_native_constant_for_identifier(identifier) is not None
+        ),
+        key=lambda identifier: identifier.id,
+    )
+    _raise_for_bound_native_constants(bound_constants)
+
+
 def substitute_sympy_expression_variables(
     sympy_expression: sympy.Expr | sympy.logic.boolalg.Boolean,
-    environment: dict[Identifier, Expression],
+    environment: Mapping[Identifier, Expression],
 ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
     """Substitute variables in a SymPy expression.
 
@@ -345,6 +586,19 @@ def substitute_sympy_expression_variables(
     Returns:
         SymPy expression with substituted variables.
 
+    Raises:
+        NativeConstantBindingError: If ``environment`` binds a native
+            constant's canonical identifier that is free in
+            ``sympy_expression`` as a symbol.
+        NonBooleanLogicalOperandError: If a replacement value in
+            ``environment`` contains a ``LOGICAL_AND``, ``LOGICAL_OR``, or
+            ``LOGICAL_NOT`` node whose operand, or a piecewise whose case
+            condition, provably denotes a number.
+        PassExecutionError: Wrapping the originating ``TypeError`` as
+            ``__cause__`` if applying a replacement makes SymPy
+            auto-evaluate a relational it cannot represent, for example a
+            comparison against ``zoo`` or against NaN.
+
     """
     # SymPy can fold boolean-valued subexpressions to plain Python `bool`
     # instances (notably ``True``/``False`` after simplification of a
@@ -352,6 +606,9 @@ def substitute_sympy_expression_variables(
     # also have nothing to substitute, so we short-circuit the no-op case.
     if isinstance(sympy_expression, bool):
         return sympy_expression
+    _raise_if_sympy_expression_binds_a_referenced_native_constant(
+        sympy_expression, environment
+    )
     # ``.subs(..., simultaneous=True)`` is deliberately avoided here.
     # Internally it masks every replacement behind a synthetic
     # ``Dummy() * Dummy()`` product before unmasking it with a final
@@ -379,7 +636,7 @@ def substitute_sympy_expression_variables(
         ): convert_expression_to_sympy_expression(v)
         for k, v in environment.items()
     }
-    return sympy_expression.xreplace(replacements)
+    return SympyVariableSubstitutionPass(replacements)(sympy_expression)
 
 
 @register_pass(
@@ -391,6 +648,10 @@ class SymPyToExpressionConverter(
 ):
     """Converts a SymPy expression to an expression tree."""
 
+    # First match wins, so a subclass entry must precede its base:
+    # ``sympy.Integer`` subclasses ``sympy.Rational``, and an ``Integer``
+    # placed after ``Rational`` would be lifted as a quotient instead of
+    # as an integer literal.
     _EXPR_DISPATCH: ClassVar[tuple[tuple[type, str], ...]] = (
         (sympy.Piecewise, "_convert_piecewise"),
         (sympy.Add, "_convert_add"),
@@ -400,6 +661,8 @@ class SymPyToExpressionConverter(
         (sympy.Symbol, "_convert_symbol"),
         (sympy.Integer, "_convert_integer"),
         (sympy.Float, "_convert_float"),
+        (sympy.Rational, "_convert_rational"),
+        (sympy.core.numbers.ComplexInfinity, "_refuse_complex_infinity"),
     )
     _BOOL_DISPATCH: ClassVar[tuple[tuple[type, str], ...]] = (
         (sympy.logic.boolalg.Not, "_convert_not"),
@@ -680,6 +943,49 @@ class SymPyToExpressionConverter(
     def _convert_float(self, float_: sympy.Float) -> LiteralExpression:
         return LiteralExpression(float(float_))
 
+    def _convert_rational(self, rational: sympy.Rational) -> Expression:
+        """Lift a non-integer rational to whichever exact IR form represents it.
+
+        A rational whose decimal expansion terminates becomes a
+        float-grammar string literal, the form ``LiteralExpression``
+        stores as an exact ``decimal.Decimal``; that is what lets a
+        decimal-string literal survive the round trip through SymPy. Every
+        other rational -- ``1/3``, say -- has no finite decimal text, so
+        it becomes a ``DIVIDE`` of its numerator and denominator, which is
+        exact for every rational SymPy can hand over and so keeps lifting
+        total.
+
+        The float grammar is unsigned, so a negative terminating rational
+        becomes a ``NEGATE`` of its magnitude's decimal text -- the IR's
+        own spelling of a negative decimal. A non-terminating one carries
+        the sign on its integer numerator instead.
+        """
+        numerator = int(rational.p)
+        denominator = int(rational.q)
+        decimal_text = _try_format_rational_as_exact_decimal(
+            abs(numerator), denominator
+        )
+        if decimal_text is None:
+            return BinaryExpression(
+                BinaryOperation.DIVIDE,
+                LiteralExpression(numerator),
+                LiteralExpression(denominator),
+            )
+        magnitude = LiteralExpression(decimal_text)
+        if numerator < 0:
+            return UnaryExpression(UnaryOperation.NEGATE, magnitude)
+        return magnitude
+
+    def _refuse_complex_infinity(
+        self, complex_infinity: sympy.core.numbers.ComplexInfinity
+    ) -> Expression:
+        """Refuse SymPy's complex infinity, which no IR expression denotes."""
+        raise ComplexInfinityLiftError(
+            f"cannot lift {complex_infinity!r} to an expression: SymPy folds a "
+            "quotient by zero to its directionless complex infinity, and no "
+            "expression denotes that value."
+        )
+
     def _convert_piecewise(self, piecewise: sympy.Piecewise) -> Expression:
         """Lift a ``sympy.Piecewise`` to a flat ``PiecewiseExpression``.
 
@@ -726,6 +1032,14 @@ def convert_sympy_expression_to_expression(
     meaning it does not cover its domain -- has no faithful
     representation and raises :class:`PartialPiecewiseError`.
 
+    A ``sympy.Rational`` lifts exactly: to a float-grammar string literal
+    when its decimal expansion terminates, and otherwise to a ``DIVIDE``
+    of its numerator and denominator. ``sympy.oo`` and ``sympy.nan``
+    lift to the canonical identifiers of the registered ``inf`` and
+    ``nan`` constants, and ``-oo`` to the negation of ``inf``.
+    ``sympy.zoo`` is the one numeric value with no IR counterpart and
+    raises :class:`ComplexInfinityLiftError`.
+
     Args:
         sympy_expression: SymPy expression to convert.
 
@@ -736,7 +1050,8 @@ def convert_sympy_expression_to_expression(
         PassExecutionError: Wrapping :class:`PartialPiecewiseError` as
             ``__cause__`` if ``sympy_expression`` contains a
             ``sympy.Piecewise`` whose final branch condition is not
-            ``sympy.true``.
+            ``sympy.true``, or :class:`ComplexInfinityLiftError` if it
+            contains ``sympy.zoo``.
 
     """
     converter = SymPyToExpressionConverter()
@@ -744,7 +1059,8 @@ def convert_sympy_expression_to_expression(
 
 
 def simplify_expression(
-    expression: Expression, environment: dict[Identifier, Expression] | None = None
+    expression: Expression,
+    environment: Mapping[Identifier, Expression] | None = None,
 ) -> Expression:
     """Simplify an expression.
 
@@ -756,11 +1072,33 @@ def simplify_expression(
         Simplified expression.
 
     Raises:
-        PassExecutionError: Wrapping :class:`PartialPiecewiseError` as
-            ``__cause__`` if simplification yields a ``sympy.Piecewise``
-            whose final branch condition is not ``sympy.true``.
+        NativeConstantBindingError: If ``environment`` binds a registered
+            native constant's canonical identifier that ``expression``
+            references. The SymPy bridge resolves such an identifier by
+            identity to the constant's own value before any substitution
+            runs, so the binding would otherwise be silently dropped
+            rather than applied.
+        NonBooleanLogicalOperandError: If an operand of a ``LOGICAL_AND``,
+            ``LOGICAL_OR``, or ``LOGICAL_NOT`` node, or a piecewise case
+            condition, provably denotes a number, counting an operand
+            ``environment`` binds to one. Simplification refuses the shape
+            before lowering rather than letting SymPy's ``And``/``Or``
+            raise a raw ``TypeError`` on it.
+        PassExecutionError: Wrapping the originating exception as
+            ``__cause__``: a ``TypeError`` if substituting ``environment``
+            makes SymPy auto-evaluate a relational it cannot represent
+            (for example a comparison against ``zoo`` or against NaN);
+            :class:`PartialPiecewiseError` if simplification yields a
+            ``sympy.Piecewise`` whose final branch condition is not
+            ``sympy.true``; or :class:`ComplexInfinityLiftError` if it
+            yields ``sympy.zoo``, which a quotient by zero folds to.
 
     """
+    validate_logical_operands(expression, environment)
+    if environment is not None:
+        _raise_if_environment_binds_a_referenced_native_constant(
+            expression, environment
+        )
     sympy_expression = convert_expression_to_sympy_expression(expression)
     if environment is not None:
         sympy_expression = substitute_sympy_expression_variables(

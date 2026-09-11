@@ -2,12 +2,17 @@
 
 __all__ = ["SymbolType"]
 
-from enum import Enum, auto
+from fhy_core.utils import StrEnum
 
 
-class SymbolType(Enum):
-    """Symbol type."""
+class SymbolType(StrEnum):
+    """Symbol type.
 
-    REAL = auto()
-    INT = auto()
-    BOOL = auto()
+    Contrast :class:`~fhy_core.symbolic.expression.sort.FunctionSort`, which
+    tags a registered function's declared parameter or result sort rather
+    than an expression's Z3 lowering sort.
+    """
+
+    REAL = "real"
+    INT = "int"
+    BOOL = "bool"

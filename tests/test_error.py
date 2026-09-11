@@ -72,3 +72,24 @@ def test_register_error_falls_back_to_class_name_for_undocumented_class() -> Non
 
     registry = get_registered_errors()
     assert registry[_UndocumentedError] == "_UndocumentedError"
+
+
+def test_register_error_returns_the_class_it_was_given_typed_as_itself() -> None:
+    """Test ``register_error`` hands back the decorated class under its own type.
+
+    Returning ``type[Exception]`` would hide every attribute a registered
+    class adds, such as ``UndecidableError.reason``, from a type checker
+    that applies class decorators. The annotated assignment is the static
+    claim, which mypy checks; the identity and attribute checks cover
+    runtime.
+    """
+
+    class _ReasonedError(Exception):
+        """An error class that adds an attribute of its own."""
+
+        reason = "a reason"
+
+    registered: type[_ReasonedError] = register_error(_ReasonedError)
+
+    assert registered is _ReasonedError
+    assert registered.reason == "a reason"

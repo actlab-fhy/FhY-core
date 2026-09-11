@@ -8,11 +8,13 @@ be derived.
 """
 
 import enum
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
 from typing import Any, cast
 
 import pytest
+from immutabledict import immutabledict
 
 from fhy_core.serialization import (
     DeserializationDictStructureError,
@@ -307,7 +309,7 @@ def test_construct_from_fields_override_is_honored() -> None:
 
         @classmethod
         @override
-        def construct_from_fields(cls, fields: dict[str, Any]) -> "_Constructed":
+        def construct_from_fields(cls, fields: Mapping[str, Any]) -> "_Constructed":
             return cls(fields["x"] + 100)
 
     assert _Constructed.deserialize_from_dict({"x": 5}).x == 105
@@ -316,6 +318,11 @@ def test_construct_from_fields_override_is_honored() -> None:
 def test_construct_from_fields_builds_from_decoded_fields() -> None:
     """Test the default hook reconstructs directly from a well-formed field map."""
     assert _Point.construct_from_fields({"x": 2, "y": 8}) == _Point(2, 8)
+
+
+def test_construct_from_fields_accepts_an_immutabledict() -> None:
+    """Test the default hook accepts an `immutabledict` field mapping."""
+    assert _Point.construct_from_fields(immutabledict({"x": 2, "y": 8})) == _Point(2, 8)
 
 
 @pytest.mark.parametrize(

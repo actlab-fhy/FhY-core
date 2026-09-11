@@ -1,12 +1,17 @@
 """Tests for `fhy_core.symbolic.expression.core`."""
 
 import dataclasses
+import itertools
+import math
 import operator
+import pickle
 from collections.abc import Callable
+from enum import IntEnum
 from typing import Any
 
 import pytest
 
+from fhy_core.error import get_registered_errors
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     SerializationFormat,
@@ -16,19 +21,32 @@ from fhy_core.serialization import (
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
+    CallExpression,
     Expression,
+    FunctionSort,
     IdentifierExpression,
     LiteralExpression,
+    NativeConstantBindingError,
+    NonBooleanLogicalOperandError,
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
+    UndecidableError,
+    build_literal_equivalence_key,
+    call,
+    get_native_constant_identifier,
+    is_integer_valued_literal,
     logical_and,
     logical_not,
     logical_or,
     make_binary_expression,
     make_unary_expression,
     piecewise,
+    register_native_constant,
+    validate_logical_operands,
+    validate_predicate,
 )
+from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.traits import FrozenMutationError, HasOperands, StructuralEquivalence
 from fhy_core.utils.override import override
 
@@ -175,6 +193,147 @@ def test_literal_expression_rejects_unsupported_python_types(value: object) -> N
     """
     with pytest.raises(TypeError, match=r"(?i)literal"):
         LiteralExpression(value)  # type: ignore[arg-type]
+
+
+# =============================================================================
+# Number subclasses: the literal holds the exact value
+# =============================================================================
+
+
+class _Level(IntEnum):
+    """An ``int`` subclass, which a literal holds as the ``int`` it denotes."""
+
+    HIGH = 3
+
+
+class _Measure(float):
+    """A ``float`` subclass, which a literal holds as the ``float`` it denotes."""
+
+
+_NUMBER_SUBCLASS_VALUES = [
+    pytest.param(_Level.HIGH, 3, id="int_subclass"),
+    pytest.param(_Measure(1.5), 1.5, id="float_subclass"),
+]
+
+
+@pytest.mark.parametrize(("value", "exact_value"), _NUMBER_SUBCLASS_VALUES)
+def test_literal_expression_holds_a_number_subclass_as_its_exact_value(
+    value: float, exact_value: float
+) -> None:
+    """Test an ``int`` or ``float`` subclass is stored as the exact number.
+
+    The numeric parameter domains admit such a value, so the literal it
+    lifts into has to hold it. The subclass is not part of the literal.
+    """
+    literal = LiteralExpression(value)
+
+    assert type(literal.value) is type(exact_value)
+    assert literal.value == exact_value
+
+
+@pytest.mark.parametrize(("value", "exact_value"), _NUMBER_SUBCLASS_VALUES)
+def test_number_subclass_literal_is_equivalent_to_its_exact_twin(
+    value: float, exact_value: float
+) -> None:
+    """Test the literal compares and keys exactly as its exact-type twin does."""
+    literal = LiteralExpression(value)
+    twin = LiteralExpression(exact_value)
+
+    assert literal.is_structurally_equivalent(twin)
+    assert twin.is_structurally_equivalent(literal)
+    assert literal.is_alpha_equivalent(twin)
+    assert build_literal_equivalence_key(literal.value) == (
+        build_literal_equivalence_key(twin.value)
+    )
+
+
+@pytest.mark.parametrize(("value", "exact_value"), _NUMBER_SUBCLASS_VALUES)
+def test_number_subclass_literal_serializes_as_its_exact_twin(
+    value: float, exact_value: float
+) -> None:
+    """Test the wire form is the exact number's, so it round-trips to the twin."""
+    literal = LiteralExpression(value)
+    twin = LiteralExpression(exact_value)
+
+    data = literal.serialize_to_dict()
+    restored = LiteralExpression.deserialize_from_dict(data)
+
+    assert data == twin.serialize_to_dict()
+    assert type(restored.value) is type(exact_value)
+    assert restored.is_structurally_equivalent(twin)
+
+
+@pytest.mark.parametrize(("value", "exact_value"), _NUMBER_SUBCLASS_VALUES)
+def test_number_subclass_literal_pickles_to_its_exact_value(
+    value: float, exact_value: float
+) -> None:
+    """Test a pickle round trip restores the exact number, not the subclass."""
+    restored = pickle.loads(pickle.dumps(LiteralExpression(value)))
+
+    assert type(restored.value) is type(exact_value)
+    assert restored.value == exact_value
+
+
+@pytest.mark.parametrize(("value", "exact_value"), _NUMBER_SUBCLASS_VALUES)
+def test_builders_lift_a_number_subclass_operand_as_its_exact_value(
+    value: float, exact_value: float
+) -> None:
+    """Test the builders and operator dunders coerce such an operand too.
+
+    Each builder coerces any ``LiteralType`` value but a ``bool``, and a
+    bound factory hands its bounds to one, so an operand the literal can
+    hold has to reach it.
+    """
+    x = mock_identifier("x", 0)
+    expected = make_binary_expression(BinaryOperation.LESS, x, exact_value)
+
+    for expression in (
+        make_binary_expression(BinaryOperation.LESS, x, value),
+        IdentifierExpression(x) < value,
+    ):
+        assert expression.is_structurally_equivalent(expected)
+        assert isinstance(expression.right, LiteralExpression)
+        assert type(expression.right.value) is type(exact_value)
+
+
+def test_literal_expression_holds_a_numpy_float64_as_a_python_float() -> None:
+    """Test NumPy's ``float64``, a ``float`` subclass, is stored as a ``float``."""
+    np = pytest.importorskip("numpy")
+
+    literal = LiteralExpression(np.float64(1.5))
+
+    assert type(literal.value) is float
+    assert literal.is_structurally_equivalent(LiteralExpression(1.5))
+
+
+def test_literal_expression_holds_a_numpy_nan_as_a_nan_float() -> None:
+    """Test a NumPy NaN is a NaN ``float`` literal, equivalent to every NaN."""
+    np = pytest.importorskip("numpy")
+
+    literal = LiteralExpression(np.float64("nan"))
+
+    assert type(literal.value) is float
+    assert math.isnan(literal.value)
+    assert literal.is_structurally_equivalent(LiteralExpression(math.nan))
+
+
+@pytest.mark.parametrize("dtype_name", ["int64", "float32", "bool_"])
+def test_numpy_scalars_outside_the_python_number_types_stay_refused(
+    dtype_name: str,
+) -> None:
+    """Test a NumPy scalar that subclasses no Python number is refused everywhere.
+
+    NumPy's ``int64``, ``float32``, and ``bool_`` are not ``int``,
+    ``float``, or ``bool`` instances, so neither the literal nor a builder
+    admits one; none is half admitted by one entry point and not the other.
+    """
+    np = pytest.importorskip("numpy")
+    value = getattr(np, dtype_name)(1)
+
+    with pytest.raises(TypeError, match=r"(?i)literal"):
+        LiteralExpression(value)
+    with pytest.raises(ValueError, match="Unable to cast"):
+        make_binary_expression(BinaryOperation.LESS, mock_identifier("x", 0), value)
 
 
 # =============================================================================
@@ -378,6 +537,215 @@ def test_literal_equivalence_distinguishes_buckets(
     assert not right.is_structurally_equivalent(left)
 
 
+def test_decimals_differing_past_default_precision_are_not_equivalent() -> None:
+    """Test two decimals differing only in their 30th fractional digit are distinct.
+
+    ``Decimal``'s default context rounds to 28 significant digits, so
+    canonicalizing through that default context would collapse these two
+    literals onto the same value; exact-decimal normalization has to keep
+    every digit significant instead.
+    """
+    left = LiteralExpression("1." + "0" * 28 + "1")
+    right = LiteralExpression("1." + "0" * 28 + "2")
+
+    assert not left.is_structurally_equivalent(right)
+    assert not right.is_structurally_equivalent(left)
+
+
+def test_decimal_equivalence_key_differs_past_default_decimal_precision() -> None:
+    """Test the equivalence key differs for decimals differing in their 30th digit."""
+    left_value = "1." + "0" * 28 + "1"
+    right_value = "1." + "0" * 28 + "2"
+
+    assert build_literal_equivalence_key(left_value) != build_literal_equivalence_key(
+        right_value
+    )
+
+
+# =============================================================================
+# NaN keeps the literal equivalence relation reflexive
+# =============================================================================
+
+
+def test_nan_literals_holding_distinct_float_objects_are_equivalent() -> None:
+    """Test two NaN literals are equivalent whichever ``float`` object each holds.
+
+    NaN compares unequal to itself, so comparing stored values would make
+    NaN equivalence a question of object identity: a literal would be
+    equivalent to itself but not to one built from a separately computed
+    NaN.
+    """
+    left = LiteralExpression(float("nan"))
+    right = LiteralExpression(math.inf - math.inf)
+
+    assert left.value is not right.value
+    assert left.is_structurally_equivalent(right)
+    assert right.is_structurally_equivalent(left)
+
+
+def test_nan_literal_is_equivalent_to_its_own_pickle_round_trip() -> None:
+    """Test a NaN literal and its unpickled copy are equivalent.
+
+    Unpickling rebuilds the ``float``, so the copy holds a different NaN
+    object than the original; equivalence must not depend on that.
+    """
+    literal = LiteralExpression(math.nan)
+
+    restored = pickle.loads(pickle.dumps(literal))
+
+    assert restored.value is not literal.value
+    assert literal.is_structurally_equivalent(restored)
+
+
+_LITERAL_EQUIVALENCE_SAMPLE: tuple[bool | int | float | str, ...] = (
+    True,
+    False,
+    0,
+    5,
+    "5",
+    "05",
+    0.0,
+    -0.0,
+    5.0,
+    1.5,
+    math.inf,
+    -math.inf,
+    math.nan,
+    float("nan"),
+    -math.nan,
+    "0.0",
+    ".0",
+    "5.0",
+    "1.5",
+    "1.50",
+    "1.00000000000000000000000000001",
+    "1.0",
+)
+
+
+def test_literal_equivalence_key_is_shared_exactly_by_equivalent_literals() -> None:
+    """Test the key agrees with literal equivalence in both directions.
+
+    Canonical ordering needs the key constant on equivalence classes, and
+    a key that also separates what equivalence separates never lets two
+    inequivalent literals tie. The sample spans every bucket, ``-0.0``,
+    NaNs of distinct identity and sign, and a decimal too long to survive
+    rounding to ``Decimal``'s default 28 digits.
+    """
+    for left_value, right_value in itertools.product(
+        _LITERAL_EQUIVALENCE_SAMPLE, repeat=2
+    ):
+        equivalent = LiteralExpression(left_value).is_structurally_equivalent(
+            LiteralExpression(right_value)
+        )
+        keyed_alike = build_literal_equivalence_key(
+            left_value
+        ) == build_literal_equivalence_key(right_value)
+        assert equivalent is keyed_alike, (left_value, right_value)
+
+
+@pytest.mark.parametrize(
+    "value, expected_key",
+    [
+        pytest.param(True, "bool:True", id="bool"),
+        pytest.param("05", "int:5", id="integer_string"),
+        pytest.param(-0.0, "float-binary:0.0", id="negative_zero"),
+        pytest.param(float("nan"), "float-binary:nan", id="nan"),
+        pytest.param(-math.inf, "float-binary:-inf", id="negative_infinity"),
+        pytest.param("1.50", "float-decimal:1.5", id="decimal_trailing_zero"),
+        pytest.param("100.0", "float-decimal:1E+2", id="decimal_whole_number"),
+    ],
+)
+def test_literal_equivalence_key_renders_bucket_and_canonical_form(
+    value: bool | int | float | str, expected_key: str
+) -> None:
+    """Test the key text for representative literals.
+
+    ``ConstraintSystem`` orders its members by keys built from this text
+    and serializes them in that order, so the rendering is pinned rather
+    than only compared.
+    """
+    assert build_literal_equivalence_key(value) == expected_key
+
+
+# =============================================================================
+# Integer-bucket predicate
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(0, id="int_zero"),
+        pytest.param(5, id="int"),
+        pytest.param("0", id="string_zero"),
+        pytest.param("5", id="string"),
+        pytest.param("05", id="string_leading_zero"),
+    ],
+)
+def test_is_integer_valued_literal_accepts_every_integer_bucket_form(
+    value: int | str,
+) -> None:
+    """Test the predicate holds for both spellings of an integer literal."""
+    assert is_integer_valued_literal(value) is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(True, id="bool_true"),
+        pytest.param(False, id="bool_false"),
+        pytest.param(5.0, id="float_binary"),
+        pytest.param(1.5, id="float_binary_fractional"),
+        pytest.param("5.0", id="float_decimal"),
+        pytest.param("1.5", id="float_decimal_fractional"),
+        pytest.param(".5", id="float_decimal_no_integer_part"),
+    ],
+)
+def test_is_integer_valued_literal_rejects_every_other_bucket_form(
+    value: bool | float | str,
+) -> None:
+    """Test the predicate fails for the Boolean and the two float buckets.
+
+    A ``bool`` is held apart from the integers, and neither float bucket
+    is integer-valued even when the value has no fractional part, since
+    ``LiteralExpression`` does not treat ``5.0`` or ``"5.0"`` as
+    equivalent to ``5``.
+    """
+    assert is_integer_valued_literal(value) is False
+
+
+@pytest.mark.parametrize(
+    "left_value, right_value",
+    [
+        pytest.param(5, "5", id="int_vs_string"),
+        pytest.param("5", "05", id="string_vs_leading_zero"),
+        pytest.param(1.5, 1.5, id="float_binary_pair"),
+        pytest.param("1.5", "1.50", id="float_decimal_pair"),
+        pytest.param(True, True, id="bool_pair"),
+    ],
+)
+def test_is_integer_valued_literal_agrees_across_an_equivalence_class(
+    left_value: bool | int | float | str,
+    right_value: bool | int | float | str,
+) -> None:
+    """Test the predicate is constant on structural-equivalence classes.
+
+    Every consumer that decides "is this literal an integer" reads this
+    predicate, so the answer has to be a class invariant: were it to
+    split a class, the Z3 and SymPy bridges would lower the members to
+    different sorts and the solver's hazard screen would refuse one
+    member of a class while deciding another.
+    """
+    left = LiteralExpression(left_value)
+    right = LiteralExpression(right_value)
+    assert left.is_structurally_equivalent(right)
+
+    assert is_integer_valued_literal(left.value) is is_integer_valued_literal(
+        right.value
+    )
+
+
 # =============================================================================
 # Unary operator dunders
 # =============================================================================
@@ -436,7 +804,6 @@ def test_binary_operator_dunders_produce_matching_expression(
 _NON_EXPRESSION_RIGHT_OPERANDS: tuple[tuple[Any, type[Expression]], ...] = (
     (10, LiteralExpression),
     (10.5, LiteralExpression),
-    (False, LiteralExpression),
     (mock_identifier("y", 42), IdentifierExpression),
 )
 
@@ -462,7 +829,6 @@ def test_binary_dunder_promotes_right_python_operand_to_expression(
 _NON_EXPRESSION_LEFT_OPERANDS: tuple[tuple[Any, type[Expression]], ...] = (
     (6, LiteralExpression),
     (10.3, LiteralExpression),
-    (True, LiteralExpression),
     (mock_identifier("x", 1), IdentifierExpression),
 )
 
@@ -494,21 +860,6 @@ def test_binary_dunder_promotes_left_python_operand_to_expression(
         right,
     )
     assert binary_operator(left, right).is_structurally_equivalent(expected)
-
-
-@pytest.mark.parametrize("value", [True, False])
-def test_binary_dunder_preserves_bool_type_when_wrapping(value: bool) -> None:
-    """Test wrapping a Python ``bool`` keeps it as a ``bool``, not coerced to ``int``.
-
-    ``bool`` is a subtype of ``int`` and ``LiteralType`` admits both, so a naive
-    isinstance check could misclassify. This test pins down that the wrapped
-    value is the ``bool`` singleton.
-    """
-    expression = LiteralExpression(0) + value
-    assert isinstance(expression, BinaryExpression)
-    assert isinstance(expression.right, LiteralExpression)
-    assert type(expression.right.value) is bool
-    assert expression.right.value is value
 
 
 def test_binary_dunder_rejects_unsupported_type_on_right() -> None:
@@ -553,6 +904,88 @@ def test_binary_dunder_rejects_unsupported_type_on_left() -> None:
 
 
 # =============================================================================
+# Bare-bool refusal: no coercion site lifts a Python ``bool``
+# =============================================================================
+
+
+def test_accidental_expression_equality_cannot_ride_into_a_conjunction() -> None:
+    """Test ``logical_and(a == b, a > 0)`` refuses rather than planting ``False``.
+
+    ``Expression.__eq__`` is object identity, so ``a == b`` over two
+    distinct expression objects is the Python ``False``. Lifted, it turns
+    the conjunction into the constant-false ``False && (a > 0)``, which
+    then rides unnoticed into an ``EquationConstraint`` and reports a
+    permanently infeasible system.
+    """
+    a = mock_identifier("a", 0)
+    b = mock_identifier("b", 1)
+    accidental = IdentifierExpression(a) == IdentifierExpression(b)
+
+    with pytest.raises(ValueError, match="bare Python bool"):
+        logical_and(accidental, IdentifierExpression(a) > LiteralExpression(0))
+
+
+_BARE_BOOL_COERCION_SITES = [
+    pytest.param(lambda value: LiteralExpression(1) + value, id="dunder_right"),
+    pytest.param(lambda value: value + LiteralExpression(1), id="dunder_left"),
+    pytest.param(lambda value: LiteralExpression(1) < value, id="comparison"),
+    pytest.param(lambda value: LiteralExpression(1).equals(value), id="equals"),
+    pytest.param(lambda value: LiteralExpression(1).not_equals(value), id="not_equals"),
+    pytest.param(
+        lambda value: make_binary_expression(
+            BinaryOperation.EQUAL, LiteralExpression(1), value
+        ),
+        id="make_binary_expression",
+    ),
+    pytest.param(
+        lambda value: make_unary_expression(UnaryOperation.LOGICAL_NOT, value),
+        id="make_unary_expression",
+    ),
+    pytest.param(
+        lambda value: logical_and(LiteralExpression(True), value), id="logical_and"
+    ),
+    pytest.param(
+        lambda value: logical_or(value, LiteralExpression(True)), id="logical_or"
+    ),
+    pytest.param(logical_not, id="logical_not"),
+    pytest.param(
+        lambda value: LiteralExpression(True).logical_and(value),
+        id="method_logical_and",
+    ),
+    pytest.param(
+        lambda value: LiteralExpression(True).logical_or(value),
+        id="method_logical_or",
+    ),
+    pytest.param(
+        lambda value: piecewise((LiteralExpression(True), value), otherwise=0),
+        id="piecewise_value",
+    ),
+    pytest.param(
+        lambda value: piecewise((LiteralExpression(True), 1), otherwise=value),
+        id="piecewise_otherwise",
+    ),
+    pytest.param(lambda value: call("max", value, 1), id="call"),
+    pytest.param(lambda value: Expression.call("max", 1, value), id="method_call"),
+]
+
+
+@pytest.mark.parametrize("value", [True, False])
+@pytest.mark.parametrize("build", _BARE_BOOL_COERCION_SITES)
+def test_every_coercion_site_refuses_a_bare_bool(
+    build: Callable[[bool], Expression], value: bool
+) -> None:
+    """Test each builder and operator dunder refuses a bare ``bool`` operand.
+
+    The refusal lives in the one coercion every site shares, so a site
+    that stopped routing through it would lift the ``bool`` again. The
+    check is on the exact type: ``bool`` subclasses ``int``, and an
+    ``int`` operand still lifts (see the promotion tests above).
+    """
+    with pytest.raises(ValueError, match="bare Python bool"):
+        build(value)
+
+
+# =============================================================================
 # Commutative / associative tree builders
 # =============================================================================
 
@@ -571,14 +1004,14 @@ def test_module_level_logical_builder_folds_three_args_right_associatively(
     """Test module-level `logical_and`/`logical_or` fold three args right-assoc."""
     first = LiteralExpression(True)
     second = LiteralExpression(False)
-    third = True  # coerced to LiteralExpression
+    third = mock_identifier("c", 2)  # coerced to IdentifierExpression
 
     result = builder(first, second, third)
 
     expected = BinaryExpression(
         expected_operation,
         first,
-        BinaryExpression(expected_operation, second, LiteralExpression(third)),
+        BinaryExpression(expected_operation, second, IdentifierExpression(third)),
     )
     assert result.is_structurally_equivalent(expected)
 
@@ -638,12 +1071,14 @@ def test_module_level_logical_not_coerces_bare_identifier() -> None:
     assert result.is_structurally_equivalent(expected)
 
 
-def test_module_level_logical_not_coerces_bare_python_literal() -> None:
-    """Test `logical_not` lifts a bare Python ``bool`` via `LiteralExpression`."""
-    result = logical_not(True)
+def test_module_level_logical_not_refuses_a_bare_python_bool() -> None:
+    """Test `logical_not` refuses a bare ``bool`` and names the literal spelling.
 
-    expected = UnaryExpression(UnaryOperation.LOGICAL_NOT, LiteralExpression(True))
-    assert result.is_structurally_equivalent(expected)
+    A caller who wants the constant writes ``LiteralExpression(True)``;
+    the message says so rather than only rejecting the input.
+    """
+    with pytest.raises(ValueError, match=r"LiteralExpression\(True\)"):
+        logical_not(True)
 
 
 _INSTANCE_LOGICAL_METHODS = (
@@ -1175,3 +1610,908 @@ def test_make_unary_expression_rejects_unsupported_operand() -> None:
     """Test `make_unary_expression` raises ``ValueError`` for an unsupported type."""
     with pytest.raises(ValueError, match="Unable to cast"):
         make_unary_expression(UnaryOperation.NEGATE, object())  # type: ignore[arg-type]
+
+
+# =============================================================================
+# validate_logical_operands: Boolean connectives reject numeric operands
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(logical_and(LiteralExpression(2), LiteralExpression(4)), id="and"),
+        pytest.param(logical_or(LiteralExpression(2), LiteralExpression(4)), id="or"),
+        pytest.param(logical_not(LiteralExpression(2)), id="not"),
+        pytest.param(
+            logical_and(LiteralExpression(True), LiteralExpression(4)),
+            id="and_one_numeric_operand",
+        ),
+        pytest.param(
+            logical_and(LiteralExpression(1.5), LiteralExpression(2.5)), id="and_floats"
+        ),
+        pytest.param(
+            logical_and(LiteralExpression("2"), LiteralExpression("4")),
+            id="and_string_form",
+        ),
+        pytest.param(
+            logical_and(
+                BinaryExpression(
+                    BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
+                ),
+                LiteralExpression(True),
+            ),
+            id="and_arithmetic_operand",
+        ),
+        pytest.param(
+            logical_not(UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1))),
+            id="not_negation_operand",
+        ),
+    ],
+)
+def test_validate_logical_operands_rejects_a_provably_numeric_operand(
+    expression: Expression,
+) -> None:
+    """Test a Boolean connective over a numeric operand is refused.
+
+    ``LOGICAL_AND`` / ``LOGICAL_OR`` / ``LOGICAL_NOT`` denote Boolean
+    connectives. A numeric operand under one has no faithful lowering:
+    SymPy's ``&``/``|`` are *bitwise* on ``sympy.Integer``, so the shape
+    would otherwise fold to a numerically wrong literal.
+    """
+    with pytest.raises(
+        NonBooleanLogicalOperandError, match="provably denotes a number"
+    ):
+        validate_logical_operands(expression)
+
+
+def test_validate_logical_operands_names_both_the_connective_and_the_operand() -> None:
+    """Test the message identifies the offending node and the operand within it.
+
+    A caller needs the site to fix, not just the fact of a refusal, so the
+    message renders the connective and the operand that made it ill-typed.
+    """
+    expression = logical_or(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError) as exc_info:
+        validate_logical_operands(expression)
+
+    message = str(exc_info.value)
+    assert "logical_or" in message
+    assert "LiteralExpression(value=2)" in message
+
+
+def test_validate_logical_operands_descends_past_the_root() -> None:
+    """Test a numeric operand nested under a well-typed root is still found.
+
+    A conjunction of constraints puts the offending connective in a child
+    position; a screen that only inspected the root would pass this tree
+    through to a backend.
+    """
+    x = mock_identifier("x", 0)
+    benign = BinaryExpression(
+        BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(0)
+    )
+    nested = logical_and(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_logical_operands(logical_and(benign, nested))
+
+
+def test_validate_logical_operands_rejects_an_all_numeric_piecewise_operand() -> None:
+    """Test a piecewise whose every branch value is numeric is a numeric operand.
+
+    The branch values decide the sort of the whole piecewise, so one whose
+    branches agree on numeric is as ill-typed under a connective as a bare
+    integer literal is.
+    """
+    x = mock_identifier("x", 0)
+    numeric_piecewise = piecewise(
+        (IdentifierExpression(x) > LiteralExpression(0), LiteralExpression(1)),
+        otherwise=LiteralExpression(2),
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_logical_operands(
+            logical_and(numeric_piecewise, LiteralExpression(True))
+        )
+
+
+def test_validate_logical_operands_accepts_a_boolean_valued_piecewise_operand() -> None:
+    """Test a piecewise whose branch values are Boolean passes the screen."""
+    x = mock_identifier("x", 0)
+    boolean_piecewise = piecewise(
+        (IdentifierExpression(x) > LiteralExpression(0), LiteralExpression(True)),
+        otherwise=LiteralExpression(False),
+    )
+
+    validate_logical_operands(logical_and(boolean_piecewise, LiteralExpression(True)))
+
+
+@pytest.mark.parametrize("numeric_branch_position", ["value", "otherwise"])
+def test_validate_logical_operands_rejects_a_piecewise_operand_with_one_numeric_branch(
+    numeric_branch_position: str,
+) -> None:
+    """Test a piecewise operand with even one numeric branch is refused.
+
+    A piecewise in a Boolean position puts each of its branch values in a
+    Boolean position too, so a single numeric branch makes it ill-typed.
+    """
+    x = mock_identifier("x", 0)
+    condition = IdentifierExpression(x) > LiteralExpression(0)
+    if numeric_branch_position == "value":
+        mixed_piecewise = piecewise(
+            (condition, LiteralExpression(2)), otherwise=LiteralExpression(True)
+        )
+    else:
+        mixed_piecewise = piecewise(
+            (condition, LiteralExpression(True)), otherwise=LiteralExpression(2)
+        )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_logical_operands(logical_not(mixed_piecewise))
+
+
+@pytest.mark.parametrize("validate", [validate_logical_operands, validate_predicate])
+def test_validators_accept_a_numeric_piecewise_compared_as_a_number(
+    validate: Callable[[Expression], None],
+) -> None:
+    """Test a piecewise with numeric branches passes where a number is expected."""
+    x = mock_identifier("x", 0)
+    numeric_piecewise = piecewise(
+        (IdentifierExpression(x) > LiteralExpression(0), LiteralExpression(2)),
+        otherwise=LiteralExpression(3),
+    )
+
+    validate(
+        logical_and(numeric_piecewise > LiteralExpression(1), LiteralExpression(True))
+    )
+
+
+@pytest.mark.parametrize(
+    "build_expression",
+    [
+        pytest.param(
+            lambda operand: logical_and(operand, LiteralExpression(True)), id="and"
+        ),
+        pytest.param(
+            lambda operand: logical_or(LiteralExpression(False), operand), id="or"
+        ),
+        pytest.param(logical_not, id="not"),
+        pytest.param(
+            lambda operand: piecewise(
+                (operand, LiteralExpression(1)), otherwise=LiteralExpression(2)
+            ),
+            id="case_condition",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "function_name", ["floor", "sqrt"], ids=["int_result", "real_result"]
+)
+def test_validate_logical_operands_rejects_a_numeric_result_call(
+    function_name: str, build_expression: Callable[[Expression], Expression]
+) -> None:
+    """Test a call whose registered result sort is INT or REAL is refused.
+
+    ``floor`` and ``sqrt`` are registered with INT and REAL result sorts
+    respectively, so under a connective or as a piecewise case condition
+    they are as ill-typed as a bare numeric literal, even though the sort
+    lives in the registry rather than on the ``CallExpression`` node
+    itself.
+    """
+    numeric_call = call(function_name, LiteralExpression(1.5))
+
+    with pytest.raises(
+        NonBooleanLogicalOperandError, match="provably denotes a number"
+    ):
+        validate_logical_operands(build_expression(numeric_call))
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(
+            logical_and(LiteralExpression(True), LiteralExpression(False)),
+            id="boolean_literals",
+        ),
+        pytest.param(
+            logical_not(LiteralExpression(True)), id="boolean_literal_negation"
+        ),
+        pytest.param(
+            logical_and(
+                IdentifierExpression(mock_identifier("p", 0)),
+                IdentifierExpression(mock_identifier("q", 1)),
+            ),
+            id="unbound_identifiers",
+        ),
+        pytest.param(
+            logical_and(
+                IdentifierExpression(mock_identifier("x", 0)) > LiteralExpression(0),
+                IdentifierExpression(mock_identifier("x", 0)) < LiteralExpression(5),
+            ),
+            id="comparisons",
+        ),
+        pytest.param(
+            logical_and(
+                CallExpression(
+                    "nand", (LiteralExpression(True), LiteralExpression(True))
+                ),
+                LiteralExpression(True),
+            ),
+            id="call_operand",
+        ),
+        pytest.param(
+            logical_and(
+                logical_not(IdentifierExpression(mock_identifier("p", 0))),
+                LiteralExpression(True),
+            ),
+            id="nested_connective_operand",
+        ),
+    ],
+)
+def test_validate_logical_operands_accepts_an_operand_it_cannot_prove_numeric(
+    expression: Expression,
+) -> None:
+    """Test the screen refuses only what it can prove, not everything unproven.
+
+    An identifier with no binding and a call carry their sort outside the
+    node -- in ``symbol_types`` and in the registry respectively -- so
+    refusing them would reject well-typed expressions the backends lower
+    correctly.
+    """
+    validate_logical_operands(expression)
+
+
+def test_validate_logical_operands_screens_an_identifier_bound_to_a_number() -> None:
+    """Test an identifier the environment binds to a number is screened as one.
+
+    Substituting a numeric value into a connective is the same ill-typed
+    shape as writing the number there, reached one step later; without the
+    environment the screen would pass the tree and the number would meet
+    the connective inside the backend.
+    """
+    p = mock_identifier("p", 0)
+    q = mock_identifier("q", 1)
+    expression = logical_and(IdentifierExpression(p), IdentifierExpression(q))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_logical_operands(
+            expression, {p: LiteralExpression(2), q: LiteralExpression(4)}
+        )
+
+
+def test_validate_logical_operands_accepts_an_identifier_bound_to_a_boolean() -> None:
+    """Test an environment binding a Boolean value leaves the connective well-typed."""
+    p = mock_identifier("p", 0)
+    expression = logical_and(IdentifierExpression(p), LiteralExpression(True))
+
+    validate_logical_operands(expression, {p: LiteralExpression(False)})
+
+
+def test_validate_logical_operands_does_not_chain_environment_bindings() -> None:
+    """Test a binding's value is classified without applying another binding to it.
+
+    Substitution is simultaneous and non-chaining, so ``{p: q, q: 2}``
+    replaces ``p`` with the residual ``q`` -- never with ``2``. A screen
+    that chained would refuse an expression the bridge lowers without
+    complaint.
+    """
+    p = mock_identifier("p", 0)
+    q = mock_identifier("q", 1)
+    expression = logical_and(IdentifierExpression(p), LiteralExpression(True))
+
+    validate_logical_operands(
+        expression, {p: IdentifierExpression(q), q: LiteralExpression(2)}
+    )
+
+
+def test_validate_logical_operands_rejects_a_numeric_piecewise_condition() -> None:
+    """Test a piecewise case condition is screened as a Boolean position.
+
+    A condition selects its branch by truth, so an arithmetic condition is
+    as ill-typed as an arithmetic operand of ``and``.
+    """
+    x = mock_identifier("x", 0)
+    expression = piecewise(
+        (IdentifierExpression(x) + LiteralExpression(1), LiteralExpression(5)),
+        otherwise=LiteralExpression(0),
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError, match="case condition"):
+        validate_logical_operands(expression)
+
+
+@pytest.mark.parametrize(
+    "build_expression",
+    [
+        pytest.param(
+            lambda constant: logical_and(constant, LiteralExpression(True)), id="and"
+        ),
+        pytest.param(
+            lambda constant: logical_or(LiteralExpression(False), constant), id="or"
+        ),
+        pytest.param(logical_not, id="not"),
+        pytest.param(
+            lambda constant: piecewise(
+                (constant, LiteralExpression(1)), otherwise=LiteralExpression(2)
+            ),
+            id="case_condition",
+        ),
+    ],
+)
+@pytest.mark.parametrize("constant_name", ["pi", "e", "inf", "nan"])
+def test_validate_logical_operands_rejects_a_native_constant_in_a_boolean_position(
+    constant_name: str, build_expression: Callable[[Expression], Expression]
+) -> None:
+    """Test a native constant is provably numeric in a Boolean position.
+
+    A constant's canonical identifier denotes the constant's value, and
+    every built-in constant is REAL-sorted, so under a connective or as
+    a case condition it is as ill-typed as the number it stands for.
+    """
+    constant = IdentifierExpression(get_native_constant_identifier(constant_name))
+
+    with pytest.raises(
+        NonBooleanLogicalOperandError, match="provably denotes a number"
+    ):
+        validate_logical_operands(build_expression(constant))
+
+
+def test_validate_logical_operands_reads_a_constant_by_its_sort_not_a_binding() -> None:
+    """Test a Boolean binding for a constant's identifier does not make it Boolean.
+
+    The identifier names a value rather than a variable: the SymPy bridge
+    lowers it to the constant's value whatever the environment binds it
+    to, so the binding never reaches the tree the backend sees.
+    """
+    pi = get_native_constant_identifier("pi")
+    expression = logical_and(IdentifierExpression(pi), LiteralExpression(True))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_logical_operands(expression, {pi: LiteralExpression(True)})
+
+
+def test_validate_logical_operands_accepts_a_boolean_native_constant(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a constant registered with the BOOL sort is a Boolean operand.
+
+    The screen reads the constant's declared sort rather than refusing
+    every constant, so a Boolean one is as well-typed as a Boolean
+    literal.
+    """
+    register_native_constant("test_validate_always", FunctionSort.BOOL, True)
+    constant = get_native_constant_identifier("test_validate_always")
+
+    validate_logical_operands(
+        logical_and(IdentifierExpression(constant), LiteralExpression(True))
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(
+            logical_and(
+                IdentifierExpression(get_native_constant_identifier("pi"))
+                > LiteralExpression(3),
+                LiteralExpression(True),
+            ),
+            id="constant_in_a_comparison",
+        ),
+        pytest.param(
+            logical_and(
+                IdentifierExpression(mock_identifier("pi", 0)),
+                LiteralExpression(True),
+            ),
+            id="identifier_named_after_a_constant",
+        ),
+    ],
+)
+def test_validate_logical_operands_accepts_a_constant_outside_a_boolean_position(
+    expression: Expression,
+) -> None:
+    """Test only a canonical constant standing in a Boolean position is refused.
+
+    A constant compared against a number is a well-typed Boolean, and an
+    identifier that merely shares a constant's name is an ordinary
+    variable whose sort the tree does not carry.
+    """
+    validate_logical_operands(expression)
+
+
+@pytest.mark.parametrize(
+    "build_expression",
+    [
+        pytest.param(
+            lambda operand: logical_and(operand, LiteralExpression(True)), id="and"
+        ),
+        pytest.param(logical_not, id="not"),
+        pytest.param(
+            lambda operand: piecewise(
+                (operand, LiteralExpression(1)), otherwise=LiteralExpression(2)
+            ),
+            id="case_condition",
+        ),
+    ],
+)
+@pytest.mark.parametrize("sort", [SymbolType.INT, SymbolType.REAL])
+def test_validate_logical_operands_rejects_an_identifier_declared_numeric(
+    sort: SymbolType, build_expression: Callable[[Expression], Expression]
+) -> None:
+    """Test an identifier declared INT or REAL is refused in a Boolean position.
+
+    ``symbol_types`` is the sort the Z3 bridge lowers the identifier with,
+    so an INT or REAL identifier under a connective is a sort mismatch
+    that Z3 rejects with an exception of its own.
+    """
+    x = mock_identifier("x", 0)
+
+    with pytest.raises(
+        NonBooleanLogicalOperandError, match="provably denotes a number"
+    ):
+        validate_logical_operands(
+            build_expression(IdentifierExpression(x)), symbol_types={x: sort}
+        )
+
+
+@pytest.mark.parametrize(
+    "declared_sort", [SymbolType.BOOL, None], ids=["declared_bool", "undeclared"]
+)
+def test_validate_logical_operands_accepts_an_identifier_not_declared_numeric(
+    declared_sort: SymbolType | None,
+) -> None:
+    """Test an identifier declared BOOL, or with no declared sort, still passes."""
+    x = mock_identifier("x", 0)
+    symbol_types = {} if declared_sort is None else {x: declared_sort}
+
+    validate_logical_operands(
+        logical_and(IdentifierExpression(x), LiteralExpression(True)),
+        symbol_types=symbol_types,
+    )
+
+
+def test_validate_logical_operands_reads_a_binding_ahead_of_a_declared_sort() -> None:
+    """Test a bound identifier is classified by its value, not its declared sort.
+
+    Substitution replaces the identifier, so its declared sort never
+    reaches a backend; the value that takes its place does.
+    """
+    x = mock_identifier("x", 0)
+    expression = logical_and(IdentifierExpression(x), LiteralExpression(True))
+
+    validate_logical_operands(
+        expression, {x: LiteralExpression(False)}, symbol_types={x: SymbolType.INT}
+    )
+
+
+def test_validate_logical_operands_reads_the_sort_a_binding_brings_in() -> None:
+    """Test an identifier a binding substitutes in is screened by its declared sort.
+
+    ``symbol_types`` describes the identifiers left free after
+    substitution, and ``q`` is one of them once it replaces ``p``.
+    """
+    p = mock_identifier("p", 0)
+    q = mock_identifier("q", 1)
+    expression = logical_and(IdentifierExpression(p), LiteralExpression(True))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_logical_operands(
+            expression,
+            {p: IdentifierExpression(q)},
+            symbol_types={q: SymbolType.INT},
+        )
+
+
+def test_validate_logical_operands_screens_a_case_condition_bound_to_a_number() -> None:
+    """Test an identifier condition the environment binds to a number is refused.
+
+    Substituting the number would build a piecewise whose condition is a
+    numeric literal, which ``PiecewiseExpression`` refuses to hold, and
+    SymPy would read such a condition as a truth value.
+    """
+    condition = mock_identifier("c", 0)
+    expression = piecewise(
+        (IdentifierExpression(condition), LiteralExpression(1)),
+        otherwise=LiteralExpression(0),
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError, match="case condition"):
+        validate_logical_operands(expression, {condition: LiteralExpression(1)})
+
+
+def test_validate_logical_operands_accepts_an_unprovable_case_condition() -> None:
+    """Test an unbound or Boolean-bound condition passes, as do numeric values.
+
+    Only the conditions are Boolean positions: the branch values ``1`` and
+    ``0`` are numbers and stay legal.
+    """
+    condition = mock_identifier("c", 0)
+    expression = piecewise(
+        (IdentifierExpression(condition), LiteralExpression(1)),
+        otherwise=LiteralExpression(0),
+    )
+
+    validate_logical_operands(expression)
+    validate_logical_operands(expression, {condition: LiteralExpression(True)})
+
+
+def test_validate_logical_operands_names_the_piecewise_and_its_condition() -> None:
+    """Test the refusal points at both the piecewise and the offending condition."""
+    x = mock_identifier("x", 0)
+    condition = IdentifierExpression(x) * LiteralExpression(2)
+    expression = piecewise(
+        (condition, LiteralExpression(5)), otherwise=LiteralExpression(0)
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError) as exc_info:
+        validate_logical_operands(expression)
+
+    message = str(exc_info.value)
+    assert repr(expression) in message
+    assert repr(condition) in message
+
+
+def test_non_boolean_logical_operand_error_is_a_type_error() -> None:
+    """Test the refusal is a `TypeError`, not an undecidability report.
+
+    ``logical_and(2, 4)`` is ill-typed: no backend and no timeout gives it
+    a meaning. Reporting it as `UndecidableError` would invite a caller to
+    retry with a larger bound, and returning `None` would hide an
+    author-side bug behind the same signal a solver timeout uses.
+    """
+    assert issubclass(NonBooleanLogicalOperandError, TypeError)
+    assert not issubclass(NonBooleanLogicalOperandError, UndecidableError)
+
+
+def test_non_boolean_logical_operand_error_is_in_the_compiler_error_registry() -> None:
+    """Test the error is discoverable through `@register_error`'s catalog."""
+    assert NonBooleanLogicalOperandError in get_registered_errors()
+
+
+def test_native_constant_binding_error_is_in_the_compiler_error_registry() -> None:
+    """Test the error is discoverable through `@register_error`'s catalog."""
+    assert NativeConstantBindingError in get_registered_errors()
+
+
+# =============================================================================
+# validate_predicate: the expression root is itself a Boolean position
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(LiteralExpression(2), id="int_literal"),
+        pytest.param(LiteralExpression(1.5), id="float_literal"),
+        pytest.param(LiteralExpression("2.5"), id="decimal_string_literal"),
+        pytest.param(
+            BinaryExpression(
+                BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
+            ),
+            id="arithmetic_node",
+        ),
+        pytest.param(
+            UnaryExpression(UnaryOperation.NEGATE, LiteralExpression(1)), id="negate"
+        ),
+        pytest.param(call("floor", LiteralExpression(1.5)), id="int_result_call"),
+        pytest.param(call("sqrt", LiteralExpression(4.0)), id="real_result_call"),
+        pytest.param(
+            IdentifierExpression(get_native_constant_identifier("pi")),
+            id="canonical_pi",
+        ),
+        pytest.param(
+            piecewise(
+                (
+                    IdentifierExpression(mock_identifier("c", 0)),
+                    LiteralExpression(True),
+                ),
+                otherwise=LiteralExpression(2),
+            ),
+            id="piecewise_with_a_numeric_branch",
+        ),
+    ],
+)
+def test_validate_predicate_rejects_a_root_that_provably_denotes_a_number(
+    expression: Expression,
+) -> None:
+    """Test a numeric root is refused, not just a numeric operand of a connective.
+
+    A predicate is itself a Boolean position: ``EquationConstraint``'s
+    expression, each ``ConstraintSystem`` member, and every solver query
+    hand ``validate_predicate`` a tree that is supposed to denote a
+    Boolean on its own, with no connective or piecewise condition above
+    it to catch a numeric root the way ``validate_logical_operands``
+    does.
+    """
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_predicate(expression)
+
+
+@pytest.mark.parametrize("sort", [SymbolType.INT, SymbolType.REAL])
+def test_validate_predicate_rejects_a_root_identifier_declared_numeric(
+    sort: SymbolType,
+) -> None:
+    """Test a root identifier `symbol_types` declares INT or REAL is refused."""
+    x = mock_identifier("x", 0)
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_predicate(IdentifierExpression(x), symbol_types={x: sort})
+
+
+def test_validate_predicate_rejects_a_root_identifier_bound_to_a_number() -> None:
+    """Test a root identifier the environment binds to a number is refused."""
+    x = mock_identifier("x", 0)
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_predicate(IdentifierExpression(x), {x: LiteralExpression(2)})
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(LiteralExpression(True), id="bool_literal"),
+        pytest.param(
+            BinaryExpression(
+                BinaryOperation.GREATER, LiteralExpression(1), LiteralExpression(0)
+            ),
+            id="comparison",
+        ),
+        pytest.param(
+            logical_and(LiteralExpression(True), LiteralExpression(False)),
+            id="connective",
+        ),
+        pytest.param(
+            IdentifierExpression(mock_identifier("p", 0)),
+            id="undeclared_unbound_identifier",
+        ),
+        pytest.param(
+            piecewise(
+                (
+                    IdentifierExpression(mock_identifier("c", 0)),
+                    LiteralExpression(True),
+                ),
+                otherwise=LiteralExpression(False),
+            ),
+            id="well_typed_boolean_piecewise",
+        ),
+        pytest.param(
+            CallExpression("nand", (LiteralExpression(True), LiteralExpression(True))),
+            id="bool_result_call",
+        ),
+        pytest.param(
+            CallExpression(
+                "test_validate_predicate_totally_unregistered_function",
+                (LiteralExpression(True),),
+            ),
+            id="unregistered_call",
+        ),
+    ],
+)
+def test_validate_predicate_accepts_a_boolean_or_unprovable_root(
+    expression: Expression,
+) -> None:
+    """Test a Boolean root, or one the screen cannot prove numeric, passes."""
+    validate_predicate(expression)
+
+
+def test_validate_predicate_accepts_a_root_identifier_declared_bool() -> None:
+    """Test a root identifier `symbol_types` declares BOOL passes."""
+    x = mock_identifier("x", 0)
+
+    validate_predicate(IdentifierExpression(x), symbol_types={x: SymbolType.BOOL})
+
+
+def test_validate_predicate_still_screens_a_nested_boolean_position() -> None:
+    """Test a numeric operand nested under a connective is still found.
+
+    The root check is additional, not a replacement: a well-typed root
+    (a ``LOGICAL_AND`` node) whose operand provably denotes a number must
+    still be refused the way ``validate_logical_operands`` refuses it.
+    """
+    expression = logical_and(LiteralExpression(2), LiteralExpression(4))
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_predicate(expression)
+
+
+# =============================================================================
+# A bound identifier's value is screened in the identifier's own position
+# =============================================================================
+
+
+def test_validate_predicate_screens_a_bound_piecewise_with_a_mixed_branch() -> None:
+    """Test a root identifier bound to a piecewise with a numeric branch is refused.
+
+    The root is itself a Boolean position, so the bound value stands in
+    the identifier's place there: its branches are screened even though
+    the piecewise as a whole is not provably numeric (its ``otherwise``
+    is a Boolean), which is what lets the numeric ``value`` branch slip
+    past a check that only asks whether every branch is numeric.
+    """
+    x = mock_identifier("x", 0)
+    mixed = piecewise(
+        (LiteralExpression(False), LiteralExpression(1)),
+        otherwise=LiteralExpression(True),
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_predicate(IdentifierExpression(x), {x: mixed})
+
+
+@pytest.mark.parametrize("numeric_branch_position", ["value", "otherwise"])
+def test_validate_logical_operands_screens_a_bound_piecewise_with_a_mixed_branch(
+    numeric_branch_position: str,
+) -> None:
+    """Test an operand bound to a piecewise with one numeric branch is refused.
+
+    ``logical_not`` puts its operand in a Boolean position, so the value
+    bound there is screened the same way a literal piecewise operand
+    would be: even one numeric branch beside a Boolean one is ill-typed.
+    """
+    x = mock_identifier("x", 0)
+    if numeric_branch_position == "value":
+        mixed = piecewise(
+            (LiteralExpression(False), LiteralExpression(1)),
+            otherwise=LiteralExpression(True),
+        )
+    else:
+        mixed = piecewise(
+            (LiteralExpression(False), LiteralExpression(True)),
+            otherwise=LiteralExpression(1),
+        )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        validate_logical_operands(logical_not(IdentifierExpression(x)), {x: mixed})
+
+
+def test_validate_predicate_accepts_a_bound_well_typed_boolean_piecewise() -> None:
+    """Test a root identifier bound to an all-Boolean piecewise still passes.
+
+    Every branch here is a Boolean, so walking into the bound value finds
+    nothing to refuse, the same as if the piecewise had been written in
+    place of the identifier.
+    """
+    x = mock_identifier("x", 0)
+    well_typed = piecewise(
+        (LiteralExpression(False), LiteralExpression(False)),
+        otherwise=LiteralExpression(True),
+    )
+
+    validate_predicate(IdentifierExpression(x), {x: well_typed})
+
+
+def test_validate_logical_operands_accepts_a_bound_piecewise_in_numeric_position() -> (
+    None
+):
+    """Test an identifier compared as a number may still bind to a numeric piecewise.
+
+    ``x`` sits in a numeric position (compared, not connected), so only
+    the bound piecewise's condition is a Boolean position; its branch
+    values are numbers and stay legal.
+    """
+    x = mock_identifier("x", 0)
+    numeric_piecewise = piecewise(
+        (LiteralExpression(False), LiteralExpression(1)),
+        otherwise=LiteralExpression(2),
+    )
+
+    validate_logical_operands(
+        IdentifierExpression(x) > LiteralExpression(0), {x: numeric_piecewise}
+    )
+
+
+# =============================================================================
+# Truthiness: an expression is not a Boolean
+# =============================================================================
+
+
+def _branch_on(expression: Expression) -> str:
+    """Return which way an ``if`` on ``expression`` goes."""
+    if expression:
+        return "taken"
+    return "not taken"
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(LiteralExpression(True), id="true_literal"),
+        pytest.param(LiteralExpression(0), id="zero_literal"),
+        pytest.param(IdentifierExpression(mock_identifier("x", 0)), id="identifier"),
+        pytest.param(
+            IdentifierExpression(mock_identifier("x", 0)) < LiteralExpression(5),
+            id="comparison",
+        ),
+        pytest.param(
+            logical_and(LiteralExpression(True), LiteralExpression(False)),
+            id="conjunction",
+        ),
+        pytest.param(
+            CallExpression("max", (LiteralExpression(1), LiteralExpression(2))),
+            id="call",
+        ),
+    ],
+)
+def test_expression_has_no_truth_value(expression: Expression) -> None:
+    """Test every expression refuses ``bool()``, whatever it would evaluate to.
+
+    Truthiness asks a symbolic node for a Python Boolean it does not have;
+    even a ``True`` literal is a node rather than a truth value.
+    """
+    with pytest.raises(TypeError, match="logical_and"):
+        bool(expression)
+
+
+def test_chained_comparison_raises_instead_of_dropping_a_conjunct() -> None:
+    """Test ``0 <= c <= 5`` raises rather than build only ``c <= 5``.
+
+    Python evaluates the chain as ``(0 <= c) and (c <= 5)``, which asks the
+    first comparison for its truth. A truthy expression let ``and`` return
+    the second comparison alone, so a parameter constrained by the chain
+    admitted -100.
+    """
+    c = IdentifierExpression(mock_identifier("c", 0))
+
+    with pytest.raises(TypeError, match="chained comparison"):
+        _ = LiteralExpression(0) <= c <= LiteralExpression(5)
+
+
+@pytest.mark.parametrize(
+    "combine",
+    [
+        pytest.param(lambda left, right: left and right, id="and"),
+        pytest.param(lambda left, right: left or right, id="or"),
+        pytest.param(lambda left, right: not left, id="not"),
+    ],
+)
+def test_python_connectives_raise_instead_of_picking_an_operand(
+    combine: Callable[[Expression, Expression], object],
+) -> None:
+    """Test Python's ``and``, ``or``, and ``not`` refuse expression operands.
+
+    Each consults its left operand's truth, so ``(x > 0) and (y > 0)``
+    returned ``y > 0`` alone; ``logical_and`` and ``logical_or`` build the
+    connective instead.
+    """
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+
+    with pytest.raises(TypeError, match="logical_or"):
+        combine(x > LiteralExpression(0), y > LiteralExpression(0))
+
+
+def test_branching_on_an_expression_raises() -> None:
+    """Test an ``if`` on an expression raises rather than always branching."""
+    x = IdentifierExpression(mock_identifier("x", 0))
+
+    with pytest.raises(TypeError):
+        _branch_on(x < LiteralExpression(5))
+
+
+def test_sorting_expressions_by_comparison_raises() -> None:
+    """Test sorting by ``<`` raises instead of trusting a comparison node.
+
+    ``sorted`` asks ``a < b`` for its truth, which an expression cannot
+    give, so an ordering over expressions needs an explicit key.
+    """
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+
+    with pytest.raises(TypeError):
+        sorted([x, y])
+
+
+def test_logical_and_builds_the_conjunction_a_chained_comparison_meant() -> None:
+    """Test ``logical_and`` keeps both bounds of ``0 <= c <= 5``."""
+    c = IdentifierExpression(mock_identifier("c", 0))
+    lower = LiteralExpression(0) <= c
+    upper = c <= LiteralExpression(5)
+
+    conjunction = logical_and(lower, upper)
+
+    assert isinstance(conjunction, BinaryExpression)
+    assert conjunction.operation is BinaryOperation.LOGICAL_AND
+    assert conjunction.left.is_structurally_equivalent(lower)
+    assert conjunction.right.is_structurally_equivalent(upper)

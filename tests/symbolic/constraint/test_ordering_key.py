@@ -8,7 +8,12 @@ pinned directly here rather than only observed indirectly through
 `ConstraintSystem`'s canonical order.
 """
 
+import math
+import pickle
 from dataclasses import dataclass, field
+from enum import IntEnum
+
+import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.constraint import (
@@ -34,6 +39,41 @@ from .conftest import HashCollidingMember, mock_identifier
 # =============================================================================
 # Constant on structural-equivalence classes
 # =============================================================================
+
+
+class _Level(IntEnum):
+    """An ``int`` subclass, which a literal holds as the ``int`` it denotes."""
+
+    HIGH = 3
+
+
+class _Measure(float):
+    """A ``float`` subclass, which a literal holds as the ``float`` it denotes."""
+
+
+@pytest.mark.parametrize(
+    ("value", "exact_value"),
+    [
+        pytest.param(_Level.HIGH, 3, id="int_subclass"),
+        pytest.param(_Measure(1.5), 1.5, id="float_subclass"),
+    ],
+)
+def test_equation_keys_a_number_subclass_literal_like_its_exact_twin(
+    value: float, exact_value: float
+) -> None:
+    """Test a literal built from a number subclass keys as the exact number.
+
+    The literal holds the exact number, so the key, which renders the
+    literal's equivalence class, cannot tell the two constructions apart.
+    """
+    x = mock_identifier("x", 0)
+
+    def build(bound: float) -> EquationConstraint:
+        return EquationConstraint(
+            make_binary_expression(BinaryOperation.LESS, x, LiteralExpression(bound))
+        )
+
+    assert build(value).build_ordering_key() == build(exact_value).build_ordering_key()
 
 
 def test_equal_keys_for_in_set_constraints_built_in_different_member_orders() -> None:
@@ -75,6 +115,49 @@ def test_equal_keys_for_constraints_over_independently_built_identifiers() -> No
 
     assert x1 is not x2
     assert left.build_ordering_key() == right.build_ordering_key()
+
+
+def test_equations_over_separately_produced_nans_are_equivalent_and_key_alike() -> None:
+    """Test equations over two different NaN objects agree on equivalence and key.
+
+    NaN compares unequal to itself, so an equivalence that compared the
+    stored ``float`` objects would split two equations the key puts
+    together, breaking the key's contract of being constant on
+    equivalence classes.
+    """
+    x = mock_identifier("x", 0)
+    left = EquationConstraint(
+        make_binary_expression(BinaryOperation.LESS, x, float("nan"))
+    )
+    right = EquationConstraint(
+        make_binary_expression(BinaryOperation.LESS, x, math.inf - math.inf)
+    )
+
+    assert left.is_structurally_equivalent(right)
+    assert left.build_ordering_key() == right.build_ordering_key()
+
+
+def test_equation_over_a_nan_literal_matches_its_pickle_round_trip() -> None:
+    """Test a NaN-bearing equation and its unpickled copy are equivalent."""
+    constraint = EquationConstraint(
+        make_binary_expression(
+            BinaryOperation.LESS, LiteralExpression(1.0), LiteralExpression(math.nan)
+        )
+    )
+
+    restored = pickle.loads(pickle.dumps(constraint))
+
+    assert constraint.is_structurally_equivalent(restored)
+    assert constraint.build_ordering_key() == restored.build_ordering_key()
+
+
+def test_keys_agree_for_in_set_constraints_over_negative_and_positive_zero() -> None:
+    """Test an `InSetConstraint` over -0.0 and one over 0.0 key alike."""
+    x = mock_identifier("x", 0)
+    negative_zero = InSetConstraint(x, {-0.0})
+    positive_zero = InSetConstraint(x, {0.0})
+
+    assert negative_zero.build_ordering_key() == positive_zero.build_ordering_key()
 
 
 # =============================================================================
@@ -124,6 +207,24 @@ def test_distinct_keys_for_different_equation_expressions() -> None:
     x = mock_identifier("x", 0)
     left = EquationConstraint(LiteralExpression(True))
     right = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 5))
+
+    assert left.build_ordering_key() != right.build_ordering_key()
+
+
+def test_distinct_keys_for_equations_over_decimals_past_default_precision() -> None:
+    """Test `x == literal` keys apart for decimals differing in their 30th digit.
+
+    ``Decimal``'s default context rounds to 28 significant digits, so a
+    key built through that default context would collapse the two
+    equations onto the same key.
+    """
+    x = mock_identifier("x", 0)
+    left = EquationConstraint(
+        make_binary_expression(BinaryOperation.EQUAL, x, "1." + "0" * 28 + "1")
+    )
+    right = EquationConstraint(
+        make_binary_expression(BinaryOperation.EQUAL, x, "1." + "0" * 28 + "2")
+    )
 
     assert left.build_ordering_key() != right.build_ordering_key()
 

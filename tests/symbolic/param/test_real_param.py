@@ -1,15 +1,20 @@
 """Tests for real-valued parameters (new composition API)."""
 
+import math
 from functools import partial
 from typing import Any
 
 import pytest
 
-from fhy_core.symbolic.constraint import EquationConstraint
+from fhy_core.serialization import DeserializationValueError
+from fhy_core.symbolic.constraint import ConstraintOutcome, EquationConstraint
+from fhy_core.symbolic.expression import get_native_constant_identifier
 from fhy_core.symbolic.param import (
     Param,
     ParamError,
     create_integer_param,
+    create_integer_param_between,
+    create_ordinal_param,
     create_real_param,
     create_real_param_between,
     create_real_param_with_lower_bound,
@@ -36,6 +41,11 @@ def test_real_param_assign_rejects_non_numeric_value(
     [
         pytest.param(1.5, True, id="float-admitted"),
         pytest.param("1.5", True, id="numeric-string-admitted"),
+        pytest.param("5", True, id="integer-grammar-string-admitted"),
+        pytest.param(".5", True, id="leading-point-string-admitted"),
+        pytest.param(
+            "1" * 400 + ".5", True, id="exact-decimal-beyond-float-range-admitted"
+        ),
         pytest.param(True, False, id="bool-true-rejected"),
         pytest.param(False, False, id="bool-false-rejected"),
         pytest.param("not a number", False, id="non-numeric-string-rejected"),
@@ -44,10 +54,12 @@ def test_real_param_assign_rejects_non_numeric_value(
     ],
 )
 def test_real_param_admissibility_matrix(value: Any, expected: bool) -> None:
-    """Test real param `is_value_admissible` admits floats / numeric strings only.
+    """Test real param `is_value_admissible` admits finite literals only.
 
     ``bool`` is a subtype of ``int`` but real-valued semantics treat booleans
-    as non-numeric to avoid silent ``True``/``False`` admission.
+    as non-numeric to avoid silent ``True``/``False`` admission. A string is
+    judged by the literal grammar rather than by ``float()``, so an exact
+    decimal too wide for a float is still admitted.
     """
     param = create_real_param()
 
@@ -56,9 +68,101 @@ def test_real_param_admissibility_matrix(value: Any, expected: bool) -> None:
     assert result is expected
 
 
+# Values ``float()`` parses but no finite literal can hold: constraint
+# evaluation lifts a candidate into a `LiteralExpression`, which refuses
+# each of the strings, and a non-finite float has no real value to compare.
+_NON_LITERAL_REAL_VALUES = [
+    pytest.param(float("nan"), id="nan-float"),
+    pytest.param(float("inf"), id="positive-infinity-float"),
+    pytest.param(float("-inf"), id="negative-infinity-float"),
+    pytest.param("nan", id="nan-string"),
+    pytest.param("inf", id="infinity-string"),
+    pytest.param("-inf", id="negative-infinity-string"),
+    pytest.param("1e400", id="overflowing-exponent-string"),
+    pytest.param("1e5", id="exponent-string"),
+    pytest.param("-1.5", id="minus-signed-string"),
+    pytest.param("+1.5", id="plus-signed-string"),
+    pytest.param(" 1.5", id="whitespace-padded-string"),
+    pytest.param("1_0", id="digit-grouped-string"),
+]
+
+
+@pytest.mark.parametrize("value", _NON_LITERAL_REAL_VALUES)
+def test_real_param_rejects_a_value_no_finite_literal_can_hold(value: Any) -> None:
+    """Test a value `float()` parses but no finite literal holds is inadmissible."""
+    assert create_real_param().is_value_admissible(value) is False
+
+
+@pytest.mark.parametrize("value", _NON_LITERAL_REAL_VALUES)
+def test_real_param_is_value_valid_reports_false_for_a_non_literal_value(
+    value: Any,
+) -> None:
+    """Test `is_value_valid` answers `False` for a non-literal value, never raising.
+
+    Admitting these values let the validator reach constraint evaluation,
+    where against `x >= 0.0` NaN raised `TypeError`, a string outside the
+    literal grammar raised `ValueError`, and positive infinity was
+    reported valid. Unconstrained, every one was reported valid.
+    """
+    bounded = create_real_param_with_lower_bound(0.0)
+    unconstrained = create_real_param()
+
+    assert bounded.is_value_valid(value) is False
+    assert unconstrained.is_value_valid(value) is False
+
+
+@pytest.mark.parametrize("value", _NON_LITERAL_REAL_VALUES)
+def test_real_param_assign_reports_a_non_literal_value_as_inadmissible(
+    value: Any,
+) -> None:
+    """Test `assign` raises the inadmissibility `ParamError` for a non-literal value."""
+    param = create_real_param_with_lower_bound(0.0)
+
+    with pytest.raises(ParamError, match="not admissible"):
+        param.assign(value)
+
+
+def test_real_param_validates_an_exact_decimal_beyond_float_range() -> None:
+    """Test an admitted exact decimal too wide for a float is checked exactly.
+
+    `float()` of this string is infinite, yet as a literal it is a finite
+    exact decimal, so it satisfies `x >= 0.0` and violates `x <= 0.0`.
+    """
+    wide_decimal = "1" * 400 + ".5"
+
+    assert create_real_param_with_lower_bound(0.0).is_value_valid(wide_decimal)
+    assert not create_real_param_with_upper_bound(0.0).is_value_valid(wide_decimal)
+
+
 def test_real_param_str_uses_R_for_param_set() -> None:
     """Test `str` of a real param denotes the param set with ``R``."""
     assert "R" in str(create_real_param())
+
+
+# =============================================================================
+# Non-finite bound feasibility
+# =============================================================================
+
+
+def test_real_param_with_infinite_upper_bound_reports_undecided_feasibility() -> None:
+    """Test an infinite upper bound reports UNDECIDED feasibility instead of raising."""
+    param = create_real_param_with_upper_bound(math.inf)
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+def test_real_param_between_infinite_bound_reports_undecided_feasibility() -> None:
+    """Test an infinite upper bound in `create_real_param_between` reports UNDECIDED."""
+    param = create_real_param_between(0.0, math.inf)
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+def test_real_param_with_infinite_upper_bound_still_validates_a_finite_value() -> None:
+    """Test `is_value_valid` stays decided against an infinite bound."""
+    param = create_real_param_with_upper_bound(math.inf)
+
+    assert param.is_value_valid(1.0) is True
 
 
 # =============================================================================
@@ -376,3 +480,50 @@ def test_real_param_serialization_round_trip_preserves_constraints() -> None:
 
     assert_all_satisfied(restored, [1.0, 5.0, 9.0])
     assert_none_satisfied(restored, [0.0, 10.0])
+
+
+# =============================================================================
+# Native constant variable
+# =============================================================================
+
+
+def test_create_real_param_named_by_native_constant_raises_param_error() -> None:
+    """Test naming a real param after a native constant's identifier raises."""
+    pi = get_native_constant_identifier("pi")
+
+    with pytest.raises(ParamError, match="native constant"):
+        create_real_param(name=pi)
+
+
+def test_create_ordinal_param_named_by_native_constant_raises_param_error() -> None:
+    """Test naming an ordinal param after a native constant's identifier raises."""
+    pi = get_native_constant_identifier("pi")
+
+    with pytest.raises(ParamError, match="native constant"):
+        create_ordinal_param([1, 2], name=pi)
+
+
+def test_integer_param_between_named_by_native_constant_raises_param_error() -> None:
+    """Test naming an integer param after a native constant's identifier raises."""
+    pi = get_native_constant_identifier("pi")
+
+    with pytest.raises(ParamError, match="native constant"):
+        create_integer_param_between(0, 3, name=pi)
+
+
+def test_real_param_with_pi_name_hint_decides_normally() -> None:
+    """Test an identifier merely hinted "pi" is an ordinary variable, not a constant."""
+    param = create_real_param(name=mock_identifier("pi", 0))
+
+    assert param.check_feasibility() is ConstraintOutcome.SATISFIED
+    assert param.is_value_valid(1.0)
+
+
+def test_deserializing_param_named_by_native_constant_raises() -> None:
+    """Test deserializing a param named by a native constant's identifier fails."""
+    pi = get_native_constant_identifier("pi")
+    payload = create_real_param(name=mock_identifier("x", 1000)).serialize_to_dict()
+    payload["variable"] = pi.serialize_to_dict()
+
+    with pytest.raises(DeserializationValueError, match="native constant"):
+        Param.deserialize_from_dict(payload)

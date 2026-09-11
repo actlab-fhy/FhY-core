@@ -89,17 +89,6 @@ def is_sequence_unique_without_set(values: Sequence[Any]) -> bool:
     return True
 
 
-def is_sorted_sequence_unique(values: Sequence[Any]) -> bool:
-    """Return whether a pre-sorted ``values`` has no adjacent strictly matching pair.
-
-    Adjacent values are compared through :func:`do_param_values_match`, so a pair
-    such as ``1`` and ``1.0`` that sorts adjacently is treated as distinct.
-    """
-    return not any(
-        do_param_values_match(values[i], values[i + 1]) for i in range(len(values) - 1)
-    )
-
-
 def supports_equal_value_semantics(value: Any) -> bool:
     """Return whether ``value`` defines usable equality (``__eq__`` + ``__hash__``)."""
     if isinstance(value, Equal):
@@ -177,12 +166,40 @@ def do_param_values_match(candidate: Any, allowed_value: Any) -> bool:
 
 
 def does_collection_contain_param_value(
-    allowed_values: Collection[Any] | Sequence[Any], candidate: Any
+    allowed_values: Collection[Any], candidate: Any
 ) -> bool:
     """Return whether ``candidate`` matches any element of ``allowed_values``."""
     return any(
         do_param_values_match(candidate, allowed_value)
         for allowed_value in allowed_values
+    )
+
+
+def do_ordered_param_values_match(
+    own_values: Sequence[Any], other_values: Sequence[Any]
+) -> bool:
+    """Return whether two value sequences match position by position.
+
+    Compares equal-length sequences index-wise through
+    :func:`do_param_values_match`, so a kind-distinct pair such as ``1`` and
+    ``True`` makes the sequences differ. Use this where position carries meaning;
+    an unordered value set is compared with :func:`does_collection_contain_param_value`
+    instead.
+
+    Args:
+        own_values: The left-hand value sequence.
+        other_values: The right-hand value sequence.
+
+    Returns:
+        Whether the sequences have the same length and strictly matching values
+        at every position.
+
+    """
+    if len(own_values) != len(other_values):
+        return False
+    return all(
+        do_param_values_match(own_value, other_value)
+        for own_value, other_value in zip(own_values, other_values, strict=True)
     )
 
 

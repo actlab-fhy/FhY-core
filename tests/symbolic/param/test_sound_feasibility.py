@@ -5,17 +5,19 @@ Python's `==` conflates but this package's domains do not, screened
 equation-constraint feasibility, foreign-identifier degradation for
 dependent constraints, one-sided in-set subset screening, and partial
 not-in-set member liftability. `Param.is_feasible`/`is_empty`/`is_subset`
-stay boolean; what changes is that the boolean answer is provably
-correct, or an honestly documented optimistic default, rather than a
-provably wrong decided answer.
+stay boolean, and each reports `True` only for a proven answer: a question
+the checker leaves undecided answers `False` rather than a provably wrong
+decided answer.
 """
 
+import math
 from typing import cast
 
 import pytest
 
 from fhy_core.symbolic.constraint import (
     ConstraintMember,
+    ConstraintOutcome,
     EquationConstraint,
     InSetConstraint,
     NotInSetConstraint,
@@ -25,6 +27,10 @@ from fhy_core.symbolic.expression import (
     BinaryOperation,
     IdentifierExpression,
     LiteralExpression,
+    NonBooleanLogicalOperandError,
+    call,
+    logical_not,
+    piecewise,
 )
 from fhy_core.symbolic.param import (
     Param,
@@ -32,6 +38,7 @@ from fhy_core.symbolic.param import (
     create_integer_param,
     create_integer_param_between,
     create_real_param,
+    create_real_param_between,
 )
 
 from .conftest import mock_identifier
@@ -91,7 +98,7 @@ def test_integer_singleton_one_is_not_subset_of_integer_singleton_float_one() ->
     ones = create_integer_param(name=x1, constraints=[InSetConstraint(x1, {1})])
     float_ones = create_integer_param(name=x2, constraints=[InSetConstraint(x2, {1.0})])
 
-    assert not ones.is_subset(float_ones)
+    assert ones.check_subset(float_ones) is ConstraintOutcome.VIOLATED
 
 
 def test_integer_singleton_one_is_not_subset_of_integer_singleton_true() -> None:
@@ -101,18 +108,27 @@ def test_integer_singleton_one_is_not_subset_of_integer_singleton_true() -> None
     ones = create_integer_param(name=x1, constraints=[InSetConstraint(x1, {1})])
     bool_ones = create_integer_param(name=x2, constraints=[InSetConstraint(x2, {True})])
 
-    assert not ones.is_subset(bool_ones)
+    assert ones.check_subset(bool_ones) is ConstraintOutcome.VIOLATED
 
 
 @pytest.mark.parametrize(
-    ("smaller_members", "larger_members", "expect_subset"),
+    ("smaller_members", "larger_members", "expected"),
     [
-        pytest.param({1, 2}, {1, 2, 3}, True, id="strict-subset-holds"),
-        pytest.param({1, 2, 3}, {1, 2}, False, id="strict-superset-does-not-hold"),
+        pytest.param(
+            {1, 2}, {1, 2, 3}, ConstraintOutcome.SATISFIED, id="strict-subset-holds"
+        ),
+        pytest.param(
+            {1, 2, 3},
+            {1, 2},
+            ConstraintOutcome.VIOLATED,
+            id="strict-superset-does-not-hold",
+        ),
     ],
 )
 def test_integer_in_set_subset_sanity_checks(
-    smaller_members: set[int], larger_members: set[int], expect_subset: bool
+    smaller_members: set[int],
+    larger_members: set[int],
+    expected: ConstraintOutcome,
 ) -> None:
     """Test ordinary integer in-set subset relations still hold as expected."""
     x1 = mock_identifier("x", 1)
@@ -124,7 +140,7 @@ def test_integer_in_set_subset_sanity_checks(
         name=x2, constraints=[InSetConstraint(x2, larger_members)]
     )
 
-    assert smaller.is_subset(larger) is expect_subset
+    assert smaller.check_subset(larger) is expected
 
 
 # =============================================================================
@@ -146,7 +162,7 @@ def test_bounded_integer_param_is_not_subset_of_disjoint_in_set_param() -> None:
     own = create_integer_param_between(1, 10, name=x)
     other = create_integer_param(name=y, constraints=[InSetConstraint(y, {100, 200})])
 
-    assert not own.is_subset(other)
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
 def test_bounded_integer_param_is_not_subset_of_partly_covering_in_set_param() -> None:
@@ -160,7 +176,7 @@ def test_bounded_integer_param_is_not_subset_of_partly_covering_in_set_param() -
     own = create_integer_param_between(1, 10, name=x)
     other = create_integer_param(name=y, constraints=[InSetConstraint(y, {1, 2, 3})])
 
-    assert not own.is_subset(other)
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
 def test_bounded_integer_param_is_subset_of_in_set_param_covering_its_range() -> None:
@@ -197,7 +213,7 @@ def test_unconstrained_integer_param_is_not_subset_of_singleton_in_set_param() -
     own = create_integer_param(name=x)
     other = create_integer_param(name=y, constraints=[InSetConstraint(y, {7})])
 
-    assert not own.is_subset(other)
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
 def test_lower_bounded_integer_param_is_not_subset_of_in_set_param() -> None:
@@ -209,7 +225,7 @@ def test_lower_bounded_integer_param_is_not_subset_of_in_set_param() -> None:
     )
     other = create_integer_param(name=y, constraints=[InSetConstraint(y, {1, 2})])
 
-    assert not own.is_subset(other)
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
 # =============================================================================
@@ -247,22 +263,83 @@ def test_integer_param_with_contradictory_equation_constraints_is_infeasible() -
     assert param.is_empty()
 
 
-def test_integer_param_with_division_by_variable_stays_optimistically_feasible() -> (
+def test_integer_param_with_division_by_variable_is_neither_feasible_nor_empty() -> (
     None
 ):
-    """Test a division-by-the-same-variable equation degrades to the optimistic default.
+    """Test a division-by-the-same-variable equation degrades to an unproven answer.
 
     `x / x != 1` triggers the division hazard screen (the divisor is not a
     nonzero literal); the screen reports `UNDECIDED` rather than a wrong
-    decided outcome, and `is_feasible` documents `UNDECIDED` degrading to
-    the optimistic `True` (feasible-unless-disproven) instead of crashing
-    or silently returning a wrong `False`.
+    decided outcome, so neither wrapper has a proof to report: the
+    parameter is reported neither feasible nor empty, and nothing crashes.
     """
     x = mock_identifier("x", 1)
     hazardous = (IdentifierExpression(x) / IdentifierExpression(x)).not_equals(1)
     param = create_integer_param(name=x, constraints=[EquationConstraint(hazardous)])
 
-    assert param.is_feasible()
+    assert param.is_feasible() is False
+    assert param.is_empty() is False
+
+
+def test_real_param_with_in_set_and_a_numeric_rooted_equation_raises() -> None:
+    """Test enumeration over in-set candidates does not silently decide a numeric root.
+
+    ``x / 2.0`` is a numeric root, not a predicate: reducing it to
+    ``0.5`` or ``1.0`` for each enumerated candidate is not a decided
+    VIOLATED, so the enumeration this in-set membership makes possible
+    must not paper over the ill-typedness with a proof of emptiness.
+    """
+    x = mock_identifier("x", 1)
+    equation = EquationConstraint(
+        BinaryExpression(
+            BinaryOperation.DIVIDE, IdentifierExpression(x), LiteralExpression(2.0)
+        )
+    )
+    param = create_real_param(
+        name=x, constraints=[InSetConstraint(x, {1.0, 2.0}), equation]
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        param.is_empty()
+    with pytest.raises(NonBooleanLogicalOperandError):
+        param.check_feasibility()
+    with pytest.raises(NonBooleanLogicalOperandError):
+        param.is_value_valid(1.0)
+
+
+def test_real_param_with_a_numeric_rooted_equation_raises_on_the_solver_path() -> None:
+    """Test the same numeric-rooted equation raises without an in-set candidate set.
+
+    With no `InSetConstraint` to make the domain finite, feasibility goes
+    to the solver instead of enumeration; the refusal has to hold on
+    that path too.
+    """
+    x = mock_identifier("x", 1)
+    equation = EquationConstraint(
+        BinaryExpression(
+            BinaryOperation.DIVIDE, IdentifierExpression(x), LiteralExpression(2.0)
+        )
+    )
+    param = create_real_param(name=x, constraints=[equation])
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        param.is_empty()
+
+
+def test_integer_param_with_in_set_and_a_numeric_result_call_under_not_raises() -> None:
+    """Test enumeration does not decide a connective over a numeric-result call.
+
+    ``floor`` is registered with an INT result sort, so
+    ``logical_not(floor(x))`` is ill-typed for every enumerated candidate.
+    """
+    x = mock_identifier("x", 1)
+    equation = EquationConstraint(logical_not(call("floor", IdentifierExpression(x))))
+    param = create_integer_param(
+        name=x, constraints=[InSetConstraint(x, {1, 2}), equation]
+    )
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        param.check_feasibility()
 
 
 # =============================================================================
@@ -304,32 +381,39 @@ def test_integer_param_with_conflicting_not_in_set_container_member_is_infeasibl
     assert param.is_empty()
 
 
-def test_integer_param_with_unliftable_not_in_set_member_stays_otherwise_feasible() -> (
-    None
-):
+def test_integer_param_with_unliftable_not_in_set_member_admits_other_values() -> None:
     """Test a not-in-set constraint with one unliftable member still allows others.
 
     Narrowing `NotInSetConstraint(x, {5, "a"})` to its liftable member
-    `{5}` only widens the admissible set relative to the full two-member
-    constraint, so with no other constraint present the parameter stays
-    feasible through any integer other than `5`.
+    `{5}` only widens the admissible set, so the parameter is never
+    reported empty and any integer other than `5` stays valid. The
+    narrowed system is inexact, so the solver's answer does not prove
+    feasibility and `is_feasible` reports `False`.
     """
     x = mock_identifier("x", 1)
     param = create_integer_param(name=x, constraints=[NotInSetConstraint(x, {5, "a"})])
 
-    assert param.is_feasible()
     assert not param.is_empty()
+    assert param.is_value_valid(6)
+    assert not param.is_value_valid(5)
+    assert not param.is_feasible()
 
 
-def test_integer_param_with_only_unliftable_not_in_set_members_stays_feasible() -> None:
-    """Test a not-in-set constraint with no liftable members is dropped, not fatal."""
+def test_integer_param_with_only_unliftable_not_in_set_members_is_not_empty() -> None:
+    """Test a not-in-set constraint with no liftable members is dropped, not fatal.
+
+    Dropping the constraint leaves an inexact system, so feasibility is
+    unproven and `is_feasible` reports `False`; nothing proves emptiness,
+    and every integer stays valid, since no string can equal one.
+    """
     x = mock_identifier("x", 1)
     param = create_integer_param(
         name=x, constraints=[NotInSetConstraint(x, {"a", "b"})]
     )
 
-    assert param.is_feasible()
     assert not param.is_empty()
+    assert param.is_value_valid(5)
+    assert not param.is_feasible()
 
 
 # =============================================================================
@@ -371,7 +455,7 @@ def test_narrower_bounded_param_is_subset_of_wider_bounded_param() -> None:
     narrower = create_integer_param_between(2, 8, name=mock_identifier("x", 1))
 
     assert narrower.is_subset(wider)
-    assert not wider.is_subset(narrower)
+    assert wider.check_subset(narrower) is ConstraintOutcome.VIOLATED
 
 
 # =============================================================================
@@ -380,23 +464,23 @@ def test_narrower_bounded_param_is_subset_of_wider_bounded_param() -> None:
 
 
 def test_is_feasible_with_foreign_identifier_constraint_does_not_raise() -> None:
-    """Test `is_feasible` degrades to the optimistic default instead of raising.
+    """Test `is_feasible` degrades to an unproven `False` instead of raising.
 
     A constraint whose scope includes an identifier foreign to this
     parameter cannot be jointly decided by this parameter alone; it must
     be excluded from the decided conjunction rather than crash with a raw
-    `KeyError`.
+    `KeyError`, and the weakened conjunction proves no satisfying value.
     """
     x = mock_identifier("x", 1)
     y = mock_identifier("y", 2)
     dependent = EquationConstraint(IdentifierExpression(x) < IdentifierExpression(y))
     param = create_integer_param(name=x, constraints=[dependent])
 
-    assert param.is_feasible() is True
+    assert param.is_feasible() is False
 
 
 def test_is_empty_with_foreign_identifier_constraint_does_not_raise() -> None:
-    """Test `is_empty` degrades to the optimistic default instead of raising."""
+    """Test `is_empty` degrades to an unproven `False` instead of raising."""
     x = mock_identifier("x", 1)
     y = mock_identifier("y", 2)
     dependent = EquationConstraint(IdentifierExpression(x) < IdentifierExpression(y))
@@ -406,7 +490,14 @@ def test_is_empty_with_foreign_identifier_constraint_does_not_raise() -> None:
 
 
 def test_is_subset_with_dependent_constraint_is_two_sided_and_safe() -> None:
-    """Test `is_subset` stays boolean in both directions for a dependent constraint."""
+    """Test `is_subset` stays boolean in both directions for a dependent constraint.
+
+    Dropping the dependent constraint only widens its side. Forward, that
+    side is the antecedent, and even widened it lies inside the
+    unconstrained consequent, which proves the relation. Backward, it is
+    the consequent, and inclusion in a widened consequent proves nothing,
+    so the relation is unproven and reported `False`.
+    """
     x1 = mock_identifier("x", 1)
     x2 = mock_identifier("x", 1)
     y = mock_identifier("y", 2)
@@ -418,7 +509,7 @@ def test_is_subset_with_dependent_constraint_is_two_sided_and_safe() -> None:
     backward = plain.is_subset(with_dependent)
 
     assert forward is True
-    assert backward is True
+    assert backward is False
 
 
 @pytest.mark.z3
@@ -434,11 +525,10 @@ def test_unbounded_param_is_not_subset_of_a_provably_empty_in_set_param(
 
     The other side's members are inadmissible for an integer domain, so
     it admits nothing, while the own side admits every non-negative
-    integer. The enumeration gate previously keyed only on the own side
-    carrying an `InSetConstraint`, so both sides went to the implication
-    branch, where the unliftable member set is dropped whole from the
-    consequent -- weakening it to `True` -- and the undecided result
-    collapsed optimistically to a wrong `True`.
+    integer, so the own side has a counterexample and the relation is
+    decided `VIOLATED`. Posed to the implication branch instead, the
+    unliftable member set would be dropped whole from the consequent --
+    weakening it to `True` -- and the relation left undecided.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
@@ -459,7 +549,8 @@ def test_unbounded_param_is_not_subset_of_a_provably_empty_in_set_param(
     )
 
     assert other.is_feasible() is False
-    assert own.is_subset(other) is False
+    assert other.is_empty() is True
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
 @pytest.mark.z3
@@ -468,8 +559,7 @@ def test_unbounded_param_is_not_subset_of_a_narrower_in_set_param() -> None:
 
     Generalizes the empty-superset case: the own side admits `3`, which
     lies outside the other side's `{0, 1, 2}`, so the relation is decided
-    `False` from a genuine counterexample rather than left to the
-    optimistic default.
+    `VIOLATED` from a genuine counterexample rather than left undecided.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
@@ -487,16 +577,16 @@ def test_unbounded_param_is_not_subset_of_a_narrower_in_set_param() -> None:
     )
     other = create_integer_param(name=y, constraints=[InSetConstraint(y, {0, 1, 2})])
 
-    assert own.is_subset(other) is False
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
 @pytest.mark.z3
 def test_unbounded_param_stays_subset_when_no_counterexample_is_provable() -> None:
-    """Test the optimistic default survives when no counterexample can be proven.
+    """Test a relation with no counterexample is still proven to hold.
 
     The own side is pinned to a single value inside the other side's
-    finite set, so no admitted value lies outside it and the relation
-    must not be decided `False`.
+    finite set, so no admitted value lies outside it: the counterexample
+    search finds none, and the implication then proves the relation.
     """
     x = mock_identifier("x", 0)
     y = mock_identifier("y", 1)
@@ -518,60 +608,142 @@ def test_unbounded_param_stays_subset_when_no_counterexample_is_provable() -> No
 
 
 @pytest.mark.parametrize("constant_name", ["e", "pi"])
-def test_param_named_after_a_native_constant_is_not_decided_infeasible(
+def test_param_named_after_a_native_constant_binds_like_any_other(
     constant_name: str,
 ) -> None:
-    """Test a parameter whose name collides with a native constant is not decided.
+    """Test a parameter named after a native constant takes its candidate binding.
 
-    The expression bridge resolves an identifier whose `name_hint` names a
-    registered native constant to that constant rather than to a
-    substitutable symbol, so the candidate binding is silently dropped and
-    the constraint is evaluated against the constant's value instead.
-    Reporting `False` there is a proof claim the backend never
-    established -- and it flipped with the presence of an unrelated in-set
-    constraint, since only the enumeration path routed through the bridge
-    this way.
+    The expression bridge resolves a native constant by the canonical
+    identifier the registry minted for it, so a parameter that merely
+    shares a constant's `name_hint` is an ordinary variable: the
+    candidate binding reaches the constraint, and both the enumeration
+    path and the solver path decide from it rather than from the
+    constant's value.
     """
-    constant = mock_identifier(constant_name, 1)
+    named_like_constant = mock_identifier(constant_name, 1)
     equation = EquationConstraint(
         BinaryExpression(
-            BinaryOperation.EQUAL, IdentifierExpression(constant), LiteralExpression(3)
+            BinaryOperation.EQUAL,
+            IdentifierExpression(named_like_constant),
+            LiteralExpression(3),
         )
     )
-    enumerated = create_integer_param(
-        name=constant, constraints=[InSetConstraint(constant, {3}), equation]
+    satisfied = create_integer_param(
+        name=named_like_constant,
+        constraints=[InSetConstraint(named_like_constant, {3}), equation],
     )
-    solver_decided = create_integer_param(name=constant, constraints=[equation])
+    violated = create_integer_param(
+        name=named_like_constant,
+        constraints=[InSetConstraint(named_like_constant, {4}), equation],
+    )
+    solver_decided = create_integer_param(
+        name=named_like_constant, constraints=[equation]
+    )
 
-    assert enumerated.is_feasible() is True
-    assert enumerated.is_empty() is False
-    assert solver_decided.is_feasible() == enumerated.is_feasible()
+    assert satisfied.is_feasible() is True
+    assert satisfied.is_empty() is False
+    assert violated.is_feasible() is False
+    assert violated.is_empty() is True
+    assert solver_decided.is_feasible() is True
 
 
 def test_bridge_failure_degrades_instead_of_escaping_a_boolean_api() -> None:
-    """Test an expression the bridge cannot lower degrades rather than raising.
+    """Test an expression the bridge cannot lift degrades rather than raising.
 
-    `x / 3` over the integers leaves a rational the SymPy bridge refuses
-    to lift, raising `PassExecutionError` from deep inside evaluation.
-    Every parameter-level entry point here returns `bool` or raises
-    `ParamError`, so the backend failing to answer must degrade to the
-    documented optimistic default instead of escaping as an unrelated
-    exception type.
+    The branch guarded by the unbound `y` divides by zero at both in-set
+    candidates, so the SymPy bridge refuses to lift the complex infinity
+    it folds to, raising `PassExecutionError` from deep inside
+    evaluation. Every parameter-level entry point here returns `bool` or
+    raises `ParamError`, so the backend failing to answer must degrade to
+    an unproven answer instead of escaping as an unrelated exception type.
     """
     x = mock_identifier("x", 1)
-    unliftable = EquationConstraint(
+    y = mock_identifier("y", 2)
+    denominator = BinaryExpression(
+        BinaryOperation.MULTIPLY,
         BinaryExpression(
-            BinaryOperation.DIVIDE, IdentifierExpression(x), LiteralExpression(3)
-        )
+            BinaryOperation.SUBTRACT, IdentifierExpression(x), LiteralExpression(2)
+        ),
+        BinaryExpression(
+            BinaryOperation.SUBTRACT, IdentifierExpression(x), LiteralExpression(4)
+        ),
+    )
+    guarded = piecewise(
+        (
+            BinaryExpression(
+                BinaryOperation.GREATER, IdentifierExpression(y), LiteralExpression(0)
+            ),
+            BinaryExpression(BinaryOperation.DIVIDE, LiteralExpression(1), denominator),
+        ),
+        otherwise=LiteralExpression(1),
+    )
+    unliftable = EquationConstraint(
+        BinaryExpression(BinaryOperation.GREATER, guarded, LiteralExpression(0))
     )
     param = create_integer_param(
         name=x, constraints=[InSetConstraint(x, {2, 4}), unliftable]
     )
 
-    assert param.is_feasible() is True
+    assert param.is_feasible() is False
+    assert param.is_empty() is False
     assert param.is_value_valid(2) is False
     with pytest.raises(ParamError, match="could not be verified"):
         param.validate_value(2)
+
+
+def test_is_value_valid_degrades_instead_of_raising_for_a_nan_dependent_binding() -> (
+    None
+):
+    """Test a NaN dependent binding reports `False` rather than raising.
+
+    Substituting NaN for `y` under a strict comparison makes the SymPy
+    bridge raise `PassExecutionError` from deep inside substitution;
+    `evaluate_system_outcome` degrades that to `UNDECIDED`, and
+    `is_value_valid` reports `False` for an undecided answer rather than
+    propagating the exception.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    param = create_real_param(
+        name=x,
+        constraints=[
+            EquationConstraint(
+                BinaryExpression(
+                    BinaryOperation.LESS,
+                    IdentifierExpression(x),
+                    IdentifierExpression(y),
+                )
+            )
+        ],
+    )
+
+    assert param.is_value_valid(1.0, bindings={y: math.nan}) is False
+
+
+def test_is_value_valid_degrades_instead_of_raising_for_a_zero_divisor_binding() -> (
+    None
+):
+    """Test a zero-divisor dependent binding reports `False` rather than raising."""
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    param = create_real_param(
+        name=x,
+        constraints=[
+            EquationConstraint(
+                BinaryExpression(
+                    BinaryOperation.GREATER,
+                    BinaryExpression(
+                        BinaryOperation.DIVIDE,
+                        IdentifierExpression(x),
+                        IdentifierExpression(y),
+                    ),
+                    LiteralExpression(1),
+                )
+            )
+        ],
+    )
+
+    assert param.is_value_valid(1.0, bindings={y: 0.0}) is False
 
 
 # =============================================================================
@@ -663,7 +835,7 @@ def test_in_set_param_is_not_subset_when_other_side_forbids_a_candidate() -> Non
     own = create_integer_param(name=x, constraints=[InSetConstraint(x, {1, 2, 3})])
     other = create_integer_param(name=y, constraints=[NotInSetConstraint(y, {1, 2, 3})])
 
-    assert own.is_subset(other) is False
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
 
 
 def test_real_in_set_param_is_not_subset_of_an_integer_param() -> None:
@@ -681,4 +853,92 @@ def test_real_in_set_param_is_not_subset_of_an_integer_param() -> None:
     # `Param[_T]` is an advisory call-site hint; the domain enforces the
     # admissible type at runtime, and a cross-domain query is exactly what
     # this asserts returns False.
-    assert own.is_subset(cast("Param[str | float]", other)) is False
+    outcome = own.check_subset(cast("Param[str | float]", other))
+
+    assert outcome is ConstraintOutcome.VIOLATED
+
+
+# =============================================================================
+# Real domain: a not-in-set constraint's numeric member does not decide alone
+# =============================================================================
+
+
+def test_real_param_singleton_excluding_its_own_float_value_is_undecided() -> None:
+    """Test excluding a real singleton's own float value degrades to UNDECIDED.
+
+    Z3 lowers the excluded `float` member and the singleton's bounds to
+    the same rational, so the solver reports the parameter emptied.
+    Type-strict membership excludes only the `float` kind of `0.5` and
+    still admits the decimal-string kind that denotes the same value, so
+    the proof does not actually hold and must be reported UNDECIDED
+    rather than VIOLATED.
+    """
+    x = mock_identifier("x", 1)
+    param = create_real_param_between(0.5, 0.5, name=x).add_constraint(
+        NotInSetConstraint(x, {0.5})
+    )
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+    assert param.is_empty() is False
+
+
+def test_real_param_singleton_excluding_its_own_float_still_admits_string_kind() -> (
+    None
+):
+    """Test the excluded real singleton still admits its decimal-string kind.
+
+    Companion witness to the feasibility test above: the not-in-set
+    member is the `float` `0.5`, so the type-strict decimal-string
+    `"0.5"` denoting the same real value is a distinct member and stays a
+    valid value for the parameter.
+    """
+    x = mock_identifier("x", 1)
+    param = create_real_param_between(0.5, 0.5, name=x).add_constraint(
+        NotInSetConstraint(x, {0.5})
+    )
+
+    assert param.is_value_valid("0.5") is True
+
+
+def test_integer_param_singleton_excluding_its_own_value_stays_violated() -> None:
+    """Test an integer singleton excluding its own value stays decided VIOLATED.
+
+    The integer domain admits only `int`, so there is no second kind of
+    `5` for the exclusion to miss: the solver's proof is sound and must
+    not be downgraded the way the real-domain case above is.
+    """
+    x = mock_identifier("x", 1)
+    param = create_integer_param_between(5, 5, name=x).add_constraint(
+        NotInSetConstraint(x, {5})
+    )
+
+    assert param.check_feasibility() is ConstraintOutcome.VIOLATED
+    assert param.is_empty() is True
+
+
+def test_real_param_violated_without_set_constraints_stays_violated() -> None:
+    """Test a real VIOLATED that rests on no set member stays decided."""
+    x = mock_identifier("x", 1)
+    param = create_real_param_between(0.0, 1.0, name=x).add_constraint(
+        EquationConstraint(
+            BinaryExpression(
+                BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(2.0)
+            )
+        )
+    )
+
+    assert param.check_feasibility() is ConstraintOutcome.VIOLATED
+    assert param.is_empty() is True
+
+
+def test_real_param_in_set_float_member_is_feasible() -> None:
+    """Test a real param restricted to a float in-set member is feasible.
+
+    Enumeration over the in-set candidate compares type-strictly and is
+    unaffected by the solver's kind conflation, so this stays a decided
+    SATISFIED.
+    """
+    x = mock_identifier("x", 1)
+    param = create_real_param(name=x, constraints=[InSetConstraint(x, {0.5})])
+
+    assert param.check_feasibility() is ConstraintOutcome.SATISFIED

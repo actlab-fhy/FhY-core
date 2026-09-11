@@ -1,6 +1,11 @@
 """Tests for `Param.is_subset` and `Param.is_value_set_subset` across param kinds."""
 
-from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
+from fhy_core.symbolic.constraint import (
+    ConstraintOutcome,
+    EquationConstraint,
+    InSetConstraint,
+    NotInSetConstraint,
+)
 from fhy_core.symbolic.param import (
     create_categorical_param,
     create_integer_param,
@@ -9,6 +14,7 @@ from fhy_core.symbolic.param import (
     create_ordinal_param,
     create_permutation_param,
     create_real_param,
+    create_real_param_between,
     create_real_param_with_lower_bound,
     create_real_param_with_upper_bound,
 )
@@ -36,7 +42,7 @@ def test_constrained_real_param_is_subset_of_unconstrained_real_param() -> None:
     unconstrained = create_real_param()
 
     assert constrained.is_subset(unconstrained)
-    assert not unconstrained.is_subset(constrained)
+    assert unconstrained.check_subset(constrained) is ConstraintOutcome.VIOLATED
 
 
 def test_narrower_interval_real_param_is_subset_of_wider_interval_real_param() -> None:
@@ -52,8 +58,89 @@ def test_narrower_interval_real_param_is_subset_of_wider_interval_real_param() -
         EquationConstraint(narrower.variable_expression <= 2)
     )
 
-    assert not wider.is_subset(narrower)
+    assert wider.check_subset(narrower) is ConstraintOutcome.VIOLATED
     assert narrower.is_subset(wider)
+
+
+def test_real_interval_subset_with_no_set_constraints_stays_satisfied() -> None:
+    """Test a real interval subset with no set constraints stays decided SATISFIED."""
+    smaller = create_real_param_between(0.2, 0.3)
+    larger = create_real_param_between(0.0, 1.0)
+
+    assert smaller.check_subset(larger) is ConstraintOutcome.SATISFIED
+
+
+# =============================================================================
+# Real domain: a numeric set member does not decide the relation alone
+# =============================================================================
+
+
+def test_real_singleton_is_not_proven_subset_of_an_in_set_float_member() -> None:
+    """Test a real singleton is not proven a subset of a float in-set param.
+
+    Z3 lowers the singleton's bound and the in-set `float` member to the
+    same rational, so the solver would prove the implication. Type-strict
+    membership admits the singleton's decimal-string kind, which the
+    in-set constraint's `float` member does not cover, so the relation
+    does not actually hold and must be reported UNDECIDED rather than
+    SATISFIED.
+    """
+    singleton = create_real_param_between(0.5, 0.5)
+    in_set = create_real_param()
+    in_set = in_set.add_constraint(InSetConstraint(in_set.variable, {0.5}))
+
+    outcome = singleton.check_subset(in_set)
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+    assert singleton.is_subset(in_set) is False
+
+
+def test_self_excluding_real_singleton_is_not_proven_subset_of_a_narrower_range() -> (
+    None
+):
+    """Test a singleton narrowed by its own not-in-set float is not proven a subset.
+
+    Z3 lowers the singleton's bound and the excluded `float` member to
+    the same rational, making the singleton appear empty and therefore a
+    trivial subset of anything. Type-strict membership still admits the
+    singleton's decimal-string kind, which lies outside the narrower
+    range, so the relation does not actually hold and must be reported
+    UNDECIDED rather than SATISFIED.
+    """
+    own = create_real_param_between(0.5, 0.5)
+    own = own.add_constraint(NotInSetConstraint(own.variable, {0.5}))
+    other = create_real_param_between(0.0, 0.4)
+
+    assert own.check_subset(other) is ConstraintOutcome.UNDECIDED
+
+
+def test_real_interval_subset_violated_by_an_excluded_member_stays_decided() -> None:
+    """Test a real subset VIOLATED by a not-in-set member stays decided.
+
+    The counterexample the solver finds can take the excluded member's
+    own `float` kind, so this VIOLATED answer is sound and must not be
+    downgraded the way a SATISFIED answer resting on the same kind of
+    constraint is.
+    """
+    own = create_real_param_between(0.0, 1.0)
+    other = create_real_param()
+    other = other.add_constraint(NotInSetConstraint(other.variable, {0.5}))
+
+    assert own.check_subset(other) is ConstraintOutcome.VIOLATED
+
+
+def test_real_in_set_float_member_is_proven_subset_of_a_covering_range() -> None:
+    """Test a real in-set float member is proven a subset of a covering range.
+
+    Enumeration over the in-set candidate compares type-strictly and is
+    unaffected by the solver's kind conflation, so this stays a decided
+    SATISFIED.
+    """
+    own = create_real_param()
+    own = own.add_constraint(InSetConstraint(own.variable, {0.5}))
+    other = create_real_param_between(0.0, 1.0)
+
+    assert own.check_subset(other) is ConstraintOutcome.SATISFIED
 
 
 # =============================================================================
@@ -61,15 +148,18 @@ def test_narrower_interval_real_param_is_subset_of_wider_interval_real_param() -
 # =============================================================================
 
 
-def test_is_subset_returns_false_across_value_spaces() -> None:
-    """Test `is_subset` returns ``False`` across distinct numeric value spaces.
+def test_check_subset_decides_violated_across_value_spaces() -> None:
+    """Test a subset check decides ``VIOLATED`` across distinct numeric value spaces.
 
     Pins down value-space gating: an integer param and a real param occupy
     different Z3 sorts (``INT`` vs ``REAL``), so neither is a subset of the
     other even when both are unconstrained. This is symmetric.
     """
-    assert not create_integer_param().is_subset(create_real_param())  # type: ignore[arg-type]  # test: cross-value-space comparison
-    assert not create_real_param().is_subset(create_integer_param())  # type: ignore[arg-type]  # test: cross-value-space comparison
+    integer = create_integer_param()
+    real = create_real_param()
+
+    assert integer.check_subset(real) is ConstraintOutcome.VIOLATED  # type: ignore[arg-type]  # test: cross-value-space comparison
+    assert real.check_subset(integer) is ConstraintOutcome.VIOLATED  # type: ignore[arg-type]  # test: cross-value-space comparison
 
 
 def test_ordinal_param_is_subset_returns_false_against_categorical_param() -> None:
@@ -77,8 +167,8 @@ def test_ordinal_param_is_subset_returns_false_against_categorical_param() -> No
     ordinal = create_ordinal_param([1, 2, 3])
     categorical = create_categorical_param({1, 2, 3})
 
-    assert not ordinal.is_subset(categorical)
-    assert not categorical.is_subset(ordinal)
+    assert ordinal.check_subset(categorical) is ConstraintOutcome.VIOLATED
+    assert categorical.check_subset(ordinal) is ConstraintOutcome.VIOLATED
 
 
 # =============================================================================
@@ -148,7 +238,7 @@ def test_ordinal_param_strict_value_set_subset_is_one_directional() -> None:
     larger = create_ordinal_param([1, 2, 3])
 
     assert smaller.is_subset(larger)
-    assert not larger.is_subset(smaller)
+    assert larger.check_subset(smaller) is ConstraintOutcome.VIOLATED
 
 
 def test_ordinal_param_disjoint_value_sets_are_not_subsets() -> None:
@@ -156,8 +246,8 @@ def test_ordinal_param_disjoint_value_sets_are_not_subsets() -> None:
     left = create_ordinal_param([1, 2])
     right = create_ordinal_param([3, 4])
 
-    assert not left.is_subset(right)
-    assert not right.is_subset(left)
+    assert left.check_subset(right) is ConstraintOutcome.VIOLATED
+    assert right.check_subset(left) is ConstraintOutcome.VIOLATED
 
 
 def test_ordinal_param_with_extra_constraint_is_strict_subset() -> None:
@@ -166,7 +256,7 @@ def test_ordinal_param_with_extra_constraint_is_strict_subset() -> None:
     narrowed = base.add_constraint(InSetConstraint(base.variable, {1, 2}))
 
     assert narrowed.is_subset(base)
-    assert not base.is_subset(narrowed)
+    assert base.check_subset(narrowed) is ConstraintOutcome.VIOLATED
 
 
 def test_ordinal_param_is_value_set_subset_returns_true_for_equal_sets() -> None:
@@ -261,7 +351,7 @@ def test_categorical_param_strict_category_subset_is_one_directional() -> None:
     larger = create_categorical_param({"a", "b", "c"})
 
     assert smaller.is_subset(larger)
-    assert not larger.is_subset(smaller)
+    assert larger.check_subset(smaller) is ConstraintOutcome.VIOLATED
 
 
 def test_categorical_param_disjoint_categories_are_not_subsets() -> None:
@@ -269,8 +359,8 @@ def test_categorical_param_disjoint_categories_are_not_subsets() -> None:
     left = create_categorical_param({"a", "b"})
     right = create_categorical_param({"c", "d"})
 
-    assert not left.is_subset(right)
-    assert not right.is_subset(left)
+    assert left.check_subset(right) is ConstraintOutcome.VIOLATED
+    assert right.check_subset(left) is ConstraintOutcome.VIOLATED
 
 
 def test_categorical_param_is_value_set_subset_returns_true_for_equal_categories() -> (
@@ -357,8 +447,8 @@ def test_perm_param_with_disjoint_members_is_not_subset() -> None:
     left = create_permutation_param([1, 2, 3])
     right = create_permutation_param([4, 5, 6])
 
-    assert not left.is_subset(right)
-    assert not right.is_subset(left)
+    assert left.check_subset(right) is ConstraintOutcome.VIOLATED
+    assert right.check_subset(left) is ConstraintOutcome.VIOLATED
 
 
 def test_perm_param_with_subset_members_is_not_subset() -> None:
@@ -371,8 +461,8 @@ def test_perm_param_with_subset_members_is_not_subset() -> None:
     smaller = create_permutation_param([1, 2])
     larger = create_permutation_param([1, 2, 3])
 
-    assert not smaller.is_subset(larger)
-    assert not larger.is_subset(smaller)
+    assert smaller.check_subset(larger) is ConstraintOutcome.VIOLATED
+    assert larger.check_subset(smaller) is ConstraintOutcome.VIOLATED
 
 
 def test_perm_param_is_value_set_subset_returns_true_for_same_member_set() -> None:
@@ -438,7 +528,7 @@ def test_categorical_param_subset_with_string_values_does_not_raise() -> None:
     larger = create_categorical_param(["red", "blue", "green"])
 
     assert smaller.is_subset(larger)
-    assert not larger.is_subset(smaller)
+    assert larger.check_subset(smaller) is ConstraintOutcome.VIOLATED
 
 
 def test_categorical_param_subset_with_int_values() -> None:
@@ -447,7 +537,7 @@ def test_categorical_param_subset_with_int_values() -> None:
     larger = create_categorical_param([1, 2, 3])
 
     assert smaller.is_subset(larger)
-    assert not larger.is_subset(smaller)
+    assert larger.check_subset(smaller) is ConstraintOutcome.VIOLATED
 
 
 def test_categorical_param_subset_respects_in_set_constraint() -> None:
@@ -456,7 +546,7 @@ def test_categorical_param_subset_respects_in_set_constraint() -> None:
     restricted = universe.add_constraint(InSetConstraint(universe.variable, {1, 2}))
 
     assert restricted.is_subset(universe)
-    assert not universe.is_subset(restricted)
+    assert universe.check_subset(restricted) is ConstraintOutcome.VIOLATED
 
 
 def test_ordinal_param_subset_with_int_values() -> None:
@@ -465,7 +555,7 @@ def test_ordinal_param_subset_with_int_values() -> None:
     larger = create_ordinal_param([1, 2, 3])
 
     assert smaller.is_subset(larger)
-    assert not larger.is_subset(smaller)
+    assert larger.check_subset(smaller) is ConstraintOutcome.VIOLATED
 
 
 def test_ordinal_param_subset_respects_in_set_constraint() -> None:
@@ -474,7 +564,7 @@ def test_ordinal_param_subset_respects_in_set_constraint() -> None:
     restricted = universe.add_constraint(InSetConstraint(universe.variable, {1, 2}))
 
     assert restricted.is_subset(universe)
-    assert not universe.is_subset(restricted)
+    assert universe.check_subset(restricted) is ConstraintOutcome.VIOLATED
 
 
 def test_perm_param_subset_distinguishes_different_member_sets() -> None:
@@ -486,8 +576,8 @@ def test_perm_param_subset_distinguishes_different_member_sets() -> None:
     smaller = create_permutation_param([1, 2])
     larger = create_permutation_param([1, 2, 3])
 
-    assert not smaller.is_subset(larger)
-    assert not larger.is_subset(smaller)
+    assert smaller.check_subset(larger) is ConstraintOutcome.VIOLATED
+    assert larger.check_subset(smaller) is ConstraintOutcome.VIOLATED
 
 
 def test_perm_param_subset_respects_in_set_constraint() -> None:
@@ -496,18 +586,18 @@ def test_perm_param_subset_respects_in_set_constraint() -> None:
     restricted = universe.add_constraint(InSetConstraint(universe.variable, {(1, 2)}))
 
     assert restricted.is_subset(universe)
-    assert not universe.is_subset(restricted)
+    assert universe.check_subset(restricted) is ConstraintOutcome.VIOLATED
 
 
 def test_discrete_params_reject_cross_family_subset_check() -> None:
-    """Test `is_subset` returns False across distinct discrete-param families."""
+    """Test a subset check decides `VIOLATED` across distinct discrete families."""
     cat = create_categorical_param([1])
     ordinal = create_ordinal_param([1])
     perm = create_permutation_param([1])
 
-    assert not cat.is_subset(ordinal)
-    assert not cat.is_subset(perm)  # type: ignore[arg-type]  # test: cross-family comparison
-    assert not ordinal.is_subset(cat)
-    assert not ordinal.is_subset(perm)  # type: ignore[arg-type]  # test: cross-family comparison
-    assert not perm.is_subset(cat)  # type: ignore[arg-type]  # test: cross-family comparison
-    assert not perm.is_subset(ordinal)  # type: ignore[arg-type]  # test: cross-family comparison
+    assert cat.check_subset(ordinal) is ConstraintOutcome.VIOLATED
+    assert cat.check_subset(perm) is ConstraintOutcome.VIOLATED  # type: ignore[arg-type]  # test: cross-family comparison
+    assert ordinal.check_subset(cat) is ConstraintOutcome.VIOLATED
+    assert ordinal.check_subset(perm) is ConstraintOutcome.VIOLATED  # type: ignore[arg-type]  # test: cross-family comparison
+    assert perm.check_subset(cat) is ConstraintOutcome.VIOLATED  # type: ignore[arg-type]  # test: cross-family comparison
+    assert perm.check_subset(ordinal) is ConstraintOutcome.VIOLATED  # type: ignore[arg-type]  # test: cross-family comparison
