@@ -19,6 +19,8 @@ inlining semantics.
 """
 
 import math
+from collections.abc import Mapping, MutableMapping
+from typing import Any, cast
 
 import pytest
 
@@ -40,7 +42,12 @@ from fhy_core.symbolic.expression import (
     inline_functions,
     is_entry_registered,
 )
-from fhy_core.symbolic.expression.builtins import BUILTIN_CONSTANTS, BUILTIN_FUNCTIONS
+from fhy_core.symbolic.expression.builtins import (
+    BUILTIN_CONSTANTS,
+    BUILTIN_FUNCTIONS,
+    BuiltinConstants,
+    BuiltinFunctions,
+)
 
 from ..conftest import mock_identifier
 
@@ -481,3 +488,67 @@ def test_round_native_rounds_to_even_for_other_half_values() -> None:
 
     assert isinstance(result, LiteralExpression)
     assert result.value == 4
+
+
+# =============================================================================
+# Read-only tables: writes are rejected
+# =============================================================================
+
+_READ_ONLY_TABLES = [(BUILTIN_FUNCTIONS, "max"), (BUILTIN_CONSTANTS, "pi")]
+_READ_ONLY_TABLE_IDS = ["functions", "constants"]
+
+
+@pytest.mark.parametrize(
+    "table, existing_key", _READ_ONLY_TABLES, ids=_READ_ONLY_TABLE_IDS
+)
+def test_builtin_table_item_assignment_raises_type_error(
+    table: Mapping[str, object], existing_key: str
+) -> None:
+    """Test assigning to an existing key raises ``TypeError``."""
+    mutable_table = cast(MutableMapping[str, object], table)
+
+    with pytest.raises(TypeError):
+        mutable_table[existing_key] = table[existing_key]
+
+
+@pytest.mark.parametrize(
+    "table, existing_key", _READ_ONLY_TABLES, ids=_READ_ONLY_TABLE_IDS
+)
+def test_builtin_table_item_deletion_raises_type_error(
+    table: Mapping[str, object], existing_key: str
+) -> None:
+    """Test deleting an existing key raises ``TypeError``.
+
+    Restores the entry in a ``finally`` block if the deletion actually
+    went through, so a run against an unfixed, still-mutable table
+    does not leave the process-wide table short an entry for the rest
+    of the test session.
+    """
+    mutable_table = cast(MutableMapping[str, object], table)
+    original_value = table[existing_key]
+
+    try:
+        with pytest.raises(TypeError):
+            del mutable_table[existing_key]
+    finally:
+        if existing_key not in table:
+            mutable_table[existing_key] = original_value
+
+
+@pytest.mark.parametrize(
+    "typed_dict_class",
+    [BuiltinFunctions, BuiltinConstants],
+    ids=_READ_ONLY_TABLE_IDS,
+)
+def test_builtin_typed_dict_declares_every_key_read_only(
+    typed_dict_class: type,
+) -> None:
+    """Test every declared key is read-only, leaving no mutable keys.
+
+    typeshed does not model PEP 705's key sets on ``TypedDict`` class
+    objects, so they are read through ``Any``.
+    """
+    key_sets = cast(Any, typed_dict_class)
+
+    assert key_sets.__readonly_keys__ == key_sets.__required_keys__
+    assert key_sets.__mutable_keys__ == frozenset()

@@ -40,9 +40,12 @@ __all__ = [
 ]
 
 import math
-from typing import TypedDict, cast
+from typing import cast
+
+from immutabledict import immutabledict
 
 from fhy_core.identifier import Identifier
+from fhy_core.utils.typed_dict import ReadOnly, TypedDict
 
 from .core import (
     BinaryOperation,
@@ -76,52 +79,52 @@ class BuiltinFunctions(TypedDict):
     """
 
     # Composable utilities.
-    max: RegisteredFunction
-    min: RegisteredFunction
-    abs: RegisteredFunction
-    sign: RegisteredFunction
-    clamp: RegisteredFunction
-    clamp_symmetric: RegisteredFunction
-    relu: RegisteredFunction
-    leaky_relu: RegisteredFunction
-    xor: RegisteredFunction
-    nand: RegisteredFunction
-    nor: RegisteredFunction
-    implies: RegisteredFunction
-    iff: RegisteredFunction
-    sigmoid: RegisteredFunction
-    silu: RegisteredFunction
-    gelu: RegisteredFunction
+    max: ReadOnly[RegisteredFunction]
+    min: ReadOnly[RegisteredFunction]
+    abs: ReadOnly[RegisteredFunction]
+    sign: ReadOnly[RegisteredFunction]
+    clamp: ReadOnly[RegisteredFunction]
+    clamp_symmetric: ReadOnly[RegisteredFunction]
+    relu: ReadOnly[RegisteredFunction]
+    leaky_relu: ReadOnly[RegisteredFunction]
+    xor: ReadOnly[RegisteredFunction]
+    nand: ReadOnly[RegisteredFunction]
+    nor: ReadOnly[RegisteredFunction]
+    implies: ReadOnly[RegisteredFunction]
+    iff: ReadOnly[RegisteredFunction]
+    sigmoid: ReadOnly[RegisteredFunction]
+    silu: ReadOnly[RegisteredFunction]
+    gelu: ReadOnly[RegisteredFunction]
 
     # Native math functions.
-    exp: NativeFunction
-    exp2: NativeFunction
-    log: NativeFunction
-    log2: NativeFunction
-    log10: NativeFunction
-    sqrt: NativeFunction
-    sin: NativeFunction
-    cos: NativeFunction
-    tan: NativeFunction
-    arcsin: NativeFunction
-    arccos: NativeFunction
-    arctan: NativeFunction
-    sinh: NativeFunction
-    cosh: NativeFunction
-    tanh: NativeFunction
-    erf: NativeFunction
-    round: NativeFunction
-    floor: NativeFunction
-    ceil: NativeFunction
+    exp: ReadOnly[NativeFunction]
+    exp2: ReadOnly[NativeFunction]
+    log: ReadOnly[NativeFunction]
+    log2: ReadOnly[NativeFunction]
+    log10: ReadOnly[NativeFunction]
+    sqrt: ReadOnly[NativeFunction]
+    sin: ReadOnly[NativeFunction]
+    cos: ReadOnly[NativeFunction]
+    tan: ReadOnly[NativeFunction]
+    arcsin: ReadOnly[NativeFunction]
+    arccos: ReadOnly[NativeFunction]
+    arctan: ReadOnly[NativeFunction]
+    sinh: ReadOnly[NativeFunction]
+    cosh: ReadOnly[NativeFunction]
+    tanh: ReadOnly[NativeFunction]
+    erf: ReadOnly[NativeFunction]
+    round: ReadOnly[NativeFunction]
+    floor: ReadOnly[NativeFunction]
+    ceil: ReadOnly[NativeFunction]
 
 
 class BuiltinConstants(TypedDict):
     """Mapping of built-in constant names to their registry entries."""
 
-    pi: NativeConstant
-    e: NativeConstant
-    inf: NativeConstant
-    nan: NativeConstant
+    pi: ReadOnly[NativeConstant]
+    e: ReadOnly[NativeConstant]
+    inf: ReadOnly[NativeConstant]
+    nan: ReadOnly[NativeConstant]
 
 
 _REAL_PARAMS_1: list[FunctionSort] = [FunctionSort.REAL]
@@ -386,12 +389,13 @@ def _register_all_natives() -> dict[str, NativeFunction]:
 
 
 def _register_all_constants() -> BuiltinConstants:
-    return {
+    constants: BuiltinConstants = {
         "pi": register_native_constant("pi", sort=FunctionSort.REAL, value=math.pi),
         "e": register_native_constant("e", sort=FunctionSort.REAL, value=math.e),
         "inf": register_native_constant("inf", sort=FunctionSort.REAL, value=math.inf),
         "nan": register_native_constant("nan", sort=FunctionSort.REAL, value=math.nan),
     }
+    return cast(BuiltinConstants, immutabledict(constants))
 
 
 # Constants are registered first so that composed function bodies can
@@ -425,7 +429,7 @@ def _build_builtin_functions() -> BuiltinFunctions:
         **composed,
         **_BUILTIN_NATIVE_FUNCTIONS,
     }
-    return cast(BuiltinFunctions, merged)
+    return cast(BuiltinFunctions, immutabledict(merged))
 
 
 BUILTIN_FUNCTIONS: BuiltinFunctions = _build_builtin_functions()
