@@ -2008,6 +2008,178 @@ def test_boolean_piecewise_connective_operand_round_trips_through_sympy() -> Non
 
 
 # =============================================================================
+# A Boolean piecewise compares as a Boolean
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "build_comparison",
+    [
+        pytest.param(
+            lambda operand, _: BinaryExpression(
+                BinaryOperation.EQUAL, operand, LiteralExpression(True)
+            ),
+            id="equal_to_true",
+        ),
+        pytest.param(
+            lambda operand, _: BinaryExpression(
+                BinaryOperation.EQUAL, LiteralExpression(True), operand
+            ),
+            id="true_equal_to",
+        ),
+        pytest.param(
+            lambda operand, x: BinaryExpression(
+                BinaryOperation.EQUAL,
+                operand,
+                BinaryExpression(BinaryOperation.LESS, x, LiteralExpression(2)),
+            ),
+            id="equal_to_relation",
+        ),
+        pytest.param(
+            lambda operand, x: BinaryExpression(
+                BinaryOperation.NOT_EQUAL,
+                operand,
+                BinaryExpression(BinaryOperation.LESS, x, LiteralExpression(2)),
+            ),
+            id="not_equal_to_relation",
+        ),
+    ],
+)
+def test_convert_expression_to_sympy_compares_a_boolean_piecewise_as_a_boolean(
+    build_comparison: Callable[[Expression, Expression], Expression],
+) -> None:
+    """Test ``==``/``!=`` over a Boolean piecewise agree with its connective form.
+
+    SymPy decides a comparison between a Boolean and a non-Boolean as
+    unequal on sight, and a ``sympy.Piecewise`` is not a SymPy Boolean
+    even when every branch is Boolean. The comparison must agree, at
+    every grid point, with the same comparison over the piecewise's
+    connective-only expansion.
+    """
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+
+    table = _tabulate_over_x_and_y(build_comparison(_build_boolean_piecewise(x, y), x))
+
+    assert table == _tabulate_over_x_and_y(
+        build_comparison(_build_first_match_expansion(x, y), x)
+    )
+
+
+@pytest.mark.parametrize(
+    ("x_value", "y_value", "expected"),
+    [(0, 1, True), (0, 2, False), (1, 2, True), (3, 2, False)],
+)
+def test_simplify_expression_decides_a_boolean_piecewise_equality_by_its_bindings(
+    x_value: int, y_value: int, expected: bool
+) -> None:
+    """Test ``pw == True`` simplifies to the piecewise's own value under a binding.
+
+    The piecewise is ``y == 1 if x == 0, otherwise x < y``; the rows reach
+    each branch with each truth value.
+    """
+    x_identifier = mock_identifier("x", 0)
+    y_identifier = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        _build_boolean_piecewise(
+            IdentifierExpression(x_identifier), IdentifierExpression(y_identifier)
+        ),
+        LiteralExpression(True),
+    )
+
+    result = simplify_expression(
+        expression,
+        {
+            x_identifier: LiteralExpression(x_value),
+            y_identifier: LiteralExpression(y_value),
+        },
+    )
+
+    assert result.is_structurally_equivalent(LiteralExpression(expected))
+
+
+@pytest.mark.parametrize(
+    ("x_value", "y_value", "b_value", "expected"),
+    [(0, 1, True, True), (0, 1, False, False), (1, 2, False, True)],
+)
+def test_simplify_expression_decides_a_symbol_branch_piecewise_equality_by_its_bindings(
+    x_value: int, y_value: int, b_value: bool, expected: bool
+) -> None:
+    """Test ``(b if x == 0, otherwise x < y) == True`` follows its bindings.
+
+    A branch that is a bare identifier does not show that the piecewise is
+    Boolean; the ``True`` on the other side of ``==`` does.
+    """
+    x_identifier = mock_identifier("x", 0)
+    y_identifier = mock_identifier("y", 1)
+    b_identifier = mock_identifier("b", 2)
+    x = IdentifierExpression(x_identifier)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        piecewise(
+            (
+                BinaryExpression(BinaryOperation.EQUAL, x, LiteralExpression(0)),
+                IdentifierExpression(b_identifier),
+            ),
+            otherwise=BinaryExpression(
+                BinaryOperation.LESS, x, IdentifierExpression(y_identifier)
+            ),
+        ),
+        LiteralExpression(True),
+    )
+
+    result = simplify_expression(
+        expression,
+        {
+            x_identifier: LiteralExpression(x_value),
+            y_identifier: LiteralExpression(y_value),
+            b_identifier: LiteralExpression(b_value),
+        },
+    )
+
+    assert result.is_structurally_equivalent(LiteralExpression(expected))
+
+
+def test_convert_expression_to_sympy_keeps_a_numeric_piecewise_comparison_numeric() -> (
+    None
+):
+    """Test ``==`` over a numeric piecewise still compares numbers.
+
+    ``(1 if x == 0, otherwise 2) == 1`` holds exactly where ``x == 0`` does.
+    """
+    x = IdentifierExpression(mock_identifier("x", 0))
+    is_zero = BinaryExpression(BinaryOperation.EQUAL, x, LiteralExpression(0))
+    numeric = piecewise((is_zero, LiteralExpression(1)), otherwise=LiteralExpression(2))
+
+    table = _tabulate_over_x_and_y(
+        BinaryExpression(BinaryOperation.EQUAL, numeric, LiteralExpression(1))
+    )
+
+    assert table == _tabulate_over_x_and_y(is_zero)
+
+
+def test_boolean_piecewise_comparison_round_trips_through_sympy() -> None:
+    """Test lifting a lowered ``pw != (x < 2)`` keeps its truth table."""
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+    relation = BinaryExpression(BinaryOperation.LESS, x, LiteralExpression(2))
+    lowered = convert_expression_to_sympy_expression(
+        BinaryExpression(
+            BinaryOperation.NOT_EQUAL, _build_boolean_piecewise(x, y), relation
+        )
+    )
+
+    lifted = convert_sympy_expression_to_expression(lowered)
+
+    assert _tabulate_over_x_and_y(lifted) == _tabulate_over_x_and_y(
+        BinaryExpression(
+            BinaryOperation.NOT_EQUAL, _build_first_match_expansion(x, y), relation
+        )
+    )
+
+
+# =============================================================================
 # Rational lifting
 # =============================================================================
 

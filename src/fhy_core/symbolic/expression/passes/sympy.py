@@ -281,6 +281,45 @@ def _convert_piecewise_to_sympy_boolean(operand: Any) -> Any:
     return operand
 
 
+def _is_sympy_boolean_node(value: Any) -> bool:
+    """Return whether ``value`` is a SymPy Boolean other than a bare symbol.
+
+    A SymPy ``Symbol`` is a ``Boolean`` too, so it does not show that a
+    lowered operand denotes a truth value; a literal, a relational, or a
+    connective does.
+    """
+    return isinstance(value, sympy.logic.boolalg.Boolean) and not value.is_Symbol
+
+
+def _is_boolean_valued_sympy_piecewise(value: Any) -> bool:
+    """Return whether ``value`` is a ``sympy.Piecewise`` of Boolean nodes only."""
+    return isinstance(value, sympy.Piecewise) and all(
+        _is_sympy_boolean_node(branch_value) for branch_value, _ in value.args
+    )
+
+
+def _convert_boolean_comparison_operands(left: Any, right: Any) -> tuple[Any, Any]:
+    """Return ``Eq``/``Ne`` operands with a Boolean piecewise rewritten to ``ITE``.
+
+    SymPy decides a comparison between a Boolean and a non-Boolean as
+    unequal on sight, and a ``sympy.Piecewise`` is not a SymPy Boolean even
+    when every branch is Boolean, so ``pw == True`` would lower to
+    ``False``. When either operand shows the comparison is between Booleans
+    -- it is a Boolean node, or a piecewise whose branches all are -- a
+    piecewise operand is rewritten to its ``ITE`` form; a numeric
+    comparison is returned as it stands.
+    """
+    if not any(
+        _is_sympy_boolean_node(operand) or _is_boolean_valued_sympy_piecewise(operand)
+        for operand in (left, right)
+    ):
+        return left, right
+    return (
+        _convert_piecewise_to_sympy_boolean(left),
+        _convert_piecewise_to_sympy_boolean(right),
+    )
+
+
 @register_pass(
     "fhy_core.symbolic.expression.to_sympy",
     "Lower expression IR into an equivalent SymPy expression.",
@@ -329,8 +368,15 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
                 _convert_piecewise_to_sympy_boolean(x),
                 _convert_piecewise_to_sympy_boolean(y),
             ),
-            BinaryOperation.EQUAL: sympy.Eq,
-            BinaryOperation.NOT_EQUAL: sympy.Ne,
+            # SymPy compares a ``Piecewise`` with a Boolean as unequal on
+            # sight, so a Boolean piecewise operand is rewritten to ``ITE``
+            # here too.
+            BinaryOperation.EQUAL: lambda x, y: sympy.Eq(
+                *_convert_boolean_comparison_operands(x, y)
+            ),
+            BinaryOperation.NOT_EQUAL: lambda x, y: sympy.Ne(
+                *_convert_boolean_comparison_operands(x, y)
+            ),
             BinaryOperation.LESS: operator.lt,
             BinaryOperation.LESS_EQUAL: operator.le,
             BinaryOperation.GREATER: operator.gt,
