@@ -267,6 +267,20 @@ def _try_lift_native_constant(expr: sympy.Expr) -> Expression | None:
 _LOGGER = get_logger(__name__)
 
 
+def _convert_piecewise_to_sympy_boolean(operand: Any) -> Any:
+    """Return ``operand`` in a form ``sympy.And`` and ``sympy.Or`` accept.
+
+    A ``sympy.Piecewise`` is not a SymPy ``Boolean`` even when every
+    branch is Boolean, so the connectives refuse it. Its ``ITE`` rewrite
+    is the equivalent Boolean, the same rewrite SymPy applies to a
+    ``Piecewise`` used as a branch condition, and it reaches nested
+    piecewise values as well. Any other operand is returned as it stands.
+    """
+    if isinstance(operand, sympy.Piecewise):
+        return operand.rewrite(sympy.logic.boolalg.ITE)
+    return operand
+
+
 @register_pass(
     "fhy_core.symbolic.expression.to_sympy",
     "Lower expression IR into an equivalent SymPy expression.",
@@ -305,8 +319,16 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             # constructors reject a non-Boolean operand; the bridge screens for
             # that shape before lowering so the refusal is this package's
             # ``NonBooleanLogicalOperandError`` rather than SymPy's own error.
-            BinaryOperation.LOGICAL_AND: sympy.And,
-            BinaryOperation.LOGICAL_OR: sympy.Or,
+            # A Boolean piecewise operand passes that screen but is still not
+            # a SymPy ``Boolean``, so it is rewritten to ``ITE`` first.
+            BinaryOperation.LOGICAL_AND: lambda x, y: sympy.And(
+                _convert_piecewise_to_sympy_boolean(x),
+                _convert_piecewise_to_sympy_boolean(y),
+            ),
+            BinaryOperation.LOGICAL_OR: lambda x, y: sympy.Or(
+                _convert_piecewise_to_sympy_boolean(x),
+                _convert_piecewise_to_sympy_boolean(y),
+            ),
             BinaryOperation.EQUAL: sympy.Eq,
             BinaryOperation.NOT_EQUAL: sympy.Ne,
             BinaryOperation.LESS: operator.lt,

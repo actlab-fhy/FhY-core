@@ -69,11 +69,28 @@ _V0, _V1 = _POOL[0], _POOL[1]
 # =============================================================================
 
 
+_CONSTANT_BOOLEAN_PIECEWISE_CONJUNCTION: Final[Expression] = make_binary_expression(
+    BinaryOperation.LOGICAL_AND,
+    piecewise(
+        (
+            make_binary_expression(BinaryOperation.EQUAL, 0, _V0),
+            LiteralExpression(False),
+        ),
+        otherwise=LiteralExpression(False),
+    ),
+    LiteralExpression(False),
+)
+
+
 # include_division=False: a symbolic FLOOR_DIVIDE/MODULO can lower and
 # auto-evaluate to a Rational such as 1/5, which lifts to the
 # exact-decimal string literal "0.2" that evaluate_expression_with_numpy
 # refuses with StringLiteralPrecisionError (no binary float equals 0.2
 # exactly). See the module docstring.
+@example(
+    expression=_CONSTANT_BOOLEAN_PIECEWISE_CONJUNCTION,
+    environment=dict.fromkeys(_POOL, 0),
+)
 @given(
     expression=build_any_sort_expression_strategy(
         _POOL,

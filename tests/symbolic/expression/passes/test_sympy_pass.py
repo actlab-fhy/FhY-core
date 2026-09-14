@@ -1857,6 +1857,157 @@ def test_lifted_boolean_node_lowers_back_to_an_equivalent_sympy_boolean(
 
 
 # =============================================================================
+# A Boolean piecewise lowers as an operand of a Boolean connective
+# =============================================================================
+
+
+_X_Y_GRID = tuple((x, y) for x in range(-1, 4) for y in range(-1, 4))
+
+
+def _build_boolean_piecewise(x: Expression, y: Expression) -> Expression:
+    """Build the Boolean piecewise ``y == 1 if x == 0, otherwise x < y``."""
+    return piecewise(
+        (
+            BinaryExpression(BinaryOperation.EQUAL, x, LiteralExpression(0)),
+            BinaryExpression(BinaryOperation.EQUAL, y, LiteralExpression(1)),
+        ),
+        otherwise=BinaryExpression(BinaryOperation.LESS, x, y),
+    )
+
+
+def _build_first_match_expansion(x: Expression, y: Expression) -> Expression:
+    """Build the meaning of `_build_boolean_piecewise` from connectives alone.
+
+    ``(x == 0 && y == 1) || (!(x == 0) && x < y)`` is the first-match
+    reading of the piecewise and builds no piecewise node.
+    """
+    is_first_case = BinaryExpression(BinaryOperation.EQUAL, x, LiteralExpression(0))
+    return logical_or(
+        logical_and(
+            is_first_case,
+            BinaryExpression(BinaryOperation.EQUAL, y, LiteralExpression(1)),
+        ),
+        logical_and(
+            logical_not(is_first_case), BinaryExpression(BinaryOperation.LESS, x, y)
+        ),
+    )
+
+
+def _tabulate_over_x_and_y(expression: Expression) -> tuple[bool, ...]:
+    """Return the lowered expression's truth value at every grid point."""
+    lowered = convert_expression_to_sympy_expression(expression)
+    x_symbol, y_symbol = sympy.Symbol("x_0"), sympy.Symbol("y_1")
+    return tuple(
+        bool(lowered.subs({x_symbol: x_value, y_symbol: y_value}))
+        for x_value, y_value in _X_Y_GRID
+    )
+
+
+@pytest.mark.parametrize(
+    "build_connective",
+    [
+        pytest.param(logical_and, id="and_left"),
+        pytest.param(
+            lambda operand, other: logical_and(other, operand), id="and_right"
+        ),
+        pytest.param(logical_or, id="or_left"),
+        pytest.param(lambda operand, other: logical_or(other, operand), id="or_right"),
+    ],
+)
+def test_convert_expression_to_sympy_lowers_a_boolean_piecewise_connective_operand(
+    build_connective: Callable[[Expression, Expression], Expression],
+) -> None:
+    """Test a Boolean piecewise under ``&&``/``||`` lowers to its first-match meaning.
+
+    ``sympy.And`` and ``sympy.Or`` accept only SymPy Booleans, and a
+    ``sympy.Piecewise`` is not one even when every branch is Boolean. The
+    lowered connective must agree with the connective-only expansion of
+    the piecewise at every grid point.
+    """
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+    other = BinaryExpression(BinaryOperation.LESS, x, LiteralExpression(2))
+
+    table = _tabulate_over_x_and_y(
+        build_connective(_build_boolean_piecewise(x, y), other)
+    )
+
+    assert table == _tabulate_over_x_and_y(
+        build_connective(_build_first_match_expansion(x, y), other)
+    )
+
+
+def test_convert_expression_to_sympy_lowers_a_nested_boolean_piecewise_operand() -> (
+    None
+):
+    """Test a Boolean piecewise nested in another's case value lowers under ``||``."""
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+    is_outer_case = BinaryExpression(BinaryOperation.LESS, x, LiteralExpression(2))
+    y_is_zero = BinaryExpression(BinaryOperation.EQUAL, y, LiteralExpression(0))
+    y_is_negative = BinaryExpression(BinaryOperation.LESS, y, LiteralExpression(0))
+    nested = piecewise(
+        (is_outer_case, _build_boolean_piecewise(x, y)), otherwise=y_is_zero
+    )
+    expansion = logical_or(
+        logical_and(is_outer_case, _build_first_match_expansion(x, y)),
+        logical_and(logical_not(is_outer_case), y_is_zero),
+    )
+
+    table = _tabulate_over_x_and_y(logical_or(nested, y_is_negative))
+
+    assert table == _tabulate_over_x_and_y(logical_or(expansion, y_is_negative))
+
+
+def test_convert_expression_to_sympy_keeps_a_numeric_piecewise_in_a_condition() -> None:
+    """Test a numeric piecewise inside a connective operand's condition keeps its value.
+
+    The Boolean piecewise ``y < 3 if (1 if x == 0, otherwise 2) < y,
+    otherwise x == 3`` sits under ``&&``; its condition compares a numeric
+    piecewise, which has to stay numeric while the Boolean one around it
+    is lowered.
+    """
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+    numeric = piecewise(
+        (
+            BinaryExpression(BinaryOperation.EQUAL, x, LiteralExpression(0)),
+            LiteralExpression(1),
+        ),
+        otherwise=LiteralExpression(2),
+    )
+    condition = BinaryExpression(BinaryOperation.LESS, numeric, y)
+    value = BinaryExpression(BinaryOperation.LESS, y, LiteralExpression(3))
+    fallback = BinaryExpression(BinaryOperation.EQUAL, x, LiteralExpression(3))
+    other = BinaryExpression(BinaryOperation.GREATER_EQUAL, y, LiteralExpression(0))
+    expansion = logical_or(
+        logical_and(condition, value), logical_and(logical_not(condition), fallback)
+    )
+
+    table = _tabulate_over_x_and_y(
+        logical_and(piecewise((condition, value), otherwise=fallback), other)
+    )
+
+    assert table == _tabulate_over_x_and_y(logical_and(expansion, other))
+
+
+def test_boolean_piecewise_connective_operand_round_trips_through_sympy() -> None:
+    """Test lifting a lowered Boolean piecewise connective keeps its truth table."""
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+    other = BinaryExpression(BinaryOperation.LESS, x, LiteralExpression(2))
+    lowered = convert_expression_to_sympy_expression(
+        logical_and(_build_boolean_piecewise(x, y), other)
+    )
+
+    lifted = convert_sympy_expression_to_expression(lowered)
+
+    assert _tabulate_over_x_and_y(lifted) == _tabulate_over_x_and_y(
+        logical_and(_build_first_match_expansion(x, y), other)
+    )
+
+
+# =============================================================================
 # Rational lifting
 # =============================================================================
 
