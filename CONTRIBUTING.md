@@ -67,10 +67,13 @@ Import them only from property files, never from a `conftest.py`; a
 **Profiles.** A bare local `pytest` runs under the `dev` profile (25
 examples). The release gate runs under `thorough` (400 examples,
 derandomized): set `HYPOTHESIS_PROFILE=thorough`, or just run
-`uv run nox -s property`, which sets it for you. Every property uses
-`deadline=None`; under `pytest-xdist`, scheduler contention rather than test
-cost is what trips a deadline. Add `@settings(max_examples=N)` on top of the
-profile only when a test is genuinely expensive (a Z3 call, a large tree).
+`uv run nox -s property`, which sets it for you. Mutation runs use a third
+profile, `mutation` (25 examples, derandomized, no example database), which
+`scripts/run-mutation.sh` selects so every mutant sees the same draws.
+Every property uses `deadline=None`; under `pytest-xdist`, scheduler
+contention rather than test cost is what trips a deadline. Add
+`@settings(max_examples=N)` on top of the profile only when a test is
+genuinely expensive (a Z3 call, a large tree).
 
 **Hazards specific to this codebase.**
 

@@ -20,7 +20,10 @@ __all__ = [
 ]
 
 # Hypothesis settings profiles. `dev` is the local inner loop; `thorough` is
-# the release gate that `nox -s property` selects through HYPOTHESIS_PROFILE.
+# the release gate that `nox -s property` selects through HYPOTHESIS_PROFILE;
+# `mutation` is what scripts/run-mutation.sh selects: the dev example count,
+# derandomized and without an example database, so every mutant runs the same
+# draws and none replays a counterexample saved while testing another.
 # Every profile runs without a deadline: under xdist, scheduler contention
 # rather than test cost is what trips one. `hypothesis` is an optional test
 # dependency (the `property` group), so the registration is guarded the same
@@ -36,6 +39,9 @@ if find_spec("hypothesis") is not None:
         derandomize=True,
         database=None,
         print_blob=True,
+    )
+    _hypothesis_settings.register_profile(
+        "mutation", max_examples=25, deadline=None, derandomize=True, database=None
     )
     _hypothesis_settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "dev"))
 

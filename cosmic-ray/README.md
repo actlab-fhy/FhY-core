@@ -21,6 +21,13 @@ Both default to `lattice` when no module name is given. See the script and
 the `mutation` nox session for the exact `cosmic-ray init` / `exec` / report
 pipeline.
 
+The script first runs `cosmic-ray baseline`, which stops the run when the
+unmutated suite fails or overruns the config's `timeout`, and it selects the
+`mutation` Hypothesis profile (derandomized, no example database) so every
+mutant sees the same draws. Cosmic-ray scores a mutant whose tests overrun
+the timeout as killed, so each config's `timeout` leaves roughly four times
+the suite's serial run time; keep that margin if the suite grows.
+
 Cosmic-ray applies each mutant to the source file in place and restores it
 after the mutant's test run, so do not run any other test command, commit,
 or edit files under `src/` while a mutation run is active; a run that is
