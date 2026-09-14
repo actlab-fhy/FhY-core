@@ -298,25 +298,62 @@ def _is_boolean_valued_sympy_piecewise(value: Any) -> bool:
     )
 
 
+def _is_boolean_comparison(left: Any, right: Any) -> bool:
+    """Return whether ``Eq``/``Ne`` over ``left`` and ``right`` compares Booleans.
+
+    Either operand shows it: a Boolean node, or a piecewise whose branches
+    all are.
+    """
+    return any(
+        _is_sympy_boolean_node(operand) or _is_boolean_valued_sympy_piecewise(operand)
+        for operand in (left, right)
+    )
+
+
 def _convert_boolean_comparison_operands(left: Any, right: Any) -> tuple[Any, Any]:
     """Return ``Eq``/``Ne`` operands with a Boolean piecewise rewritten to ``ITE``.
 
     SymPy decides a comparison between a Boolean and a non-Boolean as
     unequal on sight, and a ``sympy.Piecewise`` is not a SymPy Boolean even
     when every branch is Boolean, so ``pw == True`` would lower to
-    ``False``. When either operand shows the comparison is between Booleans
-    -- it is a Boolean node, or a piecewise whose branches all are -- a
-    piecewise operand is rewritten to its ``ITE`` form; a numeric
-    comparison is returned as it stands.
+    ``False``. When the comparison is between Booleans, a piecewise operand
+    is rewritten to its ``ITE`` form; a numeric comparison is returned as
+    it stands.
     """
-    if not any(
-        _is_sympy_boolean_node(operand) or _is_boolean_valued_sympy_piecewise(operand)
-        for operand in (left, right)
-    ):
+    if not _is_boolean_comparison(left, right):
         return left, right
     return (
         _convert_piecewise_to_sympy_boolean(left),
         _convert_piecewise_to_sympy_boolean(right),
+    )
+
+
+def _rewrite_comparisons_made_boolean_by(
+    expression: Any, replacements: Mapping[sympy.Symbol, Any]
+) -> Any:
+    """Rewrite piecewise operands of each comparison ``replacements`` makes Boolean.
+
+    ``xreplace`` rebuilds every node it substitutes into, and SymPy decides
+    an ``Eq``/``Ne`` as soon as it is rebuilt: ``Eq(Piecewise((b1, c),
+    (b2, True)), b3)`` is an open comparison until ``b3`` becomes ``true``,
+    and then folds to ``False``. A comparison that is Boolean once
+    substituted has its piecewise operands rewritten to ``ITE`` first, as
+    lowering does for one that is Boolean from the start.
+    """
+
+    def rewrite_comparison(comparison: Any) -> Any:
+        substituted = (operand.xreplace(replacements) for operand in comparison.args)
+        if not _is_boolean_comparison(*substituted):
+            return comparison
+        return comparison.func(
+            *(
+                _convert_piecewise_to_sympy_boolean(operand)
+                for operand in comparison.args
+            )
+        )
+
+    return expression.replace(
+        lambda node: isinstance(node, (sympy.Eq, sympy.Ne)), rewrite_comparison
     )
 
 
@@ -569,7 +606,9 @@ class SympyVariableSubstitutionPass(
     infinity) or against NaN -- and raise a raw ``TypeError`` from deep
     inside SymPy. Running the replacement as a pass, rather than calling
     ``xreplace`` directly, lets the pass infrastructure wrap that failure
-    as ``PassExecutionError`` like every other bridge failure.
+    as ``PassExecutionError`` like every other bridge failure. The same
+    rebuild would decide a comparison the replacement makes Boolean, so
+    that comparison's piecewise operands are rewritten to ``ITE`` first.
     """
 
     def __init__(self, replacements: Mapping[sympy.Symbol, Any]) -> None:
@@ -582,7 +621,9 @@ class SympyVariableSubstitutionPass(
     def run_pass(
         self, ir: sympy.Expr | sympy.logic.boolalg.Boolean
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
-        return ir.xreplace(self._replacements)
+        return _rewrite_comparisons_made_boolean_by(ir, self._replacements).xreplace(
+            self._replacements
+        )
 
     @override
     def get_noop_output(

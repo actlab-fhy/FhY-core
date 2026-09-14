@@ -2179,6 +2179,127 @@ def test_boolean_piecewise_comparison_round_trips_through_sympy() -> None:
     )
 
 
+def _evaluate_sympy_boolean(sympy_expression: Any, values: Mapping[str, Any]) -> bool:
+    """Return the truth value of ``sympy_expression`` with named symbols bound."""
+    return bool(
+        sympy_expression.subs(
+            {sympy.Symbol(name): value for name, value in values.items()}
+        )
+    )
+
+
+_PARTIAL_BINDING_ENTRY_POINTS = [
+    pytest.param(
+        lambda expression, environment: substitute_sympy_expression_variables(
+            convert_expression_to_sympy_expression(expression), environment
+        ),
+        id="substitute",
+    ),
+    pytest.param(
+        lambda expression, environment: convert_expression_to_sympy_expression(
+            simplify_expression(expression, environment)
+        ),
+        id="simplify",
+    ),
+]
+
+
+@pytest.mark.parametrize("apply_partial_binding", _PARTIAL_BINDING_ENTRY_POINTS)
+@pytest.mark.parametrize(
+    ("x_value", "b1_value", "b2_value", "expected"),
+    [
+        (0, True, False, True),
+        (0, False, True, False),
+        (1, True, False, False),
+        (1, False, True, True),
+    ],
+)
+def test_binding_only_the_boolean_side_keeps_a_piecewise_comparison_open(
+    apply_partial_binding: Callable[[Expression, Mapping[Identifier, Expression]], Any],
+    x_value: int,
+    b1_value: bool,
+    b2_value: bool,
+    expected: bool,
+) -> None:
+    """Test a piecewise compared with ``b3`` still means itself once ``b3 = True``.
+
+    The expression is ``(b1 if x == 0, otherwise b2) == b3``. Nothing in
+    the tree shows the piecewise is Boolean until ``b3`` is bound, and the
+    comparison must then mean ``b1 if x == 0, otherwise b2`` rather than a
+    decided constant.
+    """
+    x_identifier = mock_identifier("x", 0)
+    b3_identifier = mock_identifier("b3", 5)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        piecewise(
+            (
+                BinaryExpression(
+                    BinaryOperation.EQUAL,
+                    IdentifierExpression(x_identifier),
+                    LiteralExpression(0),
+                ),
+                IdentifierExpression(mock_identifier("b1", 3)),
+            ),
+            otherwise=IdentifierExpression(mock_identifier("b2", 4)),
+        ),
+        IdentifierExpression(b3_identifier),
+    )
+
+    partially_bound = apply_partial_binding(
+        expression, {b3_identifier: LiteralExpression(True)}
+    )
+
+    assert (
+        _evaluate_sympy_boolean(
+            partially_bound, {"x_0": x_value, "b1_3": b1_value, "b2_4": b2_value}
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize("apply_partial_binding", _PARTIAL_BINDING_ENTRY_POINTS)
+@pytest.mark.parametrize(
+    ("x_value", "y_value", "expected"), [(0, 1, True), (0, 2, False), (1, 5, True)]
+)
+def test_binding_only_the_numeric_side_keeps_a_piecewise_comparison_numeric(
+    apply_partial_binding: Callable[[Expression, Mapping[Identifier, Expression]], Any],
+    x_value: int,
+    y_value: int,
+    expected: bool,
+) -> None:
+    """Test a numeric piecewise compared with ``z`` stays numeric once ``z = 1``.
+
+    The expression is ``(y if x == 0, otherwise 1) == z``.
+    """
+    x_identifier = mock_identifier("x", 0)
+    z_identifier = mock_identifier("z", 2)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        piecewise(
+            (
+                BinaryExpression(
+                    BinaryOperation.EQUAL,
+                    IdentifierExpression(x_identifier),
+                    LiteralExpression(0),
+                ),
+                IdentifierExpression(mock_identifier("y", 1)),
+            ),
+            otherwise=LiteralExpression(1),
+        ),
+        IdentifierExpression(z_identifier),
+    )
+
+    partially_bound = apply_partial_binding(
+        expression, {z_identifier: LiteralExpression(1)}
+    )
+
+    assert (
+        _evaluate_sympy_boolean(partially_bound, {"x_0": x_value, "y_1": y_value})
+        is expected
+    )
+
+
 # =============================================================================
 # Rational lifting
 # =============================================================================
