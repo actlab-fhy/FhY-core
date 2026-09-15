@@ -2,10 +2,7 @@
 
 Covers ordinal, categorical, and width-bounded plain-integer parameters,
 each carrying zero to two extra constraints, against a brute-force
-oracle that enumerates the finite domain directly. A regression test at
-the bottom pins the smallest solver-backed shape the property draws: a
-singleton integer parameter whose only extra constraint is a not-in-set
-constraint over a value outside its domain.
+oracle that enumerates the finite domain directly.
 """
 
 from collections.abc import Sequence
@@ -195,31 +192,3 @@ def test_check_feasibility_matches_brute_force_over_finite_domains(
     )
     assert param.is_feasible() == (outcome is ConstraintOutcome.SATISFIED)
     assert param.is_empty() == (outcome is ConstraintOutcome.VIOLATED)
-
-
-# =============================================================================
-# Regression: a not-in-set constraint excluding nothing still decides
-# =============================================================================
-#
-# A plain-integer parameter carrying a `NotInSetConstraint` and no
-# `InSetConstraint` (which would force enumeration instead) goes to the
-# Z3-screening path
-# (`fhy_core.symbolic.param.domains._numeric_has_feasible_value`), where a
-# screened system that lost nothing keeps the solver's decided answer. The
-# property above draws this shape among many others; the test below pins its
-# smallest instance directly.
-
-
-def test_check_feasibility_decides_singleton_with_a_harmless_constraint() -> None:
-    """Test a satisfiable singleton with an irrelevant not-in-set constraint decides.
-
-    ``create_integer_param_between(0, 0)`` constrained by
-    ``NotInSetConstraint(variable, [5])`` is ``SATISFIED``: ``5`` is
-    outside the domain entirely, so the constraint excludes nothing
-    ``0`` needed.
-    """
-    param = create_integer_param_between(0, 0)
-    param = param.add_constraint(NotInSetConstraint(param.variable, [5]))
-
-    assert param.is_value_valid(0)
-    assert param.check_feasibility() is ConstraintOutcome.SATISFIED
