@@ -15,6 +15,7 @@ from decimal import Decimal
 from typing import Any, ClassVar
 
 import sympy  # type: ignore
+import sympy.core.evalf  # type: ignore
 import sympy.logic  # type: ignore
 import sympy.logic.boolalg  # type: ignore
 from immutabledict import immutabledict
@@ -1231,12 +1232,19 @@ def simplify_expression(
 ) -> Expression:
     """Simplify an expression.
 
+    Simplification is best-effort. ``sympy.simplify`` checks relationals
+    numerically at random points, and raises ``PrecisionExhausted`` when a
+    ``floor`` argument is exactly an integer at such a point; the
+    expression is then lifted back with ``environment`` substituted but
+    unsimplified.
+
     Args:
         expression: Expression to simplify.
         environment: Environment to simplify the expression in. Defaults to None.
 
     Returns:
-        Simplified expression.
+        Simplified expression, or the substituted but unsimplified expression
+        when SymPy exhausts precision.
 
     Raises:
         NativeConstantBindingError: If ``environment`` binds a registered
@@ -1272,6 +1280,14 @@ def simplify_expression(
             sympy_expression, environment
         )
     _LOGGER.debug("pre-simplify=%r", sympy_expression)
-    result = sympy.simplify(sympy_expression)
+    try:
+        result = sympy.simplify(sympy_expression)
+    except sympy.core.evalf.PrecisionExhausted:
+        # sympy.simplify checks a relational numerically at random points, and
+        # SymPy's integer-part evaluation raises instead of giving up when a
+        # floor's argument is exactly an integer at such a point. The
+        # substituted form is still correct, only unsimplified, so keep it.
+        _LOGGER.debug("simplify exhausted precision; keeping the unsimplified form")
+        result = sympy_expression
     _LOGGER.debug("post-simplify=%r", result)
     return convert_sympy_expression_to_expression(result)

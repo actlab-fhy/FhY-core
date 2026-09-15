@@ -2,13 +2,16 @@
 
 import logging
 import math
-from collections.abc import Callable, Mapping, MutableMapping
+from collections.abc import Callable, Iterator, Mapping, MutableMapping
 from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
 import sympy  # type: ignore[import-untyped]
 from immutabledict import immutabledict
+from sympy.core import random as sympy_random  # type: ignore[import-untyped]
+from sympy.core.cache import clear_cache  # type: ignore[import-untyped]
+from sympy.core.evalf import PrecisionExhausted  # type: ignore[import-untyped]
 
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
@@ -979,6 +982,163 @@ def test_simplify_expression_still_decides_a_well_defined_divided_comparison() -
     )
 
     assert result.is_structurally_equivalent(LiteralExpression(True))
+
+
+# =============================================================================
+# simplify_expression keeps its input when SymPy exhausts precision
+# =============================================================================
+
+
+@pytest.fixture
+def restore_sympy_random_state() -> Iterator[None]:
+    """Restore SymPy's global random state after a test reseeds it."""
+    state = sympy_random.rng.getstate()
+    yield
+    sympy_random.rng.setstate(state)
+
+
+def test_simplify_expression_keeps_the_substituted_form_when_sympy_exhausts_precision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test SymPy exhausting precision leaves the substituted form unsimplified.
+
+    Simplification is best-effort: when ``sympy.simplify`` raises
+    ``PrecisionExhausted``, the result is the lowering with ``environment``
+    substituted, lifted back unsimplified. Unpatched, ``(x - y) * (x + y)
+    == x * x - 9`` with ``y = 3`` simplifies to the literal ``True``.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        BinaryExpression(
+            BinaryOperation.MULTIPLY,
+            BinaryExpression(
+                BinaryOperation.SUBTRACT,
+                IdentifierExpression(x),
+                IdentifierExpression(y),
+            ),
+            BinaryExpression(
+                BinaryOperation.ADD, IdentifierExpression(x), IdentifierExpression(y)
+            ),
+        ),
+        BinaryExpression(
+            BinaryOperation.SUBTRACT,
+            BinaryExpression(
+                BinaryOperation.MULTIPLY,
+                IdentifierExpression(x),
+                IdentifierExpression(x),
+            ),
+            LiteralExpression(9),
+        ),
+    )
+    environment = {y: LiteralExpression(3)}
+    assert simplify_expression(expression, environment).is_structurally_equivalent(
+        LiteralExpression(True)
+    )
+    unsimplified = convert_sympy_expression_to_expression(
+        substitute_sympy_expression_variables(
+            convert_expression_to_sympy_expression(expression), environment
+        )
+    )
+
+    def raise_precision_exhausted(*args: Any, **kwargs: Any) -> Any:
+        raise PrecisionExhausted
+
+    monkeypatch.setattr(sympy, "simplify", raise_precision_exhausted)
+    result = simplify_expression(expression, environment)
+
+    assert result.is_structurally_equivalent(unsimplified)
+    assert not isinstance(result, LiteralExpression)
+
+
+def test_simplify_expression_propagates_other_arithmetic_errors_from_sympy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test only ``PrecisionExhausted`` falls back; other SymPy errors propagate.
+
+    ``ZeroDivisionError`` shares ``PrecisionExhausted``'s ``ArithmeticError``
+    base, so it guards against catching the base class.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.LESS, IdentifierExpression(x), LiteralExpression(5)
+    )
+
+    def raise_zero_division(*args: Any, **kwargs: Any) -> Any:
+        raise ZeroDivisionError
+
+    monkeypatch.setattr(sympy, "simplify", raise_zero_division)
+
+    with pytest.raises(ZeroDivisionError):
+        simplify_expression(expression)
+
+
+@pytest.mark.usefixtures("restore_sympy_random_state")
+@pytest.mark.parametrize(
+    "build_expression",
+    [
+        pytest.param(
+            lambda x, y: BinaryExpression(
+                BinaryOperation.EQUAL,
+                BinaryExpression(
+                    BinaryOperation.FLOOR_DIVIDE,
+                    call(
+                        "floor",
+                        BinaryExpression(
+                            BinaryOperation.ADD,
+                            IdentifierExpression(x),
+                            LiteralExpression(1),
+                        ),
+                    ),
+                    LiteralExpression(-8),
+                ),
+                LiteralExpression(0),
+            ),
+            id="floor_divide_of_floor",
+        ),
+        pytest.param(
+            lambda x, y: BinaryExpression(
+                BinaryOperation.NOT_EQUAL,
+                BinaryExpression(
+                    BinaryOperation.FLOOR_DIVIDE,
+                    BinaryExpression(
+                        BinaryOperation.SUBTRACT,
+                        call("floor", call("floor", IdentifierExpression(y))),
+                        call("ceil", call("ceil", IdentifierExpression(x))),
+                    ),
+                    LiteralExpression(-1),
+                ),
+                LiteralExpression(-10),
+            ),
+            id="floor_divide_of_floor_minus_ceil",
+        ),
+    ],
+)
+def test_simplify_expression_survives_sympy_precision_exhaustion(
+    build_expression: Callable[[Identifier, Identifier], Expression],
+) -> None:
+    """Test SymPy's ``PrecisionExhausted`` never escapes ``simplify_expression``.
+
+    ``sympy.simplify`` checks a relational numerically at random points,
+    and SymPy 1.14's integer-part evaluation raises ``PrecisionExhausted``
+    where the argument of an outer ``floor`` is exactly an integer at such
+    a point. Whether a call fails depends on SymPy's random state, so the
+    test reseeds it (seeds 0 to 9 include failing ones for both shapes on
+    SymPy 1.14) and clears SymPy's cache before each call. The result must
+    keep the input's truth value at every grid point.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = build_expression(x, y)
+    expected = _tabulate_over_x_and_y(expression)
+
+    for seed in range(10):
+        clear_cache()
+        sympy_random.seed(seed)
+        result = simplify_expression(expression)
+
+        assert _tabulate_over_x_and_y(result) == expected
 
 
 # =============================================================================

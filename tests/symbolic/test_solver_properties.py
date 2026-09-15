@@ -6,21 +6,15 @@ idempotence) and the Z3-backed query trio -- satisfiability, implication,
 and universal validity -- cross-checked against brute-force enumeration
 over a small bounded integer domain.
 
-The SymPy-backed properties that simplify symbolic trees draw
-division-free trees, for two reasons found with division enabled.
-First, ``simplify_expression`` can raise SymPy's ``PrecisionExhausted``
-on the ``floor(a / b)`` a ``FLOOR_DIVIDE`` lowers to when ``a`` holds a
-``floor`` or ``ceil`` call, as in ``floor(v0 + 1) // -8 == 0``:
-``sympy.simplify`` tests a relational at a random point, and where the
-outer ``floor``'s argument is exactly an integer, SymPy's integer-part
-evaluation raises instead of giving up. Which trees fail depends on
-SymPy's random state, so the failure is flaky. Second, a simplified
-quotient can hold rational coefficients, as in
-``floor(-v0**2 / 5 - v0 / 5)``, which the NumPy oracle computes by float
-true division, and ``floor`` can turn the rounding error into an
-off-by-one. The full-environment property does draw division: the
-environment binds every identifier before SymPy simplifies, and its
-oracle, ``evaluate_with_python``, is exact. SymPy lifts a ``Rational``
+The integer-tree and boolean-tree simplify properties, which the NumPy
+oracle judges, draw division-free trees. A ``FLOOR_DIVIDE`` lowers to
+``floor(a / b)``, and a simplified quotient can hold rational
+coefficients, as in ``floor(-v0**2 / 5 - v0 / 5)``. The oracle computes
+those by float true division, and ``floor`` can turn the rounding error
+into an off-by-one. The full-environment and idempotence properties do
+draw division: the first binds every identifier before SymPy simplifies
+and checks against the exact ``evaluate_with_python``, and the second
+compares structure only. SymPy lifts a ``Rational``
 to decimal text only when a binary float equals it, and to an exact
 integer ``DIVIDE`` otherwise;
 ``test_simplify_expression_preserves_a_rational_coefficient_comparison``
@@ -136,8 +130,8 @@ _NON_IDEMPOTENT_SIMPLIFICATION: Final[Expression] = make_unary_expression(
 
 
 # The SymPy-backed properties below enable calls restricted to
-# SYMPY_STABLE_CALL_FUNCTIONS and piecewise. All but the full-environment
-# property keep division off; see the module docstring. See
+# SYMPY_STABLE_CALL_FUNCTIONS and piecewise. The integer-tree and
+# boolean-tree properties keep division off; see the module docstring. See
 # test_check_expression_satisfiability_agrees_with_brute_force et al.
 # below for why the Z3-backed properties keep calls off.
 
@@ -277,7 +271,7 @@ def test_simplify_expression_with_full_environment_evaluates(
     expression=build_numeric_expression_strategy(
         _POOL,
         6,
-        include_division=False,
+        include_division=True,
         include_calls=True,
         native_functions=SYMPY_STABLE_CALL_FUNCTIONS,
         include_piecewise=True,
