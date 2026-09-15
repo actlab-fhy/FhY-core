@@ -41,14 +41,16 @@ import pytest
 
 pytest.importorskip("hypothesis")
 
-from hypothesis import example, given, settings
+from hypothesis import example, given, reject, settings
 from hypothesis import strategies as st
 
 from fhy_core.identifier import Identifier
+from fhy_core.pass_infrastructure import PassExecutionError
 from fhy_core.symbolic.expression import (
     BinaryOperation,
     Expression,
     LiteralExpression,
+    StringLiteralPrecisionError,
     UnaryOperation,
     evaluate_expression_with_numpy,
     logical_and,
@@ -82,8 +84,8 @@ _SYMBOL_TYPES: Final[dict[Identifier, SymbolType]] = dict.fromkeys(
     _POOL, SymbolType.INT
 )
 
-# Pinned counterexample for
-# test_simplify_expression_preserves_evaluation_on_boolean_trees: SymPy
+# Counterexample pinned by
+# test_simplify_expression_preserves_a_rational_coefficient_comparison: SymPy
 # normalizes the equation "21 == 15 * v0" to "v0 == 21/15", and 21/15
 # reduces to 7/5, a terminating decimal (1.4) with no exact binary float
 # representation. The lifted expression holds the exact-decimal string
@@ -123,7 +125,7 @@ _NON_IDEMPOTENT_SIMPLIFICATION: Final[Expression] = make_unary_expression(
 
 # Division stays off everywhere in this module: see the module docstring
 # for the StringLiteralPrecisionError finding this excludes, pinned below
-# by test_simplify_expression_preserves_evaluation_on_boolean_trees.
+# by test_simplify_expression_preserves_a_rational_coefficient_comparison.
 # The SymPy-backed properties additionally enable calls restricted to
 # SYMPY_STABLE_CALL_FUNCTIONS and piecewise; see
 # test_check_expression_satisfiability_agrees_with_brute_force et al.
@@ -162,23 +164,6 @@ def test_simplify_expression_preserves_evaluation_on_integer_trees(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "simplify_expression normalizes an equation like '21 == 15 * v0' to "
-        "'v0 == 21/15' (21/15 reduces to 1.4), which SymPy lifting turns "
-        "into the exact-decimal string literal '1.4'; "
-        "evaluate_expression_with_numpy's coerce_literal_value then raises "
-        "StringLiteralPrecisionError because no binary float equals 1.4 "
-        "exactly. Integer-only input, non-integer-exact output."
-    ),
-)
-@example(
-    tree_and_environment=(
-        _RATIONAL_COEFFICIENT_COMPARISON,
-        _RATIONAL_COEFFICIENT_ENVIRONMENT,
-    )
-)
 @given(
     tree_and_environment=draw_boolean_tree_with_environment(
         _POOL,
@@ -194,14 +179,49 @@ def test_simplify_expression_preserves_evaluation_on_boolean_trees(
 ) -> None:
     """Test simplification never changes a boolean tree's truth value.
 
-    Oracle: ``evaluate_expression_with_numpy``.
+    Oracle: ``evaluate_expression_with_numpy``. A draw whose simplified
+    form holds an exact-decimal literal the oracle refuses to evaluate is
+    rejected rather than judged: that refusal is the open issue
+    ``test_simplify_expression_preserves_a_rational_coefficient_comparison``
+    pins, not a counterexample to this law.
     """
     expression, environment = tree_and_environment
-
     simplified = simplify_expression(expression)
 
-    assert bool(evaluate_expression_with_numpy(simplified, environment)) == bool(
+    try:
+        simplified_value = evaluate_expression_with_numpy(simplified, environment)
+    except PassExecutionError as error:
+        if isinstance(error.__cause__, StringLiteralPrecisionError):
+            reject()
+        raise
+
+    assert bool(simplified_value) == bool(
         evaluate_expression_with_numpy(expression, environment)
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=PassExecutionError,
+    reason=(
+        "simplify_expression normalizes an equation like '21 == 15 * v0' to "
+        "'v0 == 21/15' (21/15 reduces to 1.4), which SymPy lifting turns "
+        "into the exact-decimal string literal '1.4'; "
+        "evaluate_expression_with_numpy then fails with a PassExecutionError "
+        "caused by StringLiteralPrecisionError, because no binary float "
+        "equals 1.4 exactly. Integer-only input, non-integer-exact output."
+    ),
+)
+def test_simplify_expression_preserves_a_rational_coefficient_comparison() -> None:
+    """Test simplifying ``21 == 15 * v0`` keeps its truth value at ``v0 = 0``."""
+    simplified = simplify_expression(_RATIONAL_COEFFICIENT_COMPARISON)
+
+    assert bool(
+        evaluate_expression_with_numpy(simplified, _RATIONAL_COEFFICIENT_ENVIRONMENT)
+    ) == bool(
+        evaluate_expression_with_numpy(
+            _RATIONAL_COEFFICIENT_COMPARISON, _RATIONAL_COEFFICIENT_ENVIRONMENT
+        )
     )
 
 
@@ -248,6 +268,7 @@ def test_simplify_expression_with_full_environment_evaluates(
 
 @pytest.mark.xfail(
     strict=True,
+    raises=AssertionError,
     reason=(
         "simplify_expression is not structurally idempotent for every tree: "
         "simplifying '-((0 - v0 * -v0) + v0)' once yields one Mul/Add "
