@@ -29,6 +29,7 @@ from fhy_core.symbolic.expression import (
     call,
     convert_expression_to_sympy_expression,
     convert_sympy_expression_to_expression,
+    evaluate_expression_with_numpy,
     get_native_constant_identifier,
     inline_functions,
     logical_and,
@@ -2405,39 +2406,73 @@ def test_binding_only_the_numeric_side_keeps_a_piecewise_comparison_numeric(
         pytest.param(
             sympy.Rational(7, 2), LiteralExpression("3.5"), id="three_and_a_half"
         ),
-        pytest.param(sympy.Rational(1, 10), LiteralExpression("0.1"), id="one_tenth"),
         pytest.param(
             sympy.Rational(1, 8), LiteralExpression("0.125"), id="powers_of_two_only"
         ),
         pytest.param(
-            sympy.Rational(1, 5), LiteralExpression("0.2"), id="powers_of_five_only"
-        ),
-        pytest.param(
-            sympy.Rational(3, 40),
-            LiteralExpression("0.075"),
-            id="mixed_two_and_five_factors",
+            sympy.Rational(2**53 - 1, 2),
+            LiteralExpression("4503599627370495.5"),
+            id="largest_half_a_float_holds",
         ),
         pytest.param(
             sympy.Rational(-7, 2),
             UnaryExpression(UnaryOperation.NEGATE, LiteralExpression("3.5")),
-            id="negative_terminating",
+            id="negative",
         ),
     ],
 )
-def test_terminating_rational_lifts_to_an_exact_decimal_string_literal(
+def test_binary_exact_rational_lifts_to_an_exact_decimal_string_literal(
     rational: sympy.Rational, expected_expression: Expression
 ) -> None:
-    """Test a rational with a terminating expansion lifts to exact decimal text.
+    """Test a rational some binary float equals lifts to its exact decimal text.
 
-    A denominator whose only prime factors are 2 and 5 divides a power of
-    ten, so the rational has finite decimal text and
-    ``LiteralExpression`` stores that text as an exact
-    ``decimal.Decimal``. The float grammar carries no sign, so a negative
-    one lifts as a ``NEGATE`` of its magnitude.
+    Such a rational has a power-of-two denominator, so its decimal
+    expansion terminates, and the NumPy evaluator reads that text back as
+    the same number rather than refusing it. The float grammar carries no
+    sign, so a negative one lifts as a ``NEGATE`` of its magnitude.
     """
     result = convert_sympy_expression_to_expression(rational)
 
     assert result.is_structurally_equivalent(expected_expression)
+
+
+@pytest.mark.parametrize(
+    "rational, expected_numerator, expected_denominator",
+    [
+        pytest.param(sympy.Rational(1, 10), 1, 10, id="one_tenth"),
+        pytest.param(sympy.Rational(1, 5), 1, 5, id="powers_of_five_only"),
+        pytest.param(sympy.Rational(3, 40), 3, 40, id="mixed_two_and_five_factors"),
+        pytest.param(sympy.Rational(7, 5), 7, 5, id="seven_fifths"),
+        pytest.param(
+            sympy.Rational(2**53 + 1, 2),
+            2**53 + 1,
+            2,
+            id="half_beyond_float_precision",
+        ),
+        pytest.param(sympy.Rational(-1, 10), -1, 10, id="negative_one_tenth"),
+    ],
+)
+def test_non_binary_terminating_rational_lifts_to_an_exact_divide(
+    rational: sympy.Rational, expected_numerator: int, expected_denominator: int
+) -> None:
+    """Test a terminating rational no binary float equals lifts to a `DIVIDE`.
+
+    One tenth has finite decimal text, but no binary ``float`` equals it,
+    so the NumPy evaluator would refuse that text rather than round it.
+    Half past ``2**52`` has a power-of-two denominator and still misses:
+    its significand needs 54 bits. The quotient of the integer numerator
+    and denominator is exact, and the sign rides on the numerator, as it
+    does for a repeating rational.
+    """
+    result = convert_sympy_expression_to_expression(rational)
+
+    assert result.is_structurally_equivalent(
+        BinaryExpression(
+            BinaryOperation.DIVIDE,
+            LiteralExpression(expected_numerator),
+            LiteralExpression(expected_denominator),
+        )
+    )
 
 
 @pytest.mark.parametrize(
@@ -2473,31 +2508,40 @@ def test_repeating_rational_lifts_to_an_exact_divide(
 
 
 @pytest.mark.parametrize(
-    "rational",
+    "rational, expected_type",
     [
-        pytest.param(sympy.Rational(1, 2**100), id="hundred_binary_places"),
-        pytest.param(sympy.Rational(1, 10**30), id="thirty_decimal_places"),
         pytest.param(
-            sympy.Rational(12345678901234567890, 2**80), id="wide_numerator_and_scale"
+            sympy.Rational(1, 2**100), LiteralExpression, id="hundred_binary_places"
+        ),
+        pytest.param(
+            sympy.Rational(1, 10**30), BinaryExpression, id="thirty_decimal_places"
+        ),
+        # Reduces to an odd 63-bit numerator over 2**79: a power-of-two
+        # denominator, but a significand wider than a float's 53 bits.
+        pytest.param(
+            sympy.Rational(12345678901234567890, 2**80),
+            BinaryExpression,
+            id="wide_numerator_and_scale",
         ),
     ],
 )
 def test_terminating_rational_lift_is_exact_past_the_default_decimal_precision(
-    rational: sympy.Rational,
+    rational: sympy.Rational, expected_type: type[Expression]
 ) -> None:
     """Test a rational wider than `decimal`'s default context lifts exactly.
 
     ``decimal`` rounds arithmetic to its context precision, 28 digits by
     default, so a lift that computed the digits by dividing would silently
-    truncate here. Lowering the lifted text has to recover the original
-    rational, and the text has to stay in fixed-point form -- scientific
-    notation does not match the float grammar and would be rejected at
-    construction.
+    truncate here, and so would a binary-exactness check that rounded the
+    text before comparing it. Lowering the lift has to recover the
+    original rational in either form: decimal text for ``2**-100``, which
+    a binary float equals, and a ``DIVIDE`` for the other two, which no
+    binary float equals. The text has to stay in fixed-point form, since
+    the float grammar refuses scientific notation at construction.
     """
     result = convert_sympy_expression_to_expression(rational)
 
-    assert isinstance(result, LiteralExpression)
-    assert "e" not in str(result.value).lower()
+    assert type(result) is expected_type
     assert convert_expression_to_sympy_expression(result) == rational
 
 
@@ -2516,19 +2560,19 @@ def test_integer_lifts_as_an_integer_and_not_as_a_rational() -> None:
 @pytest.mark.parametrize(
     "text",
     [
-        pytest.param("0.1", id="one_tenth"),
         pytest.param("1.5", id="one_and_a_half"),
-        pytest.param("0.075", id="three_decimal_places"),
         pytest.param(".5", id="no_integer_part"),
     ],
 )
-def test_decimal_string_literal_round_trips_through_sympy_unchanged(text: str) -> None:
-    """Test a float-grammar string literal survives lowering and lifting.
+def test_binary_exact_decimal_string_literal_round_trips_through_sympy_unchanged(
+    text: str,
+) -> None:
+    """Test a decimal string literal a binary float equals survives the round trip.
 
-    Lowering reads the text as an exact rational and lifting writes that
-    rational back as exact decimal text, so the round trip lands in the
-    float-decimal bucket it started in rather than collapsing into the
-    float-binary one.
+    Lowering reads the text as an exact rational, and lifting writes that
+    rational back as exact decimal text because a binary ``float`` equals
+    it, so the round trip lands in the float-decimal bucket it started in
+    rather than collapsing into the float-binary one.
     """
     literal = LiteralExpression(text)
 
@@ -2539,6 +2583,41 @@ def test_decimal_string_literal_round_trips_through_sympy_unchanged(text: str) -
     assert result.is_structurally_equivalent(literal)
     assert isinstance(result, LiteralExpression)
     assert type(result.value) is str
+
+
+@pytest.mark.parametrize(
+    "text, expected_numerator, expected_denominator",
+    [
+        pytest.param("0.1", 1, 10, id="one_tenth"),
+        pytest.param("0.075", 3, 40, id="three_decimal_places"),
+    ],
+)
+def test_non_binary_decimal_string_literal_round_trips_as_an_equal_divide(
+    text: str, expected_numerator: int, expected_denominator: int
+) -> None:
+    """Test a decimal string literal no binary float equals comes back as a `DIVIDE`.
+
+    Lowering reads ``"0.1"`` as exactly one tenth, and lifting writes a
+    rational no binary ``float`` equals as the quotient of its numerator
+    and denominator. The form changes but the value does not: the
+    quotient lowers to the same rational the text did.
+    """
+    literal = LiteralExpression(text)
+
+    result = convert_sympy_expression_to_expression(
+        convert_expression_to_sympy_expression(literal)
+    )
+
+    assert result.is_structurally_equivalent(
+        BinaryExpression(
+            BinaryOperation.DIVIDE,
+            LiteralExpression(expected_numerator),
+            LiteralExpression(expected_denominator),
+        )
+    )
+    assert convert_expression_to_sympy_expression(
+        result
+    ) == convert_expression_to_sympy_expression(literal)
 
 
 @pytest.mark.parametrize(
@@ -2568,6 +2647,42 @@ def test_whole_valued_decimal_string_literal_lifts_into_the_integer_bucket(
 
     assert result.is_structurally_equivalent(LiteralExpression(expected_integer))
     assert not result.is_structurally_equivalent(literal)
+
+
+@pytest.mark.parametrize(
+    "rational",
+    [
+        pytest.param(sympy.Rational(1, 2), id="one_half"),
+        pytest.param(sympy.Rational(-7, 2), id="negative_three_and_a_half"),
+        pytest.param(sympy.Rational(2**53 - 1, 2), id="largest_half_a_float_holds"),
+        pytest.param(sympy.Rational(1, 2**100), id="hundred_binary_places"),
+        pytest.param(sympy.Rational(1, 2**1074), id="least_subnormal"),
+        pytest.param(sympy.Rational(1, 10), id="one_tenth"),
+        pytest.param(sympy.Rational(-1, 10), id="negative_one_tenth"),
+        pytest.param(sympy.Rational(3, 40), id="mixed_two_and_five_factors"),
+        pytest.param(sympy.Rational(7, 5), id="seven_fifths"),
+        pytest.param(sympy.Rational(1, 3), id="one_third"),
+    ],
+)
+def test_numpy_evaluator_reads_each_rational_lift_as_the_nearest_float(
+    rational: sympy.Rational,
+) -> None:
+    """Test the NumPy evaluator reads each tabled rational's lift as the nearest float.
+
+    The evaluator refuses a decimal string literal no binary ``float``
+    equals rather than round it, and the lift emits decimal text only
+    when one does, so every string literal the lift produces is one the
+    evaluator reads exactly. Every other rational lifts as a ``DIVIDE`` of
+    integers, which the evaluator computes by true division. A rational
+    whose denominator no ``float`` can hold, such as ``1/2**1075``, is
+    outside this table: true division overflows on it.
+    """
+    pytest.importorskip("numpy")
+    lifted = convert_sympy_expression_to_expression(rational)
+
+    value = evaluate_expression_with_numpy(lifted, {})
+
+    assert value == float(rational)
 
 
 def test_simplify_divide_by_a_literal_yields_the_exact_half() -> None:
@@ -2622,6 +2737,29 @@ def test_simplify_repeating_ground_quotient_yields_a_divide() -> None:
             BinaryOperation.DIVIDE, LiteralExpression(1), LiteralExpression(3)
         )
     )
+
+
+def test_simplify_rational_coefficient_equation_evaluates_with_numpy() -> None:
+    """Test simplifying `21 == 15 * x` leaves a form NumPy decides at `x = 0`.
+
+    SymPy solves the equation to ``x == 7/5``. Seven fifths has finite
+    decimal text, but no binary ``float`` equals it, so it lifts as a
+    ``DIVIDE`` the NumPy evaluator computes rather than as a decimal
+    string literal the evaluator would refuse.
+    """
+    pytest.importorskip("numpy")
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        LiteralExpression(21),
+        BinaryExpression(
+            BinaryOperation.MULTIPLY, LiteralExpression(15), IdentifierExpression(x)
+        ),
+    )
+
+    simplified = simplify_expression(expression)
+
+    assert bool(evaluate_expression_with_numpy(simplified, {x: 0})) is False
 
 
 def test_simplify_quotient_by_zero_raises_the_complex_infinity_error() -> None:

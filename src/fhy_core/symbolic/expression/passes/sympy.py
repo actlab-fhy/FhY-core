@@ -54,6 +54,7 @@ from ..registry import (
     get_registered_entry,
     try_get_native_constant_for_identifier,
 )
+from .native_lowering import is_decimal_text_exactly_binary
 
 
 def _sympy_exp2(value: Any) -> Any:
@@ -211,6 +212,11 @@ def _try_format_rational_as_exact_decimal(
     ``n * 2**(k-a) * 5**(k-b) / 10**k`` for ``k = max(a, b)``, which is
     written exactly with ``k`` fractional digits; every other rational
     repeats forever and has no finite decimal text.
+
+    Finite text is necessary for a decimal-string lift but not sufficient:
+    the NumPy evaluator reads a decimal string literal only when a binary
+    ``float`` equals it, so the lifter keeps this text only for such a
+    rational and writes every other one as a ``DIVIDE``.
 
     Args:
         numerator: Non-negative numerator, in lowest terms with
@@ -1101,26 +1107,31 @@ class SymPyToExpressionConverter(
     def _convert_rational(self, rational: sympy.Rational) -> Expression:
         """Lift a non-integer rational to whichever exact IR form represents it.
 
-        A rational whose decimal expansion terminates becomes a
-        float-grammar string literal, the form ``LiteralExpression``
-        stores as an exact ``decimal.Decimal``; that is what lets a
-        decimal-string literal survive the round trip through SymPy. Every
-        other rational -- ``1/3``, say -- has no finite decimal text, so
-        it becomes a ``DIVIDE`` of its numerator and denominator, which is
-        exact for every rational SymPy can hand over and so keeps lifting
-        total.
+        A rational that some binary ``float`` equals becomes a
+        float-grammar string literal of its exact decimal text, the form
+        ``LiteralExpression`` stores as an exact ``decimal.Decimal``; that
+        is what lets such a decimal-string literal survive the round trip
+        through SymPy. These are exactly the strings the NumPy evaluator
+        reads: ``coerce_literal_value`` refuses decimal text no binary
+        ``float`` equals rather than round it, and the lift asks the same
+        question before writing text, so it never emits a literal the
+        evaluator refuses. Every other rational -- ``1/10``, whose finite
+        decimal text no binary ``float`` equals, or ``1/3``, which has no
+        finite decimal text at all -- becomes a ``DIVIDE`` of its
+        numerator and denominator, which is exact for every rational SymPy
+        can hand over and so keeps lifting total.
 
-        The float grammar is unsigned, so a negative terminating rational
-        becomes a ``NEGATE`` of its magnitude's decimal text -- the IR's
-        own spelling of a negative decimal. A non-terminating one carries
-        the sign on its integer numerator instead.
+        The float grammar is unsigned, so a negative rational lifted as
+        text becomes a ``NEGATE`` of its magnitude's decimal text -- the
+        IR's own spelling of a negative decimal. A ``DIVIDE`` carries the
+        sign on its integer numerator instead.
         """
         numerator = int(rational.p)
         denominator = int(rational.q)
         decimal_text = _try_format_rational_as_exact_decimal(
             abs(numerator), denominator
         )
-        if decimal_text is None:
+        if decimal_text is None or not is_decimal_text_exactly_binary(decimal_text):
             return BinaryExpression(
                 BinaryOperation.DIVIDE,
                 LiteralExpression(numerator),
@@ -1188,8 +1199,9 @@ def convert_sympy_expression_to_expression(
     representation and raises :class:`PartialPiecewiseError`.
 
     A ``sympy.Rational`` lifts exactly: to a float-grammar string literal
-    when its decimal expansion terminates, and otherwise to a ``DIVIDE``
-    of its numerator and denominator. ``sympy.oo`` and ``sympy.nan``
+    when some binary ``float`` equals it, which makes the text one the
+    NumPy evaluator reads, and otherwise to a ``DIVIDE`` of its numerator
+    and denominator. ``sympy.oo`` and ``sympy.nan``
     lift to the canonical identifiers of the registered ``inf`` and
     ``nan`` constants, and ``-oo`` to the negation of ``inf``.
     ``sympy.zoo`` is the one numeric value with no IR counterpart and

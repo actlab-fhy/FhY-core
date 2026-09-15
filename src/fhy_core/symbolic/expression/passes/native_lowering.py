@@ -9,16 +9,20 @@ in particular, the refusal to coerce a float-grammar string literal to a
 binary ``float`` that does not denote the same exact value.
 
 The SymPy bridge (:mod:`fhy_core.symbolic.expression.passes.sympy`) does
-not route through these helpers, and does not need the refusal: it has an
+not lower through these helpers, and does not need the refusal: it has an
 exact target to convert into, so it lowers a float-grammar string to a
 ``sympy.Rational`` carrying the literal's exact decimal value. The
 refusal here is about the destination, not about the string form -- a
 Python ``float`` is the only real number Python and NumPy arithmetic can
-hold, and no binary ``float`` equals ``0.1``, while ``0.5`` is one.
+hold, and no binary ``float`` equals ``0.1``, while ``0.5`` is one. The
+bridge's lifter asks :func:`is_decimal_text_exactly_binary`, the test the
+refusal applies, before it writes a rational as decimal text, so every
+string literal it emits is one these helpers accept.
 """
 
 __all__ = [
     "coerce_literal_value",
+    "is_decimal_text_exactly_binary",
     "try_get_native_constant_value",
 ]
 
@@ -29,6 +33,26 @@ from fhy_core.identifier import Identifier
 from ..core import LiteralType
 from ..errors import StringLiteralPrecisionError
 from ..registry import try_get_native_constant_for_identifier
+
+
+def is_decimal_text_exactly_binary(text: str) -> bool:
+    """Return whether some binary ``float`` equals decimal ``text`` exactly.
+
+    ``float`` rounds the text to the nearest binary value, and both sides
+    of the comparison are exact decimal expansions, so the test holds only
+    when that rounding changes nothing: ``"0.5"`` passes and ``"0.1"``
+    does not. Neither the ``Decimal`` string constructor nor a ``Decimal``
+    comparison rounds to the context precision, so the answer is exact for
+    text of any length.
+
+    Args:
+        text: Integer- or float-grammar decimal text.
+
+    Returns:
+        Whether converting ``text`` to a ``float`` loses nothing.
+
+    """
+    return Decimal(text) == Decimal(float(text))
 
 
 def coerce_literal_value(value: LiteralType) -> bool | int | float:
@@ -59,9 +83,8 @@ def coerce_literal_value(value: LiteralType) -> bool | int | float:
         return int(value)
     except ValueError:
         pass
-    binary_value = float(value)
-    if Decimal(value) == Decimal(binary_value):
-        return binary_value
+    if is_decimal_text_exactly_binary(value):
+        return float(value)
     raise StringLiteralPrecisionError(
         f"cannot coerce string-form float literal {value!r} to a numeric "
         f"value: no binary float equals its exact decimal value; use a "

@@ -6,10 +6,12 @@ cross-bridge substitution contract between ``Expression.substitute`` and
 ``substitute_sympy_expression_variables``.
 
 The semantic round trip and both substitution properties draw
-division-free trees: lowering ``FLOOR_DIVIDE``/``MODULO`` can
-auto-evaluate to a ``Rational`` that lifts to an exact-decimal string
-literal the NumPy oracle then refuses (the same finding
-``tests/symbolic/test_solver_properties.py`` pins with a strict xfail).
+division-free trees. Lowering ``FLOOR_DIVIDE`` to ``floor(a / b)`` lets
+SymPy distribute the divisor over a sum, so ``(v0 * v0 + v0) // -5``
+lifts as ``floor(-v0**2 / 5 - v0 / 5)``. The lifted coefficients are
+exact integer ``DIVIDE`` nodes, but the NumPy oracle computes them by
+float true division, and ``floor`` turns the rounding error into an
+off-by-one: ``-23`` rather than ``-22`` at ``v0 = -11``.
 They enable calls, restricted to :data:`SYMPY_STABLE_CALL_FUNCTIONS`
 (``floor``, ``ceil``, ``round``), the natives whose SymPy node lifts
 back to the same native name.
@@ -82,11 +84,8 @@ _CONSTANT_BOOLEAN_PIECEWISE_CONJUNCTION: Final[Expression] = make_binary_express
 )
 
 
-# include_division=False: a symbolic FLOOR_DIVIDE/MODULO can lower and
-# auto-evaluate to a Rational such as 1/5, which lifts to the
-# exact-decimal string literal "0.2" that evaluate_expression_with_numpy
-# refuses with StringLiteralPrecisionError (no binary float equals 0.2
-# exactly). See the module docstring.
+# include_division=False: see the module docstring for the off-by-one a
+# lifted FLOOR_DIVIDE can evaluate to under the NumPy oracle.
 @example(
     expression=_CONSTANT_BOOLEAN_PIECEWISE_CONJUNCTION,
     environment=dict.fromkeys(_POOL, 0),
@@ -198,8 +197,7 @@ def _draw_substitution_case(
     ``test_substitute_agrees_with_sympy_bridge_substitution_on_self_referential_piecewise``
     below covers with a fixed example.
     """
-    # Division stays off: see the module docstring for the
-    # StringLiteralPrecisionError finding this excludes.
+    # Division stays off: see the module docstring.
     numeric_strategy = build_numeric_expression_strategy(
         _POOL,
         6,

@@ -6,12 +6,27 @@ idempotence) and the Z3-backed query trio -- satisfiability, implication,
 and universal validity -- cross-checked against brute-force enumeration
 over a small bounded integer domain.
 
-Every strategy here draws division-free trees: a symbolic
-``FLOOR_DIVIDE``/``MODULO`` is one of the solver module's documented
-divergences, and SymPy lifts a resulting ``Rational`` such as ``1/5`` to
-the exact-decimal string literal ``"0.2"``, which the NumPy oracle then
-refuses with ``StringLiteralPrecisionError`` (no binary float equals
-``0.2`` exactly); see the pinned xfail below. ``build_numeric_expression_strategy``
+The SymPy-backed properties that simplify symbolic trees draw
+division-free trees, for two reasons found with division enabled.
+First, ``simplify_expression`` can raise SymPy's ``PrecisionExhausted``
+on the ``floor(a / b)`` a ``FLOOR_DIVIDE`` lowers to when ``a`` holds a
+``floor`` or ``ceil`` call, as in ``floor(v0 + 1) // -8 == 0``:
+``sympy.simplify`` tests a relational at a random point, and where the
+outer ``floor``'s argument is exactly an integer, SymPy's integer-part
+evaluation raises instead of giving up. Which trees fail depends on
+SymPy's random state, so the failure is flaky. Second, a simplified
+quotient can hold rational coefficients, as in
+``floor(-v0**2 / 5 - v0 / 5)``, which the NumPy oracle computes by float
+true division, and ``floor`` can turn the rounding error into an
+off-by-one. The full-environment property does draw division: the
+environment binds every identifier before SymPy simplifies, and its
+oracle, ``evaluate_with_python``, is exact. SymPy lifts a ``Rational``
+to decimal text only when a binary float equals it, and to an exact
+integer ``DIVIDE`` otherwise;
+``test_simplify_expression_preserves_a_rational_coefficient_comparison``
+pins one such ``DIVIDE``. The Z3-backed queries draw division-free trees
+too: a symbolic ``FLOOR_DIVIDE``/``MODULO`` is one of the solver
+module's documented divergences. ``build_numeric_expression_strategy``
 and ``build_boolean_expression_strategy`` thread ``include_division``
 through every subtree they draw (including a piecewise condition or
 value), so ``include_division=False`` at the root is enough to keep the
@@ -41,16 +56,14 @@ import pytest
 
 pytest.importorskip("hypothesis")
 
-from hypothesis import example, given, reject, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from fhy_core.identifier import Identifier
-from fhy_core.pass_infrastructure import PassExecutionError
 from fhy_core.symbolic.expression import (
     BinaryOperation,
     Expression,
     LiteralExpression,
-    StringLiteralPrecisionError,
     UnaryOperation,
     evaluate_expression_with_numpy,
     logical_and,
@@ -84,13 +97,12 @@ _SYMBOL_TYPES: Final[dict[Identifier, SymbolType]] = dict.fromkeys(
     _POOL, SymbolType.INT
 )
 
-# Counterexample pinned by
-# test_simplify_expression_preserves_a_rational_coefficient_comparison: SymPy
-# normalizes the equation "21 == 15 * v0" to "v0 == 21/15", and 21/15
-# reduces to 7/5, a terminating decimal (1.4) with no exact binary float
-# representation. The lifted expression holds the exact-decimal string
-# literal "1.4", and evaluate_expression_with_numpy's coerce_literal_value
-# refuses to collapse it to a lossy binary float.
+# Pinned by test_simplify_expression_preserves_a_rational_coefficient_comparison:
+# SymPy solves the equation "21 == 15 * v0" to "v0 == 7/5". Seven fifths
+# has finite decimal text (1.4), but no binary float equals it, so the
+# SymPy lifter writes it as the exact quotient DIVIDE(7, 5), which
+# evaluate_expression_with_numpy computes by true division, rather than as
+# a decimal string literal that coerce_literal_value would refuse.
 _RATIONAL_COEFFICIENT_COMPARISON: Final[Expression] = make_binary_expression(
     BinaryOperation.EQUAL,
     LiteralExpression(21),
@@ -123,11 +135,9 @@ _NON_IDEMPOTENT_SIMPLIFICATION: Final[Expression] = make_unary_expression(
 )
 
 
-# Division stays off everywhere in this module: see the module docstring
-# for the StringLiteralPrecisionError finding this excludes, pinned below
-# by test_simplify_expression_preserves_a_rational_coefficient_comparison.
-# The SymPy-backed properties additionally enable calls restricted to
-# SYMPY_STABLE_CALL_FUNCTIONS and piecewise; see
+# The SymPy-backed properties below enable calls restricted to
+# SYMPY_STABLE_CALL_FUNCTIONS and piecewise. All but the full-environment
+# property keep division off; see the module docstring. See
 # test_check_expression_satisfiability_agrees_with_brute_force et al.
 # below for why the Z3-backed properties keep calls off.
 
@@ -179,41 +189,25 @@ def test_simplify_expression_preserves_evaluation_on_boolean_trees(
 ) -> None:
     """Test simplification never changes a boolean tree's truth value.
 
-    Oracle: ``evaluate_expression_with_numpy``. A draw whose simplified
-    form holds an exact-decimal literal the oracle refuses to evaluate is
-    rejected rather than judged: that refusal is the open issue
-    ``test_simplify_expression_preserves_a_rational_coefficient_comparison``
-    pins, not a counterexample to this law.
+    Oracle: ``evaluate_expression_with_numpy``, an independent lowering
+    from the SymPy bridge simplification runs through.
     """
     expression, environment = tree_and_environment
+
     simplified = simplify_expression(expression)
 
-    try:
-        simplified_value = evaluate_expression_with_numpy(simplified, environment)
-    except PassExecutionError as error:
-        if isinstance(error.__cause__, StringLiteralPrecisionError):
-            reject()
-        raise
-
-    assert bool(simplified_value) == bool(
+    assert bool(evaluate_expression_with_numpy(simplified, environment)) == bool(
         evaluate_expression_with_numpy(expression, environment)
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=PassExecutionError,
-    reason=(
-        "simplify_expression normalizes an equation like '21 == 15 * v0' to "
-        "'v0 == 21/15' (21/15 reduces to 1.4), which SymPy lifting turns "
-        "into the exact-decimal string literal '1.4'; "
-        "evaluate_expression_with_numpy then fails with a PassExecutionError "
-        "caused by StringLiteralPrecisionError, because no binary float "
-        "equals 1.4 exactly. Integer-only input, non-integer-exact output."
-    ),
-)
 def test_simplify_expression_preserves_a_rational_coefficient_comparison() -> None:
-    """Test simplifying ``21 == 15 * v0`` keeps its truth value at ``v0 = 0``."""
+    """Test simplifying ``21 == 15 * v0`` keeps its truth value at ``v0 = 0``.
+
+    Integer-only input simplifies to a comparison against seven fifths, a
+    rational the NumPy oracle reads only as a quotient of integers, never
+    as decimal text.
+    """
     simplified = simplify_expression(_RATIONAL_COEFFICIENT_COMPARISON)
 
     assert bool(
@@ -234,7 +228,7 @@ def test_simplify_expression_preserves_a_rational_coefficient_comparison() -> No
     tree_and_environment=draw_numeric_tree_with_environment(
         _POOL,
         6,
-        include_division=False,
+        include_division=True,
         include_calls=True,
         native_functions=SYMPY_STABLE_CALL_FUNCTIONS,
         include_piecewise=True,
