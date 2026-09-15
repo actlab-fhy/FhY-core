@@ -2007,6 +2007,61 @@ def test_boolean_piecewise_connective_operand_round_trips_through_sympy() -> Non
     )
 
 
+def test_convert_expression_to_sympy_negates_a_boolean_piecewise_operand() -> None:
+    """Test ``!`` over a Boolean piecewise lowers to its first-match meaning."""
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+
+    table = _tabulate_over_x_and_y(logical_not(_build_boolean_piecewise(x, y)))
+
+    assert table == _tabulate_over_x_and_y(
+        logical_not(_build_first_match_expansion(x, y))
+    )
+
+
+def test_simplify_expression_negates_a_constant_boolean_piecewise() -> None:
+    """Test ``!(False if 0 < x, otherwise False)`` simplifies to ``True``."""
+    x = IdentifierExpression(mock_identifier("x", 0))
+    expression = logical_not(
+        piecewise(
+            (
+                BinaryExpression(BinaryOperation.LESS, LiteralExpression(0), x),
+                LiteralExpression(False),
+            ),
+            otherwise=LiteralExpression(False),
+        )
+    )
+
+    result = simplify_expression(expression)
+
+    assert result.is_structurally_equivalent(LiteralExpression(True))
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason=(
+        "SymPy 1.14's simplify drops the boundary point of a negated "
+        "univariate range: simplify(Not(0 < x & x < 5)) returns "
+        "(x >= 5) | (x < 0), which is False at x = 0, where the expression "
+        "holds."
+    ),
+)
+def test_simplify_expression_keeps_the_truth_table_of_a_negated_range() -> None:
+    """Test simplifying ``!(0 < x && x < 5)`` keeps its truth value everywhere."""
+    x = IdentifierExpression(mock_identifier("x", 0))
+    expression = logical_not(
+        logical_and(
+            BinaryExpression(BinaryOperation.LESS, LiteralExpression(0), x),
+            BinaryExpression(BinaryOperation.LESS, x, LiteralExpression(5)),
+        )
+    )
+
+    simplified = simplify_expression(expression)
+
+    assert _tabulate_over_x_and_y(simplified) == _tabulate_over_x_and_y(expression)
+
+
 # =============================================================================
 # A Boolean piecewise compares as a Boolean
 # =============================================================================

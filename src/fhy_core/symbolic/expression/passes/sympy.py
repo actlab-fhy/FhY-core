@@ -268,13 +268,15 @@ _LOGGER = get_logger(__name__)
 
 
 def _convert_piecewise_to_sympy_boolean(operand: Any) -> Any:
-    """Return ``operand`` in a form ``sympy.And`` and ``sympy.Or`` accept.
+    """Return ``operand`` in a form SymPy's Boolean operators handle.
 
     A ``sympy.Piecewise`` is not a SymPy ``Boolean`` even when every
-    branch is Boolean, so the connectives refuse it. Its ``ITE`` rewrite
-    is the equivalent Boolean, the same rewrite SymPy applies to a
-    ``Piecewise`` used as a branch condition, and it reaches nested
-    piecewise values as well. Any other operand is returned as it stands.
+    branch is Boolean: ``sympy.And`` and ``sympy.Or`` refuse it, and
+    ``sympy.Not`` accepts it but SymPy's Boolean simplification then
+    mishandles the result. Its ``ITE`` rewrite is the equivalent Boolean,
+    the same rewrite SymPy applies to a ``Piecewise`` used as a branch
+    condition, and it reaches nested piecewise values as well. Any other
+    operand is returned as it stands.
     """
     if isinstance(operand, sympy.Piecewise):
         return operand.rewrite(sympy.logic.boolalg.ITE)
@@ -373,8 +375,13 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             # ``sympy.Not``, not ``operator.not_``: the latter calls ``bool()``,
             # and every SymPy object other than a ``Relational`` is truthy, so
             # it would decide the negation at lowering time and emit the
-            # constant ``False`` -- discarding the operand entirely.
-            UnaryOperation.LOGICAL_NOT: sympy.Not,
+            # constant ``False`` -- discarding the operand entirely. A Boolean
+            # piecewise operand is rewritten to ``ITE`` first: ``sympy.Not``
+            # accepts a ``Piecewise``, but SymPy's Boolean simplification of
+            # the result can raise or return a wrong answer.
+            UnaryOperation.LOGICAL_NOT: lambda x: sympy.Not(
+                _convert_piecewise_to_sympy_boolean(x)
+            ),
         }
     )
     _BINARY_OPERATION_SYMPY_OPERATORS: immutabledict[
