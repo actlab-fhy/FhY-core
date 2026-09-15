@@ -1465,6 +1465,44 @@ def test_two_branch_sympy_piecewise_lifts_to_single_case_piecewise_expression() 
     assert result.otherwise.is_structurally_equivalent(LiteralExpression(2))
 
 
+def test_sympy_ite_lifts_to_a_single_case_piecewise_expression() -> None:
+    """Test a boolean ``sympy.ITE`` lifts to a one-case ``PiecewiseExpression``.
+
+    ``ITE(condition, consequent, alternative)`` selects its consequent
+    where the condition holds and its alternative everywhere else, so it
+    lifts to the same total, one-case shape a two-branch
+    ``sympy.Piecewise`` lifts to: the condition is the lifted first
+    argument, the case's value is the lifted second argument, and
+    ``otherwise`` is the lifted third argument.
+    """
+    x = sympy.Symbol("x_0")
+    y = sympy.Symbol("y_1")
+    sympy_expression = sympy.ITE(sympy.Eq(x, 0), sympy.Eq(y, 1), x < y)
+
+    result = convert_sympy_expression_to_expression(sympy_expression)
+
+    assert isinstance(result, PiecewiseExpression)
+    assert len(result.conditions) == 1
+    expected_condition = BinaryExpression(
+        BinaryOperation.EQUAL,
+        IdentifierExpression(mock_identifier("x", 0)),
+        LiteralExpression(0),
+    )
+    expected_value = BinaryExpression(
+        BinaryOperation.EQUAL,
+        IdentifierExpression(mock_identifier("y", 1)),
+        LiteralExpression(1),
+    )
+    expected_otherwise = BinaryExpression(
+        BinaryOperation.LESS,
+        IdentifierExpression(mock_identifier("x", 0)),
+        IdentifierExpression(mock_identifier("y", 1)),
+    )
+    assert result.conditions[0].is_structurally_equivalent(expected_condition)
+    assert result.values[0].is_structurally_equivalent(expected_value)
+    assert result.otherwise.is_structurally_equivalent(expected_otherwise)
+
+
 def test_multi_branch_sympy_piecewise_lifts_to_one_flat_piecewise_expression(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
