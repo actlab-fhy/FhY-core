@@ -4,7 +4,7 @@ import os
 from collections.abc import Iterator
 from importlib.util import find_spec
 from typing import Any
-from unittest.mock import MagicMock, Mock
+from unittest.mock import Mock
 
 import pytest
 
@@ -86,6 +86,21 @@ def _get_native_constant_names_by_identifier_id() -> dict[int, str]:
     }
 
 
+def _compare_mock_identifier_by_id(self: Mock, other: object) -> bool:
+    """Return whether ``other`` carries the mock identifier's ``id``."""
+    return bool(self.id == getattr(other, "id", object()))
+
+
+def _hash_mock_identifier_by_id(self: Mock) -> int:
+    """Return the hash of the mock identifier's ``id``."""
+    return hash(self.id)
+
+
+def _render_mock_identifier(self: Mock) -> str:
+    """Return ``<name_hint>::<id>``, the form ``Identifier.__repr__`` takes."""
+    return f"{self.name_hint}::{self.id}"
+
+
 def mock_identifier(name_hint: str, identifier_id: int) -> Identifier:
     """Create a mock identifier.
 
@@ -122,23 +137,20 @@ def mock_identifier(name_hint: str, identifier_id: int) -> Identifier:
     identifier._id = identifier_id
     identifier.name_hint = name_hint
     identifier.id = identifier_id
-    # Configure dunder methods via MagicMock's side_effect rather than direct
-    # function assignment so mock-library internals own the dunder wiring.
-    identifier.__eq__ = MagicMock(  # type: ignore[method-assign]
-        side_effect=lambda other: identifier.id == getattr(other, "id", object())
-    )
-    identifier.__hash__ = MagicMock(  # type: ignore[method-assign]
-        side_effect=lambda: hash(identifier.id)
-    )
+    # The dunders are plain functions taking `self` rather than MagicMocks:
+    # a MagicMock records every call it receives, and the identifier pools
+    # the property tests share across a worker are compared and hashed so
+    # often that the growing history makes each deepcopy of an expression
+    # slower than the last.
+    identifier.__eq__ = _compare_mock_identifier_by_id  # type: ignore[method-assign,assignment]
+    identifier.__hash__ = _hash_mock_identifier_by_id  # type: ignore[method-assign,assignment]
     # `repr()` must be deterministic and content-based, matching the shape of
     # the real `Identifier.__repr__` ("<name_hint>::<id>"), rather than
     # Mock's default address-based form. Code under test canonicalizes by
     # `repr` (e.g. `ConstraintSystem` sorts its members this way), so two
     # independently constructed mocks for the same logical identifier must
     # render identically.
-    identifier.__repr__ = MagicMock(  # type: ignore[method-assign]
-        side_effect=lambda: f"{identifier.name_hint}::{identifier.id}"
-    )
+    identifier.__repr__ = _render_mock_identifier  # type: ignore[method-assign,assignment]
     identifier.serialize_to_dict = lambda: {
         "id": identifier.id,
         "name_hint": identifier.name_hint,
