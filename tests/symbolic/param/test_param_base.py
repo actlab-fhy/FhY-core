@@ -14,7 +14,6 @@ from fhy_core.symbolic.constraint import (
 from fhy_core.symbolic.expression import IdentifierExpression
 from fhy_core.symbolic.param import (
     CategoricalDomain,
-    IntegerDomain,
     OrdinalDomain,
     Param,
     ParamError,
@@ -654,16 +653,6 @@ def test_serialize_to_dict_includes_domain_variable_and_constraint_system_keys()
 # =============================================================================
 # Direct construction with a domain (no factory)
 # =============================================================================
-
-
-def test_param_constructed_directly_with_domain_matches_factory() -> None:
-    """Test constructing a `Param` directly with a domain matches its factory."""
-    direct: Param[int] = Param(IntegerDomain(), variable=mock_identifier("x", 1))
-    via_factory = create_integer_param(name=mock_identifier("x", 1))
-
-    assert direct.is_structurally_equivalent(via_factory)
-    assert direct.is_value_admissible(5)
-    assert not direct.is_value_admissible("not an int")
 
 
 def test_param_constructed_directly_with_finite_domain_admits_only_members() -> None:

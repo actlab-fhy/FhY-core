@@ -43,11 +43,11 @@ Homepage = "https://github.com/actlab-fhy/FhY-core"
 Issues = "https://github.com/actlab-fhy/FhY-core/issues"
 
 [dependency-groups]
-test = ["pytest", "coverage[toml]", "pytest-xdist", "numpy"]
+test = ["pytest", "coverage[toml]", "pytest-xdist", "pytest-timeout", "numpy"]
 property = ["hypothesis", {include-group = "test"}]
 lint = ["ruff"]
 type = ["ty", "mypy", {include-group = "property"}]
-mutation = ["cosmic-ray", {include-group = "test"}]
+mutation = ["cosmic-ray", {include-group = "property"}]
 dev = [
    {include-group = "test"},
    {include-group = "property"},
@@ -61,6 +61,10 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-n auto -rfEs --strict-markers --durations=20 -m 'not slow'"
+# A runaway test fails with a stack dump instead of hanging the run; the
+# thread method also interrupts time spent inside a C extension (z3).
+timeout = 600
+timeout_method = "thread"
 markers = [
     "slow: takes more than ~1s; excluded from default run",
     "very_slow: takes more than ~30s; nightly only",

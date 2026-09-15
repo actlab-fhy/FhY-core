@@ -238,67 +238,6 @@ def test_template_data_type_equivalence_respects_widths() -> None:
 # =============================================================================
 
 
-def test_bind_template_then_substitute_round_trips_for_numerical_type(
-    empty_environment: TypeUnificationEnvironment,
-    float32_data_type: PrimitiveDataType,
-) -> None:
-    """Test a `NumericalType` bind/substitute cycle reproduces the actual type."""
-    t_identifier = Identifier("T")
-    template_data_type = TemplateDataType(t_identifier)
-    n_identifier = Identifier("N")
-    m_identifier = Identifier("M")
-    pattern = NumericalType(
-        template_data_type,
-        [
-            IdentifierExpression(n_identifier),
-            IdentifierExpression(m_identifier),
-        ],
-    )
-    actual = NumericalType(
-        float32_data_type, [LiteralExpression(10), LiteralExpression(20)]
-    )
-
-    environment = bind_template(pattern, actual, empty_environment)
-    assert is_structurally_equivalent(
-        environment.get_data_type_binding(t_identifier), float32_data_type
-    )
-    n_binding = environment.get_expression_binding(n_identifier)
-    m_binding = environment.get_expression_binding(m_identifier)
-    assert n_binding is not None and n_binding.is_structurally_equivalent(
-        LiteralExpression(10)
-    )
-    assert m_binding is not None and m_binding.is_structurally_equivalent(
-        LiteralExpression(20)
-    )
-
-    substituted = substitute_template(pattern, environment)
-    assert is_structurally_equivalent(substituted, actual)
-
-
-def test_bind_template_then_substitute_round_trips_for_index_type(
-    empty_environment: TypeUnificationEnvironment,
-) -> None:
-    """Test an `IndexType` bind/substitute cycle reproduces the actual type."""
-    n_identifier = Identifier("N")
-    pattern = IndexType(
-        LiteralExpression(0),
-        IdentifierExpression(n_identifier),
-        LiteralExpression(1),
-    )
-    actual = IndexType(
-        LiteralExpression(0), LiteralExpression(64), LiteralExpression(1)
-    )
-
-    environment = bind_template(pattern, actual, empty_environment)
-    binding = environment.get_expression_binding(n_identifier)
-    assert binding is not None and binding.is_structurally_equivalent(
-        LiteralExpression(64)
-    )
-
-    substituted = substitute_template(pattern, environment)
-    assert is_structurally_equivalent(substituted, actual)
-
-
 def test_bind_template_full_type_wildcard_records_entire_actual(
     empty_environment: TypeUnificationEnvironment,
     int32_data_type: PrimitiveDataType,

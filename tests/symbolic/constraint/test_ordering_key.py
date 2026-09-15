@@ -295,24 +295,6 @@ def test_third_party_subclass_ordering_key_distinguishes_distinct_instances() ->
 # =============================================================================
 
 
-def test_constraint_system_member_order_matches_sorting_by_the_public_key() -> None:
-    """Test `ConstraintSystem.constraints` equals members sorted by the public key."""
-    x = mock_identifier("x", 0)
-    y = mock_identifier("y", 1)
-    z = mock_identifier("z", 2)
-    members = (
-        NotInSetConstraint(z, {5, 6}),
-        EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, y)),
-        InSetConstraint(x, {1, 2}),
-    )
-
-    system = create_constraint_system(*members)
-
-    assert list(system.constraints) == sorted(
-        members, key=lambda member: member.build_ordering_key()
-    )
-
-
 def test_constraint_system_member_order_matches_the_key_for_a_third_party_kind() -> (
     None
 ):

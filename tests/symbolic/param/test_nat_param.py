@@ -1,5 +1,6 @@
 """Tests for natural-number parameters."""
 
+import re
 from functools import partial
 from typing import Any
 
@@ -8,13 +9,16 @@ import pytest
 from fhy_core.serialization import (
     DeserializationDictStructureError,
 )
-from fhy_core.symbolic.constraint import EquationConstraint
+from fhy_core.symbolic.constraint import ConstraintOutcome, EquationConstraint
 from fhy_core.symbolic.param import (
     IntegerDomain,
     Param,
     ParamError,
     create_integer_param,
     create_natural_param,
+    create_natural_param_between,
+    create_natural_param_with_lower_bound,
+    create_natural_param_with_upper_bound,
 )
 
 from .conftest import assert_all_satisfied, assert_none_satisfied, mock_identifier
@@ -108,24 +112,34 @@ def test_nat_param_with_lower_bound_zero_inclusive_admits_zero() -> None:
             id="between-constructor-negative-bound",
         ),
         pytest.param(
-            # There is no create_natural_param_between factory; individual
-            # add_lower_bound_constraint + add_upper_bound_constraint do not
-            # validate lower <= upper together, so a reversed bound is accepted.
-            # Marked xfail until a between-factory for natural params is added.
-            lambda: (
-                create_natural_param()
-                .add_lower_bound_constraint(3, is_inclusive=False)
-                .add_upper_bound_constraint(2, is_inclusive=False)
-            ),
+            partial(create_natural_param_between, 3, 2),
             [],
-            id="between-constructor-reversed-bound",
-            marks=pytest.mark.xfail(
-                reason=(
-                    "No create_natural_param_between factory: individual "
-                    "bound-adding does not validate lower <= upper together."
-                ),
-                strict=False,
-            ),
+            id="between-factory-reversed-bound",
+        ),
+        pytest.param(
+            partial(create_natural_param_between, -1, 5),
+            [],
+            id="between-factory-negative-lower-bound",
+        ),
+        pytest.param(
+            partial(create_natural_param_between, 0, 5, zero_included=False),
+            [],
+            id="between-factory-inclusive-zero-with-zero-excluded",
+        ),
+        pytest.param(
+            partial(create_natural_param_between, 4, 4, is_upper_inclusive=False),
+            [],
+            id="between-factory-equal-bounds-exclusive-upper",
+        ),
+        pytest.param(
+            partial(create_natural_param_with_lower_bound, -1),
+            [],
+            id="with-lower-bound-factory-negative-bound",
+        ),
+        pytest.param(
+            partial(create_natural_param_with_upper_bound, -1),
+            [],
+            id="with-upper-bound-factory-negative-bound",
         ),
     ],
 )
@@ -419,3 +433,204 @@ def test_nat_param_is_value_admissible_does_not_gate_on_sign() -> None:
 
     assert param.is_value_admissible(-5)
     assert not param.is_value_valid(-5)
+
+
+# =============================================================================
+# Bound factories
+# =============================================================================
+
+
+def test_nat_param_between_with_inclusive_bounds_admits_the_endpoints() -> None:
+    """Test `create_natural_param_between` admits both inclusive endpoints."""
+    param = create_natural_param_between(2, 5)
+
+    assert [param.is_value_valid(value) for value in (1, 2, 5, 6)] == [
+        False,
+        True,
+        True,
+        False,
+    ]
+
+
+def test_nat_param_between_with_exclusive_bounds_excludes_the_endpoints() -> None:
+    """Test exclusive bounds admit only the values strictly inside them."""
+    param = create_natural_param_between(
+        2, 5, is_lower_inclusive=False, is_upper_inclusive=False
+    )
+
+    assert [param.is_value_valid(value) for value in (2, 3, 4, 5)] == [
+        False,
+        True,
+        True,
+        False,
+    ]
+
+
+def test_nat_param_between_with_equal_inclusive_bounds_is_a_singleton() -> None:
+    """Test equal inclusive bounds admit exactly that one value."""
+    param = create_natural_param_between(3, 3)
+
+    assert [param.is_value_valid(value) for value in (2, 3, 4)] == [
+        False,
+        True,
+        False,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("is_lower_inclusive", "is_upper_inclusive"),
+    [
+        pytest.param(False, True, id="exclusive-lower-inclusive-upper"),
+        pytest.param(False, False, id="exclusive-both"),
+    ],
+)
+def test_nat_param_between_with_equal_bounds_and_an_exclusive_side_raises(
+    is_lower_inclusive: bool, is_upper_inclusive: bool
+) -> None:
+    """Test equal bounds with at least one exclusive side enclose no value."""
+    with pytest.raises(
+        ParamError,
+        match=re.escape("Lower bound must be less than or equal to upper bound."),
+    ):
+        create_natural_param_between(
+            3,
+            3,
+            is_lower_inclusive=is_lower_inclusive,
+            is_upper_inclusive=is_upper_inclusive,
+        )
+
+
+def test_nat_param_between_with_consistent_exclusive_bounds_is_empty() -> None:
+    """Test `create_natural_param_between(1, 2)` builds an empty param.
+
+    Both ends exclusive: the bounds are consistent (``1 < 2``) but enclose no
+    integer, so construction succeeds and emptiness is only discoverable by
+    query.
+    """
+    param = create_natural_param_between(
+        1, 2, is_lower_inclusive=False, is_upper_inclusive=False
+    )
+
+    assert param.is_empty()
+    assert param.check_feasibility() is ConstraintOutcome.VIOLATED
+
+
+def test_nat_param_between_with_zero_excluded_and_exclusive_zero_starts_at_one() -> (
+    None
+):
+    """Test an exclusive zero lower bound on a zero-excluded param admits one."""
+    param = create_natural_param_between(
+        0, 2, zero_included=False, is_lower_inclusive=False
+    )
+
+    assert [param.is_value_valid(value) for value in (0, 1, 2, 3)] == [
+        False,
+        True,
+        True,
+        False,
+    ]
+
+
+def test_nat_param_between_binds_the_given_variable() -> None:
+    """Test the factory binds the parameter to the identifier it is given."""
+    variable = mock_identifier("n", 7)
+
+    param = create_natural_param_between(1, 4, name=variable)
+
+    assert param.variable == variable
+
+
+@pytest.mark.parametrize(
+    ("is_inclusive", "expected"),
+    [(True, [False, True, True]), (False, [False, False, True])],
+    ids=["inclusive", "exclusive"],
+)
+def test_nat_param_with_lower_bound_admits_values_from_the_bound(
+    is_inclusive: bool, expected: list[bool]
+) -> None:
+    """Test the lower-bound factory admits values at or above the bound."""
+    param = create_natural_param_with_lower_bound(2, is_inclusive=is_inclusive)
+
+    assert [param.is_value_valid(value) for value in (1, 2, 3)] == expected
+
+
+def test_nat_param_with_lower_bound_and_zero_excluded_rejects_a_zero_bound() -> None:
+    """Test the lower-bound factory rejects a zero bound when zero is excluded."""
+    with pytest.raises(
+        ParamError,
+        match=re.escape("Lower bound must be at least 1 when zero is not included."),
+    ):
+        create_natural_param_with_lower_bound(0, zero_included=False)
+
+
+def test_nat_param_with_lower_bound_zero_excluded_exclusive_starts_at_one() -> None:
+    """Test an exclusive zero lower bound on a zero-excluded param admits one."""
+    param = create_natural_param_with_lower_bound(
+        0, zero_included=False, is_inclusive=False
+    )
+
+    assert param.is_value_valid(1)
+    assert not param.is_value_valid(0)
+
+
+@pytest.mark.parametrize(
+    ("is_inclusive", "expected"),
+    [(True, [False, True, True, False]), (False, [False, True, False, False])],
+    ids=["inclusive", "exclusive"],
+)
+def test_nat_param_with_upper_bound_admits_values_up_to_the_bound(
+    is_inclusive: bool, expected: list[bool]
+) -> None:
+    """Test the upper-bound factory admits natural values up to the bound."""
+    param = create_natural_param_with_upper_bound(2, is_inclusive=is_inclusive)
+
+    assert [param.is_value_valid(value) for value in (-1, 1, 2, 3)] == expected
+
+
+def test_nat_param_with_upper_bound_and_zero_excluded_rejects_zero() -> None:
+    """Test the upper-bound factory keeps the zero exclusion of the domain."""
+    param = create_natural_param_with_upper_bound(3, zero_included=False)
+
+    assert [param.is_value_valid(value) for value in (0, 1, 3)] == [
+        False,
+        True,
+        True,
+    ]
+
+
+def test_nat_param_with_upper_bound_and_zero_excluded_rejects_a_zero_bound() -> None:
+    """Test the upper-bound factory rejects a zero bound when zero is excluded."""
+    with pytest.raises(
+        ParamError,
+        match=re.escape("Upper bound must be at least 1 when zero is not included."),
+    ):
+        create_natural_param_with_upper_bound(0, zero_included=False)
+
+
+def test_nat_param_with_upper_bound_zero_included_exclusive_rejects_zero() -> None:
+    """Test the upper-bound factory rejects an exclusive bound of zero."""
+    with pytest.raises(
+        ParamError,
+        match=re.escape(
+            "Upper bound must be at least 1 if zero is included and bound is exclusive."
+        ),
+    ):
+        create_natural_param_with_upper_bound(0, is_inclusive=False)
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        pytest.param(create_natural_param_with_lower_bound, id="lower-bound-factory"),
+        pytest.param(create_natural_param_with_upper_bound, id="upper-bound-factory"),
+    ],
+)
+def test_nat_param_one_sided_bound_factory_binds_the_given_variable(
+    factory: Any,
+) -> None:
+    """Test the one-sided bound factories bind the parameter to the given variable."""
+    variable = mock_identifier("v", 7)
+
+    param = factory(2, name=variable)
+
+    assert param.variable is variable

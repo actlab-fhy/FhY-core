@@ -35,6 +35,76 @@ The `coverage` session combines the `.coverage.*` data left by the `tests`
 sessions, so run `tests` first. A bare `uv run nox` runs `tests` then
 `coverage` in order; running `coverage` alone on a clean tree simply skips.
 
+## Property tests
+
+Some modules carry Hypothesis-based property tests alongside the example
+suite. Use the following rules to decide which kind of test to write, and
+how to place it.
+
+**When to write a property.** If ten well-chosen hand-picked inputs would
+convince a reviewer, write ten examples instead. Write a property only when
+the input space is combinatorial and you can name an independent oracle for
+it (a reference evaluator, an inverse function, a brute-force enumeration,
+an algebraic law). A property that only re-derives the answer the same way
+the code does is a tautology, not a test. Examples keep three jobs a
+property cannot do: pinning an exact error message or exception type,
+pinning a golden value (serialization shape, `repr`/`str` text), and serving
+as a readable worked example or user story. Exhaustive parametrize tables
+over a finite domain also stay as examples.
+
+**Where they live.** A property test file sits next to the unit it tests,
+named `test_<unit>_properties.py` alongside `test_<unit>.py`. Set
+`pytestmark = pytest.mark.property` at module level, and call
+`pytest.importorskip("hypothesis")` as the first statement, since
+`hypothesis` lives in the `property` dependency group and the `tests` lane
+never installs it. Mark any property that exercises the Z3 bridge with
+`pytest.mark.z3`.
+
+**Shared strategies** live in `tests/strategies/`, one module per domain.
+Import them only from property files, never from a `conftest.py`; a
+`conftest.py` must import cleanly without `hypothesis` installed.
+
+**Profiles.** A bare local `pytest` runs under the `dev` profile (25
+examples). The release gate runs under `thorough` (400 examples,
+derandomized): set `HYPOTHESIS_PROFILE=thorough`, or just run
+`uv run nox -s property`, which sets it for you. Mutation runs use a third
+profile, `mutation` (25 examples, derandomized, no example database), which
+`scripts/run-mutation.sh` selects so every mutant sees the same draws.
+Every property uses `deadline=None`; under `pytest-xdist`, scheduler
+contention rather than test cost is what trips a deadline. Add
+`@settings(max_examples=N)` on top of the profile only when a test is
+genuinely expensive (a Z3 call, a large tree).
+
+**Hazards specific to this codebase.**
+
+- Function-scoped fixtures do not reset between examples: Hypothesis runs
+  the test body many times inside one pytest test. Never request the
+  `function_registry_snapshot` fixture in a `@given` test; write it as an
+  example test instead if it must touch the registry.
+- `Expression.__bool__` raises. Never put an `Expression` in a truth
+  context, in a strategy or in a reference evaluator.
+- Logical connectives and piecewise conditions must be boolean-sorted.
+  Generate sort-aware trees so no draw is ever refused by
+  `validate_logical_operands` or a bridge.
+- `st.data()` blocks `@example`. Put dependent draws in a `@st.composite`
+  strategy instead.
+
+**Lifting an example into a property.** When an example test compares the
+implementation to an oracle on hand-picked inputs, lift it: write the
+property against a strategy from `tests/strategies`, pin every hand-picked
+input with `@example(...)`, and delete the example test, all in the same
+commit. Never use `assume()` to rescue a bad strategy, and never suppress a
+health check; a health check firing is a strategy bug to fix.
+
+**CI policy.** The `property` job only runs on pull requests into `main`
+and on manual dispatch; it does not run on pull requests into `dev`. Run
+`uv run nox -s property` locally before opening a release pull request.
+
+Mutation testing measures whether a property earned its place. Each
+targeted module has its own config under `cosmic-ray/`; run one with
+`uv run nox -s mutation -- <module>` or directly with
+`scripts/run-mutation.sh <module>` (both default to `lattice`).
+
 ## Creating a new Pull Request
 When submitting a pull request, we ask you to check the following:
 

@@ -13,10 +13,14 @@ import pytest
 # module must be import-skippable there instead of failing collection.
 pytest.importorskip("hypothesis")
 
-from hypothesis import given, settings
+from typing import Final
+
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from fhy_core.symbolic.expression import (
+    BinaryExpression,
+    BinaryOperation,
     Expression,
     IdentifierExpression,
     LiteralExpression,
@@ -27,6 +31,10 @@ from fhy_core.symbolic.expression import (
     piecewise,
 )
 
+from ...strategies.literals import (
+    build_boolean_literal_strategy,
+    build_integer_literal_strategy,
+)
 from .conftest import mock_identifier
 
 pytestmark = pytest.mark.property
@@ -48,11 +56,11 @@ _MIN_PIECEWISE_LEAVES = 3
 """Leaves the smallest piecewise node needs: a condition, a value, ``otherwise``."""
 
 
-def _leaf_expressions() -> st.SearchStrategy[Expression]:
+def _build_leaf_expression_strategy() -> st.SearchStrategy[Expression]:
     """Return a strategy for scalar leaf expressions (int or bool literals)."""
     return st.one_of(
-        st.integers(min_value=-1000, max_value=1000).map(LiteralExpression),
-        st.booleans().map(LiteralExpression),
+        build_integer_literal_strategy(min_value=-1000, max_value=1000),
+        build_boolean_literal_strategy(),
     )
 
 
@@ -86,7 +94,7 @@ def _draw_expression(draw: st.DrawFn, max_leaves: int) -> Expression:
     """Draw a leaf or, when ``max_leaves`` affords one, a piecewise node."""
     if max_leaves >= _MIN_PIECEWISE_LEAVES and draw(st.booleans()):
         return draw(_draw_piecewise(max_leaves))
-    return draw(_leaf_expressions())
+    return draw(_build_leaf_expression_strategy())
 
 
 @st.composite
@@ -124,7 +132,8 @@ def _draw_piecewise(
 # =============================================================================
 
 
-@settings(max_examples=50, deadline=None)
+# Tree-heavy: _draw_piecewise builds trees with up to _MAX_TREE_LEAVES leaves.
+@settings(max_examples=50)
 @given(_draw_piecewise())
 def test_random_piecewise_tree_round_trips_through_dict_serialization(
     expression: PiecewiseExpression,
@@ -140,25 +149,24 @@ def test_random_piecewise_tree_round_trips_through_dict_serialization(
 # =============================================================================
 
 
-def _create_bounded_float_strategy() -> st.SearchStrategy[float]:
+def _build_bounded_float_strategy() -> st.SearchStrategy[float]:
     """Return a strategy for finite floats bounded to [-1000.0, 1000.0]."""
     return st.floats(
         min_value=-1000.0, max_value=1000.0, allow_nan=False, allow_infinity=False
     )
 
 
-@settings(max_examples=50, deadline=None)
 @given(
     cases=st.lists(
         st.tuples(
-            _create_bounded_float_strategy(),
+            _build_bounded_float_strategy(),
             st.integers(min_value=-1000, max_value=1000),
         ),
         min_size=1,
         max_size=4,
     ),
     otherwise_value=st.integers(min_value=-1000, max_value=1000),
-    sample_values=st.lists(_create_bounded_float_strategy(), min_size=1, max_size=20),
+    sample_values=st.lists(_build_bounded_float_strategy(), min_size=1, max_size=20),
 )
 def test_numpy_evaluation_matches_pointwise_first_match_fold(
     cases: list[tuple[float, int]],
@@ -181,13 +189,13 @@ def test_numpy_evaluation_matches_pointwise_first_match_fold(
 
     result = evaluate_expression_with_numpy(expression, {x: xs})
 
-    def _reference_fold(sample: float) -> int:
+    def _compute_reference_fold(sample: float) -> int:
         for threshold, value in cases:
             if sample > threshold:
                 return value
         return otherwise_value
 
-    expected = np.array([_reference_fold(sample) for sample in sample_values])
+    expected = np.array([_compute_reference_fold(sample) for sample in sample_values])
     assert np.array_equal(result, expected)
 
 
@@ -216,33 +224,78 @@ def _draw_distinct_integers(draw: st.DrawFn, count: int) -> list[int]:
     return taken
 
 
-@settings(max_examples=50, deadline=None)
-@given(data=st.data(), num_cases=st.integers(min_value=1, max_value=4))
-def test_sympy_round_trip_preserves_the_whole_piecewise(
-    data: st.DataObject, num_cases: int
-) -> None:
-    """Test lowering then lifting through SymPy reconstructs an equivalent node.
+@st.composite
+def _draw_piecewise_with_distinct_case_values(draw: st.DrawFn) -> PiecewiseExpression:
+    """Draw a piecewise node with distinct integer case values and ``otherwise``.
 
-    Asserting only the case count would pass for a bridge that reordered
-    the cases or paired a value with the wrong condition, so every case
-    value and ``otherwise`` are drawn distinct and the restored node is
-    compared structurally. All ``num_cases + 1`` values come from one
-    draw of distinct integers, with ``otherwise`` split off its end, so
-    no draw is discarded for colliding with another value.
+    Every case value and ``otherwise`` come from one draw of distinct
+    integers, with ``otherwise`` split off its end, so no draw is
+    discarded for colliding with another value; a lowering/lifting bug
+    that reordered the cases or paired a value with the wrong condition
+    -- not just dropped one -- is still caught by comparing the whole
+    restored tree structurally.
     """
-    *values, otherwise_value = data.draw(_draw_distinct_integers(num_cases + 1))
+    num_cases = draw(st.integers(min_value=1, max_value=4))
+    *values, otherwise_value = draw(_draw_distinct_integers(num_cases + 1))
     conditions = tuple(
         IdentifierExpression(mock_identifier(f"property_case_{i}", i))
         for i in range(num_cases)
     )
     value_expressions = tuple(LiteralExpression(value) for value in values)
-    expression = PiecewiseExpression(
+    return PiecewiseExpression(
         conditions, value_expressions, LiteralExpression(otherwise_value)
     )
 
+
+# Shared building block for the two pinned examples below: both use a
+# comparison (rather than a bare identifier) as a case condition, a shape
+# _draw_piecewise_with_distinct_case_values never draws.
+_COMPARISON_CONDITION_IDENTIFIER: Final = mock_identifier("x", 0)
+_COMPARISON_CONDITION_SYMBOL: Final = IdentifierExpression(
+    _COMPARISON_CONDITION_IDENTIFIER
+)
+# A single-case piecewise pinned as an example: both operands are leaves
+# whose SymPy lowerings preserve their shape.
+_SINGLE_COMPARISON_CASE_PIECEWISE: Final = PiecewiseExpression(
+    (
+        BinaryExpression(
+            BinaryOperation.GREATER, _COMPARISON_CONDITION_SYMBOL, LiteralExpression(0)
+        ),
+    ),
+    (_COMPARISON_CONDITION_SYMBOL,),
+    LiteralExpression(0),
+)
+# A 3-case chain of comparisons with distinguishable literal values, pinned
+# as an example.
+_MULTI_COMPARISON_CASE_PIECEWISE: Final = PiecewiseExpression(
+    (
+        _COMPARISON_CONDITION_SYMBOL > 0,
+        _COMPARISON_CONDITION_SYMBOL > 10,
+        _COMPARISON_CONDITION_SYMBOL > 20,
+    ),
+    (LiteralExpression(10), LiteralExpression(20), LiteralExpression(30)),
+    LiteralExpression(99),
+)
+
+
+# Tree-heavy: exercises the SymPy bridge over piecewise trees with up to
+# four cases.
+@settings(max_examples=50)
+@example(expression=_SINGLE_COMPARISON_CASE_PIECEWISE)
+@example(expression=_MULTI_COMPARISON_CASE_PIECEWISE)
+@given(expression=_draw_piecewise_with_distinct_case_values())
+def test_sympy_round_trip_preserves_the_whole_piecewise(
+    expression: PiecewiseExpression,
+) -> None:
+    """Test lowering then lifting through SymPy reconstructs an equivalent node.
+
+    Asserting only the case count would pass for a bridge that reordered
+    the cases or paired a value with the wrong condition, so the restored
+    node is compared against the original structurally.
+    """
     sympy_expression = convert_expression_to_sympy_expression(expression)
     restored = convert_sympy_expression_to_expression(sympy_expression)
 
     assert isinstance(restored, PiecewiseExpression)
-    assert len(restored.conditions) == num_cases
+    assert len(restored.conditions) == len(expression.conditions)
     assert restored.is_structurally_equivalent(expression)

@@ -97,6 +97,9 @@ __all__ = [
     "create_interval_integer_param_with_upper_bound",
     "create_interval_natural_param",
     "create_natural_param",
+    "create_natural_param_between",
+    "create_natural_param_with_lower_bound",
+    "create_natural_param_with_upper_bound",
     "create_ordinal_param",
     "create_permutation_param",
     "create_real_param",
@@ -1535,6 +1538,24 @@ def create_real_param(
     )
 
 
+def _validate_bounds_are_ordered(
+    lower_bound: float,
+    upper_bound: float,
+    is_lower_inclusive: bool,
+    is_upper_inclusive: bool,
+) -> None:
+    """Raise ``ParamError`` when the bounds enclose no value in any number system.
+
+    This is when ``lower_bound`` exceeds ``upper_bound``, or equals it with
+    an exclusive side. Bounds that are consistent but happen to enclose no
+    integer, such as ``(1, 2)`` with both ends exclusive, pass this check.
+    """
+    if lower_bound > upper_bound or (
+        lower_bound == upper_bound and not (is_lower_inclusive and is_upper_inclusive)
+    ):
+        raise ParamError("Lower bound must be less than or equal to upper bound.")
+
+
 def create_integer_param_between(
     lower_bound: int,
     upper_bound: int,
@@ -1544,10 +1565,9 @@ def create_integer_param_between(
     is_upper_inclusive: bool = True,
 ) -> Param[int]:
     """Create an integer parameter bounded to ``[lower_bound, upper_bound]``."""
-    if lower_bound > upper_bound or (
-        lower_bound == upper_bound and not (is_lower_inclusive and is_upper_inclusive)
-    ):
-        raise ParamError("Lower bound must be less than or equal to upper bound.")
+    _validate_bounds_are_ordered(
+        lower_bound, upper_bound, is_lower_inclusive, is_upper_inclusive
+    )
     param = create_integer_param(name=name)
     param = param.add_lower_bound_constraint(
         lower_bound, is_inclusive=is_lower_inclusive
@@ -1575,6 +1595,80 @@ def create_integer_param_with_upper_bound(
     )
 
 
+def create_natural_param_between(
+    lower_bound: int,
+    upper_bound: int,
+    *,
+    name: Identifier | None = None,
+    zero_included: bool = True,
+    is_lower_inclusive: bool = True,
+    is_upper_inclusive: bool = True,
+) -> Param[int]:
+    """Create a natural-number parameter bounded to ``[lower_bound, upper_bound]``.
+
+    Args:
+        lower_bound: Lower bound; must lie within the natural domain.
+        upper_bound: Upper bound; must not lie below ``lower_bound``, and
+            may equal it only when both bounds are inclusive.
+        name: Variable for the parameter; defaults to a fresh
+            ``Identifier("param")``.
+        zero_included: Whether zero belongs to the domain.
+        is_lower_inclusive: Whether ``lower_bound`` itself is admitted.
+        is_upper_inclusive: Whether ``upper_bound`` itself is admitted.
+
+    Returns:
+        The bounded natural-number parameter.
+
+    Raises:
+        ParamError: If the bounds are reversed, equal with an exclusive
+            side, or outside the natural domain.
+    """
+    _validate_bounds_are_ordered(
+        lower_bound, upper_bound, is_lower_inclusive, is_upper_inclusive
+    )
+    param = create_natural_param(name=name, zero_included=zero_included)
+    param = param.add_lower_bound_constraint(
+        lower_bound, is_inclusive=is_lower_inclusive
+    )
+    return param.add_upper_bound_constraint(
+        upper_bound, is_inclusive=is_upper_inclusive
+    )
+
+
+def create_natural_param_with_lower_bound(
+    lower_bound: int,
+    *,
+    name: Identifier | None = None,
+    zero_included: bool = True,
+    is_inclusive: bool = True,
+) -> Param[int]:
+    """Create a natural-number parameter with a lower bound.
+
+    Raises:
+        ParamError: If ``lower_bound`` lies outside the natural domain.
+    """
+    return create_natural_param(
+        name=name, zero_included=zero_included
+    ).add_lower_bound_constraint(lower_bound, is_inclusive=is_inclusive)
+
+
+def create_natural_param_with_upper_bound(
+    upper_bound: int,
+    *,
+    name: Identifier | None = None,
+    zero_included: bool = True,
+    is_inclusive: bool = True,
+) -> Param[int]:
+    """Create a natural-number parameter with an upper bound.
+
+    Raises:
+        ParamError: If ``upper_bound`` lies outside the natural domain.
+    """
+    return create_natural_param(
+        name=name, zero_included=zero_included
+    ).add_upper_bound_constraint(upper_bound, is_inclusive=is_inclusive)
+
+
 def create_real_param_between(
     lower_bound: float | str,
     upper_bound: float | str,
@@ -1584,11 +1678,9 @@ def create_real_param_between(
     is_upper_inclusive: bool = True,
 ) -> Param[str | float]:
     """Create a real parameter bounded to ``[lower_bound, upper_bound]``."""
-    if float(lower_bound) > float(upper_bound) or (
-        float(lower_bound) == float(upper_bound)
-        and not (is_lower_inclusive and is_upper_inclusive)
-    ):
-        raise ParamError("Lower bound must be less than or equal to upper bound.")
+    _validate_bounds_are_ordered(
+        float(lower_bound), float(upper_bound), is_lower_inclusive, is_upper_inclusive
+    )
     param = create_real_param(name=name)
     param = param.add_lower_bound_constraint(
         lower_bound, is_inclusive=is_lower_inclusive
@@ -1650,15 +1742,16 @@ def create_interval_integer_param_between(
     prefer_inclusive: bool = True,
 ) -> Param[int]:
     """Create an interval-integer parameter bounded to ``[lower, upper]``."""
+    _validate_bounds_are_ordered(
+        lower_bound, upper_bound, is_lower_inclusive, is_upper_inclusive
+    )
     param = create_interval_integer_param(name=name, prefer_inclusive=prefer_inclusive)
     param = param.add_lower_bound_constraint(
         lower_bound, is_inclusive=is_lower_inclusive
     )
-    param = param.add_upper_bound_constraint(
+    return param.add_upper_bound_constraint(
         upper_bound, is_inclusive=is_upper_inclusive
     )
-    _get_effective_min_max(param.constraints, param.variable)
-    return param
 
 
 def create_interval_integer_param_with_lower_bound(

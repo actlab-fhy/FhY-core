@@ -42,7 +42,6 @@ from fhy_core.symbolic.param.domains import (
 from .conftest import (
     assert_all_valid,
     assert_none_valid,
-    assert_param_round_trips_in_all_formats,
     mock_identifier,
 )
 
@@ -448,16 +447,6 @@ def test_or_dunder_with_non_param_operand_raises_type_error() -> None:
 # =============================================================================
 # Integration: serialization, subset/feasibility/assign interop
 # =============================================================================
-
-
-def test_union_result_round_trips_through_serialization() -> None:
-    """Test a union result round-trips through DICT, JSON, and BINARY formats."""
-    left = create_categorical_param({"a", "b"})
-    right = create_categorical_param({"b", "c"})
-
-    result = create_union_param(left, right)
-
-    assert_param_round_trips_in_all_formats(result)
 
 
 def test_union_result_interoperates_with_is_subset() -> None:

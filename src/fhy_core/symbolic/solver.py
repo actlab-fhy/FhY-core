@@ -240,7 +240,10 @@ def simplify_expression(
     With an environment binding every free identifier, simplification is
     evaluation: the result is a ``LiteralExpression`` whenever the backend
     can decide the value. Delegates to the SymPy bridge, which performs
-    all conversion and simplification math.
+    all conversion and simplification math. Simplification is
+    best-effort: where ``sympy.simplify`` raises ``PrecisionExhausted``,
+    the expression comes back with ``environment`` substituted but
+    unsimplified.
 
     Args:
         expression: Expression to simplify.
@@ -251,7 +254,8 @@ def simplify_expression(
             backend today.
 
     Returns:
-        Simplified expression.
+        Simplified expression, or the substituted but unsimplified expression
+        when SymPy exhausts precision.
 
     Raises:
         SolverCapabilityError: If ``backend`` is not SIMPLIFICATION-capable

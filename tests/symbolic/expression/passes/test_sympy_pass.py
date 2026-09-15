@@ -2,13 +2,16 @@
 
 import logging
 import math
-from collections.abc import Callable, Mapping, MutableMapping
+from collections.abc import Callable, Iterator, Mapping, MutableMapping
 from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
 import sympy  # type: ignore[import-untyped]
 from immutabledict import immutabledict
+from sympy.core import random as sympy_random  # type: ignore[import-untyped]
+from sympy.core.cache import clear_cache  # type: ignore[import-untyped]
+from sympy.core.evalf import PrecisionExhausted  # type: ignore[import-untyped]
 
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
@@ -29,6 +32,7 @@ from fhy_core.symbolic.expression import (
     call,
     convert_expression_to_sympy_expression,
     convert_sympy_expression_to_expression,
+    evaluate_expression_with_numpy,
     get_native_constant_identifier,
     inline_functions,
     logical_and,
@@ -981,6 +985,163 @@ def test_simplify_expression_still_decides_a_well_defined_divided_comparison() -
 
 
 # =============================================================================
+# simplify_expression keeps its input when SymPy exhausts precision
+# =============================================================================
+
+
+@pytest.fixture
+def restore_sympy_random_state() -> Iterator[None]:
+    """Restore SymPy's global random state after a test reseeds it."""
+    state = sympy_random.rng.getstate()
+    yield
+    sympy_random.rng.setstate(state)
+
+
+def test_simplify_expression_keeps_the_substituted_form_when_sympy_exhausts_precision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test SymPy exhausting precision leaves the substituted form unsimplified.
+
+    Simplification is best-effort: when ``sympy.simplify`` raises
+    ``PrecisionExhausted``, the result is the lowering with ``environment``
+    substituted, lifted back unsimplified. Unpatched, ``(x - y) * (x + y)
+    == x * x - 9`` with ``y = 3`` simplifies to the literal ``True``.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        BinaryExpression(
+            BinaryOperation.MULTIPLY,
+            BinaryExpression(
+                BinaryOperation.SUBTRACT,
+                IdentifierExpression(x),
+                IdentifierExpression(y),
+            ),
+            BinaryExpression(
+                BinaryOperation.ADD, IdentifierExpression(x), IdentifierExpression(y)
+            ),
+        ),
+        BinaryExpression(
+            BinaryOperation.SUBTRACT,
+            BinaryExpression(
+                BinaryOperation.MULTIPLY,
+                IdentifierExpression(x),
+                IdentifierExpression(x),
+            ),
+            LiteralExpression(9),
+        ),
+    )
+    environment = {y: LiteralExpression(3)}
+    assert simplify_expression(expression, environment).is_structurally_equivalent(
+        LiteralExpression(True)
+    )
+    unsimplified = convert_sympy_expression_to_expression(
+        substitute_sympy_expression_variables(
+            convert_expression_to_sympy_expression(expression), environment
+        )
+    )
+
+    def raise_precision_exhausted(*args: Any, **kwargs: Any) -> Any:
+        raise PrecisionExhausted
+
+    monkeypatch.setattr(sympy, "simplify", raise_precision_exhausted)
+    result = simplify_expression(expression, environment)
+
+    assert result.is_structurally_equivalent(unsimplified)
+    assert not isinstance(result, LiteralExpression)
+
+
+def test_simplify_expression_propagates_other_arithmetic_errors_from_sympy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test only ``PrecisionExhausted`` falls back; other SymPy errors propagate.
+
+    ``ZeroDivisionError`` shares ``PrecisionExhausted``'s ``ArithmeticError``
+    base, so it guards against catching the base class.
+    """
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.LESS, IdentifierExpression(x), LiteralExpression(5)
+    )
+
+    def raise_zero_division(*args: Any, **kwargs: Any) -> Any:
+        raise ZeroDivisionError
+
+    monkeypatch.setattr(sympy, "simplify", raise_zero_division)
+
+    with pytest.raises(ZeroDivisionError):
+        simplify_expression(expression)
+
+
+@pytest.mark.usefixtures("restore_sympy_random_state")
+@pytest.mark.parametrize(
+    "build_expression",
+    [
+        pytest.param(
+            lambda x, y: BinaryExpression(
+                BinaryOperation.EQUAL,
+                BinaryExpression(
+                    BinaryOperation.FLOOR_DIVIDE,
+                    call(
+                        "floor",
+                        BinaryExpression(
+                            BinaryOperation.ADD,
+                            IdentifierExpression(x),
+                            LiteralExpression(1),
+                        ),
+                    ),
+                    LiteralExpression(-8),
+                ),
+                LiteralExpression(0),
+            ),
+            id="floor_divide_of_floor",
+        ),
+        pytest.param(
+            lambda x, y: BinaryExpression(
+                BinaryOperation.NOT_EQUAL,
+                BinaryExpression(
+                    BinaryOperation.FLOOR_DIVIDE,
+                    BinaryExpression(
+                        BinaryOperation.SUBTRACT,
+                        call("floor", call("floor", IdentifierExpression(y))),
+                        call("ceil", call("ceil", IdentifierExpression(x))),
+                    ),
+                    LiteralExpression(-1),
+                ),
+                LiteralExpression(-10),
+            ),
+            id="floor_divide_of_floor_minus_ceil",
+        ),
+    ],
+)
+def test_simplify_expression_survives_sympy_precision_exhaustion(
+    build_expression: Callable[[Identifier, Identifier], Expression],
+) -> None:
+    """Test SymPy's ``PrecisionExhausted`` never escapes ``simplify_expression``.
+
+    ``sympy.simplify`` checks a relational numerically at random points,
+    and SymPy 1.14's integer-part evaluation raises ``PrecisionExhausted``
+    where the argument of an outer ``floor`` is exactly an integer at such
+    a point. Whether a call fails depends on SymPy's random state, so the
+    test reseeds it (seeds 0 to 9 include failing ones for both shapes on
+    SymPy 1.14) and clears SymPy's cache before each call. The result must
+    keep the input's truth value at every grid point.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = build_expression(x, y)
+    expected = _tabulate_over_x_and_y(expression)
+
+    for seed in range(10):
+        clear_cache()
+        sympy_random.seed(seed)
+        result = simplify_expression(expression)
+
+        assert _tabulate_over_x_and_y(result) == expected
+
+
+# =============================================================================
 # Native constants resolve by identity, not by name
 # =============================================================================
 
@@ -1465,6 +1626,44 @@ def test_two_branch_sympy_piecewise_lifts_to_single_case_piecewise_expression() 
     assert result.otherwise.is_structurally_equivalent(LiteralExpression(2))
 
 
+def test_sympy_ite_lifts_to_a_single_case_piecewise_expression() -> None:
+    """Test a boolean ``sympy.ITE`` lifts to a one-case ``PiecewiseExpression``.
+
+    ``ITE(condition, consequent, alternative)`` selects its consequent
+    where the condition holds and its alternative everywhere else, so it
+    lifts to the same total, one-case shape a two-branch
+    ``sympy.Piecewise`` lifts to: the condition is the lifted first
+    argument, the case's value is the lifted second argument, and
+    ``otherwise`` is the lifted third argument.
+    """
+    x = sympy.Symbol("x_0")
+    y = sympy.Symbol("y_1")
+    sympy_expression = sympy.ITE(sympy.Eq(x, 0), sympy.Eq(y, 1), x < y)
+
+    result = convert_sympy_expression_to_expression(sympy_expression)
+
+    assert isinstance(result, PiecewiseExpression)
+    assert len(result.conditions) == 1
+    expected_condition = BinaryExpression(
+        BinaryOperation.EQUAL,
+        IdentifierExpression(mock_identifier("x", 0)),
+        LiteralExpression(0),
+    )
+    expected_value = BinaryExpression(
+        BinaryOperation.EQUAL,
+        IdentifierExpression(mock_identifier("y", 1)),
+        LiteralExpression(1),
+    )
+    expected_otherwise = BinaryExpression(
+        BinaryOperation.LESS,
+        IdentifierExpression(mock_identifier("x", 0)),
+        IdentifierExpression(mock_identifier("y", 1)),
+    )
+    assert result.conditions[0].is_structurally_equivalent(expected_condition)
+    assert result.values[0].is_structurally_equivalent(expected_value)
+    assert result.otherwise.is_structurally_equivalent(expected_otherwise)
+
+
 def test_multi_branch_sympy_piecewise_lifts_to_one_flat_piecewise_expression(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1523,62 +1722,6 @@ def test_multi_branch_sympy_piecewise_with_non_true_final_condition_raises() -> 
 
     assert isinstance(exc_info.value.__cause__, PartialPiecewiseError)
     assert "flag_1" in str(exc_info.value.__cause__)
-
-
-def test_single_case_piecewise_expression_round_trips_through_sympy() -> None:
-    """Test a one-case ``PiecewiseExpression`` round-trips structurally through SymPy.
-
-    Both operands are leaves whose sympy lowerings preserve their shape;
-    unary-negate values do not round-trip because sympy represents
-    ``-x`` as ``Mul(-1, x)``.
-    """
-    x_identifier = mock_identifier("x", 0)
-    original = PiecewiseExpression(
-        (
-            BinaryExpression(
-                BinaryOperation.GREATER,
-                IdentifierExpression(x_identifier),
-                LiteralExpression(0),
-            ),
-        ),
-        (IdentifierExpression(x_identifier),),
-        LiteralExpression(0),
-    )
-
-    intermediate = convert_expression_to_sympy_expression(original)
-    restored = convert_sympy_expression_to_expression(intermediate)
-
-    assert restored.is_structurally_equivalent(original)
-
-
-def test_multi_case_piecewise_expression_round_trips_with_full_order_and_content() -> (
-    None
-):
-    """Test a 3-case ``PiecewiseExpression`` round-trips with every case intact.
-
-    Uses distinguishable literal values (10/20/30/99), and checks the
-    *entire* round-tripped tree against the original via
-    ``is_structurally_equivalent`` rather than comparing lengths or
-    individual fields, so a lowering/lifting bug that reordered cases or
-    paired a value with the wrong condition -- not just dropped one --
-    would be caught. ``PiecewiseExpression.conditions`` cannot be
-    compared with plain ``==`` here: each round-tripped
-    ``IdentifierExpression`` wraps a freshly reconstructed ``Identifier``
-    (see ``SymPyToExpressionConverter._convert_symbol``), so only
-    ``is_structurally_equivalent`` recognizes it as the same variable.
-    """
-    x_identifier = mock_identifier("x", 0)
-    x_symbol = IdentifierExpression(x_identifier)
-    original = PiecewiseExpression(
-        (x_symbol > 0, x_symbol > 10, x_symbol > 20),
-        (LiteralExpression(10), LiteralExpression(20), LiteralExpression(30)),
-        LiteralExpression(99),
-    )
-
-    intermediate = convert_expression_to_sympy_expression(original)
-    restored = convert_sympy_expression_to_expression(intermediate)
-
-    assert restored.is_structurally_equivalent(original)
 
 
 # =============================================================================
@@ -1913,6 +2056,505 @@ def test_lifted_boolean_node_lowers_back_to_an_equivalent_sympy_boolean(
 
 
 # =============================================================================
+# A Boolean piecewise lowers as an operand of a Boolean connective
+# =============================================================================
+
+
+_X_Y_GRID = tuple((x, y) for x in range(-1, 4) for y in range(-1, 4))
+
+
+def _build_boolean_piecewise(x: Expression, y: Expression) -> Expression:
+    """Build the Boolean piecewise ``y == 1 if x == 0, otherwise x < y``."""
+    return piecewise(
+        (
+            BinaryExpression(BinaryOperation.EQUAL, x, LiteralExpression(0)),
+            BinaryExpression(BinaryOperation.EQUAL, y, LiteralExpression(1)),
+        ),
+        otherwise=BinaryExpression(BinaryOperation.LESS, x, y),
+    )
+
+
+def _build_first_match_expansion(x: Expression, y: Expression) -> Expression:
+    """Build the meaning of `_build_boolean_piecewise` from connectives alone.
+
+    ``(x == 0 && y == 1) || (!(x == 0) && x < y)`` is the first-match
+    reading of the piecewise and builds no piecewise node.
+    """
+    is_first_case = BinaryExpression(BinaryOperation.EQUAL, x, LiteralExpression(0))
+    return logical_or(
+        logical_and(
+            is_first_case,
+            BinaryExpression(BinaryOperation.EQUAL, y, LiteralExpression(1)),
+        ),
+        logical_and(
+            logical_not(is_first_case), BinaryExpression(BinaryOperation.LESS, x, y)
+        ),
+    )
+
+
+def _tabulate_over_x_and_y(expression: Expression) -> tuple[bool, ...]:
+    """Return the lowered expression's truth value at every grid point."""
+    lowered = convert_expression_to_sympy_expression(expression)
+    x_symbol, y_symbol = sympy.Symbol("x_0"), sympy.Symbol("y_1")
+    return tuple(
+        bool(lowered.subs({x_symbol: x_value, y_symbol: y_value}))
+        for x_value, y_value in _X_Y_GRID
+    )
+
+
+@pytest.mark.parametrize(
+    "build_connective",
+    [
+        pytest.param(logical_and, id="and_left"),
+        pytest.param(
+            lambda operand, other: logical_and(other, operand), id="and_right"
+        ),
+        pytest.param(logical_or, id="or_left"),
+        pytest.param(lambda operand, other: logical_or(other, operand), id="or_right"),
+    ],
+)
+def test_convert_expression_to_sympy_lowers_a_boolean_piecewise_connective_operand(
+    build_connective: Callable[[Expression, Expression], Expression],
+) -> None:
+    """Test a Boolean piecewise under ``&&``/``||`` lowers to its first-match meaning.
+
+    ``sympy.And`` and ``sympy.Or`` accept only SymPy Booleans, and a
+    ``sympy.Piecewise`` is not one even when every branch is Boolean. The
+    lowered connective must agree with the connective-only expansion of
+    the piecewise at every grid point.
+    """
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+    other = BinaryExpression(BinaryOperation.LESS, x, LiteralExpression(2))
+
+    table = _tabulate_over_x_and_y(
+        build_connective(_build_boolean_piecewise(x, y), other)
+    )
+
+    assert table == _tabulate_over_x_and_y(
+        build_connective(_build_first_match_expansion(x, y), other)
+    )
+
+
+def test_convert_expression_to_sympy_lowers_a_nested_boolean_piecewise_operand() -> (
+    None
+):
+    """Test a Boolean piecewise nested in another's case value lowers under ``||``."""
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+    is_outer_case = BinaryExpression(BinaryOperation.LESS, x, LiteralExpression(2))
+    y_is_zero = BinaryExpression(BinaryOperation.EQUAL, y, LiteralExpression(0))
+    y_is_negative = BinaryExpression(BinaryOperation.LESS, y, LiteralExpression(0))
+    nested = piecewise(
+        (is_outer_case, _build_boolean_piecewise(x, y)), otherwise=y_is_zero
+    )
+    expansion = logical_or(
+        logical_and(is_outer_case, _build_first_match_expansion(x, y)),
+        logical_and(logical_not(is_outer_case), y_is_zero),
+    )
+
+    table = _tabulate_over_x_and_y(logical_or(nested, y_is_negative))
+
+    assert table == _tabulate_over_x_and_y(logical_or(expansion, y_is_negative))
+
+
+def test_convert_expression_to_sympy_keeps_a_numeric_piecewise_in_a_condition() -> None:
+    """Test a numeric piecewise inside a connective operand's condition keeps its value.
+
+    The Boolean piecewise ``y < 3 if (1 if x == 0, otherwise 2) < y,
+    otherwise x == 3`` sits under ``&&``; its condition compares a numeric
+    piecewise, which has to stay numeric while the Boolean one around it
+    is lowered.
+    """
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+    numeric = piecewise(
+        (
+            BinaryExpression(BinaryOperation.EQUAL, x, LiteralExpression(0)),
+            LiteralExpression(1),
+        ),
+        otherwise=LiteralExpression(2),
+    )
+    condition = BinaryExpression(BinaryOperation.LESS, numeric, y)
+    value = BinaryExpression(BinaryOperation.LESS, y, LiteralExpression(3))
+    fallback = BinaryExpression(BinaryOperation.EQUAL, x, LiteralExpression(3))
+    other = BinaryExpression(BinaryOperation.GREATER_EQUAL, y, LiteralExpression(0))
+    expansion = logical_or(
+        logical_and(condition, value), logical_and(logical_not(condition), fallback)
+    )
+
+    table = _tabulate_over_x_and_y(
+        logical_and(piecewise((condition, value), otherwise=fallback), other)
+    )
+
+    assert table == _tabulate_over_x_and_y(logical_and(expansion, other))
+
+
+def test_boolean_piecewise_connective_operand_round_trips_through_sympy() -> None:
+    """Test lifting a lowered Boolean piecewise connective keeps its truth table."""
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+    other = BinaryExpression(BinaryOperation.LESS, x, LiteralExpression(2))
+    lowered = convert_expression_to_sympy_expression(
+        logical_and(_build_boolean_piecewise(x, y), other)
+    )
+
+    lifted = convert_sympy_expression_to_expression(lowered)
+
+    assert _tabulate_over_x_and_y(lifted) == _tabulate_over_x_and_y(
+        logical_and(_build_first_match_expansion(x, y), other)
+    )
+
+
+def test_convert_expression_to_sympy_negates_a_boolean_piecewise_operand() -> None:
+    """Test ``!`` over a Boolean piecewise lowers to its first-match meaning."""
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+
+    table = _tabulate_over_x_and_y(logical_not(_build_boolean_piecewise(x, y)))
+
+    assert table == _tabulate_over_x_and_y(
+        logical_not(_build_first_match_expansion(x, y))
+    )
+
+
+def test_simplify_expression_negates_a_constant_boolean_piecewise() -> None:
+    """Test ``!(False if 0 < x, otherwise False)`` simplifies to ``True``."""
+    x = IdentifierExpression(mock_identifier("x", 0))
+    expression = logical_not(
+        piecewise(
+            (
+                BinaryExpression(BinaryOperation.LESS, LiteralExpression(0), x),
+                LiteralExpression(False),
+            ),
+            otherwise=LiteralExpression(False),
+        )
+    )
+
+    result = simplify_expression(expression)
+
+    assert result.is_structurally_equivalent(LiteralExpression(True))
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason=(
+        "SymPy 1.14's simplify drops the boundary point of a negated "
+        "univariate range: simplify(Not(0 < x & x < 5)) returns "
+        "(x >= 5) | (x < 0), which is False at x = 0, where the expression "
+        "holds."
+    ),
+)
+def test_simplify_expression_keeps_the_truth_table_of_a_negated_range() -> None:
+    """Test simplifying ``!(0 < x && x < 5)`` keeps its truth value everywhere."""
+    x = IdentifierExpression(mock_identifier("x", 0))
+    expression = logical_not(
+        logical_and(
+            BinaryExpression(BinaryOperation.LESS, LiteralExpression(0), x),
+            BinaryExpression(BinaryOperation.LESS, x, LiteralExpression(5)),
+        )
+    )
+
+    simplified = simplify_expression(expression)
+
+    assert _tabulate_over_x_and_y(simplified) == _tabulate_over_x_and_y(expression)
+
+
+# =============================================================================
+# A Boolean piecewise compares as a Boolean
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "build_comparison",
+    [
+        pytest.param(
+            lambda operand, _: BinaryExpression(
+                BinaryOperation.EQUAL, operand, LiteralExpression(True)
+            ),
+            id="equal_to_true",
+        ),
+        pytest.param(
+            lambda operand, _: BinaryExpression(
+                BinaryOperation.EQUAL, LiteralExpression(True), operand
+            ),
+            id="true_equal_to",
+        ),
+        pytest.param(
+            lambda operand, x: BinaryExpression(
+                BinaryOperation.EQUAL,
+                operand,
+                BinaryExpression(BinaryOperation.LESS, x, LiteralExpression(2)),
+            ),
+            id="equal_to_relation",
+        ),
+        pytest.param(
+            lambda operand, x: BinaryExpression(
+                BinaryOperation.NOT_EQUAL,
+                operand,
+                BinaryExpression(BinaryOperation.LESS, x, LiteralExpression(2)),
+            ),
+            id="not_equal_to_relation",
+        ),
+    ],
+)
+def test_convert_expression_to_sympy_compares_a_boolean_piecewise_as_a_boolean(
+    build_comparison: Callable[[Expression, Expression], Expression],
+) -> None:
+    """Test ``==``/``!=`` over a Boolean piecewise agree with its connective form.
+
+    SymPy decides a comparison between a Boolean and a non-Boolean as
+    unequal on sight, and a ``sympy.Piecewise`` is not a SymPy Boolean
+    even when every branch is Boolean. The comparison must agree, at
+    every grid point, with the same comparison over the piecewise's
+    connective-only expansion.
+    """
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+
+    table = _tabulate_over_x_and_y(build_comparison(_build_boolean_piecewise(x, y), x))
+
+    assert table == _tabulate_over_x_and_y(
+        build_comparison(_build_first_match_expansion(x, y), x)
+    )
+
+
+@pytest.mark.parametrize(
+    ("x_value", "y_value", "expected"),
+    [(0, 1, True), (0, 2, False), (1, 2, True), (3, 2, False)],
+)
+def test_simplify_expression_decides_a_boolean_piecewise_equality_by_its_bindings(
+    x_value: int, y_value: int, expected: bool
+) -> None:
+    """Test ``pw == True`` simplifies to the piecewise's own value under a binding.
+
+    The piecewise is ``y == 1 if x == 0, otherwise x < y``; the rows reach
+    each branch with each truth value.
+    """
+    x_identifier = mock_identifier("x", 0)
+    y_identifier = mock_identifier("y", 1)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        _build_boolean_piecewise(
+            IdentifierExpression(x_identifier), IdentifierExpression(y_identifier)
+        ),
+        LiteralExpression(True),
+    )
+
+    result = simplify_expression(
+        expression,
+        {
+            x_identifier: LiteralExpression(x_value),
+            y_identifier: LiteralExpression(y_value),
+        },
+    )
+
+    assert result.is_structurally_equivalent(LiteralExpression(expected))
+
+
+@pytest.mark.parametrize(
+    ("x_value", "y_value", "b_value", "expected"),
+    [(0, 1, True, True), (0, 1, False, False), (1, 2, False, True)],
+)
+def test_simplify_expression_decides_a_symbol_branch_piecewise_equality_by_its_bindings(
+    x_value: int, y_value: int, b_value: bool, expected: bool
+) -> None:
+    """Test ``(b if x == 0, otherwise x < y) == True`` follows its bindings.
+
+    A branch that is a bare identifier does not show that the piecewise is
+    Boolean; the ``True`` on the other side of ``==`` does.
+    """
+    x_identifier = mock_identifier("x", 0)
+    y_identifier = mock_identifier("y", 1)
+    b_identifier = mock_identifier("b", 2)
+    x = IdentifierExpression(x_identifier)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        piecewise(
+            (
+                BinaryExpression(BinaryOperation.EQUAL, x, LiteralExpression(0)),
+                IdentifierExpression(b_identifier),
+            ),
+            otherwise=BinaryExpression(
+                BinaryOperation.LESS, x, IdentifierExpression(y_identifier)
+            ),
+        ),
+        LiteralExpression(True),
+    )
+
+    result = simplify_expression(
+        expression,
+        {
+            x_identifier: LiteralExpression(x_value),
+            y_identifier: LiteralExpression(y_value),
+            b_identifier: LiteralExpression(b_value),
+        },
+    )
+
+    assert result.is_structurally_equivalent(LiteralExpression(expected))
+
+
+def test_convert_expression_to_sympy_keeps_a_numeric_piecewise_comparison_numeric() -> (
+    None
+):
+    """Test ``==`` over a numeric piecewise still compares numbers.
+
+    ``(1 if x == 0, otherwise 2) == 1`` holds exactly where ``x == 0`` does.
+    """
+    x = IdentifierExpression(mock_identifier("x", 0))
+    is_zero = BinaryExpression(BinaryOperation.EQUAL, x, LiteralExpression(0))
+    numeric = piecewise((is_zero, LiteralExpression(1)), otherwise=LiteralExpression(2))
+
+    table = _tabulate_over_x_and_y(
+        BinaryExpression(BinaryOperation.EQUAL, numeric, LiteralExpression(1))
+    )
+
+    assert table == _tabulate_over_x_and_y(is_zero)
+
+
+def test_boolean_piecewise_comparison_round_trips_through_sympy() -> None:
+    """Test lifting a lowered ``pw != (x < 2)`` keeps its truth table."""
+    x = IdentifierExpression(mock_identifier("x", 0))
+    y = IdentifierExpression(mock_identifier("y", 1))
+    relation = BinaryExpression(BinaryOperation.LESS, x, LiteralExpression(2))
+    lowered = convert_expression_to_sympy_expression(
+        BinaryExpression(
+            BinaryOperation.NOT_EQUAL, _build_boolean_piecewise(x, y), relation
+        )
+    )
+
+    lifted = convert_sympy_expression_to_expression(lowered)
+
+    assert _tabulate_over_x_and_y(lifted) == _tabulate_over_x_and_y(
+        BinaryExpression(
+            BinaryOperation.NOT_EQUAL, _build_first_match_expansion(x, y), relation
+        )
+    )
+
+
+def _evaluate_sympy_boolean(sympy_expression: Any, values: Mapping[str, Any]) -> bool:
+    """Return the truth value of ``sympy_expression`` with named symbols bound."""
+    return bool(
+        sympy_expression.subs(
+            {sympy.Symbol(name): value for name, value in values.items()}
+        )
+    )
+
+
+_PARTIAL_BINDING_ENTRY_POINTS = [
+    pytest.param(
+        lambda expression, environment: substitute_sympy_expression_variables(
+            convert_expression_to_sympy_expression(expression), environment
+        ),
+        id="substitute",
+    ),
+    pytest.param(
+        lambda expression, environment: convert_expression_to_sympy_expression(
+            simplify_expression(expression, environment)
+        ),
+        id="simplify",
+    ),
+]
+
+
+@pytest.mark.parametrize("apply_partial_binding", _PARTIAL_BINDING_ENTRY_POINTS)
+@pytest.mark.parametrize(
+    ("x_value", "b1_value", "b2_value", "expected"),
+    [
+        (0, True, False, True),
+        (0, False, True, False),
+        (1, True, False, False),
+        (1, False, True, True),
+    ],
+)
+def test_binding_only_the_boolean_side_keeps_a_piecewise_comparison_open(
+    apply_partial_binding: Callable[[Expression, Mapping[Identifier, Expression]], Any],
+    x_value: int,
+    b1_value: bool,
+    b2_value: bool,
+    expected: bool,
+) -> None:
+    """Test a piecewise compared with ``b3`` still means itself once ``b3 = True``.
+
+    The expression is ``(b1 if x == 0, otherwise b2) == b3``. Nothing in
+    the tree shows the piecewise is Boolean until ``b3`` is bound, and the
+    comparison must then mean ``b1 if x == 0, otherwise b2`` rather than a
+    decided constant.
+    """
+    x_identifier = mock_identifier("x", 0)
+    b3_identifier = mock_identifier("b3", 5)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        piecewise(
+            (
+                BinaryExpression(
+                    BinaryOperation.EQUAL,
+                    IdentifierExpression(x_identifier),
+                    LiteralExpression(0),
+                ),
+                IdentifierExpression(mock_identifier("b1", 3)),
+            ),
+            otherwise=IdentifierExpression(mock_identifier("b2", 4)),
+        ),
+        IdentifierExpression(b3_identifier),
+    )
+
+    partially_bound = apply_partial_binding(
+        expression, {b3_identifier: LiteralExpression(True)}
+    )
+
+    assert (
+        _evaluate_sympy_boolean(
+            partially_bound, {"x_0": x_value, "b1_3": b1_value, "b2_4": b2_value}
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize("apply_partial_binding", _PARTIAL_BINDING_ENTRY_POINTS)
+@pytest.mark.parametrize(
+    ("x_value", "y_value", "expected"), [(0, 1, True), (0, 2, False), (1, 5, True)]
+)
+def test_binding_only_the_numeric_side_keeps_a_piecewise_comparison_numeric(
+    apply_partial_binding: Callable[[Expression, Mapping[Identifier, Expression]], Any],
+    x_value: int,
+    y_value: int,
+    expected: bool,
+) -> None:
+    """Test a numeric piecewise compared with ``z`` stays numeric once ``z = 1``.
+
+    The expression is ``(y if x == 0, otherwise 1) == z``.
+    """
+    x_identifier = mock_identifier("x", 0)
+    z_identifier = mock_identifier("z", 2)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        piecewise(
+            (
+                BinaryExpression(
+                    BinaryOperation.EQUAL,
+                    IdentifierExpression(x_identifier),
+                    LiteralExpression(0),
+                ),
+                IdentifierExpression(mock_identifier("y", 1)),
+            ),
+            otherwise=LiteralExpression(1),
+        ),
+        IdentifierExpression(z_identifier),
+    )
+
+    partially_bound = apply_partial_binding(
+        expression, {z_identifier: LiteralExpression(1)}
+    )
+
+    assert (
+        _evaluate_sympy_boolean(partially_bound, {"x_0": x_value, "y_1": y_value})
+        is expected
+    )
+
+
+# =============================================================================
 # Rational lifting
 # =============================================================================
 
@@ -1924,39 +2566,73 @@ def test_lifted_boolean_node_lowers_back_to_an_equivalent_sympy_boolean(
         pytest.param(
             sympy.Rational(7, 2), LiteralExpression("3.5"), id="three_and_a_half"
         ),
-        pytest.param(sympy.Rational(1, 10), LiteralExpression("0.1"), id="one_tenth"),
         pytest.param(
             sympy.Rational(1, 8), LiteralExpression("0.125"), id="powers_of_two_only"
         ),
         pytest.param(
-            sympy.Rational(1, 5), LiteralExpression("0.2"), id="powers_of_five_only"
-        ),
-        pytest.param(
-            sympy.Rational(3, 40),
-            LiteralExpression("0.075"),
-            id="mixed_two_and_five_factors",
+            sympy.Rational(2**53 - 1, 2),
+            LiteralExpression("4503599627370495.5"),
+            id="largest_half_a_float_holds",
         ),
         pytest.param(
             sympy.Rational(-7, 2),
             UnaryExpression(UnaryOperation.NEGATE, LiteralExpression("3.5")),
-            id="negative_terminating",
+            id="negative",
         ),
     ],
 )
-def test_terminating_rational_lifts_to_an_exact_decimal_string_literal(
+def test_binary_exact_rational_lifts_to_an_exact_decimal_string_literal(
     rational: sympy.Rational, expected_expression: Expression
 ) -> None:
-    """Test a rational with a terminating expansion lifts to exact decimal text.
+    """Test a rational some binary float equals lifts to its exact decimal text.
 
-    A denominator whose only prime factors are 2 and 5 divides a power of
-    ten, so the rational has finite decimal text and
-    ``LiteralExpression`` stores that text as an exact
-    ``decimal.Decimal``. The float grammar carries no sign, so a negative
-    one lifts as a ``NEGATE`` of its magnitude.
+    Such a rational has a power-of-two denominator, so its decimal
+    expansion terminates, and the NumPy evaluator reads that text back as
+    the same number rather than refusing it. The float grammar carries no
+    sign, so a negative one lifts as a ``NEGATE`` of its magnitude.
     """
     result = convert_sympy_expression_to_expression(rational)
 
     assert result.is_structurally_equivalent(expected_expression)
+
+
+@pytest.mark.parametrize(
+    "rational, expected_numerator, expected_denominator",
+    [
+        pytest.param(sympy.Rational(1, 10), 1, 10, id="one_tenth"),
+        pytest.param(sympy.Rational(1, 5), 1, 5, id="powers_of_five_only"),
+        pytest.param(sympy.Rational(3, 40), 3, 40, id="mixed_two_and_five_factors"),
+        pytest.param(sympy.Rational(7, 5), 7, 5, id="seven_fifths"),
+        pytest.param(
+            sympy.Rational(2**53 + 1, 2),
+            2**53 + 1,
+            2,
+            id="half_beyond_float_precision",
+        ),
+        pytest.param(sympy.Rational(-1, 10), -1, 10, id="negative_one_tenth"),
+    ],
+)
+def test_non_binary_terminating_rational_lifts_to_an_exact_divide(
+    rational: sympy.Rational, expected_numerator: int, expected_denominator: int
+) -> None:
+    """Test a terminating rational no binary float equals lifts to a `DIVIDE`.
+
+    One tenth has finite decimal text, but no binary ``float`` equals it,
+    so the NumPy evaluator would refuse that text rather than round it.
+    Half past ``2**52`` has a power-of-two denominator and still misses:
+    its significand needs 54 bits. The quotient of the integer numerator
+    and denominator is exact, and the sign rides on the numerator, as it
+    does for a repeating rational.
+    """
+    result = convert_sympy_expression_to_expression(rational)
+
+    assert result.is_structurally_equivalent(
+        BinaryExpression(
+            BinaryOperation.DIVIDE,
+            LiteralExpression(expected_numerator),
+            LiteralExpression(expected_denominator),
+        )
+    )
 
 
 @pytest.mark.parametrize(
@@ -1992,31 +2668,40 @@ def test_repeating_rational_lifts_to_an_exact_divide(
 
 
 @pytest.mark.parametrize(
-    "rational",
+    "rational, expected_type",
     [
-        pytest.param(sympy.Rational(1, 2**100), id="hundred_binary_places"),
-        pytest.param(sympy.Rational(1, 10**30), id="thirty_decimal_places"),
         pytest.param(
-            sympy.Rational(12345678901234567890, 2**80), id="wide_numerator_and_scale"
+            sympy.Rational(1, 2**100), LiteralExpression, id="hundred_binary_places"
+        ),
+        pytest.param(
+            sympy.Rational(1, 10**30), BinaryExpression, id="thirty_decimal_places"
+        ),
+        # Reduces to an odd 63-bit numerator over 2**79: a power-of-two
+        # denominator, but a significand wider than a float's 53 bits.
+        pytest.param(
+            sympy.Rational(12345678901234567890, 2**80),
+            BinaryExpression,
+            id="wide_numerator_and_scale",
         ),
     ],
 )
 def test_terminating_rational_lift_is_exact_past_the_default_decimal_precision(
-    rational: sympy.Rational,
+    rational: sympy.Rational, expected_type: type[Expression]
 ) -> None:
     """Test a rational wider than `decimal`'s default context lifts exactly.
 
     ``decimal`` rounds arithmetic to its context precision, 28 digits by
     default, so a lift that computed the digits by dividing would silently
-    truncate here. Lowering the lifted text has to recover the original
-    rational, and the text has to stay in fixed-point form -- scientific
-    notation does not match the float grammar and would be rejected at
-    construction.
+    truncate here, and so would a binary-exactness check that rounded the
+    text before comparing it. Lowering the lift has to recover the
+    original rational in either form: decimal text for ``2**-100``, which
+    a binary float equals, and a ``DIVIDE`` for the other two, which no
+    binary float equals. The text has to stay in fixed-point form, since
+    the float grammar refuses scientific notation at construction.
     """
     result = convert_sympy_expression_to_expression(rational)
 
-    assert isinstance(result, LiteralExpression)
-    assert "e" not in str(result.value).lower()
+    assert type(result) is expected_type
     assert convert_expression_to_sympy_expression(result) == rational
 
 
@@ -2035,19 +2720,19 @@ def test_integer_lifts_as_an_integer_and_not_as_a_rational() -> None:
 @pytest.mark.parametrize(
     "text",
     [
-        pytest.param("0.1", id="one_tenth"),
         pytest.param("1.5", id="one_and_a_half"),
-        pytest.param("0.075", id="three_decimal_places"),
         pytest.param(".5", id="no_integer_part"),
     ],
 )
-def test_decimal_string_literal_round_trips_through_sympy_unchanged(text: str) -> None:
-    """Test a float-grammar string literal survives lowering and lifting.
+def test_binary_exact_decimal_string_literal_round_trips_through_sympy_unchanged(
+    text: str,
+) -> None:
+    """Test a decimal string literal a binary float equals survives the round trip.
 
-    Lowering reads the text as an exact rational and lifting writes that
-    rational back as exact decimal text, so the round trip lands in the
-    float-decimal bucket it started in rather than collapsing into the
-    float-binary one.
+    Lowering reads the text as an exact rational, and lifting writes that
+    rational back as exact decimal text because a binary ``float`` equals
+    it, so the round trip lands in the float-decimal bucket it started in
+    rather than collapsing into the float-binary one.
     """
     literal = LiteralExpression(text)
 
@@ -2058,6 +2743,41 @@ def test_decimal_string_literal_round_trips_through_sympy_unchanged(text: str) -
     assert result.is_structurally_equivalent(literal)
     assert isinstance(result, LiteralExpression)
     assert type(result.value) is str
+
+
+@pytest.mark.parametrize(
+    "text, expected_numerator, expected_denominator",
+    [
+        pytest.param("0.1", 1, 10, id="one_tenth"),
+        pytest.param("0.075", 3, 40, id="three_decimal_places"),
+    ],
+)
+def test_non_binary_decimal_string_literal_round_trips_as_an_equal_divide(
+    text: str, expected_numerator: int, expected_denominator: int
+) -> None:
+    """Test a decimal string literal no binary float equals comes back as a `DIVIDE`.
+
+    Lowering reads ``"0.1"`` as exactly one tenth, and lifting writes a
+    rational no binary ``float`` equals as the quotient of its numerator
+    and denominator. The form changes but the value does not: the
+    quotient lowers to the same rational the text did.
+    """
+    literal = LiteralExpression(text)
+
+    result = convert_sympy_expression_to_expression(
+        convert_expression_to_sympy_expression(literal)
+    )
+
+    assert result.is_structurally_equivalent(
+        BinaryExpression(
+            BinaryOperation.DIVIDE,
+            LiteralExpression(expected_numerator),
+            LiteralExpression(expected_denominator),
+        )
+    )
+    assert convert_expression_to_sympy_expression(
+        result
+    ) == convert_expression_to_sympy_expression(literal)
 
 
 @pytest.mark.parametrize(
@@ -2087,6 +2807,42 @@ def test_whole_valued_decimal_string_literal_lifts_into_the_integer_bucket(
 
     assert result.is_structurally_equivalent(LiteralExpression(expected_integer))
     assert not result.is_structurally_equivalent(literal)
+
+
+@pytest.mark.parametrize(
+    "rational",
+    [
+        pytest.param(sympy.Rational(1, 2), id="one_half"),
+        pytest.param(sympy.Rational(-7, 2), id="negative_three_and_a_half"),
+        pytest.param(sympy.Rational(2**53 - 1, 2), id="largest_half_a_float_holds"),
+        pytest.param(sympy.Rational(1, 2**100), id="hundred_binary_places"),
+        pytest.param(sympy.Rational(1, 2**1074), id="least_subnormal"),
+        pytest.param(sympy.Rational(1, 10), id="one_tenth"),
+        pytest.param(sympy.Rational(-1, 10), id="negative_one_tenth"),
+        pytest.param(sympy.Rational(3, 40), id="mixed_two_and_five_factors"),
+        pytest.param(sympy.Rational(7, 5), id="seven_fifths"),
+        pytest.param(sympy.Rational(1, 3), id="one_third"),
+    ],
+)
+def test_numpy_evaluator_reads_each_rational_lift_as_the_nearest_float(
+    rational: sympy.Rational,
+) -> None:
+    """Test the NumPy evaluator reads each tabled rational's lift as the nearest float.
+
+    The evaluator refuses a decimal string literal no binary ``float``
+    equals rather than round it, and the lift emits decimal text only
+    when one does, so every string literal the lift produces is one the
+    evaluator reads exactly. Every other rational lifts as a ``DIVIDE`` of
+    integers, which the evaluator computes by true division. A rational
+    whose denominator no ``float`` can hold, such as ``1/2**1075``, is
+    outside this table: true division overflows on it.
+    """
+    pytest.importorskip("numpy")
+    lifted = convert_sympy_expression_to_expression(rational)
+
+    value = evaluate_expression_with_numpy(lifted, {})
+
+    assert value == float(rational)
 
 
 def test_simplify_divide_by_a_literal_yields_the_exact_half() -> None:
@@ -2141,6 +2897,29 @@ def test_simplify_repeating_ground_quotient_yields_a_divide() -> None:
             BinaryOperation.DIVIDE, LiteralExpression(1), LiteralExpression(3)
         )
     )
+
+
+def test_simplify_rational_coefficient_equation_evaluates_with_numpy() -> None:
+    """Test simplifying `21 == 15 * x` leaves a form NumPy decides at `x = 0`.
+
+    SymPy solves the equation to ``x == 7/5``. Seven fifths has finite
+    decimal text, but no binary ``float`` equals it, so it lifts as a
+    ``DIVIDE`` the NumPy evaluator computes rather than as a decimal
+    string literal the evaluator would refuse.
+    """
+    pytest.importorskip("numpy")
+    x = mock_identifier("x", 0)
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL,
+        LiteralExpression(21),
+        BinaryExpression(
+            BinaryOperation.MULTIPLY, LiteralExpression(15), IdentifierExpression(x)
+        ),
+    )
+
+    simplified = simplify_expression(expression)
+
+    assert bool(evaluate_expression_with_numpy(simplified, {x: 0})) is False
 
 
 def test_simplify_quotient_by_zero_raises_the_complex_infinity_error() -> None:
