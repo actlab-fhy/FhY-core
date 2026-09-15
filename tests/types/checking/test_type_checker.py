@@ -225,6 +225,53 @@ def test_check_literal_against_weak_expected_type_keeps_weak_literal_type() -> N
     assert result_qualifier is TypeQualifier.PARAM
 
 
+@pytest.mark.parametrize(
+    "expression, expected_core_data_type, result_core_data_type",
+    [
+        pytest.param(
+            LiteralExpression(-1),
+            CoreDataType.INT,
+            CoreDataType.INT,
+            id="negative_literal_vs_int",
+        ),
+        pytest.param(
+            LiteralExpression(1),
+            CoreDataType.INT,
+            CoreDataType.UINT,
+            id="positive_literal_vs_int",
+        ),
+        pytest.param(
+            LiteralExpression(1.5),
+            CoreDataType.FLOAT,
+            CoreDataType.FLOAT,
+            id="float_literal_vs_float",
+        ),
+        pytest.param(
+            BinaryExpression(
+                BinaryOperation.ADD, LiteralExpression(1), LiteralExpression(2)
+            ),
+            CoreDataType.UINT,
+            CoreDataType.UINT,
+            id="unsigned_sum_vs_uint",
+        ),
+    ],
+)
+def test_check_against_a_weak_expected_type_keeps_the_synthesized_weak_type(
+    expression: Expression,
+    expected_core_data_type: CoreDataType,
+    result_core_data_type: CoreDataType,
+) -> None:
+    """Test `check` against a weak expected type keeps the synthesized weak type."""
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    result_type, result_qualifier = checker.check(
+        expression, _make_scalar(expected_core_data_type)
+    )
+
+    assert result_type.is_structurally_equivalent(_make_scalar(result_core_data_type))
+    assert result_qualifier is TypeQualifier.PARAM
+
+
 def test_check_negative_literal_against_weak_unsigned_expected_raises() -> None:
     """Test `check` rejects a negative literal against a weak unsigned type."""
     checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
