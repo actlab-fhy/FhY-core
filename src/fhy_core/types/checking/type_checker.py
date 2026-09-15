@@ -15,6 +15,16 @@ assignment-compatibility check, which is what makes checking an
 expression against the type :func:`synthesize_expression_type` returned
 for it succeed and yield that same type.
 
+A weak literal's value is never range-checked while the literal stays
+weak: neither synthesizing it on its own nor checking it against a weak
+expected type inspects whether the value fits any supported width, so a
+value of any magnitude synthesizes and checks successfully as long as it
+stays weak. The value is checked against a width only once the literal
+meets a concrete type - either because it is checked against a concrete
+expected type directly, or because a binary expression promotes it
+alongside a concretely typed operand - and a value no supported width
+can hold is rejected at that point, not before.
+
 This module raises :class:`FhYCoreTypeError` for type-rule violations and
 :class:`NotImplementedError` for expression shapes / operations that are
 not yet supported (string literals, tensor operands, unknown

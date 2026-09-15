@@ -272,6 +272,109 @@ def test_check_against_a_weak_expected_type_keeps_the_synthesized_weak_type(
     assert result_qualifier is TypeQualifier.PARAM
 
 
+_INTEGER_LITERALS_BEYOND_EVERY_SUPPORTED_WIDTH = (
+    pytest.param(2**64, CoreDataType.UINT, id="uint_beyond_uint32"),
+    pytest.param(2**200, CoreDataType.UINT, id="uint_far_beyond_uint32"),
+    pytest.param(-(2**63) - 1, CoreDataType.INT, id="int_beyond_int64"),
+)
+
+
+@pytest.mark.parametrize(
+    "literal_value, weak_core_data_type",
+    _INTEGER_LITERALS_BEYOND_EVERY_SUPPORTED_WIDTH,
+)
+def test_synthesize_integer_literal_beyond_every_supported_width_stays_weak(
+    literal_value: int, weak_core_data_type: CoreDataType
+) -> None:
+    """Test synthesizing an integer literal beyond every supported width stays weak.
+
+    A weak literal is not range-checked: a value no concrete ``uint``/``int``
+    width can represent still synthesizes as the weak family type instead of
+    raising, the same as a value that does fit.
+    """
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    result_type, result_qualifier = checker.visit(LiteralExpression(literal_value))
+
+    assert result_type.is_structurally_equivalent(_make_scalar(weak_core_data_type))
+    assert result_qualifier is TypeQualifier.PARAM
+
+
+@pytest.mark.parametrize(
+    "literal_value, weak_core_data_type",
+    _INTEGER_LITERALS_BEYOND_EVERY_SUPPORTED_WIDTH,
+)
+def test_check_beyond_width_literal_against_weak_int_keeps_the_weak_type(
+    literal_value: int, weak_core_data_type: CoreDataType
+) -> None:
+    """Test `check` against a weak `INT` keeps a beyond-every-width literal weak.
+
+    A weak expected type carries no width, so checking against it never
+    range-checks the literal's value either; the literal keeps whatever
+    weak type it would have synthesized on its own.
+    """
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    result_type, result_qualifier = checker.check(
+        LiteralExpression(literal_value), _make_scalar(CoreDataType.INT)
+    )
+
+    assert result_type.is_structurally_equivalent(_make_scalar(weak_core_data_type))
+    assert result_qualifier is TypeQualifier.PARAM
+
+
+@pytest.mark.parametrize(
+    "literal_value",
+    [2**64, 2**200, -(2**63) - 1],
+    ids=["uint_beyond_uint32", "uint_far_beyond_uint32", "int_beyond_int64"],
+)
+def test_synthesize_beyond_width_literal_beside_int32_operand_raises(
+    literal_value: int,
+) -> None:
+    """Test a beyond-every-width literal beside a concrete `int32` operand raises.
+
+    Promotion against the concretely typed operand is what first gives the
+    literal a width; a value no supported width can hold is rejected there,
+    even though the same literal type-checks fine while it stays weak.
+    """
+    identifier = mock_identifier("x", 0)
+    checker = make_identifier_checker(
+        {identifier: (_make_scalar(CoreDataType.INT32), TypeQualifier.PARAM)}
+    )
+
+    with pytest.raises(FhYCoreTypeError, match=r"does not fit in a supported int type"):
+        checker.visit(
+            BinaryExpression(
+                BinaryOperation.ADD,
+                IdentifierExpression(identifier),
+                LiteralExpression(literal_value),
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "literal_value",
+    [2**64, 2**200, -(2**63) - 1],
+    ids=["uint_beyond_uint32", "uint_far_beyond_uint32", "int_beyond_int64"],
+)
+def test_check_beyond_width_literal_against_concrete_int64_raises(
+    literal_value: int,
+) -> None:
+    """Test `check` against a concrete `INT64` rejects a beyond-every-width literal.
+
+    Meeting a concrete expected type is what first gives the literal a
+    width to be checked against; a value no supported width can hold is
+    rejected there, unlike checking the same literal against a weak
+    expected type.
+    """
+    checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
+
+    with pytest.raises(FhYCoreTypeError, match=r"does not fit in a supported int type"):
+        checker.check(
+            LiteralExpression(literal_value), _make_scalar(CoreDataType.INT64)
+        )
+
+
 def test_check_negative_literal_against_weak_unsigned_expected_raises() -> None:
     """Test `check` rejects a negative literal against a weak unsigned type."""
     checker = make_single_type_checker(_make_scalar(CoreDataType.INT32))
