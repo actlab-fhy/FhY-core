@@ -1,5 +1,6 @@
 """Tests for interval-integer parameters."""
 
+import re
 from functools import partial
 from typing import Any
 
@@ -7,7 +8,11 @@ import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import DeserializationDictStructureError
-from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
+from fhy_core.symbolic.constraint import (
+    ConstraintOutcome,
+    EquationConstraint,
+    InSetConstraint,
+)
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -106,8 +111,26 @@ def test_bound_int_param_between_with_inclusive_equal_bounds_is_singleton() -> N
 
 def test_bound_int_param_between_with_reversed_bounds_raises() -> None:
     """Test ``create_interval_integer_param_between`` raises when ``lower > upper``."""
-    with pytest.raises(ParamError):
+    with pytest.raises(
+        ParamError,
+        match=re.escape("Lower bound must be less than or equal to upper bound."),
+    ):
         create_interval_integer_param_between(5, 3)
+
+
+def test_bound_int_param_between_with_consistent_exclusive_bounds_is_empty() -> None:
+    """Test ``create_interval_integer_param_between(1, 2)`` builds an empty param.
+
+    Both ends exclusive: the bounds are consistent (``1 < 2``) but enclose no
+    integer, so construction succeeds and emptiness is only discoverable by
+    query.
+    """
+    param = create_interval_integer_param_between(
+        1, 2, is_lower_inclusive=False, is_upper_inclusive=False
+    )
+
+    assert param.is_empty()
+    assert param.check_feasibility() is ConstraintOutcome.VIOLATED
 
 
 # =============================================================================

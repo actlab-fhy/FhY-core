@@ -9,7 +9,7 @@ import pytest
 from fhy_core.serialization import (
     DeserializationDictStructureError,
 )
-from fhy_core.symbolic.constraint import EquationConstraint
+from fhy_core.symbolic.constraint import ConstraintOutcome, EquationConstraint
 from fhy_core.symbolic.param import (
     IntegerDomain,
     Param,
@@ -498,6 +498,21 @@ def test_nat_param_between_with_equal_bounds_and_an_exclusive_side_raises(
             is_lower_inclusive=is_lower_inclusive,
             is_upper_inclusive=is_upper_inclusive,
         )
+
+
+def test_nat_param_between_with_consistent_exclusive_bounds_is_empty() -> None:
+    """Test `create_natural_param_between(1, 2)` builds an empty param.
+
+    Both ends exclusive: the bounds are consistent (``1 < 2``) but enclose no
+    integer, so construction succeeds and emptiness is only discoverable by
+    query.
+    """
+    param = create_natural_param_between(
+        1, 2, is_lower_inclusive=False, is_upper_inclusive=False
+    )
+
+    assert param.is_empty()
+    assert param.check_feasibility() is ConstraintOutcome.VIOLATED
 
 
 def test_nat_param_between_with_zero_excluded_and_exclusive_zero_starts_at_one() -> (

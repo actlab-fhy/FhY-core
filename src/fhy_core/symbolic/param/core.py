@@ -1544,9 +1544,11 @@ def _validate_bounds_are_ordered(
     is_lower_inclusive: bool,
     is_upper_inclusive: bool,
 ) -> None:
-    """Raise ``ParamError`` unless the bounds enclose at least one value.
+    """Raise ``ParamError`` when the bounds enclose no value in any number system.
 
-    Equal bounds enclose a value only when both are inclusive.
+    This is when ``lower_bound`` exceeds ``upper_bound``, or equals it with
+    an exclusive side. Bounds that are consistent but happen to enclose no
+    integer, such as ``(1, 2)`` with both ends exclusive, pass this check.
     """
     if lower_bound > upper_bound or (
         lower_bound == upper_bound and not (is_lower_inclusive and is_upper_inclusive)
@@ -1740,15 +1742,16 @@ def create_interval_integer_param_between(
     prefer_inclusive: bool = True,
 ) -> Param[int]:
     """Create an interval-integer parameter bounded to ``[lower, upper]``."""
+    _validate_bounds_are_ordered(
+        lower_bound, upper_bound, is_lower_inclusive, is_upper_inclusive
+    )
     param = create_interval_integer_param(name=name, prefer_inclusive=prefer_inclusive)
     param = param.add_lower_bound_constraint(
         lower_bound, is_inclusive=is_lower_inclusive
     )
-    param = param.add_upper_bound_constraint(
+    return param.add_upper_bound_constraint(
         upper_bound, is_inclusive=is_upper_inclusive
     )
-    _get_effective_min_max(param.constraints, param.variable)
-    return param
 
 
 def create_interval_integer_param_with_lower_bound(
