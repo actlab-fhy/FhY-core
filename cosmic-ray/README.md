@@ -5,23 +5,18 @@ config differs from the others only in `module-path`. Splitting per module keeps
 scoped, since cosmic-ray mutates and re-tests one file at a time and a
 combined config would force every mutation through the whole target list.
 
-Run one config with the wrapper script from the repo root:
-
-```bash
-scripts/run-mutation.sh lattice
-```
-
-or directly with `nox`:
+Run one config from the repo root:
 
 ```bash
 uv run nox -s mutation -- lattice
 ```
 
-Both default to `lattice` when no module name is given. See the script and
-the `mutation` nox session for the exact `cosmic-ray init` / `exec` / report
+The module defaults to `lattice` when no name is given, and a name without a
+config aborts the session with the list of available ones. See the `mutation`
+nox session for the exact `cosmic-ray baseline` / `init` / `exec` / report
 pipeline.
 
-The script first runs `cosmic-ray baseline`, which stops the run when the
+The session first runs `cosmic-ray baseline`, which stops the run when the
 unmutated suite fails or overruns the config's `timeout`, and it selects the
 `mutation` Hypothesis profile (derandomized, no example database) so every
 mutant sees the same draws. Cosmic-ray scores a mutant whose tests overrun

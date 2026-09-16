@@ -111,6 +111,29 @@ def mutation(session: nox.Session) -> None:
 
     `nox -s mutation -- lattice`.
     """
-    _sync(session, "mutation")
     module = session.posargs[0] if session.posargs else "lattice"
-    session.run("bash", "scripts/run-mutation.sh", module, external=True)
+    config = ROOT / "cosmic-ray" / f"{module}.toml"
+    if not config.is_file():
+        available = ", ".join(
+            sorted(path.stem for path in config.parent.glob("*.toml"))
+        )
+        session.error(f"no mutation config for {module!r}; available: {available}")
+    _sync(session, "mutation")
+    # Every mutant has to see the same Hypothesis draws, and none may replay a
+    # counterexample saved while testing another, so the run uses the
+    # derandomized, database-free `mutation` profile from tests/conftest.py.
+    session.env["HYPOTHESIS_PROFILE"] = "mutation"
+    # Cosmic-ray scores a mutant whose test run overruns the config's timeout as
+    # killed, so stop before mutating anything if the unmutated suite fails or
+    # does not finish within that timeout.
+    session.run("cosmic-ray", "baseline", str(config))
+    database = ROOT / "session.sqlite"
+    database.unlink(missing_ok=True)
+    session.run("cosmic-ray", "init", str(config), str(database))
+    session.run("cr-filter-pragma", str(database))
+    session.run("cosmic-ray", "exec", str(config), str(database))
+    report = ROOT / "mutation-report.html"
+    with report.open("w") as report_file:
+        session.run("cr-html", str(database), stdout=report_file, stderr=None)
+    session.run("cr-report", str(database))
+    session.log(f"Report: {report}")

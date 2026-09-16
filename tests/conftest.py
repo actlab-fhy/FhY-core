@@ -21,7 +21,7 @@ __all__ = [
 
 # Hypothesis settings profiles. `dev` is the local inner loop; `thorough` is
 # the release gate that `nox -s property` selects through HYPOTHESIS_PROFILE;
-# `mutation` is what scripts/run-mutation.sh selects: the dev example count,
+# `mutation` is what `nox -s mutation` selects: the dev example count,
 # derandomized and without an example database, so every mutant runs the same
 # draws and none replays a counterexample saved while testing another.
 # Every profile runs without a deadline: under xdist, scheduler contention
