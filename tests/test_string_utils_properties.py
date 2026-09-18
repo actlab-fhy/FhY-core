@@ -2,10 +2,8 @@
 
 Covers: every item's stringified form appears exactly once, in order; the
 number of separators is `len(items) - 1` (no conjunction is ever inserted,
-so no adjustment applies); empty and singleton inputs behave as the
-docstring implies; and a raw string item is joined verbatim rather than
-passed through `str_func`, per the source's own
-`str_func(item) if not isinstance(item, str) else item` guard.
+so no adjustment applies); and empty and singleton inputs behave as the
+docstring implies.
 """
 
 from collections.abc import Callable
