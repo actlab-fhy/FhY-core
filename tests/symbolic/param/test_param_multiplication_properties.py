@@ -31,8 +31,8 @@ pytestmark = pytest.mark.property
 # reason unrelated to it. The `dev`/`thorough` profiles already set
 # `deadline=None`.
 
-# A finite stand-in for an unbounded end: far beyond any product of the
-# bounded endpoints drawn below, so an unbounded result end must admit it.
+# How far beyond both zero and the finite opposite end a finite stand-in for
+# an unbounded end sits, so an unbounded result end must admit it.
 _FAR_BEYOND_ANY_FINITE_HULL = 10**6
 
 
@@ -90,11 +90,21 @@ def _compute_product_hull(
     return min(products), max(products)
 
 
-def _clamp_to_finite(value: float) -> int:
-    """Return ``value`` as an ``int``, an infinite value clamped to the stand-in."""
-    if math.isinf(value):
-        return int(math.copysign(_FAR_BEYOND_ANY_FINITE_HULL, value))
-    return int(value)
+def _clamp_to_finite(ends: tuple[float, float]) -> tuple[int, int]:
+    """Return ``ends`` as ``int``s, each infinite end replaced by a far stand-in.
+
+    A stand-in lies ``_FAR_BEYOND_ANY_FINITE_HULL`` beyond both zero and
+    the finite opposite end, so it stays outside every finite end however
+    far from zero that end was drawn, and the pair stays ordered.
+    """
+    lower, upper = ends
+    finite_lower = None if math.isinf(lower) else int(lower)
+    finite_upper = None if math.isinf(upper) else int(upper)
+    if finite_lower is None:
+        finite_lower = min(0, finite_upper or 0) - _FAR_BEYOND_ANY_FINITE_HULL
+    if finite_upper is None:
+        finite_upper = max(0, finite_lower) + _FAR_BEYOND_ANY_FINITE_HULL
+    return finite_lower, finite_upper
 
 
 def _sample_hull_boundary(hull_min: float, hull_max: float) -> list[int]:
@@ -103,15 +113,16 @@ def _sample_hull_boundary(hull_min: float, hull_max: float) -> list[int]:
     An unbounded end has no boundary to straddle, so it contributes the
     far-out stand-in instead, which must be admitted.
     """
+    clamped_min, clamped_max = _clamp_to_finite((hull_min, hull_max))
     samples: list[int] = []
     if math.isinf(hull_min):
-        samples.append(_clamp_to_finite(hull_min))
+        samples.append(clamped_min)
     else:
-        samples.extend((int(hull_min) - 1, int(hull_min)))
+        samples.extend((clamped_min - 1, clamped_min))
     if math.isinf(hull_max):
-        samples.append(_clamp_to_finite(hull_max))
+        samples.append(clamped_max)
     else:
-        samples.extend((int(hull_max), int(hull_max) + 1))
+        samples.extend((clamped_max, clamped_max + 1))
     return samples
 
 
@@ -119,10 +130,8 @@ def _build_integer_strategy_within(
     ends: tuple[float, float],
 ) -> st.SearchStrategy[int]:
     """Return a strategy over the integers in ``ends``, infinite ends clamped."""
-    lower, upper = ends
-    return st.integers(
-        min_value=_clamp_to_finite(lower), max_value=_clamp_to_finite(upper)
-    )
+    lower, upper = _clamp_to_finite(ends)
+    return st.integers(min_value=lower, max_value=upper)
 
 
 # =============================================================================
@@ -182,12 +191,8 @@ def draw_multiplication_hull_case(draw: st.DrawFn) -> MultiplicationHullCase:
     hull_min, hull_max = _compute_product_hull(left_ends, right_ends)
     concrete_x = draw(_build_integer_strategy_within(left_ends))
     concrete_y = draw(_build_integer_strategy_within(right_ends))
-    candidate = draw(
-        st.integers(
-            min_value=_clamp_to_finite(hull_min) - 3,
-            max_value=_clamp_to_finite(hull_max) + 3,
-        )
-    )
+    clamped_min, clamped_max = _clamp_to_finite((hull_min, hull_max))
+    candidate = draw(st.integers(min_value=clamped_min - 3, max_value=clamped_max + 3))
     return MultiplicationHullCase(
         x, y, concrete_x, concrete_y, candidate, hull_min, hull_max
     )
@@ -205,7 +210,7 @@ def _build_hull_example(
         y=build_interval_integer_param(right_lower, right_upper),
         concrete_x=left_lower,
         concrete_y=right_lower,
-        candidate=_clamp_to_finite(hull_min),
+        candidate=_clamp_to_finite((hull_min, hull_max))[0],
         hull_min=hull_min,
         hull_max=hull_max,
     )

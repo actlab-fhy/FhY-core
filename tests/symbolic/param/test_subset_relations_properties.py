@@ -12,7 +12,7 @@ import pytest
 
 pytest.importorskip("hypothesis")
 
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 from fhy_core.symbolic.constraint import ConstraintOutcome
@@ -27,9 +27,12 @@ from ...strategies.params import (
     build_ordinal_value_set_strategy,
     draw_bounded_integer_param,
     draw_bounded_real_param,
+    draw_integer_bound,
     draw_interval_integer_param,
     draw_natural_param,
+    draw_real_scale,
 )
+from ...strategies.settings import cap_max_examples
 
 pytestmark = pytest.mark.property
 
@@ -72,17 +75,19 @@ def draw_categorical_subset_case(
 def draw_integer_family_pair_with_candidate(
     draw: st.DrawFn,
 ) -> tuple[Param[int], Param[int], int]:
-    """Draw two integer-family params (any interval kind), plus a candidate."""
+    """Draw two integer-family params (any interval kind), plus a candidate.
+
+    Either param may be empty, and the candidate is drawn the way a bound
+    is, so it lands near a wide bound as well as a small one.
+    """
     family = st.one_of(
-        draw_interval_integer_param(),
-        draw_bounded_integer_param(),
+        draw_interval_integer_param(include_empty=True),
+        draw_bounded_integer_param(include_empty=True),
         draw_natural_param(),
     )
     left = draw(family)
     right = draw(family)
-    candidate = draw(
-        st.integers(min_value=-_CANDIDATE_LIMIT, max_value=_CANDIDATE_LIMIT)
-    )
+    candidate = draw(draw_integer_bound(_CANDIDATE_LIMIT))
     return left, right, candidate
 
 
@@ -90,13 +95,17 @@ def draw_integer_family_pair_with_candidate(
 def draw_real_family_pair_with_candidate(
     draw: st.DrawFn,
 ) -> tuple[Param[str | float], Param[str | float], float]:
-    """Draw two independent bounded-real params with a candidate."""
+    """Draw two independent bounded-real params with a candidate.
+
+    The candidate is a multiple of a real scale drawn the way a bound's
+    is, so it lands near a widely scaled bound as well as a unit one.
+    """
     left = draw(draw_bounded_real_param())
     right = draw(draw_bounded_real_param())
-    candidate = float(
-        draw(st.integers(min_value=-_CANDIDATE_LIMIT, max_value=_CANDIDATE_LIMIT))
+    multiple = draw(
+        st.integers(min_value=-_CANDIDATE_LIMIT, max_value=_CANDIDATE_LIMIT)
     )
-    return left, right, candidate
+    return left, right, multiple * draw(draw_real_scale())
 
 
 # =============================================================================
@@ -132,7 +141,7 @@ def test_is_subset_matches_enumerated_value_set_inclusion_for_finite_kinds(
 
 @pytest.mark.z3
 # Z3-backed: numeric operands may route check_subset through the solver.
-@settings(max_examples=50)
+@cap_max_examples(50)
 @given(
     case=st.one_of(
         draw_integer_family_pair_with_candidate(),

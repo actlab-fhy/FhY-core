@@ -306,21 +306,34 @@ def assert_param_round_trips_in_all_formats(param: Param[Any]) -> None:
 
 
 def build_interval_integer_param(
-    lower_bound: int | None, upper_bound: int | None
+    lower_bound: int | None,
+    upper_bound: int | None,
+    *,
+    is_lower_inclusive: bool = True,
+    is_upper_inclusive: bool = True,
 ) -> Param[int]:
     """Build an interval-integer param over ``[lower, upper]``, ``None`` unbounded.
 
     Picks the factory matching which ends are bounded, so a test can spell
     a half-bounded or fully unbounded operand with the same call shape as
-    a bounded one.
+    a bounded one. An inclusivity flag on an unbounded side is ignored.
     """
     if lower_bound is None:
         if upper_bound is None:
             return create_interval_integer_param()
-        return create_interval_integer_param_with_upper_bound(upper_bound)
+        return create_interval_integer_param_with_upper_bound(
+            upper_bound, is_inclusive=is_upper_inclusive
+        )
     if upper_bound is None:
-        return create_interval_integer_param_with_lower_bound(lower_bound)
-    return create_interval_integer_param_between(lower_bound, upper_bound)
+        return create_interval_integer_param_with_lower_bound(
+            lower_bound, is_inclusive=is_lower_inclusive
+        )
+    return create_interval_integer_param_between(
+        lower_bound,
+        upper_bound,
+        is_lower_inclusive=is_lower_inclusive,
+        is_upper_inclusive=is_upper_inclusive,
+    )
 
 
 def build_case_condition_constraint(condition: Expression) -> EquationConstraint:

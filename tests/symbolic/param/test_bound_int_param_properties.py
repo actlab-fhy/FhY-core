@@ -2,7 +2,8 @@
 
 Covers the soundness and tightness of ``Param.__add__``, ``Param.__sub__``,
 and ``Param.__neg__`` over interval-integer operands drawn bounded,
-half-bounded, and fully unbounded.
+half-bounded, and fully unbounded, with each bounded end inclusive or
+exclusive and now and then far beyond the int64 range.
 """
 
 from typing import Final, NamedTuple
@@ -27,10 +28,10 @@ pytestmark = pytest.mark.property
 # tightness check for a reason unrelated to it. The `dev`/`thorough` profiles
 # already set `deadline=None`.
 
-# A finite stand-in for an unbounded end, used both to sample a concrete
-# point on an unbounded side and to probe that an unbounded result admits
-# arbitrarily large magnitudes.
-_UNBOUNDED_SAMPLE_LIMIT: Final = 35
+# How far beyond both zero and the finite opposite end an unbounded side is
+# sampled for a concrete point, and probed to show that an unbounded result
+# admits arbitrarily large magnitudes.
+_UNBOUNDED_SAMPLE_REACH: Final = 35
 _FAR_BEYOND_ANY_FINITE_HULL: Final = 10**6
 
 
@@ -47,18 +48,28 @@ class BinaryIntervalCase(NamedTuple):
     concrete_y: int
 
 
+def _find_far_below(upper: int | None, distance: int) -> int:
+    """Return a value ``distance`` below zero and below ``upper`` when it is set."""
+    return min(0, 0 if upper is None else upper) - distance
+
+
+def _find_far_above(lower: int | None, distance: int) -> int:
+    """Return a value ``distance`` above zero and above ``lower`` when it is set."""
+    return max(0, 0 if lower is None else lower) + distance
+
+
 def _build_sample_strategy(
     lower: int | None, upper: int | None
 ) -> st.SearchStrategy[int]:
     """Return a strategy over a finite side as-is, an unbounded side clamped.
 
-    An unbounded side is sampled from ``[-35, 35]`` instead, per the
-    property's own scope: soundness only needs one witness point, and 35
-    is comfortably outside every finite bound drawn elsewhere in the case
-    (bounds are drawn in ``[-25, 25]``).
+    An unbounded side is clamped 35 steps beyond both zero and the finite
+    opposite end, per the property's own scope: soundness only needs one
+    witness point, and the clamp keeps the range ordered however far from
+    zero that opposite end was drawn.
     """
-    low = -_UNBOUNDED_SAMPLE_LIMIT if lower is None else lower
-    high = _UNBOUNDED_SAMPLE_LIMIT if upper is None else upper
+    low = _find_far_below(upper, _UNBOUNDED_SAMPLE_REACH) if lower is None else lower
+    high = _find_far_above(lower, _UNBOUNDED_SAMPLE_REACH) if upper is None else upper
     return st.integers(min_value=low, max_value=high)
 
 
@@ -87,23 +98,53 @@ def _build_case(
     )
 
 
+def _build_identical_operand_case(
+    lower_bound: int,
+    upper_bound: int,
+    *,
+    is_lower_inclusive: bool,
+    is_upper_inclusive: bool,
+) -> BinaryIntervalCase:
+    """Build a case of two operands over the same raw bounds, for pinning an example.
+
+    The case records each operand's least and greatest members, one step
+    inside an exclusive raw bound.
+    """
+    lower = lower_bound if is_lower_inclusive else lower_bound + 1
+    upper = upper_bound if is_upper_inclusive else upper_bound - 1
+    x, y = (
+        build_interval_integer_param(
+            lower_bound,
+            upper_bound,
+            is_lower_inclusive=is_lower_inclusive,
+            is_upper_inclusive=is_upper_inclusive,
+        )
+        for _ in range(2)
+    )
+    return BinaryIntervalCase(x, lower, upper, y, lower, upper, lower, lower)
+
+
 def _assert_admits_exactly(
     result: Param[int], lower: int | None, upper: int | None
 ) -> None:
     """Assert ``result`` admits exactly the integers in ``[lower, upper]``.
 
-    ``None`` reads as unbounded on that side: probed with a value far
-    beyond any finite bound drawn elsewhere, which must be admitted. A
+    ``None`` reads as unbounded on that side: probed with a value far past
+    both zero and the finite opposite end, which must be admitted. A
     finite side is probed at the endpoint (admitted) and one step beyond
     it (not admitted).
     """
     if lower is None:
-        assert result.is_constraints_satisfied(-_FAR_BEYOND_ANY_FINITE_HULL)
+        assert result.is_constraints_satisfied(
+            _find_far_below(upper, _FAR_BEYOND_ANY_FINITE_HULL)
+        )
     else:
         assert result.is_constraints_satisfied(lower)
         assert not result.is_constraints_satisfied(lower - 1)
     if upper is None:
-        assert result.is_constraints_satisfied(_FAR_BEYOND_ANY_FINITE_HULL)
+        assert result.is_constraints_satisfied(
+            _find_far_above(lower, _FAR_BEYOND_ANY_FINITE_HULL)
+        )
     else:
         assert result.is_constraints_satisfied(upper)
         assert not result.is_constraints_satisfied(upper + 1)
@@ -121,10 +162,10 @@ def test_interval_addition_subtraction_negation_are_sound(
     """Test x+y valid for A+B, x-y valid for A-B, -x valid for -A, for sampled points.
 
     For any concrete ``x`` admissible in ``A`` and ``y`` admissible in
-    ``B`` (sampled within their finite bounds, or within ``[-35, 35]`` on
-    an unbounded side), the interval-arithmetic result must admit the
-    actual sum, difference, and negation -- the defining soundness
-    property of interval arithmetic.
+    ``B`` (sampled within their finite bounds, or within 35 steps beyond
+    zero and the opposite end on an unbounded side), the
+    interval-arithmetic result must admit the actual sum, difference, and
+    negation -- the defining soundness property of interval arithmetic.
     """
     sum_result = case.x + case.y
     difference_result = case.x - case.y
@@ -144,6 +185,31 @@ def test_interval_addition_subtraction_negation_are_sound(
 @example(case=_build_case(0, 1, 0, 1))
 @example(case=_build_case(-3, 3, -3, 3))
 @example(case=_build_case(-2, 2, -2, 2))
+@example(
+    case=_build_identical_operand_case(
+        0, 1, is_lower_inclusive=False, is_upper_inclusive=True
+    )
+)
+@example(
+    case=_build_identical_operand_case(
+        0, 1, is_lower_inclusive=True, is_upper_inclusive=False
+    )
+)
+@example(
+    case=_build_identical_operand_case(
+        0, 2, is_lower_inclusive=False, is_upper_inclusive=False
+    )
+)
+@example(
+    case=_build_identical_operand_case(
+        -3, 3, is_lower_inclusive=False, is_upper_inclusive=False
+    )
+)
+@example(
+    case=_build_identical_operand_case(
+        -2, 2, is_lower_inclusive=False, is_upper_inclusive=False
+    )
+)
 @given(case=draw_binary_interval_case())
 def test_interval_addition_subtraction_negation_admit_exactly_the_endpoint_hull(
     case: BinaryIntervalCase,
@@ -156,12 +222,8 @@ def test_interval_addition_subtraction_negation_admit_exactly_the_endpoint_hull(
     propagating to ``None`` on the corresponding side of the result. Both
     endpoints of each hull must be admitted and one step beyond each
     finite endpoint must not be, which subsumes checking a concrete pair.
-
-    The brute-force checks over identical-bound operands in
-    ``test_bound_int_param.py`` are inclusive-bound instances of this same
-    law; the exclusive-bound rows there exercise the effective-bound
-    computation for a strict interval, which this property's
-    inclusive-only strategy does not reach, and stay as their own test.
+    An operand's endpoints are its least and greatest members, so an
+    exclusive raw bound is checked through the member one step inside it.
     """
     sum_result = case.x + case.y
     difference_result = case.x - case.y

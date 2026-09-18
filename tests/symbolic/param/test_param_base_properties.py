@@ -37,6 +37,7 @@ from ...strategies.identifiers import build_identifier_pool, build_identifier_st
 from ...strategies.params import (
     build_categorical_value_set_strategy,
     build_ordinal_value_set_strategy,
+    draw_integer_bound,
     draw_param_with_candidate,
 )
 from .conftest import mock_identifier
@@ -57,7 +58,7 @@ _IDENTIFIER_POOL = build_identifier_pool(5)
 # =============================================================================
 
 
-@given(case=draw_param_with_candidate())
+@given(case=draw_param_with_candidate(include_empty=True))
 def test_assign_succeeds_exactly_when_the_value_is_valid(
     case: tuple[Param[Any], Any],
 ) -> None:
@@ -68,6 +69,7 @@ def test_assign_succeeds_exactly_when_the_value_is_valid(
     every way ``is_value_valid`` can be ``False`` for a value drawn by
     these strategies, none of which uses dependent bindings or a
     Boolean-position numeric operand that would raise a different type.
+    An empty param admits no value, so every assignment to it must raise.
     """
     param, candidate = case
 
@@ -107,9 +109,11 @@ def draw_bounded_integer_factory_args(
     ``width`` is forced to ``0`` only alongside inclusive bounds: the
     factory itself raises ``ParamError`` for an empty exclusive-at-a-
     point range, so that combination is never drawn rather than filtered.
+    ``lower`` is drawn the way a shared strategy draws a bound, so it is
+    now and then far beyond the int64 range.
     """
     identifier = draw(build_identifier_strategy(_IDENTIFIER_POOL))
-    lower = draw(st.integers(min_value=-25, max_value=25))
+    lower = draw(draw_integer_bound())
     width = draw(st.integers(min_value=0, max_value=25))
     upper = lower + width
     if width == 0:

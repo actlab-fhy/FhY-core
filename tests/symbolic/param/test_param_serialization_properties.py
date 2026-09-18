@@ -150,7 +150,7 @@ def draw_param_with_a_valid_value(draw: st.DrawFn) -> tuple[Param[Any], Any]:
         3, 5, is_lower_inclusive=True, is_upper_inclusive=False
     )
 )
-@given(param=draw_param_over_any_domain())
+@given(param=draw_param_over_any_domain(include_empty=True))
 def test_param_over_any_domain_round_trips_through_every_format(
     param: Param[Any],
 ) -> None:
@@ -158,7 +158,8 @@ def test_param_over_any_domain_round_trips_through_every_format(
 
     Oracle: ``assert_param_round_trips_in_all_formats``, the same
     structural-equivalence-based round-trip helper the sibling example
-    tests use.
+    tests use. An empty param round-trips like any other, so empties are
+    drawn too.
     """
     assert_param_round_trips_in_all_formats(param)
 
