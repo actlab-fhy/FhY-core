@@ -1,9 +1,11 @@
 """Tests for `fhy_core.symbolic.expression.passes.sympy`."""
 
+import functools
+import itertools
 import logging
 import math
 from collections.abc import Callable, Iterator, Mapping, MutableMapping
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 from unittest.mock import Mock
 
 import pytest
@@ -42,6 +44,7 @@ from fhy_core.symbolic.expression import (
     substitute_sympy_expression_variables,
 )
 from fhy_core.symbolic.expression.core import LiteralType
+from fhy_core.symbolic.expression.passes import sympy as sympy_bridge
 from fhy_core.symbolic.expression.passes.sympy import (
     _NATIVE_CONSTANT_LIFT,
     _NATIVE_CONSTANT_LOWER,
@@ -49,6 +52,7 @@ from fhy_core.symbolic.expression.passes.sympy import (
     ExpressionToSympyConverter,
     SymPyToExpressionConverter,
     SympyVariableSubstitutionPass,
+    _ParityOpaquePiecewise,
 )
 from fhy_core.symbolic.expression.passes.sympy import (
     simplify_expression as sympy_simplify_expression,
@@ -2551,6 +2555,1580 @@ def test_binding_only_the_numeric_side_keeps_a_piecewise_comparison_numeric(
     assert (
         _evaluate_sympy_boolean(partially_bound, {"x_0": x_value, "y_1": y_value})
         is expected
+    )
+
+
+# =============================================================================
+# A Boolean piecewise keeps its first-match meaning in every Boolean position
+# =============================================================================
+
+
+class _PiecewiseVariables(NamedTuple):
+    """Integer identifiers ``x``, ``y`` and Boolean identifiers ``b``, ``c``, ``d``."""
+
+    x: IdentifierExpression
+    y: IdentifierExpression
+    b: IdentifierExpression
+    c: IdentifierExpression
+    d: IdentifierExpression
+
+
+def _create_piecewise_variables() -> _PiecewiseVariables:
+    """Create the identifiers the Boolean-position tests build over."""
+    return _PiecewiseVariables(
+        *(
+            IdentifierExpression(mock_identifier(name, identifier_id))
+            for identifier_id, name in enumerate(("x", "y", "b", "c", "d"))
+        )
+    )
+
+
+def _enumerate_assignments(
+    variables: _PiecewiseVariables,
+) -> Iterator[dict[Identifier, LiteralType]]:
+    """Yield every assignment of ``variables`` the tabulating helpers evaluate at.
+
+    ``x`` ranges over 0..2, ``y`` over 0..1, and each Boolean identifier
+    over both truth values.
+    """
+    domains: dict[Identifier, tuple[LiteralType, ...]] = {
+        variables.x.identifier: (0, 1, 2),
+        variables.y.identifier: (0, 1),
+        variables.b.identifier: (True, False),
+        variables.c.identifier: (True, False),
+        variables.d.identifier: (True, False),
+    }
+    for values in itertools.product(*domains.values()):
+        yield dict(zip(domains, values, strict=True))
+
+
+def _tabulate_with_numpy(
+    expression: Expression, variables: _PiecewiseVariables
+) -> tuple[bool, ...]:
+    """Return ``expression``'s NumPy truth value at each assignment of ``variables``."""
+    return tuple(
+        bool(evaluate_expression_with_numpy(expression, assignment))
+        for assignment in _enumerate_assignments(variables)
+    )
+
+
+def _tabulate_numbers_with_numpy(
+    expression: Expression, variables: _PiecewiseVariables
+) -> tuple[float, ...]:
+    """Return ``expression``'s NumPy value at every assignment of ``variables``."""
+    return tuple(
+        float(evaluate_expression_with_numpy(expression, assignment))
+        for assignment in _enumerate_assignments(variables)
+    )
+
+
+_BOOLEAN_POSITIONS = [
+    pytest.param(lambda operand, _: logical_not(operand), id="not"),
+    pytest.param(
+        lambda operand, _: BinaryExpression(
+            BinaryOperation.EQUAL, operand, LiteralExpression(True)
+        ),
+        id="equal_to_true",
+    ),
+    pytest.param(
+        lambda operand, _: BinaryExpression(
+            BinaryOperation.NOT_EQUAL, LiteralExpression(False), operand
+        ),
+        id="false_not_equal_to",
+    ),
+    pytest.param(
+        lambda operand, variables: BinaryExpression(
+            BinaryOperation.EQUAL, operand, variables.d
+        ),
+        id="equal_to_identifier",
+    ),
+    pytest.param(
+        lambda operand, _: logical_and(operand, LiteralExpression(True)), id="and_true"
+    ),
+    pytest.param(
+        lambda operand, variables: logical_or(variables.d, operand),
+        id="identifier_or",
+    ),
+    pytest.param(
+        lambda operand, variables: piecewise(
+            (operand, variables.x < 1), otherwise=variables.x > 1
+        ),
+        id="case_condition",
+    ),
+]
+
+
+@pytest.mark.parametrize("build_position", _BOOLEAN_POSITIONS)
+@pytest.mark.parametrize(
+    "build_piecewise",
+    [
+        pytest.param(
+            lambda v: piecewise((v.b, LiteralExpression(True)), otherwise=v.c),
+            id="true_if_b_otherwise_c",
+        ),
+        pytest.param(
+            lambda v: piecewise(
+                (v.x > 0, LiteralExpression(True)),
+                (v.b, LiteralExpression(False)),
+                otherwise=v.c,
+            ),
+            id="b_condition_after_a_relation",
+        ),
+        pytest.param(
+            lambda v: piecewise(
+                (
+                    BinaryExpression(
+                        BinaryOperation.EQUAL, v.b, LiteralExpression(True)
+                    ),
+                    v.c,
+                ),
+                otherwise=LiteralExpression(False),
+            ),
+            id="b_equal_to_true_condition",
+        ),
+        pytest.param(
+            lambda v: piecewise(
+                (v.x > 0, piecewise((v.b, LiteralExpression(True)), otherwise=v.c)),
+                otherwise=v.d,
+            ),
+            id="nested_in_a_case_value",
+        ),
+    ],
+)
+def test_simplify_expression_keeps_the_branches_after_a_boolean_identifier_condition(
+    build_piecewise: Callable[[_PiecewiseVariables], Expression],
+    build_position: Callable[[Expression, _PiecewiseVariables], Expression],
+) -> None:
+    """Test a piecewise with a Boolean identifier condition keeps its truth table.
+
+    SymPy's own ``Piecewise`` to ``ITE`` rewrite reads a bare Boolean
+    symbol condition as always true and drops every later branch, so
+    ``!(True if b, otherwise c)`` would simplify to ``False``. Each
+    Boolean position must keep the piecewise's first-match meaning at
+    every assignment.
+    """
+    variables = _create_piecewise_variables()
+    expression = build_position(build_piecewise(variables), variables)
+
+    simplified = simplify_expression(expression)
+
+    assert _tabulate_with_numpy(simplified, variables) == _tabulate_with_numpy(
+        expression, variables
+    )
+
+
+@pytest.mark.parametrize("build_position", _BOOLEAN_POSITIONS)
+@pytest.mark.parametrize(
+    "build_piecewise",
+    [
+        pytest.param(
+            lambda v: piecewise((v.b.equals(v.d), v.b), otherwise=v.c),
+            id="b_if_b_equal_to_d_otherwise_c",
+        ),
+        pytest.param(
+            lambda v: piecewise(
+                (BinaryExpression(BinaryOperation.NOT_EQUAL, v.b, v.d), v.b),
+                otherwise=v.c,
+            ),
+            id="b_if_b_not_equal_to_d_otherwise_c",
+        ),
+        pytest.param(
+            lambda v: piecewise((v.b.equals(v.d), v.c), otherwise=v.b),
+            id="c_if_b_equal_to_d_otherwise_b",
+        ),
+        pytest.param(
+            lambda v: piecewise(
+                (v.x > 0, v.c), (v.b.equals(v.d), v.d), otherwise=v.x < 2
+            ),
+            id="comparison_condition_after_a_relation",
+        ),
+    ],
+)
+def test_simplify_expression_keeps_a_condition_comparing_a_branch_identifier(
+    build_piecewise: Callable[[_PiecewiseVariables], Expression],
+    build_position: Callable[[Expression, _PiecewiseVariables], Expression],
+) -> None:
+    """Test a condition comparing Boolean identifiers keeps its truth table.
+
+    SymPy's ``ITE`` constructor reads ``Eq(b, d)`` as ``False`` whenever
+    one side is an identifier a branch uses, so ``!(b if b == d,
+    otherwise c)`` would lose its first case. Each Boolean position must
+    keep the piecewise's first-match meaning at every assignment.
+    """
+    variables = _create_piecewise_variables()
+    expression = build_position(build_piecewise(variables), variables)
+
+    simplified = simplify_expression(expression)
+
+    assert _tabulate_with_numpy(simplified, variables) == _tabulate_with_numpy(
+        expression, variables
+    )
+
+
+_NUMERIC_PIECEWISE_POSITIONS = [
+    pytest.param(lambda numeric, v: numeric < v.x, id="less_than"),
+    pytest.param(lambda numeric, v: numeric.equals(1), id="equal_to_literal"),
+    pytest.param(
+        lambda numeric, v: BinaryExpression(BinaryOperation.NOT_EQUAL, v.x, numeric),
+        id="identifier_not_equal_to",
+    ),
+    pytest.param(
+        lambda numeric, v: logical_and(numeric < v.x, v.c), id="less_than_and"
+    ),
+    pytest.param(
+        lambda numeric, v: logical_not((numeric + v.y).equals(2)),
+        id="negated_sum_equal_to",
+    ),
+]
+
+
+@pytest.mark.parametrize("build_position", _NUMERIC_PIECEWISE_POSITIONS)
+@pytest.mark.parametrize(
+    "build_environment",
+    [
+        pytest.param(lambda v: {}, id="unbound"),
+        pytest.param(lambda v: {v.x.identifier: LiteralExpression(2)}, id="x_bound"),
+        pytest.param(lambda v: {v.c.identifier: LiteralExpression(True)}, id="c_bound"),
+    ],
+)
+def test_simplify_expression_compares_a_numeric_piecewise_with_an_identifier_condition(
+    build_position: Callable[[Expression, _PiecewiseVariables], Expression],
+    build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
+) -> None:
+    """Test ``(1 if b, otherwise 2)`` inside a comparison keeps its truth table.
+
+    SymPy's relational simplification substitutes a product of dummies for
+    every free symbol to test whether the difference is constant, which
+    puts a product where the piecewise needs its Boolean condition ``b``
+    and raises ``TypeError``. The comparison must instead simplify to its
+    meaning at every assignment.
+    """
+    variables = _create_piecewise_variables()
+    numeric = piecewise(
+        (variables.b, LiteralExpression(1)), otherwise=LiteralExpression(2)
+    )
+    expression = build_position(numeric, variables)
+    environment = build_environment(variables)
+
+    simplified = simplify_expression(expression, environment)
+
+    assert _tabulate_with_numpy(simplified, variables) == _tabulate_with_numpy(
+        expression.substitute(environment), variables
+    )
+
+
+@pytest.mark.parametrize(
+    "build_value",
+    [
+        pytest.param(
+            lambda v: piecewise(
+                (v.b, LiteralExpression(1)), otherwise=LiteralExpression(2)
+            ),
+            id="identifier_condition",
+        ),
+        pytest.param(
+            lambda v: piecewise((v.b.equals(v.c), v.y), otherwise=LiteralExpression(2)),
+            id="comparison_condition",
+        ),
+    ],
+)
+def test_simplify_expression_compares_an_identifier_bound_to_a_numeric_piecewise(
+    build_value: Callable[[_PiecewiseVariables], Expression],
+) -> None:
+    """Test ``x < y && d`` with ``x`` bound to a numeric piecewise keeps its meaning."""
+    variables = _create_piecewise_variables()
+    expression = logical_and(variables.x < variables.y, variables.d)
+    environment = {variables.x.identifier: build_value(variables)}
+
+    simplified = simplify_expression(expression, environment)
+
+    assert _tabulate_with_numpy(simplified, variables) == _tabulate_with_numpy(
+        expression.substitute(environment), variables
+    )
+
+
+@pytest.mark.parametrize(
+    "build_environment",
+    [
+        pytest.param(lambda v: {}, id="unbound"),
+        pytest.param(lambda v: {v.c.identifier: LiteralExpression(True)}, id="c_bound"),
+        pytest.param(
+            lambda v: {v.b.identifier: LiteralExpression(False)}, id="b_bound"
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "build_conjunction",
+    [
+        pytest.param(
+            lambda v: logical_and(v.d.equals(LiteralExpression(True)), v.x < 1),
+            id="identifier_equal_to_true",
+        ),
+        pytest.param(
+            lambda v: logical_and(
+                BinaryExpression(
+                    BinaryOperation.NOT_EQUAL, v.d, LiteralExpression(False)
+                ),
+                v.x.equals(1),
+            ),
+            id="identifier_not_equal_to_false",
+        ),
+        pytest.param(
+            lambda v: logical_and((v.x < 1).equals(LiteralExpression(True)), v.d),
+            id="relation_equal_to_true",
+        ),
+        pytest.param(
+            lambda v: logical_and((v.x < 1).equals(v.y.equals(0)), v.x.equals(1)),
+            id="relation_equal_to_relation",
+        ),
+        pytest.param(
+            lambda v: logical_and(v.c.equals(v.d), v.x < 1),
+            id="identifier_equal_to_a_bound_identifier",
+        ),
+        pytest.param(
+            lambda v: logical_and(v.b.equals(v.d), v.c),
+            id="identifiers_equal_under_a_bound_one",
+        ),
+    ],
+)
+def test_simplify_expression_conjoins_a_boolean_comparison_with_a_relation(
+    build_conjunction: Callable[[_PiecewiseVariables], Expression],
+    build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
+) -> None:
+    """Test ``(d == True) && x < 1`` and its relatives keep their truth tables.
+
+    SymPy's pattern simplification of a conjunction subtracts the two sides
+    of each comparison in it, which raises for a comparison whose side is a
+    Boolean such as ``True`` or ``x < 1``. The conjunction must simplify to
+    its meaning at every assignment instead.
+    """
+    variables = _create_piecewise_variables()
+    expression = build_conjunction(variables)
+    environment = build_environment(variables)
+
+    simplified = simplify_expression(expression, environment)
+
+    assert _tabulate_with_numpy(simplified, variables) == _tabulate_with_numpy(
+        expression.substitute(environment), variables
+    )
+
+
+def test_simplify_expression_keeps_a_nan_branch_comparison_as_it_stands() -> None:
+    """Test ``(x if y > 0, otherwise 1) > 0`` under ``x = nan`` stays open.
+
+    SymPy refuses to build ``nan > 0``, so the comparison cannot be split
+    per branch; it is simplified as it stands and keeps its truth table.
+    """
+    variables = _create_piecewise_variables()
+    expression = (
+        piecewise((variables.y > 0, variables.x), otherwise=LiteralExpression(1)) > 0
+    )
+    environment = {variables.x.identifier: LiteralExpression(math.nan)}
+
+    simplified = simplify_expression(expression, environment)
+
+    assert _tabulate_with_numpy(simplified, variables) == _tabulate_with_numpy(
+        expression.substitute(environment), variables
+    )
+
+
+def test_simplify_expression_reports_a_complex_infinity_branch_comparison() -> None:
+    """Test ``(1 / (x - 5) if y > 0, otherwise 1) > 0`` under ``x = 5`` is refused.
+
+    The branch folds to SymPy's complex infinity, which no expression
+    denotes, so simplification reports it as a bridge failure.
+    """
+    variables = _create_piecewise_variables()
+    expression = (
+        piecewise(
+            (variables.y > 0, LiteralExpression(1) / (variables.x - 5)),
+            otherwise=LiteralExpression(1),
+        )
+        > 0
+    )
+
+    with pytest.raises(PassExecutionError) as exc_info:
+        simplify_expression(expression, {variables.x.identifier: LiteralExpression(5)})
+
+    assert isinstance(exc_info.value.__cause__, ComplexInfinityLiftError)
+
+
+def test_simplify_expression_keeps_a_piecewise_comparison_in_a_case_condition() -> None:
+    """Test ``c if (1 if b, otherwise 2) < x, otherwise d`` keeps its truth table.
+
+    SymPy folds a case condition holding a piecewise into one Boolean
+    piecewise, ``1 < x if b, otherwise 2 < x``, whose branches must all
+    survive once it is made a Boolean.
+    """
+    variables = _create_piecewise_variables()
+    numeric = piecewise(
+        (variables.b, LiteralExpression(1)), otherwise=LiteralExpression(2)
+    )
+    expression = piecewise((numeric < variables.x, variables.c), otherwise=variables.d)
+
+    simplified = simplify_expression(expression)
+
+    assert _tabulate_with_numpy(simplified, variables) == _tabulate_with_numpy(
+        expression, variables
+    )
+
+
+_BOOLEAN_PIECEWISE_BINDING_VALUES = [
+    pytest.param(
+        lambda v: piecewise(
+            (v.x > 0, LiteralExpression(True)), otherwise=LiteralExpression(False)
+        ),
+        id="relation_decides_literal_branches",
+    ),
+    pytest.param(
+        lambda v: piecewise((v.x > 0, v.c), otherwise=v.d),
+        id="identifier_branches",
+    ),
+    pytest.param(
+        lambda v: piecewise((v.c, LiteralExpression(True)), otherwise=v.d),
+        id="identifier_condition",
+    ),
+    pytest.param(
+        lambda v: piecewise((v.c.equals(v.d), v.c), otherwise=v.x < 1),
+        id="condition_comparing_a_branch_identifier",
+    ),
+]
+
+
+@pytest.mark.parametrize("build_position", _BOOLEAN_POSITIONS)
+@pytest.mark.parametrize("build_value", _BOOLEAN_PIECEWISE_BINDING_VALUES)
+def test_simplify_expression_reads_a_boolean_identifier_bound_to_a_piecewise(
+    build_value: Callable[[_PiecewiseVariables], Expression],
+    build_position: Callable[[Expression, _PiecewiseVariables], Expression],
+) -> None:
+    """Test a Boolean piecewise bound to ``b`` means itself in each position of ``b``.
+
+    The binding reaches SymPy as a ``sympy.Piecewise``, which is not a
+    SymPy Boolean: ``b == True`` would fold to ``False`` and ``b && d``
+    would fail to build once it is substituted. The simplified result must
+    agree with the IR-level substitution at every assignment.
+    """
+    variables = _create_piecewise_variables()
+    expression = build_position(variables.b, variables)
+    environment = {variables.b.identifier: build_value(variables)}
+
+    simplified = simplify_expression(expression, environment)
+
+    assert _tabulate_with_numpy(simplified, variables) == _tabulate_with_numpy(
+        expression.substitute(environment), variables
+    )
+
+
+@pytest.mark.parametrize("build_value", _BOOLEAN_PIECEWISE_BINDING_VALUES)
+def test_substitute_sympy_variables_compares_a_bound_boolean_piecewise_as_a_boolean(
+    build_value: Callable[[_PiecewiseVariables], Expression],
+) -> None:
+    """Test substituting a Boolean piecewise into ``b == True`` keeps it open."""
+    variables = _create_piecewise_variables()
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, variables.b, LiteralExpression(True)
+    )
+    environment = {variables.b.identifier: build_value(variables)}
+
+    substituted = substitute_sympy_expression_variables(
+        convert_expression_to_sympy_expression(expression), environment
+    )
+
+    assert _tabulate_with_numpy(
+        convert_sympy_expression_to_expression(substituted), variables
+    ) == _tabulate_with_numpy(expression.substitute(environment), variables)
+
+
+def test_simplify_expression_keeps_a_bound_piecewise_open_over_its_identifiers() -> (
+    None
+):
+    """Test ``b == True`` under ``{b: (True if x > 0, otherwise False), x: 5}`` is open.
+
+    Bindings apply simultaneously, so the ``x`` inside ``b``'s value is not
+    bound by ``x: 5``; the result is the residual ``x > 0`` comparison, not
+    a decided constant.
+    """
+    variables = _create_piecewise_variables()
+    expression = BinaryExpression(
+        BinaryOperation.EQUAL, variables.b, LiteralExpression(True)
+    )
+    boolean_piecewise = piecewise(
+        (variables.x > 0, LiteralExpression(True)), otherwise=LiteralExpression(False)
+    )
+
+    result = simplify_expression(
+        expression,
+        {
+            variables.b.identifier: boolean_piecewise,
+            variables.x.identifier: LiteralExpression(5),
+        },
+    )
+
+    assert _tabulate_with_numpy(result, variables) == _tabulate_with_numpy(
+        variables.x > 0, variables
+    )
+
+
+@pytest.mark.parametrize(
+    ("build_comparison", "build_environment"),
+    [
+        pytest.param(
+            lambda v: BinaryExpression(
+                BinaryOperation.EQUAL,
+                piecewise((v.y.equals(0), v.x < 1), otherwise=v.b),
+                v.c,
+            ),
+            lambda v: {},
+            id="relation_and_identifier_branches",
+        ),
+        pytest.param(
+            lambda v: BinaryExpression(
+                BinaryOperation.EQUAL,
+                piecewise((v.x.equals(0), LiteralExpression(True)), otherwise=v.b),
+                v.c,
+            ),
+            lambda v: {},
+            id="literal_and_identifier_branches",
+        ),
+        pytest.param(
+            lambda v: BinaryExpression(
+                BinaryOperation.NOT_EQUAL,
+                v.c,
+                piecewise((v.x.equals(0), LiteralExpression(True)), otherwise=v.b),
+            ),
+            lambda v: {},
+            id="not_equal_literal_and_identifier_branches",
+        ),
+        pytest.param(
+            lambda v: BinaryExpression(
+                BinaryOperation.EQUAL,
+                piecewise(
+                    (
+                        v.y.equals(0),
+                        piecewise(
+                            (v.x.equals(0), LiteralExpression(True)),
+                            otherwise=LiteralExpression(False),
+                        ),
+                    ),
+                    otherwise=v.b,
+                ),
+                v.c,
+            ),
+            lambda v: {},
+            id="nested_boolean_piecewise_and_identifier_branches",
+        ),
+        pytest.param(
+            lambda v: BinaryExpression(
+                BinaryOperation.EQUAL,
+                piecewise(
+                    (
+                        v.y.equals(0),
+                        piecewise(
+                            (v.x.equals(0), LiteralExpression(True)), otherwise=v.b
+                        ),
+                    ),
+                    otherwise=v.d,
+                ),
+                v.c,
+            ),
+            lambda v: {},
+            id="nested_mixed_piecewise_and_identifier_branches",
+        ),
+        pytest.param(
+            lambda v: BinaryExpression(
+                BinaryOperation.EQUAL,
+                piecewise((v.x.equals(0), v.b), otherwise=v.c),
+                v.d,
+            ),
+            lambda v: {v.b.identifier: LiteralExpression(True)},
+            id="identifier_branches_with_one_bound",
+        ),
+        pytest.param(
+            lambda v: BinaryExpression(
+                BinaryOperation.EQUAL,
+                piecewise(
+                    (
+                        v.y.equals(0),
+                        piecewise((v.x.equals(0), v.b), otherwise=v.c),
+                    ),
+                    otherwise=v.d,
+                ),
+                v.c,
+            ),
+            lambda v: {v.b.identifier: LiteralExpression(True)},
+            id="nested_identifier_branches_with_one_bound",
+        ),
+    ],
+)
+def test_simplify_expression_compares_a_piecewise_with_a_boolean_branch_as_boolean(
+    build_comparison: Callable[[_PiecewiseVariables], Expression],
+    build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
+) -> None:
+    """Test a piecewise with a single Boolean branch compares as a Boolean.
+
+    One relational, literal, or Boolean nested-piecewise branch shows the
+    piecewise is Boolean even when its other branches are bare Boolean
+    identifiers, so the comparison must keep its truth table rather than
+    leak SymPy's arithmetic errors on the mixed branches.
+    """
+    variables = _create_piecewise_variables()
+    expression = build_comparison(variables)
+    environment = build_environment(variables)
+
+    simplified = simplify_expression(expression, environment)
+
+    assert _tabulate_with_numpy(simplified, variables) == _tabulate_with_numpy(
+        expression.substitute(environment), variables
+    )
+
+
+@pytest.mark.parametrize(
+    "build_comparison",
+    [
+        pytest.param(
+            lambda numeric, _: BinaryExpression(
+                BinaryOperation.EQUAL, numeric, LiteralExpression(True)
+            ),
+            id="equal_to_true",
+        ),
+        pytest.param(
+            lambda numeric, x: BinaryExpression(
+                BinaryOperation.NOT_EQUAL, numeric, x < 2
+            ),
+            id="not_equal_to_relation",
+        ),
+    ],
+)
+def test_simplify_expression_refuses_to_compare_a_numeric_piecewise_with_a_boolean(
+    build_comparison: Callable[[Expression, Expression], Expression],
+) -> None:
+    """Test ``(1 if x == 0, otherwise 2)`` compared with a Boolean raises.
+
+    The comparison is ill-typed for every ``x``, so it must not fold to the
+    constant SymPy decides for a number compared with a Boolean.
+    """
+    variables = _create_piecewise_variables()
+    numeric = piecewise(
+        (variables.x.equals(0), LiteralExpression(1)), otherwise=LiteralExpression(2)
+    )
+
+    with pytest.raises(PassExecutionError):
+        simplify_expression(
+            build_comparison(numeric, variables.x),
+            {variables.x.identifier: LiteralExpression(0)},
+        )
+
+
+def test_substitute_sympy_variables_refuses_a_partial_piecewise_in_a_comparison() -> (
+    None
+):
+    """Test a Boolean comparison over a piecewise with no default branch raises.
+
+    ``Piecewise((True, x > 0))`` has no value where ``x <= 0``, so there is
+    no Boolean to compare once ``b`` is bound.
+    """
+    b = mock_identifier("b", 2)
+    sympy_expression = sympy.Eq(
+        sympy.Piecewise((sympy.true, sympy.Symbol("x_0") > 0)), sympy.Symbol("b_2")
+    )
+
+    with pytest.raises(PassExecutionError) as exc_info:
+        substitute_sympy_expression_variables(
+            sympy_expression, {b: LiteralExpression(True)}
+        )
+
+    assert isinstance(exc_info.value.__cause__, PartialPiecewiseError)
+
+
+# =============================================================================
+# A Boolean identifier compared with a comparison inside a case condition
+# =============================================================================
+
+
+def _compare_identifier_with_relation(
+    operation: BinaryOperation, identifier: Expression, relation: Expression
+) -> Expression:
+    """Build ``relation <operation> identifier``, the relation on the left."""
+    return BinaryExpression(operation, relation, identifier)
+
+
+_COMPARISON_CONDITION_NUMERIC_CASES = [
+    pytest.param(
+        lambda v: piecewise(
+            (
+                _compare_identifier_with_relation(
+                    BinaryOperation.EQUAL, v.b, v.x.equals(0)
+                ),
+                LiteralExpression(0),
+            ),
+            otherwise=LiteralExpression(1),
+        ),
+        id="equality_equal_to_identifier",
+    ),
+    pytest.param(
+        lambda v: piecewise(
+            (
+                _compare_identifier_with_relation(
+                    BinaryOperation.NOT_EQUAL, v.b, v.x < 1
+                ),
+                LiteralExpression(1),
+            ),
+            otherwise=LiteralExpression(2),
+        ),
+        id="relation_not_equal_to_identifier",
+    ),
+    pytest.param(
+        lambda v: piecewise(
+            (
+                v.y.equals(0),
+                piecewise(
+                    (
+                        BinaryExpression(BinaryOperation.EQUAL, v.b, v.x < 2),
+                        v.x,
+                    ),
+                    otherwise=LiteralExpression(2),
+                ),
+            ),
+            otherwise=LiteralExpression(3),
+        ),
+        id="nested_identifier_equal_to_relation",
+    ),
+    pytest.param(
+        lambda v: piecewise(
+            (
+                logical_and(
+                    _compare_identifier_with_relation(
+                        BinaryOperation.EQUAL, v.b, v.x.equals(0)
+                    ),
+                    v.c,
+                ),
+                LiteralExpression(1),
+            ),
+            otherwise=LiteralExpression(2),
+        ),
+        id="comparison_under_a_conjunction",
+    ),
+    pytest.param(
+        lambda v: piecewise(
+            (
+                BinaryExpression(
+                    BinaryOperation.NOT_EQUAL, v.b, logical_and(v.c, v.x > 0)
+                ),
+                LiteralExpression(1),
+            ),
+            otherwise=v.x,
+        ),
+        id="identifier_not_equal_to_a_boolean_subtree",
+    ),
+    pytest.param(
+        lambda v: BinaryExpression(
+            BinaryOperation.POWER,
+            piecewise(
+                (
+                    _compare_identifier_with_relation(
+                        BinaryOperation.EQUAL, v.b, v.x.equals(0)
+                    ),
+                    LiteralExpression(1),
+                ),
+                otherwise=LiteralExpression(2),
+            ),
+            LiteralExpression(2),
+        ),
+        id="squared_piecewise",
+    ),
+]
+
+_COMPARISON_CONDITION_BOOLEAN_CASES = [
+    pytest.param(
+        lambda v: piecewise(
+            (
+                _compare_identifier_with_relation(BinaryOperation.EQUAL, v.b, v.x < 1),
+                v.c,
+            ),
+            otherwise=v.d,
+        ),
+        id="relation_equal_to_identifier",
+    ),
+    pytest.param(
+        lambda v: piecewise(
+            (
+                BinaryExpression(
+                    BinaryOperation.EQUAL,
+                    v.b,
+                    piecewise(
+                        (v.c, LiteralExpression(1)), otherwise=LiteralExpression(2)
+                    )
+                    < v.x,
+                ),
+                v.c,
+            ),
+            otherwise=v.d,
+        ),
+        id="identifier_equal_to_a_piecewise_comparison",
+    ),
+    pytest.param(
+        lambda v: (
+            piecewise(
+                (
+                    _compare_identifier_with_relation(
+                        BinaryOperation.EQUAL, v.b, v.x.equals(0)
+                    ),
+                    LiteralExpression(0),
+                ),
+                otherwise=LiteralExpression(1),
+            )
+            < v.x
+        ),
+        id="piecewise_comparison_holding_the_condition",
+    ),
+]
+
+_COMPARISON_CONDITION_ENVIRONMENTS = [
+    pytest.param(lambda v: {}, id="unbound"),
+    pytest.param(lambda v: {v.c.identifier: LiteralExpression(True)}, id="c_bound"),
+    pytest.param(
+        lambda v: {
+            v.c.identifier: LiteralExpression(False),
+            v.d.identifier: LiteralExpression(True),
+        },
+        id="c_and_d_bound",
+    ),
+    pytest.param(
+        lambda v: {
+            v.x.identifier: LiteralExpression(0),
+            v.y.identifier: LiteralExpression(0),
+            v.b.identifier: LiteralExpression(True),
+            v.c.identifier: LiteralExpression(True),
+            v.d.identifier: LiteralExpression(False),
+        },
+        id="fully_bound",
+    ),
+]
+
+
+@pytest.mark.parametrize("build_environment", _COMPARISON_CONDITION_ENVIRONMENTS)
+@pytest.mark.parametrize("build_piecewise", _COMPARISON_CONDITION_NUMERIC_CASES)
+def test_simplify_expression_evaluates_a_piecewise_comparing_an_identifier(
+    build_piecewise: Callable[[_PiecewiseVariables], Expression],
+    build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
+) -> None:
+    """Test a case condition like ``(x == 0) == b`` keeps the piecewise's values.
+
+    SymPy canonicalizes each relational in a piecewise condition as if it
+    compared numbers, subtracting its sides, which raises for ``Eq(b, x ==
+    0)``: the Boolean identifier lowers as a plain symbol, and nothing marks
+    the relation side Boolean.
+    """
+    variables = _create_piecewise_variables()
+    expression = build_piecewise(variables)
+    environment = build_environment(variables)
+
+    simplified = simplify_expression(expression, environment)
+
+    assert _tabulate_numbers_with_numpy(
+        simplified, variables
+    ) == _tabulate_numbers_with_numpy(expression.substitute(environment), variables)
+
+
+@pytest.mark.parametrize("build_environment", _COMPARISON_CONDITION_ENVIRONMENTS)
+@pytest.mark.parametrize("build_expression", _COMPARISON_CONDITION_BOOLEAN_CASES)
+def test_simplify_expression_decides_a_boolean_piecewise_comparing_an_identifier(
+    build_expression: Callable[[_PiecewiseVariables], Expression],
+    build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
+) -> None:
+    """Test a Boolean shape conditioned on ``(x < 1) == b`` keeps its truth table."""
+    variables = _create_piecewise_variables()
+    expression = build_expression(variables)
+    environment = build_environment(variables)
+
+    simplified = simplify_expression(expression, environment)
+
+    assert _tabulate_with_numpy(simplified, variables) == _tabulate_with_numpy(
+        expression.substitute(environment), variables
+    )
+
+
+@pytest.mark.parametrize(
+    ("build_piecewise", "build_environment"),
+    [
+        pytest.param(
+            lambda v: piecewise(
+                (v.b, LiteralExpression(1)), otherwise=LiteralExpression(2)
+            ),
+            lambda v: {
+                v.b.identifier: _compare_identifier_with_relation(
+                    BinaryOperation.EQUAL, v.b, v.x.equals(0)
+                )
+            },
+            id="condition_bound_to_a_comparison",
+        ),
+        pytest.param(
+            lambda v: piecewise(
+                (
+                    BinaryExpression(
+                        BinaryOperation.EQUAL,
+                        v.b,
+                        LiteralExpression(0).equals(v.y),
+                    ),
+                    LiteralExpression(1),
+                ),
+                otherwise=LiteralExpression(2),
+            ),
+            lambda v: {v.y.identifier: v.x},
+            id="relation_operand_rebound",
+        ),
+        pytest.param(
+            lambda v: BinaryExpression(
+                BinaryOperation.POWER, v.y, LiteralExpression(2)
+            ),
+            lambda v: {
+                v.y.identifier: piecewise(
+                    (
+                        _compare_identifier_with_relation(
+                            BinaryOperation.NOT_EQUAL, v.b, v.x < 1
+                        ),
+                        LiteralExpression(1),
+                    ),
+                    otherwise=LiteralExpression(2),
+                )
+            },
+            id="power_of_a_bound_piecewise",
+        ),
+    ],
+)
+def test_substitute_sympy_variables_rebuilds_a_condition_comparing_an_identifier(
+    build_piecewise: Callable[[_PiecewiseVariables], Expression],
+    build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
+) -> None:
+    """Test substituting into a piecewise conditioned on ``b == (x == 0)`` succeeds.
+
+    Rebuilding the piecewise evaluates it, and SymPy's evaluation subtracts
+    the sides of each comparison in a condition.
+    """
+    variables = _create_piecewise_variables()
+    expression = build_piecewise(variables)
+    environment = build_environment(variables)
+
+    substituted = substitute_sympy_expression_variables(
+        convert_expression_to_sympy_expression(expression), environment
+    )
+
+    assert _tabulate_numbers_with_numpy(
+        convert_sympy_expression_to_expression(substituted), variables
+    ) == _tabulate_numbers_with_numpy(expression.substitute(environment), variables)
+
+
+# =============================================================================
+# simplify_expression keeps its input when SymPy drops an otherwise branch
+# =============================================================================
+
+
+_COVERING_CONDITION_CASES = [
+    pytest.param(
+        lambda v: piecewise((logical_or(v.x > 0, v.x < 1), v.x < 1), otherwise=v.x > 1),
+        lambda v: {},
+        id="covering_disjunction",
+    ),
+    pytest.param(
+        lambda v: piecewise(
+            (
+                piecewise((v.x > 0, LiteralExpression(True)), otherwise=v.x < 1),
+                v.x < 1,
+            ),
+            otherwise=v.x > 1,
+        ),
+        lambda v: {},
+        id="covering_piecewise_condition",
+    ),
+    pytest.param(
+        lambda v: piecewise((v.b, v.x < 1), otherwise=v.c),
+        lambda v: {
+            v.b.identifier: piecewise(
+                (v.x > 0, LiteralExpression(True)), otherwise=v.x < 1
+            )
+        },
+        id="condition_bound_to_a_covering_piecewise",
+    ),
+    pytest.param(
+        lambda v: piecewise(
+            (logical_or(v.x > 0, v.x < v.y), v.x < 1), otherwise=v.x > 1
+        ),
+        lambda v: {v.y.identifier: LiteralExpression(1)},
+        id="partial_binding_makes_the_disjunction_covering",
+    ),
+    pytest.param(
+        lambda v: piecewise(
+            (logical_or(v.x > 0, v.x < v.y), v.x < 1), otherwise=v.x > 1
+        ),
+        lambda v: {
+            v.x.identifier: LiteralExpression(0),
+            v.y.identifier: LiteralExpression(1),
+        },
+        id="full_binding",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("build_expression", "build_environment"), _COVERING_CONDITION_CASES
+)
+def test_simplify_expression_keeps_the_meaning_of_conditions_covering_every_value(
+    build_expression: Callable[[_PiecewiseVariables], Expression],
+    build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
+) -> None:
+    """Test a piecewise whose conditions cover every real keeps its truth table.
+
+    SymPy drops the otherwise branch of ``x < 1 if x > 0 || x < 1,
+    otherwise x > 1`` because its case condition holds for every real,
+    and no piecewise expression represents the partial result.
+    """
+    variables = _create_piecewise_variables()
+    expression = build_expression(variables)
+    environment = build_environment(variables)
+
+    simplified = simplify_expression(expression, environment)
+
+    assert _tabulate_with_numpy(simplified, variables) == _tabulate_with_numpy(
+        expression.substitute(environment), variables
+    )
+
+
+def test_simplify_expression_keeps_the_substituted_form_when_otherwise_is_dropped() -> (
+    None
+):
+    """Test a simplification with no otherwise branch leaves the input unsimplified.
+
+    ``x < 1 if x > 0 || x < y, otherwise x > 1`` under ``y = 1`` comes
+    back as its lowering with ``y`` substituted, lifted unsimplified.
+    """
+    variables = _create_piecewise_variables()
+    expression = piecewise(
+        (logical_or(variables.x > 0, variables.x < variables.y), variables.x < 1),
+        otherwise=variables.x > 1,
+    )
+    environment = {variables.y.identifier: LiteralExpression(1)}
+    unsimplified = convert_sympy_expression_to_expression(
+        substitute_sympy_expression_variables(
+            convert_expression_to_sympy_expression(expression), environment
+        )
+    )
+
+    result = simplify_expression(expression, environment)
+
+    assert result.is_structurally_equivalent(unsimplified)
+
+
+def test_simplify_expression_raises_when_the_unsimplified_form_is_partial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a piecewise with no otherwise branch before simplifying still raises.
+
+    Falling back to the unsimplified form is only sound when that form
+    lifts; a lowering that is itself partial has no expression to return.
+    """
+    x = mock_identifier("x", 0)
+    partial = sympy.Piecewise((sympy.Symbol("x_0") < 1, sympy.Symbol("x_0") > 0))
+    monkeypatch.setattr(
+        sympy_bridge, "convert_expression_to_sympy_expression", lambda _: partial
+    )
+    monkeypatch.setattr(sympy, "simplify", lambda expression, **kwargs: expression)
+
+    with pytest.raises(PassExecutionError) as exc_info:
+        simplify_expression(IdentifierExpression(x) < 1)
+
+    assert isinstance(exc_info.value.__cause__, PartialPiecewiseError)
+
+
+def test_simplify_expression_raises_other_lift_errors_of_the_simplified_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a simplified form failing to lift for another reason still raises.
+
+    Only a piecewise with no otherwise branch falls back; a simplification
+    to complex infinity is reported, even though the input lifts.
+    """
+    x = mock_identifier("x", 0)
+    monkeypatch.setattr(sympy, "simplify", lambda *args, **kwargs: sympy.zoo)
+
+    with pytest.raises(PassExecutionError) as exc_info:
+        simplify_expression(IdentifierExpression(x) < 1)
+
+    assert isinstance(exc_info.value.__cause__, ComplexInfinityLiftError)
+
+
+# =============================================================================
+# A comparison of many relation-guarded piecewise terms simplifies
+# =============================================================================
+
+
+def _tabulate_x_and_y_with_numpy(
+    expression: Expression,
+    x: Identifier,
+    y: Identifier,
+    x_values: tuple[int, ...],
+    y_values: tuple[int, ...],
+) -> tuple[bool, ...]:
+    """Return ``expression``'s NumPy truth value at each ``(x, y)`` grid point."""
+    return tuple(
+        bool(evaluate_expression_with_numpy(expression, {x: x_value, y: y_value}))
+        for x_value, y_value in itertools.product(x_values, y_values)
+    )
+
+
+@pytest.mark.parametrize(
+    "build_left",
+    [
+        pytest.param(
+            lambda x: functools.reduce(
+                lambda total, i: (
+                    total + piecewise((x < i, LiteralExpression(i)), otherwise=0)
+                ),
+                range(1, 8),
+                cast(Expression, LiteralExpression(0)),
+            ),
+            id="sum_of_seven_piecewise_terms",
+        ),
+        pytest.param(
+            lambda x: piecewise(
+                *((x < i, LiteralExpression(i)) for i in range(1, 130)),
+                otherwise=LiteralExpression(0),
+            ),
+            id="piecewise_of_one_hundred_twenty_nine_cases",
+        ),
+    ],
+)
+def test_simplify_expression_compares_many_relation_guarded_piecewise_terms(
+    build_left: Callable[[Expression], Expression],
+) -> None:
+    """Test comparing a wide relation-guarded numeric piecewise with ``y`` simplifies.
+
+    Only a piecewise with a Boolean-symbol condition needs splitting out
+    of a comparison; splitting every piecewise multiplies the branches and
+    nests the result deeply enough to exhaust the default recursion limit.
+    """
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    expression = build_left(IdentifierExpression(x)) < IdentifierExpression(y)
+    x_values = (-1, 0, 3, 7, 8, 129, 130)
+    y_values = (0, 5, 30, 200)
+
+    simplified = simplify_expression(expression)
+
+    assert _tabulate_x_and_y_with_numpy(
+        simplified, x, y, x_values, y_values
+    ) == _tabulate_x_and_y_with_numpy(expression, x, y, x_values, y_values)
+
+
+def test_simplify_expression_splits_a_piecewise_with_a_nested_boolean_symbol() -> None:
+    """Test ``(1 if (b || c) && x > 0, otherwise 2) < y`` keeps its truth table.
+
+    The Boolean symbols sit one connective below the condition's root and
+    still need the comparison split per branch.
+    """
+    variables = _create_piecewise_variables()
+    numeric = piecewise(
+        (
+            logical_and(logical_or(variables.b, variables.c), variables.x > 0),
+            LiteralExpression(1),
+        ),
+        otherwise=LiteralExpression(2),
+    )
+    expression = numeric < variables.y
+
+    simplified = simplify_expression(expression)
+
+    assert _tabulate_with_numpy(simplified, variables) == _tabulate_with_numpy(
+        expression, variables
+    )
+
+
+# =============================================================================
+# A numeric piecewise makes no parity claim
+# =============================================================================
+
+
+_PARITY_PIECEWISES = [
+    pytest.param(
+        lambda v: piecewise(
+            (v.b, LiteralExpression(2)), otherwise=LiteralExpression(0)
+        ),
+        id="even_literals_under_an_identifier",
+    ),
+    pytest.param(
+        lambda v: piecewise(
+            (logical_not(v.b), LiteralExpression(2)), otherwise=LiteralExpression(0)
+        ),
+        id="even_literals_under_a_negated_identifier",
+    ),
+    pytest.param(
+        lambda v: piecewise(
+            (v.x < 1, LiteralExpression(6)), otherwise=LiteralExpression(0)
+        ),
+        id="even_literals_under_a_relation",
+    ),
+    pytest.param(
+        lambda v: piecewise(
+            (v.b, LiteralExpression(2) * call("floor", v.x)),
+            otherwise=LiteralExpression(4),
+        ),
+        id="symbolic_even_branch",
+    ),
+    pytest.param(
+        lambda v: piecewise(
+            (v.b, LiteralExpression(3)), otherwise=LiteralExpression(1)
+        ),
+        id="odd_literals",
+    ),
+    pytest.param(
+        lambda v: piecewise(
+            (v.b, LiteralExpression(2)),
+            (v.x < 1, LiteralExpression(5)),
+            otherwise=LiteralExpression(4),
+        ),
+        id="mixed_parity",
+    ),
+]
+
+_PARITY_OPERATIONS = [
+    pytest.param(lambda pw: pw % LiteralExpression(-6), id="modulo_negative_six"),
+    pytest.param(lambda pw: pw % LiteralExpression(10), id="modulo_ten"),
+    pytest.param(
+        lambda pw: BinaryExpression(
+            BinaryOperation.FLOOR_DIVIDE, pw, LiteralExpression(-6)
+        ),
+        id="floor_divide_negative_six",
+    ),
+    pytest.param(
+        lambda pw: BinaryExpression(
+            BinaryOperation.FLOOR_DIVIDE, pw, LiteralExpression(4)
+        ),
+        id="floor_divide_four",
+    ),
+    pytest.param(
+        lambda pw: call("floor", pw / LiteralExpression(6)), id="floor_of_quotient"
+    ),
+    pytest.param(
+        lambda pw: call("ceil", pw / LiteralExpression(-6)), id="ceil_of_quotient"
+    ),
+    pytest.param(
+        lambda pw: (pw + LiteralExpression(2)) % LiteralExpression(6),
+        id="modulo_of_a_sum",
+    ),
+]
+
+_PARITY_ENVIRONMENTS = [
+    pytest.param(lambda v: {}, id="unbound"),
+    pytest.param(lambda v: {v.b.identifier: LiteralExpression(True)}, id="b_true"),
+    pytest.param(lambda v: {v.b.identifier: LiteralExpression(False)}, id="b_false"),
+    pytest.param(
+        lambda v: {
+            v.b.identifier: LiteralExpression(True),
+            v.x.identifier: LiteralExpression(0),
+        },
+        id="fully_bound",
+    ),
+]
+
+
+@pytest.mark.parametrize("build_environment", _PARITY_ENVIRONMENTS)
+@pytest.mark.parametrize("build_operation", _PARITY_OPERATIONS)
+@pytest.mark.parametrize("build_piecewise", _PARITY_PIECEWISES)
+def test_simplify_expression_divides_a_numeric_piecewise_by_its_value(
+    build_piecewise: Callable[[_PiecewiseVariables], Expression],
+    build_operation: Callable[[Expression], Expression],
+    build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
+) -> None:
+    """Test ``%``, ``//``, ``floor``, and ``ceil`` over a piecewise keep its values.
+
+    SymPy 1.14 reads an even factor as exactly one factor of two and ignores
+    the odd part of a denominator, so it calls ``n / 6`` an integer for any
+    ``n`` it knows is even. A piecewise whose branches are all even claims
+    to be even, so ``(2 if b, otherwise 0) % -6`` would fold to ``0``.
+    """
+    variables = _create_piecewise_variables()
+    expression = build_operation(build_piecewise(variables))
+    environment = build_environment(variables)
+
+    simplified = simplify_expression(expression, environment)
+
+    assert _tabulate_numbers_with_numpy(
+        simplified, variables
+    ) == _tabulate_numbers_with_numpy(expression.substitute(environment), variables)
+
+
+@pytest.mark.parametrize(
+    "build_comparison",
+    [
+        pytest.param(
+            lambda v: (
+                piecewise((v.b, LiteralExpression(6)), otherwise=LiteralExpression(0))
+                / LiteralExpression(3)
+            ).equals(2),
+            id="quotient_equal_to_an_integer",
+        ),
+        pytest.param(
+            lambda v: (
+                piecewise((v.b, LiteralExpression(2)), otherwise=LiteralExpression(0))
+                / LiteralExpression(6)
+            ).equals(LiteralExpression(1) / LiteralExpression(3)),
+            id="quotient_equal_to_a_fraction",
+        ),
+    ],
+)
+@pytest.mark.parametrize("build_environment", _PARITY_ENVIRONMENTS)
+def test_simplify_expression_compares_the_quotient_of_a_numeric_piecewise(
+    build_comparison: Callable[[_PiecewiseVariables], Expression],
+    build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
+) -> None:
+    """Test ``(6 if b, otherwise 0) / 3 == 2`` holds exactly when ``b`` does."""
+    variables = _create_piecewise_variables()
+    expression = build_comparison(variables)
+    environment = build_environment(variables)
+
+    simplified = simplify_expression(expression, environment)
+
+    assert _tabulate_with_numpy(simplified, variables) == _tabulate_with_numpy(
+        expression.substitute(environment), variables
+    )
+
+
+def test_substitute_sympy_variables_divides_a_bound_numeric_piecewise() -> None:
+    """Test ``y % -6`` with ``y`` bound to ``(2 if b, otherwise 0)`` keeps values."""
+    variables = _create_piecewise_variables()
+    expression = variables.y % LiteralExpression(-6)
+    environment = {
+        variables.y.identifier: piecewise(
+            (variables.b, LiteralExpression(2)), otherwise=LiteralExpression(0)
+        )
+    }
+
+    substituted = substitute_sympy_expression_variables(
+        convert_expression_to_sympy_expression(expression), environment
+    )
+
+    assert _tabulate_numbers_with_numpy(
+        convert_sympy_expression_to_expression(substituted), variables
+    ) == _tabulate_numbers_with_numpy(expression.substitute(environment), variables)
+
+
+# =============================================================================
+# A nested piecewise stays total when its enclosing piecewise is rebuilt
+# =============================================================================
+
+
+_NESTED_CONTEXT_CASES = [
+    pytest.param(
+        lambda v: piecewise((v.c, v.x), otherwise=LiteralExpression(0)),
+        lambda v: {
+            v.x.identifier: piecewise(
+                (v.b, LiteralExpression(0)),
+                (v.c, LiteralExpression(0)),
+                otherwise=LiteralExpression(0),
+            ),
+            v.b.identifier: LiteralExpression(False),
+        },
+        id="equal_cases_otherwise_zero",
+    ),
+    pytest.param(
+        lambda v: piecewise((v.c, v.x), otherwise=LiteralExpression(0)),
+        lambda v: {
+            v.x.identifier: piecewise(
+                (v.b, LiteralExpression(0)),
+                (v.c, LiteralExpression(0)),
+                otherwise=LiteralExpression(5),
+            ),
+            v.b.identifier: LiteralExpression(False),
+        },
+        id="equal_cases_otherwise_five",
+    ),
+    pytest.param(
+        lambda v: piecewise((v.c, v.x), otherwise=LiteralExpression(0)),
+        lambda v: {
+            v.x.identifier: piecewise(
+                (v.b, LiteralExpression(1)),
+                (v.c, LiteralExpression(2)),
+                otherwise=LiteralExpression(5),
+            )
+        },
+        id="enclosing_condition_covers_the_inner_cases",
+    ),
+    pytest.param(
+        lambda v: piecewise(
+            (v.c, piecewise((v.d, v.x), otherwise=LiteralExpression(1))),
+            otherwise=LiteralExpression(0),
+        ),
+        lambda v: {
+            v.x.identifier: piecewise(
+                (v.b, LiteralExpression(3)),
+                (v.d, LiteralExpression(4)),
+                otherwise=LiteralExpression(5),
+            )
+        },
+        id="two_levels_deep",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("build_expression", "build_environment"), _NESTED_CONTEXT_CASES
+)
+def test_substitute_sympy_variables_keeps_a_nested_piecewise_total(
+    build_expression: Callable[[_PiecewiseVariables], Expression],
+    build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
+) -> None:
+    """Test substituting a piecewise under a case that decides it keeps it total.
+
+    Rebuilding ``c ? (b ? 1 : c ? 2 : 5) : 0`` lets SymPy drop the inner
+    otherwise branch, which the enclosing ``c`` makes unreachable, but
+    SymPy keeps ``c`` as the inner piecewise's last condition, leaving a
+    piecewise with no otherwise branch that no expression represents.
+    """
+    variables = _create_piecewise_variables()
+    expression = build_expression(variables)
+    environment = build_environment(variables)
+
+    substituted = substitute_sympy_expression_variables(
+        convert_expression_to_sympy_expression(expression), environment
+    )
+
+    assert _tabulate_numbers_with_numpy(
+        convert_sympy_expression_to_expression(substituted), variables
+    ) == _tabulate_numbers_with_numpy(expression.substitute(environment), variables)
+
+
+@pytest.mark.parametrize(
+    ("build_expression", "build_environment"), _NESTED_CONTEXT_CASES
+)
+def test_simplify_expression_keeps_a_substituted_nested_piecewise_total(
+    build_expression: Callable[[_PiecewiseVariables], Expression],
+    build_environment: Callable[[_PiecewiseVariables], dict[Identifier, Expression]],
+) -> None:
+    """Test simplifying under the same bindings keeps the expression's values."""
+    variables = _create_piecewise_variables()
+    expression = build_expression(variables)
+    environment = build_environment(variables)
+
+    simplified = simplify_expression(expression, environment)
+
+    assert _tabulate_numbers_with_numpy(
+        simplified, variables
+    ) == _tabulate_numbers_with_numpy(expression.substitute(environment), variables)
+
+
+def test_substitute_sympy_variables_keeps_every_nested_piecewise_parity_opaque() -> (
+    None
+):
+    """Test a rebuilt nested piecewise still makes no parity claim.
+
+    A piecewise SymPy builds as a plain ``Piecewise`` would claim to be
+    even when its branch values are, and misjudge its quotients.
+    """
+    variables = _create_piecewise_variables()
+    expression = piecewise((variables.c, variables.x), otherwise=LiteralExpression(0))
+    environment = {
+        variables.x.identifier: piecewise(
+            (variables.b, LiteralExpression(2)),
+            (variables.c, LiteralExpression(4)),
+            otherwise=LiteralExpression(6),
+        )
+    }
+
+    substituted = substitute_sympy_expression_variables(
+        convert_expression_to_sympy_expression(expression), environment
+    )
+
+    assert all(
+        isinstance(node, _ParityOpaquePiecewise)
+        for node in substituted.atoms(sympy.Piecewise)
+    )
+
+
+@pytest.mark.parametrize(
+    "build_power",
+    [
+        pytest.param(
+            lambda nested: BinaryExpression(
+                BinaryOperation.POWER, nested, LiteralExpression(2)
+            ),
+            id="square",
+        ),
+        pytest.param(lambda nested: call("sqrt", nested), id="square_root"),
+    ],
+)
+def test_lowering_a_power_of_a_nested_piecewise_keeps_it_total(
+    build_power: Callable[[Expression], Expression],
+) -> None:
+    """Test ``(c ? (b ? 1 : c ? 2 : 5) : 0) ** 2`` round-trips and simplifies.
+
+    SymPy raises a piecewise to a power branch by branch and rebuilds it,
+    which prunes the inner piecewise the same way substitution does.
+    """
+    variables = _create_piecewise_variables()
+    nested = piecewise(
+        (
+            variables.c,
+            piecewise(
+                (variables.b, LiteralExpression(1)),
+                (variables.c, LiteralExpression(2)),
+                otherwise=LiteralExpression(5),
+            ),
+        ),
+        otherwise=LiteralExpression(0),
+    )
+    expression = build_power(nested)
+    expected = _tabulate_numbers_with_numpy(expression, variables)
+
+    lifted = convert_sympy_expression_to_expression(
+        convert_expression_to_sympy_expression(expression)
+    )
+    simplified = simplify_expression(expression)
+
+    assert _tabulate_numbers_with_numpy(lifted, variables) == expected
+    assert _tabulate_numbers_with_numpy(simplified, variables) == expected
+
+
+# =============================================================================
+# A non-real branch under a Boolean-symbol condition
+# =============================================================================
+
+
+def test_simplify_expression_reports_complex_infinity_under_an_identifier() -> None:
+    """Test ``(1 / 0 if b, otherwise 1) < y`` reports complex infinity.
+
+    The comparison cannot be split per branch, since SymPy refuses to
+    compare complex infinity, and simplifying it whole substitutes a
+    product for ``b``. Complex infinity is reported as a lift failure, as
+    it is for a relation-guarded branch.
+    """
+    variables = _create_piecewise_variables()
+    expression = (
+        piecewise(
+            (variables.b, LiteralExpression(1) / LiteralExpression(0)),
+            otherwise=LiteralExpression(1),
+        )
+        < variables.y
+    )
+
+    with pytest.raises(PassExecutionError) as exc_info:
+        simplify_expression(expression)
+
+    assert isinstance(exc_info.value.__cause__, ComplexInfinityLiftError)
+
+
+def test_simplify_expression_keeps_a_nan_branch_under_an_identifier() -> None:
+    """Test ``(nan if b, otherwise 1) > y`` keeps its truth table unsimplified."""
+    variables = _create_piecewise_variables()
+    expression = (
+        piecewise(
+            (variables.b, LiteralExpression(math.nan)), otherwise=LiteralExpression(1)
+        )
+        > variables.y
+    )
+
+    simplified = simplify_expression(expression)
+
+    assert _tabulate_with_numpy(simplified, variables) == _tabulate_with_numpy(
+        expression, variables
     )
 
 

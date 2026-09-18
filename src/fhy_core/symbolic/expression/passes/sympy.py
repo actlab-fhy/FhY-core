@@ -10,12 +10,13 @@ __all__ = [
 ]
 
 import operator
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from decimal import Decimal
 from typing import Any, ClassVar
 
 import sympy  # type: ignore
 import sympy.core.evalf  # type: ignore
+import sympy.functions.elementary.piecewise  # type: ignore
 import sympy.logic  # type: ignore
 import sympy.logic.boolalg  # type: ignore
 from immutabledict import immutabledict
@@ -274,20 +275,335 @@ def _try_lift_native_constant(expr: sympy.Expr) -> Expression | None:
 _LOGGER = get_logger(__name__)
 
 
+class _ParityOpaquePiecewise(sympy.Piecewise):  # type: ignore[misc]
+    """A ``sympy.Piecewise`` that makes no claim about its value's parity.
+
+    SymPy 1.14's ``Mul._eval_is_integer`` counts a factor known to be even
+    as exactly one factor of two and ignores the odd part of the
+    denominator, so it calls ``n / 6`` an integer and ``n / 3`` a
+    non-integer for any ``n`` it knows is even. A ``Piecewise`` whose
+    branch values are all even is known even, so ``Mod(Piecewise((2, b),
+    (0, True)), -6)`` evaluates to ``0``, ``floor`` of its quotient by
+    ``-6`` is dropped, and ``Eq(Piecewise((6, b), (0, True)) / 3, 2)``
+    decides ``False``. Leaving the parity unknown keeps every such
+    consumer from reasoning about it; every other assumption, integrality
+    and sign included, is kept.
+
+    SymPy rebuilds a piecewise through its own class wherever it can, and
+    ``piecewise_simplify`` builds a plain ``Piecewise``, so simplifying one
+    of these returns the result with every plain ``Piecewise`` in it
+    rebuilt as this class.
+
+    Evaluating a piecewise also prunes a piecewise branch value by the
+    branch's own condition: under condition ``c``, ``Piecewise((1, b), (2,
+    c), (5, True))`` becomes the plain ``Piecewise((1, b), (2, c))``, which
+    is right where ``c`` holds but has no otherwise branch, so no
+    expression represents it. An evaluation that leaves such a partial
+    piecewise is skipped, and the piecewise keeps its own total branches.
+    """
+
+    @classmethod
+    @override
+    def eval(cls, *args: Any) -> Any:
+        evaluated = super().eval(*args)
+        if _holds_partial_sympy_piecewise(evaluated) and not any(
+            _holds_partial_sympy_piecewise(arg) for arg in args
+        ):
+            return None
+        return evaluated
+
+    @override
+    def _eval_is_even(self) -> bool | None:
+        return None
+
+    @override
+    def _eval_is_odd(self) -> bool | None:
+        return None
+
+    @override
+    def _eval_simplify(self, **kwargs: Any) -> Any:
+        return _hide_piecewise_parity(super()._eval_simplify(**kwargs))
+
+
+def _hide_piecewise_parity(expression: Any) -> Any:
+    """Return ``expression`` with each plain ``Piecewise`` made parity-opaque."""
+    if not isinstance(expression, sympy.Basic):
+        return expression
+    return expression.replace(
+        lambda node: type(node) is sympy.Piecewise,
+        lambda piecewise: _ParityOpaquePiecewise(*piecewise.args, evaluate=False),
+        simultaneous=False,
+    )
+
+
 def _convert_piecewise_to_sympy_boolean(operand: Any) -> Any:
     """Return ``operand`` in a form SymPy's Boolean operators handle.
 
     A ``sympy.Piecewise`` is not a SymPy ``Boolean`` even when every
     branch is Boolean: ``sympy.And`` and ``sympy.Or`` refuse it, and
     ``sympy.Not`` accepts it but SymPy's Boolean simplification then
-    mishandles the result. Its ``ITE`` rewrite is the equivalent Boolean,
-    the same rewrite SymPy applies to a ``Piecewise`` used as a branch
-    condition, and it reaches nested piecewise values as well. Any other
-    operand is returned as it stands.
+    mishandles the result. The equivalent Boolean is the piecewise's
+    first-match expansion, ``(condition & value) | (~condition & rest)``
+    over the branches in order, ending at the value of the first branch
+    whose condition is ``True``; a piecewise branch value is rewritten the
+    same way. Any other operand is returned as it stands.
+
+    SymPy's ``ITE`` is avoided on both of its routes.
+    ``Piecewise.rewrite(ITE)`` treats a bare Boolean symbol condition as
+    always true and drops every branch after it. The ``ITE`` constructor
+    replaces an ``Eq``/``Ne`` condition with a constant when one side is a
+    symbol a branch uses as a Boolean and the other side is not, whatever
+    ``evaluate`` says, so ``ITE(Eq(b, d), b, c)`` builds as ``c``.
+
+    A branch value that is not Boolean raises ``TypeError``, and a
+    piecewise with no ``True`` condition, which has no value where every
+    condition fails, raises ``PartialPiecewiseError``.
     """
-    if isinstance(operand, sympy.Piecewise):
-        return operand.rewrite(sympy.logic.boolalg.ITE)
-    return operand
+    if not isinstance(operand, sympy.Piecewise):
+        return operand
+    reachable_branches = []
+    for value, condition in operand.args:
+        boolean_value = sympy.logic.boolalg.as_Boolean(
+            _convert_piecewise_to_sympy_boolean(value)
+        )
+        reachable_branches.append((boolean_value, condition))
+        if condition is sympy.true:
+            break
+    else:
+        raise PartialPiecewiseError(
+            "cannot rewrite a partial sympy.Piecewise as a Boolean: no branch "
+            f"condition of {operand!r} is sympy.true, so it has no value where "
+            "every condition fails."
+        )
+    (result, _), *earlier_branches = reversed(reachable_branches)
+    for value, condition in earlier_branches:
+        result = sympy.Or(
+            sympy.And(condition, value), sympy.And(sympy.Not(condition), result)
+        )
+    return result
+
+
+def _is_symbol_compared_with_relational(node: Any) -> bool:
+    """Return whether ``node`` is an ``Eq``/``Ne`` of a symbol and a relational."""
+    return (
+        isinstance(node, (sympy.Eq, sympy.Ne))
+        and any(operand.is_Symbol for operand in node.args)
+        and any(
+            isinstance(operand, sympy.core.relational.Relational)
+            for operand in node.args
+        )
+    )
+
+
+def _negate_symbol_side(comparison: Any) -> Any:
+    """Return ``comparison`` with its symbol negated and its relation inverted.
+
+    ``b == (x < 1)`` holds exactly when ``~b != (x < 1)`` does, and
+    ``b != (x < 1)`` exactly when ``~b == (x < 1)`` does.
+    """
+    inverted = sympy.Ne if isinstance(comparison, sympy.Eq) else sympy.Eq
+    return inverted(
+        *(
+            sympy.Not(operand) if operand.is_Symbol else operand
+            for operand in comparison.args
+        )
+    )
+
+
+def _negate_symbol_sides_of_relational_comparisons(condition: Any) -> Any:
+    """Return ``condition`` with no ``Eq``/``Ne`` of a symbol and a relational.
+
+    Evaluating a ``sympy.Piecewise`` canonicalizes each relational in its
+    conditions as though it compared numbers, subtracting one side from the
+    other. A comparison between a Boolean identifier, which lowers to a
+    plain ``Symbol``, and a relational such as ``Eq(b, x < 1)`` then raises
+    ``TypeError``, since nothing marks the relational side Boolean. The
+    equivalent ``Ne(~b, x < 1)`` has no ``Expr`` side to subtract from, so
+    each such comparison is rewritten to it.
+    """
+    if not isinstance(condition, sympy.Basic):
+        return condition
+    return condition.replace(
+        _is_symbol_compared_with_relational, _negate_symbol_side, simultaneous=False
+    )
+
+
+def _convert_condition_to_sympy_boolean(condition: Any) -> Any:
+    """Return a piecewise branch condition SymPy can evaluate a piecewise over.
+
+    SymPy folds a branch condition that holds a ``sympy.Piecewise`` into a
+    single piecewise and rewrites that with ``Piecewise.rewrite(ITE)``,
+    which drops the branches after a bare Boolean symbol condition.
+    Folding the condition here and rewriting it with
+    ``_convert_piecewise_to_sympy_boolean`` leaves SymPy nothing to
+    rewrite. A comparison of a Boolean symbol with a relational is first
+    rewritten by ``_negate_symbol_sides_of_relational_comparisons``, since
+    the fold and every later evaluation of the piecewise canonicalize the
+    condition.
+    """
+    condition = _negate_symbol_sides_of_relational_comparisons(condition)
+    if isinstance(condition, sympy.Basic) and condition.has(sympy.Piecewise):
+        condition = sympy.piecewise_fold(condition)
+    return _convert_piecewise_to_sympy_boolean(condition)
+
+
+class _UnfoldableRelationalError(Exception):
+    """Raised when a relational that must be folded compares a non-real value.
+
+    ``piecewise_fold`` builds the relational once per branch, and SymPy
+    refuses to build one over a value that is not an extended real, such
+    as complex infinity or NaN, by raising ``TypeError``. Simplification
+    cannot take the unfolded relational either, so it gives up.
+    """
+
+
+def _holds_boolean_symbol_position(condition: Any) -> bool:
+    """Return whether a bare symbol stands where ``condition`` needs a Boolean.
+
+    That is ``condition`` itself being a symbol, or a symbol as an argument
+    of a Boolean connective anywhere inside it.
+    """
+    if not isinstance(condition, sympy.Basic):
+        return False
+    return bool(condition.is_Symbol) or any(
+        any(argument.is_Symbol for argument in connective.args)
+        for connective in condition.atoms(sympy.logic.boolalg.BooleanFunction)
+    )
+
+
+def _must_fold_piecewise_out_of(relational: Any) -> bool:
+    """Return whether ``relational`` holds a piecewise simplify cannot compare.
+
+    See ``_fold_piecewise_out_of_relationals`` for why such a relational is
+    folded; every other relational is left to ``sympy.simplify``, since
+    folding multiplies the branches of each piecewise in it and nests the
+    Boolean result one level deeper per branch.
+    """
+    return isinstance(relational, sympy.core.relational.Relational) and any(
+        _holds_boolean_symbol_position(condition)
+        for piecewise in relational.atoms(sympy.Piecewise)
+        for _, condition in piecewise.args
+    )
+
+
+def _fold_piecewise_out_of_relational(relational: Any) -> Any:
+    """Return ``relational`` with its piecewise operands folded into a Boolean.
+
+    Raises ``_UnfoldableRelationalError`` when a branch value is one no
+    relational compares.
+    """
+    try:
+        folded = sympy.piecewise_fold(relational)
+    except TypeError as error:
+        raise _UnfoldableRelationalError(
+            f"cannot fold the piecewise out of {relational!r}"
+        ) from error
+    return _convert_piecewise_to_sympy_boolean(folded)
+
+
+def _fold_piecewise_out_of_relationals(expression: Any) -> Any:
+    """Return ``expression`` with each relational simplify cannot take folded.
+
+    ``sympy.simplify`` checks whether a relational's ``lhs - rhs`` is zero
+    with ``Expr.equals``, which substitutes for every free symbol at once
+    through ``subs(..., simultaneous=True)``, and that masks each symbol
+    with a product of dummy symbols first. A piecewise inside the
+    relational with a bare symbol in a Boolean position of a condition then
+    receives a product there and raises ``TypeError``, as in
+    ``Piecewise((1, b), (2, True)) < y``. Folding the piecewise out of such
+    a relational, into ``(b & (1 < y)) | (~b & (2 < y))``, leaves no
+    condition inside it.
+
+    Raises:
+        _UnfoldableRelationalError: If such a relational compares a value
+            that is not an extended real.
+    """
+    if not isinstance(expression, sympy.Basic):
+        return expression
+    return expression.replace(
+        _must_fold_piecewise_out_of,
+        _fold_piecewise_out_of_relational,
+        simultaneous=False,
+    )
+
+
+def _fold_piecewise_out_of_integer_parts(expression: Any) -> Any:
+    """Return ``expression`` with each integer part of a piecewise folded.
+
+    The integer parts are ``Mod``, ``floor``, and ``ceiling``.
+
+    ``sympy.simplify`` rebuilds a ``Mod``, ``floor``, or ``ceiling`` around
+    its simplified argument, and simplifying an argument that holds a
+    piecewise folds it into a plain ``Piecewise``, whose all-even branches
+    make SymPy misjudge the quotient's integrality as
+    ``_ParityOpaquePiecewise`` describes. Folding each such node first puts
+    it inside the branches, where it applies to each branch value alone.
+    """
+    if not isinstance(expression, sympy.Basic):
+        return expression
+    return expression.replace(
+        lambda node: (
+            isinstance(node, (sympy.Mod, sympy.floor, sympy.ceiling))
+            and node.has(sympy.Piecewise)
+        ),
+        lambda node: _hide_piecewise_parity(sympy.piecewise_fold(node)),
+        simultaneous=False,
+    )
+
+
+def _is_partial_sympy_piecewise(piecewise: sympy.Piecewise) -> bool:
+    """Return whether ``piecewise`` has branches but no final ``True`` condition.
+
+    Such a piecewise has no value where every condition fails, so no total
+    ``PiecewiseExpression`` represents it.
+    """
+    return bool(piecewise.args) and piecewise.args[-1][1] is not sympy.true
+
+
+def _holds_partial_sympy_piecewise(expression: Any) -> bool:
+    """Return whether ``expression`` is or contains a partial ``sympy.Piecewise``."""
+    return isinstance(expression, sympy.Basic) and any(
+        _is_partial_sympy_piecewise(piecewise)
+        for piecewise in expression.atoms(sympy.Piecewise)
+    )
+
+
+def _try_simplify_sympy_expression(sympy_expression: Any) -> Any | None:
+    """Return ``sympy_expression`` simplified, or ``None`` to keep it as it stands.
+
+    Simplification is best-effort, and SymPy can fail to produce a form to
+    lift while its input stays correct. ``sympy.simplify`` checks a
+    relational numerically at random points, and SymPy's integer-part
+    evaluation raises ``PrecisionExhausted`` instead of giving up when a
+    ``floor``'s argument is exactly an integer at such a point. It also
+    drops a piecewise's final ``True`` branch when the earlier conditions
+    already cover every real, as for ``Piecewise((x < 1, (x > 0) | (x <
+    1)), (x > 1, True))``, which leaves a partial piecewise the lifter
+    refuses. And a comparison of a piecewise that must be split per branch
+    before simplifying, but has a branch no comparison can take, such as
+    ``Piecewise((zoo, b), (1, True)) < y``, cannot be simplified at all.
+    Each case returns ``None``; every other failure propagates.
+    """
+    try:
+        simplified = _transform_masking_boolean_comparisons(
+            sympy_expression, _fold_and_simplify
+        )
+    except sympy.core.evalf.PrecisionExhausted:
+        _LOGGER.debug("simplify exhausted precision; keeping the unsimplified form")
+        return None
+    except _UnfoldableRelationalError:
+        _LOGGER.debug(
+            "simplify cannot compare a non-real piecewise branch; keeping the "
+            "unsimplified form"
+        )
+        return None
+    if _holds_partial_sympy_piecewise(simplified):
+        _LOGGER.debug(
+            "simplify left a piecewise with no otherwise branch; keeping the "
+            "unsimplified form"
+        )
+        return None
+    return simplified
 
 
 def _is_sympy_boolean_node(value: Any) -> bool:
@@ -301,17 +617,26 @@ def _is_sympy_boolean_node(value: Any) -> bool:
 
 
 def _is_boolean_valued_sympy_piecewise(value: Any) -> bool:
-    """Return whether ``value`` is a ``sympy.Piecewise`` of Boolean nodes only."""
-    return isinstance(value, sympy.Piecewise) and all(
-        _is_sympy_boolean_node(branch_value) for branch_value, _ in value.args
+    """Return whether ``value`` is a ``sympy.Piecewise`` a branch shows is Boolean.
+
+    Every branch of a well-typed piecewise has one sort, so one branch
+    that is a Boolean node, or a piecewise a branch of which shows it is
+    Boolean, settles the sort even when the other branches are bare
+    symbols. A piecewise with no such branch, a numeric one included, is
+    not reported Boolean.
+    """
+    return isinstance(value, sympy.Piecewise) and any(
+        _is_sympy_boolean_node(branch_value)
+        or _is_boolean_valued_sympy_piecewise(branch_value)
+        for branch_value, _ in value.args
     )
 
 
 def _is_boolean_comparison(left: Any, right: Any) -> bool:
     """Return whether ``Eq``/``Ne`` over ``left`` and ``right`` compares Booleans.
 
-    Either operand shows it: a Boolean node, or a piecewise whose branches
-    all are.
+    Either operand shows it: a Boolean node, or a piecewise a branch of
+    which shows it is Boolean.
     """
     return any(
         _is_sympy_boolean_node(operand) or _is_boolean_valued_sympy_piecewise(operand)
@@ -320,14 +645,14 @@ def _is_boolean_comparison(left: Any, right: Any) -> bool:
 
 
 def _convert_boolean_comparison_operands(left: Any, right: Any) -> tuple[Any, Any]:
-    """Return ``Eq``/``Ne`` operands with a Boolean piecewise rewritten to ``ITE``.
+    """Return ``Eq``/``Ne`` operands with a Boolean piecewise made a Boolean.
 
     SymPy decides a comparison between a Boolean and a non-Boolean as
     unequal on sight, and a ``sympy.Piecewise`` is not a SymPy Boolean even
     when every branch is Boolean, so ``pw == True`` would lower to
     ``False``. When the comparison is between Booleans, a piecewise operand
-    is rewritten to its ``ITE`` form; a numeric comparison is returned as
-    it stands.
+    is rewritten as its Boolean expansion; a numeric comparison is
+    returned as it stands.
     """
     if not _is_boolean_comparison(left, right):
         return left, right
@@ -337,33 +662,129 @@ def _convert_boolean_comparison_operands(left: Any, right: Any) -> tuple[Any, An
     )
 
 
-def _rewrite_comparisons_made_boolean_by(
-    expression: Any, replacements: Mapping[sympy.Symbol, Any]
+def _mask_boolean_comparisons(
+    node: Any,
+    comparisons: MutableMapping[sympy.Dummy, Any],
+    transform: Callable[[Any], Any],
 ) -> Any:
-    """Rewrite piecewise operands of each comparison ``replacements`` makes Boolean.
+    """Return ``node`` with each outermost comparison between Booleans masked.
 
-    ``xreplace`` rebuilds every node it substitutes into, and SymPy decides
-    an ``Eq``/``Ne`` as soon as it is rebuilt: ``Eq(Piecewise((b1, c),
-    (b2, True)), b3)`` is an open comparison until ``b3`` becomes ``true``,
-    and then folds to ``False``. A comparison that is Boolean once
-    substituted has its piecewise operands rewritten to ``ITE`` first, as
-    lowering does for one that is Boolean from the start.
+    Each ``Eq``/``Ne`` that ``_is_boolean_comparison`` shows is between
+    Booleans is rebuilt over its operands transformed by
+    ``_transform_masking_boolean_comparisons`` with ``transform``, and is
+    replaced by a fresh dummy symbol recorded in ``comparisons`` against
+    the rebuilt comparison. A comparison the rebuild decides is kept as its
+    decided value instead.
     """
-
-    def rewrite_comparison(comparison: Any) -> Any:
-        substituted = (operand.xreplace(replacements) for operand in comparison.args)
-        if not _is_boolean_comparison(*substituted):
-            return comparison
-        return comparison.func(
+    if isinstance(node, (sympy.Eq, sympy.Ne)) and _is_boolean_comparison(*node.args):
+        comparison = node.func(
             *(
-                _convert_piecewise_to_sympy_boolean(operand)
-                for operand in comparison.args
+                _transform_masking_boolean_comparisons(arg, transform)
+                for arg in node.args
             )
         )
-
-    return expression.replace(
-        lambda node: isinstance(node, (sympy.Eq, sympy.Ne)), rewrite_comparison
+        if not isinstance(comparison, (sympy.Eq, sympy.Ne)):
+            return comparison
+        placeholder = sympy.Dummy("boolean_comparison")
+        comparisons[placeholder] = comparison
+        return placeholder
+    masked_arguments = tuple(
+        _mask_boolean_comparisons(arg, comparisons, transform)
+        if isinstance(arg, sympy.Basic)
+        else arg
+        for arg in node.args
     )
+    if all(
+        masked is original
+        for masked, original in zip(masked_arguments, node.args, strict=True)
+    ):
+        return node
+    return node.func(*masked_arguments)
+
+
+def _transform_masking_boolean_comparisons(
+    expression: Any, transform: Callable[[Any], Any]
+) -> Any:
+    """Return ``transform`` of ``expression`` with Boolean comparisons held opaque.
+
+    ``sympy.simplify``'s pattern rules for a conjunction subtract or negate
+    a comparison's sides, which raises for a comparison between Booleans
+    with a side such as ``True`` or ``x < 1``. Each such comparison is
+    transformed on its own operands and held as an opaque dummy symbol
+    while ``transform`` runs, then put back. Rewriting the comparison with
+    connectives instead would negate its operands, and SymPy's
+    simplification of a negated univariate range can drop one of its
+    boundary points.
+    """
+    if not isinstance(expression, sympy.Basic):
+        return transform(expression)
+    comparisons: dict[sympy.Dummy, Any] = {}
+    masked = _mask_boolean_comparisons(expression, comparisons, transform)
+    restored, _ = _substitute_sympy_symbols(transform(masked), comparisons)
+    return restored
+
+
+def _fold_and_simplify(expression: Any) -> Any:
+    """Return ``sympy.simplify`` of ``expression`` with piecewise nodes folded first.
+
+    Integer parts and the relationals ``sympy.simplify`` cannot take are
+    folded first, and each plain ``Piecewise`` in the result is rebuilt as
+    ``_ParityOpaquePiecewise`` before anything is built around it.
+    """
+    folded = _fold_piecewise_out_of_relationals(
+        _fold_piecewise_out_of_integer_parts(expression)
+    )
+    return _hide_piecewise_parity(sympy.simplify(folded))
+
+
+def _convert_boolean_positions(
+    node: Any, arguments: tuple[Any, ...]
+) -> tuple[Any, ...]:
+    """Return ``node``'s new ``arguments`` with each Boolean position made Boolean.
+
+    The Boolean positions are every argument of a Boolean connective or
+    ``ITE``, a piecewise branch's condition, and both operands of an
+    ``Eq``/``Ne`` that compares Booleans; a piecewise in one is rewritten
+    as its Boolean expansion. Every other argument is returned as it
+    stands.
+    """
+    if isinstance(node, (sympy.Eq, sympy.Ne)):
+        return _convert_boolean_comparison_operands(*arguments)
+    if isinstance(node, sympy.logic.boolalg.BooleanFunction):
+        return tuple(_convert_piecewise_to_sympy_boolean(arg) for arg in arguments)
+    if isinstance(node, sympy.functions.elementary.piecewise.ExprCondPair):
+        value, condition = arguments
+        return value, _convert_condition_to_sympy_boolean(condition)
+    return arguments
+
+
+def _substitute_sympy_symbols(
+    node: Any, replacements: Mapping[sympy.Symbol, Any]
+) -> tuple[Any, bool]:
+    """Return ``node`` with ``replacements`` applied, and whether any applied.
+
+    Substitutes as ``xreplace`` does, in one simultaneous bottom-up pass
+    that rebuilds only a node whose arguments changed, but converts the
+    rebuilt node's Boolean positions first. A rebuild evaluates the node,
+    and SymPy decides ``Eq(Piecewise, True)`` as ``False`` on sight and
+    refuses a ``Piecewise`` under ``And``, so a piecewise that reaches a
+    Boolean position -- a replacement value, or a piecewise already in
+    the tree whose comparison a replacement makes Boolean -- is rewritten
+    as a Boolean before its parent is rebuilt. A node no replacement reaches
+    is kept as it stands, unevaluated or not.
+    """
+    if node in replacements:
+        return replacements[node], True
+    substituted_arguments = tuple(
+        _substitute_sympy_symbols(arg, replacements)
+        if isinstance(arg, sympy.Basic)
+        else (arg, False)
+        for arg in node.args
+    )
+    if not any(changed for _, changed in substituted_arguments):
+        return node, False
+    arguments = tuple(arg for arg, _ in substituted_arguments)
+    return node.func(*_convert_boolean_positions(node, arguments)), True
 
 
 @register_pass(
@@ -383,7 +804,7 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             # and every SymPy object other than a ``Relational`` is truthy, so
             # it would decide the negation at lowering time and emit the
             # constant ``False`` -- discarding the operand entirely. A Boolean
-            # piecewise operand is rewritten to ``ITE`` first: ``sympy.Not``
+            # piecewise operand is rewritten as a Boolean first: ``sympy.Not``
             # accepts a ``Piecewise``, but SymPy's Boolean simplification of
             # the result can raise or return a wrong answer.
             UnaryOperation.LOGICAL_NOT: lambda x: sympy.Not(
@@ -410,7 +831,7 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
             # that shape before lowering so the refusal is this package's
             # ``NonBooleanLogicalOperandError`` rather than SymPy's own error.
             # A Boolean piecewise operand passes that screen but is still not
-            # a SymPy ``Boolean``, so it is rewritten to ``ITE`` first.
+            # a SymPy ``Boolean``, so it is rewritten as a Boolean first.
             BinaryOperation.LOGICAL_AND: lambda x, y: sympy.And(
                 _convert_piecewise_to_sympy_boolean(x),
                 _convert_piecewise_to_sympy_boolean(y),
@@ -420,7 +841,7 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
                 _convert_piecewise_to_sympy_boolean(y),
             ),
             # SymPy compares a ``Piecewise`` with a Boolean as unequal on
-            # sight, so a Boolean piecewise operand is rewritten to ``ITE``
+            # sight, so a Boolean piecewise operand is rewritten as a Boolean
             # here too.
             BinaryOperation.EQUAL: lambda x, y: sympy.Eq(
                 *_convert_boolean_comparison_operands(x, y)
@@ -472,14 +893,19 @@ class ExpressionToSympyConverter(VisitablePass[Expression, Any]):
         first-match-wins by construction (SymPy's ``Piecewise``
         evaluates to the first branch whose condition holds). Every
         condition must be boolean-valued; SymPy raises ``TypeError``
-        for a branch condition it can determine is not a Boolean.
+        for a branch condition it can determine is not a Boolean. A
+        condition holding a piecewise is folded and rewritten as a Boolean
+        before SymPy sees it.
         """
         branches = [
-            (self.visit(value), self.visit(condition))
+            (
+                self.visit(value),
+                _convert_condition_to_sympy_boolean(self.visit(condition)),
+            )
             for condition, value in piecewise_expression.get_cases()
         ]
         branches.append((self.visit(piecewise_expression.otherwise), True))
-        return sympy.Piecewise(*branches, evaluate=False)
+        return _ParityOpaquePiecewise(*branches, evaluate=False)
 
     def visit_call_expression(
         self, call_expression: CallExpression
@@ -621,8 +1047,10 @@ class SympyVariableSubstitutionPass(
     inside SymPy. Running the replacement as a pass, rather than calling
     ``xreplace`` directly, lets the pass infrastructure wrap that failure
     as ``PassExecutionError`` like every other bridge failure. The same
-    rebuild would decide a comparison the replacement makes Boolean, so
-    that comparison's piecewise operands are rewritten to ``ITE`` first.
+    rebuild would decide a comparison the replacement makes Boolean, and
+    would refuse a piecewise replacement value under a Boolean connective,
+    so a piecewise reaching a Boolean position is rewritten as a Boolean
+    first.
     """
 
     def __init__(self, replacements: Mapping[sympy.Symbol, Any]) -> None:
@@ -635,9 +1063,8 @@ class SympyVariableSubstitutionPass(
     def run_pass(
         self, ir: sympy.Expr | sympy.logic.boolalg.Boolean
     ) -> sympy.Expr | sympy.logic.boolalg.Boolean:
-        return _rewrite_comparisons_made_boolean_by(ir, self._replacements).xreplace(
-            self._replacements
-        )
+        substituted, _ = _substitute_sympy_symbols(ir, self._replacements)
+        return substituted
 
     @override
     def get_noop_output(
@@ -766,11 +1193,13 @@ def substitute_sympy_expression_variables(
     #
     # Every substitution key here is an atomic ``Symbol`` (never a
     # compound pattern), and the IR never constructs bound-variable
-    # expressions, so ``xreplace`` is a safe, exact replacement: it
-    # matches each tree node against the full replacement mapping in a
-    # single bottom-up pass, so a replacement value is never itself
-    # re-substituted by another binding -- the same simultaneous,
-    # non-chaining semantics, without the deprecated masking path.
+    # expressions, so an ``xreplace``-style pass is a safe, exact
+    # replacement: it matches each tree node against the full replacement
+    # mapping in a single bottom-up pass, so a replacement value is never
+    # itself re-substituted by another binding -- the same simultaneous,
+    # non-chaining semantics, without the deprecated masking path. The
+    # substitution pass runs that walk itself so it can keep each Boolean
+    # position Boolean as it rebuilds.
     replacements = {
         sympy.Symbol(
             ExpressionToSympyConverter.format_identifier(k)
@@ -1172,7 +1601,7 @@ class SymPyToExpressionConverter(
         if not branches:
             raise ValueError("Cannot convert an empty Piecewise expression.")
         *case_branches, (otherwise_value, final_condition) = branches
-        if final_condition is not sympy.true:
+        if _is_partial_sympy_piecewise(piecewise):
             raise PartialPiecewiseError(
                 "cannot lift a partial sympy.Piecewise to PiecewiseExpression: "
                 f"the final branch's condition is {final_condition!r}, not "
@@ -1232,11 +1661,17 @@ def simplify_expression(
 ) -> Expression:
     """Simplify an expression.
 
-    Simplification is best-effort. ``sympy.simplify`` checks relationals
-    numerically at random points, and raises ``PrecisionExhausted`` when a
-    ``floor`` argument is exactly an integer at such a point; the
-    expression is then lifted back with ``environment`` substituted but
-    unsimplified.
+    Simplification is best-effort, and the expression is lifted back with
+    ``environment`` substituted but unsimplified in three cases.
+    ``sympy.simplify`` checks relationals numerically at random points, and
+    raises ``PrecisionExhausted`` when a ``floor`` argument is exactly an
+    integer at such a point. It also drops a piecewise's otherwise branch
+    when the case conditions before it already hold for every real, as in
+    ``x < 1 if x > 0 || x < 1, otherwise x > 1``, and no piecewise
+    expression represents what remains. And it cannot simplify a comparison
+    of a piecewise with a Boolean identifier in a case condition and a
+    branch that is not a real number, as in ``(nan if b, otherwise 1) >
+    y``; a complex-infinity branch then fails to lift, as it does anywhere.
 
     Args:
         expression: Expression to simplify.
@@ -1244,7 +1679,7 @@ def simplify_expression(
 
     Returns:
         Simplified expression, or the substituted but unsimplified expression
-        when SymPy exhausts precision.
+        in the three cases above.
 
     Raises:
         NativeConstantBindingError: If ``environment`` binds a registered
@@ -1262,11 +1697,9 @@ def simplify_expression(
         PassExecutionError: Wrapping the originating exception as
             ``__cause__``: a ``TypeError`` if substituting ``environment``
             makes SymPy auto-evaluate a relational it cannot represent
-            (for example a comparison against ``zoo`` or against NaN);
-            :class:`PartialPiecewiseError` if simplification yields a
-            ``sympy.Piecewise`` whose final branch condition is not
-            ``sympy.true``; or :class:`ComplexInfinityLiftError` if it
-            yields ``sympy.zoo``, which a quotient by zero folds to.
+            (for example a comparison against ``zoo`` or against NaN); or
+            :class:`ComplexInfinityLiftError` if simplification yields
+            ``sympy.zoo``, which a quotient by zero folds to.
 
     """
     validate_logical_operands(expression, environment)
@@ -1280,14 +1713,7 @@ def simplify_expression(
             sympy_expression, environment
         )
     _LOGGER.debug("pre-simplify=%r", sympy_expression)
-    try:
-        result = sympy.simplify(sympy_expression)
-    except sympy.core.evalf.PrecisionExhausted:
-        # sympy.simplify checks a relational numerically at random points, and
-        # SymPy's integer-part evaluation raises instead of giving up when a
-        # floor's argument is exactly an integer at such a point. The
-        # substituted form is still correct, only unsimplified, so keep it.
-        _LOGGER.debug("simplify exhausted precision; keeping the unsimplified form")
-        result = sympy_expression
+    simplified = _try_simplify_sympy_expression(sympy_expression)
+    result = sympy_expression if simplified is None else simplified
     _LOGGER.debug("post-simplify=%r", result)
     return convert_sympy_expression_to_expression(result)

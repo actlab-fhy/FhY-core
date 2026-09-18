@@ -242,7 +242,10 @@ def simplify_expression(
     can decide the value. Delegates to the SymPy bridge, which performs
     all conversion and simplification math. Simplification is
     best-effort: where ``sympy.simplify`` raises ``PrecisionExhausted``,
-    the expression comes back with ``environment`` substituted but
+    drops a piecewise's otherwise branch because the case conditions before
+    it hold for every real, or cannot compare a piecewise that has a
+    Boolean identifier in a case condition and a branch that is not a real
+    number, the expression comes back with ``environment`` substituted but
     unsimplified.
 
     Args:
@@ -255,7 +258,7 @@ def simplify_expression(
 
     Returns:
         Simplified expression, or the substituted but unsimplified expression
-        when SymPy exhausts precision.
+        in the cases above.
 
     Raises:
         SolverCapabilityError: If ``backend`` is not SIMPLIFICATION-capable
@@ -273,11 +276,9 @@ def simplify_expression(
             ``And``/``Or`` raise a raw ``TypeError`` on such an operand,
             so the shape is refused before lowering instead.
         PassExecutionError: If the SymPy bridge's lowering or lifting pass
-            fails internally, for example when simplification yields a
-            ``sympy.Piecewise`` whose final branch condition is not
-            ``sympy.true``, or when it yields ``sympy.zoo``, which a
-            quotient by zero folds to. The pass infrastructure wraps the
-            originating error (e.g. ``PartialPiecewiseError``,
+            fails internally, for example when simplification yields
+            ``sympy.zoo``, which a quotient by zero folds to. The pass
+            infrastructure wraps the originating error (e.g.
             ``ComplexInfinityLiftError``) as ``__cause__`` rather than
             letting it propagate directly.
 
