@@ -1050,7 +1050,15 @@ def _create_bound_constraint(
 def _is_valid_natural_lower_bound(
     bound: int, *, zero_included: bool, is_inclusive: bool
 ) -> bool:
-    """Return whether ``bound`` is an admissible natural-domain lower-bound literal."""
+    """Return whether ``bound`` is an admissible natural-domain lower-bound literal.
+
+    The rule judges the literal, not the set it bounds. With zero included,
+    the least admissible literal is 0 for an inclusive bound and 1 for an
+    exclusive one; with zero excluded, it is 1 for an inclusive bound and 0
+    for an exclusive one. A refused bound may still bound a non-empty set:
+    ``> 0`` with zero included admits 1, 2, and so on, and ``>= 0`` with
+    zero excluded admits every member.
+    """
     if zero_included:
         if bound < 0:
             return False
@@ -1063,7 +1071,13 @@ def _is_valid_natural_lower_bound(
 def _is_valid_natural_upper_bound(
     bound: int, *, zero_included: bool, is_inclusive: bool
 ) -> bool:
-    """Return whether ``bound`` is an admissible natural-domain upper-bound literal."""
+    """Return whether ``bound`` is an admissible natural-domain upper-bound literal.
+
+    An upper bound is admissible exactly when it admits the domain's least
+    member, 0 with zero included and 1 without: an inclusive bound must be
+    at least that member, and an exclusive one must exceed it. Every refused
+    upper bound therefore bounds an empty set.
+    """
     if zero_included:
         if is_inclusive:
             return bound >= 0
@@ -1076,6 +1090,15 @@ def _is_valid_natural_upper_bound(
 def _validate_natural_lower_bound(
     bound: int, *, zero_included: bool, is_inclusive: bool
 ) -> None:
+    """Raise unless ``bound`` is an admissible natural-domain lower-bound literal.
+
+    The rule is :func:`_is_valid_natural_lower_bound`'s. The error names the
+    least literal admissible for ``zero_included`` and ``is_inclusive``.
+
+    Raises:
+        ParamError: If ``bound`` lies below that least admissible literal.
+
+    """
     if _is_valid_natural_lower_bound(
         bound, zero_included=zero_included, is_inclusive=is_inclusive
     ):
@@ -1097,6 +1120,15 @@ def _validate_natural_lower_bound(
 def _validate_natural_upper_bound(
     bound: int, *, zero_included: bool, is_inclusive: bool
 ) -> None:
+    """Raise unless ``bound`` is an admissible natural-domain upper-bound literal.
+
+    The rule is :func:`_is_valid_natural_upper_bound`'s. The error names the
+    least literal admissible for ``zero_included`` and ``is_inclusive``.
+
+    Raises:
+        ParamError: If ``bound`` lies below that least admissible literal.
+
+    """
     if _is_valid_natural_upper_bound(
         bound, zero_included=zero_included, is_inclusive=is_inclusive
     ):
@@ -1636,12 +1668,25 @@ def create_natural_param_between(
     is_lower_inclusive: bool = True,
     is_upper_inclusive: bool = True,
 ) -> Param[int]:
-    """Create a natural-number parameter bounded to ``[lower_bound, upper_bound]``.
+    """Create a natural-number parameter between ``lower_bound`` and ``upper_bound``.
+
+    Each bound admits its own value only when its inclusivity flag is set.
+    Bound factories otherwise reject only bounds that enclose no value in
+    any number system; the natural factories are the one exception, since
+    they also reject a bound literal the natural domain does not admit (see
+    Args), even when the set it bounds is not empty. With zero excluded,
+    for example, ``[0, 3]`` is refused although it holds 1, 2, and 3.
 
     Args:
-        lower_bound: Lower bound; must lie within the natural domain.
-        upper_bound: Upper bound; must not lie below ``lower_bound``, and
-            may equal it only when both bounds are inclusive.
+        lower_bound: Lower bound. With zero included, it must be at least 0
+            when inclusive and at least 1 when exclusive; with zero
+            excluded, at least 1 when inclusive and at least 0 when
+            exclusive.
+        upper_bound: Upper bound. It must admit the domain's least member,
+            0 with zero included and 1 without, so be at least that member
+            when inclusive and exceed it when exclusive. It must also not
+            lie below ``lower_bound``, and may equal it only when both
+            bounds are inclusive.
         name: Variable for the parameter; defaults to a fresh
             ``Identifier("param")``.
         zero_included: Whether zero belongs to the domain.
@@ -1649,11 +1694,15 @@ def create_natural_param_between(
         is_upper_inclusive: Whether ``upper_bound`` itself is admitted.
 
     Returns:
-        The bounded natural-number parameter.
+        The bounded natural-number parameter. Bounds that pass every check
+        yet enclose no integer, such as ``(1, 2)`` with both ends exclusive,
+        give an empty parameter.
 
     Raises:
-        ParamError: If the bounds are reversed, equal with an exclusive
-            side, or outside the natural domain.
+        ParamError: If the bounds are reversed or equal with an exclusive
+            side, or if either bound falls below the minimum Args gives for
+            it.
+
     """
     _validate_bounds_are_ordered(
         lower_bound, upper_bound, is_lower_inclusive, is_upper_inclusive
@@ -1676,8 +1725,24 @@ def create_natural_param_with_lower_bound(
 ) -> Param[int]:
     """Create a natural-number parameter with a lower bound.
 
+    Args:
+        lower_bound: Lower bound. With zero included, it must be at least 0
+            when inclusive and at least 1 when exclusive; with zero
+            excluded, at least 1 when inclusive and at least 0 when
+            exclusive.
+        name: Variable for the parameter; defaults to a fresh
+            ``Identifier("param")``.
+        zero_included: Whether zero belongs to the domain.
+        is_inclusive: Whether ``lower_bound`` itself is admitted.
+
+    Returns:
+        The natural-number parameter bounded below by ``lower_bound``, which
+        is never empty.
+
     Raises:
-        ParamError: If ``lower_bound`` lies outside the natural domain.
+        ParamError: If ``lower_bound`` falls below the minimum Args gives for
+            it.
+
     """
     return create_natural_param(
         name=name, zero_included=zero_included
@@ -1693,8 +1758,23 @@ def create_natural_param_with_upper_bound(
 ) -> Param[int]:
     """Create a natural-number parameter with an upper bound.
 
+    Args:
+        upper_bound: Upper bound. It must admit the domain's least member,
+            0 with zero included and 1 without, so be at least that member
+            when inclusive and exceed it when exclusive.
+        name: Variable for the parameter; defaults to a fresh
+            ``Identifier("param")``.
+        zero_included: Whether zero belongs to the domain.
+        is_inclusive: Whether ``upper_bound`` itself is admitted.
+
+    Returns:
+        The natural-number parameter bounded above by ``upper_bound``, which
+        is never empty.
+
     Raises:
-        ParamError: If ``upper_bound`` lies outside the natural domain.
+        ParamError: If ``upper_bound`` does not admit the domain's least
+            member.
+
     """
     return create_natural_param(
         name=name, zero_included=zero_included

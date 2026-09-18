@@ -619,6 +619,68 @@ def test_nat_param_with_upper_bound_zero_included_exclusive_rejects_zero() -> No
 
 
 @pytest.mark.parametrize(
+    ("factory", "message"),
+    [
+        pytest.param(
+            partial(create_natural_param_with_lower_bound, 0, is_inclusive=False),
+            "Lower bound must be at least 1 if zero is included "
+            "and bound is exclusive.",
+            id="lower-bound-factory-zero-included",
+        ),
+        pytest.param(
+            partial(
+                create_natural_param_with_lower_bound,
+                -1,
+                zero_included=False,
+                is_inclusive=False,
+            ),
+            "Lower bound must be non-negative when zero is not included "
+            "and bound is exclusive.",
+            id="lower-bound-factory-zero-excluded",
+        ),
+        pytest.param(
+            partial(
+                create_natural_param_with_upper_bound,
+                1,
+                zero_included=False,
+                is_inclusive=False,
+            ),
+            "Upper bound must be at least 2 when zero is not included "
+            "and bound is exclusive.",
+            id="upper-bound-factory-zero-excluded",
+        ),
+        pytest.param(
+            # The bounds hold 1, 2, and 3, yet the exclusive zero is refused.
+            partial(create_natural_param_between, 0, 3, is_lower_inclusive=False),
+            "Lower bound must be at least 1 if zero is included "
+            "and bound is exclusive.",
+            id="between-factory-lower-zero-included",
+        ),
+        pytest.param(
+            # The only ordered bounds the upper-bound rule refuses in `between`.
+            partial(
+                create_natural_param_between,
+                0,
+                1,
+                zero_included=False,
+                is_lower_inclusive=False,
+                is_upper_inclusive=False,
+            ),
+            "Upper bound must be at least 2 when zero is not included "
+            "and bound is exclusive.",
+            id="between-factory-upper-zero-excluded",
+        ),
+    ],
+)
+def test_nat_param_bound_factory_rejects_an_exclusive_bound_below_its_minimum(
+    factory: Any, message: str
+) -> None:
+    """Test the bound factories reject an exclusive bound below its natural minimum."""
+    with pytest.raises(ParamError, match=re.escape(message)):
+        factory()
+
+
+@pytest.mark.parametrize(
     "factory",
     [
         pytest.param(create_natural_param_with_lower_bound, id="lower-bound-factory"),
