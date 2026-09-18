@@ -10,6 +10,13 @@ Only the ownerless primitives used across every subsystem are re-exported at
 the top level.
 """
 
+try:
+    from fhy_core._rs import rust_available as _rust_available
+
+    RUST_BACKEND_AVAILABLE: bool = True
+except ImportError:
+    RUST_BACKEND_AVAILABLE: bool = False
+
 from importlib.metadata import version
 
 from . import (
@@ -36,6 +43,7 @@ from .identifier import Identifier
 __version__ = version("fhy_core")
 
 __all__ = [
+    "RUST_BACKEND_AVAILABLE",
     "Identifier",
     "diagnostic",
     "error",

@@ -1,0 +1,33 @@
+[package]
+name = "fhy-core"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.82"
+authors = ["Christopher Priebe <cpriebe@ucsd.edu>"]
+description = "Core utilities for the FhY compiler infrastructure."
+license = "BSD-3-Clause"
+repository = "https://github.com/actlab-fhy/FhY-core.git"
+
+[lib]
+name = "fhy_core"
+crate-type = ["rlib"]
+path = "rust/src/lib.rs"
+
+[features]
+default = []
+python = ["dep:pyo3"]
+
+[dependencies]
+pyo3 = { version = "0.24", optional = true, features = ["extension-module"] }
+num-bigint = "0.4"
+num-rational = "0.4"
+num-traits = "0.2"
+petgraph = "0.7"
+strum = { version = "0.27", features = ["derive"] }
+strum_macros = "0.27"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+pretty_assertions = "1"
