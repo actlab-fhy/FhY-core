@@ -14,6 +14,7 @@ domain.
 import operator
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import Any, Generic, TypeVar, cast
 
 from fhy_core.identifier import Identifier
@@ -1538,9 +1539,28 @@ def create_real_param(
     )
 
 
+def _convert_to_exact_bound(bound: int | float | str) -> int | float | Fraction:
+    """Return ``bound`` as a number that compares with any other bound exactly.
+
+    An ``int`` or ``float`` already compares by its exact value with an
+    ``int``, a ``float``, or a ``Fraction``, so it is returned unchanged. A
+    ``str`` is first lifted into the ``LiteralExpression`` a bound
+    constraint holds, which refuses text outside the literal grammar, and
+    is then read as the exact decimal it spells.
+
+    Raises:
+        ValueError: If ``bound`` is a ``str`` outside the literal grammar.
+
+    """
+    if not isinstance(bound, str):
+        return bound
+    LiteralExpression(bound)
+    return Fraction(bound)
+
+
 def _validate_bounds_are_ordered(
-    lower_bound: float,
-    upper_bound: float,
+    lower_bound: int | float | str,
+    upper_bound: int | float | str,
     is_lower_inclusive: bool,
     is_upper_inclusive: bool,
 ) -> None:
@@ -1549,9 +1569,21 @@ def _validate_bounds_are_ordered(
     This is when ``lower_bound`` exceeds ``upper_bound``, or equals it with
     an exclusive side. Bounds that are consistent but happen to enclose no
     integer, such as ``(1, 2)`` with both ends exclusive, pass this check.
+    The bounds compare by the exact values they denote, never rounded to a
+    ``float``: ``"0.1"`` lies below ``0.1``, whose binary value exceeds one
+    tenth, and below ``"0.10000000000000000001"``, which rounds to that
+    same ``float``.
+
+    Raises:
+        ParamError: If the bounds are reversed, or equal with an exclusive
+            side.
+        ValueError: If a ``str`` bound lies outside the literal grammar.
+
     """
-    if lower_bound > upper_bound or (
-        lower_bound == upper_bound and not (is_lower_inclusive and is_upper_inclusive)
+    lower = _convert_to_exact_bound(lower_bound)
+    upper = _convert_to_exact_bound(upper_bound)
+    if lower > upper or (
+        lower == upper and not (is_lower_inclusive and is_upper_inclusive)
     ):
         raise ParamError("Lower bound must be less than or equal to upper bound.")
 
@@ -1679,7 +1711,7 @@ def create_real_param_between(
 ) -> Param[str | float]:
     """Create a real parameter bounded to ``[lower_bound, upper_bound]``."""
     _validate_bounds_are_ordered(
-        float(lower_bound), float(upper_bound), is_lower_inclusive, is_upper_inclusive
+        lower_bound, upper_bound, is_lower_inclusive, is_upper_inclusive
     )
     param = create_real_param(name=name)
     param = param.add_lower_bound_constraint(

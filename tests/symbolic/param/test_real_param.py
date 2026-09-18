@@ -1,6 +1,7 @@
 """Tests for real-valued parameters (new composition API)."""
 
 import math
+import re
 from functools import partial
 from typing import Any
 
@@ -447,6 +448,96 @@ def test_real_param_between_equal_bounds_with_any_exclusive_raises(
             is_lower_inclusive=is_lower_inclusive,
             is_upper_inclusive=is_upper_inclusive,
         )
+
+
+# =============================================================================
+# Exact bound ordering for `between`
+# =============================================================================
+
+_WIDE_DIGITS = "1" * 400
+"""Integer digits that make a decimal too wide for a finite ``float``."""
+
+_UNORDERED_BOUNDS_MESSAGE = "Lower bound must be less than or equal to upper bound."
+
+
+# Every pair below collapses to one ``float`` when both bounds are rounded
+# to binary, so only an exact comparison tells the bounds apart.
+@pytest.mark.parametrize(
+    "lower_bound, upper_bound",
+    [
+        pytest.param("0.1", "0.10000000000000000001", id="decimals-finer-than-a-float"),
+        pytest.param(
+            f"{_WIDE_DIGITS}.5", f"{_WIDE_DIGITS}.6", id="decimals-beyond-float-range"
+        ),
+        pytest.param("0.1", 0.1, id="decimal-below-its-nearest-float"),
+        pytest.param(0.1, "0.10000000000000001", id="float-below-a-decimal"),
+        pytest.param(
+            f"{_WIDE_DIGITS}.5", math.inf, id="decimal-beyond-float-range-below-inf"
+        ),
+    ],
+)
+def test_real_param_between_accepts_exclusive_bounds_ordered_only_exactly(
+    lower_bound: float | str, upper_bound: float | str
+) -> None:
+    """Test exclusive bounds ordered by exact value build a non-empty param."""
+    param = create_real_param_between(
+        lower_bound, upper_bound, is_lower_inclusive=False, is_upper_inclusive=False
+    )
+
+    assert not param.is_empty()
+
+
+@pytest.mark.parametrize(
+    "lower_bound, upper_bound",
+    [
+        pytest.param("0.10000000000000000001", "0.1", id="decimals-finer-than-a-float"),
+        pytest.param(
+            f"{_WIDE_DIGITS}.6", f"{_WIDE_DIGITS}.5", id="decimals-beyond-float-range"
+        ),
+        pytest.param(0.1, "0.1", id="float-above-its-nearest-decimal"),
+        pytest.param(
+            math.inf, f"{_WIDE_DIGITS}.5", id="inf-above-decimal-beyond-float-range"
+        ),
+    ],
+)
+def test_real_param_between_rejects_bounds_reversed_only_exactly(
+    lower_bound: float | str, upper_bound: float | str
+) -> None:
+    """Test inclusive bounds reversed by exact value raise `ParamError`."""
+    with pytest.raises(ParamError, match=re.escape(_UNORDERED_BOUNDS_MESSAGE)):
+        create_real_param_between(lower_bound, upper_bound)
+
+
+@pytest.mark.parametrize(
+    "lower_bound, upper_bound",
+    [
+        pytest.param("1.50", "1.5", id="decimals-with-trailing-zero"),
+        pytest.param("0.5", 0.5, id="decimal-and-its-exact-float"),
+        pytest.param("5", 5.0, id="integer-text-and-its-float"),
+    ],
+)
+def test_real_param_between_rejects_exactly_equal_bounds_with_an_exclusive_side(
+    lower_bound: float | str, upper_bound: float | str
+) -> None:
+    """Test bounds spelled differently but exactly equal raise when one is exclusive."""
+    with pytest.raises(ParamError, match=re.escape(_UNORDERED_BOUNDS_MESSAGE)):
+        create_real_param_between(lower_bound, upper_bound, is_upper_inclusive=False)
+
+
+@pytest.mark.parametrize(
+    "lower_bound, upper_bound",
+    [
+        pytest.param("invalid", 1.0, id="invalid-lower"),
+        pytest.param(0.0, "1e400", id="exponent-upper"),
+        pytest.param("-1.5", 1.0, id="signed-lower"),
+    ],
+)
+def test_real_param_between_rejects_a_string_bound_outside_the_literal_grammar(
+    lower_bound: float | str, upper_bound: float | str
+) -> None:
+    """Test a string bound the literal grammar refuses raises that literal's error."""
+    with pytest.raises(ValueError, match="Invalid string-form literal expression"):
+        create_real_param_between(lower_bound, upper_bound)
 
 
 # =============================================================================

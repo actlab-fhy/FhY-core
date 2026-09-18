@@ -203,6 +203,12 @@ def test_int_param_between_with_reversed_bounds_raises() -> None:
         create_integer_param_between(2, 1)
 
 
+def test_int_param_between_orders_bounds_past_float_precision() -> None:
+    """Test bounds one apart above ``2**53``, where floats collide, order exactly."""
+    with pytest.raises(ParamError):
+        create_integer_param_between(2**53 + 1, 2**53)
+
+
 def test_int_param_between_with_consistent_exclusive_bounds_is_empty() -> None:
     """Test `create_integer_param_between(1, 2)` builds an empty param.
 
