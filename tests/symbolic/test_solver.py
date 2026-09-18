@@ -205,6 +205,44 @@ def test_simplify_expression_accepts_an_immutabledict_environment() -> None:
     assert result.value == 3
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason=(
+        "simplify_expression is not structurally idempotent for every tree: "
+        "simplifying '-((0 - v0 * -v0) + v0)' gives 'v0 * (-1 + -1 * v0)', "
+        "and simplifying that again pulls the sign out as "
+        "'-1 * (v0 * (1 + v0))', so the two results are not structurally "
+        "equivalent. This documents the current behavior and flips loudly if "
+        "SymPy simplification becomes a structural fixed point on this shape."
+    ),
+)
+def test_simplify_expression_is_structurally_idempotent_on_a_negated_sum() -> None:
+    """Test simplifying ``-((0 - v0 * -v0) + v0)`` twice matches simplifying it once."""
+    v0 = IdentifierExpression(mock_identifier("v0", 0))
+    expression = UnaryExpression(
+        UnaryOperation.NEGATE,
+        BinaryExpression(
+            BinaryOperation.ADD,
+            BinaryExpression(
+                BinaryOperation.SUBTRACT,
+                LiteralExpression(0),
+                BinaryExpression(
+                    BinaryOperation.MULTIPLY,
+                    v0,
+                    UnaryExpression(UnaryOperation.NEGATE, v0),
+                ),
+            ),
+            v0,
+        ),
+    )
+    once = simplify_expression(expression)
+
+    twice = simplify_expression(once)
+
+    assert twice.is_structurally_equivalent(once)
+
+
 # =============================================================================
 # check_expression_satisfiability
 # =============================================================================

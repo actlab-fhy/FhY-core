@@ -5,6 +5,15 @@ NumPy oracle) and structural (the SymPy-stable subset) -- and the
 cross-bridge substitution contract between ``Expression.substitute`` and
 ``substitute_sympy_expression_variables``.
 
+Every tree the semantic round trip and the substitution properties draw
+may hold Boolean identifiers from a pool of their own:
+as piecewise conditions, as Boolean piecewise branches, and as operands
+of connectives and of ``==``/``!=`` between Booleans, so a Boolean
+piecewise reaches every Boolean position the bridge rewrites. The
+environments bind each Boolean identifier to a bool, and the
+substitution properties replace one Boolean identifier with a Boolean
+tree, which may itself be a Boolean piecewise.
+
 The semantic round trip and both substitution properties draw
 division-free trees. Lowering ``FLOOR_DIVIDE`` to ``floor(a / b)`` lets
 SymPy distribute the divisor over a sum, so ``(v0 * v0 + v0) // -5``
@@ -15,11 +24,11 @@ off-by-one: ``-23`` rather than ``-22`` at ``v0 = -11``.
 They enable calls, restricted to :data:`SYMPY_STABLE_CALL_FUNCTIONS`
 (``floor``, ``ceil``, ``round``), the natives whose SymPy node lifts
 back to the same native name.
-``build_numeric_expression_strategy`` and
-``build_boolean_expression_strategy`` thread ``include_division``,
-``include_calls``, and ``native_functions`` through every subtree they
-draw (including a piecewise condition or value), so setting them once at
-the root is enough to govern the whole tree. The structural round trip
+``build_any_sort_expression_strategy`` and
+``draw_simultaneous_substitution_case`` thread every option through
+every subtree they draw (including a piecewise condition or value, and
+every replacement), so setting it once is enough to govern the whole
+tree. The structural round trip
 uses the already-restricted ``build_sympy_stable_expression_strategy``
 instead, which excludes arithmetic ``BinaryExpression`` outright (SymPy
 re-associates and folds those) and only ever calls those same natives.
@@ -53,17 +62,25 @@ from fhy_core.symbolic.expression import (
 from ....strategies.expressions import (
     SYMPY_STABLE_CALL_FUNCTIONS,
     build_any_sort_expression_strategy,
-    build_integer_environment_strategy,
-    build_numeric_expression_strategy,
+    build_gate_environment_strategy,
     build_sympy_stable_expression_strategy,
+    draw_simultaneous_substitution_case,
     evaluate_with_python,
 )
-from ....strategies.identifiers import build_identifier_pool
+from ....strategies.identifiers import (
+    build_boolean_identifier_pool,
+    build_identifier_pool,
+)
 
 pytestmark = pytest.mark.property
 
 _POOL: Final[tuple[Identifier, ...]] = build_identifier_pool(3)
-_V0, _V1 = _POOL[0], _POOL[1]
+_BOOLEAN_POOL: Final[tuple[Identifier, ...]] = build_boolean_identifier_pool(2)
+_V0: Final = _POOL[0]
+
+_SubstitutionCase = tuple[
+    Expression, dict[Identifier, Expression], dict[Identifier, int | bool]
+]
 
 
 # =============================================================================
@@ -88,21 +105,22 @@ _CONSTANT_BOOLEAN_PIECEWISE_CONJUNCTION: Final[Expression] = make_binary_express
 # lifted FLOOR_DIVIDE can evaluate to under the NumPy oracle.
 @example(
     expression=_CONSTANT_BOOLEAN_PIECEWISE_CONJUNCTION,
-    environment=dict.fromkeys(_POOL, 0),
+    environment={**dict.fromkeys(_POOL, 0), **dict.fromkeys(_BOOLEAN_POOL, False)},
 )
 @given(
     expression=build_any_sort_expression_strategy(
         _POOL,
         6,
+        boolean_identifiers=_BOOLEAN_POOL,
         include_division=False,
         include_calls=True,
         native_functions=SYMPY_STABLE_CALL_FUNCTIONS,
         include_piecewise=True,
     ),
-    environment=build_integer_environment_strategy(_POOL),
+    environment=build_gate_environment_strategy(_POOL, _BOOLEAN_POOL),
 )
 def test_sympy_round_trip_preserves_evaluation(
-    expression: Expression, environment: dict[Identifier, int]
+    expression: Expression, environment: dict[Identifier, int | bool]
 ) -> None:
     """Test lifting the lowering of a tree evaluates identically to the tree.
 
@@ -182,79 +200,62 @@ def test_round_call_round_trips_structurally(
 # =============================================================================
 
 
-@st.composite
-def _draw_substitution_case(
-    draw: st.DrawFn,
-) -> tuple[Expression, Expression, Expression, dict[Identifier, int]]:
-    """Draw ``e``, replacements ``e1``/``e2`` for ``v0``/``v1``, and an environment.
-
-    ``e1`` and ``e2`` are drawn over the same pool as ``e`` (not a
-    disjoint set of fresh variables), so a replacement can itself
-    reference ``v0`` or ``v1`` and simultaneity actually matters:
-    substituting ``{v0: e1, v1: e2}`` must not let ``e1`` see ``v1``'s
-    replacement or vice versa. A replacement may itself hold a piecewise
-    whose condition references the identifier it replaces, the shape
-    ``test_substitute_agrees_with_sympy_bridge_substitution_on_self_referential_piecewise``
-    below covers with a fixed example.
-    """
-    # Division stays off: see the module docstring.
-    numeric_strategy = build_numeric_expression_strategy(
-        _POOL,
-        6,
-        include_division=False,
-        include_calls=True,
-        native_functions=SYMPY_STABLE_CALL_FUNCTIONS,
-        include_piecewise=True,
-    )
-    e = draw(numeric_strategy)
-    e1 = draw(numeric_strategy)
-    e2 = draw(numeric_strategy)
-    environment = draw(build_integer_environment_strategy(_POOL))
-    return e, e1, e2, environment
+# Division stays off: see the module docstring.
+_SUBSTITUTION_CASES: Final = draw_simultaneous_substitution_case(
+    _POOL,
+    _BOOLEAN_POOL,
+    6,
+    include_division=False,
+    include_calls=True,
+    native_functions=SYMPY_STABLE_CALL_FUNCTIONS,
+    include_piecewise=True,
+)
 
 
-@given(case=_draw_substitution_case())
+@given(case=_SUBSTITUTION_CASES)
 def test_substitute_matches_simultaneous_python_semantics(
-    case: tuple[Expression, Expression, Expression, dict[Identifier, int]],
+    case: _SubstitutionCase,
 ) -> None:
     """Test ``substitute`` agrees with evaluating under a rebound environment.
 
-    Oracle: ``evaluate_with_python``. ``e.substitute({v0: e1, v1: e2})``
-    evaluated under ``env`` must equal ``e`` evaluated under ``env``
-    updated with ``v0 -> eval(e1, env)`` and ``v1 -> eval(e2, env)``,
-    both computed from the *original* ``env`` (simultaneity). No SymPy
-    bridge is involved.
+    Oracle: ``evaluate_with_python``. ``e.substitute(s)`` evaluated under
+    ``env`` must equal ``e`` evaluated under ``env`` with each replaced
+    identifier ``v`` rebound to ``eval(s[v], env)``, every rebinding
+    computed from the *original* ``env`` (simultaneity). The replacements
+    cover two integer identifiers and one Boolean identifier, and each is
+    drawn over the same pools, so a replacement may reference an
+    identifier that is itself replaced. No SymPy bridge is involved.
     """
-    e, e1, e2, environment = case
-    replacements = {_V0: e1, _V1: e2}
+    expression, replacements, environment = case
 
-    substituted = e.substitute(replacements)
+    substituted = expression.substitute(replacements)
 
     rebound_environment = dict(environment)
-    rebound_environment[_V0] = evaluate_with_python(e1, environment)
-    rebound_environment[_V1] = evaluate_with_python(e2, environment)
+    for identifier, replacement in replacements.items():
+        rebound_environment[identifier] = evaluate_with_python(replacement, environment)
     assert evaluate_with_python(substituted, environment) == evaluate_with_python(
-        e, rebound_environment
+        expression, rebound_environment
     )
 
 
-@given(case=_draw_substitution_case())
+@given(case=_SUBSTITUTION_CASES)
 def test_substitute_agrees_with_sympy_bridge_substitution(
-    case: tuple[Expression, Expression, Expression, dict[Identifier, int]],
+    case: _SubstitutionCase,
 ) -> None:
     """Test the IR and SymPy-bridge substitutions evaluate identically.
 
     Oracle: ``evaluate_expression_with_numpy``, comparing
     ``lift(substitute_sympy_expression_variables(lower(e), s))`` against
-    ``e.substitute(s)`` under the same environment.
+    ``e.substitute(s)`` under the same environment. A Boolean identifier
+    ``s`` replaces with a Boolean piecewise reaches the bridge's Boolean
+    positions only once substituted.
     """
-    e, e1, e2, environment = case
-    replacements = {_V0: e1, _V1: e2}
+    expression, replacements, environment = case
 
-    lowered = convert_expression_to_sympy_expression(e)
+    lowered = convert_expression_to_sympy_expression(expression)
     substituted_sympy = substitute_sympy_expression_variables(lowered, replacements)
     lifted = convert_sympy_expression_to_expression(substituted_sympy)
-    ir_substituted = e.substitute(replacements)
+    ir_substituted = expression.substitute(replacements)
 
     assert int(evaluate_expression_with_numpy(lifted, environment)) == int(
         evaluate_expression_with_numpy(ir_substituted, environment)
@@ -262,10 +263,10 @@ def test_substitute_agrees_with_sympy_bridge_substitution(
 
 
 # =============================================================================
-# A self-referential piecewise replacement folds to a boolean ITE and
-# still lifts. Kept as its own property, alongside the drawn cases above,
-# because the shape needs a replacement whose piecewise condition reuses
-# the very identifier it replaces.
+# A self-referential piecewise replacement puts a piecewise inside a case
+# condition and still lifts. Kept as its own property, alongside the drawn
+# cases above, because the shape needs a replacement whose piecewise
+# condition reuses the very identifier it replaces.
 # =============================================================================
 
 
@@ -278,9 +279,10 @@ def test_substitute_agrees_with_sympy_bridge_substitution_on_self_referential_pi
     Oracle: ``evaluate_expression_with_numpy``, comparing the
     SymPy-bridge substitution against ``Expression.substitute``.
     Replacing ``v`` in ``piecewise((0 == v, 0), otherwise=1)`` with
-    ``piecewise((0 == v, 0), otherwise=v)`` makes SymPy fold the
-    resulting ``Eq(0, Piecewise(...))`` into a boolean ``ITE`` node,
-    which lifts back as the two-branch piecewise it denotes.
+    ``piecewise((0 == v, 0), otherwise=v)`` turns the case condition into
+    ``Eq(0, Piecewise(...))``, a comparison with a piecewise operand, and
+    the substituted node must still lift to a piecewise that evaluates
+    like the IR substitution.
     """
     condition = make_binary_expression(
         BinaryOperation.EQUAL, LiteralExpression(0), identifier

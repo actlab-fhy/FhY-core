@@ -3,7 +3,8 @@
 Covers three invariants that must hold for arbitrary piecewise trees:
 serialization round-trips under structural equivalence, the NumPy
 lowering's first-match-wins selection matches a pointwise Python fold,
-and the SymPy lowering/lifting round trip reconstructs the whole node.
+and the SymPy lowering/lifting round trip reconstructs the whole node,
+numeric or Boolean.
 """
 
 import pytest
@@ -15,7 +16,7 @@ pytest.importorskip("hypothesis")
 
 from typing import Final
 
-from hypothesis import example, given, settings
+from hypothesis import example, given
 from hypothesis import strategies as st
 
 from fhy_core.symbolic.expression import (
@@ -35,6 +36,7 @@ from ...strategies.literals import (
     build_boolean_literal_strategy,
     build_integer_literal_strategy,
 )
+from ...strategies.settings import cap_max_examples
 from .conftest import mock_identifier
 
 pytestmark = pytest.mark.property
@@ -133,7 +135,7 @@ def _draw_piecewise(
 
 
 # Tree-heavy: _draw_piecewise builds trees with up to _MAX_TREE_LEAVES leaves.
-@settings(max_examples=50)
+@cap_max_examples(50)
 @given(_draw_piecewise())
 def test_random_piecewise_tree_round_trips_through_dict_serialization(
     expression: PiecewiseExpression,
@@ -247,6 +249,37 @@ def _draw_piecewise_with_distinct_case_values(draw: st.DrawFn) -> PiecewiseExpre
     )
 
 
+_BOOLEAN_VALUE_ID_BASE: Final = 100
+"""First id of a Boolean case value, clear of every case condition's id."""
+
+
+@st.composite
+def _draw_boolean_piecewise_with_distinct_case_values(
+    draw: st.DrawFn,
+) -> PiecewiseExpression:
+    """Draw a Boolean piecewise node with distinct identifier case values.
+
+    Every condition is a distinct Boolean identifier and every case value
+    another distinct Boolean identifier, so a bridge that reordered the
+    cases or paired a value with the wrong condition restores a different
+    tree. ``otherwise`` is a Boolean literal, which settles the node's
+    sort as Boolean.
+    """
+    num_cases = draw(st.integers(min_value=1, max_value=4))
+    conditions = tuple(
+        IdentifierExpression(mock_identifier(f"property_case_{i}", i))
+        for i in range(num_cases)
+    )
+    value_expressions = tuple(
+        IdentifierExpression(
+            mock_identifier(f"property_value_{i}", _BOOLEAN_VALUE_ID_BASE + i)
+        )
+        for i in range(num_cases)
+    )
+    otherwise = draw(build_boolean_literal_strategy())
+    return PiecewiseExpression(conditions, value_expressions, otherwise)
+
+
 # Shared building block for the two pinned examples below: both use a
 # comparison (rather than a bare identifier) as a case condition, a shape
 # _draw_piecewise_with_distinct_case_values never draws.
@@ -280,10 +313,15 @@ _MULTI_COMPARISON_CASE_PIECEWISE: Final = PiecewiseExpression(
 
 # Tree-heavy: exercises the SymPy bridge over piecewise trees with up to
 # four cases.
-@settings(max_examples=50)
+@cap_max_examples(50)
 @example(expression=_SINGLE_COMPARISON_CASE_PIECEWISE)
 @example(expression=_MULTI_COMPARISON_CASE_PIECEWISE)
-@given(expression=_draw_piecewise_with_distinct_case_values())
+@given(
+    expression=st.one_of(
+        _draw_piecewise_with_distinct_case_values(),
+        _draw_boolean_piecewise_with_distinct_case_values(),
+    )
+)
 def test_sympy_round_trip_preserves_the_whole_piecewise(
     expression: PiecewiseExpression,
 ) -> None:

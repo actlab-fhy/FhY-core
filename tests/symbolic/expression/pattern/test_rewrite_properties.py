@@ -45,13 +45,17 @@ from ....strategies.expressions import (
     build_integer_environment_strategy,
     build_numeric_expression_strategy,
 )
-from ....strategies.identifiers import build_identifier_pool
+from ....strategies.identifiers import (
+    build_boolean_identifier_pool,
+    build_identifier_pool,
+)
 
 pytestmark = pytest.mark.property
 
 np = pytest.importorskip("numpy")
 
 _POOL = build_identifier_pool(3)
+_BOOLEAN_POOL = build_boolean_identifier_pool(2)
 
 _WRAP_KINDS: Final[tuple[str, ...]] = ("add_zero", "multiply_one", "double_negate")
 _MAX_WRAPS: Final = 3
@@ -260,7 +264,7 @@ def _build_counting_rewrite_rules() -> tuple[list[int], tuple[RewriteRule, ...]]
 # =============================================================================
 
 
-@given(build_numeric_expression_strategy(_POOL))
+@given(build_numeric_expression_strategy(_POOL, boolean_identifiers=_BOOLEAN_POOL))
 def test_apply_rewrite_rules_with_no_rules_is_identity(expression: Expression) -> None:
     """Test apply_rewrite_rules(e, []) returns e itself, unchanged."""
     assert apply_rewrite_rules(expression, []) is expression

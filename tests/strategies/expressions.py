@@ -15,14 +15,24 @@ with a "wraps remaining" counter that decrements on those two kinds
 alone and forces a leaf, or a leaf-spending node, once exhausted.
 
 The numeric and boolean gate strategies are sort-aware by construction:
-a numeric operand never reaches a Boolean position, so no draw is ever
-refused by ``validate_logical_operands``. They are mutually recursive
-(a numeric piecewise's conditions are boolean; a boolean comparison's
-operands are numeric); each cross-sort reference goes through
-``hypothesis.strategies.deferred`` so either side can refer to the other.
+a numeric operand never reaches a Boolean position and a Boolean operand
+never reaches a numeric one, so every tree is well-typed and no draw is
+ever refused by ``validate_logical_operands`` or a bridge. Integer
+identifiers and Boolean identifiers come from separate pools, and a
+Boolean identifier only ever stands where a Boolean belongs: a
+connective operand, a piecewise condition, a Boolean piecewise branch,
+or an operand of an ``==``/``!=`` between two Boolean subtrees. Some
+Boolean subtrees are sort-ambiguous: a bare Boolean identifier, or a
+piecewise whose every branch is one, so nothing but the identifiers'
+own sort shows they are Boolean, and an ``==``/``!=`` often compares two
+of them. The two sides are mutually recursive (a numeric piecewise's conditions are
+Boolean; a comparison's operands are numeric), and every option a
+strategy takes governs every subtree of the tree it draws, whichever
+sort the subtree has.
 """
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Final
 
 from hypothesis import strategies as st
@@ -47,10 +57,12 @@ from fhy_core.symbolic.expression import (
 from .identifiers import build_identifier_strategy
 from .literals import (
     build_boolean_literal_strategy,
+    build_boolean_value_strategy,
     build_integer_literal_strategy,
 )
 
 __all__ = [
+    "BOOLEAN_EQUALITY_OPERATIONS",
     "COMPARISON_OPERATIONS",
     "INTEGER_RESULT_NATIVE_FUNCTIONS",
     "LOGICAL_BINARY_OPERATIONS",
@@ -58,13 +70,16 @@ __all__ = [
     "NUMERIC_GATE_OPERATIONS",
     "SYMPY_STABLE_CALL_FUNCTIONS",
     "build_any_sort_expression_strategy",
+    "build_boolean_environment_strategy",
     "build_boolean_expression_strategy",
+    "build_gate_environment_strategy",
     "build_integer_environment_strategy",
     "build_numeric_expression_strategy",
     "build_sympy_stable_expression_strategy",
     "count_expression_leaves",
     "draw_boolean_tree_with_environment",
     "draw_numeric_tree_with_environment",
+    "draw_simultaneous_substitution_case",
     "evaluate_with_python",
 ]
 
@@ -85,6 +100,11 @@ COMPARISON_OPERATIONS: Final = (
     BinaryOperation.GREATER,
     BinaryOperation.GREATER_EQUAL,
 )
+BOOLEAN_EQUALITY_OPERATIONS: Final = (
+    BinaryOperation.EQUAL,
+    BinaryOperation.NOT_EQUAL,
+)
+"""The comparisons defined between two Boolean operands."""
 LOGICAL_BINARY_OPERATIONS: Final = (
     BinaryOperation.LOGICAL_AND,
     BinaryOperation.LOGICAL_OR,
@@ -92,6 +112,10 @@ LOGICAL_BINARY_OPERATIONS: Final = (
 INTEGER_RESULT_NATIVE_FUNCTIONS: Final = ("floor", "ceil", "round")
 
 _NONZERO_DIVISORS: Final = (*range(-8, 0), *range(1, 9))
+_RELATION_LITERAL_BOUND: Final = 16
+"""Largest magnitude of the literal a relational leaf compares against. It
+matches the default range an environment binds an integer identifier to,
+so a relation holds under some bindings and fails under others."""
 _MIN_LEAVES_FOR_TWO_CHILDREN: Final = 2
 _MIN_PIECEWISE_LEAVES: Final = 3
 _MAX_PIECEWISE_CASES: Final = 3
@@ -189,14 +213,101 @@ def _draw_piecewise_expression(
     return piecewise(*cases, otherwise=otherwise)
 
 
+@dataclass(frozen=True)
+class _GateGrammar:
+    """The options one gate-grammar tree is drawn under, shared by every subtree."""
+
+    identifiers: Sequence[Identifier]
+    boolean_identifiers: Sequence[Identifier]
+    include_division: bool
+    include_calls: bool
+    native_functions: Sequence[str]
+    include_piecewise: bool
+    include_boolean_comparisons: bool
+
+    def build_numeric_strategy(self, max_leaves: int) -> st.SearchStrategy[Expression]:
+        """Return a strategy for a numeric-sorted subtree within ``max_leaves``."""
+        return _draw_numeric_expression(self, max_leaves, _MAX_CONSECUTIVE_WRAPS)
+
+    def build_boolean_strategy(self, max_leaves: int) -> st.SearchStrategy[Expression]:
+        """Return a strategy for a Boolean-sorted subtree within ``max_leaves``."""
+        return _draw_boolean_expression(self, max_leaves, _MAX_CONSECUTIVE_WRAPS)
+
+    def build_sort_ambiguous_strategy(
+        self, max_leaves: int
+    ) -> st.SearchStrategy[Expression]:
+        """Return a strategy for a Boolean subtree only its identifiers show is Boolean.
+
+        Requires a non-empty ``boolean_identifiers`` pool.
+        """
+        return _draw_sort_ambiguous_boolean_expression(self, max_leaves)
+
+    def build_boolean_equality_operand_strategy(
+        self, max_leaves: int
+    ) -> st.SearchStrategy[Expression]:
+        """Return a strategy for an operand of an ``==``/``!=`` between Booleans.
+
+        With Boolean identifiers, half the operands are sort-ambiguous, so
+        an equality between two of them, which nothing but the
+        identifiers' sort shows is Boolean, is drawn often.
+        """
+        if not self.boolean_identifiers:
+            return self.build_boolean_strategy(max_leaves)
+        return st.one_of(
+            self.build_boolean_strategy(max_leaves),
+            self.build_sort_ambiguous_strategy(max_leaves),
+        )
+
+
+def _build_identifier_leaf_strategy(
+    identifiers: Sequence[Identifier],
+) -> st.SearchStrategy[Expression]:
+    """Return a strategy for a bare identifier leaf drawn from ``identifiers``."""
+    return build_identifier_strategy(identifiers).map(IdentifierExpression)
+
+
 def _build_numeric_leaf_strategy(
     identifiers: Sequence[Identifier],
 ) -> st.SearchStrategy[Expression]:
     """Return a strategy for a numeric leaf: an integer literal or a pool identifier."""
     leaves: list[st.SearchStrategy[Expression]] = [build_integer_literal_strategy()]
     if identifiers:
-        leaves.append(build_identifier_strategy(identifiers).map(IdentifierExpression))
+        leaves.append(_build_identifier_leaf_strategy(identifiers))
     return st.one_of(*leaves)
+
+
+def _build_boolean_leaf_strategy(
+    boolean_identifiers: Sequence[Identifier],
+) -> st.SearchStrategy[Expression]:
+    """Return a strategy for a Boolean leaf: a Boolean literal or identifier."""
+    leaves: list[st.SearchStrategy[Expression]] = [build_boolean_literal_strategy()]
+    if boolean_identifiers:
+        leaves.append(_build_identifier_leaf_strategy(boolean_identifiers))
+    return st.one_of(*leaves)
+
+
+def _build_relation_strategy(
+    identifiers: Sequence[Identifier],
+) -> st.SearchStrategy[Expression]:
+    """Return a strategy for ``v <op> k`` or ``v <op> w`` over integer identifiers.
+
+    ``k`` is an integer literal in ``[-16, 16]``, the range an environment
+    binds an integer identifier to by default. Requires a non-empty
+    ``identifiers`` pool.
+    """
+    identifier_leaf = _build_identifier_leaf_strategy(identifiers)
+    right_operand = st.one_of(
+        build_integer_literal_strategy(
+            -_RELATION_LITERAL_BOUND, _RELATION_LITERAL_BOUND
+        ),
+        identifier_leaf,
+    )
+    return st.builds(
+        make_binary_expression,
+        st.sampled_from(COMPARISON_OPERATIONS),
+        identifier_leaf,
+        right_operand,
+    )
 
 
 def _build_nonzero_divisor_strategy() -> st.SearchStrategy[Expression]:
@@ -207,82 +318,45 @@ def _build_nonzero_divisor_strategy() -> st.SearchStrategy[Expression]:
 @st.composite
 def _draw_numeric_expression(
     draw: st.DrawFn,
-    identifiers: Sequence[Identifier],
+    grammar: _GateGrammar,
     max_leaves: int,
-    include_division: bool,
-    include_calls: bool,
-    native_functions: Sequence[str],
-    include_piecewise: bool,
     wraps_remaining: int,
 ) -> Expression:
     """Draw a numeric-sorted expression tree spending at most ``max_leaves`` leaves."""
     kinds: list[str] = ["leaf"]
     if wraps_remaining > 0:
         kinds.append("unary")
-        if include_calls and native_functions:
+        if grammar.include_calls and grammar.native_functions:
             kinds.append("call")
     if max_leaves >= _MIN_LEAVES_FOR_TWO_CHILDREN:
         kinds.append("binary")
-        if include_division:
+        if grammar.include_division:
             kinds.append("division")
-    if include_piecewise and max_leaves >= _MIN_PIECEWISE_LEAVES:
+    if grammar.include_piecewise and max_leaves >= _MIN_PIECEWISE_LEAVES:
         kinds.append("piecewise")
     kind = draw(st.sampled_from(kinds))
 
     if kind == "leaf":
-        return draw(_build_numeric_leaf_strategy(identifiers))
+        return draw(_build_numeric_leaf_strategy(grammar.identifiers))
     if kind == "unary":
         unary_operation = draw(
             st.sampled_from((UnaryOperation.NEGATE, UnaryOperation.POSITIVE))
         )
         operand = draw(
-            _draw_numeric_expression(
-                identifiers,
-                max_leaves,
-                include_division,
-                include_calls,
-                native_functions,
-                include_piecewise,
-                wraps_remaining - 1,
-            )
+            _draw_numeric_expression(grammar, max_leaves, wraps_remaining - 1)
         )
         return make_unary_expression(unary_operation, operand)
     if kind == "call":
-        function_name = draw(st.sampled_from(native_functions))
+        function_name = draw(st.sampled_from(grammar.native_functions))
         argument = draw(
-            _draw_numeric_expression(
-                identifiers,
-                max_leaves,
-                include_division,
-                include_calls,
-                native_functions,
-                include_piecewise,
-                wraps_remaining - 1,
-            )
+            _draw_numeric_expression(grammar, max_leaves, wraps_remaining - 1)
         )
         return call(function_name, argument)
     if kind == "binary":
         binary_operation = draw(st.sampled_from(NUMERIC_GATE_OPERATIONS))
         left, right = _draw_parts_within_leaf_budget(
             draw,
-            (
-                lambda budget: build_numeric_expression_strategy(
-                    identifiers,
-                    budget,
-                    include_division=include_division,
-                    include_calls=include_calls,
-                    native_functions=native_functions,
-                    include_piecewise=include_piecewise,
-                ),
-                lambda budget: build_numeric_expression_strategy(
-                    identifiers,
-                    budget,
-                    include_division=include_division,
-                    include_calls=include_calls,
-                    native_functions=native_functions,
-                    include_piecewise=include_piecewise,
-                ),
-            ),
+            (grammar.build_numeric_strategy, grammar.build_numeric_strategy),
             max_leaves,
         )
         return make_binary_expression(binary_operation, left, right)
@@ -291,14 +365,7 @@ def _draw_numeric_expression(
         dividend, divisor = _draw_parts_within_leaf_budget(
             draw,
             (
-                lambda budget: build_numeric_expression_strategy(
-                    identifiers,
-                    budget,
-                    include_division=include_division,
-                    include_calls=include_calls,
-                    native_functions=native_functions,
-                    include_piecewise=include_piecewise,
-                ),
+                grammar.build_numeric_strategy,
                 lambda _budget: _build_nonzero_divisor_strategy(),
             ),
             max_leaves,
@@ -307,137 +374,91 @@ def _draw_numeric_expression(
     return _draw_piecewise_expression(
         draw,
         max_leaves,
-        lambda budget: st.deferred(
-            lambda: build_boolean_expression_strategy(
-                identifiers,
-                budget,
-                include_calls=include_calls,
-                include_division=include_division,
-                native_functions=native_functions,
-                include_piecewise=include_piecewise,
-            )
-        ),
-        lambda budget: build_numeric_expression_strategy(
-            identifiers,
-            budget,
-            include_division=include_division,
-            include_calls=include_calls,
-            native_functions=native_functions,
-            include_piecewise=include_piecewise,
-        ),
+        grammar.build_boolean_strategy,
+        grammar.build_numeric_strategy,
     )
 
 
 @st.composite
 def _draw_boolean_expression(
     draw: st.DrawFn,
-    identifiers: Sequence[Identifier],
+    grammar: _GateGrammar,
     max_leaves: int,
-    include_calls: bool,
-    include_division: bool,
-    native_functions: Sequence[str],
-    include_piecewise: bool,
     wraps_remaining: int,
 ) -> Expression:
     """Draw a boolean-sorted expression tree spending at most ``max_leaves`` leaves."""
-    kinds: list[str] = ["bool_literal"]
+    kinds: list[str] = ["leaf"]
     if max_leaves >= _MIN_LEAVES_FOR_TWO_CHILDREN:
+        if grammar.identifiers:
+            kinds.append("relation")
         kinds.append("comparison")
+        if grammar.include_boolean_comparisons:
+            kinds.append("boolean_comparison")
         kinds.append("and_or")
     if wraps_remaining > 0:
         kinds.append("not")
-    if include_piecewise and max_leaves >= _MIN_PIECEWISE_LEAVES:
-        kinds.append("piecewise")
+    if grammar.include_piecewise and max_leaves >= _MIN_PIECEWISE_LEAVES:
+        # Listed twice: a Boolean piecewise in a Boolean position is the
+        # shape the SymPy bridge rewrites, and with one entry among this
+        # many kinds it is drawn too rarely under a small leaf budget.
+        kinds.extend(("piecewise", "piecewise"))
+    if grammar.boolean_identifiers:
+        kinds.append("sort_ambiguous")
     kind = draw(st.sampled_from(kinds))
 
-    if kind == "bool_literal":
-        return draw(build_boolean_literal_strategy())
-    if kind == "comparison":
-        operation = draw(st.sampled_from(COMPARISON_OPERATIONS))
-        left, right = _draw_parts_within_leaf_budget(
-            draw,
-            (
-                lambda budget: st.deferred(
-                    lambda: build_numeric_expression_strategy(
-                        identifiers,
-                        budget,
-                        include_division=include_division,
-                        include_calls=include_calls,
-                        native_functions=native_functions,
-                        include_piecewise=include_piecewise,
-                    )
-                ),
-                lambda budget: st.deferred(
-                    lambda: build_numeric_expression_strategy(
-                        identifiers,
-                        budget,
-                        include_division=include_division,
-                        include_calls=include_calls,
-                        native_functions=native_functions,
-                        include_piecewise=include_piecewise,
-                    )
-                ),
-            ),
-            max_leaves,
-        )
-        return make_binary_expression(operation, left, right)
+    if kind == "leaf":
+        return draw(_build_boolean_leaf_strategy(grammar.boolean_identifiers))
+    if kind == "relation":
+        return draw(_build_relation_strategy(grammar.identifiers))
     if kind == "not":
         operand = draw(
-            _draw_boolean_expression(
-                identifiers,
-                max_leaves,
-                include_calls,
-                include_division,
-                native_functions,
-                include_piecewise,
-                wraps_remaining - 1,
-            )
+            _draw_boolean_expression(grammar, max_leaves, wraps_remaining - 1)
         )
         return make_unary_expression(UnaryOperation.LOGICAL_NOT, operand)
-    if kind == "and_or":
-        operation = draw(st.sampled_from(LOGICAL_BINARY_OPERATIONS))
-        left, right = _draw_parts_within_leaf_budget(
-            draw,
-            (
-                lambda budget: build_boolean_expression_strategy(
-                    identifiers,
-                    budget,
-                    include_calls=include_calls,
-                    include_division=include_division,
-                    native_functions=native_functions,
-                    include_piecewise=include_piecewise,
-                ),
-                lambda budget: build_boolean_expression_strategy(
-                    identifiers,
-                    budget,
-                    include_calls=include_calls,
-                    include_division=include_division,
-                    native_functions=native_functions,
-                    include_piecewise=include_piecewise,
-                ),
+    if kind == "sort_ambiguous":
+        return draw(grammar.build_sort_ambiguous_strategy(max_leaves))
+    if kind != "piecewise":
+        operations, build_operand_strategy = {
+            "comparison": (COMPARISON_OPERATIONS, grammar.build_numeric_strategy),
+            "boolean_comparison": (
+                BOOLEAN_EQUALITY_OPERATIONS,
+                grammar.build_boolean_equality_operand_strategy,
             ),
-            max_leaves,
+            "and_or": (LOGICAL_BINARY_OPERATIONS, grammar.build_boolean_strategy),
+        }[kind]
+        operation = draw(st.sampled_from(operations))
+        left, right = _draw_parts_within_leaf_budget(
+            draw, (build_operand_strategy, build_operand_strategy), max_leaves
         )
         return make_binary_expression(operation, left, right)
     return _draw_piecewise_expression(
         draw,
         max_leaves,
-        lambda budget: build_boolean_expression_strategy(
-            identifiers,
-            budget,
-            include_calls=include_calls,
-            include_division=include_division,
-            native_functions=native_functions,
-            include_piecewise=include_piecewise,
-        ),
-        lambda budget: build_boolean_expression_strategy(
-            identifiers,
-            budget,
-            include_calls=include_calls,
-            include_division=include_division,
-            native_functions=native_functions,
-            include_piecewise=include_piecewise,
-        ),
+        grammar.build_boolean_strategy,
+        grammar.build_boolean_strategy,
+    )
+
+
+@st.composite
+def _draw_sort_ambiguous_boolean_expression(
+    draw: st.DrawFn, grammar: _GateGrammar, max_leaves: int
+) -> Expression:
+    """Draw a Boolean subtree that only its identifiers' sort shows is Boolean.
+
+    A bare Boolean identifier, or a piecewise whose every branch is such a
+    subtree in turn (its conditions are any Boolean subtree). No node in
+    it is Boolean on its face, the shape a bridge must type from the
+    identifiers alone.
+    """
+    if not grammar.include_piecewise or max_leaves < _MIN_PIECEWISE_LEAVES:
+        return draw(_build_identifier_leaf_strategy(grammar.boolean_identifiers))
+    if draw(st.booleans()):
+        return draw(_build_identifier_leaf_strategy(grammar.boolean_identifiers))
+    return _draw_piecewise_expression(
+        draw,
+        max_leaves,
+        grammar.build_boolean_strategy,
+        grammar.build_sort_ambiguous_strategy,
     )
 
 
@@ -445,10 +466,12 @@ def build_numeric_expression_strategy(
     identifiers: Sequence[Identifier],
     max_leaves: int = 8,
     *,
+    boolean_identifiers: Sequence[Identifier] = (),
     include_division: bool = True,
     include_calls: bool = True,
     native_functions: Sequence[str] = INTEGER_RESULT_NATIVE_FUNCTIONS,
     include_piecewise: bool = True,
+    include_boolean_comparisons: bool = True,
 ) -> st.SearchStrategy[Expression]:
     """Return a strategy for numeric-sorted expression trees within a leaf budget.
 
@@ -458,8 +481,14 @@ def build_numeric_expression_strategy(
     governs the whole tree, not just its root.
 
     Args:
-        identifiers: Pool identifiers may be drawn from as leaves.
+        identifiers: Integer-sorted pool identifiers may be drawn from as
+            numeric leaves and as the variable of a relational leaf.
         max_leaves: Most literal and identifier leaves the tree may hold.
+        boolean_identifiers: Boolean-sorted identifiers a Boolean leaf
+            (a piecewise condition, a Boolean branch value, a connective
+            or Boolean ``==``/``!=`` operand) may be drawn from. Empty,
+            the default, means every Boolean leaf is a literal. Their ids
+            must not overlap ``identifiers``'.
         include_division: Whether ``FLOOR_DIVIDE``/``MODULO`` nodes (with
             a non-zero literal divisor) may appear.
         include_calls: Whether a call node may appear at all. A call
@@ -468,74 +497,90 @@ def build_numeric_expression_strategy(
         native_functions: The only function names a call node may
             target. Defaults to :data:`INTEGER_RESULT_NATIVE_FUNCTIONS`.
         include_piecewise: Whether piecewise nodes may appear.
+        include_boolean_comparisons: Whether an ``==``/``!=`` between two
+            Boolean subtrees may appear.
 
     Returns:
         A strategy drawing a numeric-sorted :class:`Expression`.
 
     """
-    return _draw_numeric_expression(
-        identifiers,
-        max_leaves,
-        include_division,
-        include_calls,
-        native_functions,
-        include_piecewise,
-        _MAX_CONSECUTIVE_WRAPS,
+    grammar = _GateGrammar(
+        identifiers=identifiers,
+        boolean_identifiers=boolean_identifiers,
+        include_division=include_division,
+        include_calls=include_calls,
+        native_functions=native_functions,
+        include_piecewise=include_piecewise,
+        include_boolean_comparisons=include_boolean_comparisons,
     )
+    return grammar.build_numeric_strategy(max_leaves)
 
 
 def build_boolean_expression_strategy(
     identifiers: Sequence[Identifier],
     max_leaves: int = 8,
     *,
+    boolean_identifiers: Sequence[Identifier] = (),
     include_calls: bool = True,
     include_division: bool = True,
     native_functions: Sequence[str] = INTEGER_RESULT_NATIVE_FUNCTIONS,
     include_piecewise: bool = True,
+    include_boolean_comparisons: bool = True,
 ) -> st.SearchStrategy[Expression]:
     """Return a strategy for boolean-sorted expression trees within a leaf budget.
 
-    ``include_calls``, ``include_division``, and ``native_functions`` are
-    forwarded to every numeric subtree this strategy draws (a
-    comparison's two operands, and any numeric piecewise value nested
-    under a boolean piecewise condition), so they govern the whole tree,
-    not only its own boolean nodes.
+    A Boolean node is a Boolean leaf, a relational leaf ``v <op> k`` or
+    ``v <op> w`` over integer identifiers, a comparison of two numeric
+    subtrees, an ``==``/``!=`` of two Boolean subtrees, a connective, a
+    piecewise whose every branch is Boolean, or, given Boolean
+    identifiers, a sort-ambiguous subtree: a bare Boolean identifier, or
+    a piecewise whose every branch is sort-ambiguous in turn. Every option is forwarded
+    to every numeric and Boolean subtree this strategy draws, so each
+    governs the whole tree, not only its own Boolean nodes.
 
     Args:
-        identifiers: Pool identifiers a nested numeric comparison operand
-            may be drawn from.
+        identifiers: Integer-sorted pool identifiers a numeric subtree or
+            a relational leaf may be drawn from.
         max_leaves: Most literal and identifier leaves the tree may hold.
-        include_calls: Whether a numeric comparison operand may hold a
-            call node. Forwarded to every numeric subtree.
-        include_division: Whether a numeric comparison operand may hold
-            a division node. Forwarded to every numeric subtree.
-        native_functions: The only function names a numeric comparison
-            operand's call node may target.
+        boolean_identifiers: Boolean-sorted identifiers a Boolean leaf
+            may be drawn from. Empty, the default, means every Boolean
+            leaf is a literal. Their ids must not overlap
+            ``identifiers``'.
+        include_calls: Whether a numeric subtree may hold a call node.
+        include_division: Whether a numeric subtree may hold a division
+            node.
+        native_functions: The only function names a numeric subtree's
+            call node may target.
         include_piecewise: Whether piecewise nodes may appear.
+        include_boolean_comparisons: Whether an ``==``/``!=`` between two
+            Boolean subtrees may appear.
 
     Returns:
         A strategy drawing a boolean-sorted :class:`Expression`.
 
     """
-    return _draw_boolean_expression(
-        identifiers,
-        max_leaves,
-        include_calls,
-        include_division,
-        native_functions,
-        include_piecewise,
-        _MAX_CONSECUTIVE_WRAPS,
+    grammar = _GateGrammar(
+        identifiers=identifiers,
+        boolean_identifiers=boolean_identifiers,
+        include_division=include_division,
+        include_calls=include_calls,
+        native_functions=native_functions,
+        include_piecewise=include_piecewise,
+        include_boolean_comparisons=include_boolean_comparisons,
     )
+    return grammar.build_boolean_strategy(max_leaves)
 
 
 def build_any_sort_expression_strategy(
     identifiers: Sequence[Identifier],
     max_leaves: int = 8,
     *,
+    boolean_identifiers: Sequence[Identifier] = (),
     include_division: bool = True,
     include_calls: bool = True,
     native_functions: Sequence[str] = INTEGER_RESULT_NATIVE_FUNCTIONS,
     include_piecewise: bool = True,
+    include_boolean_comparisons: bool = True,
 ) -> st.SearchStrategy[Expression]:
     """Return a strategy drawing either a numeric-sorted or a boolean-sorted tree.
 
@@ -546,18 +591,22 @@ def build_any_sort_expression_strategy(
         build_numeric_expression_strategy(
             identifiers,
             max_leaves,
+            boolean_identifiers=boolean_identifiers,
             include_division=include_division,
             include_calls=include_calls,
             native_functions=native_functions,
             include_piecewise=include_piecewise,
+            include_boolean_comparisons=include_boolean_comparisons,
         ),
         build_boolean_expression_strategy(
             identifiers,
             max_leaves,
+            boolean_identifiers=boolean_identifiers,
             include_calls=include_calls,
             include_division=include_division,
             native_functions=native_functions,
             include_piecewise=include_piecewise,
+            include_boolean_comparisons=include_boolean_comparisons,
         ),
     )
 
@@ -709,32 +758,93 @@ def build_integer_environment_strategy(
     )
 
 
+def build_boolean_environment_strategy(
+    boolean_identifiers: Sequence[Identifier],
+) -> st.SearchStrategy[dict[Identifier, bool]]:
+    """Return a strategy binding every identifier in ``boolean_identifiers`` to a bool.
+
+    Args:
+        boolean_identifiers: Every identifier the returned environment binds.
+
+    Returns:
+        A strategy drawing a ``dict`` with one entry per identifier in
+        ``boolean_identifiers``.
+
+    """
+    return st.fixed_dictionaries(
+        dict.fromkeys(boolean_identifiers, build_boolean_value_strategy())
+    )
+
+
+def build_gate_environment_strategy(
+    identifiers: Sequence[Identifier],
+    boolean_identifiers: Sequence[Identifier] = (),
+    min_value: int = -16,
+    max_value: int = 16,
+) -> st.SearchStrategy[dict[Identifier, int | bool]]:
+    """Return a strategy binding integer identifiers to ints and Boolean ones to bools.
+
+    Args:
+        identifiers: Integer-sorted identifiers, each bound to an int.
+        boolean_identifiers: Boolean-sorted identifiers, each bound to a
+            bool. Their ids must not overlap ``identifiers``'.
+        min_value: Least value an integer binding may take.
+        max_value: Greatest value an integer binding may take.
+
+    Returns:
+        A strategy drawing a ``dict`` with one entry per identifier in
+        either pool.
+
+    """
+    return st.builds(
+        _merge_environments,
+        build_integer_environment_strategy(identifiers, min_value, max_value),
+        build_boolean_environment_strategy(boolean_identifiers),
+    )
+
+
+def _merge_environments(
+    integer_environment: Mapping[Identifier, int],
+    boolean_environment: Mapping[Identifier, bool],
+) -> dict[Identifier, int | bool]:
+    """Return one environment holding every binding of both environments."""
+    return {**integer_environment, **boolean_environment}
+
+
 @st.composite
 def draw_numeric_tree_with_environment(
     draw: st.DrawFn,
     identifiers: Sequence[Identifier],
     max_leaves: int = 8,
     *,
+    boolean_identifiers: Sequence[Identifier] = (),
     include_division: bool = True,
     include_calls: bool = True,
     native_functions: Sequence[str] = INTEGER_RESULT_NATIVE_FUNCTIONS,
     include_piecewise: bool = True,
-) -> tuple[Expression, dict[Identifier, int]]:
+    include_boolean_comparisons: bool = True,
+) -> tuple[Expression, dict[Identifier, int | bool]]:
     """Draw a numeric gate-grammar tree together with bindings for every identifier.
 
     Every keyword is forwarded to :func:`build_numeric_expression_strategy`.
+    The environment binds each of ``identifiers`` to an int and each of
+    ``boolean_identifiers`` to a bool.
     """
     expression = draw(
         build_numeric_expression_strategy(
             identifiers,
             max_leaves,
+            boolean_identifiers=boolean_identifiers,
             include_division=include_division,
             include_calls=include_calls,
             native_functions=native_functions,
             include_piecewise=include_piecewise,
+            include_boolean_comparisons=include_boolean_comparisons,
         )
     )
-    environment = draw(build_integer_environment_strategy(identifiers))
+    environment = draw(
+        build_gate_environment_strategy(identifiers, boolean_identifiers)
+    )
     return expression, environment
 
 
@@ -744,27 +854,99 @@ def draw_boolean_tree_with_environment(
     identifiers: Sequence[Identifier],
     max_leaves: int = 8,
     *,
+    boolean_identifiers: Sequence[Identifier] = (),
     include_calls: bool = True,
     include_division: bool = True,
     native_functions: Sequence[str] = INTEGER_RESULT_NATIVE_FUNCTIONS,
     include_piecewise: bool = True,
-) -> tuple[Expression, dict[Identifier, int]]:
+    include_boolean_comparisons: bool = True,
+) -> tuple[Expression, dict[Identifier, int | bool]]:
     """Draw a boolean gate-grammar tree together with bindings for every identifier.
 
     Every keyword is forwarded to :func:`build_boolean_expression_strategy`.
+    The environment binds each of ``identifiers`` to an int and each of
+    ``boolean_identifiers`` to a bool.
     """
     expression = draw(
         build_boolean_expression_strategy(
             identifiers,
             max_leaves,
+            boolean_identifiers=boolean_identifiers,
             include_calls=include_calls,
             include_division=include_division,
             native_functions=native_functions,
             include_piecewise=include_piecewise,
+            include_boolean_comparisons=include_boolean_comparisons,
         )
     )
-    environment = draw(build_integer_environment_strategy(identifiers))
+    environment = draw(
+        build_gate_environment_strategy(identifiers, boolean_identifiers)
+    )
     return expression, environment
+
+
+@st.composite
+def draw_simultaneous_substitution_case(
+    draw: st.DrawFn,
+    identifiers: Sequence[Identifier],
+    boolean_identifiers: Sequence[Identifier],
+    max_leaves: int = 6,
+    *,
+    include_division: bool = True,
+    include_calls: bool = True,
+    native_functions: Sequence[str] = INTEGER_RESULT_NATIVE_FUNCTIONS,
+    include_piecewise: bool = True,
+    include_boolean_comparisons: bool = True,
+) -> tuple[Expression, dict[Identifier, Expression], dict[Identifier, int | bool]]:
+    """Draw a tree, replacements for three of its identifiers, and an environment.
+
+    The tree is numeric or Boolean. ``identifiers[0]`` and
+    ``identifiers[1]`` are replaced by numeric trees and
+    ``boolean_identifiers[0]`` by a Boolean tree, which may itself be a
+    Boolean piecewise. Every replacement is drawn over the same pools as
+    the tree, so a replacement can reference an identifier that is itself
+    replaced, and only a simultaneous substitution gives it the original
+    binding. Every keyword is forwarded to every tree drawn.
+
+    Args:
+        draw: The active Hypothesis draw function.
+        identifiers: Integer-sorted pool of at least two identifiers.
+        boolean_identifiers: Boolean-sorted pool of at least one
+            identifier, with ids that do not overlap ``identifiers``'.
+        max_leaves: Most leaves the tree and each replacement may hold.
+        include_division: Whether a division node may appear.
+        include_calls: Whether a call node may appear.
+        native_functions: The only function names a call may target.
+        include_piecewise: Whether piecewise nodes may appear.
+        include_boolean_comparisons: Whether an ``==``/``!=`` between two
+            Boolean subtrees may appear.
+
+    Returns:
+        The tree, the replacement for each replaced identifier, and an
+        environment binding every identifier of both pools.
+
+    """
+    grammar = _GateGrammar(
+        identifiers=identifiers,
+        boolean_identifiers=boolean_identifiers,
+        include_division=include_division,
+        include_calls=include_calls,
+        native_functions=native_functions,
+        include_piecewise=include_piecewise,
+        include_boolean_comparisons=include_boolean_comparisons,
+    )
+    numeric_strategy = grammar.build_numeric_strategy(max_leaves)
+    boolean_strategy = grammar.build_boolean_strategy(max_leaves)
+    expression = draw(st.one_of(numeric_strategy, boolean_strategy))
+    replacements = {
+        identifiers[0]: draw(numeric_strategy),
+        identifiers[1]: draw(numeric_strategy),
+        boolean_identifiers[0]: draw(boolean_strategy),
+    }
+    environment = draw(
+        build_gate_environment_strategy(identifiers, boolean_identifiers)
+    )
+    return expression, replacements, environment
 
 
 _PYTHON_BINARY_EVALUATORS: Final[
@@ -819,7 +1001,7 @@ def _evaluate_literal_with_python(expression: LiteralExpression) -> "int | bool"
 
 
 def _evaluate_call_with_python(
-    expression: CallExpression, environment: Mapping[Identifier, int]
+    expression: CallExpression, environment: Mapping[Identifier, int | bool]
 ) -> int:
     """Evaluate a gate-grammar call: one native function on one int argument."""
     (argument_expression,) = expression.arguments
@@ -832,7 +1014,7 @@ def _evaluate_call_with_python(
 
 
 def _evaluate_piecewise_with_python(
-    expression: PiecewiseExpression, environment: Mapping[Identifier, int]
+    expression: PiecewiseExpression, environment: Mapping[Identifier, int | bool]
 ) -> "int | bool":
     """Evaluate a gate-grammar piecewise: first true condition wins, else otherwise."""
     for condition, value_expression in expression.get_cases():
@@ -842,7 +1024,7 @@ def _evaluate_piecewise_with_python(
 
 
 def _evaluate_unary_with_python(
-    expression: UnaryExpression, environment: Mapping[Identifier, int]
+    expression: UnaryExpression, environment: Mapping[Identifier, int | bool]
 ) -> "int | bool":
     """Evaluate a gate-grammar ``UnaryExpression`` with plain Python semantics."""
     operand = evaluate_with_python(expression.operand, environment)
@@ -859,7 +1041,7 @@ def _evaluate_unary_with_python(
 
 
 def evaluate_with_python(
-    expression: Expression, environment: Mapping[Identifier, int]
+    expression: Expression, environment: Mapping[Identifier, int | bool]
 ) -> "int | bool":
     """Evaluate a numeric or boolean gate-grammar expression with Python semantics.
 
@@ -867,15 +1049,17 @@ def evaluate_with_python(
     oracle ``evaluate_expression_with_numpy`` is checked against.
     Supports literals, identifiers, ``NEGATE``/``POSITIVE``/
     ``LOGICAL_NOT``, the arithmetic and logical ``BinaryOperation``s,
-    comparisons, piecewise (first true condition wins, else
-    ``otherwise``), and floor/ceil/round on ints (floor/ceil/round of an
-    int is the int itself).
+    comparisons (including ``==``/``!=`` between Booleans), piecewise
+    (first true condition wins, else ``otherwise``), and floor/ceil/round
+    on ints (floor/ceil/round of an int is the int itself). Integer
+    arithmetic is exact, with Python's floor division and modulo.
 
     Args:
         expression: A gate-grammar expression: no ``DIVIDE``, ``POWER``,
             or call other than to ``INTEGER_RESULT_NATIVE_FUNCTIONS``.
         environment: Values bound to every free identifier in
-            ``expression``.
+            ``expression``: an int for an integer identifier, a bool for
+            a Boolean one.
 
     Returns:
         The int or bool ``expression`` denotes under ``environment``.

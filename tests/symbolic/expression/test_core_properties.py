@@ -26,8 +26,14 @@ from fhy_core.symbolic.expression import (
 )
 from fhy_core.term import AlphaRenaming
 
-from ...strategies.expressions import build_numeric_expression_strategy
-from ...strategies.identifiers import build_identifier_pool
+from ...strategies.expressions import (
+    build_boolean_expression_strategy,
+    build_numeric_expression_strategy,
+)
+from ...strategies.identifiers import (
+    build_boolean_identifier_pool,
+    build_identifier_pool,
+)
 from ...strategies.literals import build_decimal_string_value_strategy
 from ...strategies.structural_expressions import build_structural_expression_strategy
 from .conftest import mock_identifier
@@ -35,6 +41,7 @@ from .conftest import mock_identifier
 pytestmark = pytest.mark.property
 
 _POOL = build_identifier_pool(3)
+_BOOLEAN_POOL = build_boolean_identifier_pool(2)
 _STRUCTURAL_MAX_LEAVES = 6
 
 # A second pool with ids well above `_POOL`'s (10000-10002): calling
@@ -51,32 +58,49 @@ _FRESH_POOL = tuple(mock_identifier(f"w{index}", 20_000 + index) for index in ra
 
 @st.composite
 def draw_expression_and_substitution(
-    draw: st.DrawFn, identifiers: Sequence[Identifier], max_leaves: int = 6
+    draw: st.DrawFn,
+    identifiers: Sequence[Identifier],
+    boolean_identifiers: Sequence[Identifier],
+    max_leaves: int = 6,
 ) -> tuple[Expression, dict[Identifier, Expression]]:
     """Draw a numeric gate tree and a substitution over one or two pool identifiers.
 
-    Every substituted value is itself a numeric gate tree over the same
-    pool, so the substitution can both remove and reintroduce free
-    identifiers, exercising both sides of the free-identifier law below.
+    The substitution's domain is drawn from both pools, and every
+    substituted value is itself a gate tree over the same pools, numeric
+    for an integer identifier and Boolean for a Boolean one, so the
+    substitution can both remove and reintroduce free identifiers,
+    exercising both sides of the free-identifier law below.
     """
-    expression = draw(build_numeric_expression_strategy(identifiers, max_leaves))
+    expression = draw(
+        build_numeric_expression_strategy(
+            identifiers, max_leaves, boolean_identifiers=boolean_identifiers
+        )
+    )
     domain_size = draw(st.integers(min_value=1, max_value=2))
     domain = draw(
         st.lists(
-            st.sampled_from(identifiers),
+            st.sampled_from((*identifiers, *boolean_identifiers)),
             unique=True,
             min_size=domain_size,
             max_size=domain_size,
         )
     )
-    substitution: dict[Identifier, Expression] = {
-        variable: draw(build_numeric_expression_strategy(identifiers, max_leaves))
-        for variable in domain
-    }
+    substitution: dict[Identifier, Expression] = {}
+    for variable in domain:
+        build_value_strategy = (
+            build_boolean_expression_strategy
+            if variable in boolean_identifiers
+            else build_numeric_expression_strategy
+        )
+        substitution[variable] = draw(
+            build_value_strategy(
+                identifiers, max_leaves, boolean_identifiers=boolean_identifiers
+            )
+        )
     return expression, substitution
 
 
-@given(draw_expression_and_substitution(_POOL))
+@given(draw_expression_and_substitution(_POOL, _BOOLEAN_POOL))
 def test_substitute_updates_free_identifiers_per_specification(
     pair: tuple[Expression, dict[Identifier, Expression]],
 ) -> None:

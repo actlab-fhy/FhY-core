@@ -3,7 +3,10 @@
 Covers three invariants of the bottom-up native-call/native-constant
 folding pass: folding never changes what a tree evaluates to (oracle:
 the NumPy evaluator), folding is idempotent, and -- with one documented
-exception -- no literal-argument native call survives a fold.
+exception -- no literal-argument native call survives a fold. Trees draw
+Boolean identifiers into their Boolean positions (piecewise conditions
+and everything beneath them), and environments bind those identifiers
+to bools.
 """
 
 from typing import Final
@@ -27,13 +30,17 @@ from ....strategies.expressions import (
     build_numeric_expression_strategy,
     draw_numeric_tree_with_environment,
 )
-from ....strategies.identifiers import build_identifier_pool
+from ....strategies.identifiers import (
+    build_boolean_identifier_pool,
+    build_identifier_pool,
+)
 
 pytestmark = pytest.mark.property
 
 pytest.importorskip("numpy")
 
 _POOL: Final[tuple[Identifier, ...]] = build_identifier_pool(3)
+_BOOLEAN_POOL: Final[tuple[Identifier, ...]] = build_boolean_identifier_pool(2)
 
 
 def _find_foldable_call(expression: Expression) -> CallExpression | None:
@@ -59,9 +66,13 @@ def _find_foldable_call(expression: Expression) -> CallExpression | None:
 # =============================================================================
 
 
-@given(tree_and_environment=draw_numeric_tree_with_environment(_POOL))
+@given(
+    tree_and_environment=draw_numeric_tree_with_environment(
+        _POOL, boolean_identifiers=_BOOLEAN_POOL
+    )
+)
 def test_evaluate_expression_preserves_evaluation(
-    tree_and_environment: tuple[Expression, dict[Identifier, int]],
+    tree_and_environment: tuple[Expression, dict[Identifier, int | bool]],
 ) -> None:
     """Test folding never changes the value under any sampled assignment.
 
@@ -82,7 +93,11 @@ def test_evaluate_expression_preserves_evaluation(
 # =============================================================================
 
 
-@given(expression=build_numeric_expression_strategy(_POOL))
+@given(
+    expression=build_numeric_expression_strategy(
+        _POOL, boolean_identifiers=_BOOLEAN_POOL
+    )
+)
 def test_evaluate_expression_is_idempotent(expression: Expression) -> None:
     """Test folding twice is structurally the same as folding once."""
     once = evaluate_expression(expression)
@@ -104,7 +119,11 @@ def test_evaluate_expression_is_idempotent(expression: Expression) -> None:
 # Walks the folded tree with get_visit_children. Every call the gate
 # grammar draws targets a NativeFunction, which is exactly the kind
 # evaluate_expression promises to fold.
-@given(expression=build_numeric_expression_strategy(_POOL))
+@given(
+    expression=build_numeric_expression_strategy(
+        _POOL, boolean_identifiers=_BOOLEAN_POOL
+    )
+)
 def test_evaluate_expression_folds_every_literal_argument_call(
     expression: Expression,
 ) -> None:
