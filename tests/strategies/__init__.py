@@ -1,7 +1,9 @@
 """Shared Hypothesis strategies for the FhY-core property-based test suites.
 
 One module per domain: ``identifiers``, ``literals``, ``expressions``,
-``params``, ``constraints``, ``types``, and ``serializables``. Nothing is
+``structural_expressions``, ``params``, ``constraints``, ``types``,
+``orders``, and ``serializables``; ``settings`` holds the shared
+Hypothesis settings helper. Nothing is
 re-exported here; import each strategy from its owning submodule, for
 example ``from .strategies.expressions import build_numeric_expression_strategy``.
 

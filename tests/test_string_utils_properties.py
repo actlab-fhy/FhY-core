@@ -19,8 +19,6 @@ from fhy_core.utils.str_utils import format_comma_separated_list
 
 pytestmark = pytest.mark.property
 
-_STRING_ALPHABET = "abcXYZ"
-
 
 @example(items=[1, 2, 3], add_space=True)
 @example(items=[1, 2, 3], add_space=False)
