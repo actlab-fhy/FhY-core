@@ -9,7 +9,7 @@ skips the whole module before the `hypothesis` import is attempted.
 import pytest
 
 pytest.importorskip("hypothesis")
-from hypothesis import example, given, settings
+from hypothesis import example, given
 from hypothesis import strategies as st
 
 from fhy_core.identifier import Identifier
@@ -39,6 +39,7 @@ from ...strategies.constraints import (
     draw_integer_set_constraint,
 )
 from ...strategies.identifiers import build_identifier_pool
+from ...strategies.settings import cap_max_examples
 from .conftest import mock_identifier
 
 pytestmark = pytest.mark.property
@@ -200,7 +201,7 @@ def _draw_domain_bound_system(
 
 @pytest.mark.z3
 # Z3-backed: check_satisfiability routes through the solver.
-@settings(max_examples=50)
+@cap_max_examples(50)
 @example(
     drawn=(
         _PINNED_THRESHOLD_LINKED_SYSTEM,

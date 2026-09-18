@@ -12,7 +12,7 @@ import pytest
 
 pytest.importorskip("hypothesis")
 
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 from fhy_core.symbolic.constraint import (
@@ -33,16 +33,16 @@ from ...strategies.params import (
     build_categorical_value_set_strategy,
     build_ordinal_value_set_strategy,
 )
+from ...strategies.settings import cap_max_examples
 
 # `check_feasibility` on the plain-integer case may route through the Z3
 # bridge whenever the drawn constraints do not include an `InSetConstraint`
-# (see `_numeric_has_feasible_value`), so this whole file is marked z3 and
-# capped at 50 examples, per the common Z3-backed-property convention.
+# (see `_numeric_has_feasible_value`), so this whole file is marked z3.
 pytestmark = [pytest.mark.property, pytest.mark.z3]
 
-# Every property runs without a hypothesis deadline; the `dev`/`thorough`
-# profiles already set `deadline=None`. `max_examples=50` on the property
-# below caps the more expensive, solver-backed examples.
+# Like the other Z3-backed properties, the property below runs at most 50
+# examples, and fewer when the loaded profile runs fewer, since some of its
+# drawn cases reach the solver.
 
 _WIDTH_LIMIT: Final = 12
 _CATEGORICAL_ALPHABET: Final = tuple("abcdefgh")
@@ -165,7 +165,7 @@ def draw_finite_domain_case(draw: st.DrawFn) -> tuple[Param[Any], tuple[Any, ...
 
 
 # Z3-backed: some drawn cases route check_feasibility through the solver.
-@settings(max_examples=50)
+@cap_max_examples(50)
 @given(case=draw_finite_domain_case())
 def test_check_feasibility_matches_brute_force_over_finite_domains(
     case: tuple[Param[Any], tuple[Any, ...]],

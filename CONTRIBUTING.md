@@ -71,9 +71,14 @@ derandomized): set `HYPOTHESIS_PROFILE=thorough`, or just run
 profile, `mutation` (25 examples, derandomized, no example database), which
 the `mutation` nox session selects so every mutant sees the same draws.
 Every property uses `deadline=None`; under `pytest-xdist`, scheduler
-contention rather than test cost is what trips a deadline. Add
-`@settings(max_examples=N)` on top of the profile only when a test is
-genuinely expensive (a Z3 call, a large tree).
+contention rather than test cost is what trips a deadline. When a test is
+genuinely expensive (a Z3 call, a large tree), cap its example count with
+`@cap_max_examples(N)` from `tests/strategies/settings.py`, or assign
+`cap_max_examples(N)` to a state machine's `TestCase.settings`. It runs the
+profile's count or `N`, whichever is lower. Never write a bare
+`@settings(max_examples=N)`: it replaces the profile's count instead of
+capping it, so under `dev` and `mutation` an `N` above 25 runs more
+examples than the profile.
 
 **Hazards specific to this codebase.**
 

@@ -10,11 +10,12 @@ import pytest
 
 pytest.importorskip("hypothesis")
 
-from hypothesis import settings
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, invariant, rule
 
 from fhy_core.utils.stack import Stack
+
+from .strategies.settings import cap_max_examples
 
 pytestmark = pytest.mark.property
 
@@ -80,4 +81,4 @@ class StackStateMachine(RuleBasedStateMachine):
 TestStackStateMachine = StackStateMachine.TestCase
 # Capped like a tree-heavy property: each example already runs a whole
 # sequence of rules, so the profile's example count would multiply out.
-TestStackStateMachine.settings = settings(max_examples=50)
+TestStackStateMachine.settings = cap_max_examples(50)
