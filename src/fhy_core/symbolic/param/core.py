@@ -690,7 +690,26 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
     def add_lower_bound_constraint(
         self, lower_bound: int | float | str, *, is_inclusive: bool = True
     ) -> "Param[_T]":
-        """Return a new parameter with an added lower-bound constraint."""
+        """Return a new parameter with an added lower-bound constraint.
+
+        Args:
+            lower_bound: Value the parameter must not fall below.
+            is_inclusive: Whether ``lower_bound`` itself is admitted.
+
+        Returns:
+            A new parameter with the constraint added, or ``self`` when an
+            equivalent constraint is already present.
+
+        Raises:
+            ParamError: If the domain admits no equation constraint, as for
+                a categorical, ordinal, or permutation parameter, or if the
+                domain is non-negative and an ``int`` ``lower_bound`` lies
+                below the least literal it admits for ``is_inclusive`` (see
+                :func:`create_natural_param_between`).
+            ValueError: If ``lower_bound`` is a ``bool``, or a ``str``
+                outside the literal grammar.
+
+        """
         _validate_natural_bound(
             self.domain, lower_bound, is_lower=True, is_inclusive=is_inclusive
         )
@@ -703,7 +722,25 @@ class Param(Serializable, FrozenMixin, DerivedEquivalenceMixin, Generic[_T]):
     def add_upper_bound_constraint(
         self, upper_bound: int | float | str, *, is_inclusive: bool = True
     ) -> "Param[_T]":
-        """Return a new parameter with an added upper-bound constraint."""
+        """Return a new parameter with an added upper-bound constraint.
+
+        Args:
+            upper_bound: Value the parameter must not exceed.
+            is_inclusive: Whether ``upper_bound`` itself is admitted.
+
+        Returns:
+            A new parameter with the constraint added, or ``self`` when an
+            equivalent constraint is already present.
+
+        Raises:
+            ParamError: If the domain admits no equation constraint, as for
+                a categorical, ordinal, or permutation parameter, or if the
+                domain is non-negative and an ``int`` ``upper_bound`` admits
+                none of its members.
+            ValueError: If ``upper_bound`` is a ``bool``, or a ``str``
+                outside the literal grammar.
+
+        """
         _validate_natural_bound(
             self.domain, upper_bound, is_lower=False, is_inclusive=is_inclusive
         )
