@@ -2,10 +2,12 @@
 
 import logging
 import math
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import pytest
 
+from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import PassExecutionError
 from fhy_core.symbolic.constraint import (
     ConstraintError,
@@ -15,6 +17,7 @@ from fhy_core.symbolic.constraint import (
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
+    Expression,
     IdentifierExpression,
     LiteralExpression,
     NonBooleanLogicalOperandError,
@@ -472,6 +475,297 @@ def test_construction_still_accepts_a_numeric_literal_expression() -> None:
     constraint = EquationConstraint(expression)
 
     assert constraint.expression is expression
+
+
+# =============================================================================
+# A piecewise over Boolean identifiers decides by its first-match meaning
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    ("b_value", "c_value", "expected"),
+    [
+        (True, True, ConstraintOutcome.VIOLATED),
+        (True, False, ConstraintOutcome.VIOLATED),
+        (False, True, ConstraintOutcome.VIOLATED),
+        (False, False, ConstraintOutcome.SATISFIED),
+    ],
+)
+def test_evaluate_with_bindings_negates_a_piecewise_with_an_identifier_condition(
+    b_value: bool, c_value: bool, expected: ConstraintOutcome
+) -> None:
+    """Test ``!(True if b, otherwise c)`` holds only when ``b`` and ``c`` both fail."""
+    b = mock_identifier("b", 0)
+    c = mock_identifier("c", 1)
+    constraint = EquationConstraint(
+        logical_not(
+            piecewise(
+                (IdentifierExpression(b), LiteralExpression(True)),
+                otherwise=IdentifierExpression(c),
+            )
+        )
+    )
+
+    outcome = constraint.evaluate_with_bindings({b: b_value, c: c_value})
+
+    assert outcome is expected
+
+
+@pytest.mark.parametrize(
+    ("b_value", "c_value", "x_value", "expected"),
+    [
+        (True, True, 2, ConstraintOutcome.SATISFIED),
+        (False, True, 2, ConstraintOutcome.SATISFIED),
+        (False, False, 2, ConstraintOutcome.VIOLATED),
+        (False, True, 0, ConstraintOutcome.VIOLATED),
+    ],
+)
+def test_evaluate_with_bindings_reads_a_case_condition_with_an_identifier_condition(
+    b_value: bool, c_value: bool, x_value: int, expected: ConstraintOutcome
+) -> None:
+    """Test ``x > 1 if (True if b, otherwise c), otherwise x < 1`` follows bindings."""
+    b = mock_identifier("b", 0)
+    c = mock_identifier("c", 1)
+    x = mock_identifier("x", 2)
+    condition = piecewise(
+        (IdentifierExpression(b), LiteralExpression(True)),
+        otherwise=IdentifierExpression(c),
+    )
+    constraint = EquationConstraint(
+        piecewise(
+            (condition, IdentifierExpression(x) > 1),
+            otherwise=IdentifierExpression(x) < 1,
+        )
+    )
+
+    outcome = constraint.evaluate_with_bindings({b: b_value, c: c_value, x: x_value})
+
+    assert outcome is expected
+
+
+@pytest.mark.parametrize(
+    "operation", [BinaryOperation.EQUAL, BinaryOperation.NOT_EQUAL]
+)
+@pytest.mark.parametrize(
+    "build_bindings",
+    [
+        pytest.param(lambda b, _, value: {b: value}, id="b_bound"),
+        pytest.param(lambda b, x, value: {b: value, x: 5}, id="b_and_x_bound"),
+    ],
+)
+def test_evaluate_with_bindings_leaves_a_bound_open_boolean_piecewise_undecided(
+    operation: BinaryOperation,
+    build_bindings: Callable[
+        [Identifier, Identifier, Expression], Mapping[Identifier, Expression | int]
+    ],
+) -> None:
+    """Test ``b == True`` under ``b = (True if x > 0, otherwise False)`` is undecided.
+
+    ``x`` is free in the value bound to ``b``, and a binding for ``x``
+    does not reach into that value, so the outcome is neither satisfied
+    nor violated.
+    """
+    b = mock_identifier("b", 0)
+    x = mock_identifier("x", 1)
+    constraint = EquationConstraint(
+        BinaryExpression(operation, IdentifierExpression(b), LiteralExpression(True))
+    )
+    boolean_piecewise = piecewise(
+        (IdentifierExpression(x) > 0, LiteralExpression(True)),
+        otherwise=LiteralExpression(False),
+    )
+
+    outcome = constraint.evaluate_with_bindings(build_bindings(b, x, boolean_piecewise))
+
+    assert outcome is ConstraintOutcome.UNDECIDED
+
+
+@pytest.mark.parametrize(
+    ("bound_values", "expected"),
+    [
+        pytest.param({}, ConstraintOutcome.UNDECIDED, id="unbound"),
+        pytest.param({"x": 0, "c": True}, ConstraintOutcome.SATISFIED, id="first_case"),
+        pytest.param(
+            {"x": 0, "c": False}, ConstraintOutcome.VIOLATED, id="first_case_false"
+        ),
+        pytest.param(
+            {"x": 1, "c": True}, ConstraintOutcome.UNDECIDED, id="otherwise_unbound"
+        ),
+        pytest.param(
+            {"x": 1, "b": False, "c": False},
+            ConstraintOutcome.SATISFIED,
+            id="otherwise_bound",
+        ),
+        pytest.param(
+            {"x": 1, "b": True, "c": False},
+            ConstraintOutcome.VIOLATED,
+            id="otherwise_bound_false",
+        ),
+    ],
+)
+def test_evaluate_with_bindings_compares_a_piecewise_mixing_identifier_branches(
+    bound_values: dict[str, bool | int], expected: ConstraintOutcome
+) -> None:
+    """Test ``(True if x == 0, otherwise b) == c`` follows its bindings.
+
+    The unbound rows leave the comparison open, which must report
+    ``UNDECIDED`` rather than raise.
+    """
+    identifiers = {
+        "x": mock_identifier("x", 0),
+        "b": mock_identifier("b", 1),
+        "c": mock_identifier("c", 2),
+    }
+    constraint = EquationConstraint(
+        BinaryExpression(
+            BinaryOperation.EQUAL,
+            piecewise(
+                (
+                    IdentifierExpression(identifiers["x"]).equals(0),
+                    LiteralExpression(True),
+                ),
+                otherwise=IdentifierExpression(identifiers["b"]),
+            ),
+            IdentifierExpression(identifiers["c"]),
+        )
+    )
+
+    outcome = constraint.evaluate_with_bindings(
+        {identifiers[name]: value for name, value in bound_values.items()}
+    )
+
+    assert outcome is expected
+
+
+@pytest.mark.parametrize(
+    ("b_value", "d_value", "c_value", "expected"),
+    [
+        (True, True, False, ConstraintOutcome.VIOLATED),
+        (False, False, True, ConstraintOutcome.SATISFIED),
+        (True, False, False, ConstraintOutcome.SATISFIED),
+        (True, False, True, ConstraintOutcome.VIOLATED),
+    ],
+)
+def test_evaluate_with_bindings_negates_a_piecewise_comparing_a_branch_identifier(
+    b_value: bool, d_value: bool, c_value: bool, expected: ConstraintOutcome
+) -> None:
+    """Test ``!(b if b == d, otherwise c)`` follows its first case when ``b == d``."""
+    b = mock_identifier("b", 0)
+    d = mock_identifier("d", 1)
+    c = mock_identifier("c", 2)
+    constraint = EquationConstraint(
+        logical_not(
+            piecewise(
+                (
+                    IdentifierExpression(b).equals(IdentifierExpression(d)),
+                    IdentifierExpression(b),
+                ),
+                otherwise=IdentifierExpression(c),
+            )
+        )
+    )
+
+    outcome = constraint.evaluate_with_bindings({b: b_value, d: d_value, c: c_value})
+
+    assert outcome is expected
+
+
+@pytest.mark.parametrize(
+    ("x_value", "expected"),
+    [
+        (3, ConstraintOutcome.SATISFIED),
+        (1, ConstraintOutcome.VIOLATED),
+        (2, ConstraintOutcome.UNDECIDED),
+    ],
+)
+def test_evaluate_with_bindings_compares_a_numeric_piecewise_over_an_unbound_condition(
+    x_value: int, expected: ConstraintOutcome
+) -> None:
+    """Test ``(1 if b, otherwise 2) < x`` is decided only when ``b`` cannot matter."""
+    b = mock_identifier("b", 0)
+    x = mock_identifier("x", 1)
+    numeric = piecewise(
+        (IdentifierExpression(b), LiteralExpression(1)),
+        otherwise=LiteralExpression(2),
+    )
+    constraint = EquationConstraint(numeric < IdentifierExpression(x))
+
+    outcome = constraint.evaluate_with_bindings({x: x_value})
+
+    assert outcome is expected
+
+
+def test_evaluate_with_bindings_refutes_a_boolean_comparison_beside_relations() -> None:
+    """Test ``(d == True) && x < 1 && x > 2`` is violated for every ``d`` and ``x``."""
+    d = mock_identifier("d", 0)
+    x = mock_identifier("x", 1)
+    constraint = EquationConstraint(
+        logical_and(
+            logical_and(
+                IdentifierExpression(d).equals(LiteralExpression(True)),
+                IdentifierExpression(x) < 1,
+            ),
+            IdentifierExpression(x) > 2,
+        )
+    )
+
+    outcome = constraint.evaluate_with_bindings({})
+
+    assert outcome is ConstraintOutcome.VIOLATED
+
+
+@pytest.mark.parametrize(
+    ("c_value", "d_value", "expected"),
+    [
+        (True, True, ConstraintOutcome.SATISFIED),
+        (False, False, ConstraintOutcome.VIOLATED),
+        (True, False, ConstraintOutcome.UNDECIDED),
+    ],
+)
+def test_evaluate_with_bindings_reads_a_case_condition_comparing_a_relation(
+    c_value: bool, d_value: bool, expected: ConstraintOutcome
+) -> None:
+    """Test ``c if (x == 0) == b, otherwise d`` is decided only when ``c == d``."""
+    x = mock_identifier("x", 0)
+    b = mock_identifier("b", 1)
+    c = mock_identifier("c", 2)
+    d = mock_identifier("d", 3)
+    condition = BinaryExpression(
+        BinaryOperation.EQUAL,
+        IdentifierExpression(x).equals(0),
+        IdentifierExpression(b),
+    )
+    constraint = EquationConstraint(
+        piecewise(
+            (condition, IdentifierExpression(c)), otherwise=IdentifierExpression(d)
+        )
+    )
+
+    outcome = constraint.evaluate_with_bindings({c: c_value, d: d_value})
+
+    assert outcome is expected
+
+
+@pytest.mark.parametrize(
+    ("b_value", "expected"),
+    [(True, ConstraintOutcome.SATISFIED), (False, ConstraintOutcome.VIOLATED)],
+)
+def test_evaluate_with_bindings_divides_an_even_valued_piecewise(
+    b_value: bool, expected: ConstraintOutcome
+) -> None:
+    """Test ``(6 if b, otherwise 0) / 3 == 2`` holds exactly when ``b`` does."""
+    b = mock_identifier("b", 0)
+    even_valued = piecewise(
+        (IdentifierExpression(b), LiteralExpression(6)),
+        otherwise=LiteralExpression(0),
+    )
+    constraint = EquationConstraint(
+        (even_valued / LiteralExpression(3)).equals(LiteralExpression(2))
+    )
+
+    outcome = constraint.evaluate_with_bindings({b: b_value})
+
+    assert outcome is expected
 
 
 # =============================================================================

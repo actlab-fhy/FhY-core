@@ -88,17 +88,52 @@ def coverage(session: nox.Session) -> None:
 
 @nox.session
 def property(session: nox.Session) -> None:
-    """Run hypothesis-based property tests (CI release gate; opt-in locally)."""
+    """Run hypothesis-based property tests under the thorough profile.
+
+    This is the CI release gate (opt-in locally); it forces
+    ``HYPOTHESIS_PROFILE=thorough`` regardless of the caller's environment.
+    """
     _sync(session, "property")
     # No success_codes override: exit 5 (nothing collected) must fail, so a
     # marker typo or a collection error cannot pass as a clean run.
-    session.run("pytest", "-m", "property", *session.posargs)
+    session.run(
+        "pytest",
+        "-m",
+        "property",
+        *session.posargs,
+        env={"HYPOTHESIS_PROFILE": "thorough"},
+    )
 
 
 @nox.session
 def mutation(session: nox.Session) -> None:
-    """Run cosmic-ray mutation testing (opt-in)."""
+    """Run cosmic-ray mutation testing for one module (opt-in).
+
+    `nox -s mutation -- lattice`.
+    """
+    module = session.posargs[0] if session.posargs else "lattice"
+    config = ROOT / "cosmic-ray" / f"{module}.toml"
+    if not config.is_file():
+        available = ", ".join(
+            sorted(path.stem for path in config.parent.glob("*.toml"))
+        )
+        session.error(f"no mutation config for {module!r}; available: {available}")
     _sync(session, "mutation")
-    session.run("cosmic-ray", "init", "cosmic-ray.toml", "cosmic-ray.sqlite")
-    session.run("cosmic-ray", "exec", "cosmic-ray.toml", "cosmic-ray.sqlite")
-    session.run("cr-report", "cosmic-ray.sqlite")
+    # Every mutant has to see the same Hypothesis draws, and none may replay a
+    # counterexample saved while testing another, so the run uses the
+    # derandomized, database-free `mutation` profile from tests/conftest.py.
+    session.env["HYPOTHESIS_PROFILE"] = "mutation"
+    # Cosmic-ray scores a mutant whose test run overruns the config's timeout as
+    # killed, so stop before mutating anything if the unmutated suite fails or
+    # does not finish within that timeout.
+    session.run("cosmic-ray", "baseline", str(config))
+    database = ROOT / "session.sqlite"
+    database.unlink(missing_ok=True)
+    session.run("cosmic-ray", "init", str(config), str(database))
+    session.run("cr-filter-pragma", str(database))
+    session.run("cosmic-ray", "exec", str(config), str(database))
+    report = ROOT / "mutation-report.html"
+    with report.open("w") as report_file:
+        session.run("cr-html", str(database), stdout=report_file, stderr=None)
+    session.run("cr-report", str(database))
+    session.log(f"Report: {report}")

@@ -68,7 +68,6 @@ from .conftest import (
     assert_all_valid,
     assert_none_satisfied,
     assert_none_valid,
-    assert_param_round_trips_in_all_formats,
     build_case_condition_constraint,
     mock_identifier,
 )
@@ -883,27 +882,6 @@ def test_intersection_type_annotation_is_param() -> None:
 # =============================================================================
 # Integration: serialization, subset/feasibility/assign interop, chaining
 # =============================================================================
-
-
-@pytest.mark.z3
-def test_intersection_result_round_trips_through_serialization() -> None:
-    """Test an intersection result round-trips through DICT, JSON, and BINARY."""
-    left = create_interval_integer_param_between(0, 10)
-    right = create_interval_integer_param_between(5, 20)
-
-    result = create_intersection_param(left, right)
-
-    assert_param_round_trips_in_all_formats(result)
-
-
-def test_categorical_intersection_result_round_trips_through_serialization() -> None:
-    """Test a baked categorical intersection result round-trips in every format."""
-    left = create_categorical_param({"a", "b", "c"})
-    right = create_categorical_param({"b", "c", "d"})
-
-    result = create_intersection_param(left, right)
-
-    assert_param_round_trips_in_all_formats(result)
 
 
 @pytest.mark.z3

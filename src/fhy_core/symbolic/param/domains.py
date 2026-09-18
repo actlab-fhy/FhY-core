@@ -483,13 +483,18 @@ def _screen_not_in_set_constraint(
     a non-liftable member only widens the admissible set: the constraint
     is narrowed to its liftable members (logged at ``WARNING`` when any
     member is excluded), and dropped entirely (also logged at
-    ``WARNING``) when it is scoped elsewhere or no member lifts.
+    ``WARNING``) when it is scoped elsewhere or no member lifts. A
+    constraint that loses no member is returned as it stands, the same
+    object, so that identity reports an unnarrowed constraint to
+    :func:`_build_screened_constraint_system_with_fidelity`.
 
     """
     if constraint.variable != variable:
         _log_set_constraint_scope_exclusion(constraint, variable)
         return None
     liftable, excluded = _split_not_in_set_members_by_liftability(constraint)
+    if not excluded:
+        return constraint
     if not liftable:
         _LOGGER.warning(
             "_build_screened_constraint_system: excluding %r for "
@@ -498,16 +503,15 @@ def _screen_not_in_set_constraint(
             variable,
         )
         return None
-    if excluded:
-        _LOGGER.warning(
-            "_build_screened_constraint_system: narrowing %r for "
-            "variable %r to its liftable member(s) %r; excluded "
-            "non-liftable member(s) %r.",
-            constraint,
-            variable,
-            liftable,
-            excluded,
-        )
+    _LOGGER.warning(
+        "_build_screened_constraint_system: narrowing %r for "
+        "variable %r to its liftable member(s) %r; excluded "
+        "non-liftable member(s) %r.",
+        constraint,
+        variable,
+        liftable,
+        excluded,
+    )
     return NotInSetConstraint(variable, liftable)
 
 
@@ -542,6 +546,11 @@ def _build_screened_constraint_system_with_fidelity(
     genuine witness about the original constraints when this holds, since
     screening can only weaken a system, and a weakened system admits
     values the original forbids.
+
+    Each screen function hands back the very constraint object it was
+    given whenever it drops nothing, so a screened constraint that is
+    not the original object is a narrowed one and marks the system
+    inexact.
 
     Args:
         constraints: Constraints to screen.

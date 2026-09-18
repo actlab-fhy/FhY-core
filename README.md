@@ -149,6 +149,7 @@ This project uses [uv](https://docs.astral.sh/uv/) for environment and dependenc
 
    `uv sync` creates `.venv` and installs `fhy_core` in editable mode.
    Prefix commands with `uv run` (e.g. `uv run python`) or activate the environment with `source .venv/bin/activate`.
+   Contributors also have two opt-in nox sessions not run by default: `uv run nox -s property` (the Hypothesis property suite under the thorough profile) and `uv run nox -s mutation -- <module>` (cosmic-ray mutation testing for one module); see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## Contributing
 

@@ -17,6 +17,7 @@ first.
 """
 
 import math
+import pickle
 
 import pytest
 import sympy  # type: ignore[import-untyped]
@@ -132,30 +133,55 @@ def test_log_lifts_back_to_call_log() -> None:
 
 
 # =============================================================================
-# Round-trip through sympy
+# round (opaque sympy function, folds only over an integer argument)
 # =============================================================================
 
 
-def test_native_call_round_trips_through_sympy_unchanged() -> None:
-    """Test a `call("exp", x)` lowers to sympy and lifts back to the same structure."""
-    x = mock_identifier("x", 0)
-    original = call("exp", x)
+def test_round_call_round_trips_through_sympy() -> None:
+    """Test a ``round`` call over an identifier lowers and lifts back unchanged."""
+    expression = call("round", IdentifierExpression(mock_identifier("x", 0)))
 
-    lowered = convert_expression_to_sympy_expression(original)
+    lowered = convert_expression_to_sympy_expression(expression)
     lifted = convert_sympy_expression_to_expression(lowered)
 
-    assert lifted.is_structurally_equivalent(original)
+    assert lifted.is_structurally_equivalent(expression)
 
 
-def test_nested_native_call_round_trips_through_sympy() -> None:
-    """Test a nested chain `sin(sqrt(x))` round-trips through sympy."""
-    x = mock_identifier("x", 0)
-    original = call("sin", call("sqrt", x))
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(3, id="positive"),
+        pytest.param(-4, id="negative"),
+    ],
+)
+def test_round_of_an_integer_literal_lowers_to_that_integer(value: int) -> None:
+    """Test lowering ``round`` of an integer literal folds to that same integer."""
+    expression = call("round", LiteralExpression(value))
 
-    lowered = convert_expression_to_sympy_expression(original)
-    lifted = convert_sympy_expression_to_expression(lowered)
+    lowered = convert_expression_to_sympy_expression(expression)
 
-    assert lifted.is_structurally_equivalent(original)
+    assert lowered == sympy.Integer(value)
+
+
+def test_round_lowering_uses_one_sympy_function_class() -> None:
+    """Test lowering ``round(x)`` twice yields nodes sharing one function class."""
+    expression = call("round", IdentifierExpression(mock_identifier("x", 0)))
+
+    first_lowered = convert_expression_to_sympy_expression(expression)
+    second_lowered = convert_expression_to_sympy_expression(expression)
+
+    assert first_lowered.func is second_lowered.func
+
+
+def test_lowered_round_node_lifts_after_a_pickle_round_trip() -> None:
+    """Test a pickled and restored lowered ``round`` node still lifts correctly."""
+    expression = call("round", IdentifierExpression(mock_identifier("x", 0)))
+    lowered = convert_expression_to_sympy_expression(expression)
+
+    restored = pickle.loads(pickle.dumps(lowered))
+    lifted = convert_sympy_expression_to_expression(restored)
+
+    assert lifted.is_structurally_equivalent(expression)
 
 
 # =============================================================================

@@ -1,5 +1,6 @@
 """Tests for interval-integer parameters."""
 
+import re
 from functools import partial
 from typing import Any
 
@@ -7,7 +8,11 @@ import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import DeserializationDictStructureError
-from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
+from fhy_core.symbolic.constraint import (
+    ConstraintOutcome,
+    EquationConstraint,
+    InSetConstraint,
+)
 from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
@@ -106,8 +111,40 @@ def test_bound_int_param_between_with_inclusive_equal_bounds_is_singleton() -> N
 
 def test_bound_int_param_between_with_reversed_bounds_raises() -> None:
     """Test ``create_interval_integer_param_between`` raises when ``lower > upper``."""
-    with pytest.raises(ParamError):
+    with pytest.raises(
+        ParamError,
+        match=re.escape("Lower bound must be less than or equal to upper bound."),
+    ):
         create_interval_integer_param_between(5, 3)
+
+
+def test_bound_int_param_between_orders_bounds_past_float_precision() -> None:
+    """Test bounds one apart above ``2**53``, where floats collide, order exactly.
+
+    Both ends exclusive: ``(2**53, 2**53 + 1)`` is consistent, so it builds
+    an empty param rather than raising as equal bounds with an exclusive
+    side would.
+    """
+    param = create_interval_integer_param_between(
+        2**53, 2**53 + 1, is_lower_inclusive=False, is_upper_inclusive=False
+    )
+
+    assert param.is_empty()
+
+
+def test_bound_int_param_between_with_consistent_exclusive_bounds_is_empty() -> None:
+    """Test ``create_interval_integer_param_between(1, 2)`` builds an empty param.
+
+    Both ends exclusive: the bounds are consistent (``1 < 2``) but enclose no
+    integer, so construction succeeds and emptiness is only discoverable by
+    query.
+    """
+    param = create_interval_integer_param_between(
+        1, 2, is_lower_inclusive=False, is_upper_inclusive=False
+    )
+
+    assert param.is_empty()
+    assert param.check_feasibility() is ConstraintOutcome.VIOLATED
 
 
 # =============================================================================
@@ -490,104 +527,91 @@ def test_bound_int_param_negation_of_strict_interval_uses_integer_semantics() ->
 
 
 # =============================================================================
-# Brute-force interval property tests
+# Arithmetic - empty operand
 # =============================================================================
+
+_EMPTY_INTERVAL_MESSAGE = "Empty integer interval"
+
+
+@pytest.fixture
+def empty_interval_integer_param() -> Param[int]:
+    return create_interval_integer_param_between(
+        1, 2, is_lower_inclusive=False, is_upper_inclusive=False
+    )
+
+
+@pytest.fixture
+def empty_integer_param() -> Param[int]:
+    return create_integer_param_between(
+        1, 2, is_lower_inclusive=False, is_upper_inclusive=False
+    )
 
 
 @pytest.mark.parametrize(
-    "lower, upper, is_lower_inclusive, is_upper_inclusive",
+    "add",
     [
-        pytest.param(0, 0, True, True, id="0-0-incl-incl"),
-        pytest.param(0, 1, True, True, id="0-1-incl-incl"),
-        pytest.param(0, 1, False, True, id="0-1-excl-incl"),
-        pytest.param(0, 1, True, False, id="0-1-incl-excl"),
-        pytest.param(0, 2, False, False, id="0-2-excl-excl"),
-        pytest.param(-3, 3, True, True, id="neg3-3-incl-incl"),
-        pytest.param(-3, 3, False, False, id="neg3-3-excl-excl"),
+        pytest.param(lambda empty, other: empty + other, id="empty-plus-param"),
+        pytest.param(lambda empty, other: other + empty, id="param-plus-empty"),
+        pytest.param(lambda empty, _: empty + 3, id="empty-plus-int"),
+        pytest.param(lambda empty, _: 3 + empty, id="int-plus-empty"),
     ],
 )
-def test_bound_int_param_addition_matches_brute_force(
-    lower: int, upper: int, is_lower_inclusive: bool, is_upper_inclusive: bool
+def test_bound_int_param_addition_with_empty_operand_raises(
+    empty_interval_integer_param: Param[int], add: Any
 ) -> None:
-    """Test addition matches brute-force set addition over the input interval."""
-    x = create_interval_integer_param_between(
-        lower,
-        upper,
-        is_lower_inclusive=is_lower_inclusive,
-        is_upper_inclusive=is_upper_inclusive,
-    )
-    y = create_interval_integer_param_between(
-        lower,
-        upper,
-        is_lower_inclusive=is_lower_inclusive,
-        is_upper_inclusive=is_upper_inclusive,
-    )
-    z = x + y
-    allowed_x = [
-        v for v in range(lower - 2, upper + 3) if x.is_constraints_satisfied(v)
-    ]
-    allowed_y = [
-        v for v in range(lower - 2, upper + 3) if y.is_constraints_satisfied(v)
-    ]
-    allowed_z = {a + b for a in allowed_x for b in allowed_y}
-    for v in range(2 * (lower - 2), 2 * (upper + 2) + 1):
-        assert z.is_constraints_satisfied(v) == (v in allowed_z)
+    """Test addition raises `ParamError` when either operand admits no integer."""
+    other = create_interval_integer_param_between(0, 5)
+
+    with pytest.raises(ParamError, match=_EMPTY_INTERVAL_MESSAGE):
+        add(empty_interval_integer_param, other)
 
 
 @pytest.mark.parametrize(
-    "lower, upper, is_lower_inclusive, is_upper_inclusive",
+    "subtract",
     [
-        pytest.param(0, 0, True, True, id="0-0-incl-incl"),
-        pytest.param(0, 1, True, True, id="0-1-incl-incl"),
-        pytest.param(0, 2, False, False, id="0-2-excl-excl"),
-        pytest.param(-2, 2, True, True, id="neg2-2-incl-incl"),
-        pytest.param(-2, 2, False, False, id="neg2-2-excl-excl"),
+        pytest.param(lambda empty, other: empty - other, id="empty-minus-param"),
+        pytest.param(lambda empty, other: other - empty, id="param-minus-empty"),
+        pytest.param(lambda empty, _: empty - 3, id="empty-minus-int"),
+        pytest.param(lambda empty, _: 3 - empty, id="int-minus-empty"),
     ],
 )
-def test_bound_int_param_subtraction_matches_brute_force(
-    lower: int, upper: int, is_lower_inclusive: bool, is_upper_inclusive: bool
+def test_bound_int_param_subtraction_with_empty_operand_raises(
+    empty_interval_integer_param: Param[int], subtract: Any
 ) -> None:
-    """Test subtraction matches brute-force set subtraction over the input interval."""
-    x = create_interval_integer_param_between(
-        lower,
-        upper,
-        is_lower_inclusive=is_lower_inclusive,
-        is_upper_inclusive=is_upper_inclusive,
-    )
-    y = create_interval_integer_param_between(
-        lower,
-        upper,
-        is_lower_inclusive=is_lower_inclusive,
-        is_upper_inclusive=is_upper_inclusive,
-    )
-    z = x - y
-    allowed_x = [
-        v for v in range(lower - 2, upper + 3) if x.is_constraints_satisfied(v)
-    ]
-    allowed_y = [
-        v for v in range(lower - 2, upper + 3) if y.is_constraints_satisfied(v)
-    ]
-    allowed_z = {a - b for a in allowed_x for b in allowed_y}
-    for v in range((lower - 2) - (upper + 2), (upper + 2) - (lower - 2) + 1):
-        assert z.is_constraints_satisfied(v) == (v in allowed_z)
+    """Test subtraction raises `ParamError` when either operand admits no integer."""
+    other = create_interval_integer_param_between(0, 5)
+
+    with pytest.raises(ParamError, match=_EMPTY_INTERVAL_MESSAGE):
+        subtract(empty_interval_integer_param, other)
 
 
-# =============================================================================
-# Serialization
-# =============================================================================
+@pytest.mark.parametrize(
+    "combine",
+    [
+        pytest.param(lambda empty, other: other + empty, id="addition"),
+        pytest.param(lambda empty, other: other - empty, id="subtraction"),
+    ],
+)
+def test_bound_int_param_arithmetic_with_empty_integer_param_operand_raises(
+    empty_integer_param: Param[int], combine: Any
+) -> None:
+    """Test arithmetic raises `ParamError` for an empty plain-integer operand.
+
+    The plain-integer operand is recast as an interval operand first, so
+    its emptiness is discovered on the recast operand.
+    """
+    other = create_interval_integer_param_between(0, 5)
+
+    with pytest.raises(ParamError, match=_EMPTY_INTERVAL_MESSAGE):
+        combine(empty_integer_param, other)
 
 
-def test_bound_int_param_serialization_round_trip_preserves_constraints() -> None:
-    """Test interval-integer param round-trips through dict serialization."""
-    p = create_interval_integer_param_between(
-        3, 5, is_lower_inclusive=True, is_upper_inclusive=False
-    )
-
-    dictionary = p.serialize_to_dict()
-    restored: Param[int] = Param.deserialize_from_dict(dictionary)
-
-    assert_all_satisfied(restored, [3, 4])
-    assert_none_satisfied(restored, [5])
+def test_bound_int_param_negation_of_empty_operand_raises(
+    empty_interval_integer_param: Param[int],
+) -> None:
+    """Test negation raises `ParamError` when the operand admits no integer."""
+    with pytest.raises(ParamError, match=_EMPTY_INTERVAL_MESSAGE):
+        _ = -empty_interval_integer_param
 
 
 # =============================================================================

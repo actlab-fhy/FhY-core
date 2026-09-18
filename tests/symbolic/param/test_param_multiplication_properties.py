@@ -7,16 +7,18 @@ module is skipped wholesale via the ``importorskip`` below.
 """
 
 import math
+from typing import NamedTuple
 
 import pytest
 
 pytest.importorskip("hypothesis")
 
-from hypothesis import given, settings
+from hypothesis import example, given
 from hypothesis import strategies as st
 
-from fhy_core.symbolic.param import create_interval_integer_param_between
+from fhy_core.symbolic.param import Param, create_interval_integer_param_between
 
+from ...strategies.params import draw_interval_integer_param_with_bounds
 from .conftest import build_interval_integer_param
 
 pytestmark = pytest.mark.property
@@ -26,23 +28,33 @@ pytestmark = pytest.mark.property
 # is filtered, so a deadline here would time only the scheduler: on a
 # contended machine one example can be descheduled for hundreds of
 # milliseconds, failing a property about which values a product admits for a
-# reason unrelated to it.
+# reason unrelated to it. The `dev`/`thorough` profiles already set
+# `deadline=None`.
 
-# A finite stand-in for an unbounded end: far beyond any product of the
-# bounded endpoints drawn below, so an unbounded result end must admit it.
+# How far beyond both zero and the finite opposite end a finite stand-in for
+# an unbounded end sits, so an unbounded result end must admit it.
 _FAR_BEYOND_ANY_FINITE_HULL = 10**6
 
-_optional_bound = st.none() | st.integers(min_value=-25, max_value=25)
+
+class BoundedMultiplicationCase(NamedTuple):
+    """Two bounded interval-integer params with one concrete point each."""
+
+    x: Param[int]
+    y: Param[int]
+    concrete_x: int
+    concrete_y: int
 
 
-def _order_optional_bounds(
-    first: int | None, second: int | None
-) -> tuple[int | None, int | None]:
-    """Return ``(lower, upper)``, sorting two finite draws; ``None`` stays put."""
-    if first is None or second is None:
-        return first, second
-    lower, upper = sorted((first, second))
-    return lower, upper
+class MultiplicationHullCase(NamedTuple):
+    """Two interval-integer params, sample points, a candidate, and the hull."""
+
+    x: Param[int]
+    y: Param[int]
+    concrete_x: int
+    concrete_y: int
+    candidate: int
+    hull_min: float
+    hull_max: float
 
 
 def _convert_to_extended_interval(
@@ -78,11 +90,21 @@ def _compute_product_hull(
     return min(products), max(products)
 
 
-def _clamp_to_finite(value: float) -> int:
-    """Return ``value`` as an ``int``, an infinite value clamped to the stand-in."""
-    if math.isinf(value):
-        return int(math.copysign(_FAR_BEYOND_ANY_FINITE_HULL, value))
-    return int(value)
+def _clamp_to_finite(ends: tuple[float, float]) -> tuple[int, int]:
+    """Return ``ends`` as ``int``s, each infinite end replaced by a far stand-in.
+
+    A stand-in lies ``_FAR_BEYOND_ANY_FINITE_HULL`` beyond both zero and
+    the finite opposite end, so it stays outside every finite end however
+    far from zero that end was drawn, and the pair stays ordered.
+    """
+    lower, upper = ends
+    finite_lower = None if math.isinf(lower) else int(lower)
+    finite_upper = None if math.isinf(upper) else int(upper)
+    if finite_lower is None:
+        finite_lower = min(0, finite_upper or 0) - _FAR_BEYOND_ANY_FINITE_HULL
+    if finite_upper is None:
+        finite_upper = max(0, finite_lower) + _FAR_BEYOND_ANY_FINITE_HULL
+    return finite_lower, finite_upper
 
 
 def _sample_hull_boundary(hull_min: float, hull_max: float) -> list[int]:
@@ -91,15 +113,16 @@ def _sample_hull_boundary(hull_min: float, hull_max: float) -> list[int]:
     An unbounded end has no boundary to straddle, so it contributes the
     far-out stand-in instead, which must be admitted.
     """
+    clamped_min, clamped_max = _clamp_to_finite((hull_min, hull_max))
     samples: list[int] = []
     if math.isinf(hull_min):
-        samples.append(_clamp_to_finite(hull_min))
+        samples.append(clamped_min)
     else:
-        samples.extend((int(hull_min) - 1, int(hull_min)))
+        samples.extend((clamped_min - 1, clamped_min))
     if math.isinf(hull_max):
-        samples.append(_clamp_to_finite(hull_max))
+        samples.append(clamped_max)
     else:
-        samples.extend((int(hull_max), int(hull_max) + 1))
+        samples.extend((clamped_max, clamped_max + 1))
     return samples
 
 
@@ -107,10 +130,8 @@ def _build_integer_strategy_within(
     ends: tuple[float, float],
 ) -> st.SearchStrategy[int]:
     """Return a strategy over the integers in ``ends``, infinite ends clamped."""
-    lower, upper = ends
-    return st.integers(
-        min_value=_clamp_to_finite(lower), max_value=_clamp_to_finite(upper)
-    )
+    lower, upper = _clamp_to_finite(ends)
+    return st.integers(min_value=lower, max_value=upper)
 
 
 # =============================================================================
@@ -118,16 +139,25 @@ def _build_integer_strategy_within(
 # =============================================================================
 
 
-@settings(deadline=None)
-@given(
-    bound_1=st.integers(min_value=-25, max_value=25),
-    bound_2=st.integers(min_value=-25, max_value=25),
-    bound_3=st.integers(min_value=-25, max_value=25),
-    bound_4=st.integers(min_value=-25, max_value=25),
-    data=st.data(),
-)
+@st.composite
+def draw_bounded_multiplication_case(draw: st.DrawFn) -> BoundedMultiplicationCase:
+    """Draw two bounded interval-integer params with a concrete point in each."""
+    bound_1 = draw(st.integers(min_value=-25, max_value=25))
+    bound_2 = draw(st.integers(min_value=-25, max_value=25))
+    bound_3 = draw(st.integers(min_value=-25, max_value=25))
+    bound_4 = draw(st.integers(min_value=-25, max_value=25))
+    lower_1, upper_1 = sorted((bound_1, bound_2))
+    lower_2, upper_2 = sorted((bound_3, bound_4))
+    x = create_interval_integer_param_between(lower_1, upper_1)
+    y = create_interval_integer_param_between(lower_2, upper_2)
+    concrete_x = draw(st.integers(min_value=lower_1, max_value=upper_1))
+    concrete_y = draw(st.integers(min_value=lower_2, max_value=upper_2))
+    return BoundedMultiplicationCase(x, y, concrete_x, concrete_y)
+
+
+@given(case=draw_bounded_multiplication_case())
 def test_multiplication_is_sound_for_every_concrete_pair_in_range(
-    bound_1: int, bound_2: int, bound_3: int, bound_4: int, data: st.DataObject
+    case: BoundedMultiplicationCase,
 ) -> None:
     """Test that for any concrete ``x in [a,b]``, ``y in [c,d]``, ``x*y`` is valid.
 
@@ -135,16 +165,9 @@ def test_multiplication_is_sound_for_every_concrete_pair_in_range(
     concrete value drawn from each operand's interval -- this is the
     defining soundness property of interval arithmetic.
     """
-    lower_1, upper_1 = sorted((bound_1, bound_2))
-    lower_2, upper_2 = sorted((bound_3, bound_4))
-    x = create_interval_integer_param_between(lower_1, upper_1)
-    y = create_interval_integer_param_between(lower_2, upper_2)
-    concrete_x = data.draw(st.integers(min_value=lower_1, max_value=upper_1))
-    concrete_y = data.draw(st.integers(min_value=lower_2, max_value=upper_2))
+    z = case.x * case.y
 
-    z = x * y
-
-    assert z.is_constraints_satisfied(concrete_x * concrete_y)
+    assert z.is_constraints_satisfied(case.concrete_x * case.concrete_y)
 
 
 # =============================================================================
@@ -152,49 +175,78 @@ def test_multiplication_is_sound_for_every_concrete_pair_in_range(
 # =============================================================================
 
 
-@settings(deadline=None)
-@given(
-    left_bound_1=_optional_bound,
-    left_bound_2=_optional_bound,
-    right_bound_1=_optional_bound,
-    right_bound_2=_optional_bound,
-    data=st.data(),
-)
-def test_multiplication_admits_exactly_the_endpoint_product_hull(
-    left_bound_1: int | None,
-    left_bound_2: int | None,
-    right_bound_1: int | None,
-    right_bound_2: int | None,
-    data: st.DataObject,
-) -> None:
-    """Test ``x * y`` admits an integer iff it lies in the four-corner product hull.
+@st.composite
+def draw_multiplication_hull_case(draw: st.DrawFn) -> MultiplicationHullCase:
+    """Draw two interval-integer params, sample points, a candidate, and the hull.
 
     The two operands are drawn independently, each end optionally
-    unbounded. The expected hull is computed over the extended reals, and
-    values on, just inside, and just outside each end of it -- plus one
-    drawn from a window around it -- must be admitted exactly when they
-    lie within it. A concrete product is checked alongside so a hole
-    anywhere inside the hull is caught, not only a misplaced end.
+    unbounded. The expected hull is computed over the extended reals from
+    the operands' own bounds, so the property below can check it directly
+    rather than reconstructing it from the params.
     """
-    left_lower, left_upper = _order_optional_bounds(left_bound_1, left_bound_2)
-    right_lower, right_upper = _order_optional_bounds(right_bound_1, right_bound_2)
+    x, left_lower, left_upper = draw(draw_interval_integer_param_with_bounds())
+    y, right_lower, right_upper = draw(draw_interval_integer_param_with_bounds())
     left_ends = _convert_to_extended_interval(left_lower, left_upper)
     right_ends = _convert_to_extended_interval(right_lower, right_upper)
     hull_min, hull_max = _compute_product_hull(left_ends, right_ends)
-    x = build_interval_integer_param(left_lower, left_upper)
-    y = build_interval_integer_param(right_lower, right_upper)
-    concrete_x = data.draw(_build_integer_strategy_within(left_ends), label="x")
-    concrete_y = data.draw(_build_integer_strategy_within(right_ends), label="y")
-    candidate = data.draw(
-        st.integers(
-            min_value=_clamp_to_finite(hull_min) - 3,
-            max_value=_clamp_to_finite(hull_max) + 3,
-        ),
-        label="candidate",
+    concrete_x = draw(_build_integer_strategy_within(left_ends))
+    concrete_y = draw(_build_integer_strategy_within(right_ends))
+    clamped_min, clamped_max = _clamp_to_finite((hull_min, hull_max))
+    candidate = draw(st.integers(min_value=clamped_min - 3, max_value=clamped_max + 3))
+    return MultiplicationHullCase(
+        x, y, concrete_x, concrete_y, candidate, hull_min, hull_max
     )
 
-    z = x * y
 
-    assert z.is_constraints_satisfied(concrete_x * concrete_y)
-    for value in (*_sample_hull_boundary(hull_min, hull_max), candidate):
-        assert z.is_constraints_satisfied(value) == (hull_min <= value <= hull_max)
+def _build_hull_example(
+    left_lower: int, left_upper: int, right_lower: int, right_upper: int
+) -> MultiplicationHullCase:
+    """Build a hull case at module level, for pinning a hand-picked example."""
+    left_ends = _convert_to_extended_interval(left_lower, left_upper)
+    right_ends = _convert_to_extended_interval(right_lower, right_upper)
+    hull_min, hull_max = _compute_product_hull(left_ends, right_ends)
+    return MultiplicationHullCase(
+        x=build_interval_integer_param(left_lower, left_upper),
+        y=build_interval_integer_param(right_lower, right_upper),
+        concrete_x=left_lower,
+        concrete_y=right_lower,
+        candidate=_clamp_to_finite((hull_min, hull_max))[0],
+        hull_min=hull_min,
+        hull_max=hull_max,
+    )
+
+
+# Each pinned case below is a bounded pair whose hull is not the set of
+# actual pairwise products (e.g. ``[1,3] * [1,3]`` admits ``5``, which is
+# nobody's product), so the tightness check -- against the corner-product
+# hull, not brute-force multiplication -- is the property that matters here.
+@example(case=_build_hull_example(0, 0, 0, 0))
+@example(case=_build_hull_example(0, 3, 0, 3))
+@example(case=_build_hull_example(-3, 3, -3, 3))
+@example(case=_build_hull_example(-3, -1, -3, -1))
+@example(case=_build_hull_example(1, 3, 1, 3))
+@example(case=_build_hull_example(-3, -1, 1, 3))
+@example(case=_build_hull_example(1, 3, -3, -1))
+@example(case=_build_hull_example(-2, 3, -3, 1))
+@example(case=_build_hull_example(0, 3, -3, -1))
+@given(case=draw_multiplication_hull_case())
+def test_multiplication_admits_exactly_the_endpoint_product_hull(
+    case: MultiplicationHullCase,
+) -> None:
+    """Test ``x * y`` admits an integer iff it lies in the four-corner product hull.
+
+    Values on, just inside, and just outside each end of the hull -- plus
+    one drawn from a window around it -- must be admitted exactly when
+    they lie within it. A concrete product is checked alongside so a hole
+    anywhere inside the hull is caught, not only a misplaced end.
+    """
+    z = case.x * case.y
+
+    assert z.is_constraints_satisfied(case.concrete_x * case.concrete_y)
+    for value in (
+        *_sample_hull_boundary(case.hull_min, case.hull_max),
+        case.candidate,
+    ):
+        assert z.is_constraints_satisfied(value) == (
+            case.hull_min <= value <= case.hull_max
+        )

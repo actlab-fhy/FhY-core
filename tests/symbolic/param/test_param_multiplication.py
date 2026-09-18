@@ -31,7 +31,6 @@ from fhy_core.symbolic.param import (
 from .conftest import (
     assert_all_satisfied,
     assert_none_satisfied,
-    assert_param_round_trips_in_all_formats,
     build_interval_integer_param,
 )
 
@@ -607,57 +606,6 @@ def test_rmul_result_uses_a_fresh_variable() -> None:
     assert isinstance(z.variable, Identifier)
 
 
-# =============================================================================
-# Brute-force property check
-# =============================================================================
-
-
-@pytest.mark.parametrize(
-    "left_lower, left_upper, right_lower, right_upper",
-    [
-        pytest.param(0, 0, 0, 0, id="0-0-x-0-0"),
-        pytest.param(0, 3, 0, 3, id="0-3-x-0-3"),
-        pytest.param(-3, 3, -3, 3, id="neg3-3-x-neg3-3"),
-        pytest.param(-3, -1, -3, -1, id="neg3-neg1-x-neg3-neg1"),
-        pytest.param(1, 3, 1, 3, id="1-3-x-1-3"),
-        pytest.param(-3, -1, 1, 3, id="neg3-neg1-x-1-3"),
-        pytest.param(1, 3, -3, -1, id="1-3-x-neg3-neg1"),
-        pytest.param(-2, 3, -3, 1, id="neg2-3-x-neg3-1"),
-        pytest.param(0, 3, -3, -1, id="0-3-x-neg3-neg1"),
-    ],
-)
-def test_multiplication_matches_brute_force_corner_products_over_bounded_intervals(
-    left_lower: int, left_upper: int, right_lower: int, right_upper: int
-) -> None:
-    """Test multiplication's satisfied range matches the four-corner hull.
-
-    Interval multiplication is an interval-hull operation, not exact set
-    multiplication: for ``[a,b] * [c,d]`` the result is
-    ``[min(ac,ad,bc,bd), max(ac,ad,bc,bd)]``. That hull can (and, self-
-    multiplied over more than two values, generally does) admit integers
-    that are not the product of any actual pair -- e.g. ``[1,3] * [1,3]``
-    admits ``5``, which is not ``a * b`` for any ``a, b`` in ``{1,2,3}``.
-    So this test checks the satisfied range against the corner-product hull
-    directly, not against the brute-force set of actual products. The
-    operands are given independently, so the asymmetric pairs exercise
-    corners a self-product never reaches.
-    """
-    corners = [
-        left_lower * right_lower,
-        left_lower * right_upper,
-        left_upper * right_lower,
-        left_upper * right_upper,
-    ]
-    expected_min, expected_max = min(corners), max(corners)
-    x = create_interval_integer_param_between(left_lower, left_upper)
-    y = create_interval_integer_param_between(right_lower, right_upper)
-
-    z = x * y
-
-    for v in range(expected_min - 2, expected_max + 3):
-        assert z.is_constraints_satisfied(v) == (expected_min <= v <= expected_max)
-
-
 def test_signature_accepts_no_keyword_only_params_for_mul() -> None:
     """Test ``__mul__``/``__rmul__`` declare no keyword-only parameters.
 
@@ -683,16 +631,6 @@ def test_signature_accepts_no_keyword_only_params_for_mul() -> None:
 # =============================================================================
 # Integration: serialization, subset/feasibility/assign interop, chaining
 # =============================================================================
-
-
-def test_multiplication_result_round_trips_through_serialization() -> None:
-    """Test a multiplication result round-trips through DICT, JSON, and BINARY."""
-    x = create_interval_integer_param_between(2, 3)
-    y = create_interval_integer_param_between(4, 5)
-
-    z = x * y
-
-    assert_param_round_trips_in_all_formats(z)
 
 
 @pytest.mark.z3

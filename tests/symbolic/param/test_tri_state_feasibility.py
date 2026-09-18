@@ -677,6 +677,63 @@ def test_weakened_subset_downgrade_logs_one_warning_naming_both_variables(
 
 
 # =============================================================================
+# A not-in-set constraint's screen narrows only when a member fails to lift
+# =============================================================================
+
+
+def test_check_feasibility_keeps_satisfied_when_a_not_in_set_constraint_excludes_nothing() -> (  # noqa: E501
+    None
+):
+    """Test SATISFIED survives a not-in-set member lying outside the domain.
+
+    `create_integer_param_between(0, 0)` constrained by
+    `NotInSetConstraint(variable, [5])` is `SATISFIED`: `5` lifts
+    cleanly but lies outside the singleton domain, so the screen
+    excludes no member and the system stays exact.
+    """
+    param = create_integer_param_between(0, 0)
+    param = param.add_constraint(NotInSetConstraint(param.variable, [5]))
+
+    assert param.is_value_valid(0)
+    assert param.check_feasibility() is ConstraintOutcome.SATISFIED
+
+
+def test_check_feasibility_stays_undecided_when_a_not_in_set_member_cannot_lift() -> (
+    None
+):
+    """Test UNDECIDED when a not-in-set member cannot lift into the domain.
+
+    `create_integer_param_between(0, 0)` constrained by
+    `NotInSetConstraint(variable, [5, "a"])` cannot lift `"a"` into an
+    integer, so the screen narrows the constraint to its liftable
+    member alone; the narrowed system can no longer vouch for the
+    solver's SATISFIED answer, which is downgraded to UNDECIDED.
+    """
+    param = create_integer_param_between(0, 0)
+    param = param.add_constraint(NotInSetConstraint(param.variable, [5, "a"]))
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+def test_check_feasibility_decides_violated_when_a_narrowed_constraint_excludes_every_value() -> (  # noqa: E501
+    None
+):
+    """Test VIOLATED survives narrowing when it excludes every remaining value.
+
+    `create_integer_param_between(0, 0)` constrained by
+    `NotInSetConstraint(variable, [0, "a"])` narrows, once `"a"` fails
+    to lift, to a constraint excluding only `0`; that narrowed
+    constraint alone excludes the singleton domain's only member, and
+    narrowing only ever widens the admissible set, so the infeasible
+    narrowed system proves the original infeasible too.
+    """
+    param = create_integer_param_between(0, 0)
+    param = param.add_constraint(NotInSetConstraint(param.variable, [0, "a"]))
+
+    assert param.check_feasibility() is ConstraintOutcome.VIOLATED
+
+
+# =============================================================================
 # True means proven, even where a valid value exists
 # =============================================================================
 
