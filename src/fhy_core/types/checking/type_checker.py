@@ -11,19 +11,25 @@ a width, so it carries nothing for a literal to adopt: a literal checked
 against a weak expected type keeps the weak type it synthesizes on its
 own, and only a concrete expected type gives it a width. Checking against
 a weak expected type therefore reduces to synthesis followed by the
-assignment-compatibility check, which is what makes checking an
-expression against the type :func:`synthesize_expression_type` returned
-for it succeed and yield that same type.
+assignment-compatibility check, so a literal checked against the weak
+type :func:`synthesize_expression_type` returned for it succeeds and
+yields that same type. Checking an expression against a concrete type it
+synthesized can still fail, because checking hands that type to literals
+synthesis left weak.
 
-A weak literal's value is never range-checked while the literal stays
-weak: neither synthesizing it on its own nor checking it against a weak
-expected type inspects whether the value fits any supported width, so a
-value of any magnitude synthesizes and checks successfully as long as it
-stays weak. The value is checked against a width only once the literal
-meets a concrete type - either because it is checked against a concrete
-expected type directly, or because a binary expression promotes it
-alongside a concretely typed operand - and a value no supported width
-can hold is rejected at that point, not before.
+A weak literal stays unbounded while it stays weak: neither synthesizing
+a literal nor checking it against a weak expected type range-checks its
+value, though its weak type still applies (a negative integer literal
+synthesizes ``INT``, which an expected ``UINT`` rejects). An integer
+literal is range-checked only where it meets a concrete integer type:
+as a direct operand of a binary arithmetic or comparison expression whose
+other operand has a concrete numerical type, or where checking hands it a
+concrete expected type, which checking passes through unary operands,
+piecewise branch values, and the literal operands of an arithmetic binary
+expression. Float and complex types bound no literal. Any other literal
+stays unchecked even when the enclosing result becomes concrete: with
+``x`` of type ``int32``, ``x`` plus the negation of ``2**200``
+synthesizes ``int32`` and checks against ``int32``.
 
 This module raises :class:`FhYCoreTypeError` for type-rule violations and
 :class:`NotImplementedError` for expression shapes / operations that are
