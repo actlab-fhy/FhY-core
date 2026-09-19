@@ -1,6 +1,7 @@
 //! Core utilities for the `FhY` compiler infrastructure.
 
 pub mod identifier;
+pub mod interned;
 
 #[cfg(feature = "python")]
 mod python;
