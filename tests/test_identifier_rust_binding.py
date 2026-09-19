@@ -1,19 +1,14 @@
-"""Tests the Rust identifier binding against the pure-Python identifier code.
+"""Tests the Rust identifier id counter against the pure-Python counter.
 
-The extension ``fhy_core._rs`` backs identifiers in two ways. Its counter
-functions, ``allocate_identifier_id`` and ``advance_identifier_counter_past``,
-are the Rust backend's id counter, which the public ``Identifier`` draws from
-when the package selected the Rust backend; they are compared against the
-pure-Python counter. Its ``Identifier`` class is a standalone Rust port of the
-public class, drawing from the same Rust counter; its deserialization errors
-are compared against the public ``Identifier``, which validates every payload
-in Python on either backend. Each counter is process-global, or fresh per
-test on the Python side, so ids are compared relative to an anchor, never
-absolutely.
+The extension ``fhy_core._rs`` exposes the Rust backend's id counter as
+``allocate_identifier_id`` and ``advance_identifier_counter_past``, which the
+public ``Identifier`` draws from when the package selected the Rust backend.
+The Rust counter is process-global and the Python counter is fresh per test,
+so ids are compared relative to an anchor, never absolutely.
 """
 
 from collections.abc import Callable
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 import pytest
 
@@ -22,14 +17,8 @@ from fhy_core.identifier import (
     Identifier,
     _PythonIdCounter,  # the reference implementation of the Rust counter
 )
-from fhy_core.serialization import (
-    DeserializationDictStructureError,
-    DeserializationValueError,
-    SerializedDict,
-)
 
 _rs = pytest.importorskip("fhy_core._rs")
-RustIdentifier = _rs.Identifier
 
 
 class _Counter(NamedTuple):
@@ -183,95 +172,3 @@ def test_public_identifier_leaves_the_rust_counter_alone_when_unselected() -> No
     after = _RUST_COUNTER.allocate()
 
     assert after == before + 1
-
-
-def test_rust_identifier_class_shares_the_rust_counter() -> None:
-    """Test the Rust `Identifier` class and the counter functions share one counter."""
-    allocated = _RUST_COUNTER.allocate()
-    constructed = RustIdentifier("constructed")
-    restored = RustIdentifier.deserialize_from_dict(
-        {"id": constructed.id + 100, "name_hint": "restored"}
-    )
-
-    assert constructed.id == allocated + 1
-    assert _RUST_COUNTER.allocate() == restored.id + 1
-
-
-# =============================================================================
-# Rust `Identifier` class: deserialization errors
-# =============================================================================
-
-
-@pytest.mark.parametrize(
-    ("payload", "expected_error"),
-    [
-        ({"name_hint": "x"}, DeserializationDictStructureError),
-        ({"id": 0}, DeserializationDictStructureError),
-        ({"id": "not_an_int", "name_hint": "x"}, DeserializationDictStructureError),
-        ({"id": 0, "name_hint": 123}, DeserializationDictStructureError),
-        ({"id": True, "name_hint": "x"}, DeserializationDictStructureError),
-        ({"id": False, "name_hint": "x"}, DeserializationDictStructureError),
-        ({"id": 0, "name_hint": "x", "extra": 1}, DeserializationDictStructureError),
-        ({"id": 0, "name_hit": "typo"}, DeserializationDictStructureError),
-        ({"id": -1, "name_hint": "x"}, DeserializationValueError),
-        ({"id": -(2**200), "name_hint": "x"}, DeserializationValueError),
-        ({"id": 2**64, "name_hint": "x"}, DeserializationValueError),
-        ({"id": 2**200, "name_hint": "x"}, DeserializationValueError),
-    ],
-    ids=[
-        "missing-id",
-        "missing-name-hint",
-        "wrong-id-type",
-        "wrong-name-hint-type",
-        "true-id",
-        "false-id",
-        "extra-key",
-        "typo-key",
-        "negative-id",
-        "huge-negative-id",
-        "two-pow-64-id",
-        "huge-id",
-    ],
-)
-def test_deserialize_error_matches_python_identifier(
-    payload: dict[str, Any], expected_error: type[Exception]
-) -> None:
-    """Test a malformed payload raises the same error type and message as Python."""
-    with pytest.raises(expected_error) as python_error:
-        Identifier.deserialize_from_dict(payload)
-    with pytest.raises(expected_error) as rust_error:
-        RustIdentifier.deserialize_from_dict(payload)
-    assert type(rust_error.value) is expected_error
-    assert str(rust_error.value) == str(python_error.value)
-
-
-def test_deserialize_max_64_bit_id_panics() -> None:
-    """Test deserializing `2**64 - 1` panics rather than wrapping the id counter."""
-    with pytest.raises(BaseException, match="identifier id space exhausted"):
-        RustIdentifier.deserialize_from_dict({"id": 2**64 - 1, "name_hint": "x"})
-
-
-# =============================================================================
-# Rust `Identifier` class: hashing
-# =============================================================================
-
-
-@pytest.mark.parametrize(
-    "id_value",
-    [0, 1, 2**61 - 2, 2**61 - 1, 2**61, 2**63 + 5],
-    ids=[
-        "zero",
-        "one",
-        "below-hash-modulus",
-        "at-hash-modulus",
-        "above-hash-modulus",
-        "above-signed-64-bit-range",
-    ],
-)
-def test_hash_matches_python_int_hash(id_value: int) -> None:
-    """Test a Rust `Identifier` hashes exactly like its `id` does in Python."""
-    payload: SerializedDict = {"id": id_value, "name_hint": "x"}
-
-    rust_identifier = RustIdentifier.deserialize_from_dict(payload)
-
-    assert hash(rust_identifier) == hash(id_value)
