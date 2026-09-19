@@ -123,6 +123,28 @@ def test_interleaved_construct_id_strictly_exceeds_running_max() -> None:
             running_max = max(running_max, d_id)
 
 
+def test_constructor_rejects_name_hint_with_lone_surrogate() -> None:
+    """Test a name hint that is not encodable as UTF-8 raises a value error."""
+    with pytest.raises(ValueError, match="UTF-8"):
+        Identifier("x\ud800")
+
+
+def test_rejected_construction_does_not_consume_an_id() -> None:
+    """Test a rejected name hint leaves the id counter untouched."""
+    base = Identifier("anchor").id
+    with pytest.raises(ValueError, match="UTF-8"):
+        Identifier("\udfff")
+    assert Identifier("next").id == base + 1
+
+
+@pytest.mark.parametrize(
+    "name_hint", ["é", "\U0001d465", "名前"], ids=["latin", "astral", "cjk"]
+)
+def test_constructor_accepts_non_ascii_name_hint(name_hint: str) -> None:
+    """Test a non-ASCII name hint that is valid Unicode is kept as given."""
+    assert Identifier(name_hint).name_hint == name_hint
+
+
 # =============================================================================
 # Equality & hashing
 # =============================================================================
@@ -390,6 +412,12 @@ def test_deserialize_typo_key_raises() -> None:
         Identifier.deserialize_from_dict(
             {"id": 0, "name_hint": "x", "name_hit": "typo"}
         )
+
+
+def test_deserialize_name_hint_with_lone_surrogate_raises() -> None:
+    """Test deserializing a name hint not encodable as UTF-8 raises a value error."""
+    with pytest.raises(DeserializationValueError):
+        Identifier.deserialize_from_dict({"id": 0, "name_hint": "x\ud800"})
 
 
 # =============================================================================

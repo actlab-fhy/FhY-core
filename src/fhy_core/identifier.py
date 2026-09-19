@@ -58,6 +58,17 @@ def _is_valid_identifier_data(data: SerializedDict) -> TypeGuard[_IdentifierData
     return isinstance(data["name_hint"], str)
 
 
+def _is_utf8_encodable(text: str) -> bool:
+    """Return whether ``text`` has no lone surrogates, so it encodes as UTF-8."""
+    if text.isascii():
+        return True
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 @final
 class _PythonIdCounter:
     """Lock-protected id counter that never wraps.
@@ -148,6 +159,11 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     pure-Python backend raises ``RuntimeError("identifier id space
     exhausted")``. Neither is meant to be caught.
 
+    A name hint must be encodable as UTF-8, so a string holding a lone
+    surrogate code point (U+D800 to U+DFFF) is rejected: construction
+    raises ``ValueError`` without consuming an id, and deserialization
+    raises ``DeserializationValueError``.
+
     ``repr`` of an ``Identifier`` returns ``"<name_hint>::<id>"``. The form
     is for debugging only. It is not a serialization protocol and is not
     round-trippable through the constructor. Use the structured ``id`` and
@@ -163,6 +179,10 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     _name_hint: str
 
     def __init__(self, name_hint: str) -> None:
+        if not _is_utf8_encodable(name_hint):
+            raise ValueError(
+                f"Identifier name hint must be encodable as UTF-8, got {name_hint!r}."
+            )
         self._id = _allocate_id()
         self._name_hint = name_hint
 
@@ -194,6 +214,10 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
         if data["id"] >= _ID_SPACE_SIZE:
             raise DeserializationValueError(
                 cls, "id", "a non-negative integer below 2**64", data["id"]
+            )
+        if not _is_utf8_encodable(data["name_hint"]):
+            raise DeserializationValueError(
+                cls, "name_hint", "a string encodable as UTF-8", data["name_hint"]
             )
         _advance_counter_past(data["id"])
         identifier = cls.__new__(cls)
