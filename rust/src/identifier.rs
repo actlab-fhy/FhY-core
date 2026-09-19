@@ -73,7 +73,7 @@ impl Identifier {
     /// Panics if `id` is `u64::MAX`, since the counter cannot advance past it.
     #[must_use]
     pub fn deserialize(id: u64, name_hint: String) -> Self {
-        advance_past(&NEXT_ID, id);
+        advance_counter_past(id);
         Self {
             id,
             name_hint: Arc::from(name_hint),
@@ -105,8 +105,30 @@ impl Identifier {
         {
             let _ = name_hint;
         }
-        take_next_id(&NEXT_ID)
+        allocate_id()
     }
+}
+
+/// Draw the next id from the process-global counter.
+///
+/// Every id an [`Identifier`] is constructed with comes from here.
+///
+/// # Panics
+///
+/// Panics if the counter has reached `u64::MAX`.
+#[must_use]
+pub(crate) fn allocate_id() -> u64 {
+    take_next_id(&NEXT_ID)
+}
+
+/// Advance the process-global counter so `id` is never issued, leaving it
+/// unchanged when it is already past `id`.
+///
+/// # Panics
+///
+/// Panics if `id` is `u64::MAX`, since the counter cannot advance past it.
+pub(crate) fn advance_counter_past(id: u64) {
+    advance_past(&NEXT_ID, id);
 }
 
 /// Return `counter`'s current value and advance it by one.
@@ -247,7 +269,7 @@ pub trait HasIdentifier {
 /// touching [`Identifier::deserialize`].
 #[cfg(test)]
 pub mod testing {
-    use super::{take_next_id, Identifier, NEXT_ID};
+    use super::{allocate_id, Identifier};
     use std::cell::RefCell;
     use std::collections::HashMap;
 
@@ -269,7 +291,7 @@ pub mod testing {
                 Some(IdStrategy::Deterministic(name_hint_to_id)) => {
                     let id = *name_hint_to_id
                         .entry(name_hint.to_string())
-                        .or_insert_with(|| take_next_id(&NEXT_ID));
+                        .or_insert_with(allocate_id);
                     Some(id)
                 }
                 None => None,
@@ -492,6 +514,36 @@ mod tests {
     #[should_panic(expected = "identifier id space exhausted")]
     fn deserializing_u64_max_panics() {
         let _max = Identifier::deserialize(u64::MAX, "max".to_string());
+    }
+
+    #[test]
+    fn allocate_id_shares_the_counter_with_construction() {
+        let allocated = allocate_id();
+        let constructed = Identifier::new("after-allocate");
+        assert!(constructed.id() > allocated);
+        assert!(allocate_id() > constructed.id());
+    }
+
+    #[test]
+    fn advance_counter_past_keeps_later_ids_beyond_the_advanced_id() {
+        let far_future_id = allocate_id() + 1_000_000;
+        advance_counter_past(far_future_id);
+        assert!(allocate_id() > far_future_id);
+        assert!(Identifier::new("after-advance").id() > far_future_id);
+    }
+
+    #[test]
+    fn advance_counter_past_is_a_no_op_for_an_issued_id() {
+        let issued = allocate_id();
+        let latest = allocate_id();
+        advance_counter_past(issued);
+        assert!(allocate_id() > latest);
+    }
+
+    #[test]
+    #[should_panic(expected = "identifier id space exhausted")]
+    fn advance_counter_past_u64_max_panics() {
+        advance_counter_past(u64::MAX);
     }
 
     #[test]

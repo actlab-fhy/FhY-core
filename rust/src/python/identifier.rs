@@ -1,16 +1,20 @@
-//! `PyO3` wrapper around the pure-Rust [`crate::identifier::Identifier`].
+//! `PyO3` bindings for the pure-Rust [`crate::identifier`] module.
+//!
+//! Two functions expose the process-global id counter; they are the Rust
+//! backend's counter for `fhy_core.identifier.Identifier`. The `Identifier`
+//! class wraps the pure-Rust [`crate::identifier::Identifier`] and draws its
+//! ids from the same counter; it is immutable and not picklable.
 //!
 //! This module owns all Python-specific concerns (argument extraction, the
 //! dict protocol, exception types). The identity, equality, hashing, and
 //! counter semantics all live in the pure Rust core and are only delegated
-//! to here. The class is immutable and not picklable on its own: the public
-//! `fhy_core.identifier.Identifier` wraps it and pickles plain data.
+//! to here.
 
 use pyo3::import_exception;
 use pyo3::prelude::*;
 use pyo3::types::{IntoPyDict, PyBool, PyDict, PyInt, PyString, PyType};
 
-use crate::identifier::Identifier as RustIdentifier;
+use crate::identifier::{self as rust_identifier, Identifier as RustIdentifier};
 
 import_exception!(fhy_core.serialization, DeserializationDictStructureError);
 import_exception!(fhy_core.serialization, DeserializationValueError);
@@ -21,6 +25,27 @@ import_exception!(fhy_core.serialization, DeserializationValueError);
 const PY_HASH_MODULUS: u64 = (1 << 61) - 1;
 #[cfg(target_pointer_width = "32")]
 const PY_HASH_MODULUS: u64 = (1 << 31) - 1;
+
+/// Draw the next identifier id from the process-global counter.
+///
+/// A counter that has reached `2**64 - 1` panics, which Python sees as a
+/// `pyo3_runtime.PanicException`, instead of wrapping.
+#[pyfunction]
+#[must_use]
+pub(crate) fn allocate_identifier_id() -> u64 {
+    rust_identifier::allocate_id()
+}
+
+/// Advance the process-global identifier counter so `identifier_id` is
+/// never issued, leaving it unchanged when it is already past the id.
+///
+/// Advancing past `2**64 - 1` panics, which Python sees as a
+/// `pyo3_runtime.PanicException`, instead of wrapping.
+#[pyfunction]
+#[pyo3(signature = (identifier_id, /))]
+pub(crate) fn advance_identifier_counter_past(identifier_id: u64) {
+    rust_identifier::advance_counter_past(identifier_id);
+}
 
 /// Process-globally unique, named compiler symbol.
 ///
