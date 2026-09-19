@@ -10,16 +10,10 @@ Only the ownerless primitives used across every subsystem are re-exported at
 the top level.
 """
 
-try:
-    from fhy_core._rs import rust_available as _rust_available
-
-    RUST_BACKEND_AVAILABLE: bool = True
-except ImportError:
-    RUST_BACKEND_AVAILABLE: bool = False
-
 from importlib.metadata import version
 
 from . import (
+    _backend,
     diagnostic,
     error,
     identifier,
@@ -41,6 +35,14 @@ from . import (
 from .identifier import Identifier
 
 __version__ = version("fhy_core")
+
+RUST_BACKEND_AVAILABLE: bool = _backend.IS_RUST_BACKEND_SELECTED
+"""Whether this process runs on the Rust extension rather than pure Python.
+
+The Rust extension is selected at import iff it imports and the
+``FHY_CORE_NO_EXTENSIONS`` environment variable is unset, empty, or one of
+``0``, ``false``, ``no``, and ``off`` (case-insensitive).
+"""
 
 __all__ = [
     "RUST_BACKEND_AVAILABLE",

@@ -127,7 +127,7 @@ pip install fhy_core
 
 ### Build from Source
 
-This project uses [uv](https://docs.astral.sh/uv/) for environment and dependency management.
+This project uses [uv](https://docs.astral.sh/uv/) for environment and dependency management and [maturin](https://www.maturin.rs/) for building the Rust extension.
 [Install uv](https://docs.astral.sh/uv/getting-started/installation/), then:
 
 1. Clone the repository.
@@ -150,6 +150,78 @@ This project uses [uv](https://docs.astral.sh/uv/) for environment and dependenc
    `uv sync` creates `.venv` and installs `fhy_core` in editable mode.
    Prefix commands with `uv run` (e.g. `uv run python`) or activate the environment with `source .venv/bin/activate`.
    Contributors also have two opt-in nox sessions not run by default: `uv run nox -s property` (the Hypothesis property suite under the thorough profile) and `uv run nox -s mutation -- <module>` (cosmic-ray mutation testing for one module); see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
+## Rust Crate
+
+FhY Core is being incrementally ported to Rust. The Rust crate (`fhy-core`) lives under `rust/src/` and serves two purposes:
+
+- **Standalone Rust library** — published to crates.io, usable by any Rust project via `cargo add fhy-core`.
+- **Python extension module** — compiled via [maturin](https://www.maturin.rs/) and exposed to the Python package as `fhy_core._rs`, accelerating hot paths while keeping the full Python API intact.
+
+PyO3 is an optional dependency gated behind the `python` feature, so pure-Rust consumers never pull in a Python dependency.
+
+### Building and Testing the Rust Crate
+
+Requires a stable Rust toolchain (1.82+). The `rust-toolchain.toml` at the repo root pins the channel.
+
+```bash
+# Check the pure-Rust library (no Python dependency)
+cargo check
+
+# Check with the Python extension module included
+cargo check --features python
+
+# Run all Rust tests
+cargo test
+
+# Lint
+cargo clippy --all-targets --features python
+```
+
+### Building the Python Extension
+
+Install [maturin](https://www.maturin.rs/) (`uv tool install maturin` or `pip install maturin`), then:
+
+```bash
+# Build and install the extension into the active virtualenv (development mode)
+maturin develop
+
+# Verify the Rust backend is available from Python
+python -c "import fhy_core; print(fhy_core.RUST_BACKEND_AVAILABLE)"
+# => True
+```
+
+`maturin develop` compiles the Rust crate with the `python` feature enabled and installs the resulting native module as `fhy_core._rs`. Inside the project environment, run it as `uv run --no-sync maturin develop` and run later commands with `uv run --no-sync` as well: a plain `uv run` re-syncs the environment and can reinstall the package over the fresh build.
+
+The backend is selected once, when `fhy_core` is imported. The package runs on the Rust extension iff the extension imports and the `FHY_CORE_NO_EXTENSIONS` environment variable does not disable it; otherwise it runs on its pure-Python implementation. The variable disables the extension when it holds anything other than an empty string or one of `0`, `false`, `no`, and `off` (case-insensitive), so `FHY_CORE_NO_EXTENSIONS=1` forces the pure-Python backend even when the extension is installed. `fhy_core.RUST_BACKEND_AVAILABLE` reports the selection. The public API is the same on both backends: `fhy_core.Identifier`, for example, draws its ids from the selected backend's counter, and exactly one counter issues ids in a process.
+
+### Testing the Python Package
+
+```bash
+# Run the full Python test suite on the Rust backend
+# (uses pytest with xdist for parallelism; build the extension first)
+uv run --no-sync pytest
+
+# Run the full Python test suite on the pure-Python backend
+FHY_CORE_NO_EXTENSIONS=1 uv run --no-sync pytest
+
+# Run specific test modules
+uv run --no-sync pytest tests/test_identifier.py
+
+# Run the suite on both backends for every supported Python version
+uv run nox -s tests
+
+# Run it on both backends for a single Python version
+uv run nox -s tests-3.12
+
+# Run it on one backend for a single Python version
+uv run nox -s "tests-3.12(backend='python')"
+
+# Run the property-based test suite (Hypothesis, thorough profile)
+uv run nox -s property
+```
+
+The `tests` nox session is parametrized over the backend: each Python version runs the full suite once with `FHY_CORE_NO_EXTENSIONS=0` (Rust) and once with `FHY_CORE_NO_EXTENSIONS=1` (pure Python), and a session fails before testing if the package does not report the backend it was asked for. A default `uv run nox` therefore tests both backends. Tests that compare the two implementations directly, such as `tests/test_identifier_rust_binding.py`, run in both sessions whenever the extension is installed. Tests can read `fhy_core.RUST_BACKEND_AVAILABLE` to tell which backend they run on.
 
 ## Contributing
 

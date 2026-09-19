@@ -117,8 +117,17 @@ def _build_load_time_import_graph() -> dict[str, set[str]]:
     paths = sorted(
         path for path in _SOURCE_ROOT.rglob("*.py") if "__pycache__" not in path.parts
     )
-    modules = frozenset(_find_module_name(path) for path in paths)
-    graph: dict[str, set[str]] = {}
+    # A compiled extension module is declared by a type stub with no Python
+    # source beside it. It is a leaf here: its load-time imports are not
+    # visible, and without it an import of the extension would resolve to the
+    # package that contains it.
+    extension_modules = frozenset(
+        _find_module_name(path)
+        for path in _SOURCE_ROOT.rglob("*.pyi")
+        if not path.with_suffix(".py").exists()
+    )
+    modules = frozenset(_find_module_name(path) for path in paths) | extension_modules
+    graph: dict[str, set[str]] = {module: set() for module in extension_modules}
     for path in paths:
         module = _find_module_name(path)
         package = module if path.name == "__init__.py" else module.rpartition(".")[0]

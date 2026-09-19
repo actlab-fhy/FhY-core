@@ -1,13 +1,21 @@
-"""Unique identifier for named compiler objects."""
+"""Unique identifier for named compiler objects.
+
+An :class:`Identifier` stores its id and name hint itself and draws new ids
+from a process-global counter. The counter is the Rust extension's
+(``fhy_core._rs``) when the package runs on the Rust backend
+(``fhy_core.RUST_BACKEND_AVAILABLE``) and a pure-Python counter otherwise.
+The backend is fixed when the package is imported, so exactly one counter
+issues ids in a process.
+"""
 
 from fhy_core.utils.override import override
 
 __all__ = ["HasIdentifier", "Identifier"]
 
+from collections.abc import Callable
 from threading import Lock
 from typing import (
     Any,
-    ClassVar,
     Protocol,
     TypedDict,
     TypeGuard,
@@ -17,7 +25,7 @@ from typing import (
 
 from fhy_core.utils import is_strict_int
 
-from .logger import get_logger
+from ._backend import IS_RUST_BACKEND_SELECTED
 from .serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -28,7 +36,9 @@ from .serialization import (
 from .traits.equality import EqualMixin
 from .traits.frozen import FrozenMixin
 
-_LOGGER = get_logger(__name__)
+_ID_SPACE_SIZE = 2**64
+_EXHAUSTED_COUNTER_VALUE = _ID_SPACE_SIZE - 1
+_ID_SPACE_EXHAUSTED_MESSAGE = "identifier id space exhausted"
 
 
 class _IdentifierData(TypedDict):
@@ -49,6 +59,68 @@ def _is_valid_identifier_data(data: SerializedDict) -> TypeGuard[_IdentifierData
 
 
 @final
+class _PythonIdCounter:
+    """Lock-protected id counter that never wraps.
+
+    Behaves like the Rust extension's counter: ids are in ``[0, 2**64)``,
+    and the largest id issued is ``2**64 - 2``. Allocating once the counter
+    has reached ``2**64 - 1``, or advancing past ``2**64 - 1``, raises
+    ``RuntimeError`` and leaves the counter unchanged.
+    """
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._next_id = 0
+
+    def allocate(self) -> int:
+        """Return the next id and advance the counter past it.
+
+        Raises:
+            RuntimeError: If the counter has reached ``2**64 - 1``.
+
+        """
+        with self._lock:
+            if self._next_id >= _EXHAUSTED_COUNTER_VALUE:
+                raise RuntimeError(_ID_SPACE_EXHAUSTED_MESSAGE)
+            identifier_id = self._next_id
+            self._next_id += 1
+        return identifier_id
+
+    def advance_past(self, identifier_id: int, /) -> None:
+        """Advance the counter so ``identifier_id`` is never allocated.
+
+        The counter is left unchanged when it is already past
+        ``identifier_id``.
+
+        Args:
+            identifier_id: Id in ``[0, 2**64)`` to advance past.
+
+        Raises:
+            RuntimeError: If ``identifier_id`` is ``2**64 - 1``, which the
+                counter cannot advance past.
+
+        """
+        if identifier_id >= _EXHAUSTED_COUNTER_VALUE:
+            raise RuntimeError(_ID_SPACE_EXHAUSTED_MESSAGE)
+        with self._lock:
+            if identifier_id >= self._next_id:
+                self._next_id = identifier_id + 1
+
+
+_allocate_id: Callable[[], int]
+_advance_counter_past: Callable[[int], None]
+if IS_RUST_BACKEND_SELECTED:
+    from . import _rs
+
+    _allocate_id = _rs.allocate_identifier_id
+    _advance_counter_past = _rs.advance_identifier_counter_past
+else:
+    _PYTHON_ID_COUNTER = _PythonIdCounter()
+    _allocate_id = _PYTHON_ID_COUNTER.allocate
+    _advance_counter_past = _PYTHON_ID_COUNTER.advance_past
+
+
+@final
 @register_serializable(type_id="id")
 class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     """Process-globally unique, named compiler symbol.
@@ -61,7 +133,20 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     Construction and deserialization are thread-safe and share the same
     counter: a deserialized id cannot collide with a subsequently
     constructed id, regardless of interleaving. Deserializing an id
-    greater than the next-to-be-issued value advances the counter past it.
+    greater than or equal to the next-to-be-issued value advances the
+    counter past it. Unpickling, copying, and deep-copying restore an
+    identifier through deserialization, so they advance the counter the
+    same way. A pickle holds only the id and the name hint and loads under
+    either backend.
+
+    Ids are unsigned 64-bit integers: deserialization accepts an int ``id``
+    with ``0 <= id < 2**64`` and raises ``DeserializationValueError`` for
+    any other int. The largest id construction issues is ``2**64 - 2``.
+    Constructing once the counter has reached ``2**64 - 1``, or
+    deserializing the id ``2**64 - 1``, is fatal rather than wrapping the
+    counter and re-issuing a live id: the Rust backend panics and the
+    pure-Python backend raises ``RuntimeError("identifier id space
+    exhausted")``. Neither is meant to be caught.
 
     ``repr`` of an ``Identifier`` returns ``"<name_hint>::<id>"``. The form
     is for debugging only. It is not a serialization protocol and is not
@@ -74,15 +159,11 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     process-global id space.
     """
 
-    _next_id: ClassVar[int] = 0
-    _id_lock: ClassVar[Lock] = Lock()
     _id: int
     _name_hint: str
 
     def __init__(self, name_hint: str) -> None:
-        with Identifier._id_lock:
-            self._id = Identifier._next_id
-            Identifier._next_id += 1
+        self._id = _allocate_id()
         self._name_hint = name_hint
 
     @property
@@ -110,38 +191,22 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
             raise DeserializationValueError(
                 cls, "id", "a non-negative integer", data["id"]
             )
+        if data["id"] >= _ID_SPACE_SIZE:
+            raise DeserializationValueError(
+                cls, "id", "a non-negative integer below 2**64", data["id"]
+            )
+        _advance_counter_past(data["id"])
         identifier = cls.__new__(cls)
         identifier._id = data["id"]
         identifier._name_hint = data["name_hint"]
-        cls._advance_next_id_past(identifier._id, identifier._name_hint)
         identifier.freeze()
         return identifier
 
-    @classmethod
-    def _advance_next_id_past(cls, identifier_id: int, name_hint: str) -> None:
-        """Advance the global counter so ``identifier_id`` is never re-issued.
-
-        No-op when the counter is already past ``identifier_id``. Thread-safe:
-        the check-and-advance runs under the id lock shared with construction.
-        """
-        advanced = False
-        with cls._id_lock:
-            if identifier_id >= cls._next_id:
-                cls._next_id = identifier_id + 1
-                advanced = True
-        if advanced:
-            _LOGGER.debug(
-                "advanced _next_id past %d (name_hint=%r)", identifier_id, name_hint
-            )
-
     @override
-    def __setstate__(self, state: Any) -> None:
-        # Mirrors `deserialize_from_dict`: an id restored in a process whose
-        # counter has not yet reached it must never be re-issued to a later
-        # construction, so unpickling advances the counter the same way
-        # deserialization does.
-        super().__setstate__(state)
-        Identifier._advance_next_id_past(self._id, self._name_hint)
+    def __reduce__(
+        self,
+    ) -> tuple[Callable[[SerializedDict], "Identifier"], tuple[SerializedDict]]:
+        return (Identifier.deserialize_from_dict, (self.serialize_to_dict(),))
 
     @override
     def __eq__(self, other: Any) -> bool:

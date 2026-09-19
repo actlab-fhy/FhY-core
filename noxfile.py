@@ -10,6 +10,8 @@ nox.options.sessions = ["lint", "type_check", "tests", "coverage"]
 PYTHONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 ROOT = pathlib.Path(__file__).parent
 SOURCES = ["src", "tests"]
+# `FHY_CORE_NO_EXTENSIONS` value that selects each backend for a test run.
+BACKEND_EXTENSION_SETTINGS = {"rust": "0", "python": "1"}
 
 
 def _sync(session: nox.Session, *groups: str) -> None:
@@ -24,9 +26,24 @@ def _sync(session: nox.Session, *groups: str) -> None:
 
 
 @nox.session(python=PYTHONS)
-def tests(session: nox.Session) -> None:
-    """Run the unit and integration test suite under coverage."""
+@nox.parametrize("backend", list(BACKEND_EXTENSION_SETTINGS))
+def tests(session: nox.Session, backend: str) -> None:
+    """Run the unit and integration test suite under coverage on one backend.
+
+    ``FHY_CORE_NO_EXTENSIONS`` selects the backend, and the session fails
+    before testing unless the package reports the backend it was asked for,
+    so an extension that silently fails to import cannot pass as a Rust run.
+    """
     _sync(session, "test")
+    session.env["FHY_CORE_NO_EXTENSIONS"] = BACKEND_EXTENSION_SETTINGS[backend]
+    is_rust_expected = backend == "rust"
+    session.run(
+        "python",
+        "-c",
+        "import sys, fhy_core; "
+        f"sys.exit(None if fhy_core.RUST_BACKEND_AVAILABLE is {is_rust_expected} "
+        f"else 'expected RUST_BACKEND_AVAILABLE to be {is_rust_expected}')",
+    )
     # Start coverage inside pytest-xdist worker subprocesses.
     purelib = session.run(
         "python",

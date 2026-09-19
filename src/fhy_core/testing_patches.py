@@ -10,12 +10,18 @@ __all__ = [
 import contextlib
 import functools
 import sys
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import ContextDecorator
-from typing import Any
+from threading import RLock
+from typing import Any, TypeVar, overload
 
 from fhy_core.identifier import Identifier
 from fhy_core.traits import StructuralEquivalence
+
+_FunctionT = TypeVar("_FunctionT", bound=Callable[..., Any])
+
+_PATCHED_IDENTIFIER_DUNDERS = ("__new__", "__init__")
+_ABSENT = object()
 
 
 @contextlib.contextmanager
@@ -78,45 +84,66 @@ def fail_fast_structural_equivalence() -> Generator[None, None, None]:
             setattr(cls, method_name, orig)
 
 
+def _find_name_hint(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+    """Return the name hint an ``Identifier(...)`` call passes, or ``_ABSENT``."""
+    if args:
+        return args[0]
+    return kwargs.get("name_hint", _ABSENT)
+
+
 class _DeterministicIdentifiersByNameHint(ContextDecorator):
-    """Test patch that assigns deterministic IDs from `name_hint`.
+    """Scope that assigns deterministic IDs from `name_hint`.
 
     This is intended for tests that compare object graphs containing
     internally-created identifiers, including when those identifiers are used as
-    dictionary keys or set members. Within the patch, all identifiers sharing
-    the same `name_hint` receive the same ID, so equality and hashing remain
-    consistent.
+    dictionary keys or set members. Within the scope, constructing an
+    `Identifier` with a `name_hint` seen before in the scope returns the
+    identifier constructed first with it, so equality and hashing remain
+    consistent, and each new `name_hint` receives a fresh ID from the real
+    counter. Deserialization, unpickling, and copying are unaffected. Scopes
+    nest: the identifiers are shared until the outermost scope exits, which
+    restores `Identifier` exactly and forgets them. The scope works as a
+    context manager and as a decorator, with or without a call.
+
+    The scope replaces `Identifier.__new__` and `Identifier.__init__` while
+    active, so it applies to every thread.
 
     Note:
         This is only safe when every semantically distinct identifier created
-        within the patched scope has a unique `name_hint`.
+        within the scope has a unique `name_hint`.
 
     """
 
+    _lock: RLock
     _active_count: int
-    _name_hint_to_id: dict[str, int]
-    _original_init: Any
-    _patched_init_func: Any
+    _identifiers_by_name_hint: dict[Any, Identifier]
+    _own_identifier_dunders: dict[str, Any]
 
     def __init__(self) -> None:
+        self._lock = RLock()
         self._active_count = 0
-        self._name_hint_to_id = {}
-        self._original_init = None
-        self._patched_init_func = None
+        self._identifiers_by_name_hint = {}
+        self._own_identifier_dunders = {}
+
+    @overload
+    def __call__(self, func: None = None) -> "_DeterministicIdentifiersByNameHint": ...
+
+    @overload
+    def __call__(self, func: _FunctionT) -> _FunctionT: ...
 
     @override
-    def __call__(self, func: Any = None) -> Any:
+    def __call__(
+        self, func: _FunctionT | None = None
+    ) -> "_FunctionT | _DeterministicIdentifiersByNameHint":
         if func is None:
             return self
         return super().__call__(func)
 
     def __enter__(self) -> "_DeterministicIdentifiersByNameHint":
-        if self._active_count == 0:
-            self._name_hint_to_id = {}
-            self._original_init = Identifier.__init__
-            self._patched_init_func = self._make_patched_init()
-            Identifier.__init__ = self._patched_init_func  # type: ignore
-        self._active_count += 1
+        with self._lock:
+            if self._active_count == 0:
+                self._patch_identifier()
+            self._active_count += 1
         return self
 
     def __exit__(
@@ -125,26 +152,67 @@ class _DeterministicIdentifiersByNameHint(ContextDecorator):
         exc: BaseException | None,
         traceback: Any,
     ) -> None:
-        self._active_count -= 1
-        if self._active_count == 0:
-            Identifier.__init__ = self._original_init  # type: ignore
-            self._name_hint_to_id = {}
-            self._original_init = None
-            self._patched_init_func = None
+        with self._lock:
+            if self._active_count == 0:
+                raise RuntimeError(
+                    "deterministic_identifiers_by_name_hint exited without "
+                    "a matching entry"
+                )
+            self._active_count -= 1
+            if self._active_count == 0:
+                self._restore_identifier()
 
-    def _make_patched_init(self) -> Any:
-        def patched_init(identifier: Identifier, name_hint: str) -> None:
-            with Identifier._id_lock:
-                identifier_id = self._name_hint_to_id.get(name_hint)
-                if identifier_id is None:
-                    identifier_id = Identifier._next_id
-                    self._name_hint_to_id[name_hint] = identifier_id
-                    Identifier._next_id += 1
-            identifier._id = identifier_id
-            identifier._name_hint = name_hint
-            identifier.freeze()
+    def _patch_identifier(self) -> None:
+        """Make `Identifier` construction return one instance per name hint."""
+        self._own_identifier_dunders = {
+            name: Identifier.__dict__.get(name, _ABSENT)
+            for name in _PATCHED_IDENTIFIER_DUNDERS
+        }
+        original_new: Callable[..., Identifier] = Identifier.__new__
+        original_init: Callable[..., None] = Identifier.__init__
 
-        return patched_init
+        def construct_once_per_name_hint(
+            cls: type[Identifier], *args: Any, **kwargs: Any
+        ) -> Identifier:
+            # A call without a name hint is not a construction to share:
+            # deserialization (and so unpickling and copying) allocates with
+            # `cls.__new__(cls)`, and a missing argument must still raise.
+            name_hint = _find_name_hint(args, kwargs)
+            if name_hint is _ABSENT:
+                return original_new(cls, *args, **kwargs)
+            with self._lock:
+                identifier = self._identifiers_by_name_hint.get(name_hint)
+                if identifier is None:
+                    identifier = original_new(cls, *args, **kwargs)
+                    original_init(identifier, *args, **kwargs)
+                    self._identifiers_by_name_hint[name_hint] = identifier
+            return identifier
+
+        def initialize_unless_shared(
+            identifier: Identifier, *args: Any, **kwargs: Any
+        ) -> None:
+            # The shared instance was initialized when first constructed.
+            name_hint = _find_name_hint(args, kwargs)
+            if self._identifiers_by_name_hint.get(name_hint) is identifier:
+                return
+            original_init(identifier, *args, **kwargs)
+
+        replacements = {
+            "__new__": staticmethod(construct_once_per_name_hint),
+            "__init__": initialize_unless_shared,
+        }
+        for name, replacement in replacements.items():
+            setattr(Identifier, name, replacement)
+
+    def _restore_identifier(self) -> None:
+        """Restore `Identifier`'s own namespace and forget the shared instances."""
+        for name, own_value in self._own_identifier_dunders.items():
+            if own_value is _ABSENT:
+                delattr(Identifier, name)
+            else:
+                setattr(Identifier, name, own_value)
+        self._own_identifier_dunders = {}
+        self._identifiers_by_name_hint.clear()
 
 
 deterministic_identifiers_by_name_hint = _DeterministicIdentifiersByNameHint()
