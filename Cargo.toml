@@ -31,3 +31,29 @@ serde_json = "1"
 
 [dev-dependencies]
 pretty_assertions = "1"
+
+[lints.rust]
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unnameable_types = "warn"
+unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "warn"
+unused_lifetimes = "warn"
+redundant_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+assertions_on_result_states = "warn"
+clone_on_ref_ptr = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "warn"
+map_err_ignore = "warn"
+let_underscore_must_use = "warn"
+partial_pub_fields = "warn"
