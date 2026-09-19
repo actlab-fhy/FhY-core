@@ -47,6 +47,7 @@ def test_fhy_core_top_level_still_has_only_identifier_as_a_re_exported_symbol() 
     `Identifier` must fail here.
     """
     assert set(fhy_core.__all__) == {
+        "RUST_BACKEND_AVAILABLE",
         "Identifier",
         "diagnostic",
         "error",
