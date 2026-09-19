@@ -13,6 +13,16 @@ name = "fhy_core"
 crate-type = ["rlib"]
 path = "rust/src/lib.rs"
 
+# The package-root `tests/` directory holds the Python test suite, so Rust
+# integration tests need explicit `[[test]]` entries pointing at `rust/tests/`.
+[[test]]
+name = "interned_equivalence"
+path = "rust/tests/interned_equivalence.rs"
+
+[[test]]
+name = "interned_stories"
+path = "rust/tests/interned_stories.rs"
+
 [features]
 default = []
 python = ["dep:pyo3"]
