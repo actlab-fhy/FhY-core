@@ -2,7 +2,7 @@
 name = "fhy-core"
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.83"
 authors = ["Christopher Priebe <cpriebe@ucsd.edu>"]
 description = "Core utilities for the FhY compiler infrastructure."
 license = "BSD-3-Clause"
@@ -18,7 +18,7 @@ default = []
 python = ["dep:pyo3"]
 
 [dependencies]
-pyo3 = { version = "0.24", optional = true, features = ["extension-module"] }
+pyo3 = { version = "0.29", optional = true, features = ["extension-module"] }
 num-bigint = "0.4"
 num-rational = "0.4"
 num-traits = "0.2"

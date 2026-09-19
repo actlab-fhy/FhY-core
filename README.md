@@ -162,7 +162,7 @@ PyO3 is an optional dependency gated behind the `python` feature, so pure-Rust c
 
 ### Building and Testing the Rust Crate
 
-Requires a stable Rust toolchain (1.82+). The `rust-toolchain.toml` at the repo root pins the channel.
+Requires a stable Rust toolchain (1.83+). The `rust-toolchain.toml` at the repo root pins the channel.
 
 ```bash
 # Check the pure-Rust library (no Python dependency)
