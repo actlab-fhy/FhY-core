@@ -23,6 +23,14 @@ path = "rust/tests/interned_equivalence.rs"
 name = "interned_stories"
 path = "rust/tests/interned_stories.rs"
 
+[[test]]
+name = "tag_type_equivalence"
+path = "rust/tests/tag_type_equivalence.rs"
+
+[[test]]
+name = "tag_type_stories"
+path = "rust/tests/tag_type_stories.rs"
+
 [features]
 default = []
 python = ["dep:pyo3"]
