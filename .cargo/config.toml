@@ -1,0 +1,5 @@
+# Resolve dependencies to versions that build on the crate's `rust-version`
+# when a newer release needs a newer compiler, so `cargo update` keeps
+# Cargo.lock inside the MSRV.
+[resolver]
+incompatible-rust-versions = "fallback"
