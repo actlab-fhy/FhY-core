@@ -158,10 +158,11 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     raises ``RuntimeError("identifier id space exhausted")`` on both
     backends and leaves the counter unchanged.
 
-    A name hint must be encodable as UTF-8, so a string holding a lone
-    surrogate code point (U+D800 to U+DFFF) is rejected: construction
-    raises ``ValueError`` without consuming an id, and deserialization
-    raises ``DeserializationValueError``.
+    A name hint must be a ``str`` encodable as UTF-8: construction raises
+    ``TypeError`` for any other type and ``ValueError`` for a string holding
+    a lone surrogate code point (U+D800 to U+DFFF), in both cases without
+    consuming an id, and deserialization raises
+    ``DeserializationValueError`` for such a string.
 
     ``repr`` of an ``Identifier`` returns ``"<name_hint>::<id>"``. The form
     is for debugging only. It is not a serialization protocol and is not
@@ -178,6 +179,10 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     _name_hint: str
 
     def __init__(self, name_hint: str) -> None:
+        if not isinstance(name_hint, str):
+            raise TypeError(
+                f"Identifier name hint must be a str, got {type(name_hint).__name__}."
+            )
         if not _is_utf8_encodable(name_hint):
             raise ValueError(
                 f"Identifier name hint must be encodable as UTF-8, got {name_hint!r}."

@@ -138,6 +138,29 @@ def test_rejected_construction_does_not_consume_an_id() -> None:
 
 
 @pytest.mark.parametrize(
+    ("name_hint", "type_name"),
+    [(123, "int"), (None, "NoneType"), (b"x", "bytes"), (["x"], "list")],
+    ids=["int", "none", "bytes", "list"],
+)
+def test_constructor_rejects_a_non_str_name_hint(
+    name_hint: object, type_name: str
+) -> None:
+    """Test a name hint that is not a `str` raises a type error naming its type."""
+    with pytest.raises(
+        TypeError, match=rf"^Identifier name hint must be a str, got {type_name}\.$"
+    ):
+        Identifier(name_hint)  # type: ignore[arg-type]  # test: invalid input
+
+
+def test_non_str_name_hint_does_not_consume_an_id() -> None:
+    """Test a rejected non-`str` name hint leaves the id counter untouched."""
+    base = Identifier("anchor").id
+    with pytest.raises(TypeError):
+        Identifier(123)  # type: ignore[arg-type]  # test: invalid input
+    assert Identifier("next").id == base + 1
+
+
+@pytest.mark.parametrize(
     "name_hint", ["é", "\U0001d465", "名前"], ids=["latin", "astral", "cjk"]
 )
 def test_constructor_accepts_non_ascii_name_hint(name_hint: str) -> None:
