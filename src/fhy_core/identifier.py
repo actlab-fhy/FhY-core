@@ -150,14 +150,13 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     same way. A pickle holds only the id and the name hint and loads under
     either backend.
 
-    Ids are unsigned 64-bit integers: deserialization accepts an int ``id``
-    with ``0 <= id < 2**64`` and raises ``DeserializationValueError`` for
-    any other int. The largest id construction issues is ``2**64 - 2``.
-    Constructing once the counter has reached ``2**64 - 1``, or
-    deserializing the id ``2**64 - 1``, is fatal rather than wrapping the
-    counter and re-issuing a live id: the Rust backend panics and the
-    pure-Python backend raises ``RuntimeError("identifier id space
-    exhausted")``. Neither is meant to be caught.
+    Ids are unsigned 64-bit integers, and the largest id an identifier ever
+    holds is ``2**64 - 2``. Deserialization accepts an int ``id`` with
+    ``0 <= id < 2**64 - 1`` and raises ``DeserializationValueError`` for any
+    other int. Once ``2**64 - 2`` is issued or restored, the counter cannot
+    advance without wrapping and re-issuing a live id, so construction
+    raises ``RuntimeError("identifier id space exhausted")`` on both
+    backends and leaves the counter unchanged.
 
     A name hint must be encodable as UTF-8, so a string holding a lone
     surrogate code point (U+D800 to U+DFFF) is rejected: construction
@@ -211,9 +210,9 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
             raise DeserializationValueError(
                 cls, "id", "a non-negative integer", data["id"]
             )
-        if data["id"] >= _ID_SPACE_SIZE:
+        if data["id"] >= _EXHAUSTED_COUNTER_VALUE:
             raise DeserializationValueError(
-                cls, "id", "a non-negative integer below 2**64", data["id"]
+                cls, "id", "a non-negative integer below 2**64 - 1", data["id"]
             )
         if not _is_utf8_encodable(data["name_hint"]):
             raise DeserializationValueError(

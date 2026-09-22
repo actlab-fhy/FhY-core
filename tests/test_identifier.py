@@ -424,67 +424,85 @@ def test_deserialize_name_hint_with_lone_surrogate_raises() -> None:
 # Id space bound
 #
 # Ids are unsigned 64-bit integers under both backends. The largest id an
-# identifier can hold is `2**64 - 2`: advancing the counter past `2**64 - 1`
-# is impossible without wrapping, so both reaching it by construction and
-# deserializing it directly are fatal.
+# identifier can hold is `2**64 - 2`: no identifier ever holds `2**64 - 1`,
+# so deserialization rejects it, and once `2**64 - 2` is issued or restored
+# the counter cannot advance without wrapping, so construction raises
+# `RuntimeError`.
 # =============================================================================
 
 
 @pytest.mark.parametrize(
     "id_value",
-    [2**64, 2**64 + 1, 2**200],
-    ids=["two-pow-64", "just-above-two-pow-64", "two-pow-200"],
+    [2**64 - 1, 2**64, 2**64 + 1, 2**200],
+    ids=["two-pow-64-minus-one", "two-pow-64", "just-above-two-pow-64", "two-pow-200"],
 )
-def test_deserialize_id_beyond_64_bits_raises_value_error(id_value: int) -> None:
-    """Test deserializing an `id` of `2**64` or more raises a value error."""
+def test_deserialize_id_of_2_pow_64_minus_1_or_more_raises_value_error(
+    id_value: int,
+) -> None:
+    """Test deserializing an `id` of `2**64 - 1` or more raises a value error."""
     with pytest.raises(
         DeserializationValueError,
-        match=r'"Identifier"\. Expected a non-negative integer below 2\*\*64',
+        match=r'"Identifier"\. Expected a non-negative integer below 2\*\*64 - 1',
     ):
         Identifier.deserialize_from_dict({"id": id_value, "name_hint": "x"})
 
 
-def test_deserialize_largest_64_bit_id_is_fatal() -> None:
-    """Test deserializing `2**64 - 1` raises the id-space-exhausted error."""
-    with pytest.raises(BaseException, match="identifier id space exhausted"):
-        Identifier.deserialize_from_dict({"id": 2**64 - 1, "name_hint": "x"})
-
-
-def test_fatal_deserialization_leaves_the_counter_untouched() -> None:
-    """Test a fatal deserialization of `2**64 - 1` does not advance the counter."""
+def test_rejected_deserialization_of_2_pow_64_minus_1_leaves_the_counter() -> None:
+    """Test rejecting the id `2**64 - 1` does not advance the counter."""
     base = Identifier("anchor").id
-    with pytest.raises(BaseException, match="identifier id space exhausted"):
+    with pytest.raises(DeserializationValueError):
         Identifier.deserialize_from_dict({"id": 2**64 - 1, "name_hint": "x"})
 
     assert Identifier("next").id == base + 1
 
 
+_EXHAUST_THEN_CONSTRUCT_PROGRAM = (
+    "from fhy_core.identifier import Identifier\n"
+    "largest = Identifier.deserialize_from_dict("
+    "{'id': 2**64 - 2, 'name_hint': 'largest'})\n"
+    "print(largest.id, flush=True)\n"
+    "for _ in range(2):\n"
+    "    try:\n"
+    "        Identifier('beyond')\n"
+    "    except RuntimeError as error:\n"
+    "        print(f'{type(error).__name__}: {error}', flush=True)\n"
+)
+
+
 @pytest.mark.slow
 @pytest.mark.subprocess
-def test_constructing_past_the_largest_issuable_id_is_fatal() -> None:
-    """Test construction is fatal once `2**64 - 2` has been issued.
+@pytest.mark.parametrize("backend", ["rust", "python"])
+def test_constructing_past_the_largest_issuable_id_raises_runtime_error(
+    backend: str,
+) -> None:
+    """Test construction raises `RuntimeError` once `2**64 - 2` has been issued.
 
     The child process deserializes the largest issuable id, which leaves the
-    counter at `2**64 - 1`, and then constructs one more identifier.
+    counter at `2**64 - 1`, and then tries to construct two more identifiers.
+    Both backends raise the same catchable error, and a failed construction
+    leaves the counter exhausted rather than wrapped.
     """
+    environment = dict(os.environ)
+    if backend == "rust":
+        pytest.importorskip("fhy_core._rs")
+        environment[_NO_EXTENSIONS_VARIABLE] = "0"
+    else:
+        environment[_NO_EXTENSIONS_VARIABLE] = "1"
+
     completed = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from fhy_core.identifier import Identifier\n"
-            "largest = Identifier.deserialize_from_dict("
-            "{'id': 2**64 - 2, 'name_hint': 'largest'})\n"
-            "print(largest.id, flush=True)\n"
-            "Identifier('beyond')\n",
-        ],
+        [sys.executable, "-c", _EXHAUST_THEN_CONSTRUCT_PROGRAM],
+        env=environment,
         capture_output=True,
         text=True,
         check=False,
     )
 
-    assert completed.returncode != 0
-    assert completed.stdout.split() == [str(2**64 - 2)]
-    assert "identifier id space exhausted" in completed.stderr
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        str(2**64 - 2),
+        "RuntimeError: identifier id space exhausted",
+        "RuntimeError: identifier id space exhausted",
+    ]
 
 
 # =============================================================================

@@ -116,13 +116,13 @@ def test_counter_advance_does_not_rewind(counter: _Counter) -> None:
     assert counter.allocate() == last + 1
 
 
-def test_counter_advancing_past_the_largest_64_bit_id_is_fatal(
+def test_counter_advancing_past_the_largest_64_bit_id_raises_runtime_error(
     counter: _Counter,
 ) -> None:
-    """Test advancing past `2**64 - 1` fails and leaves the counter unchanged."""
+    """Test advancing past `2**64 - 1` raises `RuntimeError`, counter unchanged."""
     base = counter.allocate()
 
-    with pytest.raises(BaseException, match="identifier id space exhausted"):
+    with pytest.raises(RuntimeError, match=r"^identifier id space exhausted$"):
         counter.advance_past(2**64 - 1)
 
     assert counter.allocate() == base + 1
