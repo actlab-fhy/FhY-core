@@ -485,7 +485,7 @@ mod tests {
     fn a_root_domain_encodes_with_a_null_parent() {
         let _guard = hold_registry();
         let id = reserve_pinned_id("encode-anchor");
-        let name = Identifier::deserialize(id, "encoded".to_string());
+        let name = Identifier::restore(id, "encoded".to_string());
         let domain = ValueDomain::new(name, "a description", None).into_canonical();
 
         let json = serde_json::to_string(&*domain).unwrap();
@@ -503,10 +503,10 @@ mod tests {
     fn a_child_domain_encodes_its_parent_inline() {
         let _guard = hold_registry();
         let parent_id = reserve_pinned_id("encode-parent-anchor");
-        let parent_name = Identifier::deserialize(parent_id, "parent".to_string());
+        let parent_name = Identifier::restore(parent_id, "parent".to_string());
         let parent = ValueDomain::new(parent_name, "the parent", None).into_canonical();
         let child_id = reserve_pinned_id("encode-child-anchor");
-        let child_name = Identifier::deserialize(child_id, "child".to_string());
+        let child_name = Identifier::restore(child_id, "child".to_string());
         let child = ValueDomain::new(child_name, "the child", Some(parent)).into_canonical();
 
         let json = serde_json::to_string(&*child).unwrap();

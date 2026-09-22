@@ -22,7 +22,7 @@
 //! or keep their name hints out of it. This crate's own shipped constants are
 //! never affected.
 //!
-//! [`Identifier::deserialize`](crate::identifier::Identifier::deserialize)
+//! [`Identifier::restore`](crate::identifier::Identifier::restore)
 //! and cloning are unaffected: a deserialized identifier keeps its payload's
 //! id.
 
@@ -341,7 +341,7 @@ mod tests {
         let _scope = DeterministicIdentifierScope::enter();
         let constructed = Identifier::new("shared");
 
-        let deserialized = Identifier::deserialize(far_id, "shared".to_string());
+        let deserialized = Identifier::restore(far_id, "shared".to_string());
 
         assert_eq!(
             (deserialized.id(), deserialized.name_hint()),

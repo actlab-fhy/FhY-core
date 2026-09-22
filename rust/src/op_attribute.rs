@@ -431,7 +431,7 @@ mod tests {
     fn an_attribute_encodes_as_its_name_and_description() {
         let _guard = hold_registry();
         let id = reserve_pinned_id("encode-anchor");
-        let name = Identifier::deserialize(id, "encoded".to_string());
+        let name = Identifier::restore(id, "encoded".to_string());
         let attribute = OpAttribute::new(name, "a description").into_canonical();
 
         let json = serde_json::to_string(&*attribute).unwrap();

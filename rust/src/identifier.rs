@@ -11,23 +11,34 @@
 //! the next-to-be-issued value advances the counter past it.
 //!
 //! Ids are `u64`s, so the largest id this module ever issues is
-//! `u64::MAX - 1`. Deserializing `u64::MAX`, or constructing an identifier
-//! once the counter has reached `u64::MAX`, panics instead of wrapping and
-//! reissuing a live id.
+//! `u64::MAX - 1`, and the counter never wraps to reissue a live id. Once
+//! that id is issued or restored, the counter holds `u64::MAX` and
+//! constructing another identifier panics. No identifier ever holds
+//! `u64::MAX`, so a serialized payload carrying it is rejected as invalid.
 
+use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use serde::de::{Deserializer, MapAccess, Visitor};
+use serde::de::{Deserializer, MapAccess, Unexpected, Visitor};
 use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 
 /// The process-global, monotonically-increasing id counter.
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
-/// Panic message for an id counter that cannot advance without wrapping.
-const ID_SPACE_EXHAUSTED: &str = "identifier id space exhausted";
+/// Error for an id counter that cannot advance without wrapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct IdSpaceExhausted;
+
+impl fmt::Display for IdSpaceExhausted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("identifier id space exhausted")
+    }
+}
+
+impl Error for IdSpaceExhausted {}
 
 /// Process-globally unique, named compiler symbol.
 ///
@@ -35,8 +46,8 @@ const ID_SPACE_EXHAUSTED: &str = "identifier id space exhausted";
 /// [`Arc<str>`] so clones share the underlying string.
 ///
 /// Ids are `u64`s; the largest id an `Identifier` ever holds is
-/// `u64::MAX - 1`. Reaching `u64::MAX`, whether by construction or by
-/// deserializing it directly, panics instead of wrapping.
+/// `u64::MAX - 1`. Issuing or restoring that id leaves the counter at
+/// `u64::MAX`, after which construction panics instead of wrapping.
 #[derive(Clone)]
 pub struct Identifier {
     id: u64,
@@ -50,7 +61,7 @@ impl Identifier {
     /// # Panics
     ///
     /// Panics if the counter has reached `u64::MAX`, which only
-    /// deserializing an id near `u64::MAX` can cause.
+    /// deserializing the id `u64::MAX - 1` can cause.
     #[must_use]
     pub fn new(name_hint: &str) -> Self {
         let id = Self::next_id(name_hint);
@@ -60,9 +71,8 @@ impl Identifier {
         }
     }
 
-    /// Reconstruct an identifier with a specific id and name hint, advancing
-    /// the global counter so `id` is never re-issued to a later
-    /// construction.
+    /// Restore an identifier with a specific id and name hint, advancing the
+    /// global counter so `id` is never re-issued to a later construction.
     ///
     /// This is the deserialization path: it ignores any
     /// deterministic-identifier scope and always consults the real global
@@ -70,9 +80,11 @@ impl Identifier {
     ///
     /// # Panics
     ///
-    /// Panics if `id` is `u64::MAX`, since the counter cannot advance past it.
+    /// Panics if `id` is `u64::MAX`, which no identifier ever holds and the
+    /// counter cannot advance past. Deserializing through serde rejects that
+    /// id with an error instead.
     #[must_use]
-    pub fn deserialize(id: u64, name_hint: String) -> Self {
+    pub fn restore(id: u64, name_hint: String) -> Self {
         advance_counter_past(id);
         Self {
             id,
@@ -130,6 +142,16 @@ impl Identifier {
 /// Panics if the counter has reached `u64::MAX`.
 #[must_use]
 pub(crate) fn allocate_id() -> u64 {
+    try_allocate_id().unwrap_or_else(|exhausted| panic!("{exhausted}"))
+}
+
+/// Draw the next id from the process-global counter, leaving the counter
+/// unchanged when it cannot advance.
+///
+/// # Errors
+///
+/// Returns [`IdSpaceExhausted`] if the counter has reached `u64::MAX`.
+pub(crate) fn try_allocate_id() -> Result<u64, IdSpaceExhausted> {
     take_next_id(&NEXT_ID)
 }
 
@@ -140,32 +162,46 @@ pub(crate) fn allocate_id() -> u64 {
 ///
 /// Panics if `id` is `u64::MAX`, since the counter cannot advance past it.
 pub(crate) fn advance_counter_past(id: u64) {
-    advance_past(&NEXT_ID, id);
+    try_advance_counter_past(id).unwrap_or_else(|exhausted| panic!("{exhausted}"));
+}
+
+/// Advance the process-global counter so `id` is never issued, leaving it
+/// unchanged when it is already past `id`.
+///
+/// # Errors
+///
+/// Returns [`IdSpaceExhausted`], leaving the counter unchanged, if `id` is
+/// `u64::MAX`, since the counter cannot advance past it.
+pub(crate) fn try_advance_counter_past(id: u64) -> Result<(), IdSpaceExhausted> {
+    advance_past(&NEXT_ID, id)
 }
 
 /// Return `counter`'s current value and advance it by one.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics instead of wrapping when `counter` is at `u64::MAX`, since a
-/// wrapped counter would re-issue live ids.
-fn take_next_id(counter: &AtomicU64) -> u64 {
+/// Returns [`IdSpaceExhausted`], leaving `counter` unchanged, instead of
+/// wrapping when `counter` is at `u64::MAX`, since a wrapped counter would
+/// re-issue live ids.
+fn take_next_id(counter: &AtomicU64) -> Result<u64, IdSpaceExhausted> {
     counter
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next_id| {
             next_id.checked_add(1)
         })
-        .unwrap_or_else(|_| panic!("{ID_SPACE_EXHAUSTED}"))
+        .map_err(|_exhausted_value| IdSpaceExhausted)
 }
 
 /// Advance `counter` to at least `id + 1`, leaving it unchanged when it is
 /// already past `id`.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `id` is `u64::MAX`, since `counter` cannot advance past it.
-fn advance_past(counter: &AtomicU64, id: u64) {
-    let floor = id.checked_add(1).expect(ID_SPACE_EXHAUSTED);
+/// Returns [`IdSpaceExhausted`], leaving `counter` unchanged, if `id` is
+/// `u64::MAX`, since `counter` cannot advance past it.
+fn advance_past(counter: &AtomicU64, id: u64) -> Result<(), IdSpaceExhausted> {
+    let floor = id.checked_add(1).ok_or(IdSpaceExhausted)?;
     counter.fetch_max(floor, Ordering::Relaxed);
+    Ok(())
 }
 
 impl PartialEq for Identifier {
@@ -252,11 +288,15 @@ impl<'de> Deserialize<'de> for Identifier {
                 let id = id.ok_or_else(|| serde::de::Error::missing_field("id"))?;
                 let name_hint =
                     name_hint.ok_or_else(|| serde::de::Error::missing_field("name_hint"))?;
-                // Deserialization is a correctness-critical seam: it must
-                // always advance the global counter past `id`, regardless of
-                // the active testing strategy, so a deserialized id can
-                // never collide with a subsequently constructed one.
-                Ok(Identifier::deserialize(id, name_hint))
+                if id == u64::MAX {
+                    return Err(serde::de::Error::invalid_value(
+                        Unexpected::Unsigned(id),
+                        &"an id below u64::MAX",
+                    ));
+                }
+                // Always consult the real counter, even inside a
+                // deterministic-identifier scope.
+                Ok(Identifier::restore(id, name_hint))
             }
         }
 
@@ -291,8 +331,8 @@ mod tests {
         use std::hash::{Hash, Hasher};
 
         let id_value = Identifier::new("equality-and-hash-anchor").id();
-        let a = Identifier::deserialize(id_value, "a".to_string());
-        let b = Identifier::deserialize(id_value, "b".to_string());
+        let a = Identifier::restore(id_value, "a".to_string());
+        let b = Identifier::restore(id_value, "b".to_string());
         assert_eq!(a, b);
 
         let mut hasher_a = DefaultHasher::new();
@@ -305,14 +345,14 @@ mod tests {
     #[test]
     fn display_returns_name_hint() {
         let id_value = Identifier::new("display-anchor").id();
-        let id = Identifier::deserialize(id_value, "my_name".to_string());
+        let id = Identifier::restore(id_value, "my_name".to_string());
         assert_eq!(format!("{id}"), "my_name");
     }
 
     #[test]
     fn debug_returns_name_hint_and_id() {
         let id_value = Identifier::new("debug-anchor").id();
-        let id = Identifier::deserialize(id_value, "my_name".to_string());
+        let id = Identifier::restore(id_value, "my_name".to_string());
         assert_eq!(format!("{id:?}"), format!("my_name::{id_value}"));
     }
 
@@ -320,7 +360,7 @@ mod tests {
     #[test]
     fn display_and_debug_handle_an_empty_name_hint() {
         let id_value = Identifier::new("empty-name-hint-anchor").id();
-        let identifier = Identifier::deserialize(id_value, String::new());
+        let identifier = Identifier::restore(id_value, String::new());
 
         assert_eq!(format!("{identifier}"), "");
         assert_eq!(format!("{identifier:?}"), format!("::{id_value}"));
@@ -330,16 +370,16 @@ mod tests {
     #[test]
     fn display_and_debug_handle_a_name_hint_containing_a_double_colon() {
         let id_value = Identifier::new("double-colon-anchor").id();
-        let identifier = Identifier::deserialize(id_value, "foo::bar".to_string());
+        let identifier = Identifier::restore(id_value, "foo::bar".to_string());
 
         assert_eq!(format!("{identifier}"), "foo::bar");
         assert_eq!(format!("{identifier:?}"), format!("foo::bar::{id_value}"));
     }
 
     #[test]
-    fn deserialize_advances_counter_past_a_future_id() {
+    fn restore_advances_counter_past_a_future_id() {
         let far_future_id = Identifier::new("deserialize-advances-counter-anchor").id() + 1_000_000;
-        let restored = Identifier::deserialize(far_future_id, "restored".to_string());
+        let restored = Identifier::restore(far_future_id, "restored".to_string());
         assert_eq!(restored.id(), far_future_id);
 
         let next = Identifier::new("next");
@@ -347,12 +387,12 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_is_a_no_op_when_counter_already_ahead() {
+    fn restore_is_a_no_op_when_counter_already_ahead() {
         let first = Identifier::new("first");
         let stale_id = first.id();
-        // Re-deserializing an already-issued id must not rewind the
+        // Restoring an already-issued id must not rewind the
         // counter.
-        let _stale = Identifier::deserialize(stale_id, "stale".to_string());
+        let _stale = Identifier::restore(stale_id, "stale".to_string());
         let next = Identifier::new("next");
         assert!(next.id() > stale_id);
     }
@@ -360,7 +400,7 @@ mod tests {
     #[test]
     fn serde_round_trip_preserves_id_and_name_hint() {
         let id_value = Identifier::new("serde-roundtrip-anchor").id();
-        let original = Identifier::deserialize(id_value, "roundtrip".to_string());
+        let original = Identifier::restore(id_value, "roundtrip".to_string());
         let json = serde_json::to_string(&original).unwrap();
         assert!(json.contains(&format!("\"id\":{id_value}")));
         assert!(json.contains("\"name_hint\":\"roundtrip\""));
@@ -374,7 +414,7 @@ mod tests {
     #[test]
     fn serde_round_trip_preserves_an_empty_name_hint() {
         let id_value = Identifier::new("serde-empty-name-hint-anchor").id();
-        let original = Identifier::deserialize(id_value, String::new());
+        let original = Identifier::restore(id_value, String::new());
         let json = serde_json::to_string(&original).unwrap();
 
         let restored: Identifier = serde_json::from_str(&json).unwrap();
@@ -387,7 +427,7 @@ mod tests {
     #[test]
     fn serde_round_trip_preserves_a_name_hint_containing_a_double_colon() {
         let id_value = Identifier::new("serde-double-colon-anchor").id();
-        let original = Identifier::deserialize(id_value, "foo::bar".to_string());
+        let original = Identifier::restore(id_value, "foo::bar".to_string());
         let json = serde_json::to_string(&original).unwrap();
 
         let restored: Identifier = serde_json::from_str(&json).unwrap();
@@ -396,37 +436,119 @@ mod tests {
     }
 
     #[test]
+    fn id_space_exhausted_displays_the_exhaustion_message() {
+        assert_eq!(
+            IdSpaceExhausted.to_string(),
+            "identifier id space exhausted"
+        );
+    }
+
+    #[test]
     fn take_next_id_issues_the_last_id_below_u64_max() {
         let counter = AtomicU64::new(u64::MAX - 1);
-        assert_eq!(take_next_id(&counter), u64::MAX - 1);
+        assert_eq!(take_next_id(&counter), Ok(u64::MAX - 1));
         assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
     }
 
     #[test]
-    #[should_panic(expected = "identifier id space exhausted")]
-    fn take_next_id_panics_instead_of_wrapping_at_u64_max() {
+    fn take_next_id_refuses_to_wrap_at_u64_max() {
         let counter = AtomicU64::new(u64::MAX);
-        take_next_id(&counter);
+        assert_eq!(take_next_id(&counter), Err(IdSpaceExhausted));
+        assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
     }
 
     #[test]
     fn advance_past_raises_the_counter_to_one_past_the_id() {
         let counter = AtomicU64::new(0);
-        advance_past(&counter, u64::MAX - 1);
+        assert_eq!(advance_past(&counter, u64::MAX - 1), Ok(()));
         assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
     }
 
     #[test]
-    #[should_panic(expected = "identifier id space exhausted")]
-    fn advance_past_panics_instead_of_wrapping_at_u64_max() {
-        let counter = AtomicU64::new(0);
-        advance_past(&counter, u64::MAX);
+    fn advance_past_refuses_to_wrap_at_u64_max() {
+        let counter = AtomicU64::new(7);
+        assert_eq!(advance_past(&counter, u64::MAX), Err(IdSpaceExhausted));
+        assert_eq!(counter.load(Ordering::Relaxed), 7);
     }
 
     #[test]
     #[should_panic(expected = "identifier id space exhausted")]
-    fn deserializing_u64_max_panics() {
-        let _max = Identifier::deserialize(u64::MAX, "max".to_string());
+    fn restoring_u64_max_panics() {
+        let _max = Identifier::restore(u64::MAX, "max".to_string());
+    }
+
+    #[test]
+    fn try_advance_counter_past_u64_max_returns_an_error() {
+        assert_eq!(try_advance_counter_past(u64::MAX), Err(IdSpaceExhausted));
+    }
+
+    #[test]
+    fn try_allocate_id_shares_the_counter_with_construction() {
+        let allocated = try_allocate_id();
+        let constructed = Identifier::new("after-try-allocate");
+        assert!(allocated.is_ok_and(|id| id < constructed.id()));
+    }
+
+    #[test]
+    fn serde_rejects_an_id_of_u64_max() {
+        let json = format!("{{\"id\":{},\"name_hint\":\"x\"}}", u64::MAX);
+
+        let error = serde_json::from_str::<Identifier>(&json)
+            .expect_err("no identifier ever holds u64::MAX");
+
+        assert!(
+            error.to_string().contains("an id below u64::MAX"),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// Environment variable that marks a child process running one isolated
+    /// test.
+    const ISOLATED_TEST_VARIABLE: &str = "FHY_CORE_ISOLATED_IDENTIFIER_TEST";
+
+    /// Run the named test of this module alone in a child process of the
+    /// test binary, so its effect on the process-global counter stays there.
+    fn run_isolated(test_name: &str) -> std::process::Output {
+        let test_binary = std::env::current_exe().expect("the test binary has a path");
+        std::process::Command::new(test_binary)
+            .args([
+                &format!("identifier::tests::{test_name}"),
+                "--exact",
+                "--ignored",
+                "--test-threads=1",
+            ])
+            .env(ISOLATED_TEST_VARIABLE, "1")
+            .output()
+            .expect("the test binary runs")
+    }
+
+    /// Deserialize the largest issuable id, then check the counter is
+    /// exhausted. Only meaningful in the child process that
+    /// [`serde_accepts_the_largest_issuable_id`] starts.
+    #[test]
+    #[ignore = "exhausts the process-global counter; run through run_isolated"]
+    fn serde_accepts_the_largest_issuable_id_in_isolation() {
+        if std::env::var_os(ISOLATED_TEST_VARIABLE).is_none() {
+            return;
+        }
+        let json = format!("{{\"id\":{},\"name_hint\":\"largest\"}}", u64::MAX - 1);
+
+        let restored: Identifier = serde_json::from_str(&json).expect("u64::MAX - 1 is valid");
+
+        assert_eq!(restored.id(), u64::MAX - 1);
+        assert_eq!(try_allocate_id(), Err(IdSpaceExhausted));
+    }
+
+    #[test]
+    fn serde_accepts_the_largest_issuable_id() {
+        let output = run_isolated("serde_accepts_the_largest_issuable_id_in_isolation");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "isolated test failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
@@ -527,7 +649,7 @@ mod tests {
                 .map(|thread_index| {
                     scope.spawn(move || {
                         let id = baseline + CONSTRUCTION_BUDGET * (thread_index + 1);
-                        Identifier::deserialize(id, "concurrent-deserialize".to_string()).id()
+                        Identifier::restore(id, "concurrent-deserialize".to_string()).id()
                     })
                 })
                 .collect();
@@ -563,7 +685,7 @@ mod tests {
             for thread_index in 0..8u64 {
                 scope.spawn(move || {
                     for step in 0..500u64 {
-                        advance_past(counter_ref, thread_index * 500 + step);
+                        assert_eq!(advance_past(counter_ref, thread_index * 500 + step), Ok(()));
                     }
                 });
             }
