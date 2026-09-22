@@ -2,7 +2,7 @@
  "provenance": {
   "package": "fhy_core",
   "package_version": "0.2.0",
-  "git_commit": "3a3ae4b8c9eebea904ae3175a1f24556fbb3298a",
+  "git_commit": "2ca7d3646465890dbff16009660a6a13dcdafeeb",
   "python_version": "3.11.15 (main, Jun 27 2026, 16:18:26) [Clang 15.0.0 (clang-1500.0.40.1)]",
   "generator_command": "uv run --no-sync python rust/tests/golden/generate_tag_type_cases.py"
  },
@@ -18843,6 +18843,3339 @@
      "expected": {
       "canonical_description": "Index, offset, or address values used to access data.",
       "canonical_parent_slot": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "decode_rejects_every_defective_payload_for_an_unregistered_slot",
+   "type": "op_attribute",
+   "ops": [
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d937"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "extra"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d938"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent"
+      ],
+      "value": null
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d939"
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "name"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d940"
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "description"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d941"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name"
+      ],
+      "value": "bad"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d942"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name"
+      ],
+      "value": null
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d943"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "description"
+      ],
+      "value": 3
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d944"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "description"
+      ],
+      "value": null
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d945"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": -1
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d946"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": "1"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d947"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": 1.0
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d948"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": true
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d949"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": null
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d950"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": 18446744073709551615
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d951"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": 18446744073709551616
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d952"
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "name",
+       "id"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d953"
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "name",
+       "name_hint"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d954"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "name_hint"
+      ],
+      "value": 3
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d955"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "extra"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d956"
+     },
+     "defect": {
+      "kind": "wrap",
+      "path": [
+       "name"
+      ],
+      "key": "name"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d957"
+     },
+     "defect": {
+      "kind": "wrap",
+      "path": [],
+      "key": "op_attribute"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "get",
+     "slot": "bad",
+     "expected": {
+      "canonical_description": null
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d958"
+     },
+     "expected": {
+      "canonical_slot": "bad",
+      "canonical_description": "d958"
+     }
+    }
+   ]
+  },
+  {
+   "name": "decode_rejects_every_defective_payload_for_a_registered_slot",
+   "type": "op_attribute",
+   "ops": [
+    {
+     "op": "new",
+     "slot": "reg",
+     "description": "d959",
+     "expected": {
+      "registered": true,
+      "canonical_description": "d959"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d960"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "extra"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d961"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent"
+      ],
+      "value": null
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d962"
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "name"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d963"
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "description"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d964"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name"
+      ],
+      "value": "bad"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d965"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name"
+      ],
+      "value": null
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d966"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "description"
+      ],
+      "value": 3
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d967"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "description"
+      ],
+      "value": null
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d968"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": -1
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d969"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": "1"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d970"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": 1.0
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d971"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": true
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d972"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": null
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d973"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": 18446744073709551615
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d974"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": 18446744073709551616
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d975"
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "name",
+       "id"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d976"
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "name",
+       "name_hint"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d977"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "name_hint"
+      ],
+      "value": 3
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d978"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "extra"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d979"
+     },
+     "defect": {
+      "kind": "wrap",
+      "path": [
+       "name"
+      ],
+      "key": "name"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d980"
+     },
+     "defect": {
+      "kind": "wrap",
+      "path": [],
+      "key": "op_attribute"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "require",
+     "slot": "reg",
+     "expected": {
+      "canonical_description": "d959"
+     }
+    }
+   ]
+  },
+  {
+   "name": "decode_accepts_a_name_hint_that_differs_from_the_slot",
+   "type": "op_attribute",
+   "ops": [
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "hinted",
+       "name_hint": "hinted"
+      },
+      "description": "d981"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "name_hint"
+      ],
+      "value": "renamed"
+     },
+     "expected": {
+      "canonical_slot": "hinted",
+      "canonical_description": "d981"
+     }
+    },
+    {
+     "op": "require",
+     "slot": "hinted",
+     "expected": {
+      "canonical_description": "d981"
+     }
+    }
+   ]
+  },
+  {
+   "name": "decode_rejects_every_defective_payload_for_an_unregistered_slot",
+   "type": "value_domain",
+   "ops": [
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d982",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d983",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "parent"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d984",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d985",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "extra"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d986",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d987",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "zzz"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d988",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d989",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "name"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d990",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d991",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "description"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d992",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d993",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name"
+      ],
+      "value": "bad"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d994",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d995",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "description"
+      ],
+      "value": null
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d996",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d997",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent"
+      ],
+      "value": "data"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d998",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d999",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent"
+      ],
+      "value": []
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1000",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1001",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent"
+      ],
+      "value": false
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1002",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1003",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "lift",
+      "path": [
+       "parent"
+      ],
+      "key": "name"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1004",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1005",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "wrap",
+      "path": [
+       "parent"
+      ],
+      "key": "parent"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1006",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1007",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "extra"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1008",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1009",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "parent",
+       "parent"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1010",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1011",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "parent",
+       "description"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1012",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1013",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": -1
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1014",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1015",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": "1"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1016",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1017",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": 1.0
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1018",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1019",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": true
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1020",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1021",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": null
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1022",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1023",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": 18446744073709551615
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1024",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1025",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": 18446744073709551616
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1026",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1027",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "name",
+       "id"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1028",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1029",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "name",
+       "name_hint"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1030",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1031",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "name_hint"
+      ],
+      "value": 3
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1032",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1033",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "extra"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1034",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1035",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "wrap",
+      "path": [
+       "name"
+      ],
+      "key": "name"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1036",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1037",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": -1
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1038",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1039",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": "1"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1040",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1041",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": 1.0
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1042",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1043",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": true
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1044",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1045",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": null
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1046",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1047",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": 18446744073709551615
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1048",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1049",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": 18446744073709551616
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1050",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1051",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1052",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1053",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "parent",
+       "name",
+       "name_hint"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1054",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1055",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "name_hint"
+      ],
+      "value": 3
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1056",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1057",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "extra"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1058",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1059",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "wrap",
+      "path": [
+       "parent",
+       "name"
+      ],
+      "key": "name"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1060",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1061",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "wrap",
+      "path": [],
+      "key": "value_domain"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "get",
+     "slot": "bad",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "bad",
+       "name_hint": "bad"
+      },
+      "description": "d1062",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1063",
+       "parent": null
+      }
+     },
+     "expected": {
+      "canonical_slot": "bad",
+      "canonical_description": "d1062",
+      "canonical_parent_slot": "data"
+     }
+    }
+   ]
+  },
+  {
+   "name": "decode_rejects_every_defective_payload_for_a_registered_slot",
+   "type": "value_domain",
+   "ops": [
+    {
+     "op": "new",
+     "slot": "reg",
+     "description": "d1064",
+     "parent_slot": "data",
+     "expected": {
+      "registered": true,
+      "canonical_description": "d1064",
+      "canonical_parent_slot": "data"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1065",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1066",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "parent"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1067",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1068",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "extra"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1069",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1070",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "zzz"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1071",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1072",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "name"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1073",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1074",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "description"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1075",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1076",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name"
+      ],
+      "value": "bad"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1077",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1078",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "description"
+      ],
+      "value": null
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1079",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1080",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent"
+      ],
+      "value": "data"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1081",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1082",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent"
+      ],
+      "value": []
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1083",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1084",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent"
+      ],
+      "value": false
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1085",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1086",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "lift",
+      "path": [
+       "parent"
+      ],
+      "key": "name"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1087",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1088",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "wrap",
+      "path": [
+       "parent"
+      ],
+      "key": "parent"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1089",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1090",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "extra"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1091",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1092",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "parent",
+       "parent"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1093",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1094",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "parent",
+       "description"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1095",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1096",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": -1
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1097",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1098",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": "1"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1099",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1100",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": 1.0
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1101",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1102",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": true
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1103",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1104",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": null
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1105",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1106",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": 18446744073709551615
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1107",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1108",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "id"
+      ],
+      "value": 18446744073709551616
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1109",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1110",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "name",
+       "id"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1111",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1112",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "name",
+       "name_hint"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1113",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1114",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "name_hint"
+      ],
+      "value": 3
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1115",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1116",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "extra"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1117",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1118",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "wrap",
+      "path": [
+       "name"
+      ],
+      "key": "name"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1119",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1120",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": -1
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1121",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1122",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": "1"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1123",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1124",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": 1.0
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1125",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1126",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": true
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1127",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1128",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": null
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1129",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1130",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": 18446744073709551615
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1131",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1132",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": 18446744073709551616
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1133",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1134",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1135",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1136",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "parent",
+       "name",
+       "name_hint"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1137",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1138",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "name_hint"
+      ],
+      "value": 3
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1139",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1140",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "extra"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1141",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1142",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "wrap",
+      "path": [
+       "parent",
+       "name"
+      ],
+      "key": "name"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "reg",
+       "name_hint": "reg"
+      },
+      "description": "d1143",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1144",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "wrap",
+      "path": [],
+      "key": "value_domain"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "require",
+     "slot": "reg",
+     "expected": {
+      "canonical_description": "d1064",
+      "canonical_parent_slot": "data"
+     }
+    }
+   ]
+  },
+  {
+   "name": "decode_accepts_a_name_hint_that_differs_from_the_slot",
+   "type": "value_domain",
+   "ops": [
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "hinted",
+       "name_hint": "hinted"
+      },
+      "description": "d1145",
+      "parent": {
+       "name": {
+        "id": "data",
+        "name_hint": "data"
+       },
+       "description": "d1146",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "name",
+       "name_hint"
+      ],
+      "value": "renamed"
+     },
+     "expected": {
+      "canonical_slot": "hinted",
+      "canonical_description": "d1145",
+      "canonical_parent_slot": "data"
+     }
+    },
+    {
+     "op": "require",
+     "slot": "hinted",
+     "expected": {
+      "canonical_description": "d1145",
+      "canonical_parent_slot": "data"
      }
     }
    ]

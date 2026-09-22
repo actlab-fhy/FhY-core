@@ -25,7 +25,7 @@ use fhy_core::interned::{Canonical, InternOutcome, Interned};
 use fhy_core::op_attribute::{OpAttribute, ASSOCIATIVE, COMMUTATIVE, ELEMENTWISE, PURE};
 use fhy_core::value_domain::{ValueDomain, ADDRESS_DOMAIN, DATA_DOMAIN};
 use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 const GOLDEN_JSON: &str = include_str!("golden/tag_type_cases.json");
 
@@ -165,16 +165,133 @@ fn normalize_value_domain(domain: &ValueDomain, slots: &SlotTable) -> Value {
     })
 }
 
+/// Return a real (denormalized) payload with one structural defect applied,
+/// mirroring the generator's `_apply_defect`.
+///
+/// `defect["path"]` names the field to damage, as the keys leading to it from
+/// the payload's root. `remove` deletes that field, `set` replaces or adds it
+/// with the literal `defect["value"]`, `wrap` nests it one level deeper under
+/// `defect["key"]` (an empty path wraps the whole payload), and `lift`
+/// replaces it with its own `defect["key"]` member.
+///
+/// # Panics
+///
+/// Panics if the defect is malformed or its path does not lead to a field of
+/// the payload, which would mean the golden data and this replay disagree
+/// about the defect format.
+fn apply_defect(mut payload: Value, defect: &Value) -> Value {
+    let kind = defect["kind"].as_str().expect("a defect has a kind");
+    let path: Vec<&str> = defect["path"]
+        .as_array()
+        .expect("a defect has a path")
+        .iter()
+        .map(|key| key.as_str().expect("a defect path holds field names"))
+        .collect();
+    let wrap_key = || {
+        defect["key"]
+            .as_str()
+            .expect("a wrap or lift defect has a key")
+    };
+
+    let Some((field_name, container_path)) = path.split_last() else {
+        assert_eq!(kind, "wrap", "only a wrap defect may have an empty path");
+        let mut wrapper = Map::new();
+        wrapper.insert(wrap_key().to_string(), payload);
+        return Value::Object(wrapper);
+    };
+    let mut container = &mut payload;
+    for key in container_path {
+        container = &mut container[*key];
+    }
+    let fields = container
+        .as_object_mut()
+        .expect("a defect path leads through objects");
+    let field_name = (*field_name).to_string();
+    match kind {
+        "remove" => {
+            fields
+                .remove(&field_name)
+                .expect("a remove defect names a present field");
+        }
+        "set" => {
+            fields.insert(field_name, defect["value"].clone());
+        }
+        "wrap" => {
+            let inner = fields
+                .remove(&field_name)
+                .expect("a wrap defect names a present field");
+            let mut wrapper = Map::new();
+            wrapper.insert(wrap_key().to_string(), inner);
+            fields.insert(field_name, Value::Object(wrapper));
+        }
+        "lift" => {
+            let lifted = fields[&field_name][wrap_key()].clone();
+            assert!(!lifted.is_null(), "a lift defect names a present member");
+            fields.insert(field_name, lifted);
+        }
+        other => panic!("unknown defect kind {other:?}"),
+    }
+    payload
+}
+
+/// Denormalize a decode op's payload and apply its defect, if it has one.
+///
+/// Returns the real payload together with whether a rejection of it must be
+/// a canonical conflict (a well-formed payload) or may be any error (a
+/// payload with a structural defect).
+fn build_decode_payload(
+    op: &Value,
+    denormalize: impl FnOnce(&Value) -> Value,
+) -> (Value, ExpectedRejection) {
+    let real_payload = denormalize(&op["payload"]);
+    match op.get("defect") {
+        Some(defect) => (
+            apply_defect(real_payload, defect),
+            ExpectedRejection::AnyError,
+        ),
+        None => (real_payload, ExpectedRejection::CanonicalConflict),
+    }
+}
+
+/// Which Rust decode errors agree with a rejection the oracle recorded.
+#[derive(Clone, Copy)]
+enum ExpectedRejection {
+    /// Only an error reporting a conflict with the canonical instance, which
+    /// is the one reason the oracle rejects a well-formed payload.
+    CanonicalConflict,
+    /// Any error: a payload with a structural defect is rejected for the
+    /// defect, and the two runtimes word that differently.
+    AnyError,
+}
+
+impl ExpectedRejection {
+    fn agrees_with(self, expected_error: &str, error: &serde_json::Error) -> bool {
+        match self {
+            Self::CanonicalConflict => {
+                expected_error == "DeserializationValueError"
+                    && error
+                        .to_string()
+                        .contains("conflicts with the canonical instance")
+            }
+            Self::AnyError => true,
+        }
+    }
+}
+
 /// Decode `payload` as a canonical handle and compare the outcome's kind
 /// with the golden expectation.
 ///
 /// Returns the handle when both sides decoded it. The oracle records a
+/// rejected payload as `{"error": <Python error class name>}`: a well-formed
 /// payload that conflicts with an existing canonical as
-/// `{"error": "DeserializationValueError"}`, and the Rust decode must reject
-/// the same payload for the same reason. Any disagreement becomes a mismatch
-/// and returns `None`, as does an agreed rejection.
+/// `DeserializationValueError`, which the Rust decode must reject for the
+/// same reason, and a payload with a structural defect under whatever error
+/// the oracle raised, which the Rust decode must reject with any error. Any
+/// disagreement, in either direction, becomes a mismatch and returns `None`,
+/// as does an agreed rejection.
 fn decode_or_check_rejection<T>(
     payload: Value,
+    rejection: ExpectedRejection,
     name: &str,
     index: usize,
     expected: &Value,
@@ -189,13 +306,7 @@ where
         expected_error,
     ) {
         (Ok(restored), None) => Some(restored),
-        (Err(error), Some("DeserializationValueError"))
-            if error
-                .to_string()
-                .contains("conflicts with the canonical instance") =>
-        {
-            None
-        }
+        (Err(error), Some(expected_error)) if rejection.agrees_with(expected_error, &error) => None,
         (Ok(_), Some(expected_error)) => {
             mismatches.push(format!(
                 "case {name} op {index}: expected error {expected_error:?}, got a decoded value"
@@ -335,11 +446,17 @@ fn check_decode_attribute(
     op: &Value,
     mismatches: &mut Vec<String>,
 ) {
-    let real_payload = denormalize_op_attribute(&op["payload"], slots);
+    let (real_payload, rejection) =
+        build_decode_payload(op, |payload| denormalize_op_attribute(payload, slots));
     let expected = &op["expected"];
-    let Some(restored) =
-        decode_or_check_rejection::<OpAttribute>(real_payload, name, index, expected, mismatches)
-    else {
+    let Some(restored) = decode_or_check_rejection::<OpAttribute>(
+        real_payload,
+        rejection,
+        name,
+        index,
+        expected,
+        mismatches,
+    ) else {
         return;
     };
 
@@ -625,11 +742,17 @@ fn check_decode_domain(
     op: &Value,
     mismatches: &mut Vec<String>,
 ) {
-    let real_payload = denormalize_value_domain(&op["payload"], slots);
+    let (real_payload, rejection) =
+        build_decode_payload(op, |payload| denormalize_value_domain(payload, slots));
     let expected = &op["expected"];
-    let Some(restored) =
-        decode_or_check_rejection::<ValueDomain>(real_payload, name, index, expected, mismatches)
-    else {
+    let Some(restored) = decode_or_check_rejection::<ValueDomain>(
+        real_payload,
+        rejection,
+        name,
+        index,
+        expected,
+        mismatches,
+    ) else {
         return;
     };
 

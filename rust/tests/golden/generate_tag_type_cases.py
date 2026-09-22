@@ -37,6 +37,7 @@ then replay it by naming the file in `FHY_TAG_TYPE_CORPUS`:
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import random
 import subprocess
@@ -54,7 +55,7 @@ from fhy_core.op_attribute import (
     PURE,
     OpAttribute,
 )
-from fhy_core.serialization import DeserializationValueError
+from fhy_core.serialization import DeserializationValueError, SerializationError
 from fhy_core.value_domain import ADDRESS_DOMAIN, DATA_DOMAIN, ValueDomain
 
 GENERATOR_COMMAND = (
@@ -251,8 +252,28 @@ def _build_encode_op(slot: str) -> dict[str, Any]:
     return {"op": "encode", "slot": slot}
 
 
-def _build_decode_op(payload: dict[str, Any]) -> dict[str, Any]:
-    return {"op": "decode", "payload": payload}
+def _build_decode_op(
+    payload: dict[str, Any], defect: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    if defect is None:
+        return {"op": "decode", "payload": payload}
+    return {"op": "decode", "payload": payload, "defect": defect}
+
+
+def _build_remove_defect(*path: str) -> dict[str, Any]:
+    return {"kind": "remove", "path": list(path)}
+
+
+def _build_set_defect(path: Sequence[str], value: Any) -> dict[str, Any]:
+    return {"kind": "set", "path": list(path), "value": value}
+
+
+def _build_wrap_defect(path: Sequence[str], key: str) -> dict[str, Any]:
+    return {"kind": "wrap", "path": list(path), "key": key}
+
+
+def _build_lift_defect(path: Sequence[str], key: str) -> dict[str, Any]:
+    return {"kind": "lift", "path": list(path), "key": key}
 
 
 def _build_is_subdomain_of_op(slot_a: str, slot_b: str) -> dict[str, Any]:
@@ -436,33 +457,75 @@ def _mark_registered_payload_slots(ctx: _ScriptContext, slots: list[str]) -> Non
             ctx.mark_registered(slot)
 
 
+def _apply_defect(payload: dict[str, Any], defect: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of a real (denormalized) payload with one structural defect.
+
+    `defect["path"]` names the field to damage, as the keys leading to it
+    from the payload's root. `remove` deletes that field, `set` replaces or
+    adds it with the literal `defect["value"]`, `wrap` nests it one level
+    deeper under `defect["key"]` (an empty path wraps the whole payload), and
+    `lift` replaces it with its own `defect["key"]` member.
+    """
+    damaged = copy.deepcopy(payload)
+    kind = defect["kind"]
+    path = defect["path"]
+    if not path:
+        if kind != "wrap":
+            raise ValueError(f"a {kind!r} defect needs a non-empty path")
+        return {defect["key"]: damaged}
+    container = damaged
+    for key in path[:-1]:
+        container = container[key]
+    field_name = path[-1]
+    if kind == "remove":
+        del container[field_name]
+    elif kind == "set":
+        container[field_name] = copy.deepcopy(defect["value"])
+    elif kind == "wrap":
+        container[field_name] = {defect["key"]: container[field_name]}
+    elif kind == "lift":
+        container[field_name] = container[field_name][defect["key"]]
+    else:
+        raise ValueError(f"unknown defect kind {kind!r}")
+    return damaged
+
+
 def _run_decode(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
     """Decode a payload, recording the canonical it yields or its rejection.
 
     A payload whose key is already canonical must equal that canonical: one
     that names a different parent is rejected with a
-    `DeserializationValueError`, recorded as the op's `error`.
+    `DeserializationValueError`, recorded as the op's `error`. An op with a
+    `defect` damages the payload's structure before decoding it (see
+    `_apply_defect`); the oracle's rejection of the damaged payload is
+    recorded as the op's `error`, named by the raised error's class.
     """
     payload = op["payload"]
     if ctx.kind == _OP_ATTRIBUTE_KIND:
         real = _denormalize_attribute_dict(payload, ctx)
-        try:
-            canonical = OpAttribute.deserialize_from_dict(real)
-        except DeserializationValueError:
-            _mark_registered_payload_slots(ctx, [payload["name"]["id"]])
-            return {"error": "DeserializationValueError"}
-        slot = ctx.find_slot_for_id(canonical.name.id)
-        ctx.mark_registered(slot)
-        return {"canonical_slot": slot, "canonical_description": canonical.description}
+        payload_slots = [payload["name"]["id"]]
+    else:
+        real = _denormalize_domain_dict(payload, ctx)
+        payload_slots = _collect_domain_payload_slots(payload)
 
-    real = _denormalize_domain_dict(payload, ctx)
+    defect = op.get("defect")
+    # A well-formed payload can only be rejected as a canonical conflict; a
+    # damaged one may be rejected with any serialization error.
+    rejection_type: type[SerializationError] = SerializationError
+    if defect is None:
+        rejection_type = DeserializationValueError
+    else:
+        real = _apply_defect(real, defect)
     try:
-        canonical = ValueDomain.deserialize_from_dict(real)
-    except DeserializationValueError:
-        _mark_registered_payload_slots(ctx, _collect_domain_payload_slots(payload))
-        return {"error": "DeserializationValueError"}
+        canonical = ctx.cls.deserialize_from_dict(real)
+    except rejection_type as error:
+        _mark_registered_payload_slots(ctx, payload_slots)
+        return {"error": type(error).__name__}
+
+    _mark_registered_payload_slots(ctx, payload_slots)
     slot = ctx.find_slot_for_id(canonical.name.id)
-    _mark_registered_payload_slots(ctx, _collect_domain_payload_slots(payload))
+    if ctx.kind == _OP_ATTRIBUTE_KIND:
+        return {"canonical_slot": slot, "canonical_description": canonical.description}
     canonical_parent_slot = (
         ctx.find_slot_for_id(canonical.parent.name.id)
         if canonical.parent is not None
@@ -893,6 +956,172 @@ def _list_hand_picked_domain_scripts() -> list[tuple[str, list[dict[str, Any]]]]
 
 
 # =============================================================================
+# Defective-payload scripts
+#
+# Each decodes payloads damaged by one structural defect: an unknown or
+# missing field, a field of the wrong type, or an extra level of nesting.
+# These run after the random scripts, so the descriptions they draw leave
+# every earlier script's recording unchanged.
+# =============================================================================
+
+# Defects to an identifier payload, as paths relative to the identifier.
+_IDENTIFIER_DEFECT_SPECS: list[tuple[str, tuple[str, ...], Any]] = [
+    ("set", ("id",), -1),
+    ("set", ("id",), "1"),
+    ("set", ("id",), 1.0),
+    ("set", ("id",), True),
+    ("set", ("id",), None),
+    ("set", ("id",), 2**64 - 1),
+    ("set", ("id",), 2**64),
+    ("remove", ("id",), None),
+    ("remove", ("name_hint",), None),
+    ("set", ("name_hint",), 3),
+    ("set", ("extra",), 1),
+]
+
+
+def _list_identifier_defects(prefix: Sequence[str]) -> list[dict[str, Any]]:
+    """Return defects to the identifier payload found at `prefix`."""
+    defects = []
+    for kind, path, value in _IDENTIFIER_DEFECT_SPECS:
+        full_path = [*prefix, *path]
+        if kind == "remove":
+            defects.append(_build_remove_defect(*full_path))
+        else:
+            defects.append(_build_set_defect(full_path, value))
+    defects.append(_build_wrap_defect(prefix, "name"))
+    return defects
+
+
+def _list_attribute_defects() -> list[dict[str, Any]]:
+    return [
+        _build_set_defect(["extra"], 1),
+        _build_set_defect(["parent"], None),
+        _build_remove_defect("name"),
+        _build_remove_defect("description"),
+        _build_set_defect(["name"], "bad"),
+        _build_set_defect(["name"], None),
+        _build_set_defect(["description"], 3),
+        _build_set_defect(["description"], None),
+        *_list_identifier_defects(["name"]),
+        _build_wrap_defect([], "op_attribute"),
+    ]
+
+
+def _list_domain_defects() -> list[dict[str, Any]]:
+    return [
+        _build_remove_defect("parent"),
+        _build_set_defect(["extra"], 1),
+        _build_set_defect(["zzz"], 1),
+        _build_remove_defect("name"),
+        _build_remove_defect("description"),
+        _build_set_defect(["name"], "bad"),
+        _build_set_defect(["description"], None),
+        _build_set_defect(["parent"], "data"),
+        _build_set_defect(["parent"], []),
+        _build_set_defect(["parent"], False),
+        _build_lift_defect(["parent"], "name"),
+        _build_wrap_defect(["parent"], "parent"),
+        _build_set_defect(["parent", "extra"], 1),
+        _build_remove_defect("parent", "parent"),
+        _build_remove_defect("parent", "description"),
+        *_list_identifier_defects(["name"]),
+        *_list_identifier_defects(["parent", "name"]),
+        _build_wrap_defect([], "value_domain"),
+    ]
+
+
+def _list_defective_attribute_scripts() -> list[tuple[str, list[dict[str, Any]]]]:
+    return [
+        (
+            "decode_rejects_every_defective_payload_for_an_unregistered_slot",
+            [
+                *(
+                    _build_decode_op(
+                        _build_attribute_payload("bad", _next_description()), defect
+                    )
+                    for defect in _list_attribute_defects()
+                ),
+                _build_get_op("bad"),
+                _build_decode_op(_build_attribute_payload("bad", _next_description())),
+            ],
+        ),
+        (
+            "decode_rejects_every_defective_payload_for_a_registered_slot",
+            [
+                _build_new_attribute_op("reg", _next_description()),
+                *(
+                    _build_decode_op(
+                        _build_attribute_payload("reg", _next_description()), defect
+                    )
+                    for defect in _list_attribute_defects()
+                ),
+                _build_require_op("reg"),
+            ],
+        ),
+        (
+            "decode_accepts_a_name_hint_that_differs_from_the_slot",
+            [
+                _build_decode_op(
+                    _build_attribute_payload("hinted", _next_description()),
+                    _build_set_defect(["name", "name_hint"], "renamed"),
+                ),
+                _build_require_op("hinted"),
+            ],
+        ),
+    ]
+
+
+def _build_default_parented_domain_payload(slot: str) -> dict[str, Any]:
+    return _build_domain_payload(
+        slot,
+        _next_description(),
+        _build_domain_payload("data", _next_description(), None),
+    )
+
+
+def _list_defective_domain_scripts() -> list[tuple[str, list[dict[str, Any]]]]:
+    return [
+        (
+            "decode_rejects_every_defective_payload_for_an_unregistered_slot",
+            [
+                *(
+                    _build_decode_op(
+                        _build_default_parented_domain_payload("bad"), defect
+                    )
+                    for defect in _list_domain_defects()
+                ),
+                _build_get_op("bad"),
+                _build_decode_op(_build_default_parented_domain_payload("bad")),
+            ],
+        ),
+        (
+            "decode_rejects_every_defective_payload_for_a_registered_slot",
+            [
+                _build_new_domain_op("reg", _next_description(), parent_slot="data"),
+                *(
+                    _build_decode_op(
+                        _build_default_parented_domain_payload("reg"), defect
+                    )
+                    for defect in _list_domain_defects()
+                ),
+                _build_require_op("reg"),
+            ],
+        ),
+        (
+            "decode_accepts_a_name_hint_that_differs_from_the_slot",
+            [
+                _build_decode_op(
+                    _build_default_parented_domain_payload("hinted"),
+                    _build_set_defect(["name", "name_hint"], "renamed"),
+                ),
+                _build_require_op("hinted"),
+            ],
+        ),
+    ]
+
+
+# =============================================================================
 # Random scripts
 # =============================================================================
 
@@ -1185,6 +1414,15 @@ def main() -> None:
     for index in range(arguments.random_count):
         kind = _OP_ATTRIBUTE_KIND if index % 2 == 0 else _VALUE_DOMAIN_KIND
         cases.append(_run_random_script(rng, index, kind, alphabet, arguments.max_ops))
+
+    cases += [
+        _run_fixed_script(name, _OP_ATTRIBUTE_KIND, ops)
+        for name, ops in _list_defective_attribute_scripts()
+    ]
+    cases += [
+        _run_fixed_script(name, _VALUE_DOMAIN_KIND, ops)
+        for name, ops in _list_defective_domain_scripts()
+    ]
 
     document = {
         "provenance": _build_provenance(repository_root),
