@@ -41,17 +41,25 @@ path = "rust/tests/tag_type_equivalence.rs"
 name = "tag_type_stories"
 path = "rust/tests/tag_type_stories.rs"
 
+# These three reach `fhy_core::testing`, which the dev-dependency below turns
+# on for this crate's own tests. `cargo package` drops that dev-dependency,
+# because it carries only a path, so `required-features` is what lets them be
+# skipped rather than fail to compile from the published crate; there,
+# `cargo test --features testing` runs them.
 [[test]]
 name = "deterministic_identifiers_stories"
 path = "rust/tests/deterministic_identifiers_stories.rs"
+required-features = ["testing"]
 
 [[test]]
 name = "deterministic_identifiers_constants"
 path = "rust/tests/deterministic_identifiers_constants.rs"
+required-features = ["testing"]
 
 [[test]]
 name = "deterministic_identifiers_equivalence"
 path = "rust/tests/deterministic_identifiers_equivalence.rs"
+required-features = ["testing"]
 
 [features]
 default = []
