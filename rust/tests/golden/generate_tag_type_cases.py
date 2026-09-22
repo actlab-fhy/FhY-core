@@ -34,6 +34,8 @@ then replay it by naming the file in `FHY_TAG_TYPE_CORPUS`:
 
     FHY_TAG_TYPE_CORPUS=/tmp/tag_type_corpus.json \
         cargo test --test tag_type_equivalence -- --ignored
+
+`uv run nox -s golden_expanded` does both for every generator.
 """
 
 from __future__ import annotations

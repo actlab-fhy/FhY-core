@@ -22,6 +22,8 @@ then replay it by naming the file in `FHY_INTERNED_CORPUS`:
 
     FHY_INTERNED_CORPUS=/tmp/interned_corpus.json \
         cargo test --test interned_equivalence -- --ignored
+
+`uv run nox -s golden_expanded` does both for every generator.
 """
 
 from __future__ import annotations

@@ -151,7 +151,7 @@ This project uses [uv](https://docs.astral.sh/uv/) for environment and dependenc
    It also compiles the Rust extension `fhy_core._rs` with maturin, so building from source needs a Rust toolchain (stable, 1.83 or newer; `rust-toolchain.toml` selects the channel for rustup).
    Editable mode covers only the Python sources: edits under `src/` take effect immediately, while the compiled extension changes only when it is rebuilt (see [Rebuilding the Python Extension](#rebuilding-the-python-extension)).
    Prefix commands with `uv run` (e.g. `uv run python`) or activate the environment with `source .venv/bin/activate`.
-   Contributors also have two opt-in nox sessions not run by default: `uv run nox -s property` (the Hypothesis property suite under the thorough profile, on both backends) and `uv run nox -s mutation -- <module>` (cosmic-ray mutation testing for one module); see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+   Contributors also have three opt-in nox sessions not run by default: `uv run nox -s property` (the Hypothesis property suite under the thorough profile, on both backends), `uv run nox -s golden_expanded` (large random golden corpora from the Python oracle, replayed by the Rust equivalence tests; needs `cargo`), and `uv run nox -s mutation -- <module>` (cosmic-ray mutation testing for one module); see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## Rust Crate
 

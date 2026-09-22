@@ -37,6 +37,8 @@ then replay it by naming the file in `FHY_DETERMINISTIC_IDENTIFIER_CORPUS`:
 
     FHY_DETERMINISTIC_IDENTIFIER_CORPUS=/tmp/deterministic_identifier_corpus.json \
         cargo test --test deterministic_identifiers_equivalence -- --ignored
+
+`uv run nox -s golden_expanded` does both for every generator.
 """
 
 from __future__ import annotations

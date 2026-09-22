@@ -1,6 +1,7 @@
 """Task automation for FhY Core, driven by uv-backed nox sessions."""
 
 import pathlib
+from typing import NamedTuple
 
 import nox
 
@@ -12,6 +13,38 @@ ROOT = pathlib.Path(__file__).parent
 SOURCES = ["src", "tests"]
 # `FHY_CORE_NO_EXTENSIONS` value that selects each backend for a test run.
 BACKEND_EXTENSION_SETTINGS = {"rust": "0", "python": "1"}
+GOLDEN_DIRECTORY = ROOT / "rust" / "tests" / "golden"
+
+
+class ExpandedGoldenCorpus(NamedTuple):
+    """How to generate and replay one generator's expanded random corpus."""
+
+    options: str
+    rust_test: str
+    variable: str
+
+
+# Expanded corpus settings for each generator under GOLDEN_DIRECTORY, keyed by
+# file name: the generator options its docstring gives (space-separated), the
+# Rust test target whose ignored test replays the corpus, and the variable that
+# names the corpus file for that test.
+EXPANDED_GOLDEN_CORPORA = {
+    "generate_deterministic_identifier_cases.py": ExpandedGoldenCorpus(
+        options="--seed 7 --random-count 2000 --max-ops 40 --hints a,b,c,d,e",
+        rust_test="deterministic_identifiers_equivalence",
+        variable="FHY_DETERMINISTIC_IDENTIFIER_CORPUS",
+    ),
+    "generate_interned_cases.py": ExpandedGoldenCorpus(
+        options="--seed 7 --random-count 2000 --max-ops 60 --keys a,b,c,d,e",
+        rust_test="interned_equivalence",
+        variable="FHY_INTERNED_CORPUS",
+    ),
+    "generate_tag_type_cases.py": ExpandedGoldenCorpus(
+        options="--seed 7 --random-count 2000 --max-ops 40 --slots s0,s1,s2,s3,s4",
+        rust_test="tag_type_equivalence",
+        variable="FHY_TAG_TYPE_CORPUS",
+    ),
+}
 
 
 def _sync(session: nox.Session, *groups: str) -> None:
@@ -130,6 +163,65 @@ def property(session: nox.Session, backend: str) -> None:
         *session.posargs,
         env={"HYPOTHESIS_PROFILE": "thorough"},
     )
+
+
+@nox.session
+def golden_expanded(session: nox.Session) -> None:
+    """Replay expanded random golden corpora through the Rust equivalence tests.
+
+    The committed corpora under ``rust/tests/golden/`` are small enough to
+    review; each generator can also write a much larger random corpus, which
+    its equivalence test replays in an ignored test that reads the corpus
+    path from an environment variable. The session writes every expanded
+    corpus from the pure-Python oracle into a temporary directory and runs
+    the matching ignored test on it. It needs ``cargo`` on ``PATH`` and fails
+    if a generator has no expanded settings in ``EXPANDED_GOLDEN_CORPORA``.
+    """
+    generators = sorted(GOLDEN_DIRECTORY.glob("generate_*.py"))
+    unconfigured = [
+        generator.name
+        for generator in generators
+        if generator.name not in EXPANDED_GOLDEN_CORPORA
+    ]
+    if unconfigured:
+        session.error(
+            f"no expanded corpus settings for {', '.join(unconfigured)}; "
+            "add them to EXPANDED_GOLDEN_CORPORA in noxfile.py"
+        )
+    _sync(session)
+    _select_backend(session, "python")
+    output_directory = pathlib.Path(session.create_tmp())
+    for generator in generators:
+        corpus = EXPANDED_GOLDEN_CORPORA[generator.name]
+        corpus_path = output_directory / (
+            generator.stem.removeprefix("generate_") + ".json"
+        )
+        # Silent: the oracles log a warning per ignored re-registration. Nox
+        # still prints the captured output if the generator fails.
+        session.run(
+            "python",
+            str(generator),
+            *corpus.options.split(),
+            "--output",
+            str(corpus_path),
+            silent=True,
+        )
+        # `testing` is on for this crate's own tests already; naming it keeps
+        # the deterministic-identifier test, which requires it, from being
+        # skipped if that ever changes.
+        session.run(
+            "cargo",
+            "test",
+            "--locked",
+            "--features",
+            "testing",
+            "--test",
+            corpus.rust_test,
+            "--",
+            "--ignored",
+            env={corpus.variable: str(corpus_path)},
+            external=True,
+        )
 
 
 @nox.session
