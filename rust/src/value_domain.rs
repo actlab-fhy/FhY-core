@@ -23,10 +23,11 @@
 use std::hash::{Hash, Hasher};
 use std::sync::LazyLock;
 
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 
-use crate::identifier::{HasIdentifier, Identifier};
-use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned};
+use crate::buffered_payload::{BufferedMap, BufferedValue};
+use crate::identifier::{HasIdentifier, Identifier, IdentifierPayload};
+use crate::interned::{intern_decoded, Canonical, InternOutcome, InternRegistry, Interned};
 
 /// Open classification of the kind of value an IR operation handles.
 ///
@@ -39,15 +40,10 @@ use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned};
 /// a [`Canonical<ValueDomain>`]. Deserializing a bare `ValueDomain` yields a
 /// value that no registry knows about. Decoding a handle for a name that is
 /// already canonical fails when the payload names a different parent.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValueDomain {
     name: Identifier,
     description: String,
-    // `serde` lets an `Option` field be missing and decode as `None`, but the
-    // Python payload always carries `parent`. Naming a `deserialize_with`
-    // turns off that special case, so a payload without the key is rejected.
-    #[serde(deserialize_with = "Option::deserialize")]
     parent: Option<Canonical<ValueDomain>>,
 }
 
@@ -135,6 +131,63 @@ impl ValueDomain {
                 None => return false,
             }
         }
+    }
+}
+
+/// Decoding checks one level of the payload at a time, outermost first. A
+/// level whose fields are all present, known and well typed restores its name
+/// before the level nested in its `parent` is checked, and each parent is
+/// interned, and so registered, before the domain that holds it is built.
+/// A payload rejected for its structure therefore registers nothing, though
+/// the names of the levels above the defect stay restored. A payload rejected
+/// because a level conflicts with its canonical instance leaves the fresh
+/// parents below that level registered.
+///
+/// The nested levels are read before they are decoded, which needs a
+/// self-describing format such as JSON.
+impl<'de> Deserialize<'de> for ValueDomain {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        ValueDomainPayload::deserialize(deserializer)?.build()
+    }
+}
+
+/// One level of a value-domain payload, checked but not yet built.
+///
+/// Decoding a level touches neither the id counter nor the registry: its name
+/// is held unrestored and its parent is held unread.
+#[derive(Deserialize)]
+#[serde(rename = "ValueDomain", deny_unknown_fields)]
+struct ValueDomainPayload {
+    name: IdentifierPayload,
+    description: String,
+    // `serde` lets an `Option` field be missing and decode as `None`, but the
+    // Python payload always carries `parent`. Naming a `deserialize_with`
+    // turns off that special case, so a payload without the key is rejected.
+    #[serde(deserialize_with = "Option::deserialize")]
+    parent: Option<BufferedMap>,
+}
+
+impl ValueDomainPayload {
+    /// Build the domain this level describes, leaving it unregistered.
+    ///
+    /// Restores the name, then checks, builds and interns the parent level,
+    /// the order in which the Python deserializer takes these steps.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a nested level is malformed or conflicts with the
+    /// canonical instance for its name.
+    fn build<E: de::Error>(self) -> Result<ValueDomain, E> {
+        let name = self.name.restore();
+        let parent = match self.parent {
+            None => None,
+            Some(parent) => {
+                let parent = ValueDomainPayload::deserialize(BufferedValue::from(parent))
+                    .map_err(E::custom)?;
+                Some(intern_decoded(parent.build()?)?)
+            }
+        };
+        Ok(ValueDomain::create(name, self.description, parent))
     }
 }
 
@@ -226,7 +279,9 @@ mod tests {
     use super::*;
     use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-    use crate::test_support::{compute_hash, reserve_pinned_id};
+    use crate::test_support::{
+        compute_hash, has_counter_passed, hold_id_counter, reserve_far_ahead_ids, reserve_pinned_id,
+    };
 
     /// Serializes the test that clears the process-wide registry against the
     /// tests that need their own entries to survive. Registering tests hold
@@ -685,33 +740,6 @@ mod tests {
     }
 
     #[test]
-    fn decoding_a_conflict_keeps_a_fresh_nested_parent_registered() {
-        let _guard = hold_registry();
-        let name = Identifier::new("conflict-with-fresh-parent");
-        let _canonical =
-            ValueDomain::new(name.clone(), "desc", Some(DATA_DOMAIN.clone())).into_canonical();
-        let parent_id = reserve_pinned_id("fresh-nested-parent-anchor");
-        let json = format!(
-            "{{\"name\":{{\"id\":{},\"name_hint\":\"{}\"}},\"description\":\"desc\",\
-             \"parent\":{{\"name\":{{\"id\":{parent_id},\"name_hint\":\"fresh\"}},\
-             \"description\":\"fresh parent\",\"parent\":null}}}}",
-            name.id(),
-            name.name_hint()
-        );
-
-        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
-
-        assert!(error.to_string().contains("conflicts"), "{error}");
-        let parent_name: Identifier =
-            serde_json::from_str(&format!("{{\"id\":{parent_id},\"name_hint\":\"fresh\"}}"))
-                .unwrap();
-        let fresh_parent = ValueDomain::intern_registry()
-            .get(&parent_name)
-            .expect("the nested parent decodes, and so registers, first");
-        assert_eq!(fresh_parent.description(), "fresh parent");
-    }
-
-    #[test]
     fn new_reports_a_matching_duplicate_as_already_canonical() {
         let _guard = hold_registry();
         let name = Identifier::new("matching-description");
@@ -748,6 +776,225 @@ mod tests {
         let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
 
         assert!(error.to_string().contains("parent"), "{error}");
+    }
+
+    /// Return the JSON payload of a domain named `id` whose `parent` field
+    /// holds the JSON `parent` and whose trailing fields are `trailing`.
+    fn encode_domain_payload(id: u64, parent: &str, trailing: &str) -> String {
+        format!(
+            "{{\"name\":{{\"id\":{id},\"name_hint\":\"n{id}\"}},\
+             \"description\":\"d{id}\",\"parent\":{parent}{trailing}}}"
+        )
+    }
+
+    /// Return the domain registered under the id `id`, restoring `id` to
+    /// look it up, so call it only after checking the counter.
+    fn find_registered(id: u64) -> Option<Canonical<ValueDomain>> {
+        ValueDomain::intern_registry().get(&Identifier::restore(id, String::new()))
+    }
+
+    #[test]
+    fn a_payload_rejected_for_a_trailing_unknown_field_registers_its_fresh_parent_nowhere() {
+        let _guard = hold_registry();
+        let _counter = hold_id_counter();
+        let [outer, parent] = reserve_far_ahead_ids("trailing-unknown-anchor");
+        let json = encode_domain_payload(
+            outer,
+            &encode_domain_payload(parent, "null", ""),
+            ",\"zzz\":1",
+        );
+
+        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
+
+        assert!(error.to_string().contains("zzz"), "{error}");
+        assert!(!has_counter_passed(outer));
+        assert_eq!(find_registered(parent), None);
+    }
+
+    #[test]
+    fn a_payload_rejected_for_a_trailing_unknown_field_registers_no_fresh_ancestor() {
+        let _guard = hold_registry();
+        let _counter = hold_id_counter();
+        let [outer, parent, grandparent] = reserve_far_ahead_ids("trailing-unknown-deep-anchor");
+        let json = encode_domain_payload(
+            outer,
+            &encode_domain_payload(parent, &encode_domain_payload(grandparent, "null", ""), ""),
+            ",\"zzz\":1",
+        );
+
+        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
+
+        assert!(error.to_string().contains("zzz"), "{error}");
+        assert!(!has_counter_passed(outer));
+        assert_eq!(find_registered(grandparent), None);
+        assert_eq!(find_registered(parent), None);
+    }
+
+    #[test]
+    fn a_payload_rejected_inside_its_parent_restores_only_the_outer_name() {
+        let _guard = hold_registry();
+        let _counter = hold_id_counter();
+        let [outer, parent, grandparent] = reserve_far_ahead_ids("rejected-parent-anchor");
+        let json = encode_domain_payload(
+            outer,
+            &encode_domain_payload(
+                parent,
+                &encode_domain_payload(grandparent, "null", ""),
+                ",\"zzz\":1",
+            ),
+            "",
+        );
+
+        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
+
+        assert!(error.to_string().contains("zzz"), "{error}");
+        assert!(has_counter_passed(outer));
+        assert!(!has_counter_passed(parent));
+        assert_eq!(find_registered(grandparent), None);
+        assert_eq!(find_registered(parent), None);
+    }
+
+    #[test]
+    fn a_payload_rejected_inside_its_grandparent_restores_the_names_above_it() {
+        let _guard = hold_registry();
+        let _counter = hold_id_counter();
+        let [outer, parent, grandparent] = reserve_far_ahead_ids("rejected-grandparent-anchor");
+        let json = encode_domain_payload(
+            outer,
+            &encode_domain_payload(
+                parent,
+                &encode_domain_payload(grandparent, "null", ",\"zzz\":1"),
+                "",
+            ),
+            "",
+        );
+
+        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
+
+        assert!(error.to_string().contains("zzz"), "{error}");
+        assert!(has_counter_passed(parent));
+        assert!(!has_counter_passed(grandparent));
+        assert_eq!(find_registered(grandparent), None);
+        assert_eq!(find_registered(parent), None);
+    }
+
+    #[test]
+    fn a_payload_whose_parent_key_comes_first_restores_the_outer_name_first() {
+        let _guard = hold_registry();
+        let _counter = hold_id_counter();
+        let [outer, parent] = reserve_far_ahead_ids("parent-first-anchor");
+        let json = format!(
+            "{{\"parent\":{},\"name\":{{\"id\":{outer},\"name_hint\":\"outer\"}},\
+             \"description\":\"desc\"}}",
+            encode_domain_payload(parent, "null", ",\"zzz\":1")
+        );
+
+        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
+
+        assert!(error.to_string().contains("zzz"), "{error}");
+        assert!(has_counter_passed(outer));
+        assert!(!has_counter_passed(parent));
+    }
+
+    #[test]
+    fn a_payload_whose_parent_holds_an_out_of_range_id_restores_only_the_outer_name() {
+        let _guard = hold_registry();
+        let _counter = hold_id_counter();
+        let [outer] = reserve_far_ahead_ids("out-of-range-parent-anchor");
+        let json = encode_domain_payload(
+            outer,
+            &format!(
+                "{{\"name\":{{\"id\":{},\"name_hint\":\"max\"}},\
+                 \"description\":\"desc\",\"parent\":null}}",
+                u64::MAX
+            ),
+            "",
+        );
+
+        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
+
+        assert!(
+            error.to_string().contains("an id below u64::MAX"),
+            "{error}"
+        );
+        assert!(has_counter_passed(outer));
+    }
+
+    #[test]
+    fn a_payload_whose_parent_is_not_a_map_restores_nothing() {
+        let _guard = hold_registry();
+        let _counter = hold_id_counter();
+        let [outer] = reserve_far_ahead_ids("non-map-parent-anchor");
+        let json = encode_domain_payload(outer, "\"data\"", "");
+
+        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
+
+        assert!(error.to_string().contains("invalid type"), "{error}");
+        assert!(!has_counter_passed(outer));
+    }
+
+    #[test]
+    fn a_nested_payload_missing_its_parent_is_rejected() {
+        let _guard = hold_registry();
+        let _counter = hold_id_counter();
+        let [outer, parent] = reserve_far_ahead_ids("nested-missing-parent-anchor");
+        let nested = format!(
+            "{{\"name\":{{\"id\":{parent},\"name_hint\":\"p\"}},\"description\":\"desc\"}}"
+        );
+        let json = encode_domain_payload(outer, &nested, "");
+
+        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
+
+        assert!(
+            error.to_string().contains("missing field `parent`"),
+            "{error}"
+        );
+        assert!(!has_counter_passed(parent));
+    }
+
+    #[test]
+    fn a_conflicting_payload_restores_every_name_and_registers_its_fresh_parent() {
+        let _guard = hold_registry();
+        let _counter = hold_id_counter();
+        let name = Identifier::new("conflict-after-fresh-parent");
+        let canonical =
+            ValueDomain::new(name.clone(), "desc", Some(DATA_DOMAIN.clone())).into_canonical();
+        let [parent] = reserve_far_ahead_ids("conflict-after-fresh-parent-anchor");
+        let json = encode_domain_payload(name.id(), &encode_domain_payload(parent, "null", ""), "");
+
+        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
+
+        assert!(error.to_string().contains("conflicts"), "{error}");
+        assert!(has_counter_passed(parent));
+        let registered_parent = find_registered(parent).expect("the fresh parent registers");
+        assert_eq!(registered_parent.description(), format!("d{parent}"));
+        assert_eq!(ValueDomain::intern_registry().get(&name), Some(canonical));
+    }
+
+    #[test]
+    fn a_payload_whose_parent_conflicts_registers_only_the_fresh_grandparent() {
+        let _guard = hold_registry();
+        let _counter = hold_id_counter();
+        let parent_name = Identifier::new("conflicting-middle");
+        let _canonical_parent =
+            ValueDomain::new(parent_name.clone(), "desc", Some(DATA_DOMAIN.clone()));
+        let [outer, grandparent] = reserve_far_ahead_ids("conflicting-middle-anchor");
+        let json = encode_domain_payload(
+            outer,
+            &encode_domain_payload(
+                parent_name.id(),
+                &encode_domain_payload(grandparent, "null", ""),
+                "",
+            ),
+            "",
+        );
+
+        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
+
+        assert!(error.to_string().contains("conflicts"), "{error}");
+        assert!(has_counter_passed(grandparent));
+        assert!(find_registered(grandparent).is_some());
+        assert_eq!(find_registered(outer), None);
     }
 
     #[test]

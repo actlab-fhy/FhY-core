@@ -26,7 +26,6 @@ use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A type whose values are canonicalized by key.
@@ -381,26 +380,38 @@ impl<T: Serialize> Serialize for Canonical<T> {
 /// the canonical instance without any report: this crate has no logger, so
 /// the ignored metadata is dropped silently.
 ///
-/// A payload's nested handles decode, and so intern, before the value that
-/// holds them. Rejecting that value leaves any fresh nested value registered.
+/// `T`'s own decode runs first and decides what the payload's nested handles
+/// register before the value itself is interned. Rejecting the value as a
+/// conflict leaves registered whatever that decode registered.
 impl<'de, T: Interned + Eq + Deserialize<'de>> Deserialize<'de> for Canonical<T> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = T::deserialize(deserializer)?;
-        match T::intern_registry().intern(value) {
-            InternOutcome::Registered(canonical) => Ok(canonical),
-            InternOutcome::AlreadyCanonical {
-                canonical,
-                discarded,
-            } => {
-                if discarded == *canonical {
-                    Ok(canonical)
-                } else {
-                    Err(D::Error::custom(format_args!(
-                        "payload for {} under key {:?} conflicts with the canonical instance",
-                        std::any::type_name::<T>(),
-                        canonical.intern_key()
-                    )))
-                }
+        intern_decoded(T::deserialize(deserializer)?)
+    }
+}
+
+/// Intern a decoded value and return the canonical handle for its key.
+///
+/// # Errors
+///
+/// Returns an error naming `T` and the key when the key is already canonical
+/// and `value` is unequal to the canonical instance, which stays registered.
+pub(crate) fn intern_decoded<T: Interned + Eq, E: serde::de::Error>(
+    value: T,
+) -> Result<Canonical<T>, E> {
+    match T::intern_registry().intern(value) {
+        InternOutcome::Registered(canonical) => Ok(canonical),
+        InternOutcome::AlreadyCanonical {
+            canonical,
+            discarded,
+        } => {
+            if discarded == *canonical {
+                Ok(canonical)
+            } else {
+                Err(E::custom(format_args!(
+                    "payload for {} under key {:?} conflicts with the canonical instance",
+                    std::any::type_name::<T>(),
+                    canonical.intern_key()
+                )))
             }
         }
     }

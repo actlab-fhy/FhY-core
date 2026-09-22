@@ -5,6 +5,8 @@ pub mod interned;
 pub mod op_attribute;
 pub mod value_domain;
 
+mod buffered_payload;
+
 #[cfg(feature = "python")]
 mod python;
 
