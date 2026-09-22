@@ -187,7 +187,7 @@ cargo clippy --all-targets --features python
 
 ### Building the Python Extension
 
-Install [maturin](https://www.maturin.rs/) (`uv tool install maturin` or `pip install maturin`), then:
+Install [maturin](https://www.maturin.rs/) 1.9.4 or newer (`uv tool install maturin` or `pip install maturin`), then:
 
 ```bash
 # Build and install the extension into the active virtualenv (development mode)

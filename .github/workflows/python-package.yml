@@ -65,11 +65,11 @@ jobs:
         # Clippy only checks, so the python feature costs it no libpython.
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Unit, Integration & Doc Testing
-        # Not --all-features: the python feature turns on pyo3's
-        # extension-module, which leaves libpython unlinked and so may not
-        # link a test binary. It carries no Rust test of its own either — the
-        # tests job drives the bindings from Python.
-        run: cargo test --locked
+        # --all-features compiles the python feature into the test binaries
+        # too. pyo3 leaves libpython unlinked only when maturin sets
+        # PYO3_BUILD_EXTENSION_MODULE for a wheel build, so a plain cargo
+        # build links the runner's Python and the test binaries run.
+        run: cargo test --locked --all-features
       - name: Packaging
         # Pack the crate as crates.io would receive it (the include list in
         # Cargo.toml decides what that is) and build the library from it.
