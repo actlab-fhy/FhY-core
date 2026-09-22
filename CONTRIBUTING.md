@@ -311,7 +311,8 @@ is sound only because of the one-extension rule above.
   at the same time.
 - Benchmark before deleting. Measure the module's hot paths (construction,
   equality, hashing, attribute access, and whatever the module does most)
-  on both backends. When the Rust-backed version is at most 10% slower
+  on both backends with a throwaway script, and delete the script once the
+  decision is made. When the Rust-backed version is at most 10% slower
   than the Python one on every measured path, delete the pure-Python
   implementation. When it is more than 10% slower on any path, usually
   because every call crosses into the extension, the maintainer decides
