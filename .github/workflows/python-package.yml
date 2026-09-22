@@ -8,8 +8,9 @@
 #
 # The rust and rust-msrv jobs cover the crate directly: the Python jobs only
 # compile it as an extension module and reach it through the identifier
-# bindings. The golden job regenerates the corpora those crate tests replay
-# from the Python implementation and fails if a committed one has drifted.
+# bindings. The tests job also checks the golden corpora those crate tests
+# replay against the Python generators that record them
+# (tests/test_golden_corpora.py).
 # ci-ok aggregates the required jobs into one check.
 
 name: FhY-core CI
@@ -117,19 +118,6 @@ jobs:
           cargo +${{ steps.toolchain.outputs.name }} check --lib --locked
           cargo +${{ steps.toolchain.outputs.name }} check --lib --all-features --locked
 
-  golden:
-    runs-on: "ubuntu-latest"
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-      - name: Golden Corpus Drift Check
-        run: uv run nox -s golden
-
   config:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -233,7 +221,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [style, rust, rust-msrv, golden, tests, property]
+    needs: [style, rust, rust-msrv, tests, property]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -242,13 +230,11 @@ jobs:
           echo "style: ${{ needs.style.result }}"
           echo "rust: ${{ needs.rust.result }}"
           echo "rust-msrv: ${{ needs['rust-msrv'].result }}"
-          echo "golden: ${{ needs.golden.result }}"
           echo "tests: ${{ needs.tests.result }}"
           echo "property: ${{ needs.property.result }}"
           if [[ "${{ needs.style.result }}" != "success" \
              || "${{ needs.rust.result }}" != "success" \
              || "${{ needs['rust-msrv'].result }}" != "success" \
-             || "${{ needs.golden.result }}" != "success" \
              || "${{ needs.tests.result }}" != "success" ]]; then
             echo "::error::A required job did not succeed."
             exit 1

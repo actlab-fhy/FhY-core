@@ -238,8 +238,8 @@ The `property` job only runs on pull requests into `main` and on manual
 dispatch; it does not run on pull requests into `dev`. Run
 `uv run nox -s property` locally before opening a release pull request.
 
-The `rust`, `rust-msrv`, and `golden` jobs run on every pull request, and
-`ci-ok` requires all three. `rust` runs `cargo fmt --all --check`, `cargo
+The `rust` and `rust-msrv` jobs run on every pull request, and `ci-ok`
+requires both. `rust` runs `cargo fmt --all --check`, `cargo
 clippy --all-targets --all-features --locked -- -D warnings`, `cargo test
 --locked --all-features`, and `cargo package --locked`, then unpacks the
 packaged crate and runs `cargo test --locked --features testing` in it, so
@@ -252,11 +252,13 @@ build on it and `cargo update` keeps `Cargo.lock` within it.
 
 The Rust equivalence tests replay golden corpora under `rust/tests/golden/`,
 each recorded from the Python implementation by the `generate_*.py` script
-beside it. The `golden` job runs `uv run nox -s golden`: it reruns every
-generator on the pure-Python backend and fails, printing the regeneration
-command and a diff, if a committed corpus differs outside its `provenance`
-block. After changing the Python behavior a
-corpus records, regenerate it and commit the result.
+beside it. `tests/test_golden_corpora.py` reruns every generator in a fresh
+interpreter on the backend the test run selected, so the `tests` sessions
+check the corpora on both backends and every supported Python. It fails,
+printing the regeneration command and a diff, if a committed corpus differs
+outside its `provenance` block or a generator has no committed corpus. After
+changing the Python behavior a corpus records, regenerate it and commit the
+result.
 
 Mutation testing measures whether a property earned its place: it makes
 small changes to the source and checks that some test fails. Each targeted
