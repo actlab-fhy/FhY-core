@@ -25,6 +25,19 @@ def _sync(session: nox.Session, *groups: str) -> None:
     )
 
 
+def _select_backend(session: nox.Session, backend: str) -> None:
+    """Select the session's backend and fail unless the package reports it."""
+    session.env["FHY_CORE_NO_EXTENSIONS"] = BACKEND_EXTENSION_SETTINGS[backend]
+    is_rust_expected = backend == "rust"
+    session.run(
+        "python",
+        "-c",
+        "import sys, fhy_core; "
+        f"sys.exit(None if fhy_core.RUST_BACKEND_AVAILABLE is {is_rust_expected} "
+        f"else 'expected RUST_BACKEND_AVAILABLE to be {is_rust_expected}')",
+    )
+
+
 @nox.session(python=PYTHONS)
 @nox.parametrize("backend", list(BACKEND_EXTENSION_SETTINGS))
 def tests(session: nox.Session, backend: str) -> None:
@@ -35,15 +48,7 @@ def tests(session: nox.Session, backend: str) -> None:
     so an extension that silently fails to import cannot pass as a Rust run.
     """
     _sync(session, "test")
-    session.env["FHY_CORE_NO_EXTENSIONS"] = BACKEND_EXTENSION_SETTINGS[backend]
-    is_rust_expected = backend == "rust"
-    session.run(
-        "python",
-        "-c",
-        "import sys, fhy_core; "
-        f"sys.exit(None if fhy_core.RUST_BACKEND_AVAILABLE is {is_rust_expected} "
-        f"else 'expected RUST_BACKEND_AVAILABLE to be {is_rust_expected}')",
-    )
+    _select_backend(session, backend)
     # Start coverage inside pytest-xdist worker subprocesses.
     purelib = session.run(
         "python",
