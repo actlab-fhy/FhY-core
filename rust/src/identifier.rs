@@ -242,7 +242,26 @@ impl Serialize for Identifier {
     }
 }
 
-impl<'de> Deserialize<'de> for Identifier {
+/// A decoded identifier payload whose id has not been restored yet.
+///
+/// Decoding one checks the payload's fields and rejects the id `u64::MAX`
+/// without touching the global counter, so a caller can check a whole
+/// payload before any id in it advances the counter.
+pub(crate) struct IdentifierPayload {
+    id: u64,
+    name_hint: String,
+}
+
+impl IdentifierPayload {
+    /// Restore the identifier, advancing the global counter past its id.
+    pub(crate) fn restore(self) -> Identifier {
+        // Always consult the real counter, even inside a
+        // deterministic-identifier scope.
+        Identifier::restore(self.id, self.name_hint)
+    }
+}
+
+impl<'de> Deserialize<'de> for IdentifierPayload {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -257,7 +276,7 @@ impl<'de> Deserialize<'de> for Identifier {
         struct IdentifierVisitor;
 
         impl<'de> Visitor<'de> for IdentifierVisitor {
-            type Value = Identifier;
+            type Value = IdentifierPayload;
 
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                 formatter.write_str("a map with an `id` and a `name_hint`")
@@ -294,14 +313,21 @@ impl<'de> Deserialize<'de> for Identifier {
                         &"an id below u64::MAX",
                     ));
                 }
-                // Always consult the real counter, even inside a
-                // deterministic-identifier scope.
-                Ok(Identifier::restore(id, name_hint))
+                Ok(IdentifierPayload { id, name_hint })
             }
         }
 
         const FIELDS: &[&str] = &["id", "name_hint"];
         deserializer.deserialize_struct("Identifier", FIELDS, IdentifierVisitor)
+    }
+}
+
+impl<'de> Deserialize<'de> for Identifier {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        IdentifierPayload::deserialize(deserializer).map(IdentifierPayload::restore)
     }
 }
 
