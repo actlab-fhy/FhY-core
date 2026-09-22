@@ -235,6 +235,14 @@ The `property` job only runs on pull requests into `main` and on manual
 dispatch; it does not run on pull requests into `dev`. Run
 `uv run nox -s property` locally before opening a release pull request.
 
+The `rust` and `rust-msrv` jobs run on every pull request, and `ci-ok`
+requires both. `rust` runs `cargo fmt --all --check`, `cargo clippy
+--all-targets --all-features -- -D warnings`, `cargo test`, and `cargo
+package`; `rust-msrv` builds the library on the `rust-version` in
+`Cargo.toml`. That version is a promise to crates.io consumers, so
+`.cargo/config.toml` has the resolver fall back to dependency releases that
+build on it and `cargo update` keeps `Cargo.lock` within it.
+
 Mutation testing measures whether a property earned its place: it makes
 small changes to the source and checks that some test fails. Each targeted
 module has its own config under `cosmic-ray/`; run one with

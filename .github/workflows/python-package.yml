@@ -5,7 +5,10 @@
 # PRs and a FULL matrix (3 OSes x 5 Pythons) for release gates (-> main), main
 # pushes, and manual dispatch. The property job (hypothesis suites) runs only
 # on release gates (PRs -> main) and manual dispatch — never on dev PRs.
-# ci-ok aggregates the required jobs into one check.
+#
+# The rust and rust-msrv jobs cover the crate directly: the Python jobs only
+# compile it as an extension module and reach it through the identifier
+# bindings. ci-ok aggregates the required jobs into one check.
 
 name: FhY-core CI
 
@@ -41,6 +44,67 @@ jobs:
       - name: Static Type Safety Check
         if: always()
         run: uv run nox -s type_check
+
+  rust:
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Cache Rust Build Artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Code Formatting
+        run: cargo fmt --all --check
+      - name: Code Linting
+        # Clippy only checks, so the python feature costs it no libpython.
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - name: Unit, Integration & Doc Testing
+        # Not --all-features: the python feature turns on pyo3's
+        # extension-module, which leaves libpython unlinked and so may not
+        # link a test binary. It carries no Rust test of its own either — the
+        # tests job drives the bindings from Python.
+        run: cargo test --locked
+      - name: Packaging
+        # Pack the crate as crates.io would receive it (the include list in
+        # Cargo.toml decides what that is) and build the library from it.
+        run: cargo package --locked
+
+  rust-msrv:
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Read the MSRV
+        # From Cargo.toml, so the version tested is the version promised.
+        id: msrv
+        run: |
+          VERSION="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)"
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::No rust-version in Cargo.toml."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "MSRV -> $VERSION"
+      - name: Install Rust ${{ steps.msrv.outputs.version }}
+        # The ref pins the action; the input picks the Rust version.
+        id: toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - name: Cache Rust Build Artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Build the Library on the MSRV
+        # `cargo +<toolchain>`: rust-toolchain.toml pins the channel to stable
+        # and would otherwise win over the toolchain installed here. Both
+        # feature sets, since each drops code the other compiles.
+        run: |
+          cargo +${{ steps.toolchain.outputs.name }} check --lib --locked
+          cargo +${{ steps.toolchain.outputs.name }} check --lib --all-features --locked
 
   config:
     runs-on: ubuntu-latest
@@ -145,16 +209,21 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [style, tests, property]
+    needs: [style, rust, rust-msrv, tests, property]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Verify required jobs succeeded
         run: |
           echo "style: ${{ needs.style.result }}"
+          echo "rust: ${{ needs.rust.result }}"
+          echo "rust-msrv: ${{ needs['rust-msrv'].result }}"
           echo "tests: ${{ needs.tests.result }}"
           echo "property: ${{ needs.property.result }}"
-          if [[ "${{ needs.style.result }}" != "success" || "${{ needs.tests.result }}" != "success" ]]; then
+          if [[ "${{ needs.style.result }}" != "success" \
+             || "${{ needs.rust.result }}" != "success" \
+             || "${{ needs['rust-msrv'].result }}" != "success" \
+             || "${{ needs.tests.result }}" != "success" ]]; then
             echo "::error::A required job did not succeed."
             exit 1
           fi
