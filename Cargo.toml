@@ -31,6 +31,18 @@ path = "rust/tests/tag_type_equivalence.rs"
 name = "tag_type_stories"
 path = "rust/tests/tag_type_stories.rs"
 
+[[test]]
+name = "deterministic_identifiers_stories"
+path = "rust/tests/deterministic_identifiers_stories.rs"
+
+[[test]]
+name = "deterministic_identifiers_constants"
+path = "rust/tests/deterministic_identifiers_constants.rs"
+
+[[test]]
+name = "deterministic_identifiers_equivalence"
+path = "rust/tests/deterministic_identifiers_equivalence.rs"
+
 [features]
 default = []
 python = ["dep:pyo3"]
