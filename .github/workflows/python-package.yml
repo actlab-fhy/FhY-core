@@ -3,8 +3,10 @@
 #
 # The config job selects a LEAN matrix (ubuntu x py3.10/3.14) for everyday dev
 # PRs and a FULL matrix (3 OSes x 5 Pythons) for release gates (-> main), main
-# pushes, and manual dispatch. The property job (hypothesis suites) runs only
-# on release gates (PRs -> main) and manual dispatch — never on dev PRs.
+# pushes, and manual dispatch. The property job (hypothesis suites) and the
+# golden-expanded job (large random golden corpora replayed through the Rust
+# equivalence tests) run only on release gates (PRs -> main) and manual
+# dispatch — never on dev PRs.
 #
 # The rust and rust-msrv jobs cover the crate directly: the Python jobs only
 # compile it as an extension module and reach it through the identifier
@@ -191,6 +193,29 @@ jobs:
       - name: Property-Based Testing
         run: uv run nox -s property
 
+  golden-expanded:
+    # Release gate only, like property: the tests job checks the committed
+    # golden corpora on every PR; this replays much larger random corpora
+    # from the Python oracle through the Rust equivalence tests.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.base_ref == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust Build Artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Expanded Golden Corpus Equivalence
+        run: uv run nox -s golden_expanded
+
   coverage:
     runs-on: "ubuntu-latest"
     needs: [tests]
@@ -221,7 +246,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [style, rust, rust-msrv, tests, property]
+    needs: [style, rust, rust-msrv, tests, property, golden-expanded]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -232,6 +257,7 @@ jobs:
           echo "rust-msrv: ${{ needs['rust-msrv'].result }}"
           echo "tests: ${{ needs.tests.result }}"
           echo "property: ${{ needs.property.result }}"
+          echo "golden-expanded: ${{ needs['golden-expanded'].result }}"
           if [[ "${{ needs.style.result }}" != "success" \
              || "${{ needs.rust.result }}" != "success" \
              || "${{ needs['rust-msrv'].result }}" != "success" \
@@ -239,9 +265,14 @@ jobs:
             echo "::error::A required job did not succeed."
             exit 1
           fi
-          # property is conditional: skipped is fine (dev PRs), failure is not.
+          # property and golden-expanded are conditional: skipped is fine
+          # (dev PRs), failure is not.
           if [[ "${{ needs.property.result }}" != "success" && "${{ needs.property.result }}" != "skipped" ]]; then
             echo "::error::The property job ran and did not succeed."
+            exit 1
+          fi
+          if [[ "${{ needs['golden-expanded'].result }}" != "success" && "${{ needs['golden-expanded'].result }}" != "skipped" ]]; then
+            echo "::error::The golden-expanded job ran and did not succeed."
             exit 1
           fi
           echo "All required jobs passed."

@@ -234,9 +234,10 @@ than the profile.
 
 ### CI policy and mutation testing
 
-The `property` job only runs on pull requests into `main` and on manual
-dispatch; it does not run on pull requests into `dev`. Run
-`uv run nox -s property` locally before opening a release pull request.
+The `property` and `golden-expanded` jobs only run on pull requests into
+`main` and on manual dispatch; they do not run on pull requests into `dev`.
+Run `uv run nox -s property` and `uv run nox -s golden_expanded` locally
+before opening a release pull request.
 
 The `rust` and `rust-msrv` jobs run on every pull request, and `ci-ok`
 requires both. `rust` runs `cargo fmt --all --check`, `cargo
@@ -261,6 +262,14 @@ outside its `provenance` block or a generator has no committed corpus. The
 whenever a commit touches `src/fhy_core/` or `rust/tests/golden/`. After
 changing the Python behavior a corpus records, regenerate it and commit the
 result.
+
+Each generator can also write a much larger random corpus, which an ignored
+test in its equivalence test file replays from the path in an environment
+variable. `uv run nox -s golden_expanded` writes every expanded corpus from
+the pure-Python backend and runs those ignored tests on them (it needs
+`cargo`); the `golden-expanded` job runs it on the same triggers as the
+`property` job. A new generator needs an entry in `EXPANDED_GOLDEN_CORPORA`
+in `noxfile.py`, or the session fails.
 
 Mutation testing measures whether a property earned its place: it makes
 small changes to the source and checks that some test fails. Each targeted
