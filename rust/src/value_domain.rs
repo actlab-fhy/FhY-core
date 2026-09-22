@@ -30,8 +30,10 @@ use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned};
 
 /// Open classification of the kind of value an IR operation handles.
 ///
-/// Two domains are equal when they carry the same [`Identifier`] and the same
-/// parent, whatever their descriptions say.
+/// Two domains are equal when they carry the same [`Identifier`] and equal
+/// parents, whatever their descriptions say. Parents compare by value up the
+/// whole chain, not by handle, so a chain rebuilt after the registry is
+/// cleared equals the chain built before it.
 ///
 /// Decoding a domain canonicalizes it only through the handle, so deserialize
 /// a [`Canonical<ValueDomain>`]. Deserializing a bare `ValueDomain` yields a
@@ -157,7 +159,7 @@ impl Interned for ValueDomain {
 
 impl PartialEq for ValueDomain {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && self.parent == other.parent
+        self.name == other.name && self.parent.as_deref() == other.parent.as_deref()
     }
 }
 
@@ -166,7 +168,7 @@ impl Eq for ValueDomain {}
 impl Hash for ValueDomain {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.name.hash(state);
-        self.parent.hash(state);
+        self.parent.as_deref().hash(state);
     }
 }
 
@@ -440,6 +442,50 @@ mod tests {
                 Some((*default).clone())
             );
         }
+    }
+
+    #[test]
+    fn a_chain_rebuilt_after_a_clear_equals_the_chain_built_before_it() {
+        let _guard = hold_registry_exclusively();
+        let root_name = Identifier::new("rebuilt-root");
+        let middle_name = Identifier::new("rebuilt-middle");
+        let leaf_name = Identifier::new("rebuilt-leaf");
+        let build_chain = || {
+            let root = ValueDomain::new(root_name.clone(), "root", None).into_canonical();
+            let middle =
+                ValueDomain::new(middle_name.clone(), "middle", Some(root)).into_canonical();
+            let leaf =
+                ValueDomain::new(leaf_name.clone(), "leaf", Some(middle.clone())).into_canonical();
+            (middle, leaf)
+        };
+        let (middle_before, leaf_before) = build_chain();
+
+        ValueDomain::intern_registry().clear();
+        let (middle_after, leaf_after) = build_chain();
+
+        assert_ne!(leaf_before, leaf_after);
+        assert_eq!(*middle_before, *middle_after);
+        assert_eq!(*leaf_before, *leaf_after);
+        assert_eq!(compute_hash(&*leaf_before), compute_hash(&*leaf_after));
+        assert!(leaf_after.is_subdomain_of(&middle_before));
+    }
+
+    #[test]
+    fn domains_whose_parents_differ_further_up_the_chain_are_unequal() {
+        let _guard = hold_registry_exclusively();
+        let root_name = Identifier::new("regrafted-root");
+        let middle_name = Identifier::new("regrafted-middle");
+        let root_before = ValueDomain::new(root_name.clone(), "root", None).into_canonical();
+        let middle_before =
+            ValueDomain::new(middle_name.clone(), "middle", Some(root_before)).into_canonical();
+
+        ValueDomain::intern_registry().clear();
+        let root_after =
+            ValueDomain::new(root_name, "root", Some(DATA_DOMAIN.clone())).into_canonical();
+        let middle_after =
+            ValueDomain::new(middle_name, "middle", Some(root_after)).into_canonical();
+
+        assert_ne!(*middle_before, *middle_after);
     }
 
     #[test]

@@ -16,7 +16,9 @@
 //! functions on separate threads, and running two of these concurrently
 //! would race a `clear()` in one script against an intern in another.
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
 use fhy_core::identifier::Identifier;
 use fhy_core::interned::{Canonical, InternOutcome, Interned};
@@ -74,6 +76,13 @@ impl SlotTable {
             String::as_str,
         )
     }
+}
+
+/// Return `value`'s hash under the default hasher.
+fn compute_hash<T: Hash>(value: &T) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn create_op_attribute_slots() -> SlotTable {
@@ -754,10 +763,63 @@ fn check_is_subdomain_of_with_duplicate(
     }
 }
 
+/// Set a slot's current canonical domain aside under the op's label.
+fn hold_domain(
+    slots: &mut SlotTable,
+    held: &mut HashMap<String, Canonical<ValueDomain>>,
+    op: &Value,
+) {
+    let slot = op["slot"].as_str().expect("hold op has a slot");
+    let label = op["label"].as_str().expect("hold op has a label");
+    let canonical = ValueDomain::intern_registry()
+        .require(&slots.resolve_identifier(slot))
+        .expect("golden data only holds a registered slot");
+    held.insert(label.to_string(), canonical);
+}
+
+/// Compare a held domain with a slot's current canonical domain.
+///
+/// A held domain may predate a clear, so its parent is a different instance
+/// from the current canonical's parent even when the two chains carry the
+/// same names. Equal domains must also hash equally.
+fn check_eq_held_domain(
+    slots: &mut SlotTable,
+    held: &HashMap<String, Canonical<ValueDomain>>,
+    name: &str,
+    index: usize,
+    op: &Value,
+    mismatches: &mut Vec<String>,
+) {
+    let label = op["label"].as_str().expect("eq_held op has a label");
+    let slot = op["slot"].as_str().expect("eq_held op has a slot");
+    let held_domain = held
+        .get(label)
+        .unwrap_or_else(|| panic!("case {name} op {index}: nothing is held under {label:?}"));
+    let canonical = ValueDomain::intern_registry()
+        .require(&slots.resolve_identifier(slot))
+        .expect("golden data only compares a held domain with a registered slot");
+    let expected = op["expected"]["result"]
+        .as_bool()
+        .expect("eq_held expectation has `result`");
+
+    let actual = **held_domain == *canonical;
+    if actual != expected {
+        mismatches.push(format!(
+            "case {name} op {index}: expected result={expected}, got {actual}"
+        ));
+    }
+    if actual && compute_hash(&**held_domain) != compute_hash(&*canonical) {
+        mismatches.push(format!(
+            "case {name} op {index}: equal domains hash differently"
+        ));
+    }
+}
+
 fn replay_value_domain_case(case: &Value, mismatches: &mut Vec<String>) {
     let name = case["name"].as_str().expect("case has a name");
     let ops = case["ops"].as_array().expect("case has an ops array");
     let mut slots = create_value_domain_slots();
+    let mut held = HashMap::new();
 
     for (index, op) in ops.iter().enumerate() {
         match op["op"].as_str().expect("op has a kind") {
@@ -775,6 +837,8 @@ fn replay_value_domain_case(case: &Value, mismatches: &mut Vec<String>) {
             "is_subdomain_of_with_duplicate" => {
                 check_is_subdomain_of_with_duplicate(&mut slots, name, index, op, mismatches);
             }
+            "hold" => hold_domain(&mut slots, &mut held, op),
+            "eq_held" => check_eq_held_domain(&mut slots, &held, name, index, op, mismatches),
             other => panic!("case {name} op {index}: unknown value_domain op kind {other:?}"),
         }
     }

@@ -94,7 +94,9 @@ class _ScriptContext:
     shipped constant's identifier instead. `registered_slots` tracks which
     slots currently hold the canonical instance for their identifier, so
     script construction can restrict operations such as `encode` or a
-    `parent_slot` reference to slots that are actually interned.
+    `parent_slot` reference to slots that are actually interned. `held`
+    keeps instances a `hold` operation set aside under a label, so a later
+    operation can compare them with instances built after a clear.
     """
 
     def __init__(self, kind: str, cls: type, defaults: dict[str, Any]) -> None:
@@ -107,6 +109,7 @@ class _ScriptContext:
         # `set` would iterate in an order that depends on the process's
         # string hash seed, so a seeded run would not reproduce.
         self.registered_slots: dict[str, None] = {}
+        self.held: dict[str, Any] = {}
         for slot, instance in defaults.items():
             self.bind_slot(slot, instance.name.id)
             self.mark_registered(slot)
@@ -288,6 +291,14 @@ def _build_is_subdomain_of_with_duplicate_op(
         "other_description": other_description,
         "other_parent_slot": other_parent_slot,
     }
+
+
+def _build_hold_op(slot: str, label: str) -> dict[str, Any]:
+    return {"op": "hold", "slot": slot, "label": label}
+
+
+def _build_eq_held_op(label: str, slot: str) -> dict[str, Any]:
+    return {"op": "eq_held", "label": label, "slot": slot}
 
 
 def _build_identifier_payload(slot: str) -> dict[str, Any]:
@@ -495,6 +506,25 @@ def _run_is_subdomain_of_with_duplicate(
     return {"result": self_domain.is_subdomain_of(fresh_other)}
 
 
+def _run_hold(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
+    """Set a slot's current canonical instance aside under `op["label"]`."""
+    identifier = ctx.resolve_identifier(op["slot"])
+    ctx.held[op["label"]] = ctx.cls.require_interned(identifier)
+    return {}
+
+
+def _run_eq_held(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
+    """Compare a held instance with a slot's current canonical instance.
+
+    A held instance may predate a clear, so this reaches `==` between two
+    instances built independently for one identifier, whose parents are
+    distinct instances that compare by value.
+    """
+    held = ctx.held[op["label"]]
+    canonical = ctx.cls.require_interned(ctx.resolve_identifier(op["slot"]))
+    return {"result": held == canonical}
+
+
 _OP_RUNNERS: dict[str, Callable[[_ScriptContext, dict[str, Any]], dict[str, Any]]] = {
     "new": _run_new,
     "get": _run_get,
@@ -506,6 +536,8 @@ _OP_RUNNERS: dict[str, Callable[[_ScriptContext, dict[str, Any]], dict[str, Any]
     "eq": _run_eq,
     "eq_with_duplicate": _run_eq_with_duplicate,
     "is_subdomain_of_with_duplicate": _run_is_subdomain_of_with_duplicate,
+    "hold": _run_hold,
+    "eq_held": _run_eq_held,
 }
 
 
@@ -750,6 +782,34 @@ def _list_hand_picked_domain_scripts() -> list[tuple[str, list[dict[str, Any]]]]
                 ),
                 _build_require_op("mid3"),
                 _build_is_subdomain_of_op("leaf3", "mid3"),
+            ],
+        ),
+        (
+            "a_chain_rebuilt_after_a_clear_equals_the_chain_built_before_it",
+            [
+                _build_new_domain_op("root5", _next_description()),
+                _build_new_domain_op("mid5", _next_description(), parent_slot="root5"),
+                _build_new_domain_op("leaf5", _next_description(), parent_slot="mid5"),
+                _build_hold_op("mid5", "mid5_before"),
+                _build_hold_op("leaf5", "leaf5_before"),
+                _build_clear_op(),
+                _build_new_domain_op("root5", _next_description()),
+                _build_new_domain_op("mid5", _next_description(), parent_slot="root5"),
+                _build_new_domain_op("leaf5", _next_description(), parent_slot="mid5"),
+                _build_eq_held_op("mid5_before", "mid5"),
+                _build_eq_held_op("leaf5_before", "leaf5"),
+            ],
+        ),
+        (
+            "a_chain_regrafted_after_a_clear_differs_from_the_chain_built_before_it",
+            [
+                _build_new_domain_op("root6", _next_description()),
+                _build_new_domain_op("mid6", _next_description(), parent_slot="root6"),
+                _build_hold_op("mid6", "mid6_before"),
+                _build_clear_op(),
+                _build_new_domain_op("root6", _next_description(), parent_slot="data"),
+                _build_new_domain_op("mid6", _next_description(), parent_slot="root6"),
+                _build_eq_held_op("mid6_before", "mid6"),
             ],
         ),
     ]
