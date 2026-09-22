@@ -64,6 +64,16 @@ python-source = "src"
 module-name = "fhy_core._rs"
 manifest-path = "Cargo.toml"
 
+[tool.uv]
+# uv reuses a built project unless one of these changes, so list the Rust
+# sources the extension is compiled from alongside the default pyproject.toml.
+cache-keys = [
+   { file = "pyproject.toml" },
+   { file = "Cargo.toml" },
+   { file = "Cargo.lock" },
+   { file = "rust/src/**/*.rs" },
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-n auto -rfEs --strict-markers --durations=20 -m 'not slow'"
