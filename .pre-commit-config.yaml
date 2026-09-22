@@ -41,3 +41,13 @@ repos:
         language: system
         types_or: [python, pyi, jupyter]
         require_serial: true
+      # Rerun the golden-corpus generators when the Python oracle, a generator
+      # or a corpus changes, so a stale corpus fails here rather than in CI.
+      # -n0: the generators finish in about 1.5 s run serially, sooner than
+      # xdist workers start.
+      - id: golden-corpora
+        name: golden corpora match their generators
+        entry: uv run pytest -q -n0 tests/test_golden_corpora.py
+        language: system
+        files: ^(src/fhy_core/|rust/tests/golden/|tests/test_golden_corpora\.py$)
+        pass_filenames: false

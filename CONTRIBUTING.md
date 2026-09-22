@@ -256,7 +256,9 @@ beside it. `tests/test_golden_corpora.py` reruns every generator in a fresh
 interpreter on the backend the test run selected, so the `tests` sessions
 check the corpora on both backends and every supported Python. It fails,
 printing the regeneration command and a diff, if a committed corpus differs
-outside its `provenance` block or a generator has no committed corpus. After
+outside its `provenance` block or a generator has no committed corpus. The
+`golden-corpora` pre-commit hook runs the same module, in about two seconds,
+whenever a commit touches `src/fhy_core/` or `rust/tests/golden/`. After
 changing the Python behavior a corpus records, regenerate it and commit the
 result.
 
