@@ -171,10 +171,11 @@ impl Hash for ValueDomain {
 }
 
 /// Name of the domain shipped as [`DATA_DOMAIN`].
-static DATA_DOMAIN_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("data"));
+static DATA_DOMAIN_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new_unscoped("data"));
 
 /// Name of the domain shipped as [`ADDRESS_DOMAIN`].
-static ADDRESS_DOMAIN_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("address"));
+static ADDRESS_DOMAIN_NAME: LazyLock<Identifier> =
+    LazyLock::new(|| Identifier::new_unscoped("address"));
 
 /// Build the domains this module ships, in registration order.
 ///

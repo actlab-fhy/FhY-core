@@ -8,6 +8,9 @@ pub mod value_domain;
 #[cfg(feature = "python")]
 mod python;
 
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+
 #[cfg(test)]
 mod test_support;
 

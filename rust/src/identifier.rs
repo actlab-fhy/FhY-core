@@ -64,8 +64,8 @@ impl Identifier {
     /// the global counter so `id` is never re-issued to a later
     /// construction.
     ///
-    /// This is the deserialization path: it bypasses the testing
-    /// determinism seam entirely and always consults the real global
+    /// This is the deserialization path: it ignores any
+    /// deterministic-identifier scope and always consults the real global
     /// counter.
     ///
     /// # Panics
@@ -76,6 +76,20 @@ impl Identifier {
         advance_counter_past(id);
         Self {
             id,
+            name_hint: Arc::from(name_hint),
+        }
+    }
+
+    /// Construct an identifier whose id always comes from the global
+    /// counter, even inside a deterministic-identifier scope.
+    ///
+    /// For identifiers held by this crate's shipped statics, which are created
+    /// on first use: a scope must never hand a test identifier the id of a
+    /// shipped constant.
+    #[must_use]
+    pub(crate) fn new_unscoped(name_hint: &str) -> Self {
+        Self {
+            id: allocate_id(),
             name_hint: Arc::from(name_hint),
         }
     }
@@ -92,19 +106,17 @@ impl Identifier {
         &self.name_hint
     }
 
-    /// Grab the next id for `name_hint`, consulting the active testing
-    /// strategy (if any) before falling back to the global counter.
+    /// Return the id `name_hint` receives inside the current thread's
+    /// deterministic-identifier scope, or the next id from the global counter
+    /// outside one.
+    #[cfg(any(test, feature = "testing"))]
     fn next_id(name_hint: &str) -> u64 {
-        #[cfg(test)]
-        {
-            if let Some(id) = testing::next_deterministic_id(name_hint) {
-                return id;
-            }
-        }
-        #[cfg(not(test))]
-        {
-            let _ = name_hint;
-        }
+        crate::testing::find_scoped_id(name_hint).unwrap_or_else(allocate_id)
+    }
+
+    /// Return the next id from the global counter.
+    #[cfg(not(any(test, feature = "testing")))]
+    fn next_id(_name_hint: &str) -> u64 {
         allocate_id()
     }
 }
@@ -258,105 +270,6 @@ pub trait HasIdentifier {
     /// Return the type's stable identifier.
     #[must_use]
     fn identifier(&self) -> &Identifier;
-}
-
-/// Testing-only determinism seam for [`Identifier`] construction.
-///
-/// Production code always draws ids from the process-global counter. Tests
-/// that need to compare object graphs containing internally-created
-/// identifiers can install [`DeterministicIds`] to make `Identifier::new`
-/// assign the same id to every identifier sharing a `name_hint`, without
-/// touching [`Identifier::deserialize`].
-#[cfg(test)]
-pub mod testing {
-    use super::{allocate_id, Identifier};
-    use std::cell::RefCell;
-    use std::collections::HashMap;
-
-    #[derive(Debug)]
-    enum IdStrategy {
-        Deterministic(HashMap<String, u64>),
-    }
-
-    thread_local! {
-        static ID_STRATEGY: RefCell<Option<IdStrategy>> = const { RefCell::new(None) };
-    }
-
-    /// Consult the active strategy for `name_hint`, returning `None` when
-    /// the default (monotonic) strategy is in effect.
-    pub(super) fn next_deterministic_id(name_hint: &str) -> Option<u64> {
-        ID_STRATEGY.with(|cell| {
-            let mut strategy = cell.borrow_mut();
-            match strategy.as_mut() {
-                Some(IdStrategy::Deterministic(name_hint_to_id)) => {
-                    let id = *name_hint_to_id
-                        .entry(name_hint.to_string())
-                        .or_insert_with(allocate_id);
-                    Some(id)
-                }
-                None => None,
-            }
-        })
-    }
-
-    /// RAII guard that makes every [`Identifier::new`] call on the current
-    /// thread deterministic for the guard's lifetime: identifiers sharing a
-    /// `name_hint` receive the same id, and identifiers with distinct name
-    /// hints receive distinct, freshly-allocated ids.
-    ///
-    /// Dropping the guard restores whatever strategy (if any) was active
-    /// before it was installed, so guards may be nested.
-    #[derive(Debug)]
-    pub struct DeterministicIds {
-        previous: Option<IdStrategy>,
-    }
-
-    impl DeterministicIds {
-        /// Install a fresh deterministic strategy on the current thread,
-        /// returning a guard that restores the prior strategy on drop.
-        #[must_use]
-        pub fn install() -> Self {
-            let previous = ID_STRATEGY
-                .with(|cell| cell.replace(Some(IdStrategy::Deterministic(HashMap::new()))));
-            Self { previous }
-        }
-    }
-
-    impl Drop for DeterministicIds {
-        fn drop(&mut self) {
-            let previous = self.previous.take();
-            ID_STRATEGY.with(|cell| {
-                *cell.borrow_mut() = previous;
-            });
-        }
-    }
-
-    #[test]
-    fn identifiers_sharing_a_name_hint_receive_the_same_id() {
-        let _guard = DeterministicIds::install();
-        let a = Identifier::new("x");
-        let b = Identifier::new("x");
-        assert_eq!(a.id(), b.id());
-    }
-
-    #[test]
-    fn identifiers_with_distinct_name_hints_receive_distinct_ids() {
-        let _guard = DeterministicIds::install();
-        let a = Identifier::new("x");
-        let b = Identifier::new("y");
-        assert_ne!(a.id(), b.id());
-    }
-
-    #[test]
-    fn dropping_the_guard_restores_the_default_strategy() {
-        let before = Identifier::new("before").id();
-        {
-            let _guard = DeterministicIds::install();
-            let _during = Identifier::new("during");
-        }
-        let after = Identifier::new("before");
-        assert_ne!(before, after.id());
-    }
 }
 
 #[cfg(test)]

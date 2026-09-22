@@ -160,6 +160,13 @@ FhY Core is being incrementally ported to Rust. The Rust crate (`fhy-core`) live
 
 PyO3 is an optional dependency gated behind the `python` feature, so pure-Rust consumers never pull in a Python dependency.
 
+The `testing` feature exposes `fhy_core::testing`, the Rust counterpart of `fhy_core.testing_patches`. Inside a `DeterministicIdentifierScope` scope, identifiers created with the same name hint compare equal, so a test can compare an object graph whose identifiers were created inside the code under test with one it built itself. A scope belongs to the thread that entered it; other threads join it through a handle from `share()`. Enable the feature only for tests:
+
+```toml
+[dev-dependencies]
+fhy-core = { version = "0.2", features = ["testing"] }
+```
+
 ### Building and Testing the Rust Crate
 
 Requires a stable Rust toolchain (1.83+). The `rust-toolchain.toml` at the repo root pins the channel.

@@ -125,16 +125,19 @@ impl Hash for OpAttribute {
 }
 
 /// Name of the attribute shipped as [`COMMUTATIVE`].
-static COMMUTATIVE_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("commutative"));
+static COMMUTATIVE_NAME: LazyLock<Identifier> =
+    LazyLock::new(|| Identifier::new_unscoped("commutative"));
 
 /// Name of the attribute shipped as [`ASSOCIATIVE`].
-static ASSOCIATIVE_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("associative"));
+static ASSOCIATIVE_NAME: LazyLock<Identifier> =
+    LazyLock::new(|| Identifier::new_unscoped("associative"));
 
 /// Name of the attribute shipped as [`PURE`].
-static PURE_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("pure"));
+static PURE_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new_unscoped("pure"));
 
 /// Name of the attribute shipped as [`ELEMENTWISE`].
-static ELEMENTWISE_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("elementwise"));
+static ELEMENTWISE_NAME: LazyLock<Identifier> =
+    LazyLock::new(|| Identifier::new_unscoped("elementwise"));
 
 /// Build the attributes this module ships, in registration order.
 ///
