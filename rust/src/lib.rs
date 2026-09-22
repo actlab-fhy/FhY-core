@@ -13,9 +13,3 @@ pub mod testing;
 
 #[cfg(test)]
 mod test_support;
-
-/// Returns `true`, confirming the compiled Rust extension is loaded.
-#[must_use]
-pub fn rust_available() -> bool {
-    true
-}

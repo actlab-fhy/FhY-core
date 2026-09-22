@@ -9,6 +9,8 @@ while the package is imported, so each case other than the running process's
 own is checked in a fresh interpreter.
 """
 
+import importlib
+import importlib.metadata
 import importlib.util
 import os
 import subprocess
@@ -216,3 +218,13 @@ def test_disabling_the_extension_skips_the_broken_extension_warning() -> None:
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.split() == ["False", "1"]
     assert completed.stderr == ""
+
+
+@pytest.mark.skipif(
+    not fhy_core.RUST_BACKEND_AVAILABLE, reason="the Rust backend is not selected"
+)
+def test_extension_version_matches_the_installed_package_version() -> None:
+    """Test the extension reports the version of the package it was built from."""
+    extension = importlib.import_module("fhy_core._rs")
+
+    assert extension.__version__ == importlib.metadata.version("fhy_core")
