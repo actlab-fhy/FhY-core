@@ -148,15 +148,17 @@ This project uses [uv](https://docs.astral.sh/uv/) for environment and dependenc
     ```
 
    `uv sync` creates `.venv` and installs `fhy_core` in editable mode.
+   It also compiles the Rust extension `fhy_core._rs` with maturin, so building from source needs a Rust toolchain (stable, 1.83 or newer; `rust-toolchain.toml` selects the channel for rustup).
+   Editable mode covers only the Python sources: edits under `src/` take effect immediately, while the compiled extension changes only when it is rebuilt (see [Rebuilding the Python Extension](#rebuilding-the-python-extension)).
    Prefix commands with `uv run` (e.g. `uv run python`) or activate the environment with `source .venv/bin/activate`.
-   Contributors also have two opt-in nox sessions not run by default: `uv run nox -s property` (the Hypothesis property suite under the thorough profile) and `uv run nox -s mutation -- <module>` (cosmic-ray mutation testing for one module); see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+   Contributors also have two opt-in nox sessions not run by default: `uv run nox -s property` (the Hypothesis property suite under the thorough profile, on both backends) and `uv run nox -s mutation -- <module>` (cosmic-ray mutation testing for one module); see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## Rust Crate
 
-FhY Core is being incrementally ported to Rust. The Rust crate (`fhy-core`) lives under `rust/src/` and serves two purposes:
+Parts of FhY Core are implemented in Rust, in the crate `fhy-core` under `rust/src/`: identifiers, interning, and the `OpAttribute` and `ValueDomain` tag types. The crate serves two purposes:
 
-- **Standalone Rust library** — published to crates.io, usable by any Rust project via `cargo add fhy-core`.
-- **Python extension module** — compiled via [maturin](https://www.maturin.rs/) and exposed to the Python package as `fhy_core._rs`, accelerating hot paths while keeping the full Python API intact.
+- **Standalone Rust library**: usable by any Rust project. The crate is not published to crates.io, so depend on it through git: `fhy-core = { git = "https://github.com/actlab-fhy/FhY-core.git" }`.
+- **Python extension module**: compiled with [maturin](https://www.maturin.rs/) and exposed to the Python package as `fhy_core._rs`, which currently backs identifier id allocation. The Python API is the same with or without the extension.
 
 PyO3 is an optional dependency gated behind the `python` feature, so pure-Rust consumers never pull in a Python dependency.
 
@@ -164,7 +166,7 @@ The `testing` feature exposes `fhy_core::testing`, the Rust counterpart of `fhy_
 
 ```toml
 [dev-dependencies]
-fhy-core = { version = "0.2", features = ["testing"] }
+fhy-core = { git = "https://github.com/actlab-fhy/FhY-core.git", features = ["testing"] }
 ```
 
 ### Building and Testing the Rust Crate
@@ -178,27 +180,31 @@ cargo check
 # Check with the Python extension module included
 cargo check --features python
 
-# Run all Rust tests
-cargo test
+# Run all Rust tests, as CI does
+cargo test --locked --all-features
 
-# Lint
-cargo clippy --all-targets --features python
+# Format and lint, as CI does
+cargo fmt --all --check
+cargo clippy --all-targets --all-features --locked -- -D warnings
 ```
 
-### Building the Python Extension
+### Rebuilding the Python Extension
 
-Install [maturin](https://www.maturin.rs/) 1.9.4 or newer (`uv tool install maturin` or `pip install maturin`), then:
+`uv sync` builds the extension: maturin compiles the crate with the `python` feature enabled and installs the native module as `fhy_core._rs`. The project's uv cache keys cover `rust/src/**/*.rs`, `Cargo.toml`, and `Cargo.lock`, so after a Rust edit the next `uv sync`, or any `uv run` (which syncs first), rebuilds the extension.
 
 ```bash
-# Build and install the extension into the active virtualenv (development mode)
-maturin develop
+# Rebuild the extension after editing Rust sources
+uv sync
 
-# Verify the Rust backend is available from Python
-python -c "import fhy_core; print(fhy_core.RUST_BACKEND_SELECTED)"
+# Force a rebuild even when no cache key changed
+uv sync --reinstall-package fhy-core
+
+# Verify the Rust backend is selected
+uv run python -c "import fhy_core; print(fhy_core.RUST_BACKEND_SELECTED)"
 # => True
 ```
 
-`maturin develop` compiles the Rust crate with the `python` feature enabled and installs the resulting native module as `fhy_core._rs`. Inside the project environment, run it as `uv run --no-sync maturin develop` and run later commands with `uv run --no-sync` as well: a plain `uv run` re-syncs the environment and can reinstall the package over the fresh build.
+To rebuild in place with an unoptimized, incremental build while iterating on Rust, install [maturin](https://www.maturin.rs/) 1.9.4 or newer (`uv tool install maturin`) and run `uv run --no-sync maturin develop --uv`. Run later commands with `uv run --no-sync` as well: a syncing `uv run` reinstalls uv's own build over the one `maturin develop` installed.
 
 The backend is selected once, when `fhy_core` is imported. The package runs on the Rust extension iff the extension imports and the `FHY_CORE_NO_EXTENSIONS` environment variable does not disable it; otherwise it runs on its pure-Python implementation. The variable disables the extension when it holds anything other than an empty string or one of `0`, `false`, `no`, and `off` (case-insensitive, ignoring surrounding whitespace), so `FHY_CORE_NO_EXTENSIONS=1` forces the pure-Python backend even when the extension is installed. `fhy_core.RUST_BACKEND_SELECTED` reports the selection: it is `True` only when the extension is installed, importable, and not disabled by `FHY_CORE_NO_EXTENSIONS`. The public API is the same on both backends: `fhy_core.Identifier`, for example, draws its ids from the selected backend's counter, and exactly one counter issues ids in a process.
 
@@ -206,14 +212,14 @@ The backend is selected once, when `fhy_core` is imported. The package runs on t
 
 ```bash
 # Run the full Python test suite on the Rust backend
-# (uses pytest with xdist for parallelism; build the extension first)
-uv run --no-sync pytest
+# (uses pytest with xdist for parallelism; uv run rebuilds a stale extension first)
+uv run pytest
 
 # Run the full Python test suite on the pure-Python backend
-FHY_CORE_NO_EXTENSIONS=1 uv run --no-sync pytest
+FHY_CORE_NO_EXTENSIONS=1 uv run pytest
 
 # Run specific test modules
-uv run --no-sync pytest tests/test_identifier.py
+uv run pytest tests/test_identifier.py
 
 # Run the suite on both backends for every supported Python version
 uv run nox -s tests
@@ -224,7 +230,7 @@ uv run nox -s tests-3.12
 # Run it on one backend for a single Python version
 uv run nox -s "tests-3.12(backend='python')"
 
-# Run the property-based test suite (Hypothesis, thorough profile)
+# Run the property-based test suite (Hypothesis, thorough profile) on both backends
 uv run nox -s property
 ```
 
