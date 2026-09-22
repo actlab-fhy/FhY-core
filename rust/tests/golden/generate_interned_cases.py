@@ -1,4 +1,4 @@
-"""Generate golden operation scripts for the Rust `interned` port.
+"""Generate golden operation scripts from the `InternedMixin` oracle.
 
 Drives the Python `InternedMixin` oracle (`fhy_core.traits.interned`) through
 hand-picked and randomly generated operation scripts, recording the observed

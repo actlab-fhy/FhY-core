@@ -1,4 +1,4 @@
-"""Generate golden operation scripts for the Rust tag-type port.
+"""Generate golden operation scripts from the `OpAttribute`/`ValueDomain` oracle.
 
 Drives the real `fhy_core.op_attribute` and `fhy_core.value_domain` oracles
 (the process-global `OpAttribute` and `ValueDomain` registries, including
@@ -779,8 +779,9 @@ _RANDOM_PARENT_PROBABILITY = 0.6
 # Chance a random duplicate (for `eq_with_duplicate` and
 # `is_subdomain_of_with_duplicate`) reuses the canonical's actual current
 # description/parent rather than a value guaranteed to differ from it. Kept
-# away from the extremes so both the "same" and "different" branches of T3
-# (description) and T4 (parent) get exercised across a run.
+# away from the extremes so a run exercises both the "same" and "different"
+# branches of the two equality rules: a description never affects equality,
+# and a parent always does.
 _DUPLICATE_SAME_VALUE_PROBABILITY = 0.5
 
 
@@ -888,8 +889,8 @@ def _choose_random_duplicate_description(
     """Return a description for a duplicate of `slot`'s canonical instance.
 
     Reuses the canonical's actual current description about half the time
-    (the "same" branch of T3/T4), and a fresh, guaranteed-different one the
-    rest of the time (the "different" branch).
+    (the "same" branch), and a fresh, guaranteed-different one the rest of
+    the time (the "different" branch, which equality must ignore).
     """
     if rng.random() < _DUPLICATE_SAME_VALUE_PROBABILITY:
         canonical = ctx.cls.require_interned(ctx.resolve_identifier(slot))
@@ -904,8 +905,9 @@ def _choose_random_duplicate_parent_slot(
 
     Candidates are the canonical's actual current parent slot (`None` for a
     root domain), an explicit `None`, and every other registered slot, so
-    both the "same parent" and "different parent" branches of T4 get
-    exercised, including forcing a real parent down to `None`.
+    both the "same parent" and "different parent" branches of the rule that
+    equality compares parents get exercised, including forcing a real parent
+    down to `None`.
     """
     canonical = ValueDomain.require_interned(ctx.resolve_identifier(slot))
     same_parent_slot = (

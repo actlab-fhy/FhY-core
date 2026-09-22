@@ -337,7 +337,7 @@ fn check_eq_attribute(
 /// `==` the way a discarded duplicate would, which `check_eq_attribute`
 /// (always comparing two already-canonical, differently-named instances)
 /// never reaches. This is the only way the golden data can catch `==`
-/// wrongly including `description` (divergence T3).
+/// wrongly including `description`, which equality must ignore.
 fn check_eq_with_duplicate_attribute(
     slots: &mut SlotTable,
     name: &str,
@@ -663,7 +663,7 @@ fn check_eq_domain(
 /// `==` the way a discarded duplicate would, which `check_eq_domain` (always
 /// comparing two already-canonical, differently-named instances) never
 /// reaches. This is the only way the golden data can catch `==` wrongly
-/// dropping the `parent` comparison (divergence T4).
+/// dropping the `parent` comparison, which equality must include.
 fn check_eq_with_duplicate_domain(
     slots: &mut SlotTable,
     name: &str,

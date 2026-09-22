@@ -118,8 +118,8 @@ impl ValueDomain {
     ///
     /// The walk follows parents, so the relation is reflexive and one-way: a
     /// domain is a subdomain of its ancestors and of itself, never of its
-    /// descendants or of an unrelated domain. A parent is always registered
-    /// before its children, so the chain cannot cycle.
+    /// descendants or of an unrelated domain. A domain's parent exists before
+    /// the domain is built and never changes, so the chain cannot cycle.
     #[must_use]
     pub fn is_subdomain_of(&self, other: &ValueDomain) -> bool {
         let mut current = self;
@@ -179,8 +179,10 @@ static ADDRESS_DOMAIN_NAME: LazyLock<Identifier> =
 
 /// Build the domains this module ships, in registration order.
 ///
-/// The registry calls this on its first use and again whenever it is cleared,
-/// so the constants below stay canonical for the life of the process.
+/// The registry calls this once, on its first use, and keeps the instances it
+/// builds. A clear registers those same instances again rather than building
+/// new ones, so the shipped constants stay canonical for the life of the
+/// process.
 fn create_default_domains() -> Vec<ValueDomain> {
     vec![
         ValueDomain::create(

@@ -10,7 +10,7 @@
 //!
 //! Canonical handles compare and hash by identity. Two handles are equal iff
 //! they point at the same registered instance, which for handles taken from
-//! one registry means iff their keys are equal.
+//! one registry with no clear between them means iff their keys are equal.
 //!
 //! A registry may be created with default instances, which it registers the
 //! first time it is used and restores whenever it is cleared. A default
@@ -106,10 +106,10 @@ fn index_by_key<T: Interned>(instances: &[Arc<T>]) -> HashMap<T::Key, Arc<T>> {
 /// Registered instances, and the defaults a clear restores.
 ///
 /// For keys whose `Hash` and `Eq` behave the same on every call, every
-/// mutation below either completes or panics before changing anything (for
-/// example, a key's `Hash` panicking mid-lookup), so a panic inside a
-/// critical section never leaves the state half-updated. That is what makes
-/// recovering a poisoned lock over this state safe.
+/// method that mutates this state either completes or panics before changing
+/// anything (for example, a key's `Hash` panicking mid-lookup), so a panic
+/// inside a critical section never leaves the state half-updated. That is
+/// what makes recovering a poisoned lock over this state safe.
 struct RegistryState<T: Interned> {
     defaults: Vec<Arc<T>>,
     entries: HashMap<T::Key, Arc<T>>,

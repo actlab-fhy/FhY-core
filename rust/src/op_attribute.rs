@@ -4,7 +4,7 @@
 //! operations: algebraic properties such as commutativity and associativity,
 //! purity, elementwise application, and family-specific tags contributed by
 //! particular IRs. [`OpAttribute`] keeps that classification open, so a layer
-//! shares the four generic attributes shipped here and contributes its own
+//! shares the generic attributes shipped here and contributes its own
 //! without changing this crate.
 //!
 //! An attribute is a free-standing tag: it depends on no operation type and is
@@ -141,8 +141,10 @@ static ELEMENTWISE_NAME: LazyLock<Identifier> =
 
 /// Build the attributes this module ships, in registration order.
 ///
-/// The registry calls this on its first use and again whenever it is cleared,
-/// so the constants below stay canonical for the life of the process.
+/// The registry calls this once, on its first use, and keeps the instances it
+/// builds. A clear registers those same instances again rather than building
+/// new ones, so the shipped constants stay canonical for the life of the
+/// process.
 fn create_default_attributes() -> Vec<OpAttribute> {
     vec![
         OpAttribute::create(
