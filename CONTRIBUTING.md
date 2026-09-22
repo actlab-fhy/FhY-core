@@ -311,12 +311,14 @@ is sound only because of the one-extension rule above.
   at the same time.
 - Benchmark before deleting. Measure the module's hot paths (construction,
   equality, hashing, attribute access, and whatever the module does most)
-  on both backends. Delete the pure-Python implementation only when the
-  Rust-backed version performs comparably. When it is noticeably slower,
-  usually because every call crosses into the extension, keep the Python
-  class, move only the parts that gain from Rust, and say why in the
-  module docstring. `fhy_core.identifier` is the example: `Identifier`
-  stays in Python and only its id counter runs in Rust.
+  on both backends. When the Rust-backed version is at most 10% slower
+  than the Python one on every measured path, delete the pure-Python
+  implementation. When it is more than 10% slower on any path, usually
+  because every call crosses into the extension, the maintainer decides
+  whether to keep the Python class. A kept class moves only the parts that
+  gain from Rust and says why in its module docstring.
+  `fhy_core.identifier` is the example: `Identifier` stays in Python and
+  only its id counter runs in Rust.
 - Freeze the golden corpus. Once a module's Python implementation is
   deleted, its generator has no oracle left to run, so take it out of the
   drift check and `EXPANDED_GOLDEN_CORPORA` and keep the committed JSON as
