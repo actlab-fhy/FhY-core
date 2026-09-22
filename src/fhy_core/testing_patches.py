@@ -1,4 +1,10 @@
-"""Testing patches for FhY core."""
+"""Testing patches for FhY core.
+
+``fail_fast_structural_equivalence`` makes every ``is_structurally_equivalent``
+call that returns ``False`` raise an ``AssertionError`` naming the class and
+operands. ``deterministic_identifiers_by_name_hint`` opens a scope in which
+every ``Identifier`` constructed with the same name hint is the same instance.
+"""
 
 from fhy_core.utils.override import override
 
@@ -89,7 +95,7 @@ def _find_name_hint(args: tuple[Any, ...], kwargs: dict[str, Any]) -> object:
 
 
 class _DeterministicIdentifiersByNameHint(ContextDecorator):
-    """Scope that assigns deterministic IDs from `name_hint`.
+    """Scope that shares one `Identifier` instance per `name_hint`.
 
     This is intended for tests that compare object graphs containing
     internally-created identifiers, including when those identifiers are used as
