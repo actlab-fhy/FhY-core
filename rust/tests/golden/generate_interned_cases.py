@@ -17,6 +17,11 @@ equivalence test:
     uv run --no-sync python rust/tests/golden/generate_interned_cases.py \
         --seed 7 --random-count 2000 --max-ops 60 \
         --keys a,b,c,d,e --output /tmp/interned_corpus.json
+
+then replay it by naming the file in `FHY_INTERNED_CORPUS`:
+
+    FHY_INTERNED_CORPUS=/tmp/interned_corpus.json \
+        cargo test --test interned_equivalence -- --ignored
 """
 
 from __future__ import annotations

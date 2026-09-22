@@ -32,6 +32,11 @@ expanded-corpus equivalence test:
         rust/tests/golden/generate_deterministic_identifier_cases.py \
         --seed 7 --random-count 2000 --max-ops 40 \
         --hints a,b,c,d,e --output /tmp/deterministic_identifier_corpus.json
+
+then replay it by naming the file in `FHY_DETERMINISTIC_IDENTIFIER_CORPUS`:
+
+    FHY_DETERMINISTIC_IDENTIFIER_CORPUS=/tmp/deterministic_identifier_corpus.json \
+        cargo test --test deterministic_identifiers_equivalence -- --ignored
 """
 
 from __future__ import annotations

@@ -27,6 +27,11 @@ equivalence test:
     uv run --no-sync python rust/tests/golden/generate_tag_type_cases.py \
         --seed 7 --random-count 2000 --max-ops 40 \
         --slots s0,s1,s2,s3,s4 --output /tmp/tag_type_corpus.json
+
+then replay it by naming the file in `FHY_TAG_TYPE_CORPUS`:
+
+    FHY_TAG_TYPE_CORPUS=/tmp/tag_type_corpus.json \
+        cargo test --test tag_type_equivalence -- --ignored
 """
 
 from __future__ import annotations
