@@ -21,9 +21,9 @@
 use std::hash::{Hash, Hasher};
 use std::sync::LazyLock;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::identifier::{HasIdentifier, Identifier};
+use crate::identifier::{HasIdentifier, Identifier, IdentifierPayload};
 use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned};
 
 /// Open semantic tag attached to a compiler operation.
@@ -34,10 +34,26 @@ use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned};
 /// Decoding an attribute canonicalizes it only through the handle, so
 /// deserialize a [`Canonical<OpAttribute>`]. Deserializing a bare
 /// `OpAttribute` yields a value that no registry knows about.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize)]
 pub struct OpAttribute {
     name: Identifier,
+    description: String,
+}
+
+/// Decoding checks every field of the payload before it restores the name, so
+/// a rejected payload leaves the id counter untouched.
+impl<'de> Deserialize<'de> for OpAttribute {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let payload = OpAttributePayload::deserialize(deserializer)?;
+        Ok(Self::create(payload.name.restore(), payload.description))
+    }
+}
+
+/// An attribute payload, checked but with its name not yet restored.
+#[derive(Deserialize)]
+#[serde(rename = "OpAttribute", deny_unknown_fields)]
+struct OpAttributePayload {
+    name: IdentifierPayload,
     description: String,
 }
 
@@ -199,7 +215,9 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-    use crate::test_support::{compute_hash, reserve_pinned_id};
+    use crate::test_support::{
+        compute_hash, has_counter_passed, hold_id_counter, reserve_far_ahead_ids, reserve_pinned_id,
+    };
 
     /// Serializes the test that clears the process-wide registry against the
     /// tests that need their own entries to survive. Registering tests hold
@@ -539,6 +557,35 @@ mod tests {
         let error = serde_json::from_str::<Canonical<OpAttribute>>(&json).unwrap_err();
 
         assert!(error.to_string().contains("description"), "{error}");
+    }
+
+    #[test]
+    fn a_payload_rejected_for_a_trailing_unknown_field_restores_no_name() {
+        let _guard = hold_registry();
+        let _counter = hold_id_counter();
+        let [id] = reserve_far_ahead_ids("trailing-unknown-attribute-anchor");
+        let json = format!(
+            "{{\"name\":{{\"id\":{id},\"name_hint\":\"a\"}},\
+             \"description\":\"desc\",\"zzz\":1}}"
+        );
+
+        let error = serde_json::from_str::<Canonical<OpAttribute>>(&json).unwrap_err();
+
+        assert!(error.to_string().contains("zzz"), "{error}");
+        assert!(!has_counter_passed(id));
+    }
+
+    #[test]
+    fn a_payload_rejected_for_a_mistyped_trailing_description_restores_no_name() {
+        let _guard = hold_registry();
+        let _counter = hold_id_counter();
+        let [id] = reserve_far_ahead_ids("mistyped-description-anchor");
+        let json = format!("{{\"name\":{{\"id\":{id},\"name_hint\":\"a\"}},\"description\":3}}");
+
+        let error = serde_json::from_str::<Canonical<OpAttribute>>(&json).unwrap_err();
+
+        assert!(error.to_string().contains("invalid type"), "{error}");
+        assert!(!has_counter_passed(id));
     }
 
     #[test]
