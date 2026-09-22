@@ -72,6 +72,15 @@ jobs:
         # Pack the crate as crates.io would receive it (the include list in
         # Cargo.toml decides what that is) and build the library from it.
         run: cargo package --locked
+      - name: Testing the Packaged Crate
+        # cargo package only builds the library, so run the tests from the
+        # packed crate as a consumer would get them. The published manifest
+        # loses this crate's dev-dependency on itself, which carries only a
+        # path, so the testing feature is named here instead.
+        run: |
+          tar -xzf target/package/fhy-core-*.crate -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP"/fhy-core-*/
+          cargo test --locked --features testing
 
   rust-msrv:
     runs-on: "ubuntu-latest"
