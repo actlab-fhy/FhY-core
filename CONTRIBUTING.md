@@ -276,6 +276,63 @@ small changes to the source and checks that some test fails. Each targeted
 module has its own config under `cosmic-ray/`; run one with
 `uv run nox -s mutation -- <module>` (the module defaults to `lattice`).
 
+## Porting to Rust
+
+*FhY* Core is moving to Rust one module at a time. The crate lives in
+`rust/`, and `fhy_core._rs` is the extension module built from it. Every
+port follows these rules.
+
+### One extension module per process
+
+All Rust code that uses *FhY* Core's Rust types compiles into a single
+Python extension module. The identifier id counter and every registry are
+Rust `static`s, which exist once per compiled copy of the crate, and PyO3
+creates a separate Python type for each extension module. A second
+extension linking the crate would issue ids that collide with the first
+one's, keep registries whose canonical instances never match, and fail
+`isinstance` checks against the first one's classes. A downstream *FhY*
+package that gains Rust code depends on the crate as a Rust library and is
+compiled into one combined extension module; it never ships an extension
+of its own that links the crate.
+
+### Registries are process-global statics
+
+A registry ported from Python lives in a Rust `static`, as
+`InternRegistry` does, mirroring the module-level registry it replaces so
+the Rust behavior can be checked against the Python implementation. This
+is sound only because of the one-extension rule above.
+
+### Replacing a Python class
+
+- Port bottom-up. A class switches to Rust only once everything it holds
+  is already in Rust, so Rust code never stores Python objects.
+- Switch in one step. The binding replaces the Python class outright; a
+  Python registry and a Rust registry for the same concept are never live
+  at the same time.
+- Benchmark before deleting. Measure the module's hot paths (construction,
+  equality, hashing, attribute access, and whatever the module does most)
+  on both backends. Delete the pure-Python implementation only when the
+  Rust-backed version performs comparably. When it is noticeably slower,
+  usually because every call crosses into the extension, keep the Python
+  class, move only the parts that gain from Rust, and say why in the
+  module docstring. `fhy_core.identifier` is the example: `Identifier`
+  stays in Python and only its id counter runs in Rust.
+- Freeze the golden corpus. Once a module's Python implementation is
+  deleted, its generator has no oracle left to run, so take it out of the
+  drift check and `EXPANDED_GOLDEN_CORPORA` and keep the committed JSON as
+  a fixed regression corpus.
+- From the first deletion on, the package requires the extension, and
+  `FHY_CORE_NO_EXTENSIONS` selects the pure-Python implementation only for
+  modules that still have one.
+
+### Canonical values keep their identity in Python
+
+When a canonical Rust value, such as an interned `OpAttribute`, reaches
+Python, the binding returns the same Python object for the same canonical
+instance every time, so `is` holds exactly as it does for values interned
+in Python. The binding crate keeps that cache; the core crate never holds
+Python objects.
+
 ## Creating a new Pull Request
 When submitting a pull request, we ask you to check the following:
 

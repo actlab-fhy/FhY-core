@@ -6,6 +6,11 @@ from a process-global counter. The counter is the Rust extension's
 (``fhy_core.RUST_BACKEND_SELECTED``) and a pure-Python counter otherwise.
 The backend is fixed when the package is imported, so exactly one counter
 issues ids in a process.
+
+The class stays in Python on both backends, and only the counter comes from
+the extension. A Rust-backed class makes every attribute read, equality
+check, and hash cross into the extension, which is significantly slower than
+reading plain Python attributes.
 """
 
 from fhy_core.utils.override import override
