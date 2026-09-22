@@ -26,6 +26,7 @@ from fhy_core.diagnostic import (
 )
 from fhy_core.identifier import HasIdentifier, Identifier
 from fhy_core.provenance import HasProvenance, Provenance
+from fhy_core.serialization import DeserializationValueError
 from fhy_core.traits import (
     Equal,
     EqualMixin,
@@ -642,9 +643,24 @@ def test_interned_construct_from_fields_returns_canonical_for_existing_key() -> 
     _DataclassInternedValue.clear_interned_registry()
     canonical = _DataclassInternedValue("dup", 1)
 
-    restored = _DataclassInternedValue.construct_from_fields({"key": "dup", "value": 2})
+    restored = _DataclassInternedValue.construct_from_fields({"key": "dup", "value": 1})
 
     assert restored is canonical
+
+
+def test_interned_construct_from_fields_rejects_a_conflicting_compared_field() -> None:
+    """Test a rebuilt duplicate unequal to the canonical is rejected."""
+    _DataclassInternedValue.clear_interned_registry()
+    canonical = _DataclassInternedValue("conflict", 1)
+
+    with pytest.raises(DeserializationValueError) as exc_info:
+        _DataclassInternedValue.construct_from_fields({"key": "conflict", "value": 2})
+
+    message = str(exc_info.value)
+    assert "_DataclassInternedValue" in message
+    assert "'conflict'" in message
+    assert "value" in message
+    assert _DataclassInternedValue.get_interned("conflict") is canonical
 
 
 def test_interned_construct_from_fields_accepts_an_immutabledict() -> None:

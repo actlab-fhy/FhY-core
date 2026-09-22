@@ -49,6 +49,7 @@ from fhy_core.op_attribute import (
     PURE,
     OpAttribute,
 )
+from fhy_core.serialization import DeserializationValueError
 from fhy_core.value_domain import ADDRESS_DOMAIN, DATA_DOMAIN, ValueDomain
 
 GENERATOR_COMMAND = (
@@ -419,20 +420,44 @@ def _run_encode(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
     return {"encoding": _normalize_domain_dict(raw, ctx)}
 
 
+def _mark_registered_payload_slots(ctx: _ScriptContext, slots: list[str]) -> None:
+    """Mark each of `slots` that the registry now holds as registered.
+
+    A rejected payload may still have registered the fresh parents nested in
+    it, which decode before the value holding them.
+    """
+    for slot in slots:
+        if ctx.cls.get_interned(ctx.resolve_identifier(slot)) is not None:
+            ctx.mark_registered(slot)
+
+
 def _run_decode(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
+    """Decode a payload, recording the canonical it yields or its rejection.
+
+    A payload whose key is already canonical must equal that canonical: one
+    that names a different parent is rejected with a
+    `DeserializationValueError`, recorded as the op's `error`.
+    """
     payload = op["payload"]
     if ctx.kind == _OP_ATTRIBUTE_KIND:
         real = _denormalize_attribute_dict(payload, ctx)
-        canonical = OpAttribute.deserialize_from_dict(real)
+        try:
+            canonical = OpAttribute.deserialize_from_dict(real)
+        except DeserializationValueError:
+            _mark_registered_payload_slots(ctx, [payload["name"]["id"]])
+            return {"error": "DeserializationValueError"}
         slot = ctx.find_slot_for_id(canonical.name.id)
         ctx.mark_registered(slot)
         return {"canonical_slot": slot, "canonical_description": canonical.description}
 
     real = _denormalize_domain_dict(payload, ctx)
-    canonical = ValueDomain.deserialize_from_dict(real)
+    try:
+        canonical = ValueDomain.deserialize_from_dict(real)
+    except DeserializationValueError:
+        _mark_registered_payload_slots(ctx, _collect_domain_payload_slots(payload))
+        return {"error": "DeserializationValueError"}
     slot = ctx.find_slot_for_id(canonical.name.id)
-    for touched_slot in _collect_domain_payload_slots(payload):
-        ctx.mark_registered(touched_slot)
+    _mark_registered_payload_slots(ctx, _collect_domain_payload_slots(payload))
     canonical_parent_slot = (
         ctx.find_slot_for_id(canonical.parent.name.id)
         if canonical.parent is not None
@@ -741,7 +766,11 @@ def _list_hand_picked_domain_scripts() -> list[tuple[str, list[dict[str, Any]]]]
             [
                 _build_new_domain_op("s0", _next_description(), parent_slot="data"),
                 _build_decode_op(
-                    _build_domain_payload("s0", _next_description(), None)
+                    _build_domain_payload(
+                        "s0",
+                        _next_description(),
+                        _build_domain_payload("data", _next_description(), None),
+                    )
                 ),
             ],
         ),
@@ -758,7 +787,7 @@ def _list_hand_picked_domain_scripts() -> list[tuple[str, list[dict[str, Any]]]]
             ],
         ),
         (
-            "decode_with_a_divergent_parent_keeps_the_canonical_parent",
+            "decode_with_a_divergent_parent_is_rejected",
             [
                 _build_new_domain_op("child", _next_description(), parent_slot="data"),
                 _build_decode_op(
@@ -766,6 +795,49 @@ def _list_hand_picked_domain_scripts() -> list[tuple[str, list[dict[str, Any]]]]
                         "child",
                         _next_description(),
                         _build_domain_payload("address", _next_description(), None),
+                    )
+                ),
+                _build_require_op("child"),
+            ],
+        ),
+        (
+            "decode_with_a_dropped_parent_is_rejected",
+            [
+                _build_new_domain_op("child", _next_description(), parent_slot="data"),
+                _build_decode_op(
+                    _build_domain_payload("child", _next_description(), None)
+                ),
+                _build_require_op("child"),
+            ],
+        ),
+        (
+            "a_rejected_decode_keeps_a_fresh_nested_parent_registered",
+            [
+                _build_new_domain_op("child", _next_description(), parent_slot="data"),
+                _build_decode_op(
+                    _build_domain_payload(
+                        "child",
+                        _next_description(),
+                        _build_domain_payload("fresh7", _next_description(), None),
+                    )
+                ),
+                _build_require_op("fresh7"),
+                _build_require_op("child"),
+            ],
+        ),
+        (
+            "decode_after_a_clear_accepts_a_parent_equal_by_value",
+            [
+                _build_new_domain_op("root8", _next_description()),
+                _build_new_domain_op("leaf8", _next_description(), parent_slot="root8"),
+                _build_clear_op(),
+                _build_new_domain_op("root8", _next_description()),
+                _build_new_domain_op("leaf8", _next_description(), parent_slot="root8"),
+                _build_decode_op(
+                    _build_domain_payload(
+                        "leaf8",
+                        _next_description(),
+                        _build_domain_payload("root8", _next_description(), None),
                     )
                 ),
             ],

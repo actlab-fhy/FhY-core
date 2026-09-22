@@ -24,6 +24,7 @@ use fhy_core::identifier::Identifier;
 use fhy_core::interned::{Canonical, InternOutcome, Interned};
 use fhy_core::op_attribute::{OpAttribute, ASSOCIATIVE, COMMUTATIVE, ELEMENTWISE, PURE};
 use fhy_core::value_domain::{ValueDomain, ADDRESS_DOMAIN, DATA_DOMAIN};
+use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 const GOLDEN_JSON: &str = include_str!("golden/tag_type_cases.json");
@@ -164,6 +165,52 @@ fn normalize_value_domain(domain: &ValueDomain, slots: &SlotTable) -> Value {
     })
 }
 
+/// Decode `payload` as a canonical handle and compare the outcome's kind
+/// with the golden expectation.
+///
+/// Returns the handle when both sides decoded it. The oracle records a
+/// payload that conflicts with an existing canonical as
+/// `{"error": "DeserializationValueError"}`, and the Rust decode must reject
+/// the same payload for the same reason. Any disagreement becomes a mismatch
+/// and returns `None`, as does an agreed rejection.
+fn decode_or_check_rejection<T>(
+    payload: Value,
+    name: &str,
+    index: usize,
+    expected: &Value,
+    mismatches: &mut Vec<String>,
+) -> Option<Canonical<T>>
+where
+    Canonical<T>: DeserializeOwned,
+{
+    let expected_error = expected["error"].as_str();
+    match (
+        serde_json::from_value::<Canonical<T>>(payload),
+        expected_error,
+    ) {
+        (Ok(restored), None) => Some(restored),
+        (Err(error), Some("DeserializationValueError"))
+            if error
+                .to_string()
+                .contains("conflicts with the canonical instance") =>
+        {
+            None
+        }
+        (Ok(_), Some(expected_error)) => {
+            mismatches.push(format!(
+                "case {name} op {index}: expected error {expected_error:?}, got a decoded value"
+            ));
+            None
+        }
+        (Err(error), _) => {
+            mismatches.push(format!(
+                "case {name} op {index}: expected {expected}, got error {error}"
+            ));
+            None
+        }
+    }
+}
+
 // =============================================================================
 // `op_attribute` op replay
 // =============================================================================
@@ -289,10 +336,13 @@ fn check_decode_attribute(
     mismatches: &mut Vec<String>,
 ) {
     let real_payload = denormalize_op_attribute(&op["payload"], slots);
-    let restored: Canonical<OpAttribute> =
-        serde_json::from_value(real_payload).expect("golden decode payload deserializes");
-
     let expected = &op["expected"];
+    let Some(restored) =
+        decode_or_check_rejection::<OpAttribute>(real_payload, name, index, expected, mismatches)
+    else {
+        return;
+    };
+
     let expected_slot = expected["canonical_slot"]
         .as_str()
         .expect("decode expectation has `canonical_slot`");
@@ -576,10 +626,13 @@ fn check_decode_domain(
     mismatches: &mut Vec<String>,
 ) {
     let real_payload = denormalize_value_domain(&op["payload"], slots);
-    let restored: Canonical<ValueDomain> =
-        serde_json::from_value(real_payload).expect("golden decode payload deserializes");
-
     let expected = &op["expected"];
+    let Some(restored) =
+        decode_or_check_rejection::<ValueDomain>(real_payload, name, index, expected, mismatches)
+    else {
+        return;
+    };
+
     let expected_slot = expected["canonical_slot"]
         .as_str()
         .expect("decode expectation has `canonical_slot`");

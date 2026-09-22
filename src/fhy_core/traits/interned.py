@@ -11,6 +11,7 @@ from functools import wraps
 from typing import Any, ClassVar, Generic, Protocol, TypeVar, cast, runtime_checkable
 
 from fhy_core.logger import get_logger
+from fhy_core.serialization import DeserializationValueError
 
 from .frozen import Frozen
 from .verifiable import Verifiable
@@ -48,6 +49,32 @@ def _warn_interned_metadata_ignored(
                 canonical_value,
                 payload_value,
             )
+
+
+def _build_interned_conflict_error(
+    payload: "InternedMixin[Any]", canonical: "InternedMixin[Any]"
+) -> DeserializationValueError:
+    """Build the error for a payload that conflicts with the canonical instance.
+
+    Names every equality-relevant field whose payload value differs from the
+    canonical's.
+    """
+    conflicts: list[str] = []
+    for field_definition in dataclasses.fields(cast(Any, payload)):
+        if not field_definition.compare:
+            continue
+        payload_value = getattr(payload, field_definition.name)
+        canonical_value = getattr(canonical, field_definition.name)
+        if payload_value != canonical_value:
+            conflicts.append(
+                f"{field_definition.name} (canonical {canonical_value!r}, "
+                f"payload {payload_value!r})"
+            )
+    conflict_description = "; ".join(conflicts) or "its compared fields"
+    return DeserializationValueError(
+        f'Payload for "{type(payload).__name__}" key {payload.get_intern_key()!r} '
+        f"conflicts with the canonical instance on {conflict_description}."
+    )
 
 
 class InternedMixin(Generic[_K], ABC):
@@ -202,7 +229,9 @@ class InternedMixin(Generic[_K], ABC):
         ``fhy_core.serialization``) for interned dataclasses: builds the
         instance from ``fields``, then returns the canonical instance for its
         intern key -- the freshly built one when the key is new, otherwise the
-        pre-existing canonical. Equality-excluded fields
+        pre-existing canonical. A payload for an existing key must equal the
+        canonical under the class's equality: one that differs in an
+        equality-relevant field is rejected. Equality-excluded fields
         (``field(compare=False)``) whose payload value differs from the
         canonical's are logged as ignored.
 
@@ -210,18 +239,27 @@ class InternedMixin(Generic[_K], ABC):
         instance: when the intern key already exists the freshly built instance
         is a throwaway that loses the registration race and is discarded, so its
         ``verify()`` still runs and may raise on otherwise-discardable data.
+        Likewise, the interned values nested in ``fields`` were decoded, and so
+        registered, before this runs: rejecting the payload leaves a fresh
+        nested value registered.
 
         Args:
             fields: Decoded field values, one entry per dataclass field.
 
         Returns:
             The canonical instance for the reconstructed object's intern key.
+
+        Raises:
+            DeserializationValueError: If the key is already canonical and the
+                reconstructed instance is unequal to the canonical one.
         """
         instance = cls(**fields)
         canonical = cls.get_interned(instance.get_intern_key())
         if canonical is None:
             return instance
         if canonical is not instance:
+            if instance != canonical:
+                raise _build_interned_conflict_error(instance, canonical)
             _warn_interned_metadata_ignored(instance, canonical)
         return canonical
 

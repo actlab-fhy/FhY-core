@@ -37,7 +37,8 @@ use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned};
 ///
 /// Decoding a domain canonicalizes it only through the handle, so deserialize
 /// a [`Canonical<ValueDomain>`]. Deserializing a bare `ValueDomain` yields a
-/// value that no registry knows about.
+/// value that no registry knows about. Decoding a handle for a name that is
+/// already canonical fails when the payload names a different parent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ValueDomain {
@@ -638,6 +639,76 @@ mod tests {
 
         assert_eq!(restored, canonical);
         assert_eq!(restored.description(), "original description");
+    }
+
+    #[test]
+    fn decoding_a_conflicting_parent_is_rejected() {
+        let _guard = hold_registry();
+        let name = Identifier::new("conflicting-parent");
+        let canonical =
+            ValueDomain::new(name.clone(), "desc", Some(DATA_DOMAIN.clone())).into_canonical();
+        let conflicting = ValueDomain::create(name.clone(), "desc", Some(ADDRESS_DOMAIN.clone()));
+        let json = serde_json::to_string(&conflicting).unwrap();
+
+        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
+
+        assert!(error.to_string().contains("conflicts"), "{error}");
+        assert_eq!(ValueDomain::intern_registry().get(&name), Some(canonical));
+    }
+
+    #[test]
+    fn decoding_a_dropped_parent_is_rejected() {
+        let _guard = hold_registry();
+        let name = Identifier::new("dropped-parent");
+        let _canonical =
+            ValueDomain::new(name.clone(), "desc", Some(DATA_DOMAIN.clone())).into_canonical();
+        let json = serde_json::to_string(&ValueDomain::create(name, "desc", None)).unwrap();
+
+        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
+
+        assert!(error.to_string().contains("conflicts"), "{error}");
+    }
+
+    #[test]
+    fn decoding_a_divergent_description_under_a_matching_parent_keeps_the_canonical() {
+        let _guard = hold_registry();
+        let name = Identifier::new("divergent-description-parented");
+        let canonical =
+            ValueDomain::new(name.clone(), "original", Some(DATA_DOMAIN.clone())).into_canonical();
+        let divergent = ValueDomain::create(name, "divergent", Some(DATA_DOMAIN.clone()));
+        let json = serde_json::to_string(&divergent).unwrap();
+
+        let restored: Canonical<ValueDomain> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored, canonical);
+        assert_eq!(restored.description(), "original");
+    }
+
+    #[test]
+    fn decoding_a_conflict_keeps_a_fresh_nested_parent_registered() {
+        let _guard = hold_registry();
+        let name = Identifier::new("conflict-with-fresh-parent");
+        let _canonical =
+            ValueDomain::new(name.clone(), "desc", Some(DATA_DOMAIN.clone())).into_canonical();
+        let parent_id = reserve_pinned_id("fresh-nested-parent-anchor");
+        let json = format!(
+            "{{\"name\":{{\"id\":{},\"name_hint\":\"{}\"}},\"description\":\"desc\",\
+             \"parent\":{{\"name\":{{\"id\":{parent_id},\"name_hint\":\"fresh\"}},\
+             \"description\":\"fresh parent\",\"parent\":null}}}}",
+            name.id(),
+            name.name_hint()
+        );
+
+        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
+
+        assert!(error.to_string().contains("conflicts"), "{error}");
+        let parent_name: Identifier =
+            serde_json::from_str(&format!("{{\"id\":{parent_id},\"name_hint\":\"fresh\"}}"))
+                .unwrap();
+        let fresh_parent = ValueDomain::intern_registry()
+            .get(&parent_name)
+            .expect("the nested parent decodes, and so registers, first");
+        assert_eq!(fresh_parent.description(), "fresh parent");
     }
 
     #[test]

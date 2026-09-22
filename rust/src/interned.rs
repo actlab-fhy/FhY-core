@@ -26,6 +26,7 @@ use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A type whose values are canonicalized by key.
@@ -323,7 +324,8 @@ impl<T> InternOutcome<T> {
 ///
 /// A handle serializes as its instance. Deserializing a handle interns the
 /// decoded value in its type's registry and yields the canonical instance
-/// for its key.
+/// for its key, or fails when the decoded value is unequal to a canonical
+/// instance already registered under that key.
 pub struct Canonical<T>(Arc<T>);
 
 impl<T> Deref for Canonical<T> {
@@ -372,10 +374,35 @@ impl<T: Serialize> Serialize for Canonical<T> {
     }
 }
 
-impl<'de, T: Interned + Deserialize<'de>> Deserialize<'de> for Canonical<T> {
+/// Decoding interns the decoded value. When its key is already canonical, the
+/// decoded value must equal the canonical instance under `T`'s `Eq`, and an
+/// unequal one is rejected with an error naming the type and key. A value
+/// that differs only in fields `Eq` ignores, such as a description, decodes to
+/// the canonical instance without any report: this crate has no logger, so
+/// the ignored metadata is dropped silently.
+///
+/// A payload's nested handles decode, and so intern, before the value that
+/// holds them. Rejecting that value leaves any fresh nested value registered.
+impl<'de, T: Interned + Eq + Deserialize<'de>> Deserialize<'de> for Canonical<T> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = T::deserialize(deserializer)?;
-        Ok(T::intern_registry().intern(value).into_canonical())
+        match T::intern_registry().intern(value) {
+            InternOutcome::Registered(canonical) => Ok(canonical),
+            InternOutcome::AlreadyCanonical {
+                canonical,
+                discarded,
+            } => {
+                if discarded == *canonical {
+                    Ok(canonical)
+                } else {
+                    Err(D::Error::custom(format_args!(
+                        "payload for {} under key {:?} conflicts with the canonical instance",
+                        std::any::type_name::<T>(),
+                        canonical.intern_key()
+                    )))
+                }
+            }
+        }
     }
 }
 
@@ -444,6 +471,35 @@ mod tests {
 
         fn intern_registry() -> &'static InternRegistry<Tag> {
             static REGISTRY: InternRegistry<Tag> = InternRegistry::new();
+            &REGISTRY
+        }
+    }
+
+    /// Interned fixture type whose `label` is metadata that `Eq` ignores.
+    #[derive(Debug, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LabeledTag {
+        name: String,
+        label: String,
+    }
+
+    impl PartialEq for LabeledTag {
+        fn eq(&self, other: &Self) -> bool {
+            self.name == other.name
+        }
+    }
+
+    impl Eq for LabeledTag {}
+
+    impl Interned for LabeledTag {
+        type Key = String;
+
+        fn intern_key(&self) -> &String {
+            &self.name
+        }
+
+        fn intern_registry() -> &'static InternRegistry<LabeledTag> {
+            static REGISTRY: InternRegistry<LabeledTag> = InternRegistry::new();
             &REGISTRY
         }
     }
@@ -984,21 +1040,66 @@ mod tests {
         assert_eq!(deserialized, expected);
     }
 
-    /// Test deserializing a registered key returns the existing canonical
-    /// instance, ignoring the payload's other fields.
+    /// Test deserializing a registered key with a payload equal to the
+    /// canonical instance returns that instance.
     #[test]
     fn canonical_deserialization_returns_the_existing_canonical_instance() {
         let key = "canonical_deserialization_returns_the_existing_canonical_instance";
         let original = Tag::intern_registry()
             .intern(build_tag(key, "original"))
             .into_canonical();
-        let payload = serde_json::json!({"name": key, "note": "payload"});
+        let payload = serde_json::json!({"name": key, "note": "original"});
 
         let deserialized: Canonical<Tag> =
             serde_json::from_value(payload).expect("payload deserializes");
 
         assert_eq!(deserialized, original);
-        assert_eq!(deserialized.note, "original");
+    }
+
+    /// Test deserializing a registered key with a payload unequal to the
+    /// canonical instance fails, naming the type and key, and leaves the
+    /// canonical instance registered.
+    #[test]
+    fn canonical_deserialization_rejects_a_payload_unequal_to_the_canonical_instance() {
+        let key = "canonical_deserialization_rejects_a_payload_unequal_to_the_canonical_instance";
+        let original = Tag::intern_registry()
+            .intern(build_tag(key, "original"))
+            .into_canonical();
+        let payload = serde_json::json!({"name": key, "note": "conflicting"});
+
+        let result: Result<Canonical<Tag>, _> = serde_json::from_value(payload);
+
+        let Err(error) = result else {
+            panic!("expected a deserialization error for a conflicting payload");
+        };
+        let message = error.to_string();
+        assert!(message.contains("conflicts"), "got {message}");
+        assert!(
+            message.contains(std::any::type_name::<Tag>()),
+            "got {message}"
+        );
+        assert!(message.contains(&format!("{key:?}")), "got {message}");
+        assert_eq!(Tag::intern_registry().get(key), Some(original));
+    }
+
+    /// Test deserializing a registered key with a payload that differs only in
+    /// a field `Eq` ignores returns the canonical instance unchanged.
+    #[test]
+    fn canonical_deserialization_accepts_a_payload_differing_only_in_ignored_metadata() {
+        let key = "canonical_deserialization_accepts_a_payload_differing_only_in_ignored_metadata";
+        let original = LabeledTag::intern_registry()
+            .intern(LabeledTag {
+                name: key.to_string(),
+                label: "original".to_string(),
+            })
+            .into_canonical();
+        let payload = serde_json::json!({"name": key, "label": "payload"});
+
+        let deserialized: Canonical<LabeledTag> =
+            serde_json::from_value(payload).expect("payload deserializes");
+
+        assert_eq!(deserialized, original);
+        assert_eq!(deserialized.label, "original");
     }
 
     /// Test deserializing a payload missing a required field fails without

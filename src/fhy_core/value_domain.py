@@ -59,6 +59,11 @@ class ValueDomain(
     canonical description. Deserializing a payload whose description
     differs from the canonical's emits a warning.
 
+    ``parent`` does participate in equality, compared by value up the
+    chain. Deserializing a payload for an already-canonical ``Identifier``
+    whose parent differs from the canonical's raises
+    ``DeserializationValueError`` rather than returning the canonical.
+
     Attributes:
         name: Stable, process-global identifier for this domain.
         description: Short human-readable description (surfaced in error
