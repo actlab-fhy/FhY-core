@@ -150,7 +150,7 @@ def test_python_counter_issues_the_largest_id_then_fails() -> None:
 
 
 @pytest.mark.skipif(
-    not fhy_core.RUST_BACKEND_AVAILABLE, reason="the Rust backend is not selected"
+    not fhy_core.RUST_BACKEND_SELECTED, reason="the Rust backend is not selected"
 )
 def test_public_identifier_draws_ids_from_the_rust_counter_when_selected() -> None:
     """Test the public class shares the Rust counter on the Rust backend."""
@@ -162,7 +162,7 @@ def test_public_identifier_draws_ids_from_the_rust_counter_when_selected() -> No
 
 
 @pytest.mark.skipif(
-    fhy_core.RUST_BACKEND_AVAILABLE, reason="the Rust backend is selected"
+    fhy_core.RUST_BACKEND_SELECTED, reason="the Rust backend is selected"
 )
 def test_public_identifier_leaves_the_rust_counter_alone_when_unselected() -> None:
     """Test the public class never draws from the Rust counter on the Python backend."""

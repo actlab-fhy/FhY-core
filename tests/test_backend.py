@@ -2,7 +2,7 @@
 
 The package runs on the compiled extension ``fhy_core._rs`` iff it imports
 and ``FHY_CORE_NO_EXTENSIONS`` does not disable it; the choice is reported
-as ``fhy_core.RUST_BACKEND_AVAILABLE``. An extension that is not installed
+as ``fhy_core.RUST_BACKEND_SELECTED``. An extension that is not installed
 selects the pure-Python backend silently; one that is installed but fails to
 import selects it with a ``RuntimeWarning``. The selection happens once,
 while the package is imported, so each case other than the running process's
@@ -27,7 +27,7 @@ _REPORT_BACKEND_PROGRAM = (
     "from fhy_core.identifier import Identifier\n"
     "first = Identifier('first')\n"
     "second = Identifier('second')\n"
-    "print(fhy_core.RUST_BACKEND_AVAILABLE, second.id - first.id)"
+    "print(fhy_core.RUST_BACKEND_SELECTED, second.id - first.id)"
 )
 
 
@@ -47,7 +47,7 @@ def _run_backend_report(
 
     Returns:
         The completed process, whose standard output holds the printed
-        ``RUST_BACKEND_AVAILABLE`` value, then the printed difference
+        ``RUST_BACKEND_SELECTED`` value, then the printed difference
         between two consecutively constructed ids.
 
     """
@@ -78,7 +78,7 @@ def _report_backend(variable_value: str | None) -> tuple[str, str]:
             leave it unset.
 
     Returns:
-        The printed ``RUST_BACKEND_AVAILABLE`` value, then the printed
+        The printed ``RUST_BACKEND_SELECTED`` value, then the printed
         difference between two consecutively constructed ids.
 
     """
@@ -98,9 +98,9 @@ def test_backend_flag_reflects_this_process_environment() -> None:
     is_installed = importlib.util.find_spec("fhy_core._rs") is not None
 
     if variable_value == "1":
-        assert fhy_core.RUST_BACKEND_AVAILABLE is False
+        assert fhy_core.RUST_BACKEND_SELECTED is False
     elif variable_value in {None, "0"}:
-        assert fhy_core.RUST_BACKEND_AVAILABLE is is_installed
+        assert fhy_core.RUST_BACKEND_SELECTED is is_installed
     else:
         pytest.skip(f"{_NO_EXTENSIONS_VARIABLE}={variable_value!r} is not pinned here")
 
@@ -221,7 +221,7 @@ def test_disabling_the_extension_skips_the_broken_extension_warning() -> None:
 
 
 @pytest.mark.skipif(
-    not fhy_core.RUST_BACKEND_AVAILABLE, reason="the Rust backend is not selected"
+    not fhy_core.RUST_BACKEND_SELECTED, reason="the Rust backend is not selected"
 )
 def test_extension_version_matches_the_installed_package_version() -> None:
     """Test the extension reports the version of the package it was built from."""

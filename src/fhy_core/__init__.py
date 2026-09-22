@@ -36,16 +36,19 @@ from .identifier import Identifier
 
 __version__ = version("fhy_core")
 
-RUST_BACKEND_AVAILABLE: bool = _backend.IS_RUST_BACKEND_SELECTED
+RUST_BACKEND_SELECTED: bool = _backend.IS_RUST_BACKEND_SELECTED
 """Whether this process runs on the Rust extension rather than pure Python.
 
-The Rust extension is selected at import iff it imports and the
-``FHY_CORE_NO_EXTENSIONS`` environment variable is unset, empty, or one of
-``0``, ``false``, ``no``, and ``off`` (case-insensitive).
+True only when the extension ``fhy_core._rs`` is installed, imports, and is
+not disabled through the ``FHY_CORE_NO_EXTENSIONS`` environment variable.
+The variable leaves the extension enabled when it is unset, empty, or one of
+``0``, ``false``, ``no``, and ``off`` (case-insensitive, ignoring surrounding
+whitespace); any other value disables it. The value is fixed when the package
+is imported.
 """
 
 __all__ = [
-    "RUST_BACKEND_AVAILABLE",
+    "RUST_BACKEND_SELECTED",
     "Identifier",
     "diagnostic",
     "error",

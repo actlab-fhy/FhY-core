@@ -51,8 +51,8 @@ def _select_backend(session: nox.Session, backend: str) -> None:
         "python",
         "-c",
         "import sys, fhy_core; "
-        f"sys.exit(None if fhy_core.RUST_BACKEND_AVAILABLE is {is_rust_expected} "
-        f"else 'expected RUST_BACKEND_AVAILABLE to be {is_rust_expected}')",
+        f"sys.exit(None if fhy_core.RUST_BACKEND_SELECTED is {is_rust_expected} "
+        f"else 'expected RUST_BACKEND_SELECTED to be {is_rust_expected}')",
     )
 
 

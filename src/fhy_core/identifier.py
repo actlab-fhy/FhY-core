@@ -3,7 +3,7 @@
 An :class:`Identifier` stores its id and name hint itself and draws new ids
 from a process-global counter. The counter is the Rust extension's
 (``fhy_core._rs``) when the package runs on the Rust backend
-(``fhy_core.RUST_BACKEND_AVAILABLE``) and a pure-Python counter otherwise.
+(``fhy_core.RUST_BACKEND_SELECTED``) and a pure-Python counter otherwise.
 The backend is fixed when the package is imported, so exactly one counter
 issues ids in a process.
 """

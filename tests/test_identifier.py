@@ -728,7 +728,7 @@ def _build_environment_for_the_other_backend() -> dict[str, str]:
     backend and the Rust extension is not installed.
     """
     environment = dict(os.environ)
-    if fhy_core.RUST_BACKEND_AVAILABLE:
+    if fhy_core.RUST_BACKEND_SELECTED:
         environment[_NO_EXTENSIONS_VARIABLE] = "1"
     else:
         pytest.importorskip("fhy_core._rs")
@@ -839,13 +839,13 @@ def test_pickle_written_under_this_backend_loads_under_the_other() -> None:
         "import fhy_core\n"
         "from fhy_core.identifier import Identifier\n"
         "restored = pickle.loads(base64.b64decode(sys.stdin.read()))\n"
-        "print(fhy_core.RUST_BACKEND_AVAILABLE, restored.id, restored.name_hint,\n"
+        "print(fhy_core.RUST_BACKEND_SELECTED, restored.id, restored.name_hint,\n"
         "      restored.is_frozen, Identifier('after').id)",
         stdin=payload,
     )
 
     other_backend, restored_id, name_hint, is_frozen, after_id = output
-    assert other_backend == str(not fhy_core.RUST_BACKEND_AVAILABLE)
+    assert other_backend == str(not fhy_core.RUST_BACKEND_SELECTED)
     assert (int(restored_id), name_hint, is_frozen) == (far_id, "far", "True")
     assert int(after_id) > far_id
 
@@ -867,13 +867,13 @@ def test_pickle_written_under_the_other_backend_loads_under_this_one() -> None:
         "identifier = Identifier.deserialize_from_dict(\n"
         "    {'id': int(sys.argv[1]), 'name_hint': 'far'}\n"
         ")\n"
-        "print(fhy_core.RUST_BACKEND_AVAILABLE,\n"
+        "print(fhy_core.RUST_BACKEND_SELECTED,\n"
         "      base64.b64encode(pickle.dumps(identifier)).decode('ascii'))",
         str(far_id),
     )
     restored = pickle.loads(base64.b64decode(payload))
 
-    assert other_backend == str(not fhy_core.RUST_BACKEND_AVAILABLE)
+    assert other_backend == str(not fhy_core.RUST_BACKEND_SELECTED)
     assert isinstance(restored, Identifier)
     assert (restored.id, restored.name_hint) == (far_id, "far")
     assert restored.is_frozen

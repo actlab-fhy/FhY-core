@@ -194,13 +194,13 @@ Install [maturin](https://www.maturin.rs/) 1.9.4 or newer (`uv tool install matu
 maturin develop
 
 # Verify the Rust backend is available from Python
-python -c "import fhy_core; print(fhy_core.RUST_BACKEND_AVAILABLE)"
+python -c "import fhy_core; print(fhy_core.RUST_BACKEND_SELECTED)"
 # => True
 ```
 
 `maturin develop` compiles the Rust crate with the `python` feature enabled and installs the resulting native module as `fhy_core._rs`. Inside the project environment, run it as `uv run --no-sync maturin develop` and run later commands with `uv run --no-sync` as well: a plain `uv run` re-syncs the environment and can reinstall the package over the fresh build.
 
-The backend is selected once, when `fhy_core` is imported. The package runs on the Rust extension iff the extension imports and the `FHY_CORE_NO_EXTENSIONS` environment variable does not disable it; otherwise it runs on its pure-Python implementation. The variable disables the extension when it holds anything other than an empty string or one of `0`, `false`, `no`, and `off` (case-insensitive), so `FHY_CORE_NO_EXTENSIONS=1` forces the pure-Python backend even when the extension is installed. `fhy_core.RUST_BACKEND_AVAILABLE` reports the selection. The public API is the same on both backends: `fhy_core.Identifier`, for example, draws its ids from the selected backend's counter, and exactly one counter issues ids in a process.
+The backend is selected once, when `fhy_core` is imported. The package runs on the Rust extension iff the extension imports and the `FHY_CORE_NO_EXTENSIONS` environment variable does not disable it; otherwise it runs on its pure-Python implementation. The variable disables the extension when it holds anything other than an empty string or one of `0`, `false`, `no`, and `off` (case-insensitive, ignoring surrounding whitespace), so `FHY_CORE_NO_EXTENSIONS=1` forces the pure-Python backend even when the extension is installed. `fhy_core.RUST_BACKEND_SELECTED` reports the selection: it is `True` only when the extension is installed, importable, and not disabled by `FHY_CORE_NO_EXTENSIONS`. The public API is the same on both backends: `fhy_core.Identifier`, for example, draws its ids from the selected backend's counter, and exactly one counter issues ids in a process.
 
 ### Testing the Python Package
 
@@ -228,7 +228,7 @@ uv run nox -s "tests-3.12(backend='python')"
 uv run nox -s property
 ```
 
-The `tests` nox session is parametrized over the backend: each Python version runs the full suite once with `FHY_CORE_NO_EXTENSIONS=0` (Rust) and once with `FHY_CORE_NO_EXTENSIONS=1` (pure Python), and a session fails before testing if the package does not report the backend it was asked for. A default `uv run nox` therefore tests both backends. Tests that compare the two implementations directly, such as `tests/test_identifier_rust_binding.py`, run in both sessions whenever the extension is installed. Tests can read `fhy_core.RUST_BACKEND_AVAILABLE` to tell which backend they run on.
+The `tests` nox session is parametrized over the backend: each Python version runs the full suite once with `FHY_CORE_NO_EXTENSIONS=0` (Rust) and once with `FHY_CORE_NO_EXTENSIONS=1` (pure Python), and a session fails before testing if the package does not report the backend it was asked for. A default `uv run nox` therefore tests both backends. Tests that compare the two implementations directly, such as `tests/test_identifier_rust_binding.py`, run in both sessions whenever the extension is installed. Tests can read `fhy_core.RUST_BACKEND_SELECTED` to tell which backend they run on.
 
 ## Contributing
 
