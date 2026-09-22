@@ -1,5 +1,7 @@
 """Task automation for FhY Core, driven by uv-backed nox sessions."""
 
+import difflib
+import json
 import pathlib
 
 import nox
@@ -12,6 +14,9 @@ ROOT = pathlib.Path(__file__).parent
 SOURCES = ["src", "tests"]
 # `FHY_CORE_NO_EXTENSIONS` value that selects each backend for a test run.
 BACKEND_EXTENSION_SETTINGS = {"rust": "0", "python": "1"}
+GOLDEN_DIRECTORY = ROOT / "rust" / "tests" / "golden"
+# Diff lines shown for each stale golden corpus; the rest are elided.
+GOLDEN_DIFF_LINE_LIMIT = 60
 
 
 def _sync(session: nox.Session, *groups: str) -> None:
@@ -23,6 +28,19 @@ def _sync(session: nox.Session, *groups: str) -> None:
         *args,
         env={"UV_PROJECT_ENVIRONMENT": session.virtualenv.location},
     )
+
+
+def _canonicalize_golden_corpus(path: pathlib.Path) -> str:
+    """Return a golden corpus as sorted-key JSON text, without its provenance.
+
+    The provenance block records the commit and interpreter that generated the
+    corpus, so it differs between runs. Comparing text rather than parsed
+    values keeps ``true`` distinct from ``1`` and ``1`` from ``1.0``.
+    """
+    with path.open(encoding="utf-8") as corpus_file:
+        document = json.load(corpus_file)
+    document.pop("provenance", None)
+    return json.dumps(document, ensure_ascii=False, indent=1, sort_keys=True)
 
 
 def _select_backend(session: nox.Session, backend: str) -> None:
@@ -125,6 +143,61 @@ def property(session: nox.Session) -> None:
         *session.posargs,
         env={"HYPOTHESIS_PROFILE": "thorough"},
     )
+
+
+@nox.session
+def golden(session: nox.Session) -> None:
+    """Check that the committed golden corpora match their generators.
+
+    Each ``generate_*.py`` under ``rust/tests/golden/`` replays seeded scripts
+    through the Python implementation, the oracle the Rust equivalence tests
+    replay, and writes the corpus named after it (``generate_X.py`` writes
+    ``X.json``). The session regenerates every corpus on the pure-Python
+    backend into a temporary directory and fails if any differs from the
+    committed one outside its provenance block.
+    """
+    _sync(session)
+    _select_backend(session, "python")
+    output_directory = pathlib.Path(session.create_tmp())
+    stale_corpora = []
+    for generator in sorted(GOLDEN_DIRECTORY.glob("generate_*.py")):
+        committed = generator.with_name(
+            generator.stem.removeprefix("generate_") + ".json"
+        )
+        if not committed.is_file():
+            session.error(f"{generator.name} has no committed corpus {committed.name}")
+        regenerated = output_directory / committed.name
+        # Silent: the oracles log a warning per ignored re-registration. Nox
+        # still prints the captured output if the generator fails.
+        session.run("python", str(generator), "--output", str(regenerated), silent=True)
+        committed_text = _canonicalize_golden_corpus(committed)
+        regenerated_text = _canonicalize_golden_corpus(regenerated)
+        if committed_text == regenerated_text:
+            session.log(f"{committed.name} matches its generator")
+            continue
+        stale_corpora.append(committed.name)
+        diff = list(
+            difflib.unified_diff(
+                committed_text.splitlines(),
+                regenerated_text.splitlines(),
+                fromfile=f"committed/{committed.name}",
+                tofile=f"regenerated/{committed.name}",
+                lineterm="",
+            )
+        )
+        elided = len(diff) - GOLDEN_DIFF_LINE_LIMIT
+        if elided > 0:
+            diff = [*diff[:GOLDEN_DIFF_LINE_LIMIT], f"... {elided} more diff lines"]
+        session.warn(
+            f"{committed.name} is stale; regenerate it from the repository root "
+            "with\n\n    FHY_CORE_NO_EXTENSIONS=1 uv run --no-sync python "
+            f"{generator.relative_to(ROOT).as_posix()}\n\n"
+            "Diff (provenance dropped, keys sorted):\n" + "\n".join(diff)
+        )
+    if stale_corpora:
+        session.error(
+            f"stale golden corpora: {', '.join(stale_corpora)} (see the diffs above)"
+        )
 
 
 @nox.session
