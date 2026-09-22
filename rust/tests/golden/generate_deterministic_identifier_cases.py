@@ -59,7 +59,10 @@ GENERATOR_COMMAND = (
     "rust/tests/golden/generate_deterministic_identifier_cases.py"
 )
 
-_RANDOM_HINTS = ["a", "b", "c"]
+# Beyond plain ASCII letters, the alphabet holds the empty hint, a
+# precomposed Latin letter, and an astral-plane emoji, so the random scripts
+# also key the scope's table on hints of zero, two, and four UTF-8 bytes.
+_RANDOM_HINTS = ["a", "b", "c", "", "é", "😀"]
 _RANDOM_SEED = 20260922
 _RANDOM_SCRIPT_COUNT = 130
 _RANDOM_MAX_OPS = 24
@@ -256,6 +259,37 @@ def _list_hand_picked_scripts() -> list[tuple[str, list[dict[str, Any]]]]:
                 _build_new_op("a"),
                 _build_new_op("b"),
                 _build_new_op("a"),
+            ],
+        ),
+        (
+            "empty_and_non_ascii_hints_are_shared_like_any_other",
+            [
+                _build_enter_op(),
+                _build_new_op(""),
+                _build_new_op("é"),
+                _build_new_op("😀"),
+                _build_new_op("e"),
+                _build_new_op(""),
+                _build_new_op("😀"),
+                _build_new_op("é"),
+                _build_exit_op(),
+                _build_new_op(""),
+                _build_new_op("é"),
+            ],
+        ),
+        (
+            "the_anchor_hint_inside_a_scope_does_not_share_the_anchor",
+            [
+                _build_enter_op(),
+                _build_new_op("anchor"),
+                _build_enter_op(),
+                _build_new_op("anchor"),
+                _build_exit_op(),
+                _build_new_op("anchor"),
+                _build_exit_op(),
+                _build_new_op("anchor"),
+                _build_enter_op(),
+                _build_new_op("anchor"),
             ],
         ),
     ]

@@ -2,7 +2,7 @@
  "provenance": {
   "package": "fhy_core",
   "package_version": "0.2.0",
-  "git_commit": "a449576f20c04cf283c6a71f960c2caa257c3406",
+  "git_commit": "80eb6ae65081724d9221e54227b36673f344abce",
   "python_version": "3.11.15 (main, Jun 27 2026, 16:18:26) [Clang 15.0.0 (clang-1500.0.40.1)]",
   "generator_command": "uv run --no-sync python rust/tests/golden/generate_deterministic_identifier_cases.py"
  },
@@ -362,11 +362,151 @@
    ]
   },
   {
+   "name": "empty_and_non_ascii_hints_are_shared_like_any_other",
+   "ops": [
+    {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 1
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 2
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 3
+     }
+    },
+    {
+     "op": "new",
+     "hint": "e",
+     "expected": {
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 1
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 3
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 2
+     }
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 6
+     }
+    }
+   ]
+  },
+  {
+   "name": "the_anchor_hint_inside_a_scope_does_not_share_the_anchor",
+   "ops": [
+    {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "anchor",
+     "expected": {
+      "relative_id": 1
+     }
+    },
+    {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "anchor",
+     "expected": {
+      "relative_id": 1
+     }
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "anchor",
+     "expected": {
+      "relative_id": 1
+     }
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "anchor",
+     "expected": {
+      "relative_id": 2
+     }
+    },
+    {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "anchor",
+     "expected": {
+      "relative_id": 3
+     }
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    }
+   ]
+  },
+  {
    "name": "random_000",
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
@@ -380,7 +520,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -402,7 +542,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
@@ -417,14 +557,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 7
      }
@@ -433,21 +573,21 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 6
+      "relative_id": 8
      }
     },
     {
      "op": "new",
      "hint": "b",
      "expected": {
-      "relative_id": 5
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
+     "expected": {
+      "relative_id": 9
      }
     },
     {
@@ -465,7 +605,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -483,7 +623,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
@@ -508,7 +648,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 4
      }
@@ -536,28 +676,28 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 4
      }
@@ -572,65 +712,23 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 6
      }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "enter",
-     "expected": {}
-    },
-    {
-     "op": "enter",
-     "expected": {}
-    },
-    {
-     "op": "enter",
-     "expected": {}
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "enter",
-     "expected": {}
     },
     {
      "op": "new",
      "hint": "c",
      "expected": {
-      "relative_id": 7
+      "relative_id": 6
      }
     },
     {
@@ -641,6 +739,37 @@
      "op": "new",
      "hint": "c",
      "expected": {
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
       "relative_id": 7
      }
     },
@@ -650,9 +779,20 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "é",
      "expected": {
       "relative_id": 8
+     }
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "c",
+     "expected": {
+      "relative_id": 9
      }
     },
     {
@@ -666,14 +806,14 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
@@ -684,30 +824,30 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 5
+      "relative_id": 6
      }
     },
     {
@@ -720,7 +860,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 4
      }
@@ -755,21 +895,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
@@ -778,35 +904,49 @@
      "op": "new",
      "hint": "b",
      "expected": {
-      "relative_id": 3
+      "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "a",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 5
      }
     },
     {
      "op": "new",
      "hint": "c",
      "expected": {
-      "relative_id": 4
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 5
      }
     },
     {
@@ -832,21 +972,21 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
@@ -857,7 +997,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
@@ -880,21 +1020,28 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
+     "expected": {
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "b",
      "expected": {
       "relative_id": 4
      }
@@ -903,12 +1050,12 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 4
+      "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 4
      }
@@ -917,19 +1064,12 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 4
+      "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
@@ -948,9 +1088,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 5
+      "relative_id": 7
      }
     },
     {
@@ -964,35 +1104,35 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
@@ -1006,21 +1146,21 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 8
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 9
      }
@@ -1031,7 +1171,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 10
      }
@@ -1046,37 +1186,37 @@
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 10
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 10
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
+     "hint": "😀",
      "expected": {
       "relative_id": 11
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "é",
      "expected": {
-      "relative_id": 11
+      "relative_id": 10
      }
     },
     {
      "op": "new",
      "hint": "c",
      "expected": {
-      "relative_id": 10
+      "relative_id": 12
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 13
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 11
      }
     },
     {
@@ -1090,7 +1230,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
@@ -1101,14 +1241,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 3
      }
@@ -1130,42 +1270,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
+     "hint": "é",
      "expected": {
       "relative_id": 6
      }
@@ -1174,7 +1286,35 @@
      "op": "new",
      "hint": "c",
      "expected": {
-      "relative_id": 5
+      "relative_id": 7
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 8
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 8
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 8
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 6
      }
     },
     {
@@ -1183,9 +1323,9 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 7
+      "relative_id": 9
      }
     }
    ]
@@ -1217,7 +1357,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
@@ -1235,14 +1375,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 5
      }
@@ -1260,7 +1400,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
@@ -1284,7 +1424,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -1295,7 +1435,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
@@ -1306,21 +1446,21 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
@@ -1337,14 +1477,14 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 5
+      "relative_id": 6
      }
     },
     {
@@ -1366,28 +1506,28 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 4
      }
@@ -1402,21 +1542,21 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
@@ -1434,16 +1574,16 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 5
+      "relative_id": 8
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 6
+      "relative_id": 9
      }
     },
     {
@@ -1463,14 +1603,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
@@ -1488,23 +1628,23 @@
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 8
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 9
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 10
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
+     "expected": {
+      "relative_id": 11
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 12
      }
     },
     {
@@ -1522,21 +1662,21 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -1551,44 +1691,44 @@
     },
     {
      "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
      "hint": "c",
+     "expected": {
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 6
      }
     },
     {
      "op": "new",
      "hint": "c",
      "expected": {
-      "relative_id": 5
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 6
      }
     },
     {
@@ -1597,23 +1737,23 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 5
+      "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 5
+      "relative_id": 6
      }
     },
     {
@@ -1631,14 +1771,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
@@ -1649,14 +1789,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 4
      }
@@ -1667,23 +1807,23 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 6
+      "relative_id": 7
      }
     },
     {
@@ -1705,7 +1845,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -1716,23 +1856,23 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 2
+      "relative_id": 4
      }
     },
     {
@@ -1750,7 +1890,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -1776,16 +1916,16 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
@@ -1801,23 +1941,23 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 2
+      "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
@@ -1839,14 +1979,14 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
@@ -1864,28 +2004,21 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "",
      "expected": {
       "relative_id": 6
      }
@@ -1894,7 +2027,14 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 6
+      "relative_id": 7
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
+      "relative_id": 7
      }
     },
     {
@@ -1903,9 +2043,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
@@ -1914,23 +2054,23 @@
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "",
      "expected": {
       "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
+      "relative_id": 7
      }
     },
     {
@@ -1952,14 +2092,14 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
@@ -1970,7 +2110,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
@@ -1989,16 +2129,16 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
@@ -2007,21 +2147,21 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 4
      }
@@ -2045,49 +2185,49 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 7
      }
@@ -2099,7 +2239,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -2110,7 +2250,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
@@ -2121,14 +2261,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
@@ -2157,9 +2297,9 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 6
+      "relative_id": 7
      }
     },
     {
@@ -2168,9 +2308,9 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 7
+      "relative_id": 8
      }
     },
     {
@@ -2183,9 +2323,9 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 7
+      "relative_id": 8
      }
     },
     {
@@ -2194,23 +2334,23 @@
     },
     {
      "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
      "hint": "b",
      "expected": {
       "relative_id": 7
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
+     "expected": {
+      "relative_id": 9
      }
     },
     {
@@ -2235,7 +2375,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
@@ -2250,23 +2390,16 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 3
      }
     },
     {
@@ -2274,6 +2407,13 @@
      "hint": "c",
      "expected": {
       "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 6
      }
     },
     {
@@ -2290,9 +2430,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 6
+      "relative_id": 7
      }
     },
     {
@@ -2321,7 +2461,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
@@ -2332,7 +2472,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
@@ -2343,7 +2483,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
@@ -2357,9 +2497,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 4
+      "relative_id": 6
      }
     },
     {
@@ -2368,30 +2508,30 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 3
+      "relative_id": 7
      }
     },
     {
      "op": "new",
      "hint": "c",
      "expected": {
-      "relative_id": 4
+      "relative_id": 3
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 6
      }
     },
     {
@@ -2400,28 +2540,28 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 4
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 6
      }
     },
     {
      "op": "new",
      "hint": "c",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
@@ -2445,7 +2585,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
@@ -2454,7 +2594,7 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 1
+      "relative_id": 2
      }
     },
     {
@@ -2467,16 +2607,16 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 2
+      "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
@@ -2498,21 +2638,21 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
@@ -2550,7 +2690,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
@@ -2578,21 +2718,21 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
@@ -2603,16 +2743,16 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
@@ -2621,7 +2761,44 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
+     "expected": {
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 7
+     }
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
@@ -2631,45 +2808,8 @@
      "expected": {}
     },
     {
-     "op": "enter",
-     "expected": {}
-    },
-    {
-     "op": "enter",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
      "op": "new",
      "hint": "c",
-     "expected": {
-      "relative_id": 5
-     }
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "b",
      "expected": {
       "relative_id": 4
      }
@@ -2689,14 +2829,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
@@ -2719,14 +2859,14 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
@@ -2740,14 +2880,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
@@ -2820,7 +2960,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
@@ -2840,21 +2980,21 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -2876,7 +3016,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 5
      }
@@ -2896,14 +3036,14 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
@@ -2918,7 +3058,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
@@ -2929,7 +3069,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
@@ -2943,14 +3083,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 6
      }
@@ -2961,7 +3101,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
+     "expected": {
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
      "expected": {
       "relative_id": 6
      }
@@ -2970,21 +3117,14 @@
      "op": "new",
      "hint": "b",
      "expected": {
-      "relative_id": 6
+      "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "c",
      "expected": {
-      "relative_id": 5
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 6
+      "relative_id": 8
      }
     },
     {
@@ -3010,14 +3150,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
@@ -3035,9 +3175,9 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
@@ -3046,16 +3186,16 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 5
+      "relative_id": 6
      }
     },
     {
@@ -3081,7 +3221,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
@@ -3092,7 +3232,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
@@ -3110,7 +3250,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
@@ -3140,7 +3280,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 6
      }
@@ -3151,14 +3291,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 8
      }
@@ -3174,7 +3314,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -3189,28 +3329,28 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
@@ -3230,7 +3370,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
@@ -3241,77 +3381,77 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 2
+      "relative_id": 4
      }
     },
     {
      "op": "new",
      "hint": "b",
      "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 2
      }
     },
     {
      "op": "new",
      "hint": "c",
      "expected": {
-      "relative_id": 3
+      "relative_id": 5
      }
     },
     {
      "op": "new",
      "hint": "a",
+     "expected": {
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "b",
+     "expected": {
+      "relative_id": 2
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
@@ -3339,7 +3479,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
@@ -3348,7 +3488,7 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 1
+      "relative_id": 2
      }
     },
     {
@@ -3359,7 +3499,7 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 1
+      "relative_id": 2
      }
     },
     {
@@ -3372,9 +3512,9 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 2
+      "relative_id": 3
      }
     },
     {
@@ -3392,7 +3532,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
@@ -3403,14 +3543,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -3435,14 +3575,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 7
      }
@@ -3485,28 +3625,28 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 4
      }
@@ -3517,7 +3657,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
@@ -3531,14 +3671,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 5
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
+     "hint": "😀",
      "expected": {
       "relative_id": 7
      }
@@ -3546,6 +3679,13 @@
     {
      "op": "new",
      "hint": "c",
+     "expected": {
+      "relative_id": 8
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
@@ -3556,9 +3696,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 8
+      "relative_id": 9
      }
     }
    ]
@@ -3572,14 +3712,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -3590,7 +3730,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
@@ -3613,38 +3753,20 @@
     },
     {
      "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "c",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
     },
     {
-     "op": "enter",
+     "op": "exit",
      "expected": {}
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "é",
      "expected": {
       "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 4
      }
     },
     {
@@ -3655,7 +3777,25 @@
      "op": "new",
      "hint": "b",
      "expected": {
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
       "relative_id": 5
+     }
+    },
+    {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 6
      }
     },
     {
@@ -3670,28 +3810,28 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 3
+      "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
+     "expected": {
+      "relative_id": 8
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
@@ -3700,9 +3840,9 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
@@ -3716,7 +3856,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -3727,7 +3867,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
@@ -3738,21 +3878,21 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
@@ -3774,42 +3914,42 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 8
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 9
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 10
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 11
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 12
      }
@@ -3833,14 +3973,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
@@ -3851,7 +3991,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -3866,21 +4006,21 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -3898,7 +4038,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -3909,9 +4049,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 2
+      "relative_id": 4
      }
     },
     {
@@ -3944,7 +4084,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
@@ -3955,7 +4095,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
@@ -3978,14 +4118,28 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
@@ -3994,21 +4148,7 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 5
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 5
+      "relative_id": 6
      }
     },
     {
@@ -4030,7 +4170,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -4058,7 +4198,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
@@ -4072,7 +4212,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 7
      }
@@ -4084,28 +4224,28 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 4
      }
@@ -4116,14 +4256,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
@@ -4141,7 +4281,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
@@ -4152,49 +4292,49 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "c",
+     "hint": "b",
      "expected": {
       "relative_id": 8
      }
     },
     {
+     "op": "exit",
+     "expected": {}
+    },
+    {
      "op": "new",
-     "hint": "b",
+     "hint": "a",
+     "expected": {
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "😀",
      "expected": {
       "relative_id": 9
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 10
      }
     },
     {
@@ -4203,9 +4343,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 10
+      "relative_id": 11
      }
     },
     {
@@ -4238,7 +4378,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
@@ -4249,7 +4389,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
@@ -4260,14 +4400,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
@@ -4283,7 +4423,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -4298,28 +4438,28 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
@@ -4331,7 +4471,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
@@ -4342,14 +4482,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
@@ -4375,7 +4515,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 5
      }
@@ -4389,21 +4529,21 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 8
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 9
      }
@@ -4422,7 +4562,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 10
      }
@@ -4436,7 +4576,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 10
      }
@@ -4474,35 +4614,35 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 7
      }
@@ -4513,14 +4653,21 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 8
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
+     "expected": {
+      "relative_id": 9
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
      "expected": {
       "relative_id": 9
      }
@@ -4528,27 +4675,13 @@
     {
      "op": "new",
      "hint": "b",
-     "expected": {
-      "relative_id": 9
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
      "expected": {
       "relative_id": 8
      }
     },
     {
      "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 9
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 9
      }
@@ -4562,9 +4695,16 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 10
+      "relative_id": 11
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 12
      }
     },
     {
@@ -4585,9 +4725,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 10
+      "relative_id": 11
      }
     },
     {
@@ -4605,7 +4745,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
@@ -4627,16 +4767,16 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
@@ -4651,7 +4791,7 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
@@ -4660,9 +4800,9 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 5
+      "relative_id": 6
      }
     },
     {
@@ -4684,7 +4824,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
@@ -4695,9 +4835,9 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 1
+      "relative_id": 2
      }
     },
     {
@@ -4708,7 +4848,7 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 2
+      "relative_id": 3
      }
     },
     {
@@ -4717,30 +4857,30 @@
     },
     {
      "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
      "hint": "c",
-     "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
      "hint": "b",
      "expected": {
-      "relative_id": 1
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
+     "expected": {
+      "relative_id": 2
      }
     },
     {
@@ -4749,14 +4889,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
@@ -4784,14 +4924,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
@@ -4802,21 +4942,21 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 5
      }
@@ -4827,7 +4967,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 6
      }
@@ -4838,7 +4978,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 6
      }
@@ -4849,7 +4989,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 6
      }
@@ -4858,7 +4998,7 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 6
+      "relative_id": 7
      }
     },
     {
@@ -4871,28 +5011,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 7
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 8
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 8
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
+     "hint": "é",
      "expected": {
       "relative_id": 8
      }
@@ -4901,7 +5020,28 @@
      "op": "new",
      "hint": "c",
      "expected": {
-      "relative_id": 7
+      "relative_id": 9
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 10
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 10
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 8
      }
     },
     {
@@ -4923,7 +5063,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
@@ -4934,14 +5074,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -4952,21 +5092,21 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
@@ -4985,42 +5125,42 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 3
+      "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
@@ -5048,14 +5188,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
@@ -5066,9 +5206,9 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 2
+      "relative_id": 3
      }
     },
     {
@@ -5078,24 +5218,6 @@
     {
      "op": "enter",
      "expected": {}
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 2
-     }
     },
     {
      "op": "exit",
@@ -5110,23 +5232,41 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "",
+     "expected": {
+      "relative_id": 2
+     }
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "😀",
      "expected": {
       "relative_id": 4
      }
     },
     {
-     "op": "enter",
-     "expected": {}
-    },
-    {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
     },
     {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 6
+     }
+    },
+    {
      "op": "exit",
      "expected": {}
     },
@@ -5140,9 +5280,9 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 6
+      "relative_id": 7
      }
     },
     {
@@ -5155,9 +5295,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 7
+      "relative_id": 8
      }
     },
     {
@@ -5183,7 +5323,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -5201,7 +5341,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -5216,7 +5356,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
@@ -5227,7 +5367,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
@@ -5251,7 +5391,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -5266,28 +5406,28 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
@@ -5302,14 +5442,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
@@ -5318,7 +5458,7 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 4
+      "relative_id": 6
      }
     },
     {
@@ -5327,37 +5467,37 @@
     },
     {
      "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
+     "hint": "",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "é",
      "expected": {
       "relative_id": 8
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "c",
      "expected": {
       "relative_id": 9
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 10
+     }
+    },
+    {
+     "op": "new",
+     "hint": "b",
+     "expected": {
+      "relative_id": 11
      }
     },
     {
@@ -5395,21 +5535,21 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
@@ -5420,28 +5560,28 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
@@ -5469,14 +5609,14 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
@@ -5491,7 +5631,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
@@ -5515,16 +5655,16 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 1
+      "relative_id": 2
      }
     },
     {
@@ -5533,14 +5673,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 1
+      "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -5615,7 +5755,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
@@ -5626,7 +5766,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
@@ -5635,21 +5775,21 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 5
      }
     },
     {
      "op": "new",
      "hint": "c",
      "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 4
+      "relative_id": 6
      }
     },
     {
@@ -5658,7 +5798,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
@@ -5674,7 +5814,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
@@ -5685,7 +5825,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
@@ -5703,44 +5843,44 @@
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
      "hint": "b",
      "expected": {
-      "relative_id": 4
+      "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "",
      "expected": {
-      "relative_id": 3
+      "relative_id": 5
      }
     },
     {
      "op": "new",
      "hint": "b",
      "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 3
+      "relative_id": 6
      }
     },
     {
@@ -5773,35 +5913,35 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
@@ -5815,14 +5955,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 8
      }
@@ -5834,7 +5974,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
@@ -5848,7 +5988,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -5859,7 +5999,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
@@ -5870,14 +6010,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
@@ -5892,7 +6032,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 7
      }
@@ -5910,16 +6050,16 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 9
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 8
+      "relative_id": 10
      }
     },
     {
@@ -5933,21 +6073,21 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
@@ -5961,21 +6101,21 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 7
      }
@@ -5997,14 +6137,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 9
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 10
      }
@@ -6028,37 +6168,37 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "a",
      "expected": {
-      "relative_id": 1
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 3
      }
     },
     {
@@ -6072,7 +6212,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
@@ -6083,14 +6223,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
@@ -6105,7 +6245,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 4
      }
@@ -6137,7 +6277,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 1
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -6145,29 +6292,22 @@
     {
      "op": "new",
      "hint": "c",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 2
+      "relative_id": 3
      }
     },
     {
@@ -6178,70 +6318,70 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
      "op": "new",
      "hint": "b",
      "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
+     "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 3
+      "relative_id": 5
      }
     },
     {
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
+     "expected": {
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "b",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "é",
      "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 1
+      "relative_id": 6
      }
     },
     {
@@ -6278,14 +6418,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
@@ -6296,35 +6436,35 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
@@ -6333,7 +6473,39 @@
      "op": "new",
      "hint": "a",
      "expected": {
+      "relative_id": 7
+     }
+    },
+    {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "b",
+     "expected": {
       "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 8
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 8
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 4
      }
     },
     {
@@ -6344,51 +6516,19 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 5
+      "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "enter",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 5
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
@@ -6397,7 +6537,7 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 5
+      "relative_id": 7
      }
     },
     {
@@ -6419,7 +6559,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
@@ -6430,35 +6570,35 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
@@ -6474,14 +6614,14 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
@@ -6495,7 +6635,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
@@ -6515,7 +6655,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -6529,28 +6669,28 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 6
      }
@@ -6565,14 +6705,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 8
      }
@@ -6583,14 +6723,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 8
      }
@@ -6609,14 +6749,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 7
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
+     "hint": "é",
      "expected": {
       "relative_id": 9
      }
@@ -6625,6 +6758,13 @@
      "op": "new",
      "hint": "b",
      "expected": {
+      "relative_id": 10
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
+     "expected": {
       "relative_id": 8
      }
     },
@@ -6640,7 +6780,7 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 9
+      "relative_id": 11
      }
     },
     {
@@ -6658,35 +6798,35 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
@@ -6705,14 +6845,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 7
      }
@@ -6726,7 +6866,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
@@ -6737,35 +6877,28 @@
     },
     {
      "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 7
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 7
-     }
-    },
-    {
-     "op": "new",
      "hint": "c",
+     "expected": {
+      "relative_id": 9
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 7
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 7
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 7
      }
@@ -6773,13 +6906,20 @@
     {
      "op": "new",
      "hint": "c",
+     "expected": {
+      "relative_id": 9
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
@@ -6814,16 +6954,16 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 2
+      "relative_id": 3
      }
     },
     {
@@ -6832,106 +6972,106 @@
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "enter",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "b",
+     "hint": "😀",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "b",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
+      "relative_id": 1
+     }
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 2
+     }
+    },
+    {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "😀",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "c",
      "expected": {
       "relative_id": 8
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
+      "relative_id": 9
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
+      "relative_id": 10
      }
     }
    ]
@@ -6941,28 +7081,28 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
@@ -6976,14 +7116,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 7
      }
@@ -6995,14 +7135,14 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
@@ -7017,7 +7157,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
@@ -7071,7 +7211,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
@@ -7082,7 +7222,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
@@ -7093,42 +7233,42 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 8
      }
@@ -7139,14 +7279,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 9
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 10
      }
@@ -7157,28 +7297,28 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 11
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 12
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 13
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 14
      }
@@ -7190,28 +7330,28 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 4
      }
@@ -7226,7 +7366,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 5
      }
@@ -7248,38 +7388,38 @@
     },
     {
      "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "c",
+     "hint": "b",
      "expected": {
       "relative_id": 7
      }
     },
     {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
      "op": "new",
-     "hint": "b",
+     "hint": "é",
      "expected": {
       "relative_id": 8
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "",
      "expected": {
       "relative_id": 9
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 10
      }
     },
     {
@@ -7312,7 +7452,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
@@ -7323,7 +7463,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 3
      }
@@ -7334,44 +7474,44 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 1
+      "relative_id": 4
      }
     },
     {
      "op": "new",
      "hint": "b",
      "expected": {
-      "relative_id": 2
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "b",
+     "expected": {
+      "relative_id": 5
      }
     },
     {
      "op": "new",
      "hint": "c",
      "expected": {
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 1
+      "relative_id": 5
      }
     },
     {
@@ -7380,9 +7520,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 3
+      "relative_id": 6
      }
     },
     {
@@ -7404,21 +7544,21 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -7432,14 +7572,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 6
      }
@@ -7453,7 +7593,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 8
      }
@@ -7464,14 +7604,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 9
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 10
      }
@@ -7482,14 +7622,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 11
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 12
      }
@@ -7508,7 +7648,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
@@ -7534,14 +7674,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
@@ -7552,7 +7692,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
@@ -7568,21 +7708,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
@@ -7591,14 +7724,21 @@
      "op": "new",
      "hint": "b",
      "expected": {
+      "relative_id": 2
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
+     "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
@@ -7627,14 +7767,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -7660,28 +7800,28 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 4
+      "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
@@ -7703,14 +7843,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
@@ -7746,7 +7886,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -7764,7 +7904,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
@@ -7791,28 +7931,28 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 5
+      "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
@@ -7821,12 +7961,12 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 6
+      "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
@@ -7850,7 +7990,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
@@ -7861,16 +8001,16 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 1
+      "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 2
+      "relative_id": 3
      }
     },
     {
@@ -7881,19 +8021,12 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
@@ -7907,30 +8040,37 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "é",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 8
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "",
      "expected": {
       "relative_id": 9
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "b",
      "expected": {
       "relative_id": 10
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 11
      }
     }
    ]
@@ -7947,56 +8087,56 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 8
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 9
      }
@@ -8021,7 +8161,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 12
      }
@@ -8039,9 +8179,9 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 13
+      "relative_id": 14
      }
     },
     {
@@ -8050,16 +8190,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 12
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 13
+      "relative_id": 15
      }
     },
     {
@@ -8080,7 +8213,14 @@
      "op": "new",
      "hint": "c",
      "expected": {
-      "relative_id": 12
+      "relative_id": 16
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 15
      }
     },
     {
@@ -8109,35 +8249,35 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 6
      }
@@ -8153,14 +8293,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
@@ -8183,28 +8323,28 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
@@ -8219,14 +8359,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
@@ -8263,7 +8403,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 9
      }
@@ -8275,14 +8415,14 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
@@ -8308,13 +8448,6 @@
     },
     {
      "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
      "hint": "b",
      "expected": {
       "relative_id": 4
@@ -8322,37 +8455,44 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
      "op": "new",
      "hint": "c",
      "expected": {
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
       "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
+     "expected": {
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 7
      }
     },
     {
@@ -8382,32 +8522,21 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
@@ -8424,6 +8553,10 @@
      }
     },
     {
+     "op": "exit",
+     "expected": {}
+    },
+    {
      "op": "new",
      "hint": "a",
      "expected": {
@@ -8432,23 +8565,30 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "a",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "",
      "expected": {
       "relative_id": 7
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
+      "relative_id": 8
      }
     }
    ]
@@ -8458,7 +8598,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
@@ -8472,7 +8612,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -8498,7 +8638,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
@@ -8506,13 +8653,6 @@
     {
      "op": "new",
      "hint": "b",
-     "expected": {
-      "relative_id": 5
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
      "expected": {
       "relative_id": 6
      }
@@ -8527,9 +8667,9 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 5
+      "relative_id": 7
      }
     },
     {
@@ -8546,28 +8686,28 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 7
+      "relative_id": 8
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 7
+      "relative_id": 8
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 6
      }
@@ -8591,7 +8731,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
@@ -8602,29 +8742,10 @@
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
-    },
-    {
-     "op": "enter",
-     "expected": {}
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "enter",
-     "expected": {}
     },
     {
      "op": "new",
@@ -8634,14 +8755,33 @@
      }
     },
     {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "exit",
+     "expected": {}
+    },
+    {
+     "op": "enter",
+     "expected": {}
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 4
+     }
+    },
+    {
      "op": "exit",
      "expected": {}
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 1
+      "relative_id": 2
      }
     },
     {
@@ -8667,7 +8807,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
@@ -8678,14 +8818,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -8698,14 +8838,14 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 2
+      "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
@@ -8723,7 +8863,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
@@ -8737,35 +8877,35 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 7
      }
@@ -8785,7 +8925,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
@@ -8825,7 +8965,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 5
      }
@@ -8840,51 +8980,51 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 5
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 5
-     }
-    },
-    {
-     "op": "new",
      "hint": "c",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "b",
+     "expected": {
+      "relative_id": 7
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 8
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 6
+      "relative_id": 9
      }
     },
     {
@@ -8906,7 +9046,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
@@ -8921,7 +9061,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
@@ -8932,21 +9072,21 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
@@ -8957,28 +9097,28 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 8
      }
@@ -9008,7 +9148,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 10
      }
@@ -9036,7 +9176,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
@@ -9050,21 +9190,21 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
@@ -9089,9 +9229,9 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 6
+      "relative_id": 7
      }
     },
     {
@@ -9113,21 +9253,21 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
@@ -9138,7 +9278,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
@@ -9149,7 +9289,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
@@ -9167,14 +9307,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 8
      }
@@ -9185,7 +9325,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 9
      }
@@ -9198,21 +9338,21 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 8
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 8
+      "relative_id": 10
      }
     },
     {
      "op": "new",
      "hint": "b",
      "expected": {
-      "relative_id": 7
+      "relative_id": 8
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 11
      }
     },
     {
@@ -9221,44 +9361,44 @@
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 10
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 11
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 12
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "",
      "expected": {
       "relative_id": 13
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "😀",
      "expected": {
       "relative_id": 14
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "a",
      "expected": {
       "relative_id": 15
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
+     "expected": {
+      "relative_id": 16
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 17
      }
     }
    ]
@@ -9283,7 +9423,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
@@ -9297,9 +9437,9 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
@@ -9308,9 +9448,9 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
@@ -9324,21 +9464,21 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 3
      }
@@ -9349,7 +9489,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 4
      }
@@ -9372,7 +9512,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
@@ -9383,7 +9523,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
@@ -9402,9 +9542,9 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 2
+      "relative_id": 3
      }
     },
     {
@@ -9413,28 +9553,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
@@ -9443,7 +9562,28 @@
      "op": "new",
      "hint": "c",
      "expected": {
+      "relative_id": 3
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
       "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
+     "expected": {
+      "relative_id": 3
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 5
      }
     },
     {
@@ -9465,35 +9605,35 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 5
      }
@@ -9504,7 +9644,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 6
      }
@@ -9531,14 +9671,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 8
      }
@@ -9549,14 +9689,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 8
      }
@@ -9591,7 +9731,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -9606,14 +9746,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -9624,14 +9764,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
@@ -9642,21 +9782,21 @@
     },
     {
      "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
      "hint": "c",
+     "expected": {
+      "relative_id": 1
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 3
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
@@ -9665,19 +9805,19 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
      "op": "new",
      "hint": "b",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -9688,7 +9828,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -9731,7 +9871,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
@@ -9742,7 +9882,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
@@ -9753,7 +9893,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
@@ -9764,7 +9904,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
@@ -9787,21 +9927,21 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
@@ -9812,16 +9952,16 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 4
+      "relative_id": 6
      }
     },
     {
@@ -9843,34 +9983,34 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "exit",
-     "expected": {}
-    },
-    {
-     "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
     },
     {
+     "op": "exit",
+     "expected": {}
+    },
+    {
      "op": "new",
-     "hint": "b",
+     "hint": "é",
      "expected": {
       "relative_id": 3
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
+     "expected": {
+      "relative_id": 4
      }
     },
     {
@@ -9881,7 +10021,7 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
@@ -9894,9 +10034,9 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 5
+      "relative_id": 6
      }
     },
     {
@@ -9905,16 +10045,16 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 5
+      "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 4
+      "relative_id": 8
      }
     },
     {
@@ -9940,7 +10080,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
@@ -9954,35 +10094,35 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 7
      }
@@ -10018,35 +10158,35 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
@@ -10060,14 +10200,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 8
      }
@@ -10086,16 +10226,16 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 9
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 9
+      "relative_id": 10
      }
     },
     {
@@ -10104,9 +10244,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 9
+      "relative_id": 10
      }
     },
     {
@@ -10119,16 +10259,16 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 9
+      "relative_id": 10
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 10
+      "relative_id": 11
      }
     },
     {
@@ -10172,23 +10312,23 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 1
+      "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
@@ -10197,23 +10337,23 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 3
+      "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 3
+      "relative_id": 5
      }
     },
     {
@@ -10231,14 +10371,14 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
@@ -10263,7 +10403,35 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 7
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 7
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
@@ -10272,42 +10440,14 @@
      "op": "new",
      "hint": "c",
      "expected": {
-      "relative_id": 5
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 6
+      "relative_id": 8
      }
     },
     {
      "op": "new",
      "hint": "c",
      "expected": {
-      "relative_id": 5
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 6
+      "relative_id": 8
      }
     },
     {
@@ -10320,16 +10460,16 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
-      "relative_id": 6
+      "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 5
+      "relative_id": 6
      }
     },
     {
@@ -10343,7 +10483,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -10362,28 +10502,21 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -10392,35 +10525,42 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 3
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
      "op": "new",
      "hint": "b",
      "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "b",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 3
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
       "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "c",
+     "expected": {
+      "relative_id": 6
      }
     },
     {
@@ -10431,7 +10571,7 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
@@ -10449,42 +10589,42 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 6
      }
@@ -10495,7 +10635,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 7
      }
@@ -10506,21 +10646,21 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 8
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 9
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 10
      }
@@ -10531,7 +10671,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 11
      }
@@ -10546,7 +10686,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 12
      }
@@ -10554,29 +10694,29 @@
     {
      "op": "new",
      "hint": "a",
-     "expected": {
-      "relative_id": 12
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 12
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
      "expected": {
       "relative_id": 13
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 12
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 14
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
+      "relative_id": 13
      }
     },
     {
@@ -10591,7 +10731,7 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 14
+      "relative_id": 15
      }
     },
     {
@@ -10605,7 +10745,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
@@ -10627,7 +10767,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -10646,7 +10786,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 4
      }
@@ -10662,21 +10802,21 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
@@ -10687,14 +10827,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
@@ -10705,7 +10845,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 6
      }
@@ -10723,7 +10863,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 8
      }
@@ -10762,21 +10902,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -10784,6 +10910,20 @@
     {
      "op": "new",
      "hint": "b",
+     "expected": {
+      "relative_id": 2
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 1
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
@@ -10803,14 +10943,14 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 2
      }
@@ -10843,16 +10983,16 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 4
+      "relative_id": 6
      }
     },
     {
@@ -10872,70 +11012,21 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 5
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 6
+      "relative_id": 7
      }
     },
     {
      "op": "new",
      "hint": "c",
      "expected": {
-      "relative_id": 5
+      "relative_id": 8
      }
     },
     {
      "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 5
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
@@ -10952,6 +11043,55 @@
      "hint": "b",
      "expected": {
       "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "b",
+     "expected": {
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 7
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 9
      }
     },
     {
@@ -10981,7 +11121,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
@@ -10992,14 +11132,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
@@ -11013,23 +11146,30 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 4
      }
     },
     {
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 1
+      "relative_id": 5
      }
     },
     {
@@ -11038,7 +11178,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
@@ -11049,7 +11189,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
@@ -11064,9 +11204,16 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 2
+      "relative_id": 3
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
+      "relative_id": 4
      }
     },
     {
@@ -11078,16 +11225,16 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "😀",
      "expected": {
-      "relative_id": 2
+      "relative_id": 4
      }
     },
     {
@@ -11099,16 +11246,9 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 2
+      "relative_id": 3
      }
     },
     {
@@ -11134,7 +11274,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -11148,14 +11288,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -11166,9 +11306,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
@@ -11177,9 +11317,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
@@ -11188,14 +11328,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -11215,14 +11355,14 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
@@ -11236,35 +11376,35 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 8
      }
@@ -11292,7 +11432,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 1
      }
@@ -11306,7 +11446,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 3
      }
@@ -11317,14 +11457,28 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
@@ -11332,20 +11486,6 @@
     {
      "op": "new",
      "hint": "b",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 5
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
      "expected": {
       "relative_id": 5
      }
@@ -11360,63 +11500,63 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 6
+      "relative_id": 7
      }
     },
     {
      "op": "new",
      "hint": "c",
      "expected": {
+      "relative_id": 7
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 6
+     }
+    },
+    {
+     "op": "new",
+     "hint": "😀",
+     "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
+     "hint": "c",
+     "expected": {
+      "relative_id": 7
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 8
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 8
+     }
+    },
+    {
+     "op": "new",
      "hint": "b",
-     "expected": {
-      "relative_id": 6
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 4
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
      "expected": {
       "relative_id": 5
      }
@@ -11444,21 +11584,21 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
@@ -11503,7 +11643,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -11519,7 +11659,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -11530,7 +11670,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
@@ -11541,7 +11681,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
@@ -11570,7 +11710,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
@@ -11581,7 +11721,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 6
      }
@@ -11590,7 +11730,7 @@
      "op": "new",
      "hint": "a",
      "expected": {
-      "relative_id": 6
+      "relative_id": 7
      }
     },
     {
@@ -11608,14 +11748,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
@@ -11626,14 +11766,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -11647,9 +11787,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 1
+      "relative_id": 4
      }
     },
     {
@@ -11657,27 +11797,27 @@
      "hint": "a",
      "expected": {
       "relative_id": 3
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 5
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 4
      }
     },
     {
      "op": "new",
      "hint": "b",
      "expected": {
-      "relative_id": 2
-     }
-    },
-    {
-     "op": "new",
-     "hint": "c",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 3
+      "relative_id": 6
      }
     },
     {
@@ -11694,9 +11834,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 1
+      "relative_id": 4
      }
     },
     {
@@ -11705,16 +11845,16 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 3
+      "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
-      "relative_id": 1
+      "relative_id": 4
      }
     },
     {
@@ -11732,7 +11872,7 @@
    "ops": [
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 1
      }
@@ -11746,21 +11886,21 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 5
      }
@@ -11801,7 +11941,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
@@ -11822,14 +11962,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 8
      }
@@ -11844,28 +11984,28 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 9
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 10
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 11
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 12
      }
@@ -11879,7 +12019,7 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 14
      }
@@ -11893,7 +12033,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 16
      }
@@ -11929,21 +12069,21 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 3
      }
@@ -11969,35 +12109,35 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 6
      }
@@ -12012,14 +12152,14 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 7
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 8
      }
@@ -12030,37 +12170,37 @@
     },
     {
      "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 8
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 8
-     }
-    },
-    {
-     "op": "new",
-     "hint": "a",
-     "expected": {
-      "relative_id": 8
-     }
-    },
-    {
-     "op": "new",
      "hint": "b",
+     "expected": {
+      "relative_id": 8
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
      "expected": {
       "relative_id": 9
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 8
+     }
+    },
+    {
+     "op": "new",
+     "hint": "",
+     "expected": {
+      "relative_id": 10
+     }
+    },
+    {
+     "op": "new",
+     "hint": "a",
+     "expected": {
+      "relative_id": 9
      }
     },
     {
@@ -12069,7 +12209,7 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 7
      }
@@ -12104,14 +12244,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 3
      }
@@ -12122,7 +12262,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 4
      }
@@ -12133,21 +12273,21 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 5
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 6
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 7
      }
@@ -12161,14 +12301,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 9
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 10
      }
@@ -12179,14 +12319,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 11
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 12
      }
@@ -12197,14 +12337,14 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 13
      }
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
       "relative_id": 14
      }
@@ -12232,14 +12372,14 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -12253,9 +12393,9 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 2
+      "relative_id": 3
      }
     },
     {
@@ -12264,9 +12404,9 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 2
+      "relative_id": 3
      }
     },
     {
@@ -12282,9 +12422,9 @@
     },
     {
      "op": "new",
-     "hint": "a",
+     "hint": "b",
      "expected": {
-      "relative_id": 2
+      "relative_id": 3
      }
     },
     {
@@ -12293,9 +12433,9 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
-      "relative_id": 3
+      "relative_id": 4
      }
     },
     {
@@ -12307,14 +12447,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
-     "expected": {
-      "relative_id": 1
-     }
-    },
-    {
-     "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
@@ -12323,7 +12456,14 @@
      "op": "new",
      "hint": "c",
      "expected": {
-      "relative_id": 3
+      "relative_id": 1
+     }
+    },
+    {
+     "op": "new",
+     "hint": "é",
+     "expected": {
+      "relative_id": 5
      }
     },
     {
@@ -12345,28 +12485,28 @@
    "ops": [
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 1
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 2
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "😀",
      "expected": {
       "relative_id": 4
      }
@@ -12377,7 +12517,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 5
      }
@@ -12388,7 +12528,7 @@
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 6
      }
@@ -12426,23 +12566,23 @@
     },
     {
      "op": "new",
-     "hint": "c",
+     "hint": "é",
      "expected": {
       "relative_id": 3
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "",
      "expected": {
       "relative_id": 4
      }
     },
     {
      "op": "new",
-     "hint": "b",
+     "hint": "c",
      "expected": {
-      "relative_id": 4
+      "relative_id": 5
      }
     },
     {
