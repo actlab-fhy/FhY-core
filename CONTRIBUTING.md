@@ -243,6 +243,14 @@ package`; `rust-msrv` builds the library on the `rust-version` in
 `.cargo/config.toml` has the resolver fall back to dependency releases that
 build on it and `cargo update` keeps `Cargo.lock` within it.
 
+The Rust equivalence tests replay golden corpora under `rust/tests/golden/`,
+each recorded from the Python implementation by the `generate_*.py` script
+beside it. The `golden` job, which `ci-ok` also requires, runs
+`uv run nox -s golden`: it reruns every generator on the pure-Python backend
+and fails, printing the regeneration command and a diff, if a committed corpus
+differs outside its `provenance` block. After changing the Python behavior a
+corpus records, regenerate it and commit the result.
+
 Mutation testing measures whether a property earned its place: it makes
 small changes to the source and checks that some test fails. Each targeted
 module has its own config under `cosmic-ray/`; run one with
