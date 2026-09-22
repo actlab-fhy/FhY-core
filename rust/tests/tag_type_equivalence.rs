@@ -29,6 +29,11 @@ use serde_json::{json, Map, Value};
 
 const GOLDEN_JSON: &str = include_str!("golden/tag_type_cases.json");
 
+/// Distance above a freshly minted id at which `bind_ahead` binds a slot, and
+/// between the ids of successive ahead slots in one script, mirroring the
+/// generator's `_AHEAD_ID_SPACING`.
+const AHEAD_ID_SPACING: u64 = 1_000_000;
+
 /// Per-script table binding the identifier slots named in the golden data to
 /// the `Identifier` minted for them in this process.
 ///
@@ -37,9 +42,15 @@ const GOLDEN_JSON: &str = include_str!("golden/tag_type_cases.json");
 /// reverse lookup turns a registry's identifier back into the slot name the
 /// golden data expects, so an encoded value or a domain's parent can be
 /// compared in normalized (slot) form.
+///
+/// A `bind_ahead` op instead binds a slot to an id ahead of the counter and
+/// leaves it unrestored until an op needs the slot's `Identifier`, as the
+/// generator does, so an `is_counter_past` op sees only what a decode did.
 struct SlotTable {
     by_slot: HashMap<String, Identifier>,
     by_id: HashMap<u64, String>,
+    ahead: HashMap<String, u64>,
+    ahead_count: u64,
 }
 
 impl SlotTable {
@@ -47,6 +58,33 @@ impl SlotTable {
         Self {
             by_slot: HashMap::new(),
             by_id: HashMap::new(),
+            ahead: HashMap::new(),
+            ahead_count: 0,
+        }
+    }
+
+    /// Bind the fresh `slot` to an id ahead of the counter, unrestored.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `slot` is already bound.
+    fn bind_ahead(&mut self, slot: &str) {
+        assert!(
+            !self.by_slot.contains_key(slot) && !self.ahead.contains_key(slot),
+            "slot {slot:?} is already bound"
+        );
+        self.ahead_count += 1;
+        let id = Identifier::new(slot).id() + AHEAD_ID_SPACING * self.ahead_count;
+        self.by_id.insert(id, slot.to_string());
+        self.ahead.insert(slot.to_string(), id);
+    }
+
+    /// Return `slot`'s id, minting an identifier on first use but leaving an
+    /// ahead slot's id unrestored.
+    fn resolve_id(&mut self, slot: &str) -> u64 {
+        match self.ahead.get(slot) {
+            Some(&id) => id,
+            None => self.resolve_identifier(slot).id(),
         }
     }
 
@@ -59,6 +97,11 @@ impl SlotTable {
     fn resolve_identifier(&mut self, slot: &str) -> Identifier {
         if let Some(identifier) = self.by_slot.get(slot) {
             return identifier.clone();
+        }
+        if let Some(id) = self.ahead.remove(slot) {
+            let identifier = Identifier::restore(id, slot.to_string());
+            self.by_slot.insert(slot.to_string(), identifier.clone());
+            return identifier;
         }
         let identifier = Identifier::new(slot);
         self.bind_slot(slot, identifier.clone());
@@ -114,8 +157,7 @@ fn denormalize_identifier(value: &Value, slots: &mut SlotTable) -> Value {
     let name_hint = value["name_hint"]
         .as_str()
         .expect("a normalized identifier has a name_hint");
-    let identifier = slots.resolve_identifier(slot);
-    json!({"id": identifier.id(), "name_hint": name_hint})
+    json!({"id": slots.resolve_id(slot), "name_hint": name_hint})
 }
 
 fn denormalize_op_attribute(value: &Value, slots: &mut SlotTable) -> Value {
@@ -319,6 +361,31 @@ where
             ));
             None
         }
+    }
+}
+
+/// Check whether the id counter has passed a slot's id against the golden
+/// expectation, minting one identifier to find out.
+fn check_is_counter_past(
+    slots: &mut SlotTable,
+    name: &str,
+    index: usize,
+    op: &Value,
+    mismatches: &mut Vec<String>,
+) {
+    let slot = op["slot"].as_str().expect("is_counter_past op has a slot");
+    let id = slots.resolve_id(slot);
+    let expected = op["expected"]["result"]
+        .as_bool()
+        .expect("is_counter_past expectation has a boolean `result`");
+
+    let actual = Identifier::new("counter-probe").id() > id;
+
+    if actual != expected {
+        mismatches.push(format!(
+            "case {name} op {index}: expected the counter past {slot:?} to be {expected}, \
+             got {actual}"
+        ));
     }
 }
 
@@ -569,6 +636,8 @@ fn replay_op_attribute_case(case: &Value, mismatches: &mut Vec<String>) {
             "eq_with_duplicate" => {
                 check_eq_with_duplicate_attribute(&mut slots, name, index, op, mismatches);
             }
+            "bind_ahead" => slots.bind_ahead(op["slot"].as_str().expect("op has a slot")),
+            "is_counter_past" => check_is_counter_past(&mut slots, name, index, op, mismatches),
             other => panic!("case {name} op {index}: unknown op_attribute op kind {other:?}"),
         }
     }
@@ -1015,6 +1084,8 @@ fn replay_value_domain_case(case: &Value, mismatches: &mut Vec<String>) {
             }
             "hold" => hold_domain(&mut slots, &mut held, op),
             "eq_held" => check_eq_held_domain(&mut slots, &held, name, index, op, mismatches),
+            "bind_ahead" => slots.bind_ahead(op["slot"].as_str().expect("op has a slot")),
+            "is_counter_past" => check_is_counter_past(&mut slots, name, index, op, mismatches),
             other => panic!("case {name} op {index}: unknown value_domain op kind {other:?}"),
         }
     }

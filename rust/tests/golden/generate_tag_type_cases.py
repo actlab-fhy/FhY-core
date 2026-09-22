@@ -14,7 +14,9 @@ mints one `Identifier` per fresh slot the first time the script refers to it.
 A handful of slot names are reserved as defaults, referring to the shipped
 constants (`commutative`, `associative`, `pure`, `elementwise` for
 `OpAttribute`; `data`, `address` for `ValueDomain`) instead of a freshly
-minted identifier.
+minted identifier. A `bind_ahead` operation instead binds a slot to an id well
+ahead of the id counter without restoring it, so a later `is_counter_past`
+operation can observe whether a decode restored that id.
 
 Run from the repository root:
 
@@ -79,6 +81,11 @@ _RANDOM_SCRIPT_COUNT = 110
 _RANDOM_MAX_OPS = 26
 _RANDOM_DOMAIN_PAYLOAD_DEPTH = 2
 
+# Distance above a freshly minted id at which `bind_ahead` binds a slot, and
+# between the ids of successive ahead slots in one script: far more ids than a
+# script mints, so observing one ahead slot never passes the next.
+_AHEAD_ID_SPACING = 1_000_000
+
 _OP_ATTRIBUTE_KIND = "op_attribute"
 _VALUE_DOMAIN_KIND = "value_domain"
 
@@ -104,6 +111,8 @@ class _ScriptContext:
     `parent_slot` reference to slots that are actually interned. `held`
     keeps instances a `hold` operation set aside under a label, so a later
     operation can compare them with instances built after a clear.
+    `ahead_slots` holds the slots `bind_ahead` bound to an id ahead of the
+    counter.
     """
 
     def __init__(self, kind: str, cls: type, defaults: dict[str, Any]) -> None:
@@ -117,6 +126,7 @@ class _ScriptContext:
         # string hash seed, so a seeded run would not reproduce.
         self.registered_slots: dict[str, None] = {}
         self.held: dict[str, Any] = {}
+        self.ahead_slots: dict[str, None] = {}
         for slot, instance in defaults.items():
             self.bind_slot(slot, instance.name.id)
             self.mark_registered(slot)
@@ -134,6 +144,23 @@ class _ScriptContext:
         identifier = Identifier(slot)
         self.bind_slot(slot, identifier.id)
         return identifier
+
+    def resolve_id(self, slot: str) -> int:
+        """Return `slot`'s id, minting an identifier on first use.
+
+        Unlike `resolve_identifier`, this leaves an ahead slot's id unrestored.
+        """
+        if slot in self.slot_ids:
+            return self.slot_ids[slot]
+        return self.resolve_identifier(slot).id
+
+    def bind_ahead(self, slot: str) -> None:
+        """Bind the fresh `slot` to an id ahead of the counter, unrestored."""
+        if slot in self.slot_ids:
+            raise ValueError(f"slot {slot!r} is already bound")
+        spacing = _AHEAD_ID_SPACING * (len(self.ahead_slots) + 1)
+        self.bind_slot(slot, Identifier(slot).id + spacing)
+        self.ahead_slots[slot] = None
 
     def find_slot_for_id(self, identifier_id: int) -> str:
         return self.id_to_slot[identifier_id]
@@ -184,8 +211,7 @@ def _normalize_domain_dict(raw: dict[str, Any], ctx: _ScriptContext) -> dict[str
 def _denormalize_identifier_dict(
     norm: dict[str, Any], ctx: _ScriptContext
 ) -> dict[str, Any]:
-    identifier = ctx.resolve_identifier(norm["id"])
-    return {"id": identifier.id, "name_hint": norm["name_hint"]}
+    return {"id": ctx.resolve_id(norm["id"]), "name_hint": norm["name_hint"]}
 
 
 def _denormalize_attribute_dict(
@@ -328,6 +354,14 @@ def _build_eq_held_op(label: str, slot: str) -> dict[str, Any]:
     return {"op": "eq_held", "label": label, "slot": slot}
 
 
+def _build_bind_ahead_op(slot: str) -> dict[str, Any]:
+    return {"op": "bind_ahead", "slot": slot}
+
+
+def _build_is_counter_past_op(slot: str) -> dict[str, Any]:
+    return {"op": "is_counter_past", "slot": slot}
+
+
 def _build_identifier_payload(slot: str) -> dict[str, Any]:
     return {"id": slot, "name_hint": slot}
 
@@ -450,9 +484,14 @@ def _mark_registered_payload_slots(ctx: _ScriptContext, slots: list[str]) -> Non
     """Mark each of `slots` that the registry now holds as registered.
 
     A rejected payload may still have registered the fresh parents nested in
-    it, which decode before the value holding them.
+    it, which decode before the value holding them. An ahead slot stays
+    unmarked: looking it up would restore its id, and the `is_counter_past`
+    operation that follows the decode must see the counter as the decode left
+    it.
     """
     for slot in slots:
+        if slot in ctx.ahead_slots:
+            continue
         if ctx.cls.get_interned(ctx.resolve_identifier(slot)) is not None:
             ctx.mark_registered(slot)
 
@@ -618,6 +657,20 @@ def _run_eq_held(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
     return {"result": held == canonical}
 
 
+def _run_bind_ahead(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
+    """Bind a fresh slot to an id ahead of the counter; see `bind_ahead`."""
+    ctx.bind_ahead(op["slot"])
+    return {}
+
+
+def _run_is_counter_past(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
+    """Record whether the id counter has passed a slot's id.
+
+    Mints one identifier to find out, and leaves the slot's id unrestored.
+    """
+    return {"result": Identifier("counter-probe").id > ctx.resolve_id(op["slot"])}
+
+
 _OP_RUNNERS: dict[str, Callable[[_ScriptContext, dict[str, Any]], dict[str, Any]]] = {
     "new": _run_new,
     "get": _run_get,
@@ -631,6 +684,8 @@ _OP_RUNNERS: dict[str, Callable[[_ScriptContext, dict[str, Any]], dict[str, Any]
     "is_subdomain_of_with_duplicate": _run_is_subdomain_of_with_duplicate,
     "hold": _run_hold,
     "eq_held": _run_eq_held,
+    "bind_ahead": _run_bind_ahead,
+    "is_counter_past": _run_is_counter_past,
 }
 
 
@@ -1122,6 +1177,163 @@ def _list_defective_domain_scripts() -> list[tuple[str, list[dict[str, Any]]]]:
 
 
 # =============================================================================
+# Rejected-decode side-effect scripts
+#
+# Each decodes payloads naming slots bound ahead of the id counter, then
+# records which of those ids the decode restored and which of their domains it
+# registered, checking the counter before any lookup restores an id. These
+# run last, so the descriptions they draw leave every earlier script's
+# recording unchanged.
+# =============================================================================
+
+
+def _build_chain_payload(*slots: str) -> dict[str, Any]:
+    """Return a domain payload naming `slots`, outermost first, each fresh."""
+    payload = None
+    for slot in reversed(slots):
+        payload = _build_domain_payload(slot, _next_description(), payload)
+    if payload is None:
+        raise ValueError("a chain payload needs at least one slot")
+    return payload
+
+
+def _build_observe_chain_ops(slots: Sequence[str]) -> list[dict[str, Any]]:
+    """Return ops recording the counter against, then the registry for, `slots`."""
+    return [
+        *(_build_is_counter_past_op(slot) for slot in slots),
+        *(_build_get_op(slot) for slot in reversed(slots)),
+    ]
+
+
+def _build_rejected_chain_script(
+    name: str, slots: Sequence[str], defect: dict[str, Any]
+) -> tuple[str, list[dict[str, Any]]]:
+    """Return a script decoding a fresh chain over `slots` damaged by `defect`."""
+    return (
+        name,
+        [
+            *(_build_bind_ahead_op(slot) for slot in slots),
+            _build_decode_op(_build_chain_payload(*slots), defect),
+            *_build_observe_chain_ops(slots),
+        ],
+    )
+
+
+def _list_side_effect_attribute_scripts() -> list[tuple[str, list[dict[str, Any]]]]:
+    return [
+        (
+            "a_decode_rejected_for_a_trailing_unknown_key_restores_no_name",
+            [
+                _build_bind_ahead_op("ahead"),
+                _build_decode_op(
+                    _build_attribute_payload("ahead", _next_description()),
+                    _build_set_defect(["zzz"], 1),
+                ),
+                _build_is_counter_past_op("ahead"),
+                _build_decode_op(
+                    _build_attribute_payload("ahead", _next_description()),
+                    _build_set_defect(["description"], 3),
+                ),
+                _build_is_counter_past_op("ahead"),
+                _build_decode_op(
+                    _build_attribute_payload("ahead", _next_description())
+                ),
+                _build_is_counter_past_op("ahead"),
+            ],
+        ),
+    ]
+
+
+def _list_side_effect_domain_scripts() -> list[tuple[str, list[dict[str, Any]]]]:
+    scripts = [
+        _build_rejected_chain_script(
+            "a_decode_rejected_for_a_trailing_unknown_key_registers_no_fresh_parent",
+            ["outer", "parent"],
+            _build_set_defect(["zzz"], 1),
+        ),
+        _build_rejected_chain_script(
+            "a_decode_rejected_for_a_leading_unknown_key_registers_no_fresh_parent",
+            ["outer", "parent"],
+            _build_set_defect(["extra"], 1),
+        ),
+        _build_rejected_chain_script(
+            "a_decode_rejected_for_a_trailing_unknown_key_registers_no_fresh_ancestor",
+            ["outer", "parent", "grand"],
+            _build_set_defect(["zzz"], 1),
+        ),
+        _build_rejected_chain_script(
+            "a_decode_rejected_inside_its_parent_restores_only_the_outer_name",
+            ["outer", "parent", "grand"],
+            _build_set_defect(["parent", "zzz"], 1),
+        ),
+        _build_rejected_chain_script(
+            "a_decode_rejected_inside_its_grandparent_restores_the_names_above_it",
+            ["outer", "parent", "grand"],
+            _build_set_defect(["parent", "parent", "zzz"], 1),
+        ),
+        _build_rejected_chain_script(
+            "a_decode_rejected_for_a_missing_nested_parent_restores_the_names_above_it",
+            ["outer", "parent", "grand"],
+            _build_remove_defect("parent", "parent", "parent"),
+        ),
+        _build_rejected_chain_script(
+            "a_decode_whose_parent_is_not_a_map_restores_nothing",
+            ["outer"],
+            _build_set_defect(["parent"], "data"),
+        ),
+        _build_rejected_chain_script(
+            "a_decode_whose_parent_holds_an_out_of_range_id_restores_the_outer_name",
+            ["outer", "parent"],
+            _build_set_defect(["parent", "name", "id"], 2**64 - 1),
+        ),
+    ]
+    trailing_script_name, trailing_ops = scripts[0]
+    scripts[0] = (
+        trailing_script_name,
+        [*trailing_ops, _build_new_domain_op("parent", _next_description())],
+    )
+    scripts += [
+        (
+            "a_conflicting_decode_registers_its_fresh_parent",
+            [
+                _build_new_domain_op("child", _next_description(), parent_slot="data"),
+                _build_bind_ahead_op("parent"),
+                _build_decode_op(
+                    _build_domain_payload(
+                        "child",
+                        _next_description(),
+                        _build_chain_payload("parent"),
+                    )
+                ),
+                _build_is_counter_past_op("parent"),
+                _build_get_op("parent"),
+                _build_require_op("child"),
+            ],
+        ),
+        (
+            "a_decode_whose_parent_conflicts_registers_only_the_fresh_grandparent",
+            [
+                _build_new_domain_op("middle", _next_description(), parent_slot="data"),
+                _build_bind_ahead_op("outer"),
+                _build_bind_ahead_op("grand"),
+                _build_decode_op(
+                    _build_domain_payload(
+                        "outer",
+                        _next_description(),
+                        _build_domain_payload(
+                            "middle", _next_description(), _build_chain_payload("grand")
+                        ),
+                    )
+                ),
+                *_build_observe_chain_ops(["outer", "grand"]),
+                _build_require_op("middle"),
+            ],
+        ),
+    ]
+    return scripts
+
+
+# =============================================================================
 # Random scripts
 # =============================================================================
 
@@ -1422,6 +1634,14 @@ def main() -> None:
     cases += [
         _run_fixed_script(name, _VALUE_DOMAIN_KIND, ops)
         for name, ops in _list_defective_domain_scripts()
+    ]
+    cases += [
+        _run_fixed_script(name, _OP_ATTRIBUTE_KIND, ops)
+        for name, ops in _list_side_effect_attribute_scripts()
+    ]
+    cases += [
+        _run_fixed_script(name, _VALUE_DOMAIN_KIND, ops)
+        for name, ops in _list_side_effect_domain_scripts()
     ]
 
     document = {

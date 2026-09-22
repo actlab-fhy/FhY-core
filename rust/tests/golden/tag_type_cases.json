@@ -2,7 +2,7 @@
  "provenance": {
   "package": "fhy_core",
   "package_version": "0.2.0",
-  "git_commit": "2ca7d3646465890dbff16009660a6a13dcdafeeb",
+  "git_commit": "c829d1da5cbde602baf53a6f11dee9d76696e4b5",
   "python_version": "3.11.15 (main, Jun 27 2026, 16:18:26) [Clang 15.0.0 (clang-1500.0.40.1)]",
   "generator_command": "uv run --no-sync python rust/tests/golden/generate_tag_type_cases.py"
  },
@@ -22175,6 +22175,941 @@
      "slot": "hinted",
      "expected": {
       "canonical_description": "d1145",
+      "canonical_parent_slot": "data"
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_decode_rejected_for_a_trailing_unknown_key_restores_no_name",
+   "type": "op_attribute",
+   "ops": [
+    {
+     "op": "bind_ahead",
+     "slot": "ahead",
+     "expected": {}
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "ahead",
+       "name_hint": "ahead"
+      },
+      "description": "d1147"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "zzz"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "ahead",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "ahead",
+       "name_hint": "ahead"
+      },
+      "description": "d1148"
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "description"
+      ],
+      "value": 3
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "ahead",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "ahead",
+       "name_hint": "ahead"
+      },
+      "description": "d1149"
+     },
+     "expected": {
+      "canonical_slot": "ahead",
+      "canonical_description": "d1149"
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "ahead",
+     "expected": {
+      "result": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_decode_rejected_for_a_trailing_unknown_key_registers_no_fresh_parent",
+   "type": "value_domain",
+   "ops": [
+    {
+     "op": "bind_ahead",
+     "slot": "outer",
+     "expected": {}
+    },
+    {
+     "op": "bind_ahead",
+     "slot": "parent",
+     "expected": {}
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "outer",
+       "name_hint": "outer"
+      },
+      "description": "d1151",
+      "parent": {
+       "name": {
+        "id": "parent",
+        "name_hint": "parent"
+       },
+       "description": "d1150",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "zzz"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "outer",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "parent",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "get",
+     "slot": "parent",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "get",
+     "slot": "outer",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "new",
+     "slot": "parent",
+     "description": "d1169",
+     "parent_slot": null,
+     "expected": {
+      "registered": true,
+      "canonical_description": "d1169",
+      "canonical_parent_slot": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_decode_rejected_for_a_leading_unknown_key_registers_no_fresh_parent",
+   "type": "value_domain",
+   "ops": [
+    {
+     "op": "bind_ahead",
+     "slot": "outer",
+     "expected": {}
+    },
+    {
+     "op": "bind_ahead",
+     "slot": "parent",
+     "expected": {}
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "outer",
+       "name_hint": "outer"
+      },
+      "description": "d1153",
+      "parent": {
+       "name": {
+        "id": "parent",
+        "name_hint": "parent"
+       },
+       "description": "d1152",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "extra"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "outer",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "parent",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "get",
+     "slot": "parent",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "get",
+     "slot": "outer",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_decode_rejected_for_a_trailing_unknown_key_registers_no_fresh_ancestor",
+   "type": "value_domain",
+   "ops": [
+    {
+     "op": "bind_ahead",
+     "slot": "outer",
+     "expected": {}
+    },
+    {
+     "op": "bind_ahead",
+     "slot": "parent",
+     "expected": {}
+    },
+    {
+     "op": "bind_ahead",
+     "slot": "grand",
+     "expected": {}
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "outer",
+       "name_hint": "outer"
+      },
+      "description": "d1156",
+      "parent": {
+       "name": {
+        "id": "parent",
+        "name_hint": "parent"
+       },
+       "description": "d1155",
+       "parent": {
+        "name": {
+         "id": "grand",
+         "name_hint": "grand"
+        },
+        "description": "d1154",
+        "parent": null
+       }
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "zzz"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "outer",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "parent",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "grand",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "get",
+     "slot": "grand",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "get",
+     "slot": "parent",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "get",
+     "slot": "outer",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_decode_rejected_inside_its_parent_restores_only_the_outer_name",
+   "type": "value_domain",
+   "ops": [
+    {
+     "op": "bind_ahead",
+     "slot": "outer",
+     "expected": {}
+    },
+    {
+     "op": "bind_ahead",
+     "slot": "parent",
+     "expected": {}
+    },
+    {
+     "op": "bind_ahead",
+     "slot": "grand",
+     "expected": {}
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "outer",
+       "name_hint": "outer"
+      },
+      "description": "d1159",
+      "parent": {
+       "name": {
+        "id": "parent",
+        "name_hint": "parent"
+       },
+       "description": "d1158",
+       "parent": {
+        "name": {
+         "id": "grand",
+         "name_hint": "grand"
+        },
+        "description": "d1157",
+        "parent": null
+       }
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "zzz"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "outer",
+     "expected": {
+      "result": true
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "parent",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "grand",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "get",
+     "slot": "grand",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "get",
+     "slot": "parent",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "get",
+     "slot": "outer",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_decode_rejected_inside_its_grandparent_restores_the_names_above_it",
+   "type": "value_domain",
+   "ops": [
+    {
+     "op": "bind_ahead",
+     "slot": "outer",
+     "expected": {}
+    },
+    {
+     "op": "bind_ahead",
+     "slot": "parent",
+     "expected": {}
+    },
+    {
+     "op": "bind_ahead",
+     "slot": "grand",
+     "expected": {}
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "outer",
+       "name_hint": "outer"
+      },
+      "description": "d1162",
+      "parent": {
+       "name": {
+        "id": "parent",
+        "name_hint": "parent"
+       },
+       "description": "d1161",
+       "parent": {
+        "name": {
+         "id": "grand",
+         "name_hint": "grand"
+        },
+        "description": "d1160",
+        "parent": null
+       }
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "parent",
+       "zzz"
+      ],
+      "value": 1
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "outer",
+     "expected": {
+      "result": true
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "parent",
+     "expected": {
+      "result": true
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "grand",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "get",
+     "slot": "grand",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "get",
+     "slot": "parent",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "get",
+     "slot": "outer",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_decode_rejected_for_a_missing_nested_parent_restores_the_names_above_it",
+   "type": "value_domain",
+   "ops": [
+    {
+     "op": "bind_ahead",
+     "slot": "outer",
+     "expected": {}
+    },
+    {
+     "op": "bind_ahead",
+     "slot": "parent",
+     "expected": {}
+    },
+    {
+     "op": "bind_ahead",
+     "slot": "grand",
+     "expected": {}
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "outer",
+       "name_hint": "outer"
+      },
+      "description": "d1165",
+      "parent": {
+       "name": {
+        "id": "parent",
+        "name_hint": "parent"
+       },
+       "description": "d1164",
+       "parent": {
+        "name": {
+         "id": "grand",
+         "name_hint": "grand"
+        },
+        "description": "d1163",
+        "parent": null
+       }
+      }
+     },
+     "defect": {
+      "kind": "remove",
+      "path": [
+       "parent",
+       "parent",
+       "parent"
+      ]
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "outer",
+     "expected": {
+      "result": true
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "parent",
+     "expected": {
+      "result": true
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "grand",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "get",
+     "slot": "grand",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "get",
+     "slot": "parent",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "get",
+     "slot": "outer",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_decode_whose_parent_is_not_a_map_restores_nothing",
+   "type": "value_domain",
+   "ops": [
+    {
+     "op": "bind_ahead",
+     "slot": "outer",
+     "expected": {}
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "outer",
+       "name_hint": "outer"
+      },
+      "description": "d1166",
+      "parent": null
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent"
+      ],
+      "value": "data"
+     },
+     "expected": {
+      "error": "DeserializationDictStructureError"
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "outer",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "get",
+     "slot": "outer",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_decode_whose_parent_holds_an_out_of_range_id_restores_the_outer_name",
+   "type": "value_domain",
+   "ops": [
+    {
+     "op": "bind_ahead",
+     "slot": "outer",
+     "expected": {}
+    },
+    {
+     "op": "bind_ahead",
+     "slot": "parent",
+     "expected": {}
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "outer",
+       "name_hint": "outer"
+      },
+      "description": "d1168",
+      "parent": {
+       "name": {
+        "id": "parent",
+        "name_hint": "parent"
+       },
+       "description": "d1167",
+       "parent": null
+      }
+     },
+     "defect": {
+      "kind": "set",
+      "path": [
+       "parent",
+       "name",
+       "id"
+      ],
+      "value": 18446744073709551615
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "outer",
+     "expected": {
+      "result": true
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "parent",
+     "expected": {
+      "result": false
+     }
+    },
+    {
+     "op": "get",
+     "slot": "parent",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "get",
+     "slot": "outer",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_conflicting_decode_registers_its_fresh_parent",
+   "type": "value_domain",
+   "ops": [
+    {
+     "op": "new",
+     "slot": "child",
+     "description": "d1170",
+     "parent_slot": "data",
+     "expected": {
+      "registered": true,
+      "canonical_description": "d1170",
+      "canonical_parent_slot": "data"
+     }
+    },
+    {
+     "op": "bind_ahead",
+     "slot": "parent",
+     "expected": {}
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "child",
+       "name_hint": "child"
+      },
+      "description": "d1171",
+      "parent": {
+       "name": {
+        "id": "parent",
+        "name_hint": "parent"
+       },
+       "description": "d1172",
+       "parent": null
+      }
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "parent",
+     "expected": {
+      "result": true
+     }
+    },
+    {
+     "op": "get",
+     "slot": "parent",
+     "expected": {
+      "canonical_description": "d1172",
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "require",
+     "slot": "child",
+     "expected": {
+      "canonical_description": "d1170",
+      "canonical_parent_slot": "data"
+     }
+    }
+   ]
+  },
+  {
+   "name": "a_decode_whose_parent_conflicts_registers_only_the_fresh_grandparent",
+   "type": "value_domain",
+   "ops": [
+    {
+     "op": "new",
+     "slot": "middle",
+     "description": "d1173",
+     "parent_slot": "data",
+     "expected": {
+      "registered": true,
+      "canonical_description": "d1173",
+      "canonical_parent_slot": "data"
+     }
+    },
+    {
+     "op": "bind_ahead",
+     "slot": "outer",
+     "expected": {}
+    },
+    {
+     "op": "bind_ahead",
+     "slot": "grand",
+     "expected": {}
+    },
+    {
+     "op": "decode",
+     "payload": {
+      "name": {
+       "id": "outer",
+       "name_hint": "outer"
+      },
+      "description": "d1174",
+      "parent": {
+       "name": {
+        "id": "middle",
+        "name_hint": "middle"
+       },
+       "description": "d1175",
+       "parent": {
+        "name": {
+         "id": "grand",
+         "name_hint": "grand"
+        },
+        "description": "d1176",
+        "parent": null
+       }
+      }
+     },
+     "expected": {
+      "error": "DeserializationValueError"
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "outer",
+     "expected": {
+      "result": true
+     }
+    },
+    {
+     "op": "is_counter_past",
+     "slot": "grand",
+     "expected": {
+      "result": true
+     }
+    },
+    {
+     "op": "get",
+     "slot": "grand",
+     "expected": {
+      "canonical_description": "d1176",
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "get",
+     "slot": "outer",
+     "expected": {
+      "canonical_description": null,
+      "canonical_parent_slot": null
+     }
+    },
+    {
+     "op": "require",
+     "slot": "middle",
+     "expected": {
+      "canonical_description": "d1173",
       "canonical_parent_slot": "data"
      }
     }
