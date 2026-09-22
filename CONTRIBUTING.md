@@ -238,20 +238,24 @@ The `property` job only runs on pull requests into `main` and on manual
 dispatch; it does not run on pull requests into `dev`. Run
 `uv run nox -s property` locally before opening a release pull request.
 
-The `rust` and `rust-msrv` jobs run on every pull request, and `ci-ok`
-requires both. `rust` runs `cargo fmt --all --check`, `cargo clippy
---all-targets --all-features -- -D warnings`, `cargo test`, and `cargo
-package`; `rust-msrv` builds the library on the `rust-version` in
-`Cargo.toml`. That version is a promise to crates.io consumers, so
+The `rust`, `rust-msrv`, and `golden` jobs run on every pull request, and
+`ci-ok` requires all three. `rust` runs `cargo fmt --all --check`, `cargo
+clippy --all-targets --all-features --locked -- -D warnings`, `cargo test
+--locked --all-features`, and `cargo package --locked`, then unpacks the
+packaged crate and runs `cargo test --locked --features testing` in it, so
+the tests pass on the crate as a consumer receives it. `rust-msrv`
+type-checks the library with `cargo check --lib --locked` on the
+`rust-version` in `Cargo.toml`, once with default features and once with
+`--all-features`. That version is a promise to the crate's consumers, so
 `.cargo/config.toml` has the resolver fall back to dependency releases that
 build on it and `cargo update` keeps `Cargo.lock` within it.
 
 The Rust equivalence tests replay golden corpora under `rust/tests/golden/`,
 each recorded from the Python implementation by the `generate_*.py` script
-beside it. The `golden` job, which `ci-ok` also requires, runs
-`uv run nox -s golden`: it reruns every generator on the pure-Python backend
-and fails, printing the regeneration command and a diff, if a committed corpus
-differs outside its `provenance` block. After changing the Python behavior a
+beside it. The `golden` job runs `uv run nox -s golden`: it reruns every
+generator on the pure-Python backend and fails, printing the regeneration
+command and a diff, if a committed corpus differs outside its `provenance`
+block. After changing the Python behavior a
 corpus records, regenerate it and commit the result.
 
 Mutation testing measures whether a property earned its place: it makes
