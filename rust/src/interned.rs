@@ -380,12 +380,23 @@ impl<'de, T: Interned + Deserialize<'de>> Deserialize<'de> for Canonical<T> {
 }
 
 /// No canonical instance is registered under a key.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("no canonical {type_name} is interned under key {key:?}")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotInternedError<K> {
     type_name: &'static str,
     key: K,
 }
+
+impl<K: fmt::Debug> fmt::Display for NotInternedError<K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "no canonical {} is interned under key {:?}",
+            self.type_name, self.key
+        )
+    }
+}
+
+impl<K: fmt::Debug> std::error::Error for NotInternedError<K> {}
 
 impl<K> NotInternedError<K> {
     /// Return the key that was looked up.
@@ -628,6 +639,38 @@ mod tests {
         );
         let message = error.to_string();
         assert!(message.contains("\"missing\""), "got {message}");
+    }
+
+    /// Test a missing-key error's message names the interned type and the
+    /// key's `Debug` form.
+    #[test]
+    fn require_error_display_names_the_type_and_key() {
+        let registry = InternRegistry::<Tag>::new();
+
+        let Err(error) = registry.require("missing") else {
+            panic!("expected an error for a missing key");
+        };
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "no canonical {} is interned under key \"missing\"",
+                std::any::type_name::<Tag>()
+            )
+        );
+    }
+
+    /// Test a missing-key error is a `std::error::Error` with no source.
+    #[test]
+    fn require_error_is_a_std_error_without_a_source() {
+        let registry = InternRegistry::<Tag>::new();
+
+        let Err(error) = registry.require("missing") else {
+            panic!("expected an error for a missing key");
+        };
+        let error: &dyn std::error::Error = &error;
+
+        assert!(error.source().is_none());
     }
 
     /// Test `require` accepts a borrowed `&str` for a `String` key.

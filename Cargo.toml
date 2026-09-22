@@ -71,22 +71,14 @@ testing = []
 
 [dependencies]
 pyo3 = { version = "0.29", optional = true, features = ["extension-module"] }
-num-bigint = "0.4"
-num-rational = "0.4"
-num-traits = "0.2"
-petgraph = "0.7"
-strum = { version = "0.27", features = ["derive"] }
-strum_macros = "0.27"
-thiserror = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 
 [dev-dependencies]
 # Turns on `testing` for this crate's own integration tests. Resolver 2 unifies
 # dev-dependency features only into test, example and bench builds, so a
 # normal build of the library never sees it.
 fhy-core = { path = ".", features = ["testing"] }
-pretty_assertions = "1"
+serde_json = "1"
 
 [lints.rust]
 missing_docs = "warn"
