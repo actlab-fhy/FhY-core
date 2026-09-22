@@ -127,13 +127,18 @@ def coverage(session: nox.Session) -> None:
 
 
 @nox.session
-def property(session: nox.Session) -> None:
-    """Run hypothesis-based property tests under the thorough profile.
+@nox.parametrize("backend", list(BACKEND_EXTENSION_SETTINGS))
+def property(session: nox.Session, backend: str) -> None:
+    """Run hypothesis-based property tests under the thorough profile on one backend.
 
     This is the CI release gate (opt-in locally); it forces
     ``HYPOTHESIS_PROFILE=thorough`` regardless of the caller's environment.
+    As in ``tests``, the session fails before testing unless the package
+    reports the backend it was asked for, so the Rust run cannot silently skip
+    the tests that need the extension.
     """
     _sync(session, "property")
+    _select_backend(session, backend)
     # No success_codes override: exit 5 (nothing collected) must fail, so a
     # marker typo or a collection error cannot pass as a clean run.
     session.run(

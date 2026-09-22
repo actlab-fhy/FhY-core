@@ -172,8 +172,11 @@ how hard Hypothesis looks:
   database in `.hypothesis/`.
 - `thorough`: 400 inputs, derandomized, with no database. This is the
   release gate. Set `HYPOTHESIS_PROFILE=thorough`, or run
-  `uv run nox -s property`, which sets it for you. A failure prints a
-  `@reproduce_failure` blob that replays it exactly.
+  `uv run nox -s property`, which sets it for you and runs the suite once
+  per backend, as `property(backend='rust')` and
+  `property(backend='python')`. Like `tests`, each fails before testing if
+  the package does not report the backend it was asked for. A failure
+  prints a `@reproduce_failure` blob that replays it exactly.
 - `mutation`: 25 inputs, derandomized, with no database, so every mutant
   sees the same inputs. The `mutation` nox session selects it.
 
