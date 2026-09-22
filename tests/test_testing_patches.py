@@ -143,16 +143,18 @@ def _construct_two_identifiers_sharing_a_name_hint() -> tuple[Identifier, Identi
     return Identifier("shared"), Identifier("shared")
 
 
-def _capture_identifier_construction_dunders() -> dict[str, object]:
-    """Return the `__new__`/`__init__` entries of `Identifier`'s own namespace."""
-    return {
+def _capture_identifier_construction_state() -> dict[str, object]:
+    """Return `Identifier`'s metaclass and its own `__new__`/`__init__` entries."""
+    state: dict[str, object] = {
         name: Identifier.__dict__.get(name, _ABSENT) for name in ("__new__", "__init__")
     }
+    state["metaclass"] = type(Identifier)
+    return state
 
 
-def _assert_same_dunders(expected: dict[str, object]) -> None:
-    """Assert `Identifier`'s own `__new__`/`__init__` entries are exactly these."""
-    actual = _capture_identifier_construction_dunders()
+def _assert_same_construction_state(expected: dict[str, object]) -> None:
+    """Assert `Identifier`'s metaclass and own dunders are exactly these."""
+    actual = _capture_identifier_construction_state()
     assert all(actual[name] is expected[name] for name in expected)
 
 
@@ -235,26 +237,26 @@ def test_deterministic_identifiers_by_name_hint_forgets_hints_after_exit() -> No
 
 def test_deterministic_identifiers_by_name_hint_restores_the_class_exactly() -> None:
     """Test the outermost exit leaves `Identifier`'s own namespace as it was."""
-    original = _capture_identifier_construction_dunders()
+    original = _capture_identifier_construction_state()
 
     with deterministic_identifiers_by_name_hint:
         with deterministic_identifiers_by_name_hint:
             pass
-        patched = _capture_identifier_construction_dunders()
+        patched = _capture_identifier_construction_state()
 
     assert any(patched[name] is not original[name] for name in original)
-    _assert_same_dunders(original)
+    _assert_same_construction_state(original)
 
 
 def test_deterministic_identifiers_by_name_hint_restores_the_class_on_raise() -> None:
     """Test the class is restored exactly when the body raises."""
-    original = _capture_identifier_construction_dunders()
+    original = _capture_identifier_construction_state()
 
     with pytest.raises(RuntimeError):
         with deterministic_identifiers_by_name_hint:
             raise RuntimeError("user-raised")
 
-    _assert_same_dunders(original)
+    _assert_same_construction_state(original)
 
 
 def test_deterministic_identifiers_by_name_hint_keeps_deserialized_ids() -> None:
@@ -322,3 +324,98 @@ def test_deterministic_identifiers_by_name_hint_is_thread_safe() -> None:
         sys.setswitchinterval(original_switch_interval)
 
     assert len({id(identifier) for identifier in identifiers}) == 1
+
+
+def test_deterministic_identifiers_by_name_hint_splits_construction_safely() -> None:
+    """Test a construction split around the outermost exit initializes once.
+
+    `Identifier(...)` looks up `__new__` and then `__init__` separately, so a
+    racing thread can run the allocation step inside the scope and the
+    initialization step after another thread's exit.
+    """
+    with deterministic_identifiers_by_name_hint:
+        shared = Identifier("shared")
+        allocated = Identifier.__new__(Identifier, "shared")  # type: ignore[call-arg]
+    base = Identifier("anchor").id
+
+    Identifier.__init__(allocated, "shared")
+
+    assert allocated.is_frozen
+    assert (allocated.id, allocated.name_hint) == (base + 1, "shared")
+    assert shared.id < base
+
+
+def test_deterministic_identifiers_by_name_hint_forgets_calls_finished_after_exit() -> (
+    None
+):
+    """Test a call dispatched inside the scope but finished after exit is unshared.
+
+    A racing thread may resolve `Identifier(...)` to the scope's construction
+    before another thread's exit and run it afterwards; such a call must
+    construct normally and never leak into a later scope.
+    """
+    with deterministic_identifiers_by_name_hint:
+        shared = Identifier("shared")
+        construct_as_dispatched = type(Identifier).__call__
+
+    late = construct_as_dispatched(Identifier, "shared")
+    late_again = construct_as_dispatched(Identifier, "shared")
+    with deterministic_identifiers_by_name_hint:
+        in_later_scope = Identifier("shared")
+
+    assert late.is_frozen
+    assert len({shared, late, late_again, in_later_scope}) == 4
+
+
+def test_deterministic_identifiers_by_name_hint_survives_racing_exits() -> None:
+    """Test constructions racing repeated enters and exits never fail."""
+    original_switch_interval = sys.getswitchinterval()
+    stop = threading.Event()
+    errors: list[BaseException] = []
+
+    def construct_until_stopped() -> None:
+        try:
+            while not stop.is_set():
+                identifier = Identifier("shared")
+                if not identifier.is_frozen:
+                    raise AssertionError("constructed an unfrozen identifier")
+        except BaseException as error:
+            errors.append(error)
+
+    sys.setswitchinterval(1e-6)
+    workers = [threading.Thread(target=construct_until_stopped) for _ in range(4)]
+    try:
+        for worker in workers:
+            worker.start()
+        for _ in range(300):
+            with deterministic_identifiers_by_name_hint:
+                Identifier("shared")
+    finally:
+        stop.set()
+        for worker in workers:
+            worker.join()
+        sys.setswitchinterval(original_switch_interval)
+
+    assert errors == []
+
+
+def test_deterministic_identifiers_by_name_hint_rejects_an_unmatched_exit() -> None:
+    """Test an exit without a matching entry raises and leaves the scope usable."""
+    original = _capture_identifier_construction_state()
+
+    with pytest.raises(RuntimeError, match="without a matching entry"):
+        deterministic_identifiers_by_name_hint.__exit__(None, None, None)
+
+    _assert_same_construction_state(original)
+    with deterministic_identifiers_by_name_hint:
+        first = Identifier("shared")
+        second = Identifier("shared")
+    assert second is first
+    assert Identifier("shared") != first
+
+
+def test_deterministic_identifiers_by_name_hint_passes_non_str_hints_through() -> None:
+    """Test a non-`str` name hint inside the scope raises the usual type error."""
+    with deterministic_identifiers_by_name_hint:
+        with pytest.raises(TypeError, match="must be a str, got int"):
+            Identifier(123)  # type: ignore[arg-type]  # test: invalid input

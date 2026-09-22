@@ -20,9 +20,6 @@ from fhy_core.traits import StructuralEquivalence
 
 _FunctionT = TypeVar("_FunctionT", bound=Callable[..., Any])
 
-_PATCHED_IDENTIFIER_DUNDERS = ("__new__", "__init__")
-_ABSENT = object()
-
 
 @contextlib.contextmanager
 def fail_fast_structural_equivalence() -> Generator[None, None, None]:
@@ -84,11 +81,11 @@ def fail_fast_structural_equivalence() -> Generator[None, None, None]:
             setattr(cls, method_name, orig)
 
 
-def _find_name_hint(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
-    """Return the name hint an ``Identifier(...)`` call passes, or ``_ABSENT``."""
+def _find_name_hint(args: tuple[Any, ...], kwargs: dict[str, Any]) -> object:
+    """Return the name hint an ``Identifier(...)`` call passes, or ``None``."""
     if args:
         return args[0]
-    return kwargs.get("name_hint", _ABSENT)
+    return kwargs.get("name_hint")
 
 
 class _DeterministicIdentifiersByNameHint(ContextDecorator):
@@ -105,8 +102,12 @@ class _DeterministicIdentifiersByNameHint(ContextDecorator):
     restores `Identifier` exactly and forgets them. The scope works as a
     context manager and as a decorator, with or without a call.
 
-    The scope replaces `Identifier.__new__` and `Identifier.__init__` while
-    active, so it applies to every thread.
+    While active, the scope gives `Identifier` a metaclass whose `__call__`
+    returns the shared identifier, so it applies to every thread.
+    `Identifier`'s own `__new__` and `__init__` are never replaced, and a
+    shared identifier is returned without passing through `type.__call__`,
+    so no interleaving of a construction with the outermost exit can
+    initialize an identifier twice.
 
     Note:
         This is only safe when every semantically distinct identifier created
@@ -116,14 +117,14 @@ class _DeterministicIdentifiersByNameHint(ContextDecorator):
 
     _lock: RLock
     _active_count: int
-    _identifiers_by_name_hint: dict[Any, Identifier]
-    _own_identifier_dunders: dict[str, Any]
+    _identifiers_by_name_hint: dict[str, Identifier]
+    _original_metaclass: type | None
 
     def __init__(self) -> None:
         self._lock = RLock()
         self._active_count = 0
         self._identifiers_by_name_hint = {}
-        self._own_identifier_dunders = {}
+        self._original_metaclass = None
 
     @overload
     def __call__(self, func: None = None) -> "_DeterministicIdentifiersByNameHint": ...
@@ -164,54 +165,42 @@ class _DeterministicIdentifiersByNameHint(ContextDecorator):
 
     def _patch_identifier(self) -> None:
         """Make `Identifier` construction return one instance per name hint."""
-        self._own_identifier_dunders = {
-            name: Identifier.__dict__.get(name, _ABSENT)
-            for name in _PATCHED_IDENTIFIER_DUNDERS
-        }
-        original_new: Callable[..., Identifier] = Identifier.__new__
-        original_init: Callable[..., None] = Identifier.__init__
+        original_metaclass = type(Identifier)
+        construct: Callable[..., Identifier] = original_metaclass.__call__
 
         def construct_once_per_name_hint(
             cls: type[Identifier], *args: Any, **kwargs: Any
         ) -> Identifier:
-            # A call without a name hint is not a construction to share:
-            # deserialization (and so unpickling and copying) allocates with
-            # `cls.__new__(cls)`, and a missing argument must still raise.
+            # A call without a `str` name hint is not a construction to share,
+            # and constructing normally raises the usual error for it.
             name_hint = _find_name_hint(args, kwargs)
-            if name_hint is _ABSENT:
-                return original_new(cls, *args, **kwargs)
+            if not isinstance(name_hint, str):
+                return construct(cls, *args, **kwargs)
             with self._lock:
+                # A call dispatched here just before the outermost exit
+                # constructs normally rather than recording into a table the
+                # exit has already forgotten.
+                if self._active_count == 0:
+                    return construct(cls, *args, **kwargs)
                 identifier = self._identifiers_by_name_hint.get(name_hint)
                 if identifier is None:
-                    identifier = original_new(cls, *args, **kwargs)
-                    original_init(identifier, *args, **kwargs)
+                    identifier = construct(cls, *args, **kwargs)
                     self._identifiers_by_name_hint[name_hint] = identifier
             return identifier
 
-        def initialize_unless_shared(
-            identifier: Identifier, *args: Any, **kwargs: Any
-        ) -> None:
-            # The shared instance was initialized when first constructed.
-            name_hint = _find_name_hint(args, kwargs)
-            if self._identifiers_by_name_hint.get(name_hint) is identifier:
-                return
-            original_init(identifier, *args, **kwargs)
-
-        replacements = {
-            "__new__": staticmethod(construct_once_per_name_hint),
-            "__init__": initialize_unless_shared,
-        }
-        for name, replacement in replacements.items():
-            setattr(Identifier, name, replacement)
+        scoped_metaclass = type(
+            f"_DeterministicIdentifiers{original_metaclass.__name__}",
+            (original_metaclass,),
+            {"__slots__": (), "__call__": construct_once_per_name_hint},
+        )
+        self._original_metaclass = original_metaclass
+        type.__setattr__(Identifier, "__class__", scoped_metaclass)
 
     def _restore_identifier(self) -> None:
-        """Restore `Identifier`'s own namespace and forget the shared instances."""
-        for name, own_value in self._own_identifier_dunders.items():
-            if own_value is _ABSENT:
-                delattr(Identifier, name)
-            else:
-                setattr(Identifier, name, own_value)
-        self._own_identifier_dunders = {}
+        """Restore `Identifier`'s metaclass and forget the shared instances."""
+        if self._original_metaclass is not None:
+            type.__setattr__(Identifier, "__class__", self._original_metaclass)
+            self._original_metaclass = None
         self._identifiers_by_name_hint.clear()
 
 
