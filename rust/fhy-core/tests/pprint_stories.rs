@@ -7,12 +7,11 @@
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
-
-use std::thread;
+#[path = "common/stack.rs"]
+pub mod stack_support;
 
 use expression_support::{
-    DEEP_TREE_DEPTH, build_deep_conjunction, build_deep_sum, build_identifier, build_literal,
-    build_text_literal,
+    build_deep_conjunction, build_deep_sum, build_identifier, build_literal, build_text_literal,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
@@ -20,11 +19,7 @@ use fhy_core::symbolic::expression::{
     UnaryOperation, build_call, build_logical_and, build_piecewise, format_expression,
 };
 use rstest::rstest;
-
-/// Stack size of the thread the deep trees are printed on: far below what a
-/// printer recursing once per level would need for a tree
-/// [`DEEP_TREE_DEPTH`] levels deep.
-const SMALL_STACK_BYTES: usize = 128 << 10;
+use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
 /// Return the options writing `notation` with name hints only.
 fn build_name_hint_options(notation: Notation) -> FormatOptions {
@@ -59,20 +54,6 @@ fn build_over_x_and_y(build: impl FnOnce(&Expression, &Expression) -> Expression
     let (_, x) = build_identifier("x");
     let (_, y) = build_identifier("y");
     build(&x, &y)
-}
-
-/// Print `expression` under `options` on a thread with a
-/// [`SMALL_STACK_BYTES`] stack, and return the text with the tree, so the
-/// tree is dropped on the caller's thread.
-fn format_on_small_stack(expression: Expression, options: FormatOptions) -> (String, Expression) {
-    let handle = thread::Builder::new()
-        .stack_size(SMALL_STACK_BYTES)
-        .spawn(move || (format_expression(&expression, options), expression))
-        .expect("the printing thread spawns");
-    match handle.join() {
-        Ok(result) => result,
-        Err(payload) => std::panic::resume_unwind(payload),
-    }
 }
 
 /// Return `-(-(-leaf))`, `depth` negations deep.
@@ -795,26 +776,26 @@ enum DeepShape {
 }
 
 impl DeepShape {
-    /// Build the shape [`DEEP_TREE_DEPTH`] levels deep over the leaf `x`,
+    /// Build the shape [`SMALL_STACK_DEPTH`] levels deep over the leaf `x`,
     /// with `p` as the condition where one is needed.
     fn build(self) -> Expression {
         let (_, x) = build_identifier("x");
         let (_, p) = build_identifier("p");
         match self {
-            Self::LeftSum => build_deep_sum(&x, DEEP_TREE_DEPTH),
-            Self::RightConjunction => build_deep_conjunction(&x, DEEP_TREE_DEPTH),
-            Self::Negation => build_deep_negation(&x, DEEP_TREE_DEPTH),
+            Self::LeftSum => build_deep_sum(&x, SMALL_STACK_DEPTH),
+            Self::RightConjunction => build_deep_conjunction(&x, SMALL_STACK_DEPTH),
+            Self::Negation => build_deep_negation(&x, SMALL_STACK_DEPTH),
             Self::PiecewiseInOtherwise => {
-                build_deep_piecewise_in_otherwise(&p, &x, DEEP_TREE_DEPTH)
+                build_deep_piecewise_in_otherwise(&p, &x, SMALL_STACK_DEPTH)
             }
-            Self::PiecewiseInCondition => build_deep_piecewise_in_condition(&x, DEEP_TREE_DEPTH),
-            Self::CallInLastArgument => build_deep_call_in_last_argument(&x, DEEP_TREE_DEPTH),
-            Self::CallInFirstArgument => build_deep_call_in_first_argument(&x, DEEP_TREE_DEPTH),
+            Self::PiecewiseInCondition => build_deep_piecewise_in_condition(&x, SMALL_STACK_DEPTH),
+            Self::CallInLastArgument => build_deep_call_in_last_argument(&x, SMALL_STACK_DEPTH),
+            Self::CallInFirstArgument => build_deep_call_in_first_argument(&x, SMALL_STACK_DEPTH),
         }
     }
 
     /// Return the text expected for the shape: `(opening, closing)` pieces
-    /// written [`DEEP_TREE_DEPTH`] times around the leaf `x`, in symbolic
+    /// written [`SMALL_STACK_DEPTH`] times around the leaf `x`, in symbolic
     /// then functional notation.
     fn expected_pieces(self) -> [(&'static str, &'static str); 2] {
         match self {
@@ -829,8 +810,8 @@ impl DeepShape {
     }
 }
 
-/// Test a tree thousands of levels deep prints in both notations on a thread
-/// stack far too small for one frame per level.
+/// Test a tree [`SMALL_STACK_DEPTH`] levels deep prints in both
+/// notations on a thread stack far too small for one frame per level.
 #[rstest]
 #[case::left_sum(DeepShape::LeftSum)]
 #[case::right_conjunction(DeepShape::RightConjunction)]
@@ -840,25 +821,26 @@ impl DeepShape {
 #[case::call_in_last_argument(DeepShape::CallInLastArgument)]
 #[case::call_in_first_argument(DeepShape::CallInFirstArgument)]
 fn format_expression_prints_a_deep_tree_on_a_small_stack(#[case] shape: DeepShape) {
-    let tree = shape.build();
-    let expected = shape.expected_pieces().map(|(opening, closing)| {
-        format!(
-            "{}x{}",
-            opening.repeat(DEEP_TREE_DEPTH),
-            closing.repeat(DEEP_TREE_DEPTH)
-        )
+    run_on_small_stack(move || {
+        let tree = shape.build();
+        let expected = shape.expected_pieces().map(|(opening, closing)| {
+            format!(
+                "{}x{}",
+                opening.repeat(SMALL_STACK_DEPTH),
+                closing.repeat(SMALL_STACK_DEPTH)
+            )
+        });
+
+        let symbolic = format_symbolic(&tree);
+        let functional = format_functional(&tree);
+
+        assert!(
+            symbolic == expected[0],
+            "symbolic text differs for {shape:?}"
+        );
+        assert!(
+            functional == expected[1],
+            "functional text differs for {shape:?}"
+        );
     });
-
-    let (symbolic, tree) = format_on_small_stack(tree, build_name_hint_options(Notation::Symbolic));
-    let (functional, _tree) =
-        format_on_small_stack(tree, build_name_hint_options(Notation::Functional));
-
-    assert!(
-        symbolic == expected[0],
-        "symbolic text differs for {shape:?}"
-    );
-    assert!(
-        functional == expected[1],
-        "functional text differs for {shape:?}"
-    );
 }

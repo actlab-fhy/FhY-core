@@ -6,6 +6,8 @@
 
 #[path = "common/hashing.rs"]
 pub mod hashing_support;
+#[path = "common/stack.rs"]
+pub mod stack_support;
 
 use fhy_core::provenance::{
     CallSiteProvenance, FileProvenance, FusedProvenance, HasProvenance, NamedProvenance, Position,
@@ -15,6 +17,7 @@ use hashing_support::hash_of;
 use rstest::rstest;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
 // =============================================================================
 // Helpers
@@ -807,6 +810,30 @@ fn fuse_does_not_look_inside_named_or_call_site_children() {
 
     assert_eq!(Provenance::fuse([named.clone()], None), named);
     assert_eq!(Provenance::fuse([call_site.clone()], None), call_site);
+}
+
+/// Test unlabelled fusions nested [`SMALL_STACK_DEPTH`] levels deep, each
+/// holding a file then the next fusion, are spliced into one flat fusion of
+/// every file in order, on a small thread stack.
+#[test]
+fn fuse_flattens_deeply_nested_unlabelled_fusions_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let files: Vec<Provenance> = (0..=SMALL_STACK_DEPTH)
+            .map(|index| build_file(&format!("{index}.fhy")))
+            .collect();
+        let mut nested = files[SMALL_STACK_DEPTH].clone();
+        for file in files[..SMALL_STACK_DEPTH].iter().rev() {
+            nested = build_fused(vec![file.clone(), nested], None);
+        }
+
+        let fused = Provenance::fuse([nested], None);
+
+        let Provenance::Fused(flat) = &fused else {
+            panic!("the splice leaves a fusion");
+        };
+        assert_eq!(flat.metadata(), None);
+        assert!(flat.sources() == files, "the spliced sources differ");
+    });
 }
 
 /// Test fusion is associative without metadata.

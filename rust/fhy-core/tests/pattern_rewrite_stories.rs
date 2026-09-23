@@ -9,12 +9,14 @@
 pub mod expression_support;
 #[path = "common/pattern.rs"]
 pub mod pattern_support;
+#[path = "common/stack.rs"]
+pub mod stack_support;
 
 use std::error::Error;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use expression_support::{DEEP_TREE_DEPTH, build_deep_sum, build_identifier, build_literal};
+use expression_support::{build_deep_sum, build_identifier, build_literal};
 use fhy_core::symbolic::expression::pattern::{
     CallbackError, FiredRule, MatchBindings, Pattern, RewriteError, RewriteOutcome, RewriteRule,
     apply_rewrite_rule, apply_rewrite_rules,
@@ -28,6 +30,7 @@ use pattern_support::{
     build_x_times_one_rule, expect_probe_error, rewrite, rewrite_to_capture, rewrite_to_literal,
 };
 use rstest::rstest;
+use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
 /// Return `x + 0` for the reference `x`.
 fn build_plus_zero(x: &Expression) -> Expression {
@@ -986,47 +989,59 @@ fn fired_rule_records_index_and_name_in_walk_order() {
 // Deep trees
 // =============================================================================
 
-/// Test rewriting a tree 4000 levels deep collapses it on the default
-/// thread stack, one firing per level.
+/// Test rewriting a tree [`SMALL_STACK_DEPTH`] levels deep collapses it
+/// on a small thread stack, one firing per level.
 #[test]
-fn apply_rewrite_rules_collapses_a_tree_thousands_of_levels_deep() {
-    let (_, x) = build_identifier("x");
-    let mut expression = x.clone();
-    for _ in 0..DEEP_TREE_DEPTH {
-        expression = build_plus_zero(&expression);
-    }
+fn apply_rewrite_rules_collapses_a_deep_tree_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let (_, x) = build_identifier("x");
+        let mut expression = x.clone();
+        for _ in 0..SMALL_STACK_DEPTH {
+            expression = build_plus_zero(&expression);
+        }
 
-    let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
+        let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
 
-    assert!(Expression::ptr_eq(outcome.output(), &x));
-    assert_eq!(outcome.fired().len(), DEEP_TREE_DEPTH);
+        assert!(Expression::ptr_eq(outcome.output(), &x));
+        assert_eq!(outcome.fired().len(), SMALL_STACK_DEPTH);
+    });
 }
 
-/// Test rewriting a tree 4000 levels deep in which no rule fires returns
-/// the input itself on the default thread stack.
+/// Test rewriting a tree [`SMALL_STACK_DEPTH`] levels deep in which no
+/// rule fires returns the input itself on a small thread stack.
 #[test]
-fn apply_rewrite_rules_keeps_a_deep_tree_no_rule_touches() {
-    let (_, x) = build_identifier("x");
-    let expression = build_deep_sum(&x, DEEP_TREE_DEPTH);
+fn apply_rewrite_rules_keeps_a_deep_tree_no_rule_touches_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let (_, x) = build_identifier("x");
+        let expression = build_deep_sum(&x, SMALL_STACK_DEPTH);
 
-    let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
+        let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
 
-    assert!(Expression::ptr_eq(outcome.output(), &expression));
-    assert!(!outcome.is_changed());
+        assert!(Expression::ptr_eq(outcome.output(), &expression));
+        assert!(!outcome.is_changed());
+    });
 }
 
-/// Test rewriting the bottom of a tree 4000 levels deep rebuilds every
-/// level above it on the default thread stack.
+/// Test rewriting the bottom of a tree [`SMALL_STACK_DEPTH`] levels deep
+/// rebuilds every level above it on a small thread stack.
 #[test]
-fn apply_rewrite_rules_rebuilds_every_level_above_a_deep_rewrite() {
-    let (_, x) = build_identifier("x");
-    let (_, y) = build_identifier("y");
-    let expression = build_deep_sum(&build_plus_zero(&x), DEEP_TREE_DEPTH);
+fn apply_rewrite_rules_rebuilds_every_level_above_a_deep_rewrite_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let (_, x) = build_identifier("x");
+        let (_, y) = build_identifier("y");
+        let expression = build_deep_sum(&build_plus_zero(&x), SMALL_STACK_DEPTH);
 
-    let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
+        let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
 
-    assert!(outcome.is_changed());
-    assert_eq!(outcome.output(), &build_deep_sum(&x, DEEP_TREE_DEPTH));
-    assert_ne!(outcome.output(), &build_deep_sum(&y, DEEP_TREE_DEPTH));
-    assert_eq!(outcome.fired().len(), 1);
+        assert!(outcome.is_changed());
+        assert!(
+            outcome.output() == &build_deep_sum(&x, SMALL_STACK_DEPTH),
+            "the rewritten tree differs from the deep sum over x"
+        );
+        assert!(
+            outcome.output() != &build_deep_sum(&y, SMALL_STACK_DEPTH),
+            "the rewritten tree equals the deep sum over y"
+        );
+        assert_eq!(outcome.fired().len(), 1);
+    });
 }

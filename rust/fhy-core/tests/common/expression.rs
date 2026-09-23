@@ -5,7 +5,6 @@
 //! item one target does not use is not reported as dead code there.
 
 use std::sync::LazyLock;
-use std::thread;
 
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::builtins::{
@@ -20,11 +19,13 @@ use proptest::num::f64 as f64_class;
 use proptest::prelude::*;
 use proptest::sample::select;
 
-/// Depth of the deep trees the depth tests build.
+/// Depth of the deep trees and patterns the operations documented as
+/// recursive are run over, on a stack sized for that recursion.
 pub const DEEP_TREE_DEPTH: usize = 4000;
 
-/// Stack size for the substitution and screen walks over a deep tree.
-pub const WALK_STACK_BYTES: usize = 16 << 20;
+/// Stack size for matching a pattern [`DEEP_TREE_DEPTH`] levels deep, which
+/// recurses once per pattern level.
+pub const PATTERN_MATCH_STACK_BYTES: usize = 16 << 20;
 
 /// Stack size for a serialization round trip of a deep tree through
 /// `serde_json` values, whose own recursion needs the most room.
@@ -136,28 +137,6 @@ pub fn build_deep_conjunction(leaf: &Expression, depth: usize) -> Expression {
             .expect("two operands make a conjunction");
     }
     tree
-}
-
-/// Run `body` on a new thread with a stack of `stack_bytes` bytes and return
-/// its result, re-raising its panic if it panics.
-///
-/// # Panics
-///
-/// Panics if the thread cannot be spawned, and with `body`'s panic if
-/// `body` panics.
-pub fn run_on_large_stack<T, F>(stack_bytes: usize, body: F) -> T
-where
-    T: Send + 'static,
-    F: FnOnce() -> T + Send + 'static,
-{
-    let handle = thread::Builder::new()
-        .stack_size(stack_bytes)
-        .spawn(body)
-        .expect("the test thread spawns");
-    match handle.join() {
-        Ok(result) => result,
-        Err(payload) => std::panic::resume_unwind(payload),
-    }
 }
 
 /// Identifiers the generated trees refer to, with distinct name hints.

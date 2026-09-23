@@ -10,10 +10,12 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
+#[path = "common/stack.rs"]
+pub mod stack_support;
 
 use expression_support::{
     DEEP_TREE_DEPTH, SERIALIZATION_STACK_BYTES, build_deep_sum, build_identifier, build_literal,
-    build_text_literal, run_on_large_stack,
+    build_text_literal,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
@@ -22,6 +24,7 @@ use fhy_core::symbolic::expression::{
 };
 use rstest::rstest;
 use serde_json::{Value, json};
+use stack_support::run_on_stack;
 
 /// Serialize `expression` to a JSON value.
 fn encode(expression: &Expression) -> Value {
@@ -298,7 +301,7 @@ fn expression_round_trip_restores_the_same_identifier() {
 /// Test a tree thousands of levels deep round-trips.
 #[test]
 fn expression_deep_tree_round_trips_through_a_json_value() {
-    run_on_large_stack(SERIALIZATION_STACK_BYTES, || {
+    run_on_stack(SERIALIZATION_STACK_BYTES, || {
         let (_, x) = build_identifier("x");
         let tree = build_deep_sum(&x, DEEP_TREE_DEPTH);
 

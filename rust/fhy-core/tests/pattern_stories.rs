@@ -11,13 +11,15 @@ pub mod expression_support;
 pub mod hashing_support;
 #[path = "common/pattern.rs"]
 pub mod pattern_support;
+#[path = "common/stack.rs"]
+pub mod stack_support;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use expression_support::{
-    DEEP_TREE_DEPTH, WALK_STACK_BYTES, build_call_or_panic, build_deep_sum, build_identifier,
-    build_literal, build_text_literal, run_on_large_stack,
+    DEEP_TREE_DEPTH, PATTERN_MATCH_STACK_BYTES, build_call_or_panic, build_deep_sum,
+    build_identifier, build_literal, build_text_literal,
 };
 use fhy_core::symbolic::expression::pattern::{
     CallbackError, MatchBindings, Pattern, PatternError, does_pattern_match, match_pattern,
@@ -32,6 +34,7 @@ use pattern_support::{
     build_piecewise_pattern, expect_bound, expect_match, expect_probe_error, match_infallibly,
 };
 use rstest::rstest;
+use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack, run_on_stack};
 
 /// Return the bound names of `bindings` in binding order.
 fn collect_names(bindings: &MatchBindings) -> Vec<&str> {
@@ -1756,27 +1759,28 @@ fn callback_error_from_literal_text_error_wraps_it() {
 // Deep trees
 // =============================================================================
 
-/// Test a pattern that does not descend matches a tree 4000 levels deep on
-/// the default thread stack.
+/// Test a pattern that does not descend matches a tree
+/// [`SMALL_STACK_DEPTH`] levels deep on a small thread stack, binding
+/// the root's left operand.
 #[test]
-fn match_pattern_with_a_shallow_pattern_matches_a_deep_tree() {
-    let (_, x) = build_identifier("x");
-    let tree = build_deep_sum(&x, DEEP_TREE_DEPTH);
-    let pattern = Pattern::binary(
-        Some(BinaryOperation::Add),
-        build_capture("rest"),
-        build_literal_pattern(1),
-    );
+fn match_pattern_with_a_shallow_pattern_matches_a_deep_tree_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let (_, x) = build_identifier("x");
+        let tree = build_deep_sum(&x, SMALL_STACK_DEPTH);
+        let pattern = Pattern::binary(
+            Some(BinaryOperation::Add),
+            build_capture("rest"),
+            build_literal_pattern(1),
+        );
 
-    let bindings = expect_match(&pattern, &tree);
+        let bindings = match_infallibly(&pattern, &tree).expect("the deep sum matches");
 
-    let ExpressionKind::Binary(root) = tree.kind() else {
-        panic!("a sum at the root");
-    };
-    assert!(Expression::ptr_eq(
-        expect_bound(&bindings, "rest"),
-        root.left()
-    ));
+        let ExpressionKind::Binary(root) = tree.kind() else {
+            panic!("a sum at the root");
+        };
+        let rest = bindings.get("rest").expect("rest is bound");
+        assert!(Expression::ptr_eq(rest, root.left()));
+    });
 }
 
 /// Test a pattern mirroring a 50-level chain matches it.
@@ -1791,11 +1795,12 @@ fn match_pattern_matches_a_deeply_nested_chain() {
     assert!(Expression::ptr_eq(expect_bound(&bindings, "leaf"), &x));
 }
 
-/// Test a pattern 4000 levels deep matches a tree as deep on a 16 MiB
-/// thread stack, and a mismatch at the bottom is found.
+/// Test a pattern [`DEEP_TREE_DEPTH`] levels deep matches a tree as deep on a
+/// [`PATTERN_MATCH_STACK_BYTES`] thread stack, and a mismatch at the bottom
+/// is found.
 #[test]
 fn match_pattern_matches_a_pattern_thousands_of_levels_deep() {
-    let (matched, mismatched) = run_on_large_stack(WALK_STACK_BYTES, || {
+    let (matched, mismatched) = run_on_stack(PATTERN_MATCH_STACK_BYTES, || {
         let (identifier, x) = build_identifier("x");
         let (_, y) = build_identifier("y");
         let pattern =

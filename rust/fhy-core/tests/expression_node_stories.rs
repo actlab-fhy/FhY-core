@@ -9,12 +9,14 @@
 pub mod expression_support;
 #[path = "common/hashing.rs"]
 pub mod hashing_support;
+#[path = "common/stack.rs"]
+pub mod stack_support;
 
 use std::collections::{HashMap, HashSet};
 
 use expression_support::{
-    DEEP_TREE_DEPTH, WALK_STACK_BYTES, build_call_node_or_panic, build_deep_sum, build_identifier,
-    build_literal, build_piecewise_node_or_panic, build_text_literal, run_on_large_stack,
+    build_call_node_or_panic, build_deep_sum, build_identifier, build_literal,
+    build_piecewise_node_or_panic, build_text_literal,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
@@ -23,6 +25,7 @@ use fhy_core::symbolic::expression::{
 };
 use hashing_support::hash_of;
 use rstest::rstest;
+use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
 /// Return the unary node `expression` refers to.
 fn expect_unary(expression: &Expression) -> &UnaryExpression {
@@ -1146,52 +1149,86 @@ fn alpha_renaming_are_identifiers_alpha_equivalent_follows_the_renaming(
 // Deep trees
 // =============================================================================
 
-/// Test dropping a tree thousands of levels deep does not overflow the stack.
+/// Test dropping a tree [`SMALL_STACK_DEPTH`] levels deep completes on
+/// a small thread stack.
 #[test]
-fn expression_drop_of_a_deep_tree_completes() {
-    let (_, x) = build_identifier("x");
-    let tree = build_deep_sum(&x, DEEP_TREE_DEPTH);
+fn expression_drop_of_a_deep_tree_completes_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let (_, x) = build_identifier("x");
+        let tree = build_deep_sum(&x, SMALL_STACK_DEPTH);
 
-    drop(tree);
+        drop(tree);
+    });
 }
 
-/// Test a deep tree's free identifiers are found at the bottom.
+/// Test a deep tree's free identifiers are found at the bottom, on a small
+/// thread stack.
 #[test]
-fn expression_free_identifiers_of_a_deep_tree_reach_the_bottom() {
-    let (x, reference) = build_identifier("x");
-    let tree = build_deep_sum(&reference, DEEP_TREE_DEPTH);
+fn expression_free_identifiers_of_a_deep_tree_reach_the_bottom_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let (x, reference) = build_identifier("x");
+        let tree = build_deep_sum(&reference, SMALL_STACK_DEPTH);
 
-    let free = tree.free_identifiers();
+        let free = tree.free_identifiers();
 
-    assert_eq!(free, collect_identifiers([&x]));
+        assert_eq!(free, collect_identifiers([&x]));
+    });
 }
 
 /// Test two deep trees built separately are equal and hash equally, and
-/// differ when only their bottom leaf differs.
+/// differ and hash differently when only their bottom leaf differs, on a
+/// small thread stack.
 #[test]
-fn expression_equality_and_hash_of_deep_trees_reach_the_bottom() {
-    let (_, x) = build_identifier("x");
-    let (_, y) = build_identifier("y");
-    let first = build_deep_sum(&x, DEEP_TREE_DEPTH);
-    let second = build_deep_sum(&x, DEEP_TREE_DEPTH);
-    let other = build_deep_sum(&y, DEEP_TREE_DEPTH);
+fn expression_equality_and_hash_of_deep_trees_reach_the_bottom_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let (_, x) = build_identifier("x");
+        let (_, y) = build_identifier("y");
+        let first = build_deep_sum(&x, SMALL_STACK_DEPTH);
+        let second = build_deep_sum(&x, SMALL_STACK_DEPTH);
+        let other = build_deep_sum(&y, SMALL_STACK_DEPTH);
 
-    assert_eq!(first, second);
-    assert_eq!(hash_of(&first), hash_of(&second));
-    assert_ne!(first, other);
+        assert!(first == second, "equal deep trees compare unequal");
+        assert!(first != other, "deep trees over x and y compare equal");
+        assert_eq!(hash_of(&first), hash_of(&second));
+        assert_ne!(hash_of(&first), hash_of(&other));
+    });
 }
 
-/// Test substitution reaches the bottom of a deep tree.
+/// Test renaming equivalence reaches the bottom of two deep trees under a
+/// non-empty renaming, on a small thread stack: the tree over `x` is
+/// equivalent to the tree over `w` under `x -> w`, and not to the tree over
+/// `v`.
 #[test]
-fn expression_substitute_reaches_the_bottom_of_a_deep_tree() {
-    run_on_large_stack(WALK_STACK_BYTES, || {
+fn expression_is_alpha_equivalent_under_a_renaming_reaches_the_bottom_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let (x, x_reference) = build_identifier("x");
+        let (w, w_reference) = build_identifier("w");
+        let (_, v_reference) = build_identifier("v");
+        let tree = build_deep_sum(&x_reference, SMALL_STACK_DEPTH);
+        let renamed = build_deep_sum(&w_reference, SMALL_STACK_DEPTH);
+        let other = build_deep_sum(&v_reference, SMALL_STACK_DEPTH);
+        let renaming = build_renaming([(x, w)]);
+
+        assert!(tree.is_alpha_equivalent_under(&renamed, &renaming));
+        assert!(!tree.is_alpha_equivalent_under(&other, &renaming));
+    });
+}
+
+/// Test substitution reaches the bottom of a deep tree on a small thread
+/// stack.
+#[test]
+fn expression_substitute_reaches_the_bottom_of_a_deep_tree_on_a_small_stack() {
+    run_on_small_stack(|| {
         let (x, reference) = build_identifier("x");
-        let tree = build_deep_sum(&reference, DEEP_TREE_DEPTH);
+        let tree = build_deep_sum(&reference, SMALL_STACK_DEPTH);
 
         let result = tree
             .substitute(&HashMap::from([(x, build_literal(0))]))
             .expect("no piecewise to refuse");
 
-        assert_eq!(result, build_deep_sum(&build_literal(0), DEEP_TREE_DEPTH));
+        assert!(
+            result == build_deep_sum(&build_literal(0), SMALL_STACK_DEPTH),
+            "the substituted tree differs from the tree over 0"
+        );
     });
 }

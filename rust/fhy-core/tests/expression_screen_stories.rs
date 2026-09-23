@@ -10,14 +10,14 @@
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
+#[path = "common/stack.rs"]
+pub mod stack_support;
 
 use std::collections::HashMap;
-use std::thread;
 
 use expression_support::{
-    DEEP_TREE_DEPTH, WALK_STACK_BYTES, build_call_or_panic, build_deep_conjunction, build_deep_sum,
-    build_identifier, build_literal, build_piecewise_or_panic, build_text_literal,
-    run_on_large_stack,
+    build_call_or_panic, build_deep_conjunction, build_deep_sum, build_identifier, build_literal,
+    build_piecewise_or_panic, build_text_literal,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
@@ -27,17 +27,11 @@ use fhy_core::symbolic::expression::{
 };
 use fhy_core::symbolic::symbol_type::SymbolType;
 use rstest::rstest;
+use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
 /// The tail of every refusal message naming a parent node.
 const ILL_TYPED: &str = "which provably denotes a number; the expression is ill-typed and no \
                          symbolic backend lowers it faithfully";
-
-/// Depth of the tree whose refusal is displayed on a small stack: far
-/// deeper than a renderer recursing once per level could reach.
-const DISPLAY_TREE_DEPTH: usize = 100_000;
-
-/// Stack size of the thread a deep refusal is displayed on.
-const SMALL_STACK_BYTES: usize = 128 << 10;
 
 /// Names of the real-valued built-in constants.
 const REAL_CONSTANT_NAMES: [&str; 4] = ["pi", "e", "inf", "nan"];
@@ -1068,34 +1062,29 @@ fn non_boolean_logical_operand_error_display_writes_identifier_ids() {
 }
 
 /// Test displaying a refusal whose parent and operand are
-/// [`DISPLAY_TREE_DEPTH`] levels deep completes on a small stack.
+/// [`SMALL_STACK_DEPTH`] levels deep completes on a small stack.
 #[test]
 fn non_boolean_logical_operand_error_display_writes_a_deep_tree_on_a_small_stack() {
-    let operand = build_deep_sum(&build_literal(0), DISPLAY_TREE_DEPTH);
-    let expression = operand.logical_not();
-    let error = expect_refusal(Screen::LogicalOperands.run(&expression));
+    run_on_small_stack(|| {
+        let operand = build_deep_sum(&build_literal(0), SMALL_STACK_DEPTH);
+        let expression = operand.logical_not();
+        let error = expect_refusal(Screen::LogicalOperands.run(&expression));
 
-    let handle = thread::Builder::new()
-        .stack_size(SMALL_STACK_BYTES)
-        .spawn(move || (error.to_string(), error))
-        .expect("the display thread spawns");
-    let (text, _error) = match handle.join() {
-        Ok(result) => result,
-        Err(payload) => std::panic::resume_unwind(payload),
-    };
+        let text = error.to_string();
 
-    let operand_text = format!(
-        "{}0{}",
-        "(".repeat(DISPLAY_TREE_DEPTH),
-        " + 1)".repeat(DISPLAY_TREE_DEPTH)
-    );
-    assert_eq!(
-        text,
-        format!(
-            "(!{operand_text}) applies the Boolean connective logical_not to the operand \
-             {operand_text}, {ILL_TYPED}"
-        )
-    );
+        let operand_text = format!(
+            "{}0{}",
+            "(".repeat(SMALL_STACK_DEPTH),
+            " + 1)".repeat(SMALL_STACK_DEPTH)
+        );
+        assert!(
+            text == format!(
+                "(!{operand_text}) applies the Boolean connective logical_not to the operand \
+                 {operand_text}, {ILL_TYPED}"
+            ),
+            "the message of the deep refusal differs"
+        );
+    });
 }
 
 /// Test the empty lookup knows no constant and no function.
@@ -1123,23 +1112,50 @@ fn validate_logical_operands_takes_a_trait_object_lookup() {
 // Deep trees
 // =============================================================================
 
-/// Test a Boolean conjunction thousands of levels deep passes, and one with a
-/// number at the bottom is refused there.
+/// Test a Boolean conjunction [`SMALL_STACK_DEPTH`] levels deep passes,
+/// and one with a number at the bottom is refused there by both screens, on
+/// a small thread stack.
 #[test]
-fn validate_logical_operands_walks_a_deep_conjunction() {
-    run_on_large_stack(WALK_STACK_BYTES, || {
+fn validate_walks_a_deep_conjunction_on_a_small_stack() {
+    run_on_small_stack(|| {
         let (_, p) = build_identifier("p");
-        let boolean = build_deep_conjunction(&p, DEEP_TREE_DEPTH);
+        let boolean = build_deep_conjunction(&p, SMALL_STACK_DEPTH);
         let number = build_literal(3);
-        let numeric = build_deep_conjunction(&number, DEEP_TREE_DEPTH);
+        let numeric = build_deep_conjunction(&number, SMALL_STACK_DEPTH);
 
         let boolean_result = Screen::LogicalOperands.run(&boolean);
+        let predicate_result = Screen::Predicate.run(&boolean);
         let numeric_error = expect_refusal(Screen::LogicalOperands.run(&numeric));
         let predicate_error = expect_refusal(Screen::Predicate.run(&numeric));
 
-        assert_eq!(boolean_result, Ok(()));
-        assert_eq!(numeric_error.operand(), &number);
-        assert_eq!(predicate_error.operand(), &number);
+        assert!(boolean_result.is_ok(), "the Boolean conjunction is refused");
+        assert!(predicate_result.is_ok(), "the Boolean predicate is refused");
+        assert!(Expression::ptr_eq(numeric_error.operand(), &number));
+        assert!(Expression::ptr_eq(predicate_error.operand(), &number));
+    });
+}
+
+/// Test a piecewise nested [`SMALL_STACK_DEPTH`] levels deep along its
+/// otherwise branches, with numeric values and a numeric bottom, is proven
+/// numeric by both screens on a small thread stack: as a negated operand and
+/// as a predicate root.
+#[test]
+fn validate_proves_a_deep_piecewise_numeric_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let (_, p) = build_identifier("p");
+        let mut piecewise = build_literal(3);
+        for _ in 0..SMALL_STACK_DEPTH {
+            piecewise = build_piecewise_or_panic([(&p, build_literal(1))], piecewise);
+        }
+        let negation = piecewise.logical_not();
+
+        let negated_error = expect_refusal(Screen::LogicalOperands.run(&negation));
+        let root_error = expect_refusal(Screen::Predicate.run(&piecewise));
+
+        assert!(Expression::ptr_eq(negated_error.operand(), &piecewise));
+        assert_eq!(negated_error.position(), BooleanPosition::NegatedOperand);
+        assert!(Expression::ptr_eq(root_error.operand(), &piecewise));
+        assert_eq!(root_error.position(), BooleanPosition::PredicateRoot);
     });
 }
 
