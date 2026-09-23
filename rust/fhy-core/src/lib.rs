@@ -8,9 +8,11 @@
 //! one. A second copy would issue ids that collide with the first copy's and
 //! keep registries whose canonical instances never equal the first copy's.
 
+pub mod diagnostic;
 pub mod identifier;
 pub mod interned;
 pub mod op_attribute;
+pub mod provenance;
 pub mod value_domain;
 
 mod decode;

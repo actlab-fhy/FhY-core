@@ -49,6 +49,11 @@ EXPANDED_GOLDEN_CORPORA = {
         rust_test="tag_type_equivalence",
         variable="FHY_TAG_TYPE_CORPUS",
     ),
+    "generate_provenance_diagnostic_cases.py": ExpandedGoldenCorpus(
+        options="--seed 7 --random-count 2000 --max-ops 20",
+        rust_test="provenance_diagnostic_equivalence",
+        variable="FHY_PROVENANCE_DIAGNOSTIC_CORPUS",
+    ),
 }
 
 

@@ -1,0 +1,342 @@
+//! Property tests for `Provenance::fuse`, the provenance wire form, position
+//! ordering, and `ValidationReport`.
+//!
+//! `flatten_sources` is a test-side reference for the reduction `fuse`
+//! documents (drop `Provenance::Unknown`, splice the sources of every
+//! unlabelled fusion in order, keep everything else whole), written
+//! independently of `fuse`'s own loop.
+
+use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, ValidationReport};
+use fhy_core::provenance::{
+    CallSiteProvenance, FileProvenance, FusedProvenance, NamedProvenance, Position, Provenance,
+    Span,
+};
+use proptest::prelude::*;
+use proptest::sample::select;
+
+/// File paths the strategies draw from, including spellings that normalize
+/// to one another.
+const FILE_PATHS: &[&str] = &[
+    "a.fhy",
+    "b.fhy",
+    "c.fhy",
+    "./a.fhy",
+    "dir//b.fhy",
+    "dir/../c.fhy",
+];
+
+/// Labels the strategies draw from, including the empty label.
+const LABELS: &[&str] = &["cse", "loop-fusion", ""];
+
+/// Names the strategies draw from for named provenances.
+const NAMES: &[&str] = &["n", "fhy.add", " "];
+
+/// Largest fusion depth the tree strategy builds.
+const MAXIMUM_TREE_DEPTH: u32 = 3;
+
+/// Build the file provenance for `path` over `span`.
+fn build_file(path: &str, span: Option<Span>) -> Provenance {
+    Provenance::File(FileProvenance::new(path, span))
+}
+
+/// Build the named provenance `name` over `child`.
+fn build_named(name: &str, child: Provenance) -> Provenance {
+    Provenance::Named(NamedProvenance::try_new(name, child).expect("names are non-empty"))
+}
+
+/// Return the flattened source list `Provenance::fuse` documents for
+/// `inputs`: unknown provenances dropped and unlabelled fusions spliced in
+/// order at any depth.
+fn flatten_sources(inputs: &[Provenance]) -> Vec<Provenance> {
+    let mut flat = Vec::new();
+    for input in inputs {
+        match input {
+            Provenance::Unknown => {}
+            Provenance::Fused(fused) if fused.metadata().is_none() => {
+                flat.extend(flatten_sources(fused.sources()));
+            }
+            other => flat.push(other.clone()),
+        }
+    }
+    flat
+}
+
+/// Return whether `provenance` holds, at its top level, an unknown
+/// provenance or an unlabelled fusion among its fused sources.
+fn has_reducible_sources(provenance: &Provenance) -> bool {
+    match provenance {
+        Provenance::Fused(fused) => fused.sources().iter().any(|source| {
+            matches!(source, Provenance::Unknown)
+                || matches!(source, Provenance::Fused(inner) if inner.metadata().is_none())
+        }),
+        _ => false,
+    }
+}
+
+prop_compose! {
+    /// Draw a span that is unknown, offset-bounded, or position-bounded.
+    fn arbitrary_span()(
+        shape in 0_u8..3,
+        start_offset in 0_u64..1000,
+        extra_offset in 0_u64..100,
+        start_line in 1_u64..50,
+        start_column in 1_u64..80,
+        extra_lines in 0_u64..5,
+        end_column in 1_u64..80,
+    ) -> Span {
+        match shape {
+            0 => Span::unknown(),
+            1 => Span::try_new(Some(start_offset), Some(start_offset + extra_offset), None, None)
+                .expect("offsets are ordered"),
+            _ => {
+                let start = Position::try_new(start_line, start_column).expect("non-zero");
+                let end_column = if extra_lines == 0 { start_column.max(end_column) } else { end_column };
+                let end = Position::try_new(start_line + extra_lines, end_column).expect("non-zero");
+                Span::try_new(None, None, Some(start), Some(end)).expect("positions are ordered")
+            }
+        }
+    }
+}
+
+/// Return a strategy for a leaf provenance: unknown, a file, or a name over
+/// a file.
+fn arbitrary_leaf() -> impl Strategy<Value = Provenance> {
+    prop_oneof![
+        Just(Provenance::Unknown),
+        (select(FILE_PATHS), proptest::option::of(arbitrary_span()))
+            .prop_map(|(path, span)| build_file(path, span)),
+        (select(NAMES), select(FILE_PATHS))
+            .prop_map(|(name, path)| build_named(name, build_file(path, None))),
+    ]
+}
+
+/// Return a strategy for provenance trees up to [`MAXIMUM_TREE_DEPTH`]
+/// levels deep, whose inner nodes are fusions (labelled or not), names and
+/// call sites.
+fn arbitrary_tree() -> impl Strategy<Value = Provenance> {
+    arbitrary_leaf().prop_recursive(MAXIMUM_TREE_DEPTH, 32, 3, |inner| {
+        prop_oneof![
+            3 => (
+                proptest::collection::vec(inner.clone(), 0..=3),
+                proptest::option::of(select(LABELS)),
+            )
+                .prop_map(|(sources, label)| {
+                    Provenance::Fused(FusedProvenance::new(sources, label.map(str::to_owned)))
+                }),
+            1 => (select(NAMES), inner.clone()).prop_map(|(name, child)| build_named(name, child)),
+            1 => (inner.clone(), inner).prop_map(|(callee, caller)| {
+                Provenance::CallSite(CallSiteProvenance::new(callee, caller))
+            }),
+        ]
+    })
+}
+
+/// Return a strategy for 0 to 4 trees, the inputs of one `fuse` call.
+fn arbitrary_inputs() -> impl Strategy<Value = Vec<Provenance>> {
+    proptest::collection::vec(arbitrary_tree(), 0..=4)
+}
+
+/// Return a strategy for an optional label.
+fn arbitrary_metadata() -> impl Strategy<Value = Option<&'static str>> {
+    proptest::option::of(select(LABELS))
+}
+
+proptest! {
+    /// Test `fuse` equals the reference flattening, collapsing to the unknown
+    /// provenance for no survivors and to the bare survivor for one survivor
+    /// without metadata.
+    #[test]
+    fn fuse_result_equals_the_flattened_input(
+        inputs in arbitrary_inputs(),
+        metadata in arbitrary_metadata(),
+    ) {
+        let flat = flatten_sources(&inputs);
+
+        let result = Provenance::fuse(inputs, metadata);
+
+        match (flat.as_slice(), metadata) {
+            ([], _) => prop_assert_eq!(result, Provenance::Unknown),
+            ([single], None) => prop_assert_eq!(&result, single),
+            _ => {
+                let Provenance::Fused(fused) = &result else {
+                    return Err(TestCaseError::fail(format!("expected a fusion, got {result:?}")));
+                };
+                prop_assert_eq!(fused.sources(), flat.as_slice());
+                prop_assert_eq!(fused.metadata(), metadata);
+                prop_assert!(!has_reducible_sources(&result));
+            }
+        }
+    }
+
+    /// Test fusing `fuse`'s own output alone, without metadata, changes
+    /// nothing.
+    #[test]
+    fn fuse_is_idempotent_on_its_own_output(
+        inputs in arbitrary_inputs(),
+        metadata in arbitrary_metadata(),
+    ) {
+        let result = Provenance::fuse(inputs, metadata);
+
+        let refused = Provenance::fuse([result.clone()], None);
+
+        prop_assert_eq!(refused, result);
+    }
+
+    /// Test fusing already-fused groups without metadata equals fusing all
+    /// of their inputs at once.
+    #[test]
+    fn fuse_is_associative_without_metadata(
+        first in arbitrary_inputs(),
+        second in arbitrary_inputs(),
+        third in arbitrary_inputs(),
+    ) {
+        let all: Vec<Provenance> =
+            first.iter().chain(&second).chain(&third).cloned().collect();
+
+        let grouped = Provenance::fuse(
+            [
+                Provenance::fuse(first, None),
+                Provenance::fuse(second, None),
+                Provenance::fuse(third, None),
+            ],
+            None,
+        );
+
+        prop_assert_eq!(grouped, Provenance::fuse(all, None));
+    }
+
+    /// Test inserting the unknown provenance anywhere among the inputs does
+    /// not change the result.
+    #[test]
+    fn fuse_treats_unknown_as_an_identity(
+        inputs in arbitrary_inputs(),
+        index in any::<prop::sample::Index>(),
+        metadata in arbitrary_metadata(),
+    ) {
+        let mut with_unknown = inputs.clone();
+        with_unknown.insert(index.index(inputs.len() + 1), Provenance::Unknown);
+
+        let expected = Provenance::fuse(inputs, metadata);
+
+        prop_assert_eq!(Provenance::fuse(with_unknown, metadata), expected);
+    }
+
+    /// Test every provenance tree round-trips through JSON text.
+    #[test]
+    fn provenance_round_trips_through_json(provenance in arbitrary_tree()) {
+        let json = serde_json::to_string(&provenance).expect("provenances encode");
+
+        let restored: Provenance = serde_json::from_str(&json).expect("encoded provenances decode");
+
+        prop_assert_eq!(restored, provenance);
+    }
+
+    /// Test re-encoding a decoded provenance reproduces the same JSON text.
+    #[test]
+    fn provenance_json_text_is_stable_across_a_round_trip(provenance in arbitrary_tree()) {
+        let json = serde_json::to_string(&provenance).expect("provenances encode");
+        let restored: Provenance = serde_json::from_str(&json).expect("encoded provenances decode");
+
+        let re_encoded = serde_json::to_string(&restored).expect("provenances encode");
+
+        prop_assert_eq!(re_encoded, json);
+    }
+
+    /// Test positions order exactly as their `(line, column)` pairs do.
+    #[test]
+    fn position_order_matches_line_column_pair_order(
+        left in (1_u64..=u64::MAX, 1_u64..=u64::MAX),
+        right in (1_u64..=u64::MAX, 1_u64..=u64::MAX),
+    ) {
+        let left_position = Position::try_new(left.0, left.1).expect("non-zero");
+        let right_position = Position::try_new(right.0, right.1).expect("non-zero");
+
+        prop_assert_eq!(left_position.cmp(&right_position), left.cmp(&right));
+    }
+}
+
+/// Return a strategy for one diagnostic with a random level, message,
+/// source and detail.
+fn arbitrary_diagnostic() -> impl Strategy<Value = Diagnostic> {
+    (
+        select(
+            &[
+                DiagnosticLevel::Error,
+                DiagnosticLevel::Warning,
+                DiagnosticLevel::Info,
+            ][..],
+        ),
+        ".{0,20}",
+        ".{1,10}",
+        proptest::option::of(".{0,20}"),
+    )
+        .prop_map(|(level, message, source, detail)| {
+            Diagnostic::new(level, Note::with_other_kind(message), source, detail)
+        })
+}
+
+/// Return a strategy for a report with 0 to 8 diagnostics and no records.
+fn arbitrary_report() -> impl Strategy<Value = ValidationReport> {
+    proptest::collection::vec(arbitrary_diagnostic(), 0..=8)
+        .prop_map(|diagnostics| ValidationReport::new(diagnostics, Vec::new()))
+}
+
+/// Return the diagnostics of `diagnostics` at `level`, in order.
+fn select_level(diagnostics: &[Diagnostic], level: DiagnosticLevel) -> Vec<&Diagnostic> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.level() == level)
+        .collect()
+}
+
+proptest! {
+    /// Test `has_errors` holds exactly when some diagnostic is an error.
+    #[test]
+    fn report_has_errors_matches_any_error_level_diagnostic(report in arbitrary_report()) {
+        let expected = report
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.level() == DiagnosticLevel::Error);
+
+        prop_assert_eq!(report.has_errors(), expected);
+    }
+
+    /// Test the level filters partition the diagnostics, each keeping
+    /// emission order.
+    #[test]
+    fn report_level_filters_partition_the_diagnostics_in_order(report in arbitrary_report()) {
+        let errors: Vec<&Diagnostic> = report.errors().collect();
+        let warnings: Vec<&Diagnostic> = report.warnings().collect();
+        let infos: Vec<&Diagnostic> = report.infos().collect();
+
+        prop_assert_eq!(&errors, &select_level(report.diagnostics(), DiagnosticLevel::Error));
+        prop_assert_eq!(&warnings, &select_level(report.diagnostics(), DiagnosticLevel::Warning));
+        prop_assert_eq!(&infos, &select_level(report.diagnostics(), DiagnosticLevel::Info));
+        prop_assert_eq!(
+            errors.len() + warnings.len() + infos.len(),
+            report.diagnostics().len()
+        );
+    }
+
+    /// Test `into_result` fails exactly when the report has errors, and the
+    /// failure owns an equal report whose text it renders.
+    #[test]
+    fn report_into_result_fails_iff_it_has_errors(report in arbitrary_report()) {
+        let has_errors = report.has_errors();
+        let expected = report.clone();
+
+        let result = report.into_result();
+
+        match result {
+            Ok(returned) => {
+                prop_assert!(!has_errors);
+                prop_assert_eq!(returned, expected);
+            }
+            Err(error) => {
+                prop_assert!(has_errors);
+                prop_assert_eq!(error.to_string(), expected.format());
+                prop_assert_eq!(error.into_report(), expected);
+            }
+        }
+    }
+}
