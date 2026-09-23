@@ -20,14 +20,20 @@ default = []
 testing = []
 
 [dependencies]
+num-bigint = { workspace = true }
+num-traits = { workspace = true }
 serde = { workspace = true }
+# Integer literals of any size serialize as JSON integers, as Python writes
+# them; `arbitrary_precision` lets `serde_json::Number` carry the digits.
+serde_json = { workspace = true }
 
 [dev-dependencies]
 # Turns on `testing` for this crate's own integration tests. Resolver 2 unifies
 # dev-dependency features only into test, example and bench builds, so a
 # normal build of the library never sees it.
 fhy-core = { path = ".", features = ["testing"] }
-serde_json = { workspace = true }
+proptest = { workspace = true }
+rstest = { workspace = true }
 
 [lints]
 workspace = true
