@@ -374,6 +374,37 @@ fn expression_deserialize_rejects_an_unknown_type_id() {
     "__type__": "unary_expression",
     "__data__": {"operation": "-", "operand": build_literal_wire(&json!(1))}
 }))]
+#[case::unknown_unary_operation_name(json!({
+    "__type__": "unary_expression",
+    "__data__": {"operation": "not", "operand": build_literal_wire(&json!(1))}
+}))]
+#[case::unknown_binary_operation_name(json!({
+    "__type__": "binary_expression",
+    "__data__": {
+        "operation": "plus",
+        "left": build_literal_wire(&json!(1)),
+        "right": build_literal_wire(&json!(2))
+    }
+}))]
+#[case::nested_numeric_condition(json!({
+    "__type__": "binary_expression",
+    "__data__": {
+        "operation": "add",
+        "left": build_literal_wire(&json!(1)),
+        "right": {
+            "__type__": "piecewise_expression",
+            "__data__": {
+                "conditions": [build_literal_wire(&json!(1))],
+                "values": [build_literal_wire(&json!(1))],
+                "otherwise": build_literal_wire(&json!(0))
+            }
+        }
+    }
+}))]
+#[case::arguments_not_a_list(json!({
+    "__type__": "call_expression",
+    "__data__": {"function_name": "f", "arguments": build_literal_wire(&json!(1))}
+}))]
 #[case::missing_operand(json!({
     "__type__": "binary_expression",
     "__data__": {"operation": "add", "left": build_literal_wire(&json!(1))}

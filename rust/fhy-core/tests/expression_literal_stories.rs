@@ -657,3 +657,76 @@ fn function_sort_real_accepts_special_floats(#[case] value: f64) {
 
     assert!(FunctionSort::Real.accepts_literal(&literal));
 }
+
+// =============================================================================
+// Edge cases across every bucket
+// =============================================================================
+
+/// Test the canonical key, the integer-bucket verdict, and the verdicts of
+/// the Boolean, natural, integer and real sorts (in that order) of edge-case
+/// literals from every bucket.
+#[rstest]
+#[case::bool_true("b:true", "bool:True", false, [true, false, false, false])]
+#[case::integer_zero("i:0", "int:0", true, [false, true, true, true])]
+#[case::integer_above_u64("i:18446744073709551616", "int:18446744073709551616", true, [false, true, true, true])]
+#[case::integer_forty_one_digits(
+    "i:10000000000000000000000000000000000000000",
+    "int:10000000000000000000000000000000000000000",
+    true,
+    [false, true, true, true]
+)]
+#[case::negative_integer_forty_one_digits(
+    "i:-10000000000000000000000000000000000000000",
+    "int:-10000000000000000000000000000000000000000",
+    true,
+    [false, false, true, true]
+)]
+#[case::integer_text_zero("t:0", "int:0", true, [false, true, true, true])]
+#[case::integer_text_fifty_digits(
+    "t:12345678901234567890123456789012345678901234567890",
+    "int:12345678901234567890123456789012345678901234567890",
+    true,
+    [false, true, true, true]
+)]
+#[case::decimal_text_zero("t:0.0", "float-decimal:0", false, [false, false, false, true])]
+#[case::decimal_text_leading_zero("t:0.5", "float-decimal:0.5", false, [false, false, false, true])]
+#[case::decimal_text_bare_leading_point("t:.5", "float-decimal:0.5", false, [false, false, false, true])]
+#[case::decimal_text_bare_trailing_point("t:5.", "float-decimal:5", false, [false, false, false, true])]
+#[case::decimal_text_forty_digits(
+    "t:1.000000000000000000000000000000000000001",
+    "float-decimal:1.000000000000000000000000000000000000001",
+    false,
+    [false, false, false, true]
+)]
+#[case::float_fraction("f:1.5", "float-binary:1.5", false, [false, false, false, true])]
+#[case::negative_float_fraction("f:-1.5", "float-binary:-1.5", false, [false, false, false, true])]
+#[case::float_zero("f:0.0", "float-binary:0.0", false, [false, false, false, true])]
+#[case::float_one_tenth("f:0.1", "float-binary:0.1", false, [false, false, false, true])]
+#[case::float_huge("f:1e300", "float-binary:1e+300", false, [false, false, false, true])]
+#[case::positive_infinity("f:inf", "float-binary:inf", false, [false, false, false, true])]
+#[case::negative_nan("f:-NaN", "float-binary:nan", false, [false, false, false, true])]
+#[case::smallest_subnormal("f:5e-324", "float-binary:5e-324", false, [false, false, false, true])]
+#[case::three_smallest_subnormals("f:1.5e-323", "float-binary:1.5e-323", false, [false, false, false, true])]
+#[case::even_tie("f:667929902981260.2", "float-binary:667929902981260.2", false, [false, false, false, true])]
+fn literal_value_edge_case_has_its_key_bucket_and_sorts(
+    #[case] spec: &str,
+    #[case] expected_key: &str,
+    #[case] expected_integer_valued: bool,
+    #[case] expected_sort_verdicts: [bool; 4],
+) {
+    let literal = build_sample_literal(spec);
+
+    let key = literal.canonical_key();
+    let integer_valued = literal.is_integer_valued();
+    let sort_verdicts = [
+        FunctionSort::Bool,
+        FunctionSort::Nat,
+        FunctionSort::Int,
+        FunctionSort::Real,
+    ]
+    .map(|sort| sort.accepts_literal(&literal));
+
+    assert_eq!(key, expected_key);
+    assert_eq!(integer_valued, expected_integer_valued);
+    assert_eq!(sort_verdicts, expected_sort_verdicts);
+}

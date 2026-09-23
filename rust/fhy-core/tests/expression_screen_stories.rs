@@ -375,6 +375,38 @@ fn validate_logical_operands_reports_a_shared_branch_at_its_first_position() {
     );
 }
 
+/// Test every case condition of a piecewise in a Boolean position is checked
+/// before any of its case values: a numeric later condition is reported
+/// ahead of a numeric earlier value.
+#[rstest]
+#[case::logical_operands(Screen::LogicalOperands)]
+#[case::predicate(Screen::Predicate)]
+fn validate_checks_every_case_condition_before_any_case_value(#[case] screen: Screen) {
+    let (_, x) = build_identifier("x");
+    let numeric_condition = &x + 1;
+    let mixed = build_piecewise(
+        [
+            (x.greater(0), build_literal(2)),
+            (numeric_condition.clone(), build_literal(true)),
+        ],
+        build_literal(true),
+    )
+    .expect("a valid piecewise");
+    let expression = match screen {
+        Screen::LogicalOperands => mixed.logical_not(),
+        Screen::Predicate => mixed.clone(),
+    };
+
+    let error = expect_refusal(screen.run(&expression));
+
+    assert_refusal(
+        &error,
+        &numeric_condition,
+        Some(&mixed),
+        BooleanPosition::CaseCondition { case_index: 1 },
+    );
+}
+
 /// Test a numeric piecewise compared as a number passes both screens.
 #[rstest]
 #[case::logical_operands(Screen::LogicalOperands)]

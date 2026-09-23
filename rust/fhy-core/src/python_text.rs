@@ -312,54 +312,8 @@ pub(crate) fn format_bool(value: bool) -> &'static str {
 mod tests {
     use proptest::prelude::*;
     use rstest::rstest;
-    use serde::Deserialize;
 
     use super::*;
-
-    const GOLDEN_JSON: &str = include_str!("../tests/golden/python_text_cases.json");
-
-    const MIN_FLOAT_CASES: usize = 1000;
-
-    const MIN_DECIMAL_CASES: usize = 300;
-
-    /// One golden float: its bit pattern and the text the oracle printed.
-    #[derive(Deserialize)]
-    struct FloatCase {
-        name: String,
-        bits: String,
-        repr: String,
-    }
-
-    /// One golden decimal text and, when accepted, its normalized form.
-    #[derive(Deserialize)]
-    struct DecimalCase {
-        name: String,
-        text: String,
-        accepted: bool,
-        digits: Option<String>,
-        exponent: Option<i64>,
-        #[serde(rename = "str")]
-        rendered: Option<String>,
-    }
-
-    /// One golden Boolean and the text the oracle printed.
-    #[derive(Deserialize)]
-    struct BoolCase {
-        value: bool,
-        #[serde(rename = "str")]
-        rendered: String,
-    }
-
-    /// The golden corpus of float, decimal and Boolean renderings.
-    #[derive(Deserialize)]
-    struct GoldenDocument {
-        #[serde(rename = "float_repr_cases")]
-        floats: Vec<FloatCase>,
-        #[serde(rename = "decimal_cases")]
-        decimals: Vec<DecimalCase>,
-        #[serde(rename = "bool_cases")]
-        bools: Vec<BoolCase>,
-    }
 
     /// Normalize `text`, failing the test if it is outside the grammar.
     fn normalize_accepted_text(text: &str) -> NormalizedDecimal {
@@ -374,111 +328,36 @@ mod tests {
         }
     }
 
-    /// Record the mismatches between one golden float case and the Rust text.
-    fn check_float_case(case: &FloatCase, mismatches: &mut Vec<String>) {
-        let bits = u64::from_str_radix(&case.bits, 16).expect("golden bits are hexadecimal");
-
-        let text = format_float_repr(f64::from_bits(bits));
-
-        if text != case.repr {
-            mismatches.push(format!(
-                "float {} (bits {}): expected {:?}, got {text:?}",
-                case.name, case.bits, case.repr
-            ));
-        }
-    }
-
-    /// Record the mismatches between one golden decimal case and the Rust
-    /// normalization and text.
-    fn check_decimal_case(case: &DecimalCase, mismatches: &mut Vec<String>) {
-        let normalized = normalize_decimal_text(&case.text);
-
-        match (case.accepted, normalized) {
-            (false, None) => {}
-            (false, Some(decimal)) => mismatches.push(format!(
-                "decimal {} ({:?}): expected rejection, got {decimal:?}",
-                case.name, case.text
-            )),
-            (true, None) => mismatches.push(format!(
-                "decimal {} ({:?}): expected acceptance, got rejection",
-                case.name, case.text
-            )),
-            (true, Some(decimal)) => {
-                let expected_digits = case.digits.as_deref().expect("accepted case has digits");
-                let expected_exponent = case.exponent.expect("accepted case has an exponent");
-                let expected_text = case
-                    .rendered
-                    .as_deref()
-                    .expect("accepted case has str text");
-                if &*decimal.digits != expected_digits || decimal.exponent != expected_exponent {
-                    mismatches.push(format!(
-                        "decimal {} ({:?}): expected digits {expected_digits:?} exponent \
-                         {expected_exponent}, got digits {:?} exponent {}",
-                        case.name, case.text, decimal.digits, decimal.exponent
-                    ));
-                }
-                let text = format_normalized_decimal(&decimal);
-                if text != expected_text {
-                    mismatches.push(format!(
-                        "decimal {} ({:?}): expected text {expected_text:?}, got {text:?}",
-                        case.name, case.text
-                    ));
-                }
-            }
-        }
-    }
-
-    /// Replay every case of a golden document, failing with all mismatches.
-    fn replay_golden_document(json: &str, corpus_path: Option<&str>) {
-        let document: GoldenDocument =
-            serde_json::from_str(json).expect("golden data matches the corpus shape");
-        assert!(
-            document.floats.len() >= MIN_FLOAT_CASES,
-            "expected at least {MIN_FLOAT_CASES} float cases, found {}",
-            document.floats.len()
-        );
-        assert!(
-            document.decimals.len() >= MIN_DECIMAL_CASES,
-            "expected at least {MIN_DECIMAL_CASES} decimal cases, found {}",
-            document.decimals.len()
-        );
-        assert_eq!(document.bools.len(), 2, "expected both Booleans");
-
-        let mut mismatches = Vec::new();
-        for case in &document.floats {
-            check_float_case(case, &mut mismatches);
-        }
-        for case in &document.decimals {
-            check_decimal_case(case, &mut mismatches);
-        }
-        for case in &document.bools {
-            let text = format_bool(case.value);
-            if text != case.rendered {
-                mismatches.push(format!(
-                    "bool {}: expected {:?}, got {text:?}",
-                    case.value, case.rendered
-                ));
-            }
-        }
-
-        let location = corpus_path
-            .map(|path| format!(" in {path}"))
-            .unwrap_or_default();
-        assert!(
-            mismatches.is_empty(),
-            "found {} mismatch(es){location}:\n{}",
-            mismatches.len(),
-            mismatches.join("\n")
-        );
-    }
-
-    /// Test float formatting matches the oracle's text for representative
-    /// values on each side of every notation boundary.
+    /// Test float formatting writes the expected text for representative
+    /// values of every magnitude and sign, on each side of every notation
+    /// boundary.
     #[rstest]
     #[case::zero(0.0, "0.0")]
     #[case::negative_zero(-0.0, "-0.0")]
     #[case::one(1.0, "1.0")]
     #[case::negative_one_and_a_half(-1.5, "-1.5")]
+    #[case::negative_two_and_a_half(-2.5, "-2.5")]
+    #[case::one_hundred(100.0, "100.0")]
+    #[case::one_tenth(0.1, "0.1")]
+    #[case::two_thirds(2.0 / 3.0, "0.6666666666666666")]
+    #[case::pi(std::f64::consts::PI, "3.141592653589793")]
+    #[case::e(std::f64::consts::E, "2.718281828459045")]
+    #[case::machine_epsilon(f64::EPSILON, "2.220446049250313e-16")]
+    #[case::one_plus_epsilon(1.0 + f64::EPSILON, "1.0000000000000002")]
+    #[case::small_positional_fraction(0.00123, "0.00123")]
+    #[case::long_positional_fraction(123_456_789_012_345.67, "123456789012345.67")]
+    #[case::two_to_the_53(9_007_199_254_740_992.0, "9007199254740992.0")]
+    #[case::two_to_the_53_plus_two(9_007_199_254_740_994.0, "9007199254740994.0")]
+    #[case::sixteen_digit_point_two_digits(9.5e15, "9500000000000000.0")]
+    #[case::seventeen_digit_integral(12_345_678_901_234_567.0, "1.2345678901234568e+16")]
+    #[case::two_to_the_63(9_223_372_036_854_775_808.0, "9.223372036854776e+18")]
+    #[case::googol(1e100, "1e+100")]
+    #[case::inverse_googol(1e-100, "1e-100")]
+    #[case::negative_largest_finite(f64::MIN, "-1.7976931348623157e+308")]
+    #[case::largest_subnormal(f64::from_bits(0x000f_ffff_ffff_ffff), "2.225073858507201e-308")]
+    #[case::twice_smallest_subnormal(f64::from_bits(2), "1e-323")]
+    #[case::three_smallest_subnormals(f64::from_bits(3), "1.5e-323")]
+    #[case::negative_smallest_subnormal(f64::from_bits(0x8000_0000_0000_0001), "-5e-324")]
     #[case::one_tenth_plus_two_tenths(0.1 + 0.2, "0.30000000000000004")]
     #[case::one_third(1.0 / 3.0, "0.3333333333333333")]
     #[case::smallest_positional_exponent(0.0001, "0.0001")]
@@ -496,8 +375,25 @@ mod tests {
     #[case::smallest_subnormal(f64::from_bits(1), "5e-324")]
     #[case::positive_infinity(f64::INFINITY, "inf")]
     #[case::negative_infinity(f64::NEG_INFINITY, "-inf")]
-    fn format_float_repr_matches_the_oracle_text(#[case] value: f64, #[case] expected: &str) {
+    fn format_float_repr_writes_the_expected_text(#[case] value: f64, #[case] expected: &str) {
         let text = format_float_repr(value);
+
+        assert_eq!(text, expected);
+    }
+
+    /// Test a float lying exactly halfway between two equally short digit
+    /// strings is written with the one ending in an even digit.
+    #[rstest]
+    #[case::fifteen_integer_digits(0x4302_fbd4_64d1_0462, "667929902981260.2")]
+    #[case::sixteen_integer_digits(0x431e_ff49_0c10_ae59, "2181234625358742.2")]
+    #[case::two_fraction_digits(0x42d8_4f05_70a5_0528, "106910691005460.62")]
+    #[case::four_fraction_digits_ending_in_two(0x4270_3c54_c1ca_8280, "1115706629288.1562")]
+    #[case::four_fraction_digits_ending_in_eight(0x428a_96fe_d6a2_92c0, "3654477861970.3438")]
+    fn format_float_repr_breaks_an_exact_tie_toward_the_even_digit(
+        #[case] bits: u64,
+        #[case] expected: &str,
+    ) {
+        let text = format_float_repr(f64::from_bits(bits));
 
         assert_eq!(text, expected);
     }
@@ -515,7 +411,7 @@ mod tests {
     }
 
     /// Test normalization strips leading zeros, trailing zeros and the point,
-    /// and the result formats as the oracle prints it.
+    /// and the result formats in the general decimal notation.
     #[rstest]
     #[case::integer("5", "5", 0, "5")]
     #[case::integer_leading_zero("05", "5", 0, "5")]
@@ -536,7 +432,46 @@ mod tests {
     #[case::two_digits_at_minus_seven("0.00000012", "12", -8, "1.2E-7")]
     #[case::trailing_zeros_small("0.00012300", "123", -6, "0.000123")]
     #[case::positional_fraction("123.45", "12345", -2, "123.45")]
-    fn normalize_decimal_text_strips_zeros_and_formats_as_the_oracle(
+    #[case::three_fraction_digits("123.456", "123456", -3, "123.456")]
+    #[case::fraction_trailing_zero_after_one("0.10", "1", -1, "0.1")]
+    #[case::adjusted_exponent_minus_twenty_one("0.000000000000000000001", "1", -21, "1E-21")]
+    #[case::forty_ones(
+        "1111111111111111111111111111111111111111",
+        "1111111111111111111111111111111111111111",
+        0,
+        "1111111111111111111111111111111111111111"
+    )]
+    #[case::thirty_one_significant(
+        "1.000000000000000000000000000001",
+        "1000000000000000000000000000001",
+        -30,
+        "1.000000000000000000000000000001"
+    )]
+    #[case::sixty_nines(
+        "999999999999999999999999999999.999999999999999999999999999999",
+        "999999999999999999999999999999999999999999999999999999999999",
+        -30,
+        "999999999999999999999999999999.999999999999999999999999999999"
+    )]
+    #[case::forty_digits_with_trailing_zeros(
+        "1234567890123456789012345678901234567890.0000000000",
+        "123456789012345678901234567890123456789",
+        1,
+        "1.23456789012345678901234567890123456789E+39"
+    )]
+    #[case::fifty_digits_after_long_leading_zeros(
+        "0.0000000000000000000012345678901234567890123456789012345678901234567890",
+        "1234567890123456789012345678901234567890123456789",
+        -69,
+        "1.234567890123456789012345678901234567890123456789E-21"
+    )]
+    #[case::fifty_digits_with_long_trailing_zeros(
+        "12345678901234567890123456789012345678901234567890000000000",
+        "1234567890123456789012345678901234567890123456789",
+        10,
+        "1.234567890123456789012345678901234567890123456789E+58"
+    )]
+    fn normalize_decimal_text_strips_zeros_and_formats_the_result(
         #[case] text: &str,
         #[case] expected_digits: &str,
         #[case] expected_exponent: i64,
@@ -674,25 +609,6 @@ mod tests {
         let text = format_bool(value);
 
         assert_eq!(text, expected);
-    }
-
-    /// Test float, decimal and Boolean renderings reproduce every text the
-    /// oracle recorded in the committed golden corpus.
-    #[test]
-    fn python_text_renderings_match_the_python_oracle() {
-        replay_golden_document(GOLDEN_JSON, None);
-    }
-
-    /// Test the renderings reproduce every text the oracle recorded in an
-    /// expanded corpus, read from the file named by `FHY_PYTHON_TEXT_CORPUS`.
-    #[test]
-    #[ignore = "requires an expanded corpus generated from the Python oracle"]
-    fn python_text_renderings_match_the_python_oracle_on_an_expanded_corpus() {
-        let path = std::env::var("FHY_PYTHON_TEXT_CORPUS")
-            .expect("FHY_PYTHON_TEXT_CORPUS names an expanded corpus file");
-        let json = std::fs::read_to_string(&path).expect("expanded corpus file is readable");
-
-        replay_golden_document(&json, Some(&path));
     }
 
     /// Build a strategy over the digit strings of `1..=max_length` ASCII

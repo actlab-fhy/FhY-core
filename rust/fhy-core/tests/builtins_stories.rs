@@ -1,7 +1,8 @@
 //! Stories for the built-in catalogue in
 //! `fhy_core::symbolic::expression::builtins`: the three tables and their
 //! order, lookups by name, the declared sorts, the constant values, the
-//! parameters, and the exact composed bodies. Public API only.
+//! parameters, and the exact composed bodies and their printed text. Public
+//! API only.
 //!
 //! Expected bodies are built with the node constructors
 //! (`Expression::new_binary`, `PiecewiseExpression::try_new`, ...), not the
@@ -21,8 +22,9 @@ use fhy_core::symbolic::expression::builtins::{
     native_functions,
 };
 use fhy_core::symbolic::expression::{
-    BinaryOperation, CallExpression, Expression, ExpressionKind, FunctionSort, LiteralKind,
-    PiecewiseExpression, UnaryOperation, build_piecewise,
+    BinaryOperation, CallExpression, Expression, ExpressionKind, FormatOptions, FunctionSort,
+    IdentifierStyle, LiteralKind, Notation, PiecewiseExpression, UnaryOperation, build_piecewise,
+    format_expression,
 };
 use num_bigint::BigInt;
 use rstest::rstest;
@@ -575,12 +577,12 @@ fn native_constant_holds_its_exact_value(#[case] name: &str, #[case] expected: f
     );
 }
 
-/// Test the `nan` constant holds a NaN.
+/// Test the `nan` constant holds the positive quiet NaN with no payload.
 #[test]
-fn native_constant_nan_holds_a_nan() {
+fn native_constant_nan_holds_the_quiet_nan() {
     let constant = find_native_constant("nan").expect("nan is a constant");
 
-    assert!(constant.value().is_nan(), "nan holds {}", constant.value());
+    assert_eq!(constant.value().to_bits(), 0x7ff8_0000_0000_0000);
 }
 
 /// Test each composed built-in's body is exactly its documented tree over its
@@ -612,6 +614,73 @@ fn composed_function_body_is_the_documented_tree(
     let expected = build_expected_body(name, &build_parameter_references(function));
 
     assert_eq!(function.body(), &expected);
+}
+
+/// Test each composed body prints, with identifiers by name hint, as its
+/// documented symbolic and functional text.
+#[rstest]
+#[case::max("max", "{a if (a > b); b otherwise}", "(piecewise (greater a b) a b)")]
+#[case::min("min", "{a if (a < b); b otherwise}", "(piecewise (less a b) a b)")]
+#[case::abs(
+    "abs",
+    "{x if (x >= 0.0); (-x) otherwise}",
+    "(piecewise (greater_equal x 0.0) x (negate x))"
+)]
+#[case::sign(
+    "sign",
+    "{1 if (x > 0.0); -1 if (x < 0.0); 0 otherwise}",
+    "(piecewise (greater x 0.0) 1 (less x 0.0) -1 0)"
+)]
+#[case::clamp("clamp", "min(max(x, lo), hi)", "(min (max x lo) hi)")]
+#[case::clamp_symmetric(
+    "clamp_symmetric",
+    "clamp(x, (-bound), bound)",
+    "(clamp x (negate bound) bound)"
+)]
+#[case::relu("relu", "max(x, 0)", "(max x 0)")]
+#[case::leaky_relu(
+    "leaky_relu",
+    "{x if (x > 0.0); (x * slope) otherwise}",
+    "(piecewise (greater x 0.0) x (multiply x slope))"
+)]
+#[case::xor(
+    "xor",
+    "((a || b) && (!(a && b)))",
+    "(logical_and (logical_or a b) (logical_not (logical_and a b)))"
+)]
+#[case::nand("nand", "(!(a && b))", "(logical_not (logical_and a b))")]
+#[case::nor("nor", "(!(a || b))", "(logical_not (logical_or a b))")]
+#[case::implies("implies", "((!a) || b)", "(logical_or (logical_not a) b)")]
+#[case::iff("iff", "(a == b)", "(equal a b)")]
+#[case::sigmoid(
+    "sigmoid",
+    "(1.0 / (1.0 + exp((-x))))",
+    "(divide 1.0 (add 1.0 (exp (negate x))))"
+)]
+#[case::silu("silu", "(x * sigmoid(x))", "(multiply x (sigmoid x))")]
+#[case::gelu(
+    "gelu",
+    "((0.5 * x) * (1.0 + erf((x / sqrt(2.0)))))",
+    "(multiply (multiply 0.5 x) (add 1.0 (erf (divide x (sqrt 2.0)))))"
+)]
+fn composed_function_body_prints_as_its_documented_text(
+    #[case] name: &str,
+    #[case] expected_symbolic: &str,
+    #[case] expected_functional: &str,
+) {
+    let body = find_composed(name).body();
+
+    let symbolic = format_expression(
+        body,
+        FormatOptions::new(Notation::Symbolic, IdentifierStyle::NameHint),
+    );
+    let functional = format_expression(
+        body,
+        FormatOptions::new(Notation::Functional, IdentifierStyle::NameHint),
+    );
+
+    assert_eq!(symbolic, expected_symbolic);
+    assert_eq!(functional, expected_functional);
 }
 
 /// Test each composed body refers to every one of its parameters and to no

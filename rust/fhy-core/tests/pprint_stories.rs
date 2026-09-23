@@ -334,15 +334,22 @@ fn format_expression_writes_a_literal_as_given(
     assert_eq!(texts, (expected.to_owned(), expected.to_owned()));
 }
 
-/// Test a negation of a negative literal writes the literal's sign after the
-/// operator's.
-#[test]
-fn format_expression_writes_negation_of_negative_literal_with_two_signs() {
-    let negation = -build_literal(-1);
+/// Test a unary operation over a negative literal writes the literal's sign
+/// after the operator's.
+#[rstest]
+#[case::negate(UnaryOperation::Negate, "(--1)", "(negate -1)")]
+#[case::positive(UnaryOperation::Positive, "(+-1)", "(positive -1)")]
+#[case::logical_not(UnaryOperation::LogicalNot, "(!-1)", "(logical_not -1)")]
+fn format_expression_writes_unary_of_negative_literal_with_two_signs(
+    #[case] operation: UnaryOperation,
+    #[case] symbolic: &str,
+    #[case] functional: &str,
+) {
+    let expression = Expression::new_unary(operation, build_literal(-1));
 
-    let texts = (format_symbolic(&negation), format_functional(&negation));
+    let texts = (format_symbolic(&expression), format_functional(&expression));
 
-    assert_eq!(texts, ("(--1)".to_owned(), "(negate -1)".to_owned()));
+    assert_eq!(texts, (symbolic.to_owned(), functional.to_owned()));
 }
 
 /// Test an integer and the integer text of the same value print alike.
