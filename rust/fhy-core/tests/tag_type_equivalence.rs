@@ -133,19 +133,29 @@ fn compute_hash<T: Hash>(value: &T) -> u64 {
     hasher.finish()
 }
 
-fn create_op_attribute_slots() -> SlotTable {
-    let mut slots = SlotTable::default();
-    slots.bind_slot("commutative", get_commutative().name().clone());
-    slots.bind_slot("associative", get_associative().name().clone());
-    slots.bind_slot("pure", get_pure().name().clone());
-    slots.bind_slot("elementwise", get_elementwise().name().clone());
-    slots
-}
+/// A slot the golden data binds before every script, paired with the function
+/// returning the Rust default it is bound to.
+type DefaultSlot<T> = (&'static str, fn() -> &'static Canonical<T>);
 
-fn create_value_domain_slots() -> SlotTable {
+/// `OpAttribute`'s default slots, in the golden data's `default_slots` order.
+const OP_ATTRIBUTE_DEFAULTS: [DefaultSlot<OpAttribute>; 4] = [
+    ("commutative", get_commutative),
+    ("associative", get_associative),
+    ("pure", get_pure),
+    ("elementwise", get_elementwise),
+];
+
+/// `ValueDomain`'s default slots, in the golden data's `default_slots` order.
+const VALUE_DOMAIN_DEFAULTS: [DefaultSlot<ValueDomain>; 2] =
+    [("data", get_data_domain), ("address", get_address_domain)];
+
+/// Return a slot table with each of `defaults`' slots bound to its default's
+/// name.
+fn create_default_slots<T: TagType>(defaults: &[DefaultSlot<T>]) -> SlotTable {
     let mut slots = SlotTable::default();
-    slots.bind_slot("data", get_data_domain().name().clone());
-    slots.bind_slot("address", get_address_domain().name().clone());
+    for (slot, get_default) in defaults {
+        slots.bind_slot(slot, get_default().get_name().clone());
+    }
     slots
 }
 
@@ -735,7 +745,7 @@ fn check_eq_with_duplicate<T: TagType>(
 fn replay_op_attribute_case(case: &Value, mismatches: &mut Vec<String>) {
     let name = case["name"].as_str().expect("case has a name");
     let ops = case["ops"].as_array().expect("case has an ops array");
-    let mut slots = create_op_attribute_slots();
+    let mut slots = create_default_slots(&OP_ATTRIBUTE_DEFAULTS);
 
     for (index, op) in ops.iter().enumerate() {
         match op["op"].as_str().expect("op has a kind") {
@@ -918,7 +928,7 @@ fn check_eq_held_domain(
 fn replay_value_domain_case(case: &Value, mismatches: &mut Vec<String>) {
     let name = case["name"].as_str().expect("case has a name");
     let ops = case["ops"].as_array().expect("case has an ops array");
-    let mut slots = create_value_domain_slots();
+    let mut slots = create_default_slots(&VALUE_DOMAIN_DEFAULTS);
     let mut held = HashMap::new();
 
     for (index, op) in ops.iter().enumerate() {
@@ -965,25 +975,28 @@ fn assert_default_slots_match_rust(document: &Value) {
         .as_object()
         .expect("golden data has a `default_slots` object");
 
-    let expected_op_attribute_slots: Vec<&str> =
-        vec!["commutative", "associative", "pure", "elementwise"];
-    let expected_value_domain_slots: Vec<&str> = vec!["data", "address"];
+    assert_default_slot_names_match(default_slots, &OP_ATTRIBUTE_DEFAULTS);
+    assert_default_slot_names_match(default_slots, &VALUE_DOMAIN_DEFAULTS);
+}
 
-    for (kind, expected) in [
-        ("op_attribute", &expected_op_attribute_slots),
-        ("value_domain", &expected_value_domain_slots),
-    ] {
-        let actual: Vec<&str> = default_slots[kind]
-            .as_array()
-            .unwrap_or_else(|| panic!("default_slots.{kind} is not an array"))
-            .iter()
-            .map(|value| value.as_str().expect("a default slot name is a string"))
-            .collect();
-        assert_eq!(
-            &actual, expected,
-            "Rust's default slots for {kind} have drifted from the golden data"
-        );
-    }
+/// Assert the golden data's default-slot names for `T` are `defaults`' slot
+/// names, in order.
+fn assert_default_slot_names_match<T: TagType>(
+    default_slots: &Map<String, Value>,
+    defaults: &[DefaultSlot<T>],
+) {
+    let kind = T::KIND;
+    let actual: Vec<&str> = default_slots[kind]
+        .as_array()
+        .unwrap_or_else(|| panic!("default_slots.{kind} is not an array"))
+        .iter()
+        .map(|value| value.as_str().expect("a default slot name is a string"))
+        .collect();
+    let expected: Vec<&str> = defaults.iter().map(|(slot, _)| *slot).collect();
+    assert_eq!(
+        actual, expected,
+        "Rust's default slots for {kind} have drifted from the golden data"
+    );
 }
 
 /// Serializes the corpus replays, since every script clears and interns into
