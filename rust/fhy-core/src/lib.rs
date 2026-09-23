@@ -13,9 +13,11 @@ pub mod identifier;
 pub mod interned;
 pub mod op_attribute;
 pub mod provenance;
+pub mod symbolic;
 pub mod value_domain;
 
 mod decode;
+mod python_text;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

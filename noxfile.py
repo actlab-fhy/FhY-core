@@ -27,12 +27,15 @@ class ExpandedGoldenCorpus(NamedTuple):
     options: str
     rust_test: str
     variable: str
+    library_test: str = ""
 
 
 # Expanded corpus settings for each generator under GOLDEN_DIRECTORY, keyed by
 # file name: the generator options (space-separated), the Rust test target
 # whose ignored test replays the corpus, and the variable that names the corpus
-# file for that test.
+# file for that test. A corpus replayed by a unit test inside the library
+# (its helpers are private) names that test's full path in `library_test`
+# instead, and `rust_test` is only its label.
 EXPANDED_GOLDEN_CORPORA = {
     "generate_deterministic_identifier_cases.py": ExpandedGoldenCorpus(
         options="--seed 7 --random-count 2000 --max-ops 40 --hints a,b,c,d,e",
@@ -49,10 +52,29 @@ EXPANDED_GOLDEN_CORPORA = {
         rust_test="tag_type_equivalence",
         variable="FHY_TAG_TYPE_CORPUS",
     ),
+    "generate_expression_cases.py": ExpandedGoldenCorpus(
+        options="--seed 7 --random-count 1000 --max-ops 16",
+        rust_test="expression_equivalence",
+        variable="FHY_EXPRESSION_CORPUS",
+    ),
+    "generate_literal_cases.py": ExpandedGoldenCorpus(
+        options="--seed 7 --random-count 3000 --max-ops 60",
+        rust_test="expression_literal_equivalence",
+        variable="FHY_LITERAL_CORPUS",
+    ),
     "generate_provenance_diagnostic_cases.py": ExpandedGoldenCorpus(
         options="--seed 7 --random-count 2000 --max-ops 20",
         rust_test="provenance_diagnostic_equivalence",
         variable="FHY_PROVENANCE_DIAGNOSTIC_CORPUS",
+    ),
+    "generate_python_text_cases.py": ExpandedGoldenCorpus(
+        options="--seed 7 --random-count 20000 --max-ops 80",
+        rust_test="python_text",
+        variable="FHY_PYTHON_TEXT_CORPUS",
+        library_test=(
+            "python_text::tests::"
+            "python_text_renderings_match_the_python_oracle_on_an_expanded_corpus"
+        ),
     ),
 }
 
@@ -222,6 +244,12 @@ def golden_expanded(session: nox.Session) -> None:
         # `testing` is on for this crate's own tests already; naming it keeps
         # the deterministic-identifier test, which requires it, from being
         # skipped if that ever changes.
+        if corpus.library_test:
+            target = ["--lib"]
+            selection = ["--exact", corpus.library_test]
+        else:
+            target = ["--test", corpus.rust_test]
+            selection = []
         output = session.run(
             "cargo",
             "test",
@@ -230,10 +258,10 @@ def golden_expanded(session: nox.Session) -> None:
             "fhy-core",
             "--features",
             "testing",
-            "--test",
-            corpus.rust_test,
+            *target,
             "--",
             "--ignored",
+            *selection,
             env={corpus.variable: str(corpus_path)},
             external=True,
             silent=True,
