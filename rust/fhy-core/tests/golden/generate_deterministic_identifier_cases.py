@@ -404,7 +404,7 @@ def _print_summary(cases: list[dict[str, Any]], output_path: Path) -> None:
 
 
 def _parse_arguments(default_output: Path) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").partition("\n")[0])
     parser.add_argument("--seed", type=int, default=_RANDOM_SEED)
     parser.add_argument("--random-count", type=int, default=_RANDOM_SCRIPT_COUNT)
     parser.add_argument("--max-ops", type=int, default=_RANDOM_MAX_OPS)

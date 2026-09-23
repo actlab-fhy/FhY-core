@@ -121,7 +121,7 @@ exclude_also = [
 python-version = "3.10"
 
 [tool.ty.src]
-include = ["src", "tests"]
+include = ["src", "tests", "rust/fhy-core/tests/golden"]
 
 [tool.ty.rules]
 # ty defaults to strict inference; start clean and only relax on real friction.

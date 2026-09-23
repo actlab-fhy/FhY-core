@@ -117,7 +117,12 @@ class _ScriptContext:
     counter.
     """
 
-    def __init__(self, kind: str, cls: type, defaults: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        kind: str,
+        cls: type[OpAttribute] | type[ValueDomain],
+        defaults: dict[str, Any],
+    ) -> None:
         self.kind = kind
         self.cls = cls
         self.default_names = tuple(defaults)
@@ -387,72 +392,14 @@ def _build_domain_payload(
 # =============================================================================
 
 
-def _run_new(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
-    slot = op["slot"]
-    description = op["description"]
-    identifier = ctx.resolve_identifier(slot)
+def _describe_canonical(
+    ctx: _ScriptContext, canonical: OpAttribute | ValueDomain
+) -> dict[str, Any]:
+    """Return the fields every op records about a canonical instance.
 
-    if ctx.kind == _OP_ATTRIBUTE_KIND:
-        instance = OpAttribute(identifier, description)
-        canonical = OpAttribute.get_interned(identifier)
-        if canonical is None:
-            raise RuntimeError("new must register a canonical instance")
-        ctx.mark_registered(slot)
-        return {
-            "registered": canonical is instance,
-            "canonical_description": canonical.description,
-        }
-
-    parent_slot = op["parent_slot"]
-    parent = None
-    if parent_slot is not None:
-        parent = ValueDomain.require_interned(ctx.resolve_identifier(parent_slot))
-    instance = ValueDomain(identifier, description, parent)
-    canonical = ValueDomain.get_interned(identifier)
-    if canonical is None:
-        raise RuntimeError("new must register a canonical instance")
-    ctx.mark_registered(slot)
-    canonical_parent_slot = (
-        ctx.find_slot_for_id(canonical.parent.name.id)
-        if canonical.parent is not None
-        else None
-    )
-    return {
-        "registered": canonical is instance,
-        "canonical_description": canonical.description,
-        "canonical_parent_slot": canonical_parent_slot,
-    }
-
-
-def _run_get(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
-    identifier = ctx.resolve_identifier(op["slot"])
-    canonical = ctx.cls.get_interned(identifier)
-    if ctx.kind == _OP_ATTRIBUTE_KIND:
-        return {
-            "canonical_description": None
-            if canonical is None
-            else canonical.description
-        }
-    if canonical is None:
-        return {"canonical_description": None, "canonical_parent_slot": None}
-    parent_slot = (
-        ctx.find_slot_for_id(canonical.parent.name.id)
-        if canonical.parent is not None
-        else None
-    )
-    return {
-        "canonical_description": canonical.description,
-        "canonical_parent_slot": parent_slot,
-    }
-
-
-def _run_require(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
-    identifier = ctx.resolve_identifier(op["slot"])
-    try:
-        canonical = ctx.cls.require_interned(identifier)
-    except KeyError:
-        return {"error": "KeyError"}
-    if ctx.kind == _OP_ATTRIBUTE_KIND:
+    A domain also records its parent's slot, or `None` for a root domain.
+    """
+    if isinstance(canonical, OpAttribute):
         return {"canonical_description": canonical.description}
     parent_slot = (
         ctx.find_slot_for_id(canonical.parent.name.id)
@@ -463,6 +410,46 @@ def _run_require(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
         "canonical_description": canonical.description,
         "canonical_parent_slot": parent_slot,
     }
+
+
+def _run_new(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
+    slot = op["slot"]
+    description = op["description"]
+    identifier = ctx.resolve_identifier(slot)
+
+    instance: OpAttribute | ValueDomain
+    if ctx.kind == _OP_ATTRIBUTE_KIND:
+        instance = OpAttribute(identifier, description)
+    else:
+        parent_slot = op["parent_slot"]
+        parent = None
+        if parent_slot is not None:
+            parent = ValueDomain.require_interned(ctx.resolve_identifier(parent_slot))
+        instance = ValueDomain(identifier, description, parent)
+    canonical = ctx.cls.get_interned(identifier)
+    if canonical is None:
+        raise RuntimeError("new must register a canonical instance")
+    ctx.mark_registered(slot)
+    return {"registered": canonical is instance, **_describe_canonical(ctx, canonical)}
+
+
+def _run_get(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
+    identifier = ctx.resolve_identifier(op["slot"])
+    canonical = ctx.cls.get_interned(identifier)
+    if canonical is not None:
+        return _describe_canonical(ctx, canonical)
+    if ctx.kind == _OP_ATTRIBUTE_KIND:
+        return {"canonical_description": None}
+    return {"canonical_description": None, "canonical_parent_slot": None}
+
+
+def _run_require(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
+    identifier = ctx.resolve_identifier(op["slot"])
+    try:
+        canonical = ctx.cls.require_interned(identifier)
+    except KeyError:
+        return {"error": "KeyError"}
+    return _describe_canonical(ctx, canonical)
 
 
 def _run_clear(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
@@ -565,18 +552,7 @@ def _run_decode(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
 
     _mark_registered_payload_slots(ctx, payload_slots)
     slot = ctx.find_slot_for_id(canonical.name.id)
-    if ctx.kind == _OP_ATTRIBUTE_KIND:
-        return {"canonical_slot": slot, "canonical_description": canonical.description}
-    canonical_parent_slot = (
-        ctx.find_slot_for_id(canonical.parent.name.id)
-        if canonical.parent is not None
-        else None
-    )
-    return {
-        "canonical_slot": slot,
-        "canonical_description": canonical.description,
-        "canonical_parent_slot": canonical_parent_slot,
-    }
+    return {"canonical_slot": slot, **_describe_canonical(ctx, canonical)}
 
 
 def _run_is_subdomain_of(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
@@ -605,16 +581,17 @@ def _run_eq_with_duplicate(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str,
     identifier = ctx.resolve_identifier(slot)
     canonical = ctx.cls.require_interned(identifier)
     other_description = op["other_description"]
+    fresh: OpAttribute | ValueDomain
     if ctx.kind == _OP_ATTRIBUTE_KIND:
         fresh = OpAttribute(identifier, other_description)
-        return {"result": canonical == fresh}
-    other_parent_slot = op["other_parent_slot"]
-    other_parent = None
-    if other_parent_slot is not None:
-        other_parent = ValueDomain.require_interned(
-            ctx.resolve_identifier(other_parent_slot)
-        )
-    fresh = ValueDomain(identifier, other_description, other_parent)
+    else:
+        other_parent_slot = op["other_parent_slot"]
+        other_parent = None
+        if other_parent_slot is not None:
+            other_parent = ValueDomain.require_interned(
+                ctx.resolve_identifier(other_parent_slot)
+            )
+        fresh = ValueDomain(identifier, other_description, other_parent)
     return {"result": canonical == fresh}
 
 
@@ -1594,7 +1571,7 @@ def _build_provenance(repository_root: Path) -> dict[str, Any]:
 
 
 def _parse_arguments(default_output: Path) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").partition("\n")[0])
     parser.add_argument("--seed", type=int, default=_RANDOM_SEED)
     parser.add_argument("--random-count", type=int, default=_RANDOM_SCRIPT_COUNT)
     parser.add_argument("--max-ops", type=int, default=_RANDOM_MAX_OPS)

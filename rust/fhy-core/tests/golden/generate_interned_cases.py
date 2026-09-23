@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from fhy_core.traits.interned import InternedMixin
+from fhy_core.utils.override import override
 
 GENERATOR_COMMAND = (
     "uv run --no-sync python rust/fhy-core/tests/golden/generate_interned_cases.py"
@@ -74,10 +75,12 @@ class _GoldenTag(InternedMixin[str]):
     def __post_init__(self) -> None:
         self.register_interned_instance()
 
+    @override
     def get_intern_key(self) -> str:
         return self.name
 
     @classmethod
+    @override
     def register_default_instances(cls) -> None:
         for instance in cls._script_defaults:
             instance.register_interned_instance()
@@ -126,8 +129,8 @@ def _run_op(op: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError("intern must register a canonical instance")
         return {"registered": canonical is instance, "canonical_note": canonical.note}
     if kind == "get":
-        instance = _GoldenTag.get_interned(op["key"])
-        return {"canonical_note": instance.note if instance is not None else None}
+        canonical = _GoldenTag.get_interned(op["key"])
+        return {"canonical_note": canonical.note if canonical is not None else None}
     if kind == "require":
         try:
             instance = _GoldenTag.require_interned(op["key"])
@@ -264,7 +267,7 @@ def _defaults_catalogue_as_json() -> dict[str, list[dict[str, str]]]:
 
 
 def _parse_arguments(default_output: Path) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").partition("\n")[0])
     parser.add_argument("--seed", type=int, default=_RANDOM_SEED)
     parser.add_argument("--random-count", type=int, default=_RANDOM_CASE_COUNT)
     parser.add_argument("--max-ops", type=int, default=30)
