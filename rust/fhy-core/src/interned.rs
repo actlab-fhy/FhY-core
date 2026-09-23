@@ -88,6 +88,12 @@ pub trait Interned: Sized + Send + Sync + 'static {
 /// A registry is normally a `static` returned by
 /// [`Interned::intern_registry`], but a local registry is independent of it
 /// and of every other registry.
+///
+/// A registry suits small, long-lived vocabularies such as attributes and
+/// value domains. Every [`intern`](Self::intern) takes the write lock, even
+/// when the key is already registered, and an instance stays registered
+/// until a [`clear`](Self::clear), so a registry is not a hash-consing table
+/// for IR nodes.
 pub struct InternRegistry<T: Interned> {
     create_defaults: fn() -> Vec<T>,
     state: OnceLock<RwLock<RegistryState<T>>>,

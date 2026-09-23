@@ -328,6 +328,24 @@ is sound only because of the one-extension rule above.
   `FHY_CORE_NO_EXTENSIONS` selects the pure-Python implementation only for
   modules that still have one.
 
+### Module paths follow the Python package
+
+A Rust module takes the path of the Python module it ports:
+`fhy_core.symbolic.expression` becomes `fhy_core::symbolic::expression`,
+and a package's `core.py` folds into the package's own module. Packages
+that group items by kind, `traits/` and `utils/`, have no Rust
+counterpart; each of their items moves to the module whose concept it
+serves, as `HasIdentifier` lives in `identifier` and `Interned` in
+`interned`.
+
+### Errors belong to their module
+
+Each module defines the error types for its own operations; the crate has
+no crate-wide error enum. A public error enum is `#[non_exhaustive]`.
+`Display` and `std::error::Error` are implemented by hand. The binding
+crate raises the same Python exception class, with the same message, that
+the Python implementation raises.
+
 ### Canonical values keep their identity in Python
 
 When a canonical Rust value, such as an interned `OpAttribute`, reaches
