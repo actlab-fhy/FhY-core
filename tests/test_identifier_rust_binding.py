@@ -19,6 +19,8 @@ from fhy_core.identifier import (
     _PythonIdCounter,  # the reference implementation of the Rust counter
 )
 
+from .conftest import run_counter_operations
+
 _rs = pytest.importorskip("fhy_core._rs")
 
 
@@ -33,21 +35,11 @@ _RUST_COUNTER = _Counter(
     _rs.allocate_identifier_id, _rs.advance_identifier_counter_past
 )
 
-# Allocate/advance steps whose relative ids are computed by hand in
+# Allocate (`None`) and advance steps, followed by the runner's final
+# allocation, whose relative ids are computed by hand in
 # `test_counters_issue_the_same_relative_ids_for_the_same_operations`. Advance
 # offsets land ahead of, behind, and exactly on the counter.
-_OPERATION_SCRIPT: list[tuple[str, int]] = [
-    ("allocate", 0),
-    ("advance", 50),
-    ("allocate", 0),
-    ("advance", 1),
-    ("allocate", 0),
-    ("advance", 53),
-    ("allocate", 0),
-    ("advance", 200),
-    ("advance", 100),
-    ("allocate", 0),
-]
+_OPERATION_SCRIPT: list[int | None] = [None, 50, None, 1, None, 53, None, 200, 100]
 
 
 def _create_python_counter() -> _Counter:
@@ -58,14 +50,9 @@ def _create_python_counter() -> _Counter:
 
 def _run_operation_script(counter: _Counter) -> list[int]:
     """Run the operation script and return the allocated ids relative to an anchor."""
-    base = counter.allocate()
-    relative_ids = []
-    for operation, offset in _OPERATION_SCRIPT:
-        if operation == "allocate":
-            relative_ids.append(counter.allocate() - base)
-        else:
-            counter.advance_past(base + offset)
-    return relative_ids
+    return run_counter_operations(
+        _OPERATION_SCRIPT, counter.allocate, counter.advance_past
+    )
 
 
 @pytest.fixture(params=["rust", "python"])

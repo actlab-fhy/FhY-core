@@ -1,7 +1,7 @@
 """Testing utilitiy functions."""
 
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Sequence
 from importlib.util import find_spec
 from typing import Any
 from unittest.mock import Mock
@@ -19,6 +19,7 @@ __all__ = [
     "SerializableEqualHashable",
     "build_backend_environment",
     "mock_identifier",
+    "run_counter_operations",
 ]
 
 # The variable that selects the backend a freshly started interpreter imports.
@@ -103,6 +104,38 @@ def build_backend_environment(
     if no_extensions is not None:
         environment[NO_EXTENSIONS_VARIABLE] = no_extensions
     return environment
+
+
+def run_counter_operations(
+    operations: Sequence[int | None],
+    allocate: Callable[[], int],
+    advance_past: Callable[[int], None],
+) -> list[int]:
+    """Run allocations and advances on an identifier id counter.
+
+    The counter first allocates an anchor id. ``None`` allocates; an integer
+    advances the counter past the id that far past the anchor. After the
+    operations the counter allocates once more, so every sequence ends by
+    observing where it left the counter.
+
+    Args:
+        operations: The allocations and advance offsets, in order.
+        allocate: The counter's allocation.
+        advance_past: The counter's advance past an id.
+
+    Returns:
+        Every id allocated after the anchor, minus the anchor.
+
+    """
+    base = allocate()
+    relative_ids = []
+    for advance_offset in operations:
+        if advance_offset is None:
+            relative_ids.append(allocate() - base)
+        else:
+            advance_past(base + advance_offset)
+    relative_ids.append(allocate() - base)
+    return relative_ids
 
 
 class MockIdentifierAliasError(Exception):

@@ -6,8 +6,6 @@ fresh start, and must issue the same ids relative to an anchor allocated just
 before the sequence.
 """
 
-from collections.abc import Callable
-
 import pytest
 
 pytest.importorskip("hypothesis")
@@ -18,6 +16,8 @@ from hypothesis import strategies as st
 from fhy_core.identifier import (
     _PythonIdCounter,  # the reference implementation of the Rust counter
 )
+
+from .conftest import run_counter_operations
 
 _rs = pytest.importorskip("fhy_core._rs")
 
@@ -30,23 +30,6 @@ _operation_sequences = st.lists(
 )
 
 
-def _run_operations(
-    operations: list[int | None],
-    allocate: Callable[[], int],
-    advance_past: Callable[[int], None],
-) -> list[int]:
-    """Run the operations on one counter and return allocated ids relative to it."""
-    base = allocate()
-    relative_ids = []
-    for advance_offset in operations:
-        if advance_offset is None:
-            relative_ids.append(allocate() - base)
-        else:
-            advance_past(base + advance_offset)
-    relative_ids.append(allocate() - base)
-    return relative_ids
-
-
 @given(operations=_operation_sequences)
 def test_counters_issue_the_same_relative_ids_for_any_operation_sequence(
     operations: list[int | None],
@@ -54,10 +37,10 @@ def test_counters_issue_the_same_relative_ids_for_any_operation_sequence(
     """Test both counters agree on every id for one allocate/advance sequence."""
     python_counter = _PythonIdCounter()
 
-    rust_relative_ids = _run_operations(
+    rust_relative_ids = run_counter_operations(
         operations, _rs.allocate_identifier_id, _rs.advance_identifier_counter_past
     )
-    python_relative_ids = _run_operations(
+    python_relative_ids = run_counter_operations(
         operations, python_counter.allocate, python_counter.advance_past
     )
 
