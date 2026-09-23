@@ -309,7 +309,7 @@ static NATIVE_CONSTANTS: [NativeConstantSpec; 4] = [
     NativeConstantSpec::create("pi", std::f64::consts::PI),
     NativeConstantSpec::create("e", std::f64::consts::E),
     NativeConstantSpec::create("inf", f64::INFINITY),
-    NativeConstantSpec::create("nan", f64::NAN),
+    NativeConstantSpec::create("nan", f64::from_bits(0x7ff8_0000_0000_0000)),
 ];
 
 /// A built-in function defined by an expression over its parameters.
@@ -433,7 +433,8 @@ impl NativeConstantSpec {
     }
 
     /// Return the constant's value: `pi` and `e` are the `f64` values nearest
-    /// to pi and e, `inf` is positive infinity, and `nan` is a quiet NaN.
+    /// to pi and e, `inf` is positive infinity, and `nan` is the positive
+    /// quiet NaN with no payload, the bits `0x7ff8_0000_0000_0000`.
     #[must_use]
     pub fn value(&self) -> f64 {
         self.value
