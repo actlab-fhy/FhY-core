@@ -201,6 +201,23 @@ pub fn coerce_to_condition(expression: Expression) -> Expression {
     }
 }
 
+/// Return a copy of `expression` sharing no node with it.
+///
+/// # Panics
+///
+/// Panics if a node does not rebuild from copies of its own children,
+/// which a valid tree rules out.
+#[must_use]
+pub fn copy_deeply(expression: &Expression) -> Expression {
+    match expression.kind() {
+        ExpressionKind::Identifier(identifier) => Expression::from(identifier.clone()),
+        ExpressionKind::Literal(literal) => Expression::from(literal.clone()),
+        _ => expression
+            .rebuild_with_children(expression.children().map(copy_deeply).collect())
+            .expect("a node rebuilds from copies of its own children"),
+    }
+}
+
 /// Return a strategy for finite floats of every magnitude and sign,
 /// subnormals and both zeros included, with a few small values that recur.
 fn build_finite_float_strategy() -> impl Strategy<Value = f64> {

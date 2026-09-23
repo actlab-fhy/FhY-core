@@ -6,6 +6,8 @@
 //! unlabelled fusion in order, keep everything else whole), written
 //! independently of `fuse`'s own loop.
 
+use std::fmt::Write as _;
+
 use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel, Note, ValidationReport};
 use fhy_core::provenance::{
     CallSiteProvenance, FileProvenance, FusedProvenance, NamedProvenance, Position, Provenance,
@@ -14,8 +16,9 @@ use fhy_core::provenance::{
 use proptest::prelude::*;
 use proptest::sample::select;
 
-/// File paths the strategies draw from, including spellings that normalize
-/// to one another.
+/// File paths the strategies draw from: spellings that normalize to one
+/// another, absolute paths, the POSIX `//` root, the empty path and the
+/// root alone, backslashes, non-ASCII text, and characters JSON escapes.
 const FILE_PATHS: &[&str] = &[
     "a.fhy",
     "b.fhy",
@@ -23,6 +26,17 @@ const FILE_PATHS: &[&str] = &[
     "./a.fhy",
     "dir//b.fhy",
     "dir/../c.fhy",
+    "/abs/a.fhy",
+    "/abs//./b.fhy/",
+    "//a",
+    "//a/./b",
+    "",
+    "/",
+    "C:\\src\\a.fhy",
+    "dir\\b.fhy",
+    "ünïcødé/файл.fhy",
+    "quote\"and\\slash.fhy",
+    "tab\there/new\nline\u{1}.fhy",
 ];
 
 /// Labels the strategies draw from, including the empty label.
@@ -73,29 +87,66 @@ fn has_reducible_sources(provenance: &Provenance) -> bool {
     }
 }
 
-prop_compose! {
-    /// Draw a span that is unknown, offset-bounded, or position-bounded.
-    fn arbitrary_span()(
-        shape in 0_u8..3,
-        start_offset in 0_u64..1000,
-        extra_offset in 0_u64..100,
-        start_line in 1_u64..50,
-        start_column in 1_u64..80,
-        extra_lines in 0_u64..5,
-        end_column in 1_u64..80,
-    ) -> Span {
-        match shape {
-            0 => Span::unknown(),
-            1 => Span::try_new(Some(start_offset), Some(start_offset + extra_offset), None, None)
-                .expect("offsets are ordered"),
-            _ => {
-                let start = Position::try_new(start_line, start_column).expect("non-zero");
-                let end_column = if extra_lines == 0 { start_column.max(end_column) } else { end_column };
-                let end = Position::try_new(start_line + extra_lines, end_column).expect("non-zero");
-                Span::try_new(None, None, Some(start), Some(end)).expect("positions are ordered")
-            }
-        }
-    }
+/// Return a strategy for offsets and line or column numbers, small or
+/// near `u64::MAX`.
+fn arbitrary_bound_value() -> BoxedStrategy<u64> {
+    prop_oneof![3 => 0_u64..1000, 1 => (u64::MAX - 1000)..=u64::MAX].boxed()
+}
+
+/// Return a strategy for an optional start and end drawn from `values`,
+/// either one alone, or both with the end at or after the start by
+/// `distance`, where `u64::MAX` caps it.
+fn arbitrary_ordered_bounds<T: std::fmt::Debug + Clone>(
+    values: impl Strategy<Value = T> + Clone,
+    advance: fn(&T, u64) -> T,
+) -> impl Strategy<Value = (Option<T>, Option<T>)> {
+    prop_oneof![
+        Just((None, None)),
+        values.clone().prop_map(|start| (Some(start), None)),
+        values.clone().prop_map(|end| (None, Some(end))),
+        (values, prop_oneof![0_u64..3, any::<u64>()]).prop_map(move |(start, distance)| {
+            let end = advance(&start, distance);
+            (Some(start), Some(end))
+        }),
+    ]
+}
+
+/// Return a strategy for positions with small or huge lines and columns.
+fn arbitrary_position() -> BoxedStrategy<Position> {
+    (arbitrary_bound_value(), arbitrary_bound_value())
+        .prop_map(|(line, column)| Position::try_new(line.max(1), column.max(1)).expect("non-zero"))
+        .boxed()
+}
+
+/// Return the position `distance` lines after `start`, at the same column
+/// when `distance` is zero and at column 1 otherwise, with `u64::MAX`
+/// capping the line.
+fn advance_position(start: &Position, distance: u64) -> Position {
+    let line = start.line().get().saturating_add(distance);
+    let column = if line == start.line().get() {
+        start.column().get()
+    } else {
+        1
+    };
+    Position::try_new(line, column).expect("non-zero")
+}
+
+/// Return a strategy for spans mixing unknown, one-sided and two-sided
+/// offset bounds with unknown, one-sided and two-sided position bounds,
+/// with small and huge values.
+fn arbitrary_span() -> impl Strategy<Value = Span> {
+    (
+        arbitrary_ordered_bounds(arbitrary_bound_value(), |start, distance| {
+            start.saturating_add(distance)
+        }),
+        arbitrary_ordered_bounds(arbitrary_position(), advance_position),
+    )
+        .prop_map(
+            |((start_offset, end_offset), (start_position, end_position))| {
+                Span::try_new(start_offset, end_offset, start_position, end_position)
+                    .expect("bounds are ordered")
+            },
+        )
 }
 
 /// Return a strategy for a leaf provenance: unknown, a file, or a name over
@@ -305,10 +356,49 @@ fn arbitrary_diagnostic() -> impl Strategy<Value = Diagnostic> {
         })
 }
 
-/// Return a strategy for a report with 0 to 8 diagnostics and no records.
-fn arbitrary_report() -> impl Strategy<Value = ValidationReport> {
-    proptest::collection::vec(arbitrary_diagnostic(), 0..=8)
-        .prop_map(|diagnostics| ValidationReport::new(diagnostics, Vec::new()))
+/// Return a strategy for a report with 0 to 8 diagnostics and 0 to 4
+/// records.
+fn arbitrary_report() -> impl Strategy<Value = ValidationReport<u32>> {
+    (
+        proptest::collection::vec(arbitrary_diagnostic(), 0..=8),
+        proptest::collection::vec(any::<u32>(), 0..=4),
+    )
+        .prop_map(|(diagnostics, records)| ValidationReport::new(diagnostics, records))
+}
+
+/// Return the rendering `ValidationReport::format` documents for
+/// `diagnostics`: a placeholder for none, and otherwise one `[LEVEL]
+/// source: message` line per diagnostic, followed by an indented detail line
+/// when the detail is present and non-empty, joined by newlines.
+fn render_report(diagnostics: &[Diagnostic]) -> String {
+    if diagnostics.is_empty() {
+        return "No validation diagnostics.".to_owned();
+    }
+    let mut text = String::new();
+    for (index, diagnostic) in diagnostics.iter().enumerate() {
+        if index > 0 {
+            text.push('\n');
+        }
+        let level = match diagnostic.level() {
+            DiagnosticLevel::Error => "ERROR",
+            DiagnosticLevel::Warning => "WARNING",
+            DiagnosticLevel::Info => "INFO",
+        };
+        write!(
+            text,
+            "[{level}] {}: {}",
+            diagnostic.source(),
+            diagnostic.message().message()
+        )
+        .expect("writing to a string succeeds");
+        match diagnostic.detail() {
+            Some(detail) if !detail.is_empty() => {
+                write!(text, "\n    detail: {detail}").expect("writing to a string succeeds");
+            }
+            _ => {}
+        }
+    }
+    text
 }
 
 /// Return the diagnostics of `diagnostics` at `level`, in order.
@@ -348,8 +438,18 @@ proptest! {
         );
     }
 
+    /// Test a report renders as its documented text, built here diagnostic
+    /// by diagnostic.
+    #[test]
+    fn report_format_writes_the_documented_text(report in arbitrary_report()) {
+        let text = report.format();
+
+        prop_assert_eq!(text, render_report(report.diagnostics()));
+    }
+
     /// Test `into_result` fails exactly when the report has errors, and the
-    /// failure owns an equal report whose text it renders.
+    /// failure owns an equal report, records included, whose text it
+    /// renders.
     #[test]
     fn report_into_result_fails_iff_it_has_errors(report in arbitrary_report()) {
         let has_errors = report.has_errors();

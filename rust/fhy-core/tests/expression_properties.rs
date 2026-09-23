@@ -17,11 +17,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use expression_support::{
-    IDENTIFIER_POOL as POOL, build_expression_strategy, build_literal_strategy, coerce_to_condition,
+    IDENTIFIER_POOL as POOL, build_expression_strategy, build_literal_strategy,
+    coerce_to_condition, copy_deeply,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
-    AlphaRenaming, Expression, ExpressionKind, LiteralValue, build_piecewise,
+    AlphaRenaming, Expression, ExpressionBuildError, ExpressionKind, LiteralKind, LiteralValue,
+    build_piecewise,
 };
 use hashing_support::hash_of;
 use proptest::prelude::*;
@@ -57,16 +59,36 @@ fn build_spelled_literal(spelling: &str) -> LiteralValue {
     }
 }
 
-/// Return a copy of `expression` sharing no node with it.
-fn copy_deeply(expression: &Expression) -> Expression {
-    match expression.kind() {
-        ExpressionKind::Identifier(identifier) => Expression::from(identifier.clone()),
-        ExpressionKind::Literal(literal) => Expression::from(literal.clone()),
-        _ => expression
-            .rebuild_with_children(expression.children().map(copy_deeply).collect())
-            .expect("a node rebuilds from copies of its own children"),
-    }
+/// Return whether substituting `substitution` into `expression` puts a
+/// literal other than a Boolean in a piecewise case condition: whether some
+/// case condition is a reference to an identifier mapped to such a literal.
+fn does_substitution_break_a_condition(
+    expression: &Expression,
+    substitution: &HashMap<Identifier, Expression>,
+) -> bool {
+    let breaks_here = match expression.kind() {
+        ExpressionKind::Piecewise(piecewise) => piecewise.cases().iter().any(|(condition, _)| {
+            let ExpressionKind::Identifier(identifier) = condition.kind() else {
+                return false;
+            };
+            substitution.get(identifier).is_some_and(|replacement| {
+                matches!(
+                    replacement.kind(),
+                    ExpressionKind::Literal(literal) if !matches!(literal.kind(), LiteralKind::Bool(_))
+                )
+            })
+        }),
+        _ => false,
+    };
+    breaks_here
+        || expression
+            .children()
+            .any(|child| does_substitution_break_a_condition(child, substitution))
 }
+
+/// The renamings of [`POOL`] onto itself other than the identity, as
+/// permutations of pool indices: the three swaps and the two rotations.
+const POOL_PERMUTATIONS: [[usize; 3]; 5] = [[1, 0, 2], [2, 1, 0], [0, 2, 1], [1, 2, 0], [2, 0, 1]];
 
 /// Return a strategy for piecewise trees over integer and Boolean literals,
 /// with a piecewise at the root.
@@ -100,14 +122,19 @@ fn build_piecewise_strategy() -> BoxedStrategy<Expression> {
 }
 
 proptest! {
-    /// Test substitution removes the mapped identifiers and brings in the
-    /// free identifiers of the replacements it uses, and nothing else.
+    /// Test substitution is refused exactly when it puts a literal other
+    /// than a Boolean in a piecewise case condition, and otherwise removes
+    /// the mapped identifiers and brings in the free identifiers of the
+    /// replacements it uses, and nothing else.
     #[test]
     fn expression_substitute_updates_free_identifiers_per_specification(
         expression in build_expression_strategy(false),
         domain in prop::sample::subsequence(vec![0_usize, 1, 2], 1..=2),
         replacements in prop::collection::vec(
-            build_expression_strategy(false).prop_map(coerce_to_condition),
+            prop_oneof![
+                build_expression_strategy(false),
+                build_literal_strategy(false).prop_map(Expression::from),
+            ],
             2,
         ),
     ) {
@@ -116,6 +143,7 @@ proptest! {
             .zip(replacements)
             .map(|(index, replacement)| (POOL[*index].clone(), replacement))
             .collect();
+        let is_refused = does_substitution_break_a_condition(&expression, &substitution);
         let free_before = expression.free_identifiers();
         let mut expected: HashSet<Identifier> = free_before
             .iter()
@@ -130,8 +158,20 @@ proptest! {
 
         let substituted = expression.substitute(&substitution);
 
-        let substituted = substituted.expect("no replacement is a literal other than a Boolean");
-        prop_assert_eq!(substituted.free_identifiers(), expected);
+        match substituted {
+            Ok(substituted) => {
+                prop_assert!(!is_refused, "a number reached a case condition unrefused");
+                prop_assert_eq!(substituted.free_identifiers(), expected);
+            }
+            Err(error) => {
+                prop_assert!(is_refused, "refused with {:?}", error);
+                prop_assert!(
+                    matches!(error, ExpressionBuildError::NonBooleanConditionLiteral { .. }),
+                    "refused with {:?}",
+                    error
+                );
+            }
+        }
     }
 
     /// Test a tree equals, and is equivalent under the empty renaming to,
@@ -256,6 +296,44 @@ proptest! {
         let has_free_identifiers = !expression.free_identifiers().is_empty();
         prop_assert_eq!(expression == renamed, !has_free_identifiers);
         prop_assert_eq!(under_no_renaming, !has_free_identifiers);
+    }
+
+    /// Test renaming the pool identifiers among themselves, onto
+    /// identifiers the tree also refers to, is equivalence under that
+    /// renaming and of the renamed tree to the original under the inverse,
+    /// and is equality exactly when the renaming fixes every free identifier
+    /// of the tree.
+    #[test]
+    fn expression_renaming_within_the_tree_identifiers_holds_under_the_declared_renaming(
+        expression in build_expression_strategy(false),
+        permutation in select(POOL_PERMUTATIONS.to_vec()),
+    ) {
+        let pairs: HashMap<Identifier, Identifier> = permutation
+            .iter()
+            .enumerate()
+            .filter(|(from, to)| from != *to)
+            .map(|(from, to)| (POOL[from].clone(), POOL[*to].clone()))
+            .collect();
+        let inverse_pairs: HashMap<Identifier, Identifier> =
+            pairs.iter().map(|(from, to)| (to.clone(), from.clone())).collect();
+        let substitution: HashMap<Identifier, Expression> = pairs
+            .iter()
+            .map(|(from, to)| (from.clone(), Expression::from(to.clone())))
+            .collect();
+        let is_fixed = expression
+            .free_identifiers()
+            .iter()
+            .all(|identifier| !pairs.contains_key(identifier));
+        let renaming = AlphaRenaming::try_new(pairs).expect("a permutation is injective");
+        let inverse = AlphaRenaming::try_new(inverse_pairs).expect("a permutation is injective");
+        let renamed = expression.substitute(&substitution).expect("identifiers replace identifiers");
+
+        let under_renaming = expression.is_alpha_equivalent_under(&renamed, &renaming);
+        let under_inverse = renamed.is_alpha_equivalent_under(&expression, &inverse);
+
+        prop_assert!(under_renaming);
+        prop_assert!(under_inverse);
+        prop_assert_eq!(expression == renamed, is_fixed);
     }
 
     /// Test an integer and its digit text, zero-padded or not, share a key.

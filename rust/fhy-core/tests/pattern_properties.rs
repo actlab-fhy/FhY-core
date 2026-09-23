@@ -3,9 +3,10 @@
 //! Covers a pattern mirroring a tree's exact shape (it matches the tree and
 //! binds each leaf capture to that leaf, in leaf order), the wildcard,
 //! agreement of `does_pattern_match` with `match_pattern`, a mirror whose
-//! root operation is swapped, the empty rule list as the identity, a
-//! semantics-preserving rule set checked against a reference evaluator, the
-//! link between firings and handle identity, and what counts as a change.
+//! root operation is swapped, a capture repeated across both operands, the
+//! empty rule list as the identity, a semantics-preserving rule set checked
+//! against a reference evaluator and for firing once per wrap, the link
+//! between firings and handle identity, and what counts as a change.
 //!
 //! Public API only (`fhy_core::symbolic::expression::pattern`).
 
@@ -18,6 +19,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use expression_support::{
     ALL_BINARY_OPERATIONS as BINARY_OPERATIONS, IDENTIFIER_POOL as POOL, build_expression_strategy,
+    copy_deeply,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::pattern::{
@@ -377,6 +379,32 @@ fn mirror_binary_root_with(root: &Expression, operation: BinaryOperation) -> Pat
     Pattern::binary(Some(operation), left, right)
 }
 
+/// Return the number of nodes in `expression`, counting each occurrence.
+fn count_nodes(expression: &Expression) -> usize {
+    1 + expression.children().map(count_nodes).sum::<usize>()
+}
+
+/// Return the number of wraps in `wrapped`, the copy of `plain` the wrapped
+/// numeric tree strategy made: each wrap adds exactly two nodes.
+fn count_wraps(plain: &Expression, wrapped: &Expression) -> usize {
+    (count_nodes(wrapped) - count_nodes(plain)) / 2
+}
+
+/// Return a strategy for pairs of trees, half of them a tree and a copy of
+/// it sharing no node with it, the rest two independent trees.
+fn build_operand_pair_strategy() -> impl Strategy<Value = (Expression, Expression)> {
+    prop_oneof![
+        build_expression_strategy(true).prop_map(|tree| {
+            let copy = copy_deeply(&tree);
+            (tree, copy)
+        }),
+        (
+            build_expression_strategy(true),
+            build_expression_strategy(true)
+        ),
+    ]
+}
+
 /// Return the number of literal leaves in `expression`, counting each
 /// occurrence.
 fn count_literal_leaves(expression: &Expression) -> usize {
@@ -443,6 +471,27 @@ proptest! {
         prop_assert!(bindings.is_none(), "matched with {:?}", bindings);
     }
 
+    /// Test a binary pattern capturing both operands under one name matches
+    /// exactly when the operands are structurally equal, and binds the name
+    /// to a handle to the left operand.
+    #[test]
+    fn repeated_capture_matches_exactly_equal_operands(
+        (left, right) in build_operand_pair_strategy(),
+        operation in select(BINARY_OPERATIONS.to_vec()),
+    ) {
+        let pattern = Pattern::binary(Some(operation), build_capture_x(), build_capture_x());
+        let expression = Expression::new_binary(operation, &left, &right);
+
+        let bindings = match_pattern(&pattern, &expression).expect("no predicate");
+
+        prop_assert_eq!(bindings.is_some(), left == right);
+        if let Some(bindings) = bindings {
+            let bound = bindings.get("x").expect("x is bound");
+            prop_assert!(Expression::ptr_eq(bound, &left), "x is bound to {:?}", bound);
+            prop_assert_eq!(bindings.names().count(), 1);
+        }
+    }
+
     /// Test an empty rule list returns the input itself, unchanged.
     #[test]
     fn apply_rewrite_rules_with_no_rules_is_the_identity(expression in build_expression_strategy(true)) {
@@ -454,35 +503,45 @@ proptest! {
     }
 
     /// Test the no-op rules `x + 0 -> x`, `x * 1 -> x` and `-(-x) -> x`
-    /// keep the value of a tree wrapped in those no-ops.
+    /// fire at least once per wrap and keep the value of a tree wrapped in
+    /// those no-ops.
     #[test]
     fn neutral_rules_preserve_evaluation(
         (plain, wrapped) in build_wrapped_numeric_tree_strategy(),
         environment in build_environment_strategy(),
     ) {
         let rules = build_neutral_rules(&Arc::new(AtomicUsize::new(0)));
+        let wraps = count_wraps(&plain, &wrapped);
 
         let outcome = apply_rewrite_rules(&wrapped, &rules).expect("no callback fails");
 
+        prop_assert!(
+            outcome.fired().len() >= wraps,
+            "{} firings for {} wraps",
+            outcome.fired().len(),
+            wraps
+        );
         prop_assert_eq!(
             evaluate_numeric(outcome.output(), &environment),
             evaluate_numeric(&plain, &environment)
         );
     }
 
-    /// Test, for rules that never return the node they matched, the output
-    /// is the input itself exactly when no rule fired, and the fired list
-    /// counts every firing.
+    /// Test, for rules that never return the node they matched, the rules
+    /// fire at least once per wrap, the output is the input itself exactly
+    /// when no rule fired, and the fired list counts every firing.
     #[test]
     fn neutral_rules_keep_identity_exactly_when_no_rule_fired(
-        (_, wrapped) in build_wrapped_numeric_tree_strategy()
+        (plain, wrapped) in build_wrapped_numeric_tree_strategy()
     ) {
         let fire_count = Arc::new(AtomicUsize::new(0));
         let rules = build_neutral_rules(&fire_count);
+        let wraps = count_wraps(&plain, &wrapped);
 
         let outcome = apply_rewrite_rules(&wrapped, &rules).expect("no callback fails");
 
         let fired = fire_count.load(Ordering::SeqCst);
+        prop_assert!(fired >= wraps, "{} firings for {} wraps", fired, wraps);
         prop_assert_eq!(outcome.fired().len(), fired);
         prop_assert_eq!(Expression::ptr_eq(outcome.output(), &wrapped), fired == 0);
         prop_assert_eq!(outcome.is_changed(), fired != 0);
