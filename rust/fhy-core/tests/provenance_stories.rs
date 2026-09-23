@@ -6,7 +6,6 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::path::Path;
 
 use fhy_core::provenance::{
     CallSiteProvenance, FileProvenance, FusedProvenance, HasProvenance, NamedProvenance, Position,
@@ -85,15 +84,6 @@ fn assert_decode_rejected<T: DeserializeOwned + std::fmt::Debug>(payload: Value)
         !error.to_string().is_empty(),
         "the error for {rendered} has a message"
     );
-}
-
-/// Return the file path of a file provenance as text.
-fn render_file_path(provenance: &FileProvenance) -> String {
-    provenance
-        .file_path()
-        .to_str()
-        .expect("test paths are UTF-8")
-        .to_owned()
 }
 
 // =============================================================================
@@ -383,7 +373,7 @@ fn span_display_renders_positions_or_offsets(
 fn file_provenance_new_without_span_stores_the_path() {
     let provenance = FileProvenance::new("a.fhy", None);
 
-    assert_eq!(render_file_path(&provenance), "a.fhy");
+    assert_eq!(provenance.file_path(), "a.fhy");
     assert_eq!(provenance.span(), None);
 }
 
@@ -392,14 +382,16 @@ fn file_provenance_new_without_span_stores_the_path() {
 fn file_provenance_new_stores_the_span() {
     let span = build_offset_span(Some(0), Some(3));
 
-    let provenance = FileProvenance::new(Path::new("a.fhy"), Some(span));
+    let provenance = FileProvenance::new("a.fhy", Some(span));
 
     assert_eq!(provenance.span(), Some(&span));
 }
 
-/// Test file paths are normalized like POSIX `pathlib` paths: repeated
-/// separators and `.` components go, a trailing separator goes, the empty
-/// path becomes `.`, and `..`, `~` and a leading `//` stay.
+/// Test file paths are normalized as Python's `PurePosixPath` normalizes
+/// them, on every platform: `/` is the only separator, repeated separators
+/// and `.` components go, a trailing separator goes, the empty path becomes
+/// `.`, and `..`, `~`, a leading `//`, backslashes and drive letters stay.
+/// Each expected path is what `str(PurePosixPath(path))` returns.
 #[rstest]
 #[case::plain("a.fhy", "a.fhy")]
 #[case::leading_current_directory("./a", "a")]
@@ -424,10 +416,22 @@ fn file_provenance_new_stores_the_span() {
 #[case::messy_absolute("////a//b/", "/a/b")]
 #[case::non_ascii("h\u{e9}llo/w\u{f6}rld.fhy", "h\u{e9}llo/w\u{f6}rld.fhy")]
 #[case::spaces("a b/c d.fhy", "a b/c d.fhy")]
+#[case::windows_drive_path("C:\\src\\a.fhy", "C:\\src\\a.fhy")]
+#[case::backslash_is_not_a_separator("a\\b/c", "a\\b/c")]
+#[case::backslash_then_current_directory("a\\.\\b", "a\\.\\b")]
+#[case::unc_path("\\\\server\\share", "\\\\server\\share")]
+#[case::drive_letter_with_slash("C:/x", "C:/x")]
+#[case::bare_drive_letter("C:", "C:")]
+#[case::drive_letter_then_current_directory("C:/./x/", "C:/x")]
+#[case::two_leading_separators_normalized("//a/./b/", "//a/b")]
+#[case::two_leading_separators_then_current_directory("//./a", "//a")]
+#[case::current_directory_then_repeated_separator(".//a", "a")]
+#[case::three_separators("///", "/")]
+#[case::four_leading_separators("////a", "/a")]
 fn file_provenance_new_normalizes_the_path(#[case] path: &str, #[case] expected: &str) {
     let provenance = FileProvenance::new(path, None);
 
-    assert_eq!(render_file_path(&provenance), expected);
+    assert_eq!(provenance.file_path(), expected);
 }
 
 /// Test two spellings of one normalized path give equal provenances with

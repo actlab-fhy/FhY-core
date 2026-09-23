@@ -20,12 +20,11 @@
 //! `{"__type__": "provenance.<kind>", "__data__": {..}}`.
 
 use std::fmt;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::num::NonZeroU64;
-use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use serde::ser::{self, SerializeStruct};
+use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 use crate::decode::deserialize_map_only;
@@ -431,7 +430,7 @@ impl fmt::Display for Provenance {
         match self {
             Provenance::Unknown => f.write_str("<unknown>"),
             Provenance::File(file) => {
-                write!(f, "{}", file.file_path.display())?;
+                f.write_str(&file.file_path)?;
                 match &file.span {
                     Some(span) if !span.is_unknown() => write!(f, ":{span}"),
                     _ => Ok(()),
@@ -492,27 +491,20 @@ struct FusedFields<'a> {
     metadata: Option<&'a str>,
 }
 
-/// Encodes the provenance in the wrapped `__type__`/`__data__` form. Encoding
-/// fails if a file path is not valid UTF-8, since the wire form holds the
-/// path as a string.
+/// Encodes the provenance in the wrapped `__type__`/`__data__` form.
 impl Serialize for Provenance {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut envelope = serializer.serialize_struct("Provenance", 2)?;
         envelope.serialize_field("__type__", self.type_id())?;
         match self {
             Provenance::Unknown => envelope.serialize_field("__data__", &UnknownFields {})?,
-            Provenance::File(file) => {
-                let file_path = file.file_path.to_str().ok_or_else(|| {
-                    <S::Error as ser::Error>::custom("a file provenance's path is not valid UTF-8")
-                })?;
-                envelope.serialize_field(
-                    "__data__",
-                    &FileFields {
-                        file_path,
-                        span: file.span.as_ref(),
-                    },
-                )?;
-            }
+            Provenance::File(file) => envelope.serialize_field(
+                "__data__",
+                &FileFields {
+                    file_path: &file.file_path,
+                    span: file.span.as_ref(),
+                },
+            )?,
             Provenance::Named(named) => envelope.serialize_field(
                 "__data__",
                 &NamedFields {
@@ -619,46 +611,48 @@ impl<'de> Deserialize<'de> for Provenance {
     }
 }
 
-/// Return `path` normalized as a POSIX `pathlib` path would be.
+/// Return `path` normalized as Python's `PurePosixPath` normalizes it.
 ///
-/// Repeated separators and `.` components are removed, a trailing separator
-/// is dropped, `..` components are kept, a leading `//` (exactly two
-/// separators) is kept while three or more leading separators become one, and
-/// a path with no root and no components becomes `.`.
-fn normalize_file_path(path: &Path) -> PathBuf {
-    let bytes = path.as_os_str().as_encoded_bytes();
-    let root = if bytes.starts_with(b"//") && !bytes.starts_with(b"///") {
+/// `/` is the only separator; every other character, a backslash or a
+/// drive letter's colon included, is part of a component. Empty and `.`
+/// components are removed, which drops repeated and trailing separators,
+/// `..` components are kept, a leading `//` (exactly two separators) is kept
+/// while three or more leading separators become one, and a path with no
+/// root and no components becomes `.`. The result is the same on every
+/// platform.
+fn normalize_file_path(path: &str) -> String {
+    let root = if path.starts_with("//") && !path.starts_with("///") {
         "//"
-    } else if bytes.starts_with(b"/") {
+    } else if path.starts_with('/') {
         "/"
     } else {
         ""
     };
-    let mut normalized = PathBuf::from(root);
-    for component in path.components() {
-        match component {
-            Component::Normal(part) => normalized.push(part),
-            Component::ParentDir => normalized.push(".."),
-            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
-        }
+    let components: Vec<&str> = path
+        .split('/')
+        .filter(|component| !component.is_empty() && *component != ".")
+        .collect();
+    let normalized = format!("{root}{}", components.join("/"));
+    if normalized.is_empty() {
+        ".".to_owned()
+    } else {
+        normalized
     }
-    if normalized.as_os_str().is_empty() {
-        normalized.push(".");
-    }
-    normalized
 }
 
 /// Provenance pointing at a region of a source file.
 ///
-/// The path is stored in normalized form: repeated separators and `.`
-/// components are removed and a trailing separator is dropped, so `./a` and
-/// `a//b/` become `a` and `a/b`, and the empty path becomes `.`. A `..`
-/// component, `~`, and a leading `//` are kept as written. Equality and
-/// [`Display`](fmt::Display) use the normalized path, compared as written,
-/// so `//a` and `/a` differ.
-#[derive(Debug, Clone)]
+/// The path is text stored in normalized form, as Python's `PurePosixPath`
+/// normalizes it on every platform: `/` is the only separator, repeated
+/// separators and `.` components are removed and a trailing separator is
+/// dropped, so `./a` and `a//b/` become `a` and `a/b`, and the empty path
+/// becomes `.`. A `..` component, `~`, a leading `//`, a backslash and a
+/// drive letter such as `C:` are kept as written, so `C:\src\a.fhy` is
+/// one component. Equality, hashing and [`Display`](fmt::Display) use the
+/// normalized text, so `//a` and `/a` differ.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FileProvenance {
-    file_path: PathBuf,
+    file_path: String,
     span: Option<Span>,
 }
 
@@ -669,16 +663,14 @@ impl FileProvenance {
     /// # Examples
     ///
     /// ```
-    /// use std::path::Path;
-    ///
     /// use fhy_core::provenance::FileProvenance;
     ///
     /// let provenance = FileProvenance::new("./src//main.fhy", None);
     ///
-    /// assert_eq!(provenance.file_path(), Path::new("src/main.fhy"));
+    /// assert_eq!(provenance.file_path(), "src/main.fhy");
     /// ```
     #[must_use]
-    pub fn new(file_path: impl AsRef<Path>, span: Option<Span>) -> Self {
+    pub fn new(file_path: impl AsRef<str>, span: Option<Span>) -> Self {
         Self {
             file_path: normalize_file_path(file_path.as_ref()),
             span,
@@ -687,7 +679,7 @@ impl FileProvenance {
 
     /// Returns the normalized path of the file.
     #[must_use]
-    pub fn file_path(&self) -> &Path {
+    pub fn file_path(&self) -> &str {
         &self.file_path
     }
 
@@ -695,23 +687,6 @@ impl FileProvenance {
     #[must_use]
     pub fn span(&self) -> Option<&Span> {
         self.span.as_ref()
-    }
-}
-
-/// Compares the normalized paths as text rather than by component, which
-/// would equate a leading `//` with `/`.
-impl PartialEq for FileProvenance {
-    fn eq(&self, other: &Self) -> bool {
-        self.file_path.as_os_str() == other.file_path.as_os_str() && self.span == other.span
-    }
-}
-
-impl Eq for FileProvenance {}
-
-impl Hash for FileProvenance {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.file_path.as_os_str().hash(state);
-        self.span.hash(state);
     }
 }
 

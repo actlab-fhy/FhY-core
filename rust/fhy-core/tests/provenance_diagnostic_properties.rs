@@ -1,5 +1,5 @@
-//! Property tests for `Provenance::fuse`, the provenance wire form, position
-//! ordering, and `ValidationReport`.
+//! Property tests for `Provenance::fuse`, file path normalization, the
+//! provenance wire form, position ordering, and `ValidationReport`.
 //!
 //! `flatten_sources` is a test-side reference for the reduction `fuse`
 //! documents (drop `Provenance::Unknown`, splice the sources of every
@@ -139,6 +139,30 @@ fn arbitrary_inputs() -> impl Strategy<Value = Vec<Provenance>> {
 /// Return a strategy for an optional label.
 fn arbitrary_metadata() -> impl Strategy<Value = Option<&'static str>> {
     proptest::option::of(select(LABELS))
+}
+
+proptest! {
+    /// Test normalizing a file path twice changes nothing more than
+    /// normalizing it once, and the result has no empty or `.` component
+    /// after its root, whatever mix of separators, dots, backslashes and
+    /// drive letters the path holds.
+    #[test]
+    fn file_path_normalization_is_idempotent(path in "[a/.\\\\:C]{0,12}") {
+        let normalized = FileProvenance::new(&path, None);
+
+        let renormalized = FileProvenance::new(normalized.file_path(), None);
+
+        prop_assert_eq!(renormalized.file_path(), normalized.file_path());
+        let unrooted = normalized.file_path().trim_start_matches('/');
+        prop_assert!(
+            unrooted == "."
+                || unrooted.is_empty()
+                || unrooted.split('/').all(|component| !component.is_empty() && component != "."),
+            "{:?} normalized to {:?}",
+            path,
+            normalized.file_path()
+        );
+    }
 }
 
 proptest! {
