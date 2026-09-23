@@ -13,6 +13,7 @@ use std::fmt;
 
 use super::node::Expression;
 use super::operation::BinaryOperation;
+use super::pprint::{FormatOptions, IdentifierStyle, format_expression};
 
 /// A node that could not be built because it would break a node invariant.
 ///
@@ -94,6 +95,7 @@ impl Error for ExpressionBuildError {}
 
 /// Where a Boolean position sits relative to the node that imposes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum BooleanPosition {
     /// The operand of a logical negation.
     NegatedOperand,
@@ -124,22 +126,30 @@ pub enum BooleanPosition {
 ///
 /// Carries the offending operand, the node that puts it in a Boolean
 /// position (none for [`BooleanPosition::PredicateRoot`]), and the position
-/// itself. `Display` names the position and renders the parent and the
-/// operand with their `Debug` text:
+/// itself. `Display` names the position and writes the parent and the
+/// operand as [`format_expression`] does in [`Notation::Symbolic`] with
+/// [`IdentifierStyle::NameHintWithId`], so a tree of any depth displays
+/// without exhausting the thread's stack:
 ///
-/// - negated operand: `the logical_not in {parent:?} takes the operand
-///   {operand:?}, which provably denotes a number`
-/// - conjunction or disjunction operand: `the {operation} in {parent:?}
-///   takes the operand {operand:?}, which provably denotes a number`, with
-///   the operation's wire name
-/// - case condition: `{parent:?} takes {operand:?} as the condition of case
+/// - negated operand: `{parent} applies the Boolean connective logical_not
+///   to the operand {operand}, which provably denotes a number`
+/// - conjunction or disjunction operand: `{parent} applies the Boolean
+///   connective {operation} to the operand {operand}, which provably
+///   denotes a number`, with the operation's wire name
+/// - case condition: `{parent} takes {operand} as the condition of case
 ///   {case_index}, which provably denotes a number`
-/// - case value: `{parent:?} takes {operand:?} as the value of case
+/// - case value: `{parent} takes {operand} as the value of case
 ///   {case_index}, which provably denotes a number`
-/// - otherwise branch: `{parent:?} takes {operand:?} as its otherwise
-///   branch, which provably denotes a number`
-/// - predicate root: `{operand:?} is used as a predicate but provably
+/// - otherwise branch: `{parent} takes {operand} as its otherwise branch,
+///   which provably denotes a number`
+/// - predicate root: `{operand} is used as a predicate but provably
 ///   denotes a number`
+///
+/// followed in every case by `; the expression is ill-typed and no symbolic
+/// backend lowers it faithfully`.
+///
+/// [`format_expression`]: super::format_expression
+/// [`Notation::Symbolic`]: super::Notation::Symbolic
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NonBooleanLogicalOperandError {
     operand: Expression,
@@ -184,39 +194,45 @@ impl NonBooleanLogicalOperandError {
 impl fmt::Display for NonBooleanLogicalOperandError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         const NUMBER: &str = "which provably denotes a number";
-        let operand = &self.operand;
-        let Some(parent) = &self.parent else {
-            return write!(
-                f,
-                "{operand:?} is used as a predicate but provably denotes a number"
-            );
-        };
+        let options =
+            FormatOptions::default().with_identifier_style(IdentifierStyle::NameHintWithId);
+        let operand = format_expression(&self.operand, options);
+        let parent = self
+            .parent
+            .as_ref()
+            .map(|parent| format_expression(parent, options))
+            .unwrap_or_default();
         match self.position {
             BooleanPosition::NegatedOperand => write!(
                 f,
-                "the logical_not in {parent:?} takes the operand {operand:?}, {NUMBER}"
+                "{parent} applies the Boolean connective logical_not to the operand {operand}, \
+                 {NUMBER}"
             ),
             BooleanPosition::LogicalOperand { operation } => write!(
                 f,
-                "the {operation} in {parent:?} takes the operand {operand:?}, {NUMBER}"
+                "{parent} applies the Boolean connective {operation} to the operand {operand}, \
+                 {NUMBER}"
             ),
             BooleanPosition::CaseCondition { case_index } => write!(
                 f,
-                "{parent:?} takes {operand:?} as the condition of case {case_index}, {NUMBER}"
+                "{parent} takes {operand} as the condition of case {case_index}, {NUMBER}"
             ),
             BooleanPosition::CaseValue { case_index } => write!(
                 f,
-                "{parent:?} takes {operand:?} as the value of case {case_index}, {NUMBER}"
+                "{parent} takes {operand} as the value of case {case_index}, {NUMBER}"
             ),
-            BooleanPosition::Otherwise => write!(
-                f,
-                "{parent:?} takes {operand:?} as its otherwise branch, {NUMBER}"
-            ),
+            BooleanPosition::Otherwise => {
+                write!(
+                    f,
+                    "{parent} takes {operand} as its otherwise branch, {NUMBER}"
+                )
+            }
             BooleanPosition::PredicateRoot => write!(
                 f,
-                "{operand:?} is used as a predicate but provably denotes a number"
+                "{operand} is used as a predicate but provably denotes a number"
             ),
-        }
+        }?;
+        f.write_str("; the expression is ill-typed and no symbolic backend lowers it faithfully")
     }
 }
 

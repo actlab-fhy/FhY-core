@@ -12,10 +12,11 @@
 pub mod expression_support;
 
 use std::collections::HashMap;
+use std::thread;
 
 use expression_support::{
-    DEEP_TREE_DEPTH, WALK_STACK_BYTES, build_deep_conjunction, build_identifier, build_literal,
-    build_text_literal, run_on_large_stack,
+    DEEP_TREE_DEPTH, WALK_STACK_BYTES, build_deep_conjunction, build_deep_sum, build_identifier,
+    build_literal, build_text_literal, run_on_large_stack,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
@@ -25,6 +26,17 @@ use fhy_core::symbolic::expression::{
 };
 use fhy_core::symbolic::symbol_type::SymbolType;
 use rstest::rstest;
+
+/// The tail of every refusal message naming a parent node.
+const ILL_TYPED: &str = "which provably denotes a number; the expression is ill-typed and no \
+                         symbolic backend lowers it faithfully";
+
+/// Depth of the tree whose refusal is displayed on a small stack: far
+/// deeper than a renderer recursing once per level could reach.
+const DISPLAY_TREE_DEPTH: usize = 100_000;
+
+/// Stack size of the thread a deep refusal is displayed on.
+const SMALL_STACK_BYTES: usize = 128 << 10;
 
 /// Names of the real-valued built-in constants.
 const REAL_CONSTANT_NAMES: [&str; 4] = ["pi", "e", "inf", "nan"];
@@ -249,17 +261,13 @@ fn validate_logical_operands_rejects_a_numeric_negated_operand(#[case] operand: 
 /// Test the message names the connective node and the numeric operand.
 #[test]
 fn validate_logical_operands_error_names_the_connective_and_the_operand() {
-    let operand = build_literal(2);
-    let expression = build_or(&operand, &build_literal(4));
+    let expression = build_or(&build_literal(2), &build_literal(4));
 
     let error = expect_refusal(Screen::LogicalOperands.run(&expression));
 
     assert_eq!(
         error.to_string(),
-        format!(
-            "the logical_or in {expression:?} takes the operand {operand:?}, which provably \
-             denotes a number"
-        )
+        format!("(2 || 4) applies the Boolean connective logical_or to the operand 2, {ILL_TYPED}")
     );
 }
 
@@ -557,17 +565,18 @@ fn validate_logical_operands_rejects_a_numeric_piecewise_condition() {
 /// Test the message names the piecewise and its condition.
 #[test]
 fn validate_logical_operands_error_names_the_piecewise_and_its_condition() {
-    let (_, x) = build_identifier("x");
+    let (x_identifier, x) = build_identifier("x");
     let condition = &x * 2;
     let expression = build_one_case(&condition, &build_literal(5), &build_literal(0));
 
     let error = expect_refusal(Screen::LogicalOperands.run(&expression));
 
+    let id = x_identifier.id();
     assert_eq!(
         error.to_string(),
         format!(
-            "{expression:?} takes {condition:?} as the condition of case 0, which provably \
-             denotes a number"
+            "{{5 if (x::{id} * 2); 0 otherwise}} takes (x::{id} * 2) as the condition of case 0, \
+             {ILL_TYPED}"
         )
     );
 }
@@ -1015,37 +1024,85 @@ fn non_boolean_logical_operand_error_display_describes_the_position(
             Screen::Predicate,
         ),
         BooleanPosition::PredicateRoot => (number.clone(), Screen::Predicate),
+        _ => unreachable!("every position has a case"),
     };
     let expected = match position {
         BooleanPosition::NegatedOperand => format!(
-            "the logical_not in {expression:?} takes the operand {number:?}, which provably \
-             denotes a number"
+            "(!(-7)) applies the Boolean connective logical_not to the operand (-7), {ILL_TYPED}"
         ),
         BooleanPosition::LogicalOperand { .. } => format!(
-            "the logical_and in {expression:?} takes the operand {number:?}, which provably \
-             denotes a number"
+            "((-7) && True) applies the Boolean connective logical_and to the operand (-7), \
+             {ILL_TYPED}"
         ),
         BooleanPosition::CaseCondition { .. } => format!(
-            "{expression:?} takes {number:?} as the condition of case 0, which provably denotes \
-             a number"
+            "{{True if (-7); True otherwise}} takes (-7) as the condition of case 0, {ILL_TYPED}"
         ),
         BooleanPosition::CaseValue { .. } => format!(
-            "{expression:?} takes {number:?} as the value of case 0, which provably denotes a \
-             number"
+            "{{(-7) if True; True otherwise}} takes (-7) as the value of case 0, {ILL_TYPED}"
         ),
         BooleanPosition::Otherwise => format!(
-            "{expression:?} takes {number:?} as its otherwise branch, which provably denotes a \
-             number"
+            "{{True if True; (-7) otherwise}} takes (-7) as its otherwise branch, {ILL_TYPED}"
         ),
-        BooleanPosition::PredicateRoot => {
-            format!("{number:?} is used as a predicate but provably denotes a number")
-        }
+        BooleanPosition::PredicateRoot => String::from(
+            "(-7) is used as a predicate but provably denotes a number; the expression is \
+             ill-typed and no symbolic backend lowers it faithfully",
+        ),
+        _ => unreachable!("every position has a case"),
     };
 
     let error = expect_refusal(screen.run(&expression));
 
     assert_eq!(error.position(), position);
     assert_eq!(error.to_string(), expected);
+}
+
+/// Test the message renders identifiers with their ids, as `name::id`.
+#[test]
+fn non_boolean_logical_operand_error_display_writes_identifier_ids() {
+    let (x_identifier, x) = build_identifier("x");
+    let expression = -&x;
+
+    let error = expect_refusal(Screen::Predicate.run(&expression));
+
+    let id = x_identifier.id();
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "(-x::{id}) is used as a predicate but provably denotes a number; the expression is \
+             ill-typed and no symbolic backend lowers it faithfully"
+        )
+    );
+}
+
+/// Test displaying a refusal whose parent and operand are
+/// [`DISPLAY_TREE_DEPTH`] levels deep completes on a small stack.
+#[test]
+fn non_boolean_logical_operand_error_display_writes_a_deep_tree_on_a_small_stack() {
+    let operand = build_deep_sum(&build_literal(0), DISPLAY_TREE_DEPTH);
+    let expression = operand.logical_not();
+    let error = expect_refusal(Screen::LogicalOperands.run(&expression));
+
+    let handle = thread::Builder::new()
+        .stack_size(SMALL_STACK_BYTES)
+        .spawn(move || (error.to_string(), error))
+        .expect("the display thread spawns");
+    let (text, _error) = match handle.join() {
+        Ok(result) => result,
+        Err(payload) => std::panic::resume_unwind(payload),
+    };
+
+    let operand_text = format!(
+        "{}0{}",
+        "(".repeat(DISPLAY_TREE_DEPTH),
+        " + 1)".repeat(DISPLAY_TREE_DEPTH)
+    );
+    assert_eq!(
+        text,
+        format!(
+            "(!{operand_text}) applies the Boolean connective logical_not to the operand \
+             {operand_text}, {ILL_TYPED}"
+        )
+    );
 }
 
 /// Test the empty lookup knows no constant and no function.
