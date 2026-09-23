@@ -22,7 +22,7 @@ use super::error::ExpressionBuildError;
 use super::literal::{LiteralKind, LiteralValue};
 use super::node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, PiecewiseExpression,
-    UnaryExpression,
+    UnaryExpression, validate_case_count, validate_condition_literal, validate_function_name,
 };
 use super::operation::{BinaryOperation, UnaryOperation};
 
@@ -327,19 +327,13 @@ fn parse_piecewise(data: &Value) -> Result<PayloadNode, String> {
             values.len()
         ));
     }
-    if conditions.is_empty() {
-        return Err(ExpressionBuildError::EmptyPiecewise.to_string());
-    }
+    validate_case_count(conditions.len()).map_err(|error| error.to_string())?;
     let mut cases = Vec::with_capacity(conditions.len());
     for (case_index, (condition, value)) in conditions.iter().zip(values).enumerate() {
         let condition =
             parse_node(condition).map_err(|error| add_field_context("conditions", error))?;
-        if let PayloadNode::Literal(literal) = &condition
-            && !matches!(literal.kind(), LiteralKind::Bool(_))
-        {
-            return Err(
-                ExpressionBuildError::NonBooleanConditionLiteral { case_index }.to_string(),
-            );
+        if let PayloadNode::Literal(literal) = &condition {
+            validate_condition_literal(case_index, literal).map_err(|error| error.to_string())?;
         }
         let value = parse_node(value).map_err(|error| add_field_context("values", error))?;
         cases.push((condition, value));
@@ -360,9 +354,7 @@ fn parse_call(data: &Value) -> Result<PayloadNode, String> {
             format_args!("expected a string, got {}", describe_value(function_name)),
         ));
     };
-    if function_name.is_empty() {
-        return Err(ExpressionBuildError::EmptyFunctionName.to_string());
-    }
+    validate_function_name(function_name).map_err(|error| error.to_string())?;
     let arguments = read_list(arguments, "arguments")?
         .iter()
         .map(|argument| parse_node(argument).map_err(|error| add_field_context("arguments", error)))

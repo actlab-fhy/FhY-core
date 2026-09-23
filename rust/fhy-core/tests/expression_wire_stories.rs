@@ -6,6 +6,8 @@
 //! Public API only (`fhy_core::symbolic::expression`,
 //! `fhy_core::identifier`).
 
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
 #[path = "common/expression.rs"]
 pub mod expression_support;
 
@@ -15,8 +17,8 @@ use expression_support::{
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
-    BinaryOperation, Expression, ExpressionKind, LiteralKind, UnaryOperation, build_call,
-    build_piecewise,
+    BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralKind, UnaryOperation,
+    build_call, build_piecewise,
 };
 use num_bigint::BigInt;
 use rstest::rstest;
@@ -311,20 +313,117 @@ fn expression_deep_tree_round_trips_through_a_json_value() {
 // Refused payloads
 // =============================================================================
 
-/// Test malformed literal payloads are refused.
-#[rstest]
-#[case::missing_value(json!({"__type__": "literal_expression", "__data__": {}}))]
-#[case::list_value(build_literal_wire(&json!([1, 2, 3])))]
-#[case::null_value(build_literal_wire(&Value::Null))]
-#[case::object_value(build_literal_wire(&json!({"value": 1})))]
-#[case::text_outside_the_grammar(build_literal_wire(&json!("abc")))]
-#[case::signed_text(build_literal_wire(&json!("-5")))]
-#[case::non_ascii_digit_text(build_literal_wire(&json!("\u{665}")))]
-#[case::extra_key(json!({"__type__": "literal_expression", "__data__": {"value": 1, "extra": 1}}))]
-fn expression_deserialize_rejects_a_malformed_literal(#[case] payload: Value) {
-    let result = decode(payload);
+/// Serializes the tests that restore an id far ahead of the counter or check
+/// the counter has not passed one: a far-ahead id one test restores passes
+/// the ids every other such test reserved.
+static ID_COUNTER_LOCK: Mutex<()> = Mutex::new(());
 
-    result.expect_err("the payload is refused");
+/// Hold the id counter against every other counter-observing test.
+fn hold_id_counter() -> MutexGuard<'static, ()> {
+    ID_COUNTER_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Return an id far ahead of the id counter, for a test that holds
+/// [`hold_id_counter`].
+fn reserve_ahead_id() -> u64 {
+    Identifier::new("probe").id() + (1 << 40)
+}
+
+/// Return whether the id counter has moved past `id`, drawing one id to find
+/// out.
+fn has_counter_passed(id: u64) -> bool {
+    Identifier::new("counter-probe").id() > id
+}
+
+/// Return the wire form of a reference to an identifier with the id `id`.
+fn build_identifier_id_wire(id: u64) -> Value {
+    json!({
+        "__type__": "identifier_expression",
+        "__data__": {"identifier": {"id": id, "name_hint": "ahead"}}
+    })
+}
+
+/// Return the wire form of `left + right`.
+fn build_sum_wire(left: &Value, right: &Value) -> Value {
+    json!({
+        "__type__": "binary_expression",
+        "__data__": {"operation": "add", "left": left, "right": right}
+    })
+}
+
+/// Assert the payload `build_refused` returns, given a reference to an
+/// identifier far ahead of the counter and decoded as the right operand of a
+/// sum whose left operand refers to another such identifier, is refused with
+/// ``in `right`: `` followed by `expected_message`, and leaves the counter
+/// short of both ids.
+///
+/// Building the sum would restore the left operand before the right one, so
+/// a refusal only raised while building the right operand fails the counter
+/// check.
+fn assert_refused_before_any_restore(
+    build_refused: impl FnOnce(Value) -> Value,
+    expected_message: &str,
+) {
+    let _guard = hold_id_counter();
+    let left_id = reserve_ahead_id();
+    let inner_id = reserve_ahead_id();
+    let refused = build_refused(build_identifier_id_wire(inner_id));
+
+    let result = decode(build_sum_wire(&build_identifier_id_wire(left_id), &refused));
+
+    let error = result.expect_err("the payload is refused");
+    assert_eq!(error.to_string(), format!("in `right`: {expected_message}"));
+    assert!(
+        !has_counter_passed(left_id.min(inner_id)),
+        "the refused payload advanced the counter"
+    );
+}
+
+/// Test malformed literal payloads are refused, naming the defect, before any
+/// identifier is restored.
+#[rstest]
+#[case::missing_value(
+    json!({"__type__": "literal_expression", "__data__": {}}),
+    "missing field `value` in a literal"
+)]
+#[case::list_value(
+    build_literal_wire(&json!([1, 2, 3])),
+    "in `value`: expected a Boolean, a number, or a numeric text as a literal value, got a list"
+)]
+#[case::null_value(
+    build_literal_wire(&Value::Null),
+    "in `value`: expected a Boolean, a number, or a numeric text as a literal value, got null"
+)]
+#[case::object_value(
+    build_literal_wire(&json!({"value": 1})),
+    "in `value`: expected a Boolean, a number, or a numeric text as a literal value, got a map"
+)]
+#[case::text_outside_the_grammar(
+    build_literal_wire(&json!("abc")),
+    "in `value`: invalid literal text \"abc\": expected ASCII digits with at most one decimal \
+     point"
+)]
+#[case::signed_text(
+    build_literal_wire(&json!("-5")),
+    "in `value`: invalid literal text \"-5\": expected ASCII digits with at most one decimal \
+     point"
+)]
+#[case::non_ascii_digit_text(
+    build_literal_wire(&json!("\u{665}")),
+    "in `value`: invalid literal text \"\u{665}\": expected ASCII digits with at most one \
+     decimal point"
+)]
+#[case::extra_key(
+    json!({"__type__": "literal_expression", "__data__": {"value": 1, "extra": 1}}),
+    "unknown field `extra` in a literal"
+)]
+fn expression_deserialize_rejects_a_malformed_literal(
+    #[case] refused: Value,
+    #[case] expected_message: &str,
+) {
+    assert_refused_before_any_restore(|_| refused, expected_message);
 }
 
 /// Test a payload with an unknown type id is refused, naming the id.
@@ -344,7 +443,8 @@ fn expression_deserialize_rejects_an_unknown_type_id() {
     assert!(error.to_string().contains("ternary_expression"), "{error}");
 }
 
-/// Test payloads breaking a node's structure or invariants are refused.
+/// Test payloads breaking a node's structure are refused, naming the defect,
+/// before any identifier is restored.
 #[rstest]
 #[case::length_mismatch(json!({
     "__type__": "piecewise_expression",
@@ -353,31 +453,17 @@ fn expression_deserialize_rejects_an_unknown_type_id() {
         "values": [build_literal_wire(&json!(1))],
         "otherwise": build_literal_wire(&json!(0))
     }
-}))]
-#[case::no_cases(json!({
-    "__type__": "piecewise_expression",
-    "__data__": {"conditions": [], "values": [], "otherwise": build_literal_wire(&json!(0))}
-}))]
-#[case::numeric_condition(json!({
-    "__type__": "piecewise_expression",
-    "__data__": {
-        "conditions": [build_literal_wire(&json!(1))],
-        "values": [build_literal_wire(&json!(1))],
-        "otherwise": build_literal_wire(&json!(0))
-    }
-}))]
-#[case::empty_function_name(json!({
-    "__type__": "call_expression",
-    "__data__": {"function_name": "", "arguments": []}
-}))]
+}), "a piecewise has 2 conditions but 1 values")]
 #[case::unknown_operation(json!({
     "__type__": "unary_expression",
     "__data__": {"operation": "-", "operand": build_literal_wire(&json!(1))}
-}))]
+}), "in `operation`: invalid value: string \"-\", expected a unary operation name such as \
+     negate or logical_not")]
 #[case::unknown_unary_operation_name(json!({
     "__type__": "unary_expression",
     "__data__": {"operation": "not", "operand": build_literal_wire(&json!(1))}
-}))]
+}), "in `operation`: invalid value: string \"not\", expected a unary operation name such as \
+     negate or logical_not")]
 #[case::unknown_binary_operation_name(json!({
     "__type__": "binary_expression",
     "__data__": {
@@ -385,95 +471,146 @@ fn expression_deserialize_rejects_an_unknown_type_id() {
         "left": build_literal_wire(&json!(1)),
         "right": build_literal_wire(&json!(2))
     }
-}))]
-#[case::nested_numeric_condition(json!({
+}), "in `operation`: invalid value: string \"plus\", expected a binary operation name such as \
+     add or floor_divide")]
+#[case::arguments_not_a_list(json!({
+    "__type__": "call_expression",
+    "__data__": {"function_name": "f", "arguments": build_literal_wire(&json!(1))}
+}), "in `arguments`: expected a list, got a map")]
+#[case::missing_operand(json!({
     "__type__": "binary_expression",
-    "__data__": {
-        "operation": "add",
-        "left": build_literal_wire(&json!(1)),
-        "right": {
+    "__data__": {"operation": "add", "left": build_literal_wire(&json!(1))}
+}), "missing field `right` in a binary node")]
+#[case::extra_field(json!({
+    "__type__": "call_expression",
+    "__data__": {"function_name": "f", "arguments": [], "extra": 1}
+}), "unknown field `extra` in a call")]
+#[case::extra_top_level_key(json!({
+    "__type__": "literal_expression",
+    "__data__": {"value": 1},
+    "extra": 1
+}), "unknown field `extra` in an expression")]
+#[case::missing_data(
+    json!({"__type__": "literal_expression"}),
+    "missing field `__data__` in an expression"
+)]
+#[case::identifier_without_name_hint(json!({
+    "__type__": "identifier_expression",
+    "__data__": {"identifier": {"id": 1}}
+}), "in `identifier`: missing field `name_hint`")]
+#[case::child_not_a_map(json!({
+    "__type__": "unary_expression",
+    "__data__": {"operation": "negate", "operand": 5}
+}), "in `operand`: expected the fields of an expression as a map, got a number")]
+fn expression_deserialize_rejects_a_malformed_node(
+    #[case] refused: Value,
+    #[case] expected_message: &str,
+) {
+    assert_refused_before_any_restore(|_| refused, expected_message);
+}
+
+/// Test payloads breaking a node invariant are refused with the error the
+/// node's constructor reports, before any identifier is restored, even one
+/// inside the refused node.
+#[rstest]
+#[case::no_cases(
+    |ahead: Value| json!({
+        "__type__": "piecewise_expression",
+        "__data__": {"conditions": [], "values": [], "otherwise": ahead}
+    }),
+    ExpressionBuildError::EmptyPiecewise
+)]
+#[case::numeric_condition(
+    |ahead: Value| json!({
+        "__type__": "piecewise_expression",
+        "__data__": {
+            "conditions": [build_literal_wire(&json!(true)), build_literal_wire(&json!(1))],
+            "values": [ahead, build_literal_wire(&json!(1))],
+            "otherwise": build_literal_wire(&json!(0))
+        }
+    }),
+    ExpressionBuildError::NonBooleanConditionLiteral { case_index: 1 }
+)]
+#[case::text_condition(
+    |ahead: Value| json!({
+        "__type__": "piecewise_expression",
+        "__data__": {
+            "conditions": [build_literal_wire(&json!("1.5"))],
+            "values": [build_literal_wire(&json!(1))],
+            "otherwise": ahead
+        }
+    }),
+    ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 }
+)]
+#[case::empty_function_name(
+    |ahead: Value| json!({
+        "__type__": "call_expression",
+        "__data__": {"function_name": "", "arguments": [ahead]}
+    }),
+    ExpressionBuildError::EmptyFunctionName
+)]
+fn expression_deserialize_rejects_a_node_its_constructor_refuses(
+    #[case] build_refused: fn(Value) -> Value,
+    #[case] expected: ExpressionBuildError,
+) {
+    assert_refused_before_any_restore(build_refused, &expected.to_string());
+}
+
+/// Test a piecewise nested below a sum is refused for a numeric condition,
+/// naming the path to it, before any identifier is restored.
+#[test]
+fn expression_deserialize_rejects_a_nested_numeric_condition() {
+    let nested = build_sum_wire(
+        &build_literal_wire(&json!(1)),
+        &json!({
             "__type__": "piecewise_expression",
             "__data__": {
                 "conditions": [build_literal_wire(&json!(1))],
                 "values": [build_literal_wire(&json!(1))],
                 "otherwise": build_literal_wire(&json!(0))
             }
-        }
-    }
-}))]
-#[case::arguments_not_a_list(json!({
-    "__type__": "call_expression",
-    "__data__": {"function_name": "f", "arguments": build_literal_wire(&json!(1))}
-}))]
-#[case::missing_operand(json!({
-    "__type__": "binary_expression",
-    "__data__": {"operation": "add", "left": build_literal_wire(&json!(1))}
-}))]
-#[case::extra_field(json!({
-    "__type__": "call_expression",
-    "__data__": {"function_name": "f", "arguments": [], "extra": 1}
-}))]
-#[case::extra_top_level_key(json!({
-    "__type__": "literal_expression",
-    "__data__": {"value": 1},
-    "extra": 1
-}))]
-#[case::missing_data(json!({"__type__": "literal_expression"}))]
-#[case::identifier_without_name_hint(json!({
-    "__type__": "identifier_expression",
-    "__data__": {"identifier": {"id": 1}}
-}))]
-#[case::child_not_a_map(json!({
-    "__type__": "unary_expression",
-    "__data__": {"operation": "negate", "operand": 5}
-}))]
-fn expression_deserialize_rejects_a_malformed_node(#[case] payload: Value) {
-    let result = decode(payload);
+        }),
+    );
+    let expected = format!(
+        "in `right`: {}",
+        ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 }
+    );
 
-    result.expect_err("the payload is refused");
+    assert_refused_before_any_restore(|_| nested, &expected);
 }
 
 /// Test a payload refused after an identifier in it was read leaves the id
 /// counter untouched, and the same payload made valid restores the id.
 #[test]
 fn expression_deserialize_restores_no_identifier_from_a_refused_payload() {
-    let ahead_id = Identifier::new("probe").id() + (1 << 40);
-    let identifier_wire = json!({
-        "__type__": "identifier_expression",
-        "__data__": {"identifier": {"id": ahead_id, "name_hint": "ahead"}}
-    });
-    let refused = json!({
-        "__type__": "binary_expression",
-        "__data__": {
-            "operation": "add",
-            "left": identifier_wire,
-            "right": {
-                "__type__": "piecewise_expression",
-                "__data__": {
-                    "conditions": [build_literal_wire(&json!(7))],
-                    "values": [build_literal_wire(&json!(1))],
-                    "otherwise": build_literal_wire(&json!(0))
-                }
+    let _guard = hold_id_counter();
+    let ahead_id = reserve_ahead_id();
+    let identifier_wire = build_identifier_id_wire(ahead_id);
+    let refused = build_sum_wire(
+        &identifier_wire,
+        &json!({
+            "__type__": "piecewise_expression",
+            "__data__": {
+                "conditions": [build_literal_wire(&json!(7))],
+                "values": [build_literal_wire(&json!(1))],
+                "otherwise": build_literal_wire(&json!(0))
             }
-        }
-    });
-    let accepted = json!({
-        "__type__": "binary_expression",
-        "__data__": {"operation": "add", "left": identifier_wire, "right": build_literal_wire(&json!(1))}
-    });
+        }),
+    );
+    let accepted = build_sum_wire(&identifier_wire, &build_literal_wire(&json!(1)));
 
     let refusal = decode(refused);
-    let next_after_refusal = Identifier::new("after_refusal").id();
+    let passed_after_refusal = has_counter_passed(ahead_id);
     let restored = decode(accepted).expect("a valid payload");
-    let next_after_restore = Identifier::new("after_restore").id();
+    let passed_after_restore = has_counter_passed(ahead_id);
 
     refusal.expect_err("the numeric case condition is refused");
     assert!(
-        next_after_refusal < ahead_id,
+        !passed_after_refusal,
         "the refused payload advanced the counter"
     );
     assert!(
-        next_after_restore > ahead_id,
+        passed_after_restore,
         "the accepted payload did not restore its id"
     );
     let ExpressionKind::Binary(node) = restored.kind() else {

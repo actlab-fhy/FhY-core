@@ -636,6 +636,57 @@ impl BinaryExpression {
     }
 }
 
+/// Check a piecewise with `case_count` cases has at least one.
+///
+/// The constructor and the wire decoder share this check, so a payload is
+/// refused for the same reason before any of its identifiers is restored.
+///
+/// # Errors
+///
+/// Returns [`ExpressionBuildError::EmptyPiecewise`] if `case_count` is zero.
+pub(super) fn validate_case_count(case_count: usize) -> Result<(), ExpressionBuildError> {
+    if case_count == 0 {
+        return Err(ExpressionBuildError::EmptyPiecewise);
+    }
+    Ok(())
+}
+
+/// Check the literal condition of the piecewise case at `case_index` is a
+/// Boolean.
+///
+/// The constructor and the wire decoder share this check, so a payload is
+/// refused for the same reason before any of its identifiers is restored.
+///
+/// # Errors
+///
+/// Returns [`ExpressionBuildError::NonBooleanConditionLiteral`] naming
+/// `case_index` if `condition` is not a Boolean.
+pub(super) fn validate_condition_literal(
+    case_index: usize,
+    condition: &LiteralValue,
+) -> Result<(), ExpressionBuildError> {
+    if !matches!(condition.kind(), LiteralKind::Bool(_)) {
+        return Err(ExpressionBuildError::NonBooleanConditionLiteral { case_index });
+    }
+    Ok(())
+}
+
+/// Check a call's function name is not empty.
+///
+/// The constructor and the wire decoder share this check, so a payload is
+/// refused for the same reason before any of its identifiers is restored.
+///
+/// # Errors
+///
+/// Returns [`ExpressionBuildError::EmptyFunctionName`] if `function_name` is
+/// empty.
+pub(super) fn validate_function_name(function_name: &str) -> Result<(), ExpressionBuildError> {
+    if function_name.is_empty() {
+        return Err(ExpressionBuildError::EmptyFunctionName);
+    }
+    Ok(())
+}
+
 impl PiecewiseExpression {
     /// Construct a piecewise from its `(condition, value)` cases, in
     /// evaluation order, and its otherwise branch.
@@ -649,17 +700,11 @@ impl PiecewiseExpression {
         cases: Vec<(Expression, Expression)>,
         otherwise: Expression,
     ) -> Result<Self, ExpressionBuildError> {
-        if cases.is_empty() {
-            return Err(ExpressionBuildError::EmptyPiecewise);
-        }
-        let non_boolean_condition = cases.iter().position(|(condition, _)| {
-            matches!(
-                condition.kind(),
-                ExpressionKind::Literal(literal) if !matches!(literal.kind(), LiteralKind::Bool(_))
-            )
-        });
-        if let Some(case_index) = non_boolean_condition {
-            return Err(ExpressionBuildError::NonBooleanConditionLiteral { case_index });
+        validate_case_count(cases.len())?;
+        for (case_index, (condition, _)) in cases.iter().enumerate() {
+            if let ExpressionKind::Literal(literal) = condition.kind() {
+                validate_condition_literal(case_index, literal)?;
+            }
         }
         Ok(Self {
             cases: cases.into_boxed_slice(),
@@ -691,9 +736,7 @@ impl CallExpression {
         function_name: &str,
         arguments: Vec<Expression>,
     ) -> Result<Self, ExpressionBuildError> {
-        if function_name.is_empty() {
-            return Err(ExpressionBuildError::EmptyFunctionName);
-        }
+        validate_function_name(function_name)?;
         Ok(Self {
             function_name: Arc::from(function_name),
             arguments: arguments.into_boxed_slice(),

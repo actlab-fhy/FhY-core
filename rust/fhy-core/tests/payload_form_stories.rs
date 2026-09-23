@@ -4,7 +4,9 @@
 //! values, in field order, without their keys) is refused for every type
 //! that decodes through the crate's payload machinery, while the map form
 //! of the same values decodes. Each case pairs the two forms, so a refusal
-//! can only come from the sequence shape.
+//! can only come from the sequence shape. For an expression or a provenance,
+//! wrapped as `{"__type__": .., "__data__": ..}`, both the wrapper and its
+//! `__data__` are refused as sequences.
 
 use std::fmt::Debug;
 
@@ -12,6 +14,8 @@ use fhy_core::diagnostic::{Note, NoteKind};
 use fhy_core::identifier::Identifier;
 use fhy_core::interned::Canonical;
 use fhy_core::op_attribute::OpAttribute;
+use fhy_core::provenance::{Position, Provenance, Span};
+use fhy_core::symbolic::expression::Expression;
 use fhy_core::value_domain::ValueDomain;
 use rstest::rstest;
 use serde::de::DeserializeOwned;
@@ -28,6 +32,12 @@ enum PayloadType {
     NoteKind,
     CanonicalNoteKind,
     Note,
+    Expression,
+    ExpressionData,
+    Position,
+    Span,
+    Provenance,
+    ProvenanceData,
 }
 
 /// Return the wire form of a fresh identifier named `name_hint`.
@@ -79,6 +89,54 @@ impl PayloadType {
                 });
                 (json!({"message": "m", "kind": kind}), json!(["m", kind]))
             }
+            Self::Expression => {
+                let data = json!({"identifier": build_identifier_payload("sequence-expression")});
+                (
+                    json!({"__type__": "identifier_expression", "__data__": data}),
+                    json!(["identifier_expression", data]),
+                )
+            }
+            Self::ExpressionData => {
+                let identifier = build_identifier_payload("sequence-expression");
+                (
+                    json!({
+                        "__type__": "identifier_expression",
+                        "__data__": {"identifier": identifier},
+                    }),
+                    json!({"__type__": "identifier_expression", "__data__": [identifier]}),
+                )
+            }
+            Self::Position => (json!({"line": 1, "column": 2}), json!([1, 2])),
+            Self::Span => (
+                json!({
+                    "start_offset": 0,
+                    "end_offset": 1,
+                    "start_position": null,
+                    "end_position": null,
+                }),
+                json!([0, 1, null, null]),
+            ),
+            Self::Provenance => (
+                json!({"__type__": "provenance.unknown", "__data__": {}}),
+                json!(["provenance.unknown", {}]),
+            ),
+            Self::ProvenanceData => (
+                json!({
+                    "__type__": "provenance.file",
+                    "__data__": {"file_path": "a.fhy", "span": null},
+                }),
+                json!({"__type__": "provenance.file", "__data__": ["a.fhy", null]}),
+            ),
+        }
+    }
+
+    /// Return the text the refusal of this type's sequence form contains.
+    fn describe_sequence_refusal(self) -> &'static str {
+        match self {
+            Self::ExpressionData => {
+                "expected the fields of an identifier reference as a map, got a list"
+            }
+            _ => "invalid type: sequence",
         }
     }
 
@@ -95,6 +153,10 @@ impl PayloadType {
             Self::NoteKind => decode_text::<NoteKind>(&text),
             Self::CanonicalNoteKind => decode_text::<Canonical<NoteKind>>(&text),
             Self::Note => decode_text::<Note>(&text),
+            Self::Expression | Self::ExpressionData => decode_text::<Expression>(&text),
+            Self::Position => decode_text::<Position>(&text),
+            Self::Span => decode_text::<Span>(&text),
+            Self::Provenance | Self::ProvenanceData => decode_text::<Provenance>(&text),
         }
     }
 }
@@ -117,6 +179,12 @@ fn decode_text<T: DeserializeOwned + Debug>(text: &str) -> Result<(), String> {
 #[case::note_kind(PayloadType::NoteKind)]
 #[case::canonical_note_kind(PayloadType::CanonicalNoteKind)]
 #[case::note(PayloadType::Note)]
+#[case::expression(PayloadType::Expression)]
+#[case::expression_data(PayloadType::ExpressionData)]
+#[case::position(PayloadType::Position)]
+#[case::span(PayloadType::Span)]
+#[case::provenance(PayloadType::Provenance)]
+#[case::provenance_data(PayloadType::ProvenanceData)]
 fn a_payload_given_as_a_sequence_is_refused(#[case] payload_type: PayloadType) {
     let (map, sequence) = payload_type.build_map_and_sequence();
 
@@ -128,7 +196,7 @@ fn a_payload_given_as_a_sequence_is_refused(#[case] payload_type: PayloadType) {
         "{payload_type:?} sequence form {sequence} is refused"
     ));
     assert!(
-        error.contains("invalid type: sequence"),
+        error.contains(payload_type.describe_sequence_refusal()),
         "{payload_type:?} refuses {sequence} as a sequence, not for another reason: {error}"
     );
 }
