@@ -1,6 +1,7 @@
 """Task automation for FhY Core, driven by uv-backed nox sessions."""
 
 import pathlib
+import re
 from typing import NamedTuple
 
 import nox
@@ -16,6 +17,8 @@ SOURCES = ["src", "tests", "rust/fhy-core/tests/golden"]
 # `FHY_CORE_NO_EXTENSIONS` value that selects each backend for a test run.
 BACKEND_EXTENSION_SETTINGS = {"rust": "0", "python": "1"}
 GOLDEN_DIRECTORY = ROOT / "rust" / "fhy-core" / "tests" / "golden"
+# `cargo test` summary of a run that replayed one expanded corpus.
+_EXPANDED_REPLAY_PASSED = re.compile(r"^test result: ok\. 1 passed;", re.MULTILINE)
 
 
 class ExpandedGoldenCorpus(NamedTuple):
@@ -214,7 +217,7 @@ def golden_expanded(session: nox.Session) -> None:
         # `testing` is on for this crate's own tests already; naming it keeps
         # the deterministic-identifier test, which requires it, from being
         # skipped if that ever changes.
-        session.run(
+        output = session.run(
             "cargo",
             "test",
             "--locked",
@@ -228,7 +231,16 @@ def golden_expanded(session: nox.Session) -> None:
             "--ignored",
             env={corpus.variable: str(corpus_path)},
             external=True,
+            silent=True,
         )
+        # `cargo test` also succeeds when no test matches, so an expanded
+        # test that lost its `#[ignore]` would pass without a replay.
+        if not isinstance(output, str) or not _EXPANDED_REPLAY_PASSED.search(output):
+            session.error(
+                f"{corpus.rust_test} did not replay the expanded corpus in "
+                f"exactly one ignored test:\n{output}"
+            )
+        session.log(f"{corpus.rust_test}: the expanded corpus replayed")
 
 
 @nox.session
