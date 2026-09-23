@@ -649,7 +649,148 @@ mod tests {
         }
     }
 
+    /// Return the value a finite, non-negative float's text writes as
+    /// `(significand, exponent)`, the value `significand * 10^exponent`, with
+    /// the significand's trailing zeros removed.
+    fn read_float_text_digits(text: &str) -> (u64, i64) {
+        let (mantissa, exponent) =
+            text.split_once('e')
+                .map_or((text, 0), |(mantissa, exponent)| {
+                    (
+                        mantissa,
+                        exponent.parse::<i64>().expect("an integer exponent"),
+                    )
+                });
+        let (integer_part, fraction_part) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+        let mut digits = format!("{integer_part}{fraction_part}");
+        let mut exponent = exponent - convert_count_to_exponent(fraction_part.len());
+        while digits.len() > 1 && digits.ends_with('0') {
+            digits.pop();
+            exponent += 1;
+        }
+        (digits.parse().expect("at most twenty digits"), exponent)
+    }
+
+    /// Return the normalized decimal a text in the general decimal notation
+    /// writes: an exponent-free decimal text, optionally followed by `E` and
+    /// a signed exponent.
+    fn read_general_decimal_text(text: &str) -> NormalizedDecimal {
+        let (mantissa, exponent) =
+            text.split_once('E')
+                .map_or((text, 0), |(mantissa, exponent)| {
+                    (
+                        mantissa,
+                        exponent.parse::<i64>().expect("a signed exponent"),
+                    )
+                });
+        let mut decimal = normalize_accepted_text(mantissa);
+        if &*decimal.digits != "0" {
+            decimal.exponent += exponent;
+        }
+        decimal
+    }
+
+    /// The `(fraction digits, binary exponent)` pairs `(d, k)` at which a
+    /// float `I + f`, with `2^k <= I < 2^(k + 1)` and `f` an odd multiple of
+    /// `2^-(d + 1)`, lies exactly halfway between two strings of `d` fraction
+    /// digits that both read back as it, while no string of `d - 1` fraction
+    /// digits does.
+    const EXACT_TIE_SHAPES: [(u32, u32); 11] = [
+        (1, 49),
+        (1, 50),
+        (2, 46),
+        (2, 47),
+        (3, 43),
+        (3, 44),
+        (4, 39),
+        (4, 40),
+        (4, 41),
+        (5, 36),
+        (5, 37),
+    ];
+
+    /// Build a strategy over exact halfway ties, each paired with the text
+    /// breaking the tie toward the even last digit: `I.l` when the lower
+    /// candidate `l` of `d` fraction digits ends in an even digit, `I.u` with
+    /// the upper candidate `u = l + 1` otherwise.
+    fn generate_exact_ties() -> impl Strategy<Value = (f64, String)> {
+        proptest::sample::select(EXACT_TIE_SHAPES.to_vec()).prop_flat_map(
+            |(fraction_digits, binary_exponent)| {
+                (
+                    (1_u64 << binary_exponent)..(1_u64 << (binary_exponent + 1)),
+                    0_u64..(1_u64 << fraction_digits),
+                )
+                    .prop_map(move |(integer, half_index)| {
+                        let odd = 2 * half_index + 1;
+                        let denominator = 1_u64 << (fraction_digits + 1);
+                        #[expect(clippy::cast_precision_loss, reason = "all three are below 2^52")]
+                        let value = integer as f64 + odd as f64 / denominator as f64;
+                        let tie_digits = odd * 5_u64.pow(fraction_digits + 1);
+                        let lower = tie_digits / 10;
+                        let even = if lower % 2 == 0 { lower } else { lower + 1 };
+                        let width = usize::try_from(fraction_digits).expect("a small width");
+                        (value, format!("{integer}.{even:0width$}"))
+                    })
+            },
+        )
+    }
+
     proptest! {
+        /// Test no digit string shorter than a float's text reads back as
+        /// the same float: neither neighbor one digit shorter, the digits
+        /// truncated or truncated and raised by one in the last place, does.
+        #[test]
+        fn format_float_repr_writes_the_shortest_round_trip_digits(bits in any::<u64>()) {
+            let value = f64::from_bits(bits).abs();
+            prop_assume!(value.is_finite() && value != 0.0);
+            let text = format_float_repr(value);
+            let (significand, exponent) = read_float_text_digits(&text);
+            prop_assume!(significand >= 10);
+
+            for shorter in [significand / 10, significand / 10 + 1] {
+                let shorter_text = format!("{shorter}e{}", exponent + 1);
+                let reparsed: f64 = shorter_text.parse().expect("the shorter text parses");
+                prop_assert_ne!(
+                    reparsed.to_bits(),
+                    value.to_bits(),
+                    "{} is shorter than {:?} and reads back as the same float",
+                    shorter_text,
+                    text
+                );
+            }
+        }
+
+        /// Test a float lying exactly halfway between two equally short
+        /// digit strings that both read back as it is written with the one
+        /// ending in an even digit.
+        #[test]
+        fn format_float_repr_breaks_every_exact_tie_toward_the_even_digit(
+            (value, expected) in generate_exact_ties(),
+        ) {
+            let text = format_float_repr(value);
+
+            prop_assert_eq!(text, expected);
+        }
+
+        /// Test a normalized decimal's general-notation text reads back as
+        /// the same decimal, from a decimal text or from coefficient digits
+        /// and an exponent far outside the positional range.
+        #[test]
+        fn format_normalized_decimal_reads_back_as_the_same_decimal(
+            decimal in prop_oneof![
+                generate_decimal_parts().prop_map(|(integer_part, fraction_part)| {
+                    normalize_accepted_text(&join_decimal_parts(&integer_part, fraction_part.as_deref()))
+                }),
+                ("[1-9]([0-9]{0,30}[1-9])?", -400_i64..400).prop_map(|(digits, exponent)| {
+                    build_normalized_decimal(&digits, exponent)
+                }),
+            ],
+        ) {
+            let text = format_normalized_decimal(&decimal);
+
+            prop_assert_eq!(read_general_decimal_text(&text), decimal, "text {:?}", text);
+        }
+
         /// Test every non-NaN float's text parses back to the identical bits.
         #[test]
         fn format_float_repr_round_trips_every_non_nan_float(bits in any::<u64>()) {
