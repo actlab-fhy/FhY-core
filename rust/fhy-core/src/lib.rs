@@ -1,12 +1,14 @@
 //! Core utilities for the `FhY` compiler infrastructure.
 //!
-//! The identifier id counter and each [`Interned`](interned::Interned)
-//! type's [`InternRegistry`](interned::InternRegistry) are process-global
-//! `static`s, so a process must hold exactly one compiled copy of this
-//! crate. Link it into one Python extension module, and compile Rust code
-//! from other `FhY` packages into that same module rather than into a second
-//! one. A second copy would issue ids that collide with the first copy's and
-//! keep registries whose canonical instances never equal the first copy's.
+//! The identifier id counter, each [`Interned`](interned::Interned) type's
+//! [`InternRegistry`](interned::InternRegistry), and the pass registry and
+//! run counters of [`pass_infrastructure`] are process-global `static`s, so
+//! a process must hold exactly one compiled copy of this crate. Link it into
+//! one Python extension module, and compile Rust code from other `FhY`
+//! packages into that same module rather than into a second one. A second
+//! copy would issue ids that collide with the first copy's, keep registries
+//! whose canonical instances never equal the first copy's, and keep a
+//! separate pass registry and separate run counters.
 //!
 //! This crate turns on `serde_json`'s `arbitrary_precision` feature, so an
 //! integer literal of any size serializes as a JSON integer with all its
@@ -22,6 +24,7 @@ pub mod diagnostic;
 pub mod identifier;
 pub mod interned;
 pub mod op_attribute;
+pub mod pass_infrastructure;
 pub mod provenance;
 pub mod symbolic;
 pub mod value_domain;
