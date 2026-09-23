@@ -13,8 +13,11 @@ selection is made once, when this module is first imported.
 
 An extension that is not installed selects the pure-Python implementation
 silently. An extension that is installed but fails to import, for example
-because its shared library fails to load or was built for another
-interpreter, selects it with a ``RuntimeWarning`` naming the error. An
+because its shared library fails to load, selects it with a
+``RuntimeWarning`` naming the error. So does an extension built only for
+other interpreters, which the import system skips as if it were missing: a
+``RuntimeWarning`` names the builds found and the file name this interpreter
+loads. An
 extension that imports but whose ``__version__`` does not match the
 installed package, is not a PEP 440 version, or is missing, is stale: it
 selects the pure-Python implementation with a ``RuntimeWarning`` naming
@@ -24,12 +27,17 @@ both versions. A disabled extension is never imported, so it never warns.
 __all__ = ["IS_RUST_BACKEND_SELECTED"]
 
 import importlib
+import importlib.machinery
 import importlib.metadata
 import os
 import re
 import warnings
+from pathlib import Path
 
 _EXTENSION_MODULE = "fhy_core._rs"
+_EXTENSION_STEM = "_rs"
+# File endings of a compiled extension module on any platform.
+_EXTENSION_FILE_ENDINGS = (".so", ".pyd")
 _PACKAGE_NAME = "fhy_core"
 _NO_EXTENSIONS_VARIABLE = "FHY_CORE_NO_EXTENSIONS"
 _EXTENSION_ENABLING_VALUES = frozenset({"", "0", "false", "no", "off"})
@@ -75,6 +83,47 @@ def _warn_extension_failed_to_import(error: ImportError) -> None:
         f"The Rust extension {_EXTENSION_MODULE} is installed but failed to "
         f"import ({type(error).__name__}: {error}); falling back to the "
         f"pure-Python backend. Set {_NO_EXTENSIONS_VARIABLE}=1 to select the "
+        "pure-Python backend without importing the extension.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
+def _find_foreign_extension_builds(
+    directory: Path, extension_suffixes: list[str]
+) -> list[str]:
+    """Return the extension builds in `directory` that this interpreter skips.
+
+    Args:
+        directory: Directory the extension module is imported from.
+        extension_suffixes: File suffixes this interpreter loads extension
+            modules from, such as ``importlib.machinery.EXTENSION_SUFFIXES``.
+
+    Returns:
+        The sorted file names of the builds found, or an empty list if none
+        was found or one of them matches ``extension_suffixes``.
+
+    """
+    loadable_names = {_EXTENSION_STEM + suffix for suffix in extension_suffixes}
+    build_names = sorted(
+        path.name
+        for path in directory.glob(f"{_EXTENSION_STEM}.*")
+        if path.name.endswith(_EXTENSION_FILE_ENDINGS)
+    )
+    if any(name in loadable_names for name in build_names):
+        return []
+    return build_names
+
+
+def _warn_extension_built_for_other_interpreters(
+    build_names: list[str], extension_suffixes: list[str]
+) -> None:
+    warnings.warn(
+        f"The Rust extension {_EXTENSION_MODULE} is installed only as "
+        f"{', '.join(build_names)}, which this interpreter does not load (it "
+        f"loads {_EXTENSION_STEM}{extension_suffixes[0]}); falling back to "
+        "the pure-Python backend. Rebuild the extension (`uv sync`) for this "
+        f"interpreter, or set {_NO_EXTENSIONS_VARIABLE}=1 to select the "
         "pure-Python backend without importing the extension.",
         RuntimeWarning,
         stacklevel=3,
@@ -135,6 +184,15 @@ def _is_extension_importable() -> bool:
     except ModuleNotFoundError as error:
         if error.name != _EXTENSION_MODULE:
             _warn_extension_failed_to_import(error)
+            return False
+        extension_suffixes = importlib.machinery.EXTENSION_SUFFIXES
+        build_names = _find_foreign_extension_builds(
+            Path(__file__).parent, extension_suffixes
+        )
+        if build_names:
+            _warn_extension_built_for_other_interpreters(
+                build_names, extension_suffixes
+            )
         return False
     except ImportError as error:
         _warn_extension_failed_to_import(error)

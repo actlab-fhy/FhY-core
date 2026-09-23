@@ -5,22 +5,27 @@ its version matches the installed package, and ``FHY_CORE_NO_EXTENSIONS``
 does not disable it; the choice is reported as
 ``fhy_core.RUST_BACKEND_SELECTED``. An extension that is not installed
 selects the pure-Python backend silently; one that is installed but fails to
-import selects it with a ``RuntimeWarning``. The selection happens once,
-while the package is imported, so each case other than the running process's
-own is checked in a fresh interpreter.
+import, or is built only for other interpreters, selects it with a
+``RuntimeWarning``. The selection happens once, while the package is
+imported, so each case other than the running process's own is checked in a
+fresh interpreter.
 """
 
 import importlib
 import importlib.metadata
 import importlib.util
 import os
+import pathlib
 import subprocess
 import sys
 
 import pytest
 
 import fhy_core
-from fhy_core._backend import _normalize_pep440_version
+from fhy_core._backend import (
+    _find_foreign_extension_builds,
+    _normalize_pep440_version,
+)
 
 _NO_EXTENSIONS_VARIABLE = "FHY_CORE_NO_EXTENSIONS"
 
@@ -155,6 +160,63 @@ def test_a_missing_extension_selects_the_python_backend_silently() -> None:
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.split() == ["False", "1"]
     assert completed.stderr == ""
+
+
+_THIS_INTERPRETER_SUFFIXES = [".cpython-313-darwin.so", ".abi3.so", ".so"]
+
+
+@pytest.mark.parametrize(
+    ("file_names", "expected_foreign_builds"),
+    [
+        (
+            ["_rs.cpython-312-darwin.so", "_rs.cpython-310-darwin.so", "_rs.pyi"],
+            ["_rs.cpython-310-darwin.so", "_rs.cpython-312-darwin.so"],
+        ),
+        (["_rs.cp312-win_amd64.pyd"], ["_rs.cp312-win_amd64.pyd"]),
+        (["_rs.cpython-312-darwin.so", "_rs.cpython-313-darwin.so"], []),
+        (["_rs.cpython-312-darwin.so", "_rs.abi3.so"], []),
+        (["_rs.pyi", "_backend.py", "other.cpython-312-darwin.so"], []),
+        ([], []),
+    ],
+)
+def test_find_foreign_extension_builds_reports_only_unloadable_builds(
+    tmp_path: pathlib.Path,
+    file_names: list[str],
+    expected_foreign_builds: list[str],
+) -> None:
+    """Test only builds with no loadable sibling count as foreign."""
+    for file_name in file_names:
+        (tmp_path / file_name).touch()
+
+    foreign_builds = _find_foreign_extension_builds(
+        tmp_path, _THIS_INTERPRETER_SUFFIXES
+    )
+
+    assert foreign_builds == expected_foreign_builds
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_an_extension_built_for_other_interpreters_warns_then_falls_back() -> None:
+    """Test builds this interpreter skips select the Python backend with a warning."""
+    extension = pytest.importorskip("fhy_core._rs")
+    build_name = pathlib.Path(extension.__file__).name
+    # Hide the build this interpreter loads, as an import under another
+    # interpreter would, and give the interpreter a suffix no build carries.
+    hide_loadable_build = (
+        "import importlib.machinery, sys\n"
+        "sys.modules['fhy_core._rs'] = None\n"
+        "importlib.machinery.EXTENSION_SUFFIXES[:] = ['.cpython-399-fake.so']\n"
+    )
+
+    completed = _run_backend_report(None, program_prefix=hide_loadable_build)
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.split() == ["False", "1"]
+    assert "RuntimeWarning" in completed.stderr
+    assert build_name in completed.stderr
+    assert "_rs.cpython-399-fake.so" in completed.stderr
+    assert f"{_NO_EXTENSIONS_VARIABLE}=1" in completed.stderr
 
 
 def _create_failing_extension_prefix(raise_statement: str) -> str:
