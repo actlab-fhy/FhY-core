@@ -954,8 +954,8 @@ fn expression_reordered_piecewise_cases_are_unequal() {
     assert_ne!(reversed, forward);
 }
 
-/// Test trees differing in kind, operation, child, name, or arity are
-/// unequal.
+/// Test trees differing in kind, operation, child, name, arity, identifier,
+/// or literal value are unequal both ways and hash differently.
 #[rstest]
 #[case::literal_and_identifier(build_literal(1), build_identifier("x").1)]
 #[case::operation(
@@ -977,12 +977,48 @@ fn expression_reordered_piecewise_cases_are_unequal() {
     Expression::new_unary(UnaryOperation::Negate, 1),
     Expression::new_binary(BinaryOperation::Subtract, 0, 1)
 )]
-fn expression_trees_differing_anywhere_are_unequal(
+#[case::identifier(build_identifier("x").1, build_identifier("x").1)]
+#[case::integer_literal(build_literal(1), build_literal(2))]
+#[case::float_literal(build_literal(1.5), build_literal(2.5))]
+#[case::bool_literal(build_literal(true), build_literal(false))]
+#[case::decimal_text_literal(build_text_literal("1.5"), build_text_literal("2.5"))]
+fn expression_trees_differing_anywhere_are_unequal_and_hash_differently(
     #[case] left: Expression,
     #[case] right: Expression,
 ) {
     assert_ne!(left, right);
     assert_ne!(right, left);
+    assert_ne!(hash_of(&left), hash_of(&right));
+}
+
+/// Test piecewise nodes with different case counts are unequal both ways and
+/// hash differently when the shorter one's children are a prefix of the
+/// longer one's: `{y if p; q otherwise}` against `{y if p; z if q; w
+/// otherwise}`.
+#[test]
+fn expression_piecewise_nodes_with_different_case_counts_are_unequal() {
+    let [
+        first_condition,
+        second_condition,
+        first_value,
+        second_value,
+        otherwise,
+    ] = ["p", "q", "y", "z", "w"].map(|name| build_identifier(name).1);
+    let one_case = build_piecewise_node_or_panic(
+        vec![(first_condition.clone(), first_value.clone())],
+        second_condition.clone(),
+    );
+    let two_cases = build_piecewise_node_or_panic(
+        vec![
+            (first_condition, first_value),
+            (second_condition, second_value),
+        ],
+        otherwise,
+    );
+
+    assert_ne!(one_case, two_cases);
+    assert_ne!(two_cases, one_case);
+    assert_ne!(hash_of(&one_case), hash_of(&two_cases));
 }
 
 // =============================================================================

@@ -392,6 +392,34 @@ fn literal_value_equal_literals_hash_equally(#[case] left: &str, #[case] right: 
     assert_eq!(hash_of(&left), hash_of(&right));
 }
 
+/// Test distinct literals, within a bucket and across buckets, are unequal
+/// both ways and hash differently.
+#[rstest]
+#[case::booleans("b:true", "b:false")]
+#[case::integers("i:0", "i:5")]
+#[case::integer_texts("t:5", "t:6")]
+#[case::floats("f:1.5", "f:5.0")]
+#[case::infinities("f:inf", "f:-inf")]
+#[case::decimal_texts("t:1.5", "t:5.0")]
+#[case::decimals_in_the_thirtieth_digit(
+    "t:1.00000000000000000000000000001",
+    "t:1.00000000000000000000000000002"
+)]
+#[case::integer_and_float("i:5", "f:5.0")]
+#[case::integer_text_and_decimal_text("t:5", "t:5.0")]
+#[case::float_and_decimal_text("f:1.5", "t:1.5")]
+fn literal_value_distinct_literals_are_unequal_and_hash_differently(
+    #[case] left: &str,
+    #[case] right: &str,
+) {
+    let left = build_sample_literal(left);
+    let right = build_sample_literal(right);
+
+    assert_ne!(left, right);
+    assert_ne!(right, left);
+    assert_ne!(hash_of(&left), hash_of(&right));
+}
+
 /// Test the key text of representative literals in every bucket.
 #[rstest]
 #[case::bool_true("b:true", "bool:True")]
