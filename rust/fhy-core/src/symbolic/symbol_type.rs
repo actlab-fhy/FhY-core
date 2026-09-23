@@ -5,9 +5,7 @@
 //! lowercase value name (`"real"`, `"int"`, `"bool"`), which is also its
 //! serialized form.
 
-use std::fmt;
-
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use crate::symbolic::wire_name::impl_wire_name_traits;
 
 /// Every symbol type, in declaration order.
 const ALL_SYMBOL_TYPES: [SymbolType; 3] = [SymbolType::Real, SymbolType::Int, SymbolType::Bool];
@@ -49,30 +47,8 @@ impl SymbolType {
     }
 }
 
-impl fmt::Display for SymbolType {
-    /// Write the [`as_str`](Self::as_str) text.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl Serialize for SymbolType {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for SymbolType {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        ALL_SYMBOL_TYPES
-            .into_iter()
-            .find(|candidate| candidate.as_str() == text)
-            .ok_or_else(|| {
-                de::Error::invalid_value(
-                    de::Unexpected::Str(&text),
-                    &"a symbol type name: real, int, or bool",
-                )
-            })
-    }
-}
+impl_wire_name_traits!(
+    SymbolType,
+    ALL_SYMBOL_TYPES,
+    "a symbol type name: real, int, or bool"
+);

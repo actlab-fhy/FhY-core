@@ -426,6 +426,44 @@ fn binary_operation_accepts_exactly_its_fifteen_wire_names() {
     assert_eq!(accepted, expected);
 }
 
+/// Return the message deserializing the JSON string `word` as `T` fails with.
+fn describe_rejected_word<T: DeserializeOwned + Debug>(word: &str) -> String {
+    let result = serde_json::from_value::<T>(json!(word));
+
+    let Err(error) = &result else {
+        panic!("expected {word:?} to be rejected, got {result:?}");
+    };
+    error.to_string()
+}
+
+/// Test each vocabulary's rejection of an unknown word names the word and
+/// the names it expects.
+#[rstest]
+#[case::symbol_type(
+    describe_rejected_word::<SymbolType>("float"),
+    "invalid value: string \"float\", expected a symbol type name: real, int, or bool"
+)]
+#[case::function_sort(
+    describe_rejected_word::<FunctionSort>("float"),
+    "invalid value: string \"float\", expected a function sort name: bool, nat, int, or real"
+)]
+#[case::unary_operation(
+    describe_rejected_word::<UnaryOperation>("not"),
+    "invalid value: string \"not\", expected a unary operation name such as negate or \
+     logical_not"
+)]
+#[case::binary_operation(
+    describe_rejected_word::<BinaryOperation>("plus"),
+    "invalid value: string \"plus\", expected a binary operation name such as add or \
+     floor_divide"
+)]
+fn vocabulary_rejection_names_the_word_and_the_expected_names(
+    #[case] message: String,
+    #[case] expected: &str,
+) {
+    assert_eq!(message, expected);
+}
+
 /// Test a table from symbol back to operation recovers every unary and every
 /// binary operation, so a parser can map printed operators back to
 /// operations.

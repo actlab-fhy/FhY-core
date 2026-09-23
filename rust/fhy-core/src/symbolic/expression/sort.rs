@@ -6,9 +6,7 @@
 //! numeric sort. Its text form is the lowercase sort name (`"bool"`,
 //! `"nat"`, `"int"`, `"real"`), which is also its serialized form.
 
-use std::fmt;
-
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use crate::symbolic::wire_name::impl_wire_name_traits;
 
 /// Every function sort, in declaration order.
 const ALL_FUNCTION_SORTS: [FunctionSort; 4] = [
@@ -58,30 +56,8 @@ impl FunctionSort {
     }
 }
 
-impl fmt::Display for FunctionSort {
-    /// Write the [`as_str`](Self::as_str) text.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl Serialize for FunctionSort {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for FunctionSort {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        ALL_FUNCTION_SORTS
-            .into_iter()
-            .find(|candidate| candidate.as_str() == text)
-            .ok_or_else(|| {
-                de::Error::invalid_value(
-                    de::Unexpected::Str(&text),
-                    &"a function sort name: bool, nat, int, or real",
-                )
-            })
-    }
-}
+impl_wire_name_traits!(
+    FunctionSort,
+    ALL_FUNCTION_SORTS,
+    "a function sort name: bool, nat, int, or real"
+);

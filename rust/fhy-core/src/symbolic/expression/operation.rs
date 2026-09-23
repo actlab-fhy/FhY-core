@@ -8,9 +8,7 @@
 //! as `"//"`), which the symbolic notation of the printer uses. Within each
 //! enum, no two operations share a wire name or a symbol.
 
-use std::fmt;
-
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use crate::symbolic::wire_name::impl_wire_name_traits;
 
 /// Every unary operation, in declaration order.
 const ALL_UNARY_OPERATIONS: [UnaryOperation; 3] = [
@@ -104,33 +102,11 @@ impl UnaryOperation {
     }
 }
 
-impl fmt::Display for UnaryOperation {
-    /// Write the wire name, [`as_str`](Self::as_str).
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl Serialize for UnaryOperation {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for UnaryOperation {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        ALL_UNARY_OPERATIONS
-            .into_iter()
-            .find(|candidate| candidate.as_str() == text)
-            .ok_or_else(|| {
-                de::Error::invalid_value(
-                    de::Unexpected::Str(&text),
-                    &"a unary operation name such as negate or logical_not",
-                )
-            })
-    }
-}
+impl_wire_name_traits!(
+    UnaryOperation,
+    ALL_UNARY_OPERATIONS,
+    "a unary operation name such as negate or logical_not"
+);
 
 /// The operation of a binary expression.
 ///
@@ -264,33 +240,11 @@ impl BinaryOperation {
     }
 }
 
-impl fmt::Display for BinaryOperation {
-    /// Write the wire name, [`as_str`](Self::as_str).
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl Serialize for BinaryOperation {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for BinaryOperation {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        ALL_BINARY_OPERATIONS
-            .into_iter()
-            .find(|candidate| candidate.as_str() == text)
-            .ok_or_else(|| {
-                de::Error::invalid_value(
-                    de::Unexpected::Str(&text),
-                    &"a binary operation name such as add or floor_divide",
-                )
-            })
-    }
-}
+impl_wire_name_traits!(
+    BinaryOperation,
+    ALL_BINARY_OPERATIONS,
+    "a binary operation name such as add or floor_divide"
+);
 
 #[cfg(test)]
 mod tests {
