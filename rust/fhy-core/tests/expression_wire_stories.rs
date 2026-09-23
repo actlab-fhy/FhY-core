@@ -493,7 +493,8 @@ fn expression_deserialize_rejects_a_malformed_literal(
     assert_refused_before_any_restore(|_| refused, expected_message);
 }
 
-/// Test a payload with an unknown type id is refused, naming the id.
+/// Test a payload with an unknown type id is refused with a message naming
+/// the id.
 #[test]
 fn expression_deserialize_rejects_an_unknown_type_id() {
     let payload = json!({
@@ -507,7 +508,10 @@ fn expression_deserialize_rejects_an_unknown_type_id() {
 
     let error = decode(payload).expect_err("the type id is unknown");
 
-    assert!(error.to_string().contains("ternary_expression"), "{error}");
+    assert_eq!(
+        error.to_string(),
+        "unknown expression type id `ternary_expression`"
+    );
 }
 
 /// Test payloads breaking a node's structure are refused, naming the defect,

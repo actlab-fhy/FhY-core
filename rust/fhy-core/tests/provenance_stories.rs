@@ -69,18 +69,12 @@ fn build_fused(sources: Vec<Provenance>, metadata: Option<&str>) -> Provenance {
     Provenance::Fused(FusedProvenance::new(sources, metadata.map(str::to_owned)))
 }
 
-/// Assert decoding `payload` as a `T` fails.
-///
-/// The wording of a decode error is not part of the contract, so only the
-/// rejection itself is checked.
-fn assert_decode_rejected<T: DeserializeOwned + std::fmt::Debug>(payload: Value) {
+/// Assert decoding `payload` as a `T` fails with the message `expected`.
+fn assert_decode_rejected<T: DeserializeOwned + std::fmt::Debug>(payload: Value, expected: &str) {
     let rendered = payload.to_string();
     let error = serde_json::from_value::<T>(payload)
         .expect_err(&format!("{rendered} is malformed and must be rejected"));
-    assert!(
-        !error.to_string().is_empty(),
-        "the error for {rendered} has a message"
-    );
+    assert_eq!(error.to_string(), expected, "the error for {rendered}");
 }
 
 // =============================================================================
@@ -1184,80 +1178,200 @@ fn provenance_decode_normalizes_the_file_path() {
     assert_eq!(decoded, build_file("x/y.fhy"));
 }
 
-/// Test malformed position payloads are rejected.
+/// Test malformed position payloads are rejected with a message naming the
+/// problem.
 #[rstest]
-#[case::missing_column(json!({"line": 1}))]
-#[case::bool_line(json!({"line": true, "column": 1}))]
-#[case::extra_key(json!({"line": 1, "column": 2, "z": 3}))]
-#[case::zero_line(json!({"line": 0, "column": 1}))]
-#[case::zero_column(json!({"line": 1, "column": 0}))]
-#[case::float_line(json!({"line": 1.0, "column": 1}))]
-#[case::string_line(json!({"line": "1", "column": 1}))]
-#[case::negative_line(json!({"line": -1, "column": 1}))]
-#[case::null_line(json!({"line": null, "column": 1}))]
-#[case::not_a_map(json!([1, 1]))]
-fn position_decode_rejects_malformed_payloads(#[case] payload: Value) {
-    assert_decode_rejected::<Position>(payload);
+#[case::missing_column(
+    json!({"line": 1}),
+    "missing field `column`"
+)]
+#[case::bool_line(
+    json!({"line": true, "column": 1}),
+    "invalid type: boolean `true`, expected u64"
+)]
+#[case::extra_key(
+    json!({"line": 1, "column": 2, "z": 3}),
+    "unknown field `z`, expected `line` or `column`"
+)]
+#[case::zero_line(
+    json!({"line": 0, "column": 1}),
+    "a position's line must be at least 1"
+)]
+#[case::zero_column(
+    json!({"line": 1, "column": 0}),
+    "a position's column must be at least 1"
+)]
+#[case::float_line(
+    json!({"line": 1.0, "column": 1}),
+    "invalid number"
+)]
+#[case::string_line(
+    json!({"line": "1", "column": 1}),
+    r#"invalid type: string "1", expected u64"#
+)]
+#[case::negative_line(
+    json!({"line": -1, "column": 1}),
+    "invalid number"
+)]
+#[case::null_line(
+    json!({"line": null, "column": 1}),
+    "invalid type: null, expected u64"
+)]
+#[case::not_a_map(
+    json!([1, 1]),
+    "invalid type: sequence, expected struct PositionPayload"
+)]
+fn position_decode_rejects_malformed_payloads(#[case] payload: Value, #[case] expected: &str) {
+    assert_decode_rejected::<Position>(payload, expected);
 }
 
-/// Test malformed span payloads are rejected.
+/// Test malformed span payloads, including one missing each key, are
+/// rejected with a message naming the problem.
 #[rstest]
-#[case::missing_keys(json!({"start_offset": 0}))]
-#[case::extra_key(json!({"start_offset": 0, "end_offset": 3, "start_position": null, "end_position": null, "extra": 1}))]
-#[case::end_offset_before_start(json!({"start_offset": 5, "end_offset": 3, "start_position": null, "end_position": null}))]
-#[case::end_position_before_start(json!({
+#[case::missing_start_offset(
+    json!({"end_offset": null, "start_position": null, "end_position": null}),
+    "missing field `start_offset`"
+)]
+#[case::missing_end_offset(
+    json!({"start_offset": null, "start_position": null, "end_position": null}),
+    "missing field `end_offset`"
+)]
+#[case::missing_start_position(
+    json!({"start_offset": null, "end_offset": null, "end_position": null}),
+    "missing field `start_position`"
+)]
+#[case::missing_end_position(
+    json!({"start_offset": null, "end_offset": null, "start_position": null}),
+    "missing field `end_position`"
+)]
+#[case::extra_key(
+    json!({"start_offset": 0, "end_offset": 3, "start_position": null, "end_position": null, "extra": 1}),
+    "unknown field `extra`, expected one of `start_offset`, `end_offset`, `start_position`, `end_position`"
+)]
+#[case::end_offset_before_start(
+    json!({"start_offset": 5, "end_offset": 3, "start_position": null, "end_position": null}),
+    "a span's end offset 3 precedes its start offset 5"
+)]
+#[case::end_position_before_start(
+    json!({
     "start_offset": null,
     "end_offset": null,
     "start_position": {"line": 2, "column": 1},
     "end_position": {"line": 1, "column": 1},
-}))]
-#[case::negative_offset(json!({"start_offset": -1, "end_offset": null, "start_position": null, "end_position": null}))]
-#[case::bool_offset(json!({"start_offset": true, "end_offset": null, "start_position": null, "end_position": null}))]
-#[case::invalid_position(json!({
+}),
+    "a span's end position 1:1 precedes its start position 2:1"
+)]
+#[case::negative_offset(
+    json!({"start_offset": -1, "end_offset": null, "start_position": null, "end_position": null}),
+    "invalid number"
+)]
+#[case::bool_offset(
+    json!({"start_offset": true, "end_offset": null, "start_position": null, "end_position": null}),
+    "invalid type: boolean `true`, expected u64"
+)]
+#[case::invalid_position(
+    json!({
     "start_offset": null,
     "end_offset": null,
     "start_position": {"line": 0, "column": 1},
     "end_position": null,
-}))]
-#[case::list_position(json!({"start_offset": null, "end_offset": null, "start_position": [1, 1], "end_position": null}))]
-fn span_decode_rejects_malformed_payloads(#[case] payload: Value) {
-    assert_decode_rejected::<Span>(payload);
+}),
+    "a position's line must be at least 1"
+)]
+#[case::list_position(
+    json!({"start_offset": null, "end_offset": null, "start_position": [1, 1], "end_position": null}),
+    "invalid type: sequence, expected struct PositionPayload"
+)]
+fn span_decode_rejects_malformed_payloads(#[case] payload: Value, #[case] expected: &str) {
+    assert_decode_rejected::<Span>(payload, expected);
 }
 
-/// Test malformed provenance payloads are rejected, including an unknown
-/// type id and an unknown provenance without its empty data dict.
+/// Test malformed provenance payloads are rejected with a message naming the
+/// problem, including an unknown type id and an unknown provenance without
+/// its empty data dict.
 #[rstest]
-#[case::unknown_type_id(json!({"__type__": "provenance.does_not_exist", "__data__": {}}))]
-#[case::non_provenance_type_id(json!({"__type__": "position", "__data__": {"line": 1, "column": 1}}))]
-#[case::unknown_without_data(json!({"__type__": "provenance.unknown"}))]
-#[case::unknown_with_null_data(json!({"__type__": "provenance.unknown", "__data__": null}))]
-#[case::unknown_with_a_field(json!({"__type__": "provenance.unknown", "__data__": {"x": 1}}))]
-#[case::extra_envelope_key(json!({"__type__": "provenance.unknown", "__data__": {}, "z": 1}))]
-#[case::missing_type(json!({"__data__": {}}))]
-#[case::file_missing_span(json!({"__type__": "provenance.file", "__data__": {"file_path": "a"}}))]
-#[case::file_path_not_a_string(json!({"__type__": "provenance.file", "__data__": {"file_path": 3, "span": null}}))]
-#[case::empty_name(json!({
+#[case::unknown_type_id(
+    json!({"__type__": "provenance.does_not_exist", "__data__": {}}),
+    "unknown variant `provenance.does_not_exist`, expected one of `provenance.unknown`, `provenance.file`, `provenance.named`, `provenance.call_site`, `provenance.fused`"
+)]
+#[case::non_provenance_type_id(
+    json!({"__type__": "position", "__data__": {"line": 1, "column": 1}}),
+    "unknown variant `position`, expected one of `provenance.unknown`, `provenance.file`, `provenance.named`, `provenance.call_site`, `provenance.fused`"
+)]
+#[case::unknown_without_data(
+    json!({"__type__": "provenance.unknown"}),
+    "missing field `__data__`"
+)]
+#[case::unknown_with_null_data(
+    json!({"__type__": "provenance.unknown", "__data__": null}),
+    "invalid type: null, expected struct UnknownFields"
+)]
+#[case::unknown_with_a_field(
+    json!({"__type__": "provenance.unknown", "__data__": {"x": 1}}),
+    "unknown field `x`, there are no fields"
+)]
+#[case::extra_envelope_key(
+    json!({"__type__": "provenance.unknown", "__data__": {}, "z": 1}),
+    r#"invalid value: string "z", expected "__type__" or "__data__""#
+)]
+#[case::missing_type(
+    json!({"__data__": {}}),
+    "missing field `__type__`"
+)]
+#[case::file_missing_span(
+    json!({"__type__": "provenance.file", "__data__": {"file_path": "a"}}),
+    "missing field `span`"
+)]
+#[case::file_path_not_a_string(
+    json!({"__type__": "provenance.file", "__data__": {"file_path": 3, "span": null}}),
+    "invalid type: integer `3`, expected a string"
+)]
+#[case::empty_name(
+    json!({
     "__type__": "provenance.named",
     "__data__": {"name": "", "child": {"__type__": "provenance.unknown", "__data__": {}}},
-}))]
-#[case::unwrapped_child(json!({"__type__": "provenance.named", "__data__": {"name": "n", "child": {"line": 1, "column": 1}}}))]
-#[case::null_caller(json!({
+}),
+    "a named provenance's name must be non-empty"
+)]
+#[case::unwrapped_child(
+    json!({"__type__": "provenance.named", "__data__": {"name": "n", "child": {"line": 1, "column": 1}}}),
+    r#"invalid value: string "column", expected "__type__" or "__data__""#
+)]
+#[case::null_caller(
+    json!({
     "__type__": "provenance.call_site",
     "__data__": {"callee": {"__type__": "provenance.unknown", "__data__": {}}, "caller": null},
-}))]
-#[case::integer_metadata(json!({"__type__": "provenance.fused", "__data__": {"sources": [], "metadata": 5}}))]
-#[case::null_sources(json!({"__type__": "provenance.fused", "__data__": {"sources": null, "metadata": null}}))]
-#[case::missing_metadata(json!({"__type__": "provenance.fused", "__data__": {"sources": []}}))]
-#[case::invalid_nested_source(json!({
+}),
+    "invalid type: null, expected adjacently tagged enum ProvenancePayload"
+)]
+#[case::integer_metadata(
+    json!({"__type__": "provenance.fused", "__data__": {"sources": [], "metadata": 5}}),
+    "invalid type: integer `5`, expected a string"
+)]
+#[case::null_sources(
+    json!({"__type__": "provenance.fused", "__data__": {"sources": null, "metadata": null}}),
+    "invalid type: null, expected a sequence"
+)]
+#[case::missing_metadata(
+    json!({"__type__": "provenance.fused", "__data__": {"sources": []}}),
+    "missing field `metadata`"
+)]
+#[case::invalid_nested_source(
+    json!({
     "__type__": "provenance.fused",
     "__data__": {
         "sources": [{"__type__": "provenance.named", "__data__": {"name": "", "child": {"__type__": "provenance.unknown", "__data__": {}}}}],
         "metadata": null,
     },
-}))]
-#[case::not_a_map(json!([{"__type__": "provenance.unknown", "__data__": {}}]))]
-fn provenance_decode_rejects_malformed_payloads(#[case] payload: Value) {
-    assert_decode_rejected::<Provenance>(payload);
+}),
+    "a named provenance's name must be non-empty"
+)]
+#[case::not_a_map(
+    json!([{"__type__": "provenance.unknown", "__data__": {}}]),
+    "invalid type: sequence, expected adjacently tagged enum ProvenancePayload"
+)]
+fn provenance_decode_rejects_malformed_payloads(#[case] payload: Value, #[case] expected: &str) {
+    assert_decode_rejected::<Provenance>(payload, expected);
 }
 
 /// Test a line, column or offset beyond `u64` is rejected on decode, where
@@ -1266,7 +1380,7 @@ fn provenance_decode_rejects_malformed_payloads(#[case] payload: Value) {
 #[case::huge_line(json!({"line": 1_180_591_620_717_411_303_424_u128, "column": 1}))]
 #[case::line_just_past_u64(json!({"line": 18_446_744_073_709_551_616_u128, "column": 1}))]
 fn position_decode_rejects_values_beyond_u64(#[case] payload: Value) {
-    assert_decode_rejected::<Position>(payload);
+    assert_decode_rejected::<Position>(payload, "invalid number");
 }
 
 /// Test a span offset beyond `u64` is rejected on decode.
@@ -1279,7 +1393,7 @@ fn span_decode_rejects_an_offset_beyond_u64() {
         "end_position": null,
     });
 
-    assert_decode_rejected::<Span>(payload);
+    assert_decode_rejected::<Span>(payload, "invalid number");
 }
 
 /// Return `depth` named provenances nested over the unknown provenance.
@@ -1324,32 +1438,33 @@ fn provenance_json_text_decodes_up_to_the_serde_json_nesting_limit() {
 // Errors and thread safety
 // =============================================================================
 
-/// Test every error variant renders a message naming what was wrong.
+/// Test every error variant renders its full message, with the offsets and
+/// positions of an unordered span each in its own place.
 #[rstest]
-#[case::zero_line(ProvenanceError::ZeroLine, "line")]
-#[case::zero_column(ProvenanceError::ZeroColumn, "column")]
+#[case::zero_line(ProvenanceError::ZeroLine, "a position's line must be at least 1")]
+#[case::zero_column(ProvenanceError::ZeroColumn, "a position's column must be at least 1")]
 #[case::end_offset(
     ProvenanceError::EndOffsetBeforeStartOffset { start_offset: 5, end_offset: 3 },
-    "3"
+    "a span's end offset 3 precedes its start offset 5"
 )]
 #[case::end_position(
     ProvenanceError::EndPositionBeforeStartPosition {
         start_position: build_position(2, 1),
         end_position: build_position(1, 1),
     },
-    "1:1"
+    "a span's end position 1:1 precedes its start position 2:1"
 )]
-#[case::empty_name(ProvenanceError::EmptyName, "name")]
-fn provenance_error_display_names_the_problem(
+#[case::empty_name(
+    ProvenanceError::EmptyName,
+    "a named provenance's name must be non-empty"
+)]
+fn provenance_error_display_writes_the_full_message(
     #[case] error: ProvenanceError,
-    #[case] expected_fragment: &str,
+    #[case] expected: &str,
 ) {
     let message = error.to_string();
 
-    assert!(
-        message.contains(expected_fragment),
-        "{message:?} does not mention {expected_fragment:?}"
-    );
+    assert_eq!(message, expected);
 }
 
 /// Compile-time check that the provenance types can cross threads.
