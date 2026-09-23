@@ -62,20 +62,15 @@ pub(crate) fn replay_golden_document(
         replay_case(case, &mut mismatches);
     }
 
-    match corpus_path {
-        None => assert!(
-            mismatches.is_empty(),
-            "found {} mismatch(es):\n{}",
-            mismatches.len(),
-            mismatches.join("\n")
-        ),
-        Some(path) => assert!(
-            mismatches.is_empty(),
-            "found {} mismatch(es) in {path}:\n{}",
-            mismatches.len(),
-            mismatches.join("\n")
-        ),
-    }
+    let location = corpus_path
+        .map(|path| format!(" in {path}"))
+        .unwrap_or_default();
+    assert!(
+        mismatches.is_empty(),
+        "found {} mismatch(es){location}:\n{}",
+        mismatches.len(),
+        mismatches.join("\n")
+    );
 }
 
 /// Read the expanded corpus file named by the environment variable

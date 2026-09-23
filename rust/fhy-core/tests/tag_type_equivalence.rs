@@ -59,6 +59,7 @@ const AHEAD_ID_SPACING: u64 = 1_000_000;
 /// A `bind_ahead` op instead binds a slot to an id ahead of the counter and
 /// leaves it unrestored until an op needs the slot's `Identifier`, as the
 /// generator does, so an `is_counter_past` op sees only what a decode did.
+#[derive(Default)]
 struct SlotTable {
     by_slot: HashMap<String, Identifier>,
     by_id: HashMap<u64, String>,
@@ -67,15 +68,6 @@ struct SlotTable {
 }
 
 impl SlotTable {
-    fn new() -> Self {
-        Self {
-            by_slot: HashMap::new(),
-            by_id: HashMap::new(),
-            ahead: HashMap::new(),
-            ahead_count: 0,
-        }
-    }
-
     /// Bind the fresh `slot` to an id ahead of the counter, unrestored.
     ///
     /// # Panics
@@ -111,12 +103,10 @@ impl SlotTable {
         if let Some(identifier) = self.by_slot.get(slot) {
             return identifier.clone();
         }
-        if let Some(id) = self.ahead.remove(slot) {
-            let identifier = Identifier::restore(id, slot.to_string());
-            self.by_slot.insert(slot.to_string(), identifier.clone());
-            return identifier;
-        }
-        let identifier = Identifier::new(slot);
+        let identifier = match self.ahead.remove(slot) {
+            Some(id) => Identifier::restore(id, slot.to_string()),
+            None => Identifier::new(slot),
+        };
         self.bind_slot(slot, identifier.clone());
         identifier
     }
@@ -143,7 +133,7 @@ fn compute_hash<T: Hash>(value: &T) -> u64 {
 }
 
 fn create_op_attribute_slots() -> SlotTable {
-    let mut slots = SlotTable::new();
+    let mut slots = SlotTable::default();
     slots.bind_slot("commutative", get_commutative().name().clone());
     slots.bind_slot("associative", get_associative().name().clone());
     slots.bind_slot("pure", get_pure().name().clone());
@@ -152,7 +142,7 @@ fn create_op_attribute_slots() -> SlotTable {
 }
 
 fn create_value_domain_slots() -> SlotTable {
-    let mut slots = SlotTable::new();
+    let mut slots = SlotTable::default();
     slots.bind_slot("data", get_data_domain().name().clone());
     slots.bind_slot("address", get_address_domain().name().clone());
     slots
