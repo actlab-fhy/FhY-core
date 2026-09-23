@@ -169,8 +169,8 @@ fn create_composed_function<const N: usize>(
     build_body: fn(&[Expression; N]) -> Expression,
 ) -> ComposedFunction {
     let parameters = parameter_names.map(Identifier::new_unscoped);
-    // A clone of an identifier shares its name hint; the body holds its own
-    // references to the parameters the function keeps.
+    // A clone keeps the identifier's id, so the body's references equal the
+    // parameters the function keeps.
     let references = parameters
         .each_ref()
         .map(|parameter| Expression::from(parameter.clone()));

@@ -9,10 +9,10 @@
 //!
 //! The arithmetic operators `+ - * / %` and unary `-` build binary and unary
 //! nodes, with an expression on either side of a binary operator and any
-//! operand on the other side. The other
-//! operations are methods named after them: [`Expression::equals`],
-//! [`Expression::less`], [`Expression::floor_divide`],
-//! [`Expression::power`], [`Expression::logical_not`], and so on.
+//! operand on the other side. The other operations are methods named after
+//! them: [`Expression::equals`], [`Expression::less`],
+//! [`Expression::floor_divide`], [`Expression::power`],
+//! [`Expression::logical_not`], and so on.
 //! [`build_logical_and`], [`build_logical_or`], [`build_piecewise`], and
 //! [`build_call`] build the nodes whose operand count varies.
 

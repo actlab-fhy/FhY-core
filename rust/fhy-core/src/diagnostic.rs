@@ -250,7 +250,7 @@ impl Diagnostic {
         self.message.message()
     }
 
-    /// Returns the identifier of whatever emitted the diagnostic.
+    /// Returns the name of whatever emitted the diagnostic.
     #[must_use]
     pub fn source(&self) -> &str {
         &self.source

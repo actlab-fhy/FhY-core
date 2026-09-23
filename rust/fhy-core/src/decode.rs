@@ -75,10 +75,13 @@ pub(crate) fn deserialize_map_only<'de, D: Deserializer<'de>, T: Deserialize<'de
     T::deserialize(MapOnly(deserializer))
 }
 
-/// Deserializer adapter that reads every value as a map.
+/// Deserializer adapter that reads the value it wraps as a map.
 ///
 /// A derived struct decoder also accepts the struct's fields as a sequence;
-/// routing it through this adapter refuses that form.
+/// routing it through this adapter refuses that form. Only the wrapped value
+/// is affected: its fields are read by the wrapped deserializer, so a nested
+/// value is map-only when its own `Deserialize` impl routes through
+/// [`deserialize_map_only`].
 struct MapOnly<D>(D);
 
 impl<'de, D: Deserializer<'de>> Deserializer<'de> for MapOnly<D> {

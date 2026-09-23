@@ -5,12 +5,14 @@
 //! one tree or of several trees. [`Expression::kind`] exposes the node as an
 //! [`ExpressionKind`] to match on. Equality and hashing are structural:
 //! two expressions are equal when they have the same shape, the same
-//! operations, identifiers with the same ids, and equal literals (see
-//! [`LiteralValue`]). [`Expression::ptr_eq`] tells whether two handles share
-//! one node.
+//! operations and call function names, identifiers with the same ids, and
+//! equal literals (see [`LiteralValue`]). [`Expression::ptr_eq`] tells
+//! whether two handles share one node.
 //!
-//! Every walk here keeps its pending nodes in a work list on the heap rather
-//! than on the call stack, so it handles a tree of any depth.
+//! Dropping, equality, hashing, alpha-equivalence, substitution and free
+//! identifier collection keep their pending nodes in a work list on the heap
+//! rather than on the call stack, so they handle a tree of any depth. The
+//! derived `Debug` recurses once per tree level.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hash, Hasher};
@@ -513,8 +515,9 @@ impl From<CallExpression> for Expression {
 }
 
 impl PartialEq for Expression {
-    /// Compare structurally: same node kinds and operations, identifiers
-    /// with the same ids, equal literals, children equal in order.
+    /// Compare structurally: same node kinds, operations and call function
+    /// names, identifiers with the same ids, equal literals, children equal
+    /// in order.
     fn eq(&self, other: &Self) -> bool {
         is_tree_equal(self, other, true, &|left, right| left == right)
     }

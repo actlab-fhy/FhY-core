@@ -183,9 +183,13 @@ impl Serialize for LiteralWire<'_> {
 /// integer literal and a float token as a float literal, never the one as
 /// the other.
 ///
-/// Integers beyond the `i64` range need a format that carries arbitrary
-/// integers, such as JSON through `serde_json`. A NaN or infinite float
-/// literal has no JSON form and fails to serialize.
+/// An integer in the `i64` range serializes through `serialize_i64`, and
+/// one above it up to `u64::MAX` through `serialize_u64`. Any other integer
+/// serializes as a `serde_json` arbitrary-precision number, which only
+/// `serde_json` writes as an integer; another format receives it as a
+/// struct under `serde_json`'s private number token, holding the decimal
+/// digits as a string. A NaN or infinite float literal has no JSON form and
+/// fails to serialize.
 ///
 /// Deserializing checks the whole payload before it restores any identifier:
 /// a payload refused for its structure, an unknown type id, an unknown or

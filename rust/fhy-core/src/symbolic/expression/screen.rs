@@ -79,8 +79,8 @@ impl<E: BuildHasher, T: BuildHasher, L: SortLookup + ?Sized> ScreenContext<'_, E
         true
     }
 
-    /// Return the first Boolean-position operand under `root` that provably
-    /// denotes a number, in depth-first pre-order.
+    /// Report the first Boolean-position operand under `root` that provably
+    /// denotes a number, in depth-first pre-order, as an error.
     fn find_numeric_operand(
         &self,
         root: &Expression,
@@ -254,10 +254,10 @@ impl SortLookup for NoRegisteredSorts {
 /// piecewise's conditions, then its values, then its otherwise branch) and
 /// the first offending one is reported, before the walk descends into the
 /// children in [`Expression::children`] order. The walk keeps its pending
-/// nodes on the heap, so it handles a tree of any depth. An identifier `environment` binds (and
-/// `sorts` does not report as a native constant) is screened by walking its
-/// bound value in the identifier's own position, with no binding applied
-/// inside it.
+/// nodes on the heap, so it handles a tree of any depth. An identifier
+/// `environment` binds (and `sorts` does not report as a native constant) is
+/// screened by walking its bound value in the identifier's own position,
+/// with no binding applied inside it.
 ///
 /// # Errors
 ///

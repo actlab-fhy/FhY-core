@@ -11,13 +11,16 @@
 //! library symbol, are compositions of these variants rather than new ones.
 //!
 //! A transformation that combines several objects combines their provenances
-//! with [`Provenance::fuse`], which drops unknown inputs and flattens
-//! unlabelled fusions so fusion trees stay flat.
+//! with [`Provenance::fuse`], which drops unknown inputs and splices in the
+//! sources of unlabelled fusions. A fusion that `fuse` builds therefore never
+//! lists an unknown provenance or an unlabelled fusion among its own
+//! sources; labelled fusions and the other variants are kept whole, whatever
+//! they contain.
 //!
-//! Every type here serializes to a JSON-compatible dict. A [`Position`] is
-//! `{"line": .., "column": ..}`, a [`Span`] names all four of its fields
-//! with `null` for an absent one, and a [`Provenance`] is wrapped as
-//! `{"__type__": "provenance.<kind>", "__data__": {..}}`.
+//! [`Position`], [`Span`] and [`Provenance`] serialize to JSON-compatible
+//! dicts. A position is `{"line": .., "column": ..}`, a span names all four
+//! of its fields with `null` for an absent one, and a provenance is wrapped
+//! as `{"__type__": "provenance.<kind>", "__data__": {..}}`.
 
 use std::fmt;
 use std::hash::Hash;
@@ -301,12 +304,14 @@ impl<'de> Deserialize<'de> for Span {
 ///
 /// # Nesting depth
 ///
-/// Equality, hashing, [`Display`](fmt::Display), serialization,
-/// deserialization and dropping recurse through nested provenances, so their
-/// stack use grows with the nesting depth of the tree, and a tree nested
-/// deeply enough (on the order of tens of thousands of levels on a default
-/// thread stack) overflows the stack. [`Provenance::fuse`] walks an explicit
-/// stack instead, and never nests an unlabelled fusion in its result.
+/// Equality, hashing, `Debug`, [`Display`](fmt::Display), serialization,
+/// deserialization and dropping recurse through nested provenances, and
+/// cloning recurses through nested fusions (a named or call-site child is
+/// shared, not copied), so their stack use grows with the nesting depth of
+/// the tree, and a tree nested deeply enough (on the order of tens of
+/// thousands of levels on a default thread stack) overflows the stack.
+/// [`Provenance::fuse`] walks an explicit stack instead, and a fusion it
+/// builds never lists an unlabelled fusion among its own sources.
 ///
 /// Decoding JSON text is also capped by `serde_json`'s nesting limit: its
 /// text deserializer refuses input nested more than 127 JSON levels deep
