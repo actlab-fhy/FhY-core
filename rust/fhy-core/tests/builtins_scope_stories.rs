@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 
 use fhy_core::identifier::Identifier;
-use fhy_core::symbolic::expression::builtins::{ComposedFunction, composed_functions};
+use fhy_core::symbolic::expression::builtins::{ComposedFunction, list_composed_functions};
 use fhy_core::testing::DeterministicIdentifierScope;
 
 /// Test a scope that first creates the catalogue neither merges same-named
@@ -18,7 +18,7 @@ use fhy_core::testing::DeterministicIdentifierScope;
 #[test]
 fn composed_functions_first_used_in_a_scope_keeps_its_parameters_unique() {
     let _scope = DeterministicIdentifierScope::enter();
-    let parameters: Vec<Identifier> = composed_functions()
+    let parameters: Vec<Identifier> = list_composed_functions()
         .iter()
         .flat_map(ComposedFunction::parameters)
         .cloned()

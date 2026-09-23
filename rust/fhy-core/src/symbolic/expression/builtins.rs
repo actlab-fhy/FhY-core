@@ -2,15 +2,15 @@
 //!
 //! The catalogue has three tables, each in a fixed order:
 //!
-//! - [`composed_functions`]: the 16 functions whose meaning is an expression
-//!   over their parameters (`max`, `min`, `abs`, `sign`, `clamp`,
-//!   `clamp_symmetric`, `relu`, `leaky_relu`, `xor`, `nand`, `nor`,
+//! - [`list_composed_functions`]: the 16 functions whose meaning is an
+//!   expression over their parameters (`max`, `min`, `abs`, `sign`,
+//!   `clamp`, `clamp_symmetric`, `relu`, `leaky_relu`, `xor`, `nand`, `nor`,
 //!   `implies`, `iff`, `sigmoid`, `silu`, `gelu`);
-//! - [`native_functions`]: the signatures of the 19 functions computed
+//! - [`list_native_functions`]: the signatures of the 19 functions computed
 //!   natively (`exp`, `exp2`, `log`, `log2`, `log10`, `sqrt`, `sin`, `cos`,
 //!   `tan`, `arcsin`, `arccos`, `arctan`, `sinh`, `cosh`, `tanh`, `erf`,
 //!   `round`, `floor`, `ceil`), each taking one real argument;
-//! - [`native_constants`]: the four real constants `pi`, `e`, `inf`, `nan`.
+//! - [`list_native_constants`]: the four real constants `pi`, `e`, `inf`, `nan`.
 //!
 //! No name appears twice across the three tables. A composed body refers to
 //! other built-in functions by name through call nodes, and to nothing but
@@ -448,7 +448,7 @@ impl NativeConstantSpec {
 /// [`find_composed_function`] in the process, and every later call returns
 /// the same functions with the same parameters.
 #[must_use]
-pub fn composed_functions() -> &'static [ComposedFunction] {
+pub fn list_composed_functions() -> &'static [ComposedFunction] {
     &*COMPOSED_FUNCTIONS
 }
 
@@ -457,14 +457,14 @@ pub fn composed_functions() -> &'static [ComposedFunction] {
 /// `arcsin`, `arccos`, `arctan`, `sinh`, `cosh`, `tanh`, `erf`, `round`,
 /// `floor`, `ceil`.
 #[must_use]
-pub fn native_functions() -> &'static [NativeFunctionSignature] {
+pub fn list_native_functions() -> &'static [NativeFunctionSignature] {
     &NATIVE_FUNCTIONS
 }
 
 /// Return the built-in constants in catalogue order: `pi`, `e`, `inf`,
 /// `nan`.
 #[must_use]
-pub fn native_constants() -> &'static [NativeConstantSpec] {
+pub fn list_native_constants() -> &'static [NativeConstantSpec] {
     &NATIVE_CONSTANTS
 }
 
@@ -482,7 +482,7 @@ pub fn native_constants() -> &'static [NativeConstantSpec] {
 /// ```
 #[must_use]
 pub fn find_composed_function(name: &str) -> Option<&'static ComposedFunction> {
-    composed_functions()
+    list_composed_functions()
         .iter()
         .find(|function| function.name == name)
 }
@@ -491,7 +491,7 @@ pub fn find_composed_function(name: &str) -> Option<&'static ComposedFunction> {
 /// `name`, or `None` if no native built-in has that name.
 #[must_use]
 pub fn find_native_function(name: &str) -> Option<&'static NativeFunctionSignature> {
-    native_functions()
+    list_native_functions()
         .iter()
         .find(|function| function.name == name)
 }
@@ -500,7 +500,7 @@ pub fn find_native_function(name: &str) -> Option<&'static NativeFunctionSignatu
 /// built-in constant has that name.
 #[must_use]
 pub fn find_native_constant(name: &str) -> Option<&'static NativeConstantSpec> {
-    native_constants()
+    list_native_constants()
         .iter()
         .find(|constant| constant.name == name)
 }

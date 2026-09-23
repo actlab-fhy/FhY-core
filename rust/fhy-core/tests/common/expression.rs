@@ -9,7 +9,7 @@ use std::thread;
 
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::builtins::{
-    ComposedFunction, NativeFunctionSignature, composed_functions, native_functions,
+    ComposedFunction, NativeFunctionSignature, list_composed_functions, list_native_functions,
 };
 use fhy_core::symbolic::expression::{
     BinaryOperation, Expression, ExpressionKind, LiteralKind, LiteralValue, UnaryOperation,
@@ -140,10 +140,14 @@ pub const ALL_BINARY_OPERATIONS: [BinaryOperation; 15] = [
 /// Function names the generated calls use: every built-in function and two
 /// names no catalogue knows.
 static CALL_NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    composed_functions()
+    list_composed_functions()
         .iter()
         .map(ComposedFunction::name)
-        .chain(native_functions().iter().map(NativeFunctionSignature::name))
+        .chain(
+            list_native_functions()
+                .iter()
+                .map(NativeFunctionSignature::name),
+        )
         .chain(["f", "g"])
         .collect()
 });

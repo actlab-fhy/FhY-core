@@ -17,9 +17,9 @@ use std::thread;
 
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::builtins::{
-    ComposedFunction, NativeConstantSpec, NativeFunctionSignature, composed_functions,
-    find_composed_function, find_native_constant, find_native_function, native_constants,
-    native_functions,
+    ComposedFunction, NativeConstantSpec, NativeFunctionSignature, find_composed_function,
+    find_native_constant, find_native_function, list_composed_functions, list_native_constants,
+    list_native_functions,
 };
 use fhy_core::symbolic::expression::{
     BinaryOperation, CallExpression, Expression, ExpressionKind, FormatOptions, FunctionSort,
@@ -281,7 +281,7 @@ fn find_literal(expression: &Expression) -> LiteralKind<'_> {
 /// Return the ids of every composed function's parameters, in catalogue
 /// order, each paired with its function's name.
 fn collect_parameter_ids() -> Vec<(&'static str, Vec<u64>)> {
-    composed_functions()
+    list_composed_functions()
         .iter()
         .map(|function| {
             (
@@ -295,7 +295,7 @@ fn collect_parameter_ids() -> Vec<(&'static str, Vec<u64>)> {
 /// Test the composed table lists the 16 composed built-ins in catalogue order.
 #[test]
 fn composed_functions_lists_the_composed_builtins_in_catalogue_order() {
-    let names: Vec<&str> = composed_functions()
+    let names: Vec<&str> = list_composed_functions()
         .iter()
         .map(ComposedFunction::name)
         .collect();
@@ -306,7 +306,7 @@ fn composed_functions_lists_the_composed_builtins_in_catalogue_order() {
 /// Test the native table lists the 19 native built-ins in catalogue order.
 #[test]
 fn native_functions_lists_the_native_builtins_in_catalogue_order() {
-    let names: Vec<&str> = native_functions()
+    let names: Vec<&str> = list_native_functions()
         .iter()
         .map(NativeFunctionSignature::name)
         .collect();
@@ -317,7 +317,7 @@ fn native_functions_lists_the_native_builtins_in_catalogue_order() {
 /// Test the constant table lists `pi`, `e`, `inf`, `nan` in that order.
 #[test]
 fn native_constants_lists_the_builtin_constants_in_catalogue_order() {
-    let names: Vec<&str> = native_constants()
+    let names: Vec<&str> = list_native_constants()
         .iter()
         .map(NativeConstantSpec::name)
         .collect();
@@ -328,11 +328,15 @@ fn native_constants_lists_the_builtin_constants_in_catalogue_order() {
 /// Test no name appears twice across the three tables.
 #[test]
 fn builtin_catalogue_names_are_unique_across_the_tables() {
-    let names: Vec<&str> = composed_functions()
+    let names: Vec<&str> = list_composed_functions()
         .iter()
         .map(ComposedFunction::name)
-        .chain(native_functions().iter().map(NativeFunctionSignature::name))
-        .chain(native_constants().iter().map(NativeConstantSpec::name))
+        .chain(
+            list_native_functions()
+                .iter()
+                .map(NativeFunctionSignature::name),
+        )
+        .chain(list_native_constants().iter().map(NativeConstantSpec::name))
         .collect();
 
     let distinct: HashSet<&str> = names.iter().copied().collect();
@@ -366,7 +370,7 @@ fn find_composed_function_returns_the_listed_entry(
 ) {
     let found = find_composed_function(name);
 
-    let listed = composed_functions()
+    let listed = list_composed_functions()
         .iter()
         .find(|function| function.name() == name)
         .unwrap_or_else(|| panic!("{name} is listed"));
@@ -389,7 +393,7 @@ fn find_native_function_returns_the_listed_entry(
 ) {
     let found = find_native_function(name);
 
-    let listed = native_functions()
+    let listed = list_native_functions()
         .iter()
         .find(|function| function.name() == name)
         .unwrap_or_else(|| panic!("{name} is listed"));
@@ -406,7 +410,7 @@ fn find_native_function_returns_the_listed_entry(
 fn find_native_constant_returns_the_listed_entry(#[values("pi", "e", "inf", "nan")] name: &str) {
     let found = find_native_constant(name);
 
-    let listed = native_constants()
+    let listed = list_native_constants()
         .iter()
         .find(|constant| constant.name() == name)
         .unwrap_or_else(|| panic!("{name} is listed"));
@@ -838,10 +842,10 @@ fn composed_function_parameters_are_distinct_across_the_catalogue() {
 /// Test repeated calls return the same table with the same parameters.
 #[test]
 fn composed_functions_returns_the_same_table_on_every_call() {
-    let first = composed_functions();
+    let first = list_composed_functions();
     let first_ids = collect_parameter_ids();
 
-    let second = composed_functions();
+    let second = list_composed_functions();
 
     assert!(std::ptr::eq(first, second), "the table was rebuilt");
     assert_eq!(collect_parameter_ids(), first_ids);
@@ -876,7 +880,7 @@ fn composed_function_parameters_differ_from_new_identifiers() {
     let (fresh_x, _) = build_identifier("x");
     let (fresh_a, _) = build_identifier("a");
 
-    let parameters: Vec<&Identifier> = composed_functions()
+    let parameters: Vec<&Identifier> = list_composed_functions()
         .iter()
         .flat_map(ComposedFunction::parameters)
         .collect();
