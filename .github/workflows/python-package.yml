@@ -253,28 +253,38 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Verify required jobs succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          echo "style: ${{ needs.style.result }}"
-          echo "rust: ${{ needs.rust.result }}"
-          echo "rust-msrv: ${{ needs['rust-msrv'].result }}"
-          echo "tests: ${{ needs.tests.result }}"
-          echo "property: ${{ needs.property.result }}"
-          echo "golden-expanded: ${{ needs['golden-expanded'].result }}"
-          if [[ "${{ needs.style.result }}" != "success" \
-             || "${{ needs.rust.result }}" != "success" \
-             || "${{ needs['rust-msrv'].result }}" != "success" \
-             || "${{ needs.tests.result }}" != "success" ]]; then
-            echo "::error::A required job did not succeed."
-            exit 1
-          fi
-          # property and golden-expanded are conditional: skipped is fine
-          # (dev PRs), failure is not.
-          if [[ "${{ needs.property.result }}" != "success" && "${{ needs.property.result }}" != "skipped" ]]; then
-            echo "::error::The property job ran and did not succeed."
-            exit 1
-          fi
-          if [[ "${{ needs['golden-expanded'].result }}" != "success" && "${{ needs['golden-expanded'].result }}" != "skipped" ]]; then
-            echo "::error::The golden-expanded job ran and did not succeed."
+          required=(style rust rust-msrv tests)
+          # Conditional jobs skip on dev PRs, so skipped is fine for them;
+          # any other result besides success is not.
+          conditional=(property golden-expanded)
+          failed=0
+          checked=" ${required[*]} ${conditional[*]} "
+          for job in $(jq -r 'keys[]' <<<"$NEEDS"); do
+            if [[ "$checked" != *" $job "* ]]; then
+              echo "::error::The $job job is needed but not checked here."
+              failed=1
+            fi
+          done
+          for job in "${required[@]}"; do
+            result=$(jq -r --arg job "$job" '.[$job].result' <<<"$NEEDS")
+            echo "$job: $result"
+            if [[ "$result" != "success" ]]; then
+              echo "::error::The required $job job did not succeed."
+              failed=1
+            fi
+          done
+          for job in "${conditional[@]}"; do
+            result=$(jq -r --arg job "$job" '.[$job].result' <<<"$NEEDS")
+            echo "$job: $result"
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "::error::The $job job ran and did not succeed."
+              failed=1
+            fi
+          done
+          if (( failed )); then
             exit 1
           fi
           echo "All required jobs passed."
