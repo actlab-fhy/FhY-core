@@ -10,17 +10,19 @@
 //!
 //! Every script in the golden data runs against the process-global
 //! `OpAttribute` and `ValueDomain` registries, because their constructors
-//! have no other registry to intern into. Both `#[test]` functions below
-//! therefore replay their whole corpus as ONE sequential loop, never split
-//! across several `#[test]` functions: cargo schedules different `#[test]`
-//! functions on separate threads, and running two of these concurrently
-//! would race a `clear()` in one script against an intern in another.
+//! have no other registry to intern into. Each `#[test]` function below
+//! therefore replays its whole corpus as one sequential loop, and both hold
+//! one shared `static` `Mutex<()>` for their whole duration: cargo runs
+//! `#[test]` functions on separate threads, so without it the default and
+//! the ignored expanded-corpus test would race a `clear()` in one script
+//! against an intern in the other under `--include-ignored`.
 
 mod common;
 
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use fhy_core::identifier::Identifier;
 use fhy_core::interned::{Canonical, InternOutcome, Interned};
@@ -1145,10 +1147,22 @@ fn assert_default_slots_match_rust(document: &Value) {
     }
 }
 
+/// Serializes the corpus replays, since every script clears and interns into
+/// the process-global registries.
+static REPLAY_LOCK: Mutex<()> = Mutex::new(());
+
+/// Lock [`REPLAY_LOCK`] for the caller's whole replay, recovering from
+/// poisoning: every script creates fresh identifiers, so a replay that
+/// panicked leaves nothing behind that another replay reads.
+fn lock_replay() -> MutexGuard<'static, ()> {
+    REPLAY_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// Test the Rust `OpAttribute` and `ValueDomain` registries reproduce every
 /// observation the Python oracle recorded for the golden operation scripts.
 #[test]
 fn tag_type_registries_match_the_python_oracle() {
+    let _replay = lock_replay();
     common::replay_golden_document(
         GOLDEN_JSON,
         MIN_CASES,
@@ -1166,6 +1180,7 @@ fn tag_type_registries_match_the_python_oracle() {
 #[ignore = "requires an expanded corpus generated from the Python oracle"]
 fn tag_type_registries_match_the_python_oracle_on_an_expanded_corpus() {
     let (path, json) = common::read_expanded_corpus("FHY_TAG_TYPE_CORPUS");
+    let _replay = lock_replay();
 
     common::replay_golden_document(
         &json,
