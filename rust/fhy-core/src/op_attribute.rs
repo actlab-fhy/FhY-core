@@ -47,12 +47,15 @@ impl Decode for OpAttribute {
     type Payload = OpAttributePayload;
 
     fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
+        Self::intern_registry().initialize();
         Ok(Self::create(payload.name.restore(), payload.description))
     }
 }
 
 /// Decoding checks every field of the payload before it restores the name, so
-/// a rejected payload leaves the id counter untouched.
+/// a rejected payload leaves the id counter untouched. An accepted payload
+/// registers the shipped defaults first if this is the registry's first use,
+/// so their names draw ids before the payload's name can exhaust the counter.
 impl<'de> Deserialize<'de> for OpAttribute {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         decode::deserialize_via_payload(deserializer)
@@ -248,8 +251,10 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+    use crate::identifier::{IdSpaceExhausted, try_allocate_id};
     use crate::test_support::{
-        compute_hash, has_counter_passed, hold_id_counter, reserve_far_ahead_ids, reserve_pinned_id,
+        assert_isolated_test_passes, compute_hash, has_counter_passed, hold_id_counter,
+        is_isolated_run, reserve_far_ahead_ids, reserve_pinned_id,
     };
 
     /// Serializes the test that clears the process-wide registry against the
@@ -647,5 +652,71 @@ mod tests {
 
         assert!(rendered.contains("debug-attribute"), "{rendered}");
         assert!(rendered.contains("debug desc"), "{rendered}");
+    }
+
+    /// Return the JSON payload of an attribute named with the largest
+    /// issuable id, which exhausts the id counter when restored.
+    fn encode_largest_id_payload() -> String {
+        format!(
+            "{{\"name\":{{\"id\":{},\"name_hint\":\"largest\"}},\"description\":\"desc\"}}",
+            u64::MAX - 1
+        )
+    }
+
+    /// Check that the shipped defaults survive a decode that exhausts the id
+    /// counter before the registry's first use. Only meaningful in the child
+    /// process that
+    /// [`decoding_the_largest_id_as_the_first_use_keeps_the_defaults`]
+    /// starts.
+    #[test]
+    #[ignore = "exhausts the process-global counter; run through assert_isolated_test_passes"]
+    fn decoding_the_largest_id_as_the_first_use_keeps_the_defaults_in_isolation() {
+        if !is_isolated_run() {
+            return;
+        }
+
+        let restored: Canonical<OpAttribute> =
+            serde_json::from_str(&encode_largest_id_payload()).expect("u64::MAX - 1 is valid");
+
+        assert_eq!(restored.name().id(), u64::MAX - 1);
+        assert_eq!(try_allocate_id(), Err(IdSpaceExhausted));
+        assert_eq!(get_commutative().name().name_hint(), "commutative");
+        assert_eq!(get_elementwise().name().name_hint(), "elementwise");
+    }
+
+    #[test]
+    fn decoding_the_largest_id_as_the_first_use_keeps_the_defaults() {
+        assert_isolated_test_passes(
+            "op_attribute::tests::\
+             decoding_the_largest_id_as_the_first_use_keeps_the_defaults_in_isolation",
+        );
+    }
+
+    /// Check that decoding a bare attribute, which interns nothing, still
+    /// leaves the shipped defaults buildable after it exhausts the id
+    /// counter. Only meaningful in the child process that
+    /// [`decoding_a_bare_largest_id_as_the_first_use_keeps_the_defaults`]
+    /// starts.
+    #[test]
+    #[ignore = "exhausts the process-global counter; run through assert_isolated_test_passes"]
+    fn decoding_a_bare_largest_id_as_the_first_use_keeps_the_defaults_in_isolation() {
+        if !is_isolated_run() {
+            return;
+        }
+
+        let restored: OpAttribute =
+            serde_json::from_str(&encode_largest_id_payload()).expect("u64::MAX - 1 is valid");
+
+        assert_eq!(restored.name().id(), u64::MAX - 1);
+        assert_eq!(try_allocate_id(), Err(IdSpaceExhausted));
+        assert_eq!(get_pure().name().name_hint(), "pure");
+    }
+
+    #[test]
+    fn decoding_a_bare_largest_id_as_the_first_use_keeps_the_defaults() {
+        assert_isolated_test_passes(
+            "op_attribute::tests::\
+             decoding_a_bare_largest_id_as_the_first_use_keeps_the_defaults_in_isolation",
+        );
     }
 }

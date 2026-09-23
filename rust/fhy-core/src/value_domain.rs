@@ -139,14 +139,17 @@ impl Decode for ValueDomain {
 
     /// Build the domain this level describes, leaving it unregistered.
     ///
-    /// Restore the name, then check, build and intern the parent level, the
-    /// order in which the Python deserializer takes these steps.
+    /// Register the shipped defaults if this is the registry's first use,
+    /// then restore the name, then check, build and intern the parent level.
+    /// The Python deserializer takes the last three steps in this order, and
+    /// its defaults exist from import, before any id is restored.
     ///
     /// # Errors
     ///
     /// Returns an error if a nested level is malformed or conflicts with the
     /// canonical instance for its name.
     fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
+        Self::intern_registry().initialize();
         let name = payload.name.restore();
         let parent = match payload.parent {
             None => None,
@@ -160,8 +163,9 @@ impl Decode for ValueDomain {
 /// level whose fields are all present, known and well typed restores its name
 /// before the level nested in its `parent` is checked, and each parent is
 /// interned, and so registered, before the domain that holds it is built.
-/// A payload rejected for its structure therefore registers nothing, though
-/// the names of the levels above the defect stay restored. A payload rejected
+/// A payload rejected for its structure therefore registers nothing beyond
+/// the shipped defaults, though the names of the levels above the defect stay
+/// restored. A payload rejected
 /// because a level conflicts with its canonical instance leaves the fresh
 /// parents below that level registered.
 ///
@@ -288,8 +292,10 @@ mod tests {
     use super::*;
     use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+    use crate::identifier::{IdSpaceExhausted, try_allocate_id};
     use crate::test_support::{
-        compute_hash, has_counter_passed, hold_id_counter, reserve_far_ahead_ids, reserve_pinned_id,
+        assert_isolated_test_passes, compute_hash, has_counter_passed, hold_id_counter,
+        is_isolated_run, reserve_far_ahead_ids, reserve_pinned_id,
     };
 
     /// Serializes the test that clears the process-wide registry against the
@@ -1017,5 +1023,74 @@ mod tests {
 
         assert!(rendered.contains("debug-domain"), "{rendered}");
         assert!(rendered.contains("debug desc"), "{rendered}");
+    }
+
+    /// Check that the shipped defaults survive a decode that exhausts the id
+    /// counter before the registry's first use. Only meaningful in the child
+    /// process that
+    /// [`decoding_the_largest_id_as_the_first_use_keeps_the_defaults`]
+    /// starts.
+    #[test]
+    #[ignore = "exhausts the process-global counter; run through assert_isolated_test_passes"]
+    fn decoding_the_largest_id_as_the_first_use_keeps_the_defaults_in_isolation() {
+        if !is_isolated_run() {
+            return;
+        }
+        let json = encode_domain_payload(u64::MAX - 1, "null", "");
+
+        let restored: Canonical<ValueDomain> =
+            serde_json::from_str(&json).expect("u64::MAX - 1 is valid");
+
+        assert_eq!(restored.name().id(), u64::MAX - 1);
+        assert_eq!(try_allocate_id(), Err(IdSpaceExhausted));
+        assert_eq!(get_data_domain().name().name_hint(), "data");
+        assert_eq!(get_address_domain().name().name_hint(), "address");
+    }
+
+    #[test]
+    fn decoding_the_largest_id_as_the_first_use_keeps_the_defaults() {
+        assert_isolated_test_passes(
+            "value_domain::tests::\
+             decoding_the_largest_id_as_the_first_use_keeps_the_defaults_in_isolation",
+        );
+    }
+
+    /// Check that a bare domain whose name exhausts the id counter still
+    /// decodes and interns its parent when that parent is the registry's
+    /// first use. Only meaningful in the child process that
+    /// [`decoding_a_bare_largest_id_over_a_parent_keeps_the_defaults`]
+    /// starts.
+    #[test]
+    #[ignore = "exhausts the process-global counter; run through assert_isolated_test_passes"]
+    fn decoding_a_bare_largest_id_over_a_parent_keeps_the_defaults_in_isolation() {
+        if !is_isolated_run() {
+            return;
+        }
+        let parent_id = u64::MAX - 2;
+        let json = encode_domain_payload(
+            u64::MAX - 1,
+            &encode_domain_payload(parent_id, "null", ""),
+            "",
+        );
+
+        let restored: ValueDomain = serde_json::from_str(&json).expect("u64::MAX - 1 is valid");
+
+        assert_eq!(restored.name().id(), u64::MAX - 1);
+        let parent = restored.parent().expect("the payload names a parent");
+        assert_eq!(parent.name().id(), parent_id);
+        assert_eq!(
+            ValueDomain::intern_registry().get(parent.name()).as_ref(),
+            Some(parent)
+        );
+        assert_eq!(try_allocate_id(), Err(IdSpaceExhausted));
+        assert_eq!(get_data_domain().name().name_hint(), "data");
+    }
+
+    #[test]
+    fn decoding_a_bare_largest_id_over_a_parent_keeps_the_defaults() {
+        assert_isolated_test_passes(
+            "value_domain::tests::\
+             decoding_a_bare_largest_id_over_a_parent_keeps_the_defaults_in_isolation",
+        );
     }
 }

@@ -247,6 +247,20 @@ impl<T: Interned> InternRegistry<T> {
         self.write_state().restore_defaults();
     }
 
+    /// Register the defaults now if this is the registry's first use.
+    ///
+    /// A decode calls this before it restores any identifier, so the
+    /// defaults' names draw their ids from the counter before a payload's id
+    /// can exhaust it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this is the registry's first use and `create_defaults`
+    /// panics.
+    pub(crate) fn initialize(&self) {
+        self.state();
+    }
+
     /// Return the registry's state, initializing it from `create_defaults`
     /// on first use.
     fn state(&self) -> &RwLock<RegistryState<T>> {
