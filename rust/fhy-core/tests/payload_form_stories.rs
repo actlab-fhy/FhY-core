@@ -201,9 +201,9 @@ fn a_payload_given_as_a_sequence_is_refused(#[case] payload_type: PayloadType) {
     );
 }
 
-/// Test a refused sequence payload leaves no trace: the identifier it names
-/// is not restored, so a later map payload naming the same id registers a
-/// fresh canonical attribute rather than finding one.
+/// Test a refused sequence payload registers no attribute under the name it
+/// carries, so a later map payload naming the same id registers a fresh
+/// canonical attribute rather than finding one.
 #[test]
 fn a_refused_sequence_payload_registers_nothing() {
     let name = build_identifier_payload("sequence-never-registered");

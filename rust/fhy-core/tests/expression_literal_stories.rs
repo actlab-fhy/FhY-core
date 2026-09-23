@@ -328,8 +328,8 @@ fn literal_value_negative_zero_equals_zero() {
     assert_eq!(zero.canonical_key(), negative_zero.canonical_key());
 }
 
-/// Every bucket, `-0.0`, NaNs of both signs, and decimals too long for a
-/// 28-digit decimal context.
+/// Every bucket, `-0.0`, NaNs of both signs, and decimals longer than 28
+/// significant digits.
 const EQUIVALENCE_SAMPLE: [&str; 22] = [
     "b:true",
     "b:false",

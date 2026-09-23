@@ -27,8 +27,9 @@ pub const DEEP_TREE_DEPTH: usize = 4000;
 /// recurses once per pattern level.
 pub const PATTERN_MATCH_STACK_BYTES: usize = 16 << 20;
 
-/// Stack size for a serialization round trip of a deep tree through
-/// `serde_json` values, whose own recursion needs the most room.
+/// Stack size for a serialization round trip of a [`DEEP_TREE_DEPTH`]-level
+/// tree through `serde_json` values: twice the 32 MiB `Expression`
+/// documents for an unoptimized build, as headroom.
 pub const SERIALIZATION_STACK_BYTES: usize = 64 << 20;
 
 /// Mint an identifier named `name` and return it with a reference to it.

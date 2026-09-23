@@ -59,7 +59,7 @@ fn build_named(name: &str, child: Provenance) -> Provenance {
     Provenance::Named(NamedProvenance::try_new(name, child).expect("name is non-empty"))
 }
 
-/// Build the call-site provenance of `callee` at `caller`.
+/// Build the call-site provenance of `called` at `call_site`.
 fn build_call_site(called: Provenance, call_site: Provenance) -> Provenance {
     Provenance::CallSite(CallSiteProvenance::new(called, call_site))
 }
@@ -1374,8 +1374,8 @@ fn provenance_decode_rejects_malformed_payloads(#[case] payload: Value, #[case] 
     assert_decode_rejected::<Provenance>(payload, expected);
 }
 
-/// Test a line, column or offset beyond `u64` is rejected on decode, where
-/// an unbounded integer would be accepted.
+/// Test a line beyond `u64::MAX` is rejected on decode: lines, columns and
+/// offsets decode as `u64`.
 #[rstest]
 #[case::huge_line(json!({"line": 1_180_591_620_717_411_303_424_u128, "column": 1}))]
 #[case::line_just_past_u64(json!({"line": 18_446_744_073_709_551_616_u128, "column": 1}))]

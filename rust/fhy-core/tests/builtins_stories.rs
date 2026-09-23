@@ -839,7 +839,7 @@ fn composed_functions_returns_the_same_table_on_every_call() {
     assert_eq!(collect_parameter_ids(), first_ids);
 }
 
-/// Test threads racing to first use the catalogue all see one set of
+/// Test threads reading the catalogue concurrently all see one set of
 /// parameters.
 #[test]
 fn composed_functions_agrees_across_threads() {
@@ -909,7 +909,7 @@ fn composed_function_max_body_with_literal_arguments_yields_the_literal_piecewis
 }
 
 /// Test the clamp `max(low, min(value, high))`, inlined through the `min`
-/// and `max` bodies, yields the nested piecewise a scheduling pass expects.
+/// and `max` bodies, yields the nested piecewise.
 #[test]
 fn composed_function_max_of_min_inlines_to_a_nested_clamp() {
     let (_, low) = build_identifier("low");

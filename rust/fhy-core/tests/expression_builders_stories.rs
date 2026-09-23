@@ -788,7 +788,7 @@ fn build_call_returns_a_call_with_name_and_arguments() {
     assert!(Expression::ptr_eq(&node.arguments()[1], &second));
 }
 
-/// Test the call builder takes no arguments.
+/// Test the call builder accepts zero arguments.
 #[test]
 fn build_call_supports_zero_arguments() {
     let built = build_call("nullary", Vec::<Expression>::new()).expect("a named call");

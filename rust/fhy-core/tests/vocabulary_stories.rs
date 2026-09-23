@@ -442,9 +442,8 @@ fn vocabulary_rejection_names_the_word_and_the_expected_names(
     assert_eq!(message, expected);
 }
 
-/// Test a table from symbol back to operation recovers every unary and every
-/// binary operation, so a parser can map printed operators back to
-/// operations.
+/// Test no two operations of one kind share a symbol, so a table from symbol
+/// back to operation recovers every unary and every binary operation.
 #[test]
 fn operation_symbols_invert_to_their_operations() {
     let unary_by_symbol: HashMap<&str, UnaryOperation> = ALL_UNARY_OPERATIONS

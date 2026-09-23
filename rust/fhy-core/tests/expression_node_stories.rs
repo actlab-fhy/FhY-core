@@ -544,7 +544,7 @@ fn expression_rebuild_with_children_keeps_kind_and_operation() {
 }
 
 /// Test rebuilding a unary, binary, or call node from a different number of
-/// children is refused, a call included.
+/// children is refused.
 #[rstest]
 #[case::unary_none(Expression::new_unary(UnaryOperation::Negate, 1), 0, 1)]
 #[case::unary_two(Expression::new_unary(UnaryOperation::Negate, 1), 2, 1)]
@@ -806,7 +806,8 @@ fn expression_substitute_does_not_chain_replacements() {
     assert_eq!(result, &y_reference + 1);
 }
 
-/// Test substitution refuses to put a number in a piecewise condition.
+/// Test substitution refuses to put a numeric literal in a piecewise case
+/// condition.
 #[test]
 fn expression_substitute_refuses_a_number_in_a_piecewise_condition() {
     let (c, condition) = build_identifier("c");
