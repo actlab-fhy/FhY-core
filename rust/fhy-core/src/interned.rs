@@ -478,6 +478,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
 
+    use crate::test_support::assert_send_sync;
+
     /// Interned fixture type: a name-keyed tag carrying a `note` that
     /// identifies the exact instance under test.
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1202,10 +1204,7 @@ mod tests {
         assert!(debug_text.contains("InternRegistry"), "got {debug_text}");
     }
 
-    /// Compile-time check that the public types remain usable from multiple
-    /// threads.
-    const fn assert_send_sync<T: Send + Sync>() {}
-
+    /// The public types stay usable from multiple threads.
     const _: () = {
         assert_send_sync::<Canonical<Tag>>();
         assert_send_sync::<InternRegistry<Tag>>();

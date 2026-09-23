@@ -93,6 +93,10 @@ pub(crate) fn assert_isolated_test_passes(test_path: &str) {
     );
 }
 
+/// Compile-time check that `T` can be shared and sent across threads, for use
+/// in a `const _: () = { ... };` item.
+pub(crate) const fn assert_send_sync<T: Send + Sync>() {}
+
 /// Return `value`'s hash under the default hasher.
 ///
 /// Call it on the value itself, not on a handle to it: a

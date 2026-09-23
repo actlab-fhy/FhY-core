@@ -222,7 +222,7 @@ mod tests {
     use std::thread;
 
     use crate::identifier::Identifier;
-    use crate::test_support::{compute_hash, reserve_pinned_id};
+    use crate::test_support::{assert_send_sync, compute_hash, reserve_pinned_id};
 
     #[test]
     fn identifiers_sharing_a_name_hint_behave_as_one_key() {
@@ -479,4 +479,8 @@ mod tests {
         assert_ne!(unscoped_again, unscoped);
         assert_eq!(Identifier::new("shared"), scoped);
     }
+
+    /// A handle stays usable from other threads, which is its purpose. The
+    /// scope itself is deliberately `!Send`; see its `compile_fail` example.
+    const _: () = assert_send_sync::<DeterministicIdentifierScopeHandle>();
 }

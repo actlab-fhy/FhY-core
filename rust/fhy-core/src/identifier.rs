@@ -363,7 +363,7 @@ mod tests {
     use std::collections::HashSet;
     use std::thread;
 
-    use crate::test_support::{assert_isolated_test_passes, is_isolated_run};
+    use crate::test_support::{assert_isolated_test_passes, assert_send_sync, is_isolated_run};
 
     #[test]
     fn new_identifiers_get_increasing_ids() {
@@ -744,4 +744,11 @@ mod tests {
 
         assert_eq!(thing.identifier().id(), expected_id);
     }
+
+    /// The public types stay usable from multiple threads. The tag types are
+    /// covered by `Interned`'s own `Send + Sync` bounds.
+    const _: () = {
+        assert_send_sync::<Identifier>();
+        assert_send_sync::<IdSpaceExhausted>();
+    };
 }
