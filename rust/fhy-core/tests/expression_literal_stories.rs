@@ -7,8 +7,9 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use fhy_core::symbolic::expression::{FunctionSort, LiteralKind, LiteralTextError, LiteralValue};
-use num_bigint::BigInt;
+use fhy_core::symbolic::expression::{
+    BigInt, FunctionSort, LiteralKind, LiteralTextError, LiteralValue,
+};
 use rstest::rstest;
 
 /// Parse `text` as a literal, failing the test if it is refused.
@@ -729,4 +730,19 @@ fn literal_value_edge_case_has_its_key_bucket_and_sorts(
     assert_eq!(key, expected_key);
     assert_eq!(integer_valued, expected_integer_valued);
     assert_eq!(sort_verdicts, expected_sort_verdicts);
+}
+
+/// Test the re-exported `BigInt` is num-bigint's own type, so a value built
+/// with num-bigint becomes a literal without conversion.
+#[test]
+fn big_int_re_export_is_the_num_bigint_type() {
+    let from_num_bigint: num_bigint::BigInt =
+        "123456789012345678901234567890".parse().expect("digits");
+
+    let re_exported: BigInt = from_num_bigint.clone();
+
+    assert_eq!(
+        LiteralValue::from(re_exported),
+        LiteralValue::from(from_num_bigint)
+    );
 }

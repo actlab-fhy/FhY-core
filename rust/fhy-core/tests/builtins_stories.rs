@@ -22,10 +22,10 @@ use fhy_core::symbolic::expression::builtins::{
     list_native_functions,
 };
 use fhy_core::symbolic::expression::{
-    BinaryOperation, CallExpression, Expression, ExpressionKind, FormatOptions, FunctionSort,
-    LiteralKind, Notation, PiecewiseExpression, UnaryOperation, build_piecewise, format_expression,
+    BigInt, BinaryOperation, CallExpression, Expression, ExpressionKind, FormatOptions,
+    FunctionSort, LiteralKind, Notation, PiecewiseExpression, UnaryOperation, build_piecewise,
+    format_expression,
 };
-use num_bigint::BigInt;
 use rstest::rstest;
 
 use expression_support::{build_identifier, build_literal};

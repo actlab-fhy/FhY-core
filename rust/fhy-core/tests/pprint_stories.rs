@@ -16,10 +16,9 @@ use expression_support::{
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
-    BinaryOperation, Expression, FormatOptions, IdentifierStyle, LiteralValue, Notation,
+    BigInt, BinaryOperation, Expression, FormatOptions, IdentifierStyle, LiteralValue, Notation,
     UnaryOperation, build_call, build_logical_and, build_piecewise, format_expression,
 };
-use num_bigint::BigInt;
 use rstest::rstest;
 
 /// Stack size of the thread the deep trees are printed on: far below what a

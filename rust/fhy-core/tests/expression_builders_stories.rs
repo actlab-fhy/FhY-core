@@ -10,10 +10,9 @@ pub mod expression_support;
 use expression_support::{build_identifier, build_literal, build_text_literal};
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
-    BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, IntoOperand, LiteralValue,
-    UnaryOperation, build_call, build_logical_and, build_logical_or, build_piecewise,
+    BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, IntoOperand,
+    LiteralValue, UnaryOperation, build_call, build_logical_and, build_logical_or, build_piecewise,
 };
-use num_bigint::BigInt;
 use rstest::rstest;
 
 /// The binary operations reachable from an expression on the left, each

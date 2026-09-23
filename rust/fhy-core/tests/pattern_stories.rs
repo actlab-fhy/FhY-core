@@ -23,10 +23,9 @@ use fhy_core::symbolic::expression::pattern::{
     CallbackError, MatchBindings, Pattern, PatternError, does_pattern_match, match_pattern,
 };
 use fhy_core::symbolic::expression::{
-    BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralValue,
+    BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralValue,
     UnaryOperation, build_call, build_piecewise,
 };
-use num_bigint::BigInt;
 use pattern_support::{
     ProbeError, build_alternatives, build_capture, build_capture_of, build_literal_pattern,
     build_piecewise_pattern, expect_bound, expect_match, expect_probe_error, match_infallibly,

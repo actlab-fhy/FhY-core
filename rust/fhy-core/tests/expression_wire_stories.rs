@@ -17,10 +17,9 @@ use expression_support::{
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
-    BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralKind, UnaryOperation,
-    build_call, build_piecewise,
+    BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralKind,
+    UnaryOperation, build_call, build_piecewise,
 };
-use num_bigint::BigInt;
 use rstest::rstest;
 use serde_json::{Value, json};
 

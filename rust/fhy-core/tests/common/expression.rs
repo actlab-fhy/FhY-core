@@ -12,10 +12,9 @@ use fhy_core::symbolic::expression::builtins::{
     ComposedFunction, NativeFunctionSignature, list_composed_functions, list_native_functions,
 };
 use fhy_core::symbolic::expression::{
-    BinaryOperation, Expression, ExpressionKind, LiteralKind, LiteralValue, UnaryOperation,
+    BigInt, BinaryOperation, Expression, ExpressionKind, LiteralKind, LiteralValue, UnaryOperation,
     build_call, build_logical_and, build_piecewise,
 };
-use num_bigint::BigInt;
 use proptest::num::f64 as f64_class;
 use proptest::prelude::*;
 use proptest::sample::select;
