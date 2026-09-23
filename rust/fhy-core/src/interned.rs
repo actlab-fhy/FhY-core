@@ -435,6 +435,19 @@ pub(crate) fn intern_decoded<T: Interned + Eq, E: serde::de::Error>(
     }
 }
 
+/// Return the canonical instance of `T` registered under a default's key.
+///
+/// # Panics
+///
+/// Panics if `key` is not the key of one of the defaults `T`'s registry was
+/// created with, since the registry registers every default on its first
+/// use.
+pub(crate) fn require_default<T: Interned>(key: &T::Key) -> Canonical<T> {
+    T::intern_registry()
+        .require(key)
+        .expect("the registry registers every default on its first use")
+}
+
 /// No canonical instance is registered under a key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotInternedError<K> {

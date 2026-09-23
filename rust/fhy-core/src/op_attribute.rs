@@ -27,7 +27,7 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use crate::decode::{self, Decode};
 
 use crate::identifier::{HasIdentifier, Identifier, IdentifierPayload};
-use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned};
+use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned, require_default};
 
 /// Open semantic tag attached to a compiler operation.
 ///
@@ -195,28 +195,16 @@ fn create_default_attributes() -> Vec<OpAttribute> {
     ]
 }
 
-/// Return the canonical attribute registered under a shipped default's name.
-///
-/// # Panics
-///
-/// Panics if `name` is not one of the names [`create_default_attributes`]
-/// builds, since the registry registers every default on its first use.
-fn require_default(name: &Identifier) -> Canonical<OpAttribute> {
-    OpAttribute::intern_registry()
-        .require(name)
-        .expect("the registry registers every default on its first use")
-}
-
 static COMMUTATIVE: LazyLock<Canonical<OpAttribute>> =
-    LazyLock::new(|| require_default(&COMMUTATIVE_NAME));
+    LazyLock::new(|| require_default(&*COMMUTATIVE_NAME));
 
 static ASSOCIATIVE: LazyLock<Canonical<OpAttribute>> =
-    LazyLock::new(|| require_default(&ASSOCIATIVE_NAME));
+    LazyLock::new(|| require_default(&*ASSOCIATIVE_NAME));
 
-static PURE: LazyLock<Canonical<OpAttribute>> = LazyLock::new(|| require_default(&PURE_NAME));
+static PURE: LazyLock<Canonical<OpAttribute>> = LazyLock::new(|| require_default(&*PURE_NAME));
 
 static ELEMENTWISE: LazyLock<Canonical<OpAttribute>> =
-    LazyLock::new(|| require_default(&ELEMENTWISE_NAME));
+    LazyLock::new(|| require_default(&*ELEMENTWISE_NAME));
 
 /// Return the attribute for ops whose output is invariant under operand swap.
 #[must_use]

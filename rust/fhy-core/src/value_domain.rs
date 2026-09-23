@@ -27,7 +27,9 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 
 use crate::decode::{self, Decode, DeferredPayload};
 use crate::identifier::{HasIdentifier, Identifier, IdentifierPayload};
-use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned, intern_decoded};
+use crate::interned::{
+    Canonical, InternOutcome, InternRegistry, Interned, intern_decoded, require_default,
+};
 
 /// Open classification of the kind of value an IR operation handles.
 ///
@@ -261,23 +263,11 @@ fn create_default_domains() -> Vec<ValueDomain> {
     ]
 }
 
-/// Return the canonical domain registered under a shipped default's name.
-///
-/// # Panics
-///
-/// Panics if `name` is not one of the names [`create_default_domains`] builds,
-/// since the registry registers every default on its first use.
-fn require_default(name: &Identifier) -> Canonical<ValueDomain> {
-    ValueDomain::intern_registry()
-        .require(name)
-        .expect("the registry registers every default on its first use")
-}
-
 static DATA_DOMAIN: LazyLock<Canonical<ValueDomain>> =
-    LazyLock::new(|| require_default(&DATA_DOMAIN_NAME));
+    LazyLock::new(|| require_default(&*DATA_DOMAIN_NAME));
 
 static ADDRESS_DOMAIN: LazyLock<Canonical<ValueDomain>> =
-    LazyLock::new(|| require_default(&ADDRESS_DOMAIN_NAME));
+    LazyLock::new(|| require_default(&*ADDRESS_DOMAIN_NAME));
 
 /// Return the domain for concrete data values flowing through the IR.
 #[must_use]
