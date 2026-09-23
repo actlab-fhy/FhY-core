@@ -14,7 +14,7 @@
 //! the outer level's side effects have run is a [`DeferredPayload`], decoded
 //! with [`DeferredPayload::decode`] once the holder's build reaches it; a
 //! nested canonical value is then interned with
-//! `interned::intern_decoded(deferred.decode()?)`.
+//! `interned::intern_decoded(deferred.decode("field")?)`.
 //!
 //! A deferred level is buffered through `deserialize_any` before it is
 //! decoded, so it needs a self-describing format such as JSON.
@@ -75,15 +75,20 @@ impl<'de, T> Deserialize<'de> for DeferredPayload<T> {
 }
 
 impl<T: Decode> DeferredPayload<T> {
-    /// Decode the deferred level, performing its build's side effects.
+    /// Decode the deferred level held in the holder's `field`, performing its
+    /// build's side effects.
     ///
     /// # Errors
     ///
     /// Returns an error if the level is malformed or conflicts with a
-    /// canonical instance.
-    pub(crate) fn decode<E: de::Error>(self) -> Result<T, E> {
-        let payload = T::Payload::deserialize(BufferedValue::from(self.map)).map_err(E::custom)?;
-        T::build_from_payload(payload)
+    /// canonical instance, prefixed with ``in `field`: `` so an error from a
+    /// deep chain shows the path to the level it came from.
+    pub(crate) fn decode<E: de::Error>(self, field: &str) -> Result<T, E> {
+        let add_field =
+            |error: &dyn std::fmt::Display| E::custom(format_args!("in `{field}`: {error}"));
+        let payload = T::Payload::deserialize(BufferedValue::from(self.map))
+            .map_err(|error| add_field(&error))?;
+        T::build_from_payload::<E>(payload).map_err(|error| add_field(&error))
     }
 }
 
@@ -135,7 +140,7 @@ mod tests {
             record_build(&payload.name);
             let child = match payload.child {
                 None => None,
-                Some(child) => Some(Box::new(child.decode()?)),
+                Some(child) => Some(Box::new(child.decode("child")?)),
             };
             Ok(Self {
                 name: payload.name,
@@ -172,6 +177,21 @@ mod tests {
 
         assert!(error.to_string().contains("surprise"), "{error}");
         assert_eq!(take_build_log(), vec!["outer".to_owned()]);
+    }
+
+    /// Test that an error from a level two deep names the path to it.
+    #[test]
+    fn an_error_two_levels_deep_names_the_path_to_its_level() {
+        let json = r#"{"name":"outer","child":{"name":"inner","child":
+            {"name":"leaf","child":null,"surprise":1}}}"#;
+
+        let error = serde_json::from_str::<Probe>(json).unwrap_err();
+
+        let message = error.to_string();
+        assert!(
+            message.starts_with("in `child`: in `child`: unknown field `surprise`"),
+            "{message}"
+        );
     }
 
     /// Test that a child which is not a map is rejected while the outer

@@ -159,7 +159,7 @@ impl Decode for ValueDomain {
         let name = payload.name.restore();
         let parent = match payload.parent {
             None => None,
-            Some(parent) => Some(intern_decoded(parent.decode()?)?),
+            Some(parent) => Some(intern_decoded(parent.decode("parent")?)?),
         };
         Ok(ValueDomain::create(name, payload.description, parent))
     }
