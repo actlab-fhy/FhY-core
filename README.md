@@ -155,7 +155,7 @@ This project uses [uv](https://docs.astral.sh/uv/) for environment and dependenc
 
 ## Rust Crate
 
-Parts of FhY Core are implemented in Rust, in the crate `fhy-core` under `rust/src/`: identifiers, interning, and the `OpAttribute` and `ValueDomain` tag types. The crate serves two purposes:
+Parts of FhY Core are implemented in Rust, in the crate `fhy-core` under `rust/fhy-core/`: identifiers, interning, and the `OpAttribute` and `ValueDomain` tag types. The crate serves two purposes:
 
 - **Standalone Rust library**: usable by any Rust project. The crate is not published to crates.io, so depend on it through git: `fhy-core = { git = "https://github.com/actlab-fhy/FhY-core.git" }`.
 - **Python extension module**: compiled with [maturin](https://www.maturin.rs/) and exposed to the Python package as `fhy_core._rs`, which currently backs identifier id allocation. The Python API is the same with or without the extension.
@@ -190,7 +190,7 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 
 ### Rebuilding the Python Extension
 
-`uv sync` builds the extension: maturin compiles the crate with the `python` feature enabled and installs the native module as `fhy_core._rs`. The project's uv cache keys cover `rust/src/**/*.rs`, `Cargo.toml`, and `Cargo.lock`, so after a Rust edit the next `uv sync`, or any `uv run` (which syncs first), rebuilds the extension.
+`uv sync` builds the extension: maturin compiles the crate with the `python` feature enabled and installs the native module as `fhy_core._rs`. The project's uv cache keys cover `rust/**/*.rs`, every workspace member's `Cargo.toml`, the root `Cargo.toml`, and `Cargo.lock`, so after a Rust edit the next `uv sync`, or any `uv run` (which syncs first), rebuilds the extension.
 
 ```bash
 # Rebuild the extension after editing Rust sources

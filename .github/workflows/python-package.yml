@@ -74,8 +74,8 @@ jobs:
         # build links the runner's Python and the test binaries run.
         run: cargo test --locked --all-features
       - name: Packaging
-        # Pack the crate as crates.io would receive it (the include list in
-        # Cargo.toml decides what that is) and build the library from it.
+        # Pack the crate as crates.io would receive it and build the
+        # library from it.
         run: cargo package --locked
       - name: Testing the Packaged Crate
         # cargo package only builds the library, so run the tests from the

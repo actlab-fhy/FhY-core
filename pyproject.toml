@@ -62,7 +62,7 @@ dev = [
 features = ["python"]
 python-source = "src"
 module-name = "fhy_core._rs"
-manifest-path = "Cargo.toml"
+manifest-path = "rust/fhy-core/Cargo.toml"
 
 [tool.uv]
 # uv reuses a built project unless one of these changes, so list the Rust
@@ -71,7 +71,8 @@ cache-keys = [
    { file = "pyproject.toml" },
    { file = "Cargo.toml" },
    { file = "Cargo.lock" },
-   { file = "rust/src/**/*.rs" },
+   { file = "rust/*/Cargo.toml" },
+   { file = "rust/**/*.rs" },
 ]
 
 [tool.pytest.ini_options]

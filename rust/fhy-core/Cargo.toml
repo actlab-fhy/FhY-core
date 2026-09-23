@@ -1,0 +1,53 @@
+[package]
+name = "fhy-core"
+description = "Core utilities for the FhY compiler infrastructure."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license-file = "../../LICENSE"
+repository.workspace = true
+readme = "../../README.md"
+
+[lib]
+name = "fhy_core"
+
+[features]
+default = []
+python = ["dep:pyo3"]
+# Exposes `fhy_core::testing`, the deterministic-identifier scope, to other
+# crates' tests. Enable it from `[dev-dependencies]`, never for a production
+# build.
+testing = []
+
+[dependencies]
+pyo3 = { workspace = true, optional = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+# Turns on `testing` for this crate's own integration tests. Resolver 2 unifies
+# dev-dependency features only into test, example and bench builds, so a
+# normal build of the library never sees it.
+fhy-core = { path = ".", features = ["testing"] }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
+
+# Integration tests are auto-discovered from `tests/`. These three reach
+# `fhy_core::testing`, which the dev-dependency above turns on for this
+# crate's own tests. `cargo package` drops that dev-dependency, because it
+# carries only a path, so `required-features` is what lets them be skipped
+# rather than fail to compile from the published crate; there, `cargo test
+# --features testing` runs them.
+[[test]]
+name = "deterministic_identifiers_stories"
+required-features = ["testing"]
+
+[[test]]
+name = "deterministic_identifiers_constants"
+required-features = ["testing"]
+
+[[test]]
+name = "deterministic_identifiers_equivalence"
+required-features = ["testing"]

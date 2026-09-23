@@ -2,9 +2,9 @@
  "provenance": {
   "package": "fhy_core",
   "package_version": "0.2.0",
-  "git_commit": "c829d1da5cbde602baf53a6f11dee9d76696e4b5",
+  "git_commit": "42b566203d7b99b0d9ce4c42df6bdfa30a3fc37d",
   "python_version": "3.11.15 (main, Jun 27 2026, 16:18:26) [Clang 15.0.0 (clang-1500.0.40.1)]",
-  "generator_command": "uv run --no-sync python rust/tests/golden/generate_tag_type_cases.py"
+  "generator_command": "uv run --no-sync python rust/fhy-core/tests/golden/generate_tag_type_cases.py"
  },
  "default_slots": {
   "op_attribute": [

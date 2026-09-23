@@ -5,7 +5,7 @@ Drives the real
 through hand-picked and randomly generated scripts of `enter`, `exit` and
 `new(hint)` operations, recording the id each `new` receives relative to a
 per-script anchor identifier. The Rust equivalence test
-(`rust/tests/deterministic_identifiers_equivalence.rs`) replays these scripts
+(`rust/fhy-core/tests/deterministic_identifiers_equivalence.rs`) replays these scripts
 against `fhy_core::testing::DeterministicIdentifierScope` and compares every
 observation.
 
@@ -22,14 +22,14 @@ a repeated hint allocates no id.
 Run from the repository root:
 
     uv run --no-sync python \
-        rust/tests/golden/generate_deterministic_identifier_cases.py
+        rust/fhy-core/tests/golden/generate_deterministic_identifier_cases.py
 
-This overwrites `rust/tests/golden/deterministic_identifier_cases.json`.
+This overwrites `rust/fhy-core/tests/golden/deterministic_identifier_cases.json`.
 Options select a larger random corpus written elsewhere, for the ignored
 expanded-corpus equivalence test:
 
     uv run --no-sync python \
-        rust/tests/golden/generate_deterministic_identifier_cases.py \
+        rust/fhy-core/tests/golden/generate_deterministic_identifier_cases.py \
         --seed 7 --random-count 2000 --max-ops 40 \
         --hints a,b,c,d,e --output /tmp/deterministic_identifier_corpus.json
 
@@ -58,7 +58,7 @@ from fhy_core.testing_patches import deterministic_identifiers_by_name_hint
 
 GENERATOR_COMMAND = (
     "uv run --no-sync python "
-    "rust/tests/golden/generate_deterministic_identifier_cases.py"
+    "rust/fhy-core/tests/golden/generate_deterministic_identifier_cases.py"
 )
 
 # Beyond plain ASCII letters, the alphabet holds the empty hint, a

@@ -1,6 +1,6 @@
 """Tests the committed golden corpora match the generators that record them.
 
-Each ``generate_X.py`` under ``rust/tests/golden/`` replays seeded scripts
+Each ``generate_X.py`` under ``rust/fhy-core/tests/golden/`` replays seeded scripts
 through the Python implementation, the oracle the Rust equivalence tests
 replay, and writes the corpus ``X.json`` beside it. Every generator is rerun
 here and its output compared with the committed corpus outside the
@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-_GOLDEN_DIRECTORY = _REPOSITORY_ROOT / "rust" / "tests" / "golden"
+_GOLDEN_DIRECTORY = _REPOSITORY_ROOT / "rust" / "fhy-core" / "tests" / "golden"
 _GENERATORS = sorted(_GOLDEN_DIRECTORY.glob("generate_*.py"))
 # Diff lines shown for a stale corpus; the rest are elided.
 _DIFF_LINE_LIMIT = 60

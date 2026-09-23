@@ -13,7 +13,7 @@ ROOT = pathlib.Path(__file__).parent
 SOURCES = ["src", "tests"]
 # `FHY_CORE_NO_EXTENSIONS` value that selects each backend for a test run.
 BACKEND_EXTENSION_SETTINGS = {"rust": "0", "python": "1"}
-GOLDEN_DIRECTORY = ROOT / "rust" / "tests" / "golden"
+GOLDEN_DIRECTORY = ROOT / "rust" / "fhy-core" / "tests" / "golden"
 
 
 class ExpandedGoldenCorpus(NamedTuple):
@@ -169,7 +169,7 @@ def property(session: nox.Session, backend: str) -> None:
 def golden_expanded(session: nox.Session) -> None:
     """Replay expanded random golden corpora through the Rust equivalence tests.
 
-    The committed corpora under ``rust/tests/golden/`` are small enough to
+    The committed corpora under ``rust/fhy-core/tests/golden/`` are small enough to
     review; each generator can also write a much larger random corpus, which
     its equivalence test replays in an ignored test that reads the corpus
     path from an environment variable. The session writes every expanded
@@ -213,6 +213,8 @@ def golden_expanded(session: nox.Session) -> None:
             "cargo",
             "test",
             "--locked",
+            "-p",
+            "fhy-core",
             "--features",
             "testing",
             "--test",

@@ -251,7 +251,7 @@ type-checks the library with `cargo check --lib --locked` on the
 `.cargo/config.toml` has the resolver fall back to dependency releases that
 build on it and `cargo update` keeps `Cargo.lock` within it.
 
-The Rust equivalence tests replay golden corpora under `rust/tests/golden/`,
+The Rust equivalence tests replay golden corpora under `rust/fhy-core/tests/golden/`,
 each recorded from the Python implementation by the `generate_*.py` script
 beside it. `tests/test_golden_corpora.py` reruns every generator in a fresh
 interpreter on the backend the test run selected, so the `tests` sessions
@@ -259,7 +259,7 @@ check the corpora on both backends and every supported Python. It fails,
 printing the regeneration command and a diff, if a committed corpus differs
 outside its `provenance` block or a generator has no committed corpus. The
 `golden-corpora` pre-commit hook runs the same module, in about two seconds,
-whenever a commit touches `src/fhy_core/` or `rust/tests/golden/`. After
+whenever a commit touches `src/fhy_core/` or `rust/fhy-core/tests/golden/`. After
 changing the Python behavior a corpus records, regenerate it and commit the
 result.
 

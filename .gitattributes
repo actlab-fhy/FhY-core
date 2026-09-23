@@ -2,4 +2,4 @@
 # beside them, so GitHub collapses them in a diff and leaves them out of the
 # repository's language statistics. They stay plain text: a regenerated corpus
 # should still be reviewable, just not in the way of the rest of a review.
-rust/tests/golden/*.json linguist-generated=true
+rust/fhy-core/tests/golden/*.json linguist-generated=true

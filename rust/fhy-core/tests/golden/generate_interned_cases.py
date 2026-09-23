@@ -3,18 +3,18 @@
 Drives the Python `InternedMixin` oracle (`fhy_core.traits.interned`) through
 hand-picked and randomly generated operation scripts, recording the observed
 outcome of each operation. The Rust equivalence test
-(`rust/tests/interned_equivalence.rs`) replays these scripts against
+(`rust/fhy-core/tests/interned_equivalence.rs`) replays these scripts against
 `fhy_core::interned::InternRegistry` and compares every observation.
 
 Run from the repository root:
 
-    uv run --no-sync python rust/tests/golden/generate_interned_cases.py
+    uv run --no-sync python rust/fhy-core/tests/golden/generate_interned_cases.py
 
-This overwrites `rust/tests/golden/interned_cases.json`. Options select a
+This overwrites `rust/fhy-core/tests/golden/interned_cases.json`. Options select a
 larger random corpus written elsewhere, for the ignored expanded-corpus
 equivalence test:
 
-    uv run --no-sync python rust/tests/golden/generate_interned_cases.py \
+    uv run --no-sync python rust/fhy-core/tests/golden/generate_interned_cases.py \
         --seed 7 --random-count 2000 --max-ops 60 \
         --keys a,b,c,d,e --output /tmp/interned_corpus.json
 
@@ -41,12 +41,12 @@ from typing import Any, ClassVar
 from fhy_core.traits.interned import InternedMixin
 
 GENERATOR_COMMAND = (
-    "uv run --no-sync python rust/tests/golden/generate_interned_cases.py"
+    "uv run --no-sync python rust/fhy-core/tests/golden/generate_interned_cases.py"
 )
 
 # Defaults catalogue: catalogue id -> ordered (key, note) pairs. Kept in sync
 # by hand with the four `fn() -> Vec<GoldenTag>` catalogue functions in
-# `rust/tests/interned_equivalence.rs`; the equivalence test asserts the two
+# `rust/fhy-core/tests/interned_equivalence.rs`; the equivalence test asserts the two
 # cannot drift apart.
 DEFAULTS_CATALOGUE: dict[str, list[tuple[str, str]]] = {
     "none": [],

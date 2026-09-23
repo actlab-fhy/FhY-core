@@ -49,5 +49,5 @@ repos:
         name: golden corpora match their generators
         entry: uv run pytest -q -n0 tests/test_golden_corpora.py
         language: system
-        files: ^(src/fhy_core/|rust/tests/golden/|tests/test_golden_corpora\.py$)
+        files: ^(src/fhy_core/|rust/fhy-core/tests/golden/|tests/test_golden_corpora\.py$)
         pass_filenames: false

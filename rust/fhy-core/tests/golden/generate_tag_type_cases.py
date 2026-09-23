@@ -4,7 +4,7 @@ Drives the real `fhy_core.op_attribute` and `fhy_core.value_domain` oracles
 (the process-global `OpAttribute` and `ValueDomain` registries, including
 their shipped default instances) through hand-picked and randomly generated
 operation scripts, recording the observed outcome of each operation. The Rust
-equivalence test (`rust/tests/tag_type_equivalence.rs`) replays these scripts
+equivalence test (`rust/fhy-core/tests/tag_type_equivalence.rs`) replays these scripts
 against `fhy_core::op_attribute` and `fhy_core::value_domain` and compares
 every observation.
 
@@ -20,13 +20,13 @@ operation can observe whether a decode restored that id.
 
 Run from the repository root:
 
-    uv run --no-sync python rust/tests/golden/generate_tag_type_cases.py
+    uv run --no-sync python rust/fhy-core/tests/golden/generate_tag_type_cases.py
 
-This overwrites `rust/tests/golden/tag_type_cases.json`. Options select a
+This overwrites `rust/fhy-core/tests/golden/tag_type_cases.json`. Options select a
 larger random corpus written elsewhere, for the ignored expanded-corpus
 equivalence test:
 
-    uv run --no-sync python rust/tests/golden/generate_tag_type_cases.py \
+    uv run --no-sync python rust/fhy-core/tests/golden/generate_tag_type_cases.py \
         --seed 7 --random-count 2000 --max-ops 40 \
         --slots s0,s1,s2,s3,s4 --output /tmp/tag_type_corpus.json
 
@@ -63,7 +63,7 @@ from fhy_core.serialization import DeserializationValueError, SerializationError
 from fhy_core.value_domain import ADDRESS_DOMAIN, DATA_DOMAIN, ValueDomain
 
 GENERATOR_COMMAND = (
-    "uv run --no-sync python rust/tests/golden/generate_tag_type_cases.py"
+    "uv run --no-sync python rust/fhy-core/tests/golden/generate_tag_type_cases.py"
 )
 
 _OP_ATTRIBUTE_DEFAULTS: dict[str, OpAttribute] = {
