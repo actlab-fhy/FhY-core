@@ -21,38 +21,35 @@
 //! into a [`ValidationFailedError`] with [`ValidationReport::into_result`].
 
 use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::sync::LazyLock;
 
 use serde::{Deserialize, Deserializer, Serialize, de};
 
 use crate::decode::{self, Decode, DeferredPayload};
-use crate::identifier::{HasIdentifier, Identifier, IdentifierPayload};
-use crate::interned::{
-    Canonical, InternOutcome, InternRegistry, Interned, intern_decoded, require_default,
-};
+use crate::described_tag::define_described_tag;
+use crate::interned::{Canonical, intern_decoded};
 
-/// Open classification of the role a [`Note`] plays.
-///
-/// Two kinds are equal when they carry the same [`Identifier`], whatever
-/// their descriptions say. The description is human-readable metadata: the
-/// first kind registered under an identifier stays canonical, and a later
-/// one is handed back to its caller in [`InternOutcome::AlreadyCanonical`]
-/// instead of replacing it.
-///
-/// A kind encodes as `{"name": {"id": .., "name_hint": ..}, "description":
-/// ..}`. Decoding a kind canonicalizes it only through the handle, so
-/// deserialize a [`Canonical<NoteKind>`]. Deserializing a bare `NoteKind`
-/// yields a value that no registry knows about. Decoding checks every field
-/// before it restores the name, so a rejected payload leaves the id counter
-/// untouched.
-#[derive(Debug, Serialize)]
-pub struct NoteKind {
-    name: Identifier,
-    description: String,
-}
+define_described_tag! {
+    /// Open classification of the role a [`Note`] plays.
+    ///
+    /// Two kinds are equal when they carry the same [`Identifier`], whatever
+    /// their descriptions say. The description is human-readable metadata: the
+    /// first kind registered under an identifier stays canonical, and a later
+    /// one is handed back to its caller in [`InternOutcome::AlreadyCanonical`]
+    /// instead of replacing it.
+    ///
+    /// A kind encodes as `{"name": {"id": .., "name_hint": ..}, "description":
+    /// ..}`. Decoding a kind canonicalizes it only through the handle, so
+    /// deserialize a [`Canonical<NoteKind>`]. Deserializing a bare `NoteKind`
+    /// yields a value that no registry knows about. Decoding checks every field
+    /// before it restores the name, so a rejected payload leaves the id counter
+    /// untouched.
+    ///
+    /// [`Identifier`]: crate::identifier::Identifier
+    /// [`InternOutcome::AlreadyCanonical`]: crate::interned::InternOutcome::AlreadyCanonical
+    pub struct NoteKind;
+    payload NoteKindPayload as "NoteKind";
+    noun "kind";
 
-impl NoteKind {
     /// Builds the kind named `name` and registers it as the canonical one
     /// for that name.
     ///
@@ -73,171 +70,32 @@ impl NoteKind {
     /// assert_eq!(kind.to_string(), "performance");
     /// assert_eq!(NoteKind::intern_registry().get(&name), Some(kind));
     /// ```
-    pub fn new(name: Identifier, description: impl Into<String>) -> InternOutcome<Self> {
-        Self::intern_registry().intern(Self::create(name, description))
-    }
+    fn new;
 
-    /// Build the kind without registering it.
-    fn create(name: Identifier, description: impl Into<String>) -> Self {
-        Self {
-            name,
-            description: description.into(),
-        }
-    }
+    shipped by create_default_note_kinds, initialized by initialize_shipped_note_kinds {
+        /// Returns the kind for notes that explain why a decision, transformation,
+        /// or result occurred.
+        fn get_rationale_note_kind => RATIONALE, RATIONALE_NAME =
+            ("rationale", "Explains why a decision, transformation, or result occurred.");
 
-    /// Returns the kind's name.
-    #[must_use]
-    pub fn name(&self) -> &Identifier {
-        &self.name
-    }
+        /// Returns the kind for notes that suggest a fix or course of action.
+        fn get_suggestion_note_kind => SUGGESTION, SUGGESTION_NAME =
+            ("suggestion", "A suggested fix or course of action.");
 
-    /// Returns the kind's human-readable description.
-    #[must_use]
-    pub fn description(&self) -> &str {
-        &self.description
+        /// Returns the kind for neutral informational notes.
+        fn get_remark_note_kind => REMARK, REMARK_NAME =
+            ("remark", "A neutral informational observation.");
+
+        /// Returns the kind for uncategorized notes.
+        fn get_other_note_kind => OTHER, OTHER_NAME = ("other", "Uncategorized note.");
     }
 }
 
 /// Renders the name's hint, for example `other`.
 impl fmt::Display for NoteKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.name, f)
+        fmt::Display::fmt(self.name(), f)
     }
-}
-
-impl HasIdentifier for NoteKind {
-    fn identifier(&self) -> &Identifier {
-        &self.name
-    }
-}
-
-impl Interned for NoteKind {
-    type Key = Identifier;
-
-    fn intern_key(&self) -> &Identifier {
-        &self.name
-    }
-
-    fn intern_registry() -> &'static InternRegistry<Self> {
-        static REGISTRY: InternRegistry<NoteKind> =
-            InternRegistry::with_defaults(create_default_note_kinds);
-        &REGISTRY
-    }
-}
-
-impl PartialEq for NoteKind {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-    }
-}
-
-impl Eq for NoteKind {}
-
-impl Hash for NoteKind {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
-    }
-}
-
-impl Decode for NoteKind {
-    type Payload = NoteKindPayload;
-
-    fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
-        Ok(Self::create(payload.name.restore(), payload.description))
-    }
-}
-
-/// Restoring the payload's name creates the shipped kinds first if they do
-/// not exist yet, so their names draw ids before the payload's name can
-/// exhaust the counter.
-impl<'de> Deserialize<'de> for NoteKind {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        decode::deserialize_via_payload(deserializer)
-    }
-}
-
-/// A note-kind payload, checked but with its name not yet restored.
-#[derive(Deserialize)]
-#[serde(rename = "NoteKind", deny_unknown_fields)]
-pub(crate) struct NoteKindPayload {
-    name: IdentifierPayload,
-    description: String,
-}
-
-/// Name of the kind returned by [`get_rationale_note_kind`].
-static RATIONALE_NAME: LazyLock<Identifier> =
-    LazyLock::new(|| Identifier::new_unscoped("rationale"));
-
-/// Name of the kind returned by [`get_suggestion_note_kind`].
-static SUGGESTION_NAME: LazyLock<Identifier> =
-    LazyLock::new(|| Identifier::new_unscoped("suggestion"));
-
-/// Name of the kind returned by [`get_remark_note_kind`].
-static REMARK_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new_unscoped("remark"));
-
-/// Name of the kind returned by [`get_other_note_kind`].
-static OTHER_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new_unscoped("other"));
-
-/// Build the kinds this module ships, in registration order.
-///
-/// The registry calls this once, on its first use, and keeps the instances it
-/// builds. A clear registers those same instances again rather than building
-/// new ones, so the shipped kinds stay canonical for the life of the process.
-fn create_default_note_kinds() -> Vec<NoteKind> {
-    vec![
-        NoteKind::create(
-            RATIONALE_NAME.clone(),
-            "Explains why a decision, transformation, or result occurred.",
-        ),
-        NoteKind::create(
-            SUGGESTION_NAME.clone(),
-            "A suggested fix or course of action.",
-        ),
-        NoteKind::create(REMARK_NAME.clone(), "A neutral informational observation."),
-        NoteKind::create(OTHER_NAME.clone(), "Uncategorized note."),
-    ]
-}
-
-static RATIONALE: LazyLock<Canonical<NoteKind>> =
-    LazyLock::new(|| require_default(&*RATIONALE_NAME));
-
-static SUGGESTION: LazyLock<Canonical<NoteKind>> =
-    LazyLock::new(|| require_default(&*SUGGESTION_NAME));
-
-static REMARK: LazyLock<Canonical<NoteKind>> = LazyLock::new(|| require_default(&*REMARK_NAME));
-
-static OTHER: LazyLock<Canonical<NoteKind>> = LazyLock::new(|| require_default(&*OTHER_NAME));
-
-/// Create the shipped kinds, and their names, if this is their first use.
-pub(crate) fn initialize_shipped_note_kinds() {
-    for kind in [&RATIONALE, &SUGGESTION, &REMARK, &OTHER] {
-        LazyLock::force(kind);
-    }
-}
-
-/// Returns the kind for notes that explain why a decision, transformation,
-/// or result occurred.
-#[must_use]
-pub fn get_rationale_note_kind() -> &'static Canonical<NoteKind> {
-    &RATIONALE
-}
-
-/// Returns the kind for notes that suggest a fix or course of action.
-#[must_use]
-pub fn get_suggestion_note_kind() -> &'static Canonical<NoteKind> {
-    &SUGGESTION
-}
-
-/// Returns the kind for neutral informational notes.
-#[must_use]
-pub fn get_remark_note_kind() -> &'static Canonical<NoteKind> {
-    &REMARK
-}
-
-/// Returns the kind for uncategorized notes.
-#[must_use]
-pub fn get_other_note_kind() -> &'static Canonical<NoteKind> {
-    &OTHER
 }
 
 /// A human-readable message tagged with the role it plays.
@@ -549,7 +407,8 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::identifier::{IdSpaceExhausted, try_allocate_id};
+    use crate::identifier::{IdSpaceExhausted, Identifier, try_allocate_id};
+    use crate::interned::Interned;
     use crate::test_support::{
         RegistryGuard, assert_isolated_test_passes, has_counter_passed, hold_id_counter,
         is_isolated_run, reserve_far_ahead_ids,

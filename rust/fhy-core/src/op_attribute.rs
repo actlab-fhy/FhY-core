@@ -18,59 +18,28 @@
 //! hashing or interning: the first attribute registered under an identifier
 //! stays canonical, and a later one is handed back to its caller in
 //! [`InternOutcome::AlreadyCanonical`] instead of replacing it.
+//!
+//! [`Identifier`]: crate::identifier::Identifier
+//! [`InternOutcome::AlreadyCanonical`]: crate::interned::InternOutcome::AlreadyCanonical
 
-use std::hash::{Hash, Hasher};
-use std::sync::LazyLock;
+use crate::described_tag::define_described_tag;
 
-use serde::{Deserialize, Deserializer, Serialize, de};
+define_described_tag! {
+    /// Open semantic tag attached to a compiler operation.
+    ///
+    /// Two attributes are equal when they carry the same [`Identifier`], whatever
+    /// their descriptions say.
+    ///
+    /// Decoding an attribute canonicalizes it only through the handle, so
+    /// deserialize a [`Canonical<OpAttribute>`]. Deserializing a bare
+    /// `OpAttribute` yields a value that no registry knows about.
+    ///
+    /// [`Identifier`]: crate::identifier::Identifier
+    /// [`Canonical<OpAttribute>`]: crate::interned::Canonical
+    pub struct OpAttribute;
+    payload OpAttributePayload as "OpAttribute";
+    noun "attribute";
 
-use crate::decode::{self, Decode};
-
-use crate::identifier::{HasIdentifier, Identifier, IdentifierPayload};
-use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned, require_default};
-
-/// Open semantic tag attached to a compiler operation.
-///
-/// Two attributes are equal when they carry the same [`Identifier`], whatever
-/// their descriptions say.
-///
-/// Decoding an attribute canonicalizes it only through the handle, so
-/// deserialize a [`Canonical<OpAttribute>`]. Deserializing a bare
-/// `OpAttribute` yields a value that no registry knows about.
-#[derive(Debug, Serialize)]
-pub struct OpAttribute {
-    name: Identifier,
-    description: String,
-}
-
-impl Decode for OpAttribute {
-    type Payload = OpAttributePayload;
-
-    fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
-        Ok(Self::create(payload.name.restore(), payload.description))
-    }
-}
-
-/// Decoding checks every field of the payload before it restores the name, so
-/// a rejected payload leaves the id counter untouched. Restoring the name of
-/// an accepted payload creates the shipped defaults first if they do not
-/// exist yet, so their names draw ids before the payload's name can exhaust
-/// the counter.
-impl<'de> Deserialize<'de> for OpAttribute {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        decode::deserialize_via_payload(deserializer)
-    }
-}
-
-/// An attribute payload, checked but with its name not yet restored.
-#[derive(Deserialize)]
-#[serde(rename = "OpAttribute", deny_unknown_fields)]
-pub(crate) struct OpAttributePayload {
-    name: IdentifierPayload,
-    description: String,
-}
-
-impl OpAttribute {
     /// Build the attribute named `name` and register it as the canonical one
     /// for that name.
     ///
@@ -94,151 +63,28 @@ impl OpAttribute {
     /// assert_eq!(attribute.name(), &name);
     /// assert_eq!(OpAttribute::intern_registry().get(&name), Some(attribute));
     /// ```
-    pub fn new(name: Identifier, description: impl Into<String>) -> InternOutcome<Self> {
-        Self::intern_registry().intern(Self::create(name, description))
+    fn new;
+
+    shipped by create_default_attributes, initialized by initialize_shipped_attributes {
+        /// Return the attribute for ops whose output is invariant under operand swap.
+        fn get_commutative => COMMUTATIVE, COMMUTATIVE_NAME =
+            ("commutative", "Op output is invariant under operand swap.");
+
+        /// Return the attribute for ops that compose associatively across
+        /// applications.
+        fn get_associative => ASSOCIATIVE, ASSOCIATIVE_NAME =
+            ("associative", "Op composes associatively across applications.");
+
+        /// Return the attribute for ops that have no side effects and produce
+        /// deterministic outputs.
+        fn get_pure => PURE, PURE_NAME =
+            ("pure", "Op has no side effects and produces deterministic outputs.");
+
+        /// Return the attribute for ops that act independently on each element of
+        /// their operands.
+        fn get_elementwise => ELEMENTWISE, ELEMENTWISE_NAME =
+            ("elementwise", "Op acts independently on each element of its operands.");
     }
-
-    /// Build the attribute without registering it.
-    fn create(name: Identifier, description: impl Into<String>) -> Self {
-        Self {
-            name,
-            description: description.into(),
-        }
-    }
-
-    /// Return the attribute's name.
-    #[must_use]
-    pub fn name(&self) -> &Identifier {
-        &self.name
-    }
-
-    /// Return the attribute's human-readable description.
-    #[must_use]
-    pub fn description(&self) -> &str {
-        &self.description
-    }
-}
-
-impl HasIdentifier for OpAttribute {
-    fn identifier(&self) -> &Identifier {
-        &self.name
-    }
-}
-
-impl Interned for OpAttribute {
-    type Key = Identifier;
-
-    fn intern_key(&self) -> &Identifier {
-        &self.name
-    }
-
-    fn intern_registry() -> &'static InternRegistry<Self> {
-        static REGISTRY: InternRegistry<OpAttribute> =
-            InternRegistry::with_defaults(create_default_attributes);
-        &REGISTRY
-    }
-}
-
-impl PartialEq for OpAttribute {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-    }
-}
-
-impl Eq for OpAttribute {}
-
-impl Hash for OpAttribute {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
-    }
-}
-
-/// Name of the attribute returned by [`get_commutative`].
-static COMMUTATIVE_NAME: LazyLock<Identifier> =
-    LazyLock::new(|| Identifier::new_unscoped("commutative"));
-
-/// Name of the attribute returned by [`get_associative`].
-static ASSOCIATIVE_NAME: LazyLock<Identifier> =
-    LazyLock::new(|| Identifier::new_unscoped("associative"));
-
-/// Name of the attribute returned by [`get_pure`].
-static PURE_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new_unscoped("pure"));
-
-/// Name of the attribute returned by [`get_elementwise`].
-static ELEMENTWISE_NAME: LazyLock<Identifier> =
-    LazyLock::new(|| Identifier::new_unscoped("elementwise"));
-
-/// Build the attributes this module ships, in registration order.
-///
-/// The registry calls this once, on its first use, and keeps the instances it
-/// builds. A clear registers those same instances again rather than building
-/// new ones, so the shipped constants stay canonical for the life of the
-/// process.
-fn create_default_attributes() -> Vec<OpAttribute> {
-    vec![
-        OpAttribute::create(
-            COMMUTATIVE_NAME.clone(),
-            "Op output is invariant under operand swap.",
-        ),
-        OpAttribute::create(
-            ASSOCIATIVE_NAME.clone(),
-            "Op composes associatively across applications.",
-        ),
-        OpAttribute::create(
-            PURE_NAME.clone(),
-            "Op has no side effects and produces deterministic outputs.",
-        ),
-        OpAttribute::create(
-            ELEMENTWISE_NAME.clone(),
-            "Op acts independently on each element of its operands.",
-        ),
-    ]
-}
-
-static COMMUTATIVE: LazyLock<Canonical<OpAttribute>> =
-    LazyLock::new(|| require_default(&*COMMUTATIVE_NAME));
-
-static ASSOCIATIVE: LazyLock<Canonical<OpAttribute>> =
-    LazyLock::new(|| require_default(&*ASSOCIATIVE_NAME));
-
-static PURE: LazyLock<Canonical<OpAttribute>> = LazyLock::new(|| require_default(&*PURE_NAME));
-
-static ELEMENTWISE: LazyLock<Canonical<OpAttribute>> =
-    LazyLock::new(|| require_default(&*ELEMENTWISE_NAME));
-
-/// Create the shipped attributes, and their names, if this is their first
-/// use.
-pub(crate) fn initialize_shipped_attributes() {
-    for attribute in [&COMMUTATIVE, &ASSOCIATIVE, &PURE, &ELEMENTWISE] {
-        LazyLock::force(attribute);
-    }
-}
-
-/// Return the attribute for ops whose output is invariant under operand swap.
-#[must_use]
-pub fn get_commutative() -> &'static Canonical<OpAttribute> {
-    &COMMUTATIVE
-}
-
-/// Return the attribute for ops that compose associatively across
-/// applications.
-#[must_use]
-pub fn get_associative() -> &'static Canonical<OpAttribute> {
-    &ASSOCIATIVE
-}
-
-/// Return the attribute for ops that have no side effects and produce
-/// deterministic outputs.
-#[must_use]
-pub fn get_pure() -> &'static Canonical<OpAttribute> {
-    &PURE
-}
-
-/// Return the attribute for ops that act independently on each element of
-/// their operands.
-#[must_use]
-pub fn get_elementwise() -> &'static Canonical<OpAttribute> {
-    &ELEMENTWISE
 }
 
 #[cfg(test)]
@@ -248,7 +94,8 @@ mod tests {
 
     use rstest::rstest;
 
-    use crate::identifier::{IdSpaceExhausted, try_allocate_id};
+    use crate::identifier::{HasIdentifier, IdSpaceExhausted, Identifier, try_allocate_id};
+    use crate::interned::{Canonical, InternOutcome, Interned};
     use crate::test_support::{
         RegistryGuard, assert_isolated_test_passes, compute_hash, has_counter_passed,
         hold_id_counter, is_isolated_run, reserve_far_ahead_ids, reserve_pinned_id, take_discarded,
