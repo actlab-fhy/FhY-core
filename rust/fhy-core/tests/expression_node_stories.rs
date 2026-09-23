@@ -7,10 +7,10 @@
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
+#[path = "common/hashing.rs"]
+pub mod hashing_support;
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 
 use expression_support::{
     DEEP_TREE_DEPTH, WALK_STACK_BYTES, build_deep_sum, build_identifier, build_literal,
@@ -21,14 +21,8 @@ use fhy_core::symbolic::expression::{
     AlphaRenaming, BinaryExpression, BinaryOperation, CallExpression, Expression,
     ExpressionBuildError, ExpressionKind, PiecewiseExpression, UnaryExpression, UnaryOperation,
 };
+use hashing_support::hash_of;
 use rstest::rstest;
-
-/// Return the default hash of `expression`.
-fn hash_of(expression: &Expression) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    expression.hash(&mut hasher);
-    hasher.finish()
-}
 
 /// Return the unary node `expression` refers to.
 fn expect_unary(expression: &Expression) -> &UnaryExpression {

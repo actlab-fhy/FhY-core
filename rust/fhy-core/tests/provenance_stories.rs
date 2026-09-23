@@ -4,13 +4,14 @@
 //! Public API only. Nothing here touches process-global state, so the tests
 //! run in parallel freely.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+#[path = "common/hashing.rs"]
+pub mod hashing_support;
 
 use fhy_core::provenance::{
     CallSiteProvenance, FileProvenance, FusedProvenance, HasProvenance, NamedProvenance, Position,
     Provenance, ProvenanceError, Span,
 };
+use hashing_support::hash_of;
 use rstest::rstest;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -63,13 +64,6 @@ fn build_call_site(called: Provenance, call_site: Provenance) -> Provenance {
 /// Build the fusion of `sources` labelled with `metadata`, as given.
 fn build_fused(sources: Vec<Provenance>, metadata: Option<&str>) -> Provenance {
     Provenance::Fused(FusedProvenance::new(sources, metadata.map(str::to_owned)))
-}
-
-/// Return the hash of `value` under the standard hasher.
-fn compute_hash<T: Hash>(value: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
 }
 
 /// Assert decoding `payload` as a `T` fails.
@@ -442,7 +436,7 @@ fn file_provenance_equality_follows_the_normalized_path() {
     let canonical = FileProvenance::new("dir/a.fhy", None);
 
     assert_eq!(written, canonical);
-    assert_eq!(compute_hash(&written), compute_hash(&canonical));
+    assert_eq!(hash_of(&written), hash_of(&canonical));
 }
 
 /// Test normalization never resolves `..` or merges a leading `//` into `/`.
@@ -576,7 +570,7 @@ fn equal_provenances_hash_equally(#[case] build: fn() -> Provenance) {
     let second = build();
 
     assert_eq!(first, second);
-    assert_eq!(compute_hash(&first), compute_hash(&second));
+    assert_eq!(hash_of(&first), hash_of(&second));
 }
 
 // =============================================================================

@@ -4,24 +4,18 @@
 //!
 //! Public API only (`fhy_core::symbolic::expression`).
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+#[path = "common/hashing.rs"]
+pub mod hashing_support;
 
 use fhy_core::symbolic::expression::{
     BigInt, FunctionSort, LiteralKind, LiteralTextError, LiteralValue,
 };
+use hashing_support::hash_of;
 use rstest::rstest;
 
 /// Parse `text` as a literal, failing the test if it is refused.
 fn parse_literal(text: &str) -> LiteralValue {
     LiteralValue::parse_text(text).expect("the text is a literal text")
-}
-
-/// Return the default hash of `value`.
-fn hash_of(value: &LiteralValue) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
 }
 
 /// Build a literal from a test-table spelling: `b:` Boolean, `i:` integer,

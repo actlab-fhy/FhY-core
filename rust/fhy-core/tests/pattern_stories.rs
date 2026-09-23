@@ -7,11 +7,11 @@
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
+#[path = "common/hashing.rs"]
+pub mod hashing_support;
 #[path = "common/pattern.rs"]
 pub mod pattern_support;
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -26,18 +26,12 @@ use fhy_core::symbolic::expression::{
     BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralValue,
     UnaryOperation, build_call, build_piecewise,
 };
+use hashing_support::hash_of;
 use pattern_support::{
     ProbeError, build_alternatives, build_capture, build_capture_of, build_literal_pattern,
     build_piecewise_pattern, expect_bound, expect_match, expect_probe_error, match_infallibly,
 };
 use rstest::rstest;
-
-/// Return the default hash of `value`.
-fn hash_of<T: Hash>(value: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
 
 /// Return the bound names of `bindings` in binding order.
 fn collect_names(bindings: &MatchBindings) -> Vec<&str> {

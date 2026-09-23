@@ -6,9 +6,10 @@
 //! and run in parallel, so none of them clears it, and each test that
 //! registers a kind does so under a fresh identifier.
 
-use std::collections::hash_map::DefaultHasher;
+#[path = "common/hashing.rs"]
+pub mod hashing_support;
+
 use std::error::Error;
-use std::hash::{Hash, Hasher};
 
 use fhy_core::diagnostic::{
     Diagnostic, DiagnosticLevel, Note, NoteKind, ValidationFailedError, ValidationReport,
@@ -16,6 +17,7 @@ use fhy_core::diagnostic::{
 };
 use fhy_core::identifier::{HasIdentifier, Identifier};
 use fhy_core::interned::{Canonical, InternOutcome, Interned};
+use hashing_support::hash_of;
 use rstest::rstest;
 use serde_json::{Value, json};
 
@@ -25,13 +27,6 @@ use serde_json::{Value, json};
 
 /// A function returning one of the shipped note kinds.
 type DefaultKind = fn() -> &'static Canonical<NoteKind>;
-
-/// Return the hash of `value` under the standard hasher.
-fn compute_hash<T: Hash>(value: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
 
 /// Build a diagnostic at `level` from `source` with an uncategorized note.
 fn build_diagnostic(level: DiagnosticLevel, message: &str, source: &str) -> Diagnostic {
@@ -162,7 +157,7 @@ fn note_kind_equality_ignores_description() {
     assert_eq!(canonical.description(), "first description");
     assert_eq!(discarded.description(), "second description");
     assert_eq!(discarded, *first);
-    assert_eq!(compute_hash(&discarded), compute_hash(&*first));
+    assert_eq!(hash_of(&discarded), hash_of(&*first));
 }
 
 /// Test kinds under distinct identifiers that share a name hint are
@@ -254,10 +249,7 @@ fn note_equality_compares_message_and_kind() {
     let note = Note::with_other_kind("hello");
 
     assert_eq!(note, Note::new("hello", get_other_note_kind().clone()));
-    assert_eq!(
-        compute_hash(&note),
-        compute_hash(&Note::with_other_kind("hello"))
-    );
+    assert_eq!(hash_of(&note), hash_of(&Note::with_other_kind("hello")));
     assert_ne!(note, Note::with_other_kind("goodbye"));
     assert_ne!(note, Note::new("hello", get_remark_note_kind().clone()));
 }
@@ -417,8 +409,8 @@ fn diagnostic_equality_is_by_value() {
         build_diagnostic(DiagnosticLevel::Error, "bad", "v1")
     );
     assert_eq!(
-        compute_hash(&diagnostic),
-        compute_hash(&build_diagnostic(DiagnosticLevel::Error, "bad", "v1"))
+        hash_of(&diagnostic),
+        hash_of(&build_diagnostic(DiagnosticLevel::Error, "bad", "v1"))
     );
     assert_ne!(
         diagnostic,

@@ -10,10 +10,10 @@
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
+#[path = "common/hashing.rs"]
+pub mod hashing_support;
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 use std::sync::LazyLock;
 
 use expression_support::{
@@ -23,6 +23,7 @@ use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
     AlphaRenaming, Expression, ExpressionKind, LiteralValue, build_piecewise,
 };
+use hashing_support::hash_of;
 use proptest::prelude::*;
 use proptest::sample::select;
 
@@ -54,13 +55,6 @@ fn build_spelled_literal(spelling: &str) -> LiteralValue {
         "t:" => LiteralValue::parse_text(value).expect("a literal text"),
         _ => panic!("unknown literal spelling {spelling:?}"),
     }
-}
-
-/// Return the default hash of `value`.
-fn hash_of<T: Hash>(value: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
 }
 
 /// Return a copy of `expression` sharing no node with it.
