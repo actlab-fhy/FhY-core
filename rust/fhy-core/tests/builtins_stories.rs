@@ -22,13 +22,14 @@ use fhy_core::symbolic::expression::builtins::{
     list_native_functions,
 };
 use fhy_core::symbolic::expression::{
-    BigInt, BinaryOperation, CallExpression, Expression, ExpressionKind, FormatOptions,
-    FunctionSort, LiteralKind, Notation, PiecewiseExpression, UnaryOperation, build_piecewise,
-    format_expression,
+    BigInt, BinaryOperation, Expression, ExpressionKind, FormatOptions, FunctionSort, LiteralKind,
+    Notation, UnaryOperation, build_piecewise, format_expression,
 };
 use rstest::rstest;
 
-use expression_support::{build_identifier, build_literal};
+use expression_support::{
+    build_call_node_or_panic, build_identifier, build_literal, build_piecewise_node_or_panic,
+};
 
 const COMPOSED_NAMES: [&str; 16] = [
     "max",
@@ -74,22 +75,6 @@ fn build_parameter_references(function: &ComposedFunction) -> Vec<Expression> {
         .collect()
 }
 
-/// Return the piecewise node with `cases` and `otherwise`.
-fn build_cases(cases: &[(Expression, Expression)], otherwise: &Expression) -> Expression {
-    Expression::from(
-        PiecewiseExpression::try_new(cases.to_vec(), otherwise.clone())
-            .expect("the expected piecewise is well formed"),
-    )
-}
-
-/// Return the call node `name(arguments...)`.
-fn build_call_node(name: &str, arguments: &[Expression]) -> Expression {
-    Expression::from(
-        CallExpression::try_new(name, arguments.to_vec())
-            .expect("the expected call is well formed"),
-    )
-}
-
 /// Return the documented body of the composed built-in `name` over
 /// `parameters`, the references to its parameters in order.
 fn build_expected_body(name: &str, parameters: &[Expression]) -> Expression {
@@ -107,29 +92,29 @@ fn build_expected_body(name: &str, parameters: &[Expression]) -> Expression {
 fn build_expected_piecewise_body(name: &str, parameters: &[Expression]) -> Expression {
     let zero_float = build_literal(0.0);
     match (name, parameters) {
-        ("max", [a, b]) => build_cases(
-            &[(
+        ("max", [a, b]) => build_piecewise_node_or_panic(
+            vec![(
                 Expression::new_binary(BinaryOperation::Greater, a, b),
                 a.clone(),
             )],
-            b,
+            b.clone(),
         ),
-        ("min", [a, b]) => build_cases(
-            &[(
+        ("min", [a, b]) => build_piecewise_node_or_panic(
+            vec![(
                 Expression::new_binary(BinaryOperation::Less, a, b),
                 a.clone(),
             )],
-            b,
+            b.clone(),
         ),
-        ("abs", [x]) => build_cases(
-            &[(
+        ("abs", [x]) => build_piecewise_node_or_panic(
+            vec![(
                 Expression::new_binary(BinaryOperation::GreaterEqual, x, &zero_float),
                 x.clone(),
             )],
-            &Expression::new_unary(UnaryOperation::Negate, x),
+            Expression::new_unary(UnaryOperation::Negate, x),
         ),
-        ("sign", [x]) => build_cases(
-            &[
+        ("sign", [x]) => build_piecewise_node_or_panic(
+            vec![
                 (
                     Expression::new_binary(BinaryOperation::Greater, x, &zero_float),
                     build_literal(1),
@@ -139,14 +124,14 @@ fn build_expected_piecewise_body(name: &str, parameters: &[Expression]) -> Expre
                     build_literal(-1),
                 ),
             ],
-            &build_literal(0),
+            build_literal(0),
         ),
-        ("leaky_relu", [x, slope]) => build_cases(
-            &[(
+        ("leaky_relu", [x, slope]) => build_piecewise_node_or_panic(
+            vec![(
                 Expression::new_binary(BinaryOperation::Greater, x, &zero_float),
                 x.clone(),
             )],
-            &Expression::new_binary(BinaryOperation::Multiply, x, slope),
+            Expression::new_binary(BinaryOperation::Multiply, x, slope),
         ),
         _ => panic!(
             "no piecewise body for {name} with {} parameters",
@@ -193,32 +178,38 @@ fn build_expected_boolean_body(name: &str, parameters: &[Expression]) -> Express
 fn build_expected_arithmetic_body(name: &str, parameters: &[Expression]) -> Expression {
     let one_float = build_literal(1.0);
     match (name, parameters) {
-        ("clamp", [x, lo, hi]) => build_call_node(
+        ("clamp", [x, lo, hi]) => build_call_node_or_panic(
             "min",
-            &[build_call_node("max", &[x.clone(), lo.clone()]), hi.clone()],
+            vec![
+                build_call_node_or_panic("max", vec![x.clone(), lo.clone()]),
+                hi.clone(),
+            ],
         ),
-        ("clamp_symmetric", [x, bound]) => build_call_node(
+        ("clamp_symmetric", [x, bound]) => build_call_node_or_panic(
             "clamp",
-            &[
+            vec![
                 x.clone(),
                 Expression::new_unary(UnaryOperation::Negate, bound),
                 bound.clone(),
             ],
         ),
-        ("relu", [x]) => build_call_node("max", &[x.clone(), build_literal(0)]),
+        ("relu", [x]) => build_call_node_or_panic("max", vec![x.clone(), build_literal(0)]),
         ("sigmoid", [x]) => Expression::new_binary(
             BinaryOperation::Divide,
             &one_float,
             Expression::new_binary(
                 BinaryOperation::Add,
                 &one_float,
-                build_call_node("exp", &[Expression::new_unary(UnaryOperation::Negate, x)]),
+                build_call_node_or_panic(
+                    "exp",
+                    vec![Expression::new_unary(UnaryOperation::Negate, x)],
+                ),
             ),
         ),
         ("silu", [x]) => Expression::new_binary(
             BinaryOperation::Multiply,
             x,
-            build_call_node("sigmoid", std::slice::from_ref(x)),
+            build_call_node_or_panic("sigmoid", vec![x.clone()]),
         ),
         ("gelu", [x]) => Expression::new_binary(
             BinaryOperation::Multiply,
@@ -226,12 +217,12 @@ fn build_expected_arithmetic_body(name: &str, parameters: &[Expression]) -> Expr
             Expression::new_binary(
                 BinaryOperation::Add,
                 &one_float,
-                build_call_node(
+                build_call_node_or_panic(
                     "erf",
-                    &[Expression::new_binary(
+                    vec![Expression::new_binary(
                         BinaryOperation::Divide,
                         x,
-                        build_call_node("sqrt", &[build_literal(2.0)]),
+                        build_call_node_or_panic("sqrt", vec![build_literal(2.0)]),
                     )],
                 ),
             ),
@@ -907,12 +898,12 @@ fn composed_function_max_body_with_literal_arguments_yields_the_literal_piecewis
         .substitute(&arguments)
         .expect("literal arguments substitute into max");
 
-    let expected = build_cases(
-        &[(
+    let expected = build_piecewise_node_or_panic(
+        vec![(
             Expression::new_binary(BinaryOperation::Greater, build_literal(1), build_literal(2)),
             build_literal(1),
         )],
-        &build_literal(2),
+        build_literal(2),
     );
     assert_eq!(inlined, expected);
 }
@@ -942,19 +933,19 @@ fn composed_function_max_of_min_inlines_to_a_nested_clamp() {
         ]))
         .expect("the inner clamp substitutes into max");
 
-    let inner_min = build_cases(
-        &[(
+    let inner_min = build_piecewise_node_or_panic(
+        vec![(
             Expression::new_binary(BinaryOperation::Less, &value, &high),
             value.clone(),
         )],
-        &high,
+        high,
     );
-    let expected = build_cases(
-        &[(
+    let expected = build_piecewise_node_or_panic(
+        vec![(
             Expression::new_binary(BinaryOperation::Greater, &low, &inner_min),
             low.clone(),
         )],
-        &inner_min,
+        inner_min,
     );
     assert_eq!(inlined, expected);
 }
@@ -970,12 +961,12 @@ fn build_piecewise_guards_a_fast_path_with_a_fallback() {
     let expression = build_piecewise([(x.greater(0), sqrt_path.clone())], fallback_path.clone())
         .expect("one guarded case builds");
 
-    let expected = build_cases(
-        &[(
+    let expected = build_piecewise_node_or_panic(
+        vec![(
             Expression::new_binary(BinaryOperation::Greater, &x, build_literal(0)),
             sqrt_path,
         )],
-        &fallback_path,
+        fallback_path,
     );
     assert_eq!(expression, expected);
 }

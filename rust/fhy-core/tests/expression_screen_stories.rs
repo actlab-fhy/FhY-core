@@ -15,14 +15,15 @@ use std::collections::HashMap;
 use std::thread;
 
 use expression_support::{
-    DEEP_TREE_DEPTH, WALK_STACK_BYTES, build_deep_conjunction, build_deep_sum, build_identifier,
-    build_literal, build_text_literal, run_on_large_stack,
+    DEEP_TREE_DEPTH, WALK_STACK_BYTES, build_call_or_panic, build_deep_conjunction, build_deep_sum,
+    build_identifier, build_literal, build_piecewise_or_panic, build_text_literal,
+    run_on_large_stack,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
     BinaryOperation, BooleanPosition, Expression, FunctionSort, NoRegisteredSorts,
-    NonBooleanLogicalOperandError, SortLookup, UnaryOperation, build_call, build_logical_and,
-    build_logical_or, build_piecewise, validate_logical_operands, validate_predicate,
+    NonBooleanLogicalOperandError, SortLookup, UnaryOperation, build_logical_and, build_logical_or,
+    build_piecewise, validate_logical_operands, validate_predicate,
 };
 use fhy_core::symbolic::symbol_type::SymbolType;
 use rstest::rstest;
@@ -163,20 +164,6 @@ fn build_or(left: &Expression, right: &Expression) -> Expression {
     build_logical_or([left, right]).expect("two operands")
 }
 
-/// Return the one-case piecewise `condition ? value : otherwise`.
-fn build_one_case(
-    condition: &Expression,
-    value: &Expression,
-    otherwise: &Expression,
-) -> Expression {
-    build_piecewise([(condition, value)], otherwise).expect("a valid piecewise")
-}
-
-/// Return a call to `function_name` with `arguments`.
-fn build_call_to(function_name: &str, arguments: &[Expression]) -> Expression {
-    build_call(function_name, arguments).expect("a named call")
-}
-
 /// A way to put an operand in a Boolean position, with the position it
 /// lands in.
 #[derive(Debug, Clone, Copy)]
@@ -194,7 +181,9 @@ impl Placement {
             Self::AndLeft => build_and(operand, &build_literal(true)),
             Self::OrRight => build_or(&build_literal(false), operand),
             Self::Negated => operand.logical_not(),
-            Self::CaseCondition => build_one_case(operand, &build_literal(1), &build_literal(2)),
+            Self::CaseCondition => {
+                build_piecewise_or_panic([(operand, &build_literal(1))], build_literal(2))
+            }
         }
     }
 
@@ -314,7 +303,7 @@ fn validate_logical_operands_checks_operands_before_descending() {
 #[test]
 fn validate_logical_operands_rejects_an_all_numeric_piecewise_operand() {
     let (_, x) = build_identifier("x");
-    let numeric = build_one_case(&x.greater(0), &build_literal(1), &build_literal(2));
+    let numeric = build_piecewise_or_panic([(&x.greater(0), &build_literal(1))], build_literal(2));
     let expression = build_and(&numeric, &build_literal(true));
 
     let error = expect_refusal(Screen::LogicalOperands.run(&expression));
@@ -333,7 +322,10 @@ fn validate_logical_operands_rejects_an_all_numeric_piecewise_operand() {
 #[test]
 fn validate_logical_operands_accepts_a_boolean_valued_piecewise_operand() {
     let (_, x) = build_identifier("x");
-    let boolean = build_one_case(&x.greater(0), &build_literal(true), &build_literal(false));
+    let boolean = build_piecewise_or_panic(
+        [(&x.greater(0), &build_literal(true))],
+        build_literal(false),
+    );
 
     let result = Screen::LogicalOperands.run(&build_and(&boolean, &build_literal(true)));
 
@@ -351,7 +343,7 @@ fn validate_logical_operands_rejects_a_piecewise_operand_with_one_numeric_branch
     #[case] position: BooleanPosition,
 ) {
     let (_, x) = build_identifier("x");
-    let mixed = build_one_case(&x.greater(0), &value, &otherwise);
+    let mixed = build_piecewise_or_panic([(&x.greater(0), &value)], &otherwise);
 
     let error = expect_refusal(Screen::LogicalOperands.run(&mixed.logical_not()));
 
@@ -421,7 +413,7 @@ fn validate_checks_every_case_condition_before_any_case_value(#[case] screen: Sc
 #[case::predicate(Screen::Predicate)]
 fn validate_accepts_a_numeric_piecewise_compared_as_a_number(#[case] screen: Screen) {
     let (_, x) = build_identifier("x");
-    let numeric = build_one_case(&x.greater(0), &build_literal(2), &build_literal(3));
+    let numeric = build_piecewise_or_panic([(&x.greater(0), &build_literal(2))], build_literal(3));
     let expression = build_and(&numeric.greater(1), &build_literal(true));
 
     let result = screen.run(&expression);
@@ -442,7 +434,7 @@ fn validate_logical_operands_rejects_a_numeric_result_call(
     )]
     placement: Placement,
 ) {
-    let call = build_call_to(function_name, &[build_literal(1.5)]);
+    let call = build_call_or_panic(function_name, &[build_literal(1.5)]);
     let expression = placement.place(&call);
 
     let error = expect_refusal(Screen::LogicalOperands.run(&expression));
@@ -453,7 +445,7 @@ fn validate_logical_operands_rejects_a_numeric_result_call(
 /// Test a call nothing knows the sort of is not refused.
 #[test]
 fn validate_logical_operands_accepts_a_call_the_lookup_does_not_know() {
-    let call = build_call_to("floor", &[build_literal(1.5)]);
+    let call = build_call_or_panic("floor", &[build_literal(1.5)]);
     let expression = build_and(&call, &build_literal(true));
 
     let result = validate_logical_operands(
@@ -472,7 +464,7 @@ fn validate_logical_operands_accepts_a_call_the_lookup_does_not_know() {
 #[case::boolean_literal_negation(build_literal(true).logical_not())]
 #[case::unbound_identifiers(build_and(&build_identifier("p").1, &build_identifier("q").1))]
 #[case::comparisons({ let x = build_identifier("x").1; build_and(&x.greater(0), &x.less(5)) })]
-#[case::boolean_call(build_and(&build_call_to("nand", &[build_literal(true), build_literal(true)]), &build_literal(true)))]
+#[case::boolean_call(build_and(&build_call_or_panic("nand", &[build_literal(true), build_literal(true)]), &build_literal(true)))]
 #[case::nested_connective(build_and(&build_identifier("p").1.logical_not(), &build_literal(true)))]
 fn validate_logical_operands_accepts_an_operand_it_cannot_prove_numeric(
     #[case] expression: Expression,
@@ -550,7 +542,7 @@ fn validate_logical_operands_does_not_chain_environment_bindings() {
 fn validate_logical_operands_rejects_a_numeric_piecewise_condition() {
     let (_, x) = build_identifier("x");
     let condition = &x + 1;
-    let expression = build_one_case(&condition, &build_literal(5), &build_literal(0));
+    let expression = build_piecewise_or_panic([(&condition, &build_literal(5))], build_literal(0));
 
     let error = expect_refusal(Screen::LogicalOperands.run(&expression));
 
@@ -567,7 +559,7 @@ fn validate_logical_operands_rejects_a_numeric_piecewise_condition() {
 fn validate_logical_operands_error_names_the_piecewise_and_its_condition() {
     let (x_identifier, x) = build_identifier("x");
     let condition = &x * 2;
-    let expression = build_one_case(&condition, &build_literal(5), &build_literal(0));
+    let expression = build_piecewise_or_panic([(&condition, &build_literal(5))], build_literal(0));
 
     let error = expect_refusal(Screen::LogicalOperands.run(&expression));
 
@@ -741,7 +733,7 @@ fn validate_logical_operands_reads_the_type_a_binding_brings_in() {
 #[test]
 fn validate_logical_operands_screens_a_case_condition_bound_to_a_number() {
     let (c, condition) = build_identifier("c");
-    let expression = build_one_case(&condition, &build_literal(1), &build_literal(0));
+    let expression = build_piecewise_or_panic([(&condition, &build_literal(1))], build_literal(0));
 
     let error = expect_refusal(Screen::LogicalOperands.run_with(
         &expression,
@@ -762,7 +754,7 @@ fn validate_logical_operands_screens_a_case_condition_bound_to_a_number() {
 #[test]
 fn validate_logical_operands_accepts_an_unprovable_case_condition() {
     let (c, condition) = build_identifier("c");
-    let expression = build_one_case(&condition, &build_literal(1), &build_literal(0));
+    let expression = build_piecewise_or_panic([(&condition, &build_literal(1))], build_literal(0));
 
     let unbound = Screen::LogicalOperands.run(&expression);
     let bound = Screen::LogicalOperands.run_with(
@@ -787,7 +779,7 @@ fn validate_logical_operands_screens_a_bound_piecewise_with_a_mixed_branch(
     #[case] position: BooleanPosition,
 ) {
     let (x, reference) = build_identifier("x");
-    let mixed = build_one_case(&build_literal(false), &value, &otherwise);
+    let mixed = build_piecewise_or_panic([(&build_literal(false), &value)], &otherwise);
 
     let error = expect_refusal(Screen::LogicalOperands.run_with(
         &reference.logical_not(),
@@ -804,7 +796,10 @@ fn validate_logical_operands_screens_a_bound_piecewise_with_a_mixed_branch(
 #[test]
 fn validate_logical_operands_accepts_a_bound_piecewise_in_a_numeric_position() {
     let (x, reference) = build_identifier("x");
-    let numeric = build_one_case(&build_literal(false), &build_literal(1), &build_literal(2));
+    let numeric = build_piecewise_or_panic(
+        [(&build_literal(false), &build_literal(1))],
+        build_literal(2),
+    );
 
     let result = Screen::LogicalOperands.run_with(
         &reference.greater(0),
@@ -827,8 +822,8 @@ fn validate_logical_operands_accepts_a_bound_piecewise_in_a_numeric_position() {
 #[case::decimal_text_literal(build_text_literal("2.5"))]
 #[case::arithmetic_node(build_literal(1) + 2)]
 #[case::negation(-build_literal(1))]
-#[case::integer_result_call(build_call_to("floor", &[build_literal(1.5)]))]
-#[case::real_result_call(build_call_to("sqrt", &[build_literal(4.0)]))]
+#[case::integer_result_call(build_call_or_panic("floor", &[build_literal(1.5)]))]
+#[case::real_result_call(build_call_or_panic("sqrt", &[build_literal(4.0)]))]
 fn validate_predicate_rejects_a_numeric_root(#[case] expression: Expression) {
     let error = expect_refusal(Screen::Predicate.run(&expression));
 
@@ -852,7 +847,7 @@ fn validate_predicate_rejects_a_native_constant_root() {
 #[test]
 fn validate_predicate_rejects_a_piecewise_root_with_a_numeric_branch() {
     let (_, c) = build_identifier("c");
-    let expression = build_one_case(&c, &build_literal(true), &build_literal(2));
+    let expression = build_piecewise_or_panic([(&c, &build_literal(true))], build_literal(2));
 
     let error = expect_refusal(Screen::Predicate.run(&expression));
 
@@ -902,9 +897,9 @@ fn validate_predicate_rejects_a_root_identifier_bound_to_a_number() {
 #[case::comparison(build_literal(1).greater(0))]
 #[case::connective(build_and(&build_literal(true), &build_literal(false)))]
 #[case::undeclared_unbound_identifier(build_identifier("p").1)]
-#[case::boolean_piecewise(build_one_case(&build_identifier("c").1, &build_literal(true), &build_literal(false)))]
-#[case::boolean_result_call(build_call_to("nand", &[build_literal(true), build_literal(true)]))]
-#[case::unknown_call(build_call_to("totally_unregistered_function", &[build_literal(true)]))]
+#[case::boolean_piecewise(build_piecewise_or_panic([(&build_identifier("c").1, &build_literal(true))], build_literal(false)))]
+#[case::boolean_result_call(build_call_or_panic("nand", &[build_literal(true), build_literal(true)]))]
+#[case::unknown_call(build_call_or_panic("totally_unregistered_function", &[build_literal(true)]))]
 fn validate_predicate_accepts_a_boolean_or_unprovable_root(#[case] expression: Expression) {
     let result = Screen::Predicate.run(&expression);
 
@@ -948,10 +943,9 @@ fn validate_predicate_still_screens_a_nested_boolean_position() {
 #[test]
 fn validate_predicate_screens_a_bound_piecewise_with_a_mixed_branch() {
     let (x, reference) = build_identifier("x");
-    let mixed = build_one_case(
-        &build_literal(false),
-        &build_literal(1),
-        &build_literal(true),
+    let mixed = build_piecewise_or_panic(
+        [(&build_literal(false), &build_literal(1))],
+        build_literal(true),
     );
 
     let error = expect_refusal(Screen::Predicate.run_with(
@@ -973,10 +967,9 @@ fn validate_predicate_screens_a_bound_piecewise_with_a_mixed_branch() {
 #[test]
 fn validate_predicate_accepts_a_bound_well_typed_boolean_piecewise() {
     let (x, reference) = build_identifier("x");
-    let well_typed = build_one_case(
-        &build_literal(false),
-        &build_literal(false),
-        &build_literal(true),
+    let well_typed = build_piecewise_or_panic(
+        [(&build_literal(false), &build_literal(false))],
+        build_literal(true),
     );
 
     let result = Screen::Predicate.run_with(
@@ -1012,15 +1005,15 @@ fn non_boolean_logical_operand_error_display_describes_the_position(
             Screen::LogicalOperands,
         ),
         BooleanPosition::CaseCondition { .. } => (
-            build_one_case(&number, &build_literal(true), &build_literal(true)),
+            build_piecewise_or_panic([(&number, &build_literal(true))], build_literal(true)),
             Screen::LogicalOperands,
         ),
         BooleanPosition::CaseValue { .. } => (
-            build_one_case(&build_literal(true), &number, &build_literal(true)),
+            build_piecewise_or_panic([(&build_literal(true), &number)], build_literal(true)),
             Screen::Predicate,
         ),
         BooleanPosition::Otherwise => (
-            build_one_case(&build_literal(true), &build_literal(true), &number),
+            build_piecewise_or_panic([(&build_literal(true), &build_literal(true))], &number),
             Screen::Predicate,
         ),
         BooleanPosition::PredicateRoot => (number.clone(), Screen::Predicate),
@@ -1118,7 +1111,7 @@ fn no_registered_sorts_knows_nothing() {
 #[test]
 fn validate_logical_operands_takes_a_trait_object_lookup() {
     let sorts: Box<dyn SortLookup> = Box::new(BuiltinSorts::new());
-    let call = build_call_to("sqrt", &[build_literal(2.0)]);
+    let call = build_call_or_panic("sqrt", &[build_literal(2.0)]);
     let expression = call.logical_not();
 
     let result = validate_logical_operands(&expression, &HashMap::new(), &HashMap::new(), &*sorts);

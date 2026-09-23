@@ -16,15 +16,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use expression_support::{
-    DEEP_TREE_DEPTH, WALK_STACK_BYTES, build_deep_sum, build_identifier, build_literal,
-    build_text_literal, run_on_large_stack,
+    DEEP_TREE_DEPTH, WALK_STACK_BYTES, build_call_or_panic, build_deep_sum, build_identifier,
+    build_literal, build_text_literal, run_on_large_stack,
 };
 use fhy_core::symbolic::expression::pattern::{
     CallbackError, MatchBindings, Pattern, PatternError, does_pattern_match, match_pattern,
 };
 use fhy_core::symbolic::expression::{
     BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralValue,
-    UnaryOperation, build_call, build_piecewise,
+    UnaryOperation, build_piecewise,
 };
 use hashing_support::hash_of;
 use pattern_support::{
@@ -69,11 +69,6 @@ fn build_two_case_piecewise() -> Expression {
     .expect("a valid piecewise")
 }
 
-/// Return a call of `function_name` with `arguments`.
-fn build_call_expression(function_name: &str, arguments: Vec<Expression>) -> Expression {
-    build_call(function_name, arguments).expect("a named call")
-}
-
 /// A kind of expression node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NodeKind {
@@ -95,7 +90,7 @@ impl NodeKind {
             Self::Unary => -&x,
             Self::Binary => build_simple_binary(BinaryOperation::Add),
             Self::Piecewise => build_one_case_piecewise(),
-            Self::Call => build_call_expression("f", vec![x]),
+            Self::Call => build_call_or_panic("f", vec![x]),
         }
     }
 }
@@ -1142,10 +1137,7 @@ fn pattern_piecewise_repeated_capture_spans_cases_and_otherwise(
 fn pattern_call_matches_its_function_name() {
     let pattern = Pattern::call(Some("f"), Some(vec![Pattern::wildcard()]));
 
-    let result = match_infallibly(
-        &pattern,
-        &build_call_expression("f", vec![build_literal(1)]),
-    );
+    let result = match_infallibly(&pattern, &build_call_or_panic("f", vec![build_literal(1)]));
 
     assert!(result.is_some());
 }
@@ -1155,10 +1147,7 @@ fn pattern_call_matches_its_function_name() {
 fn pattern_call_rejects_another_function_name() {
     let pattern = Pattern::call(Some("f"), Some(vec![Pattern::wildcard()]));
 
-    let result = match_infallibly(
-        &pattern,
-        &build_call_expression("g", vec![build_literal(1)]),
-    );
+    let result = match_infallibly(&pattern, &build_call_or_panic("g", vec![build_literal(1)]));
 
     assert!(result.is_none(), "got {result:?}");
 }
@@ -1173,7 +1162,7 @@ fn pattern_call_without_function_name_matches_any_name(#[case] function_name: &s
 
     let result = match_infallibly(
         &pattern,
-        &build_call_expression(function_name, vec![build_literal(1)]),
+        &build_call_or_panic(function_name, vec![build_literal(1)]),
     );
 
     assert!(result.is_some());
@@ -1189,7 +1178,7 @@ fn pattern_call_rejects_another_arity(#[case] arguments: Vec<Expression>) {
         Some(vec![Pattern::wildcard(), Pattern::wildcard()]),
     );
 
-    let result = match_infallibly(&pattern, &build_call_expression("f", arguments));
+    let result = match_infallibly(&pattern, &build_call_or_panic("f", arguments));
 
     assert!(result.is_none(), "got {result:?}");
 }
@@ -1203,7 +1192,7 @@ fn pattern_call_rejects_another_arity(#[case] arguments: Vec<Expression>) {
 fn pattern_call_without_arguments_matches_any_arity(#[case] arguments: Vec<Expression>) {
     let pattern = Pattern::call(Some("f"), None);
 
-    let result = match_infallibly(&pattern, &build_call_expression("f", arguments));
+    let result = match_infallibly(&pattern, &build_call_or_panic("f", arguments));
 
     assert!(result.is_some_and(|bindings| bindings.is_empty()));
 }
@@ -1220,7 +1209,7 @@ fn pattern_call_binds_captures_in_its_arguments() {
 
     let bindings = expect_match(
         &pattern,
-        &build_call_expression("f", vec![first.clone(), second.clone()]),
+        &build_call_or_panic("f", vec![first.clone(), second.clone()]),
     );
 
     assert_eq!(collect_names(&bindings), vec!["a", "b"]);
@@ -1254,11 +1243,12 @@ fn pattern_call_rejects_other_node_kinds(
 fn pattern_call_with_empty_arguments_matches_only_calls_without_arguments() {
     let pattern = Pattern::call(Some("f"), Some(Vec::new()));
 
-    let without_arguments = match_infallibly(&pattern, &build_call_expression("f", Vec::new()));
-    let with_argument = match_infallibly(
+    let without_arguments = match_infallibly(
         &pattern,
-        &build_call_expression("f", vec![build_literal(1)]),
+        &build_call_or_panic("f", Vec::<Expression>::new()),
     );
+    let with_argument =
+        match_infallibly(&pattern, &build_call_or_panic("f", vec![build_literal(1)]));
 
     assert!(without_arguments.is_some());
     assert!(with_argument.is_none(), "got {with_argument:?}");
@@ -1277,7 +1267,7 @@ fn pattern_call_repeated_capture_requires_equal_arguments(
         Some("f"),
         Some(vec![build_capture("x"), build_capture("x")]),
     );
-    let expression = build_call_expression("f", vec![build_literal(1), second_argument]);
+    let expression = build_call_or_panic("f", vec![build_literal(1), second_argument]);
 
     let result = match_infallibly(&pattern, &expression);
 

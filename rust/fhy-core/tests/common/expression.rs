@@ -12,8 +12,9 @@ use fhy_core::symbolic::expression::builtins::{
     ComposedFunction, NativeFunctionSignature, list_composed_functions, list_native_functions,
 };
 use fhy_core::symbolic::expression::{
-    BigInt, BinaryOperation, Expression, ExpressionKind, LiteralKind, LiteralValue, UnaryOperation,
-    build_call, build_logical_and, build_piecewise,
+    BigInt, BinaryOperation, CallExpression, Expression, ExpressionKind, IntoOperand, LiteralKind,
+    LiteralValue, PiecewiseExpression, UnaryOperation, build_call, build_logical_and,
+    build_piecewise,
 };
 use proptest::num::f64 as f64_class;
 use proptest::prelude::*;
@@ -51,6 +52,64 @@ pub fn build_literal(value: impl Into<LiteralValue>) -> Expression {
 #[must_use]
 pub fn build_text_literal(text: &str) -> Expression {
     Expression::from(LiteralValue::parse_text(text).expect("the text is a literal text"))
+}
+
+/// Return the piecewise expression `build_piecewise` builds from `cases`
+/// and `otherwise`, failing the test if it is refused.
+///
+/// # Panics
+///
+/// Panics if the builder refuses the parts.
+#[must_use]
+pub fn build_piecewise_or_panic<C: IntoOperand, V: IntoOperand, O: IntoOperand>(
+    cases: impl IntoIterator<Item = (C, V)>,
+    otherwise: O,
+) -> Expression {
+    build_piecewise(cases, otherwise).expect("a valid piecewise")
+}
+
+/// Return the call `build_call` builds of `function_name` with `arguments`,
+/// failing the test if it is refused.
+///
+/// # Panics
+///
+/// Panics if the builder refuses the call.
+#[must_use]
+pub fn build_call_or_panic<I>(function_name: &str, arguments: I) -> Expression
+where
+    I: IntoIterator,
+    I::Item: IntoOperand,
+{
+    build_call(function_name, arguments).expect("a named call")
+}
+
+/// Return the piecewise expression built by the node constructor
+/// `PiecewiseExpression::try_new`, failing the test if it is refused.
+///
+/// For tests whose expected trees must not depend on the builders.
+///
+/// # Panics
+///
+/// Panics if the constructor refuses the parts.
+#[must_use]
+pub fn build_piecewise_node_or_panic(
+    cases: Vec<(Expression, Expression)>,
+    otherwise: Expression,
+) -> Expression {
+    Expression::from(PiecewiseExpression::try_new(cases, otherwise).expect("a valid piecewise"))
+}
+
+/// Return the call built by the node constructor `CallExpression::try_new`,
+/// failing the test if it is refused.
+///
+/// For tests whose expected trees must not depend on the builders.
+///
+/// # Panics
+///
+/// Panics if the constructor refuses the call.
+#[must_use]
+pub fn build_call_node_or_panic(function_name: &str, arguments: Vec<Expression>) -> Expression {
+    Expression::from(CallExpression::try_new(function_name, arguments).expect("a valid call"))
 }
 
 /// Return `((leaf + 1) + 1) + ...`, `depth` additions deep.

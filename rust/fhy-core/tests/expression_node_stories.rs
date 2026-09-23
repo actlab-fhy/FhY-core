@@ -13,8 +13,8 @@ pub mod hashing_support;
 use std::collections::{HashMap, HashSet};
 
 use expression_support::{
-    DEEP_TREE_DEPTH, WALK_STACK_BYTES, build_deep_sum, build_identifier, build_literal,
-    build_text_literal, run_on_large_stack,
+    DEEP_TREE_DEPTH, WALK_STACK_BYTES, build_call_node_or_panic, build_deep_sum, build_identifier,
+    build_literal, build_piecewise_node_or_panic, build_text_literal, run_on_large_stack,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
@@ -57,17 +57,6 @@ fn assert_same_nodes(actual: &[&Expression], expected: &[&Expression]) {
             "node {index}: {actual_node:?} is not the node {expected_node:?}"
         );
     }
-}
-
-/// Return a piecewise expression from its parts, failing the test if it is
-/// refused.
-fn build_piecewise_node(cases: Vec<(Expression, Expression)>, otherwise: Expression) -> Expression {
-    Expression::from(PiecewiseExpression::try_new(cases, otherwise).expect("a valid piecewise"))
-}
-
-/// Return a call expression, failing the test if it is refused.
-fn build_call_node(function_name: &str, arguments: Vec<Expression>) -> Expression {
-    Expression::from(CallExpression::try_new(function_name, arguments).expect("a valid call"))
 }
 
 /// Return the set of `identifiers`.
@@ -298,8 +287,9 @@ fn expression_from_node_struct_rewraps_the_node() {
     let (_, x) = build_identifier("x");
     let unary = -&x;
     let binary = &x % 3;
-    let piecewise = build_piecewise_node(vec![(x.less(0), build_literal(1))], build_literal(2));
-    let call = build_call_node("f", vec![x.clone()]);
+    let piecewise =
+        build_piecewise_node_or_panic(vec![(x.less(0), build_literal(1))], build_literal(2));
+    let call = build_call_node_or_panic("f", vec![x.clone()]);
 
     let rewrapped_unary = Expression::from(expect_unary(&unary).clone());
     let rewrapped_binary = Expression::from(expect_binary(&binary).clone());
@@ -348,7 +338,7 @@ fn expression_children_of_piecewise_interleave_cases_then_otherwise() {
     let (first_condition, second_condition) = (build_literal(true), build_literal(false));
     let (first_value, second_value) = (build_literal(1), build_literal(2));
     let otherwise = build_literal(0);
-    let expression = build_piecewise_node(
+    let expression = build_piecewise_node_or_panic(
         vec![
             (first_condition.clone(), first_value.clone()),
             (second_condition.clone(), second_value.clone()),
@@ -376,7 +366,7 @@ fn expression_children_of_piecewise_interleave_cases_then_otherwise() {
 fn expression_children_of_single_case_piecewise_are_condition_value_otherwise() {
     let (condition, value, otherwise) = (build_literal(true), build_literal(1), build_literal(0));
     let expression =
-        build_piecewise_node(vec![(condition.clone(), value.clone())], otherwise.clone());
+        build_piecewise_node_or_panic(vec![(condition.clone(), value.clone())], otherwise.clone());
 
     let children: Vec<&Expression> = expression.children().collect();
 
@@ -387,7 +377,7 @@ fn expression_children_of_single_case_piecewise_are_condition_value_otherwise() 
 #[test]
 fn expression_children_of_call_are_the_arguments() {
     let arguments = [build_literal(1), build_literal(2), build_literal(3)];
-    let expression = build_call_node("select3", arguments.to_vec());
+    let expression = build_call_node_or_panic("select3", arguments.to_vec());
 
     let children: Vec<&Expression> = expression.children().collect();
 
@@ -408,7 +398,7 @@ fn expression_children_of_leaf_are_empty(#[case] leaf: Expression) {
 /// Test rebuilding a one-case piecewise from its own children reproduces it.
 #[test]
 fn expression_rebuild_with_children_round_trips_single_case_piecewise() {
-    let expression = build_piecewise_node(
+    let expression = build_piecewise_node_or_panic(
         vec![(build_literal(true), build_literal(1))],
         build_literal(0),
     );
@@ -432,7 +422,7 @@ fn expression_rebuild_with_children_round_trips_multiple_case_piecewise() {
     ];
     let values = [build_literal(1), build_literal(2), build_literal(3)];
     let otherwise = build_literal(0);
-    let expression = build_piecewise_node(
+    let expression = build_piecewise_node_or_panic(
         conditions
             .iter()
             .cloned()
@@ -478,7 +468,7 @@ fn expression_rebuild_with_children_round_trips_multiple_case_piecewise() {
 #[case::five(5)]
 #[case::six(6)]
 fn expression_rebuild_with_children_rejects_piecewise_child_count(#[case] child_count: usize) {
-    let expression = build_piecewise_node(
+    let expression = build_piecewise_node_or_panic(
         vec![(build_literal(true), build_literal(1))],
         build_literal(0),
     );
@@ -499,7 +489,7 @@ fn expression_rebuild_with_children_rejects_piecewise_child_count(#[case] child_
 /// refused.
 #[test]
 fn expression_rebuild_with_children_rejects_numeric_piecewise_condition() {
-    let expression = build_piecewise_node(
+    let expression = build_piecewise_node_or_panic(
         vec![(build_literal(true), build_literal(1))],
         build_literal(0),
     );
@@ -524,7 +514,7 @@ fn expression_rebuild_with_children_keeps_kind_and_operation() {
     let (_, y) = build_identifier("y");
     let unary = Expression::new_unary(UnaryOperation::LogicalNot, &x);
     let binary = Expression::new_binary(BinaryOperation::FloorDivide, &x, 2);
-    let call = build_call_node("f", vec![x.clone(), build_literal(1)]);
+    let call = build_call_node_or_panic("f", vec![x.clone(), build_literal(1)]);
 
     let rebuilt_unary = unary
         .rebuild_with_children(vec![y.clone()])
@@ -546,7 +536,7 @@ fn expression_rebuild_with_children_keeps_kind_and_operation() {
     );
     assert_eq!(
         rebuilt_call,
-        build_call_node("f", vec![y.clone(), build_literal(4)])
+        build_call_node_or_panic("f", vec![y.clone(), build_literal(4)])
     );
 }
 
@@ -557,9 +547,9 @@ fn expression_rebuild_with_children_keeps_kind_and_operation() {
 #[case::unary_two(Expression::new_unary(UnaryOperation::Negate, 1), 2, 1)]
 #[case::binary_one(Expression::new_binary(BinaryOperation::Add, 1, 2), 1, 2)]
 #[case::binary_three(Expression::new_binary(BinaryOperation::Add, 1, 2), 3, 2)]
-#[case::call_fewer(build_call_node("f", vec![build_literal(1), build_literal(2)]), 1, 2)]
-#[case::call_more(build_call_node("f", vec![build_literal(1), build_literal(2)]), 3, 2)]
-#[case::call_none_to_one(build_call_node("f", Vec::new()), 1, 0)]
+#[case::call_fewer(build_call_node_or_panic("f", vec![build_literal(1), build_literal(2)]), 1, 2)]
+#[case::call_more(build_call_node_or_panic("f", vec![build_literal(1), build_literal(2)]), 3, 2)]
+#[case::call_none_to_one(build_call_node_or_panic("f", Vec::new()), 1, 0)]
 fn expression_rebuild_with_children_rejects_a_different_child_count(
     #[case] expression: Expression,
     #[case] child_count: usize,
@@ -653,7 +643,7 @@ fn expression_free_identifiers_walk_into_a_unary_operand() {
 fn expression_free_identifiers_of_call_is_the_union_over_arguments() {
     let (x, x_reference) = build_identifier("x");
     let (y, y_reference) = build_identifier("y");
-    let expression = build_call_node("f", vec![x_reference, y_reference]);
+    let expression = build_call_node_or_panic("f", vec![x_reference, y_reference]);
 
     let free = expression.free_identifiers();
 
@@ -667,7 +657,7 @@ fn expression_free_identifiers_of_piecewise_cover_every_branch() {
     let (c, c_reference) = build_identifier("c");
     let (v, v_reference) = build_identifier("v");
     let (o, o_reference) = build_identifier("o");
-    let expression = build_piecewise_node(
+    let expression = build_piecewise_node_or_panic(
         vec![
             (c_reference.clone(), v_reference),
             (c_reference.logical_not(), build_literal(1)),
@@ -817,7 +807,8 @@ fn expression_substitute_does_not_chain_replacements() {
 #[test]
 fn expression_substitute_refuses_a_number_in_a_piecewise_condition() {
     let (c, condition) = build_identifier("c");
-    let expression = build_piecewise_node(vec![(condition, build_literal(1))], build_literal(0));
+    let expression =
+        build_piecewise_node_or_panic(vec![(condition, build_literal(1))], build_literal(0));
 
     let result = expression.substitute(&HashMap::from([(c, build_literal(1))]));
 
@@ -831,8 +822,8 @@ fn expression_substitute_refuses_a_number_in_a_piecewise_condition() {
 #[test]
 fn expression_substitute_with_empty_map_yields_an_equal_tree() {
     let (_, x) = build_identifier("x");
-    let expression = build_piecewise_node(
-        vec![(x.less(3), build_call_node("f", vec![-&x]))],
+    let expression = build_piecewise_node_or_panic(
+        vec![(x.less(3), build_call_node_or_panic("f", vec![-&x]))],
         x.power(2),
     );
 
@@ -853,8 +844,8 @@ fn expression_substitute_with_empty_map_yields_an_equal_tree() {
 #[case::literal(|| build_literal(42))]
 #[case::unary(|| Expression::new_unary(UnaryOperation::Negate, 1))]
 #[case::binary(|| Expression::new_binary(BinaryOperation::Add, 1, 2))]
-#[case::piecewise(|| build_piecewise_node(vec![(build_literal(true), build_literal(1))], build_literal(0)))]
-#[case::call(|| build_call_node("max", vec![build_literal(1), build_literal(2)]))]
+#[case::piecewise(|| build_piecewise_node_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(0)))]
+#[case::call(|| build_call_node_or_panic("max", vec![build_literal(1), build_literal(2)]))]
 fn expression_separately_built_equal_trees_are_equal_but_distinct(
     #[case] build: fn() -> Expression,
 ) {
@@ -902,8 +893,8 @@ fn expression_references_to_distinct_identifiers_are_unequal() {
 #[case::literal(|| build_literal(42))]
 #[case::unary(|| Expression::new_unary(UnaryOperation::Negate, 1))]
 #[case::binary(|| Expression::new_binary(BinaryOperation::Add, 1, 2))]
-#[case::piecewise(|| build_piecewise_node(vec![(build_literal(true), build_literal(1))], build_literal(0)))]
-#[case::call(|| build_call_node("max", vec![build_literal(1), build_literal(2)]))]
+#[case::piecewise(|| build_piecewise_node_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(0)))]
+#[case::call(|| build_call_node_or_panic("max", vec![build_literal(1), build_literal(2)]))]
 fn expression_set_of_equal_trees_keeps_one_member(#[case] build: fn() -> Expression) {
     let first = build();
     let second = build();
@@ -950,11 +941,11 @@ fn expression_literal_equality_follows_literal_equivalence(
 fn expression_reordered_piecewise_cases_are_unequal() {
     let first_case = (build_literal(true), build_literal(1));
     let second_case = (build_literal(false), build_literal(2));
-    let forward = build_piecewise_node(
+    let forward = build_piecewise_node_or_panic(
         vec![first_case.clone(), second_case.clone()],
         build_literal(0),
     );
-    let reversed = build_piecewise_node(vec![second_case, first_case], build_literal(0));
+    let reversed = build_piecewise_node_or_panic(vec![second_case, first_case], build_literal(0));
 
     assert_ne!(forward, reversed);
     assert_ne!(reversed, forward);
@@ -976,9 +967,9 @@ fn expression_reordered_piecewise_cases_are_unequal() {
     Expression::new_binary(BinaryOperation::Add, 1, 2),
     Expression::new_binary(BinaryOperation::Add, 2, 1)
 )]
-#[case::function_name(build_call_node("f", vec![build_literal(1)]), build_call_node("g", vec![build_literal(1)]))]
-#[case::arity(build_call_node("f", vec![build_literal(1)]), build_call_node("f", vec![build_literal(1), build_literal(1)]))]
-#[case::otherwise(build_piecewise_node(vec![(build_literal(true), build_literal(1))], build_literal(0)), build_piecewise_node(vec![(build_literal(true), build_literal(1))], build_literal(2)))]
+#[case::function_name(build_call_node_or_panic("f", vec![build_literal(1)]), build_call_node_or_panic("g", vec![build_literal(1)]))]
+#[case::arity(build_call_node_or_panic("f", vec![build_literal(1)]), build_call_node_or_panic("f", vec![build_literal(1), build_literal(1)]))]
+#[case::otherwise(build_piecewise_node_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(0)), build_piecewise_node_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(2)))]
 #[case::unary_and_binary(
     Expression::new_unary(UnaryOperation::Negate, 1),
     Expression::new_binary(BinaryOperation::Subtract, 0, 1)
