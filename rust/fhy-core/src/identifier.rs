@@ -363,7 +363,9 @@ mod tests {
     use std::collections::HashSet;
     use std::thread;
 
-    use crate::test_support::{assert_isolated_test_passes, assert_send_sync, is_isolated_run};
+    use crate::test_support::{
+        assert_isolated_test_passes, assert_send_sync, compute_hash, is_isolated_run,
+    };
 
     #[test]
     fn new_identifiers_get_increasing_ids() {
@@ -374,19 +376,12 @@ mod tests {
 
     #[test]
     fn equality_and_hash_ignore_name_hint() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
         let id_value = Identifier::new("equality-and-hash-anchor").id();
         let a = Identifier::restore(id_value, "a".to_string());
         let b = Identifier::restore(id_value, "b".to_string());
         assert_eq!(a, b);
 
-        let mut hasher_a = DefaultHasher::new();
-        a.hash(&mut hasher_a);
-        let mut hasher_b = DefaultHasher::new();
-        b.hash(&mut hasher_b);
-        assert_eq!(hasher_a.finish(), hasher_b.finish());
+        assert_eq!(compute_hash(&a), compute_hash(&b));
     }
 
     #[test]
