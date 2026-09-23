@@ -37,7 +37,7 @@ use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned};
 /// Decoding an attribute canonicalizes it only through the handle, so
 /// deserialize a [`Canonical<OpAttribute>`]. Deserializing a bare
 /// `OpAttribute` yields a value that no registry knows about.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct OpAttribute {
     name: Identifier,
     description: String,

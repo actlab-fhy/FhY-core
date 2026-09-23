@@ -40,7 +40,7 @@ use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned, intern
 /// a [`Canonical<ValueDomain>`]. Deserializing a bare `ValueDomain` yields a
 /// value that no registry knows about. Decoding a handle for a name that is
 /// already canonical fails when the payload names a different parent.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ValueDomain {
     name: Identifier,
     description: String,
@@ -52,6 +52,12 @@ impl ValueDomain {
     /// that name.
     ///
     /// `parent` is the domain's super-domain, or `None` for a root domain.
+    /// The domain keeps `parent` as given. A handle taken before a clear of
+    /// this type's registry, or from another registry, is not canonical, so
+    /// the domain's parent chain then holds a different instance than the
+    /// registry does for that name, as in the Python implementation.
+    /// Equality and [`is_subdomain_of`](Self::is_subdomain_of) compare
+    /// parents by value, so neither is affected.
     ///
     /// The outcome carries the canonical handle either way. When `name` is
     /// already taken the earlier domain stays canonical, and the one built
@@ -165,9 +171,8 @@ impl Decode for ValueDomain {
 /// interned, and so registered, before the domain that holds it is built.
 /// A payload rejected for its structure therefore registers nothing beyond
 /// the shipped defaults, though the names of the levels above the defect stay
-/// restored. A payload rejected
-/// because a level conflicts with its canonical instance leaves the fresh
-/// parents below that level registered.
+/// restored. A payload rejected because a level conflicts with its canonical
+/// instance leaves the fresh parents below that level registered.
 ///
 /// The nested levels are read before they are decoded, which needs a
 /// self-describing format such as JSON.
@@ -539,6 +544,32 @@ mod tests {
         assert_eq!(*leaf_before, *leaf_after);
         assert_eq!(compute_hash(&*leaf_before), compute_hash(&*leaf_after));
         assert!(leaf_after.is_subdomain_of(&middle_before));
+    }
+
+    #[test]
+    fn a_parent_taken_before_a_clear_is_kept_and_compares_by_value() {
+        let _guard = hold_registry_exclusively();
+        let parent_name = Identifier::new("stale-parent");
+        let stale_parent = ValueDomain::new(parent_name.clone(), "parent", None).into_canonical();
+        ValueDomain::intern_registry().clear();
+
+        let child = ValueDomain::new(
+            Identifier::new("child-of-stale"),
+            "child",
+            Some(stale_parent.clone()),
+        )
+        .into_canonical();
+        let json = serde_json::to_string(&*child).unwrap();
+        let restored: Canonical<ValueDomain> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(child.parent(), Some(&stale_parent));
+        assert_eq!(restored, child);
+        let registered_parent = ValueDomain::intern_registry()
+            .get(&parent_name)
+            .expect("decoding the child registers its parent's name again");
+        assert_ne!(registered_parent, stale_parent);
+        assert_eq!(*registered_parent, *stale_parent);
+        assert!(child.is_subdomain_of(&registered_parent));
     }
 
     #[test]
