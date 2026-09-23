@@ -44,6 +44,9 @@ from .traits.frozen import FrozenMixin
 _ID_SPACE_SIZE = 2**64
 _EXHAUSTED_COUNTER_VALUE = _ID_SPACE_SIZE - 1
 _ID_SPACE_EXHAUSTED_MESSAGE = "identifier id space exhausted"
+# The messages the Rust extension raises for an id outside ``[0, 2**64)``.
+_NEGATIVE_ID_MESSAGE = "can't convert negative int to unsigned"
+_OVERSIZED_ID_MESSAGE = "int too big to convert"
 
 
 class _IdentifierData(TypedDict):
@@ -112,11 +115,16 @@ class _PythonIdCounter:
             identifier_id: Id in ``[0, 2**64)`` to advance past.
 
         Raises:
+            OverflowError: If ``identifier_id`` is outside ``[0, 2**64)``.
             RuntimeError: If ``identifier_id`` is ``2**64 - 1``, which the
                 counter cannot advance past.
 
         """
-        if identifier_id >= _EXHAUSTED_COUNTER_VALUE:
+        if identifier_id < 0:
+            raise OverflowError(_NEGATIVE_ID_MESSAGE)
+        if identifier_id >= _ID_SPACE_SIZE:
+            raise OverflowError(_OVERSIZED_ID_MESSAGE)
+        if identifier_id == _EXHAUSTED_COUNTER_VALUE:
             raise RuntimeError(_ID_SPACE_EXHAUSTED_MESSAGE)
         with self._lock:
             if identifier_id >= self._next_id:

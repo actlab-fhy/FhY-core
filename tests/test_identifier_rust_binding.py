@@ -7,6 +7,7 @@ The Rust counter is process-global and the Python counter is fresh per test,
 so ids are compared relative to an anchor, never absolutely.
 """
 
+import re
 from collections.abc import Callable
 from typing import NamedTuple
 
@@ -124,6 +125,26 @@ def test_counter_advancing_past_the_largest_64_bit_id_raises_runtime_error(
 
     with pytest.raises(RuntimeError, match=r"^identifier id space exhausted$"):
         counter.advance_past(2**64 - 1)
+
+    assert counter.allocate() == base + 1
+
+
+@pytest.mark.parametrize(
+    ("identifier_id", "message"),
+    [
+        (-1, "can't convert negative int to unsigned"),
+        (2**64, "int too big to convert"),
+        (2**70, "int too big to convert"),
+    ],
+)
+def test_counter_advancing_past_an_id_outside_64_bits_raises_overflow_error(
+    counter: _Counter, identifier_id: int, message: str
+) -> None:
+    """Test advancing past an id outside `[0, 2**64)` raises, counter unchanged."""
+    base = counter.allocate()
+
+    with pytest.raises(OverflowError, match=f"^{re.escape(message)}"):
+        counter.advance_past(identifier_id)
 
     assert counter.allocate() == base + 1
 
