@@ -14,10 +14,15 @@ from fhy_core.symbolic.expression import registry as _registry
 from fhy_core.utils.override import override
 
 __all__ = [
+    "NO_EXTENSIONS_VARIABLE",
     "MockIdentifierAliasError",
     "SerializableEqualHashable",
+    "build_backend_environment",
     "mock_identifier",
 ]
+
+# The variable that selects the backend a freshly started interpreter imports.
+NO_EXTENSIONS_VARIABLE = "FHY_CORE_NO_EXTENSIONS"
 
 # Hypothesis settings profiles. `dev` is the local inner loop; `thorough` is
 # the release gate that `nox -s property` selects through HYPOTHESIS_PROFILE;
@@ -71,6 +76,33 @@ def function_registry_snapshot() -> Iterator[None]:
         yield
     finally:
         _registry.set_registry_state_for_tests(snapshot)
+
+
+def build_backend_environment(
+    no_extensions: str | None, *, drop_python_warnings: bool = False
+) -> dict[str, str]:
+    """Return this process's environment with the backend variable replaced.
+
+    A fresh interpreter started with the result selects its backend from
+    ``no_extensions`` alone, whatever this process was started with.
+
+    Args:
+        no_extensions: Value for ``FHY_CORE_NO_EXTENSIONS``, or ``None`` to
+            leave it unset.
+        drop_python_warnings: Whether to also unset ``PYTHONWARNINGS``, so
+            this process's warning filters do not reach the child.
+
+    Returns:
+        A copy of ``os.environ`` with those variables replaced.
+
+    """
+    environment = dict(os.environ)
+    environment.pop(NO_EXTENSIONS_VARIABLE, None)
+    if drop_python_warnings:
+        environment.pop("PYTHONWARNINGS", None)
+    if no_extensions is not None:
+        environment[NO_EXTENSIONS_VARIABLE] = no_extensions
+    return environment
 
 
 class MockIdentifierAliasError(Exception):

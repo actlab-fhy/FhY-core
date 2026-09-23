@@ -27,7 +27,7 @@ from fhy_core._backend import (
     _normalize_pep440_version,
 )
 
-_NO_EXTENSIONS_VARIABLE = "FHY_CORE_NO_EXTENSIONS"
+from .conftest import NO_EXTENSIONS_VARIABLE, build_backend_environment
 
 _REPORT_BACKEND_PROGRAM = (
     "import fhy_core\n"
@@ -58,11 +58,6 @@ def _run_backend_report(
         between two consecutively constructed ids.
 
     """
-    environment = dict(os.environ)
-    environment.pop(_NO_EXTENSIONS_VARIABLE, None)
-    environment.pop("PYTHONWARNINGS", None)
-    if variable_value is not None:
-        environment[_NO_EXTENSIONS_VARIABLE] = variable_value
     return subprocess.run(
         [
             sys.executable,
@@ -70,7 +65,7 @@ def _run_backend_report(
             "-c",
             program_prefix + _REPORT_BACKEND_PROGRAM,
         ],
-        env=environment,
+        env=build_backend_environment(variable_value, drop_python_warnings=True),
         capture_output=True,
         text=True,
         check=False,
@@ -101,7 +96,7 @@ def test_backend_flag_reflects_this_process_environment() -> None:
     ``nox`` runs the suite once with the variable set to ``1`` and once with
     it set to ``0``; a plain ``pytest`` run leaves it unset.
     """
-    variable_value = os.environ.get(_NO_EXTENSIONS_VARIABLE)
+    variable_value = os.environ.get(NO_EXTENSIONS_VARIABLE)
     is_installed = importlib.util.find_spec("fhy_core._rs") is not None
 
     if variable_value == "1":
@@ -109,7 +104,7 @@ def test_backend_flag_reflects_this_process_environment() -> None:
     elif variable_value in {None, "0"}:
         assert fhy_core.RUST_BACKEND_SELECTED is is_installed
     else:
-        pytest.skip(f"{_NO_EXTENSIONS_VARIABLE}={variable_value!r} is not pinned here")
+        pytest.skip(f"{NO_EXTENSIONS_VARIABLE}={variable_value!r} is not pinned here")
 
 
 @pytest.mark.slow
@@ -216,7 +211,7 @@ def test_an_extension_built_for_other_interpreters_warns_then_falls_back() -> No
     assert "RuntimeWarning" in completed.stderr
     assert build_name in completed.stderr
     assert "_rs.cpython-399-fake.so" in completed.stderr
-    assert f"{_NO_EXTENSIONS_VARIABLE}=1" in completed.stderr
+    assert f"{NO_EXTENSIONS_VARIABLE}=1" in completed.stderr
 
 
 def _create_failing_extension_prefix(raise_statement: str) -> str:
@@ -266,7 +261,7 @@ def test_a_broken_extension_selects_the_python_backend_with_a_warning(
     assert "RuntimeWarning" in completed.stderr
     assert "fhy_core._rs" in completed.stderr
     assert expected_detail in completed.stderr
-    assert f"{_NO_EXTENSIONS_VARIABLE}=1" in completed.stderr
+    assert f"{NO_EXTENSIONS_VARIABLE}=1" in completed.stderr
 
 
 @pytest.mark.slow

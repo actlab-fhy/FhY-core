@@ -3,7 +3,6 @@
 import base64
 import copy
 import io
-import os
 import pickle
 import subprocess
 import sys
@@ -24,7 +23,7 @@ from fhy_core.serialization import (
 from fhy_core.traits import Equal, Frozen, FrozenMutationError, PartialEqual
 from fhy_core.utils.override import override
 
-_NO_EXTENSIONS_VARIABLE = "FHY_CORE_NO_EXTENSIONS"
+from .conftest import build_backend_environment
 
 # =============================================================================
 # Construction & ID generation
@@ -619,16 +618,12 @@ def test_constructing_past_the_largest_issuable_id_raises_runtime_error(
     backend it selected, so a stale extension that falls back to Python
     cannot pass as the Rust case.
     """
-    environment = dict(os.environ)
     if backend == "rust":
         pytest.importorskip("fhy_core._rs")
-        environment[_NO_EXTENSIONS_VARIABLE] = "0"
-    else:
-        environment[_NO_EXTENSIONS_VARIABLE] = "1"
 
     completed = subprocess.run(
         [sys.executable, "-c", _EXHAUST_THEN_CONSTRUCT_PROGRAM],
-        env=environment,
+        env=build_backend_environment("0" if backend == "rust" else "1"),
         capture_output=True,
         text=True,
         check=False,
@@ -842,13 +837,10 @@ def _build_environment_for_the_other_backend() -> dict[str, str]:
     Skips the calling test when this process runs on the pure-Python
     backend and the Rust extension is not installed.
     """
-    environment = dict(os.environ)
     if fhy_core.RUST_BACKEND_SELECTED:
-        environment[_NO_EXTENSIONS_VARIABLE] = "1"
-    else:
-        pytest.importorskip("fhy_core._rs")
-        environment.pop(_NO_EXTENSIONS_VARIABLE, None)
-    return environment
+        return build_backend_environment("1")
+    pytest.importorskip("fhy_core._rs")
+    return build_backend_environment(None)
 
 
 def _run_python_under_the_other_backend(
