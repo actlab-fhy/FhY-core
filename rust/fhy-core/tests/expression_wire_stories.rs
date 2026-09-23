@@ -199,16 +199,52 @@ fn expression_literal_writes_a_big_integer_as_a_json_integer(#[case] digits: &st
 #[case::float_with_exponent("5e0", "float")]
 #[case::negative_integer("-5", "int")]
 fn expression_literal_keeps_the_json_number_kind(#[case] token: &str, #[case] kind: &str) {
-    let text =
-        format!("{{\"__type__\":\"literal_expression\",\"__data__\":{{\"value\":{token}}}}}");
-
-    let restored: Expression = serde_json::from_str(&text).expect("the text deserializes");
+    let restored: Expression =
+        serde_json::from_str(&build_literal_wire_text(token)).expect("the text deserializes");
 
     match (expect_literal(&restored), kind) {
         (LiteralKind::Int(value), "int") => assert_eq!(value.to_string(), token),
         (LiteralKind::Float(value), "float") => assert_eq!(value.to_bits(), 5.0_f64.to_bits()),
         (actual, _) => panic!("expected a {kind} literal from {token}, got {actual:?}"),
     }
+}
+
+/// Return the wire text of a literal whose value is the JSON number `token`.
+fn build_literal_wire_text(token: &str) -> String {
+    format!("{{\"__type__\":\"literal_expression\",\"__data__\":{{\"value\":{token}}}}}")
+}
+
+/// Test a float token beyond the range of an f64 is refused with a message
+/// naming the token as `serde_json` spells it.
+#[rstest]
+#[case::positive("1e400", "in `value`: the float 1e+400 does not fit an f64")]
+#[case::negative("-1e400", "in `value`: the float -1e+400 does not fit an f64")]
+fn expression_literal_refuses_a_float_token_beyond_the_f64_range(
+    #[case] token: &str,
+    #[case] expected: &str,
+) {
+    let result = serde_json::from_str::<Expression>(&build_literal_wire_text(token));
+
+    let error = result.expect_err("the float does not fit an f64");
+    assert_eq!(error.to_string(), expected);
+}
+
+/// Test a float token below the smallest subnormal reads as a float zero of
+/// the token's sign.
+#[rstest]
+#[case::positive("1e-400", 0.0)]
+#[case::negative("-1e-400", -0.0)]
+fn expression_literal_reads_an_underflowing_float_token_as_a_signed_zero(
+    #[case] token: &str,
+    #[case] expected: f64,
+) {
+    let restored: Expression =
+        serde_json::from_str(&build_literal_wire_text(token)).expect("the text deserializes");
+
+    let LiteralKind::Float(value) = expect_literal(&restored) else {
+        panic!("expected a float literal from {token}");
+    };
+    assert_eq!(value.to_bits(), expected.to_bits());
 }
 
 /// Test a text literal reads back with its spelling and bucket.
