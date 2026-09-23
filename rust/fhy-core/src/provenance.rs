@@ -28,33 +28,7 @@ use std::sync::Arc;
 use serde::ser::{self, SerializeStruct};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
-/// Deserializer adapter that reads every value as a map.
-///
-/// A derived struct decoder also accepts the struct's fields as a sequence;
-/// routing it through this adapter rejects that form, so only the dict wire
-/// form decodes.
-struct MapOnly<D>(D);
-
-impl<'de, D: Deserializer<'de>> Deserializer<'de> for MapOnly<D> {
-    type Error = D::Error;
-
-    fn deserialize_any<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, D::Error> {
-        self.0.deserialize_map(visitor)
-    }
-
-    serde::forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-        bytes byte_buf option unit unit_struct newtype_struct seq tuple
-        tuple_struct map struct enum identifier ignored_any
-    }
-}
-
-/// Decode `T` from `deserializer`, accepting only the map form.
-fn deserialize_map_only<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
-    deserializer: D,
-) -> Result<T, D::Error> {
-    T::deserialize(MapOnly(deserializer))
-}
+use crate::decode::deserialize_map_only;
 
 /// A 1-indexed line and column in a source text.
 ///

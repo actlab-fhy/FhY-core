@@ -18,6 +18,11 @@
 //!
 //! A deferred level is buffered through `deserialize_any` before it is
 //! decoded, so it needs a self-describing format such as JSON.
+//!
+//! Every payload decodes from its map form only. A derived struct decoder
+//! would also accept the struct's fields as a sequence, without their keys;
+//! [`deserialize_via_payload`] and [`deserialize_map_only`] refuse that
+//! form.
 
 mod buffered;
 
@@ -51,11 +56,43 @@ pub(crate) trait Decode: Sized {
     fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E>;
 }
 
-/// Decode `T` by checking its payload first and then building it.
+/// Decode `T` by checking its payload, in its map form only, first and then
+/// building it.
 pub(crate) fn deserialize_via_payload<'de, T: Decode, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<T, D::Error> {
-    T::build_from_payload(T::Payload::deserialize(deserializer)?)
+    T::build_from_payload(deserialize_map_only::<D, T::Payload>(deserializer)?)
+}
+
+/// Decode `T` from `deserializer`, accepting only the map form.
+///
+/// # Errors
+///
+/// Returns an error if the input is not a map or does not decode as `T`.
+pub(crate) fn deserialize_map_only<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<T, D::Error> {
+    T::deserialize(MapOnly(deserializer))
+}
+
+/// Deserializer adapter that reads every value as a map.
+///
+/// A derived struct decoder also accepts the struct's fields as a sequence;
+/// routing it through this adapter refuses that form.
+struct MapOnly<D>(D);
+
+impl<'de, D: Deserializer<'de>> Deserializer<'de> for MapOnly<D> {
+    type Error = D::Error;
+
+    fn deserialize_any<V: de::Visitor<'de>>(self, visitor: V) -> Result<V::Value, D::Error> {
+        self.0.deserialize_map(visitor)
+    }
+
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option unit unit_struct newtype_struct seq tuple
+        tuple_struct map struct enum identifier ignored_any
+    }
 }
 
 /// A nested level of a payload, read now and checked and built only when its
