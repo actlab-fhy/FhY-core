@@ -3,6 +3,7 @@ resolver = "2"
 members = ["rust/fhy-core", "rust/fhy-core-py"]
 
 [workspace.package]
+# Also the Python package version: maturin derives it from this one.
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"

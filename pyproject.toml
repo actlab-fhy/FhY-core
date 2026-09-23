@@ -4,7 +4,8 @@ build-backend = "maturin"
 
 [project]
 name = "fhy_core"
-version = "0.2.0"
+# maturin reads the version from the workspace Cargo.toml.
+dynamic = ["version"]
 description = "Core utilities for the FhY compiler infrastructure."
 readme = "README.md"
 license = {file = "LICENSE"}

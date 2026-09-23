@@ -1,8 +1,9 @@
 """Tests selecting the Rust-backed or pure-Python backend at import.
 
-The package runs on the compiled extension ``fhy_core._rs`` iff it imports
-and ``FHY_CORE_NO_EXTENSIONS`` does not disable it; the choice is reported
-as ``fhy_core.RUST_BACKEND_SELECTED``. An extension that is not installed
+The package runs on the compiled extension ``fhy_core._rs`` iff it imports,
+its version matches the installed package, and ``FHY_CORE_NO_EXTENSIONS``
+does not disable it; the choice is reported as
+``fhy_core.RUST_BACKEND_SELECTED``. An extension that is not installed
 selects the pure-Python backend silently; one that is installed but fails to
 import selects it with a ``RuntimeWarning``. The selection happens once,
 while the package is imported, so each case other than the running process's
@@ -19,6 +20,7 @@ import sys
 import pytest
 
 import fhy_core
+from fhy_core._backend import _normalize_pep440_version
 
 _NO_EXTENSIONS_VARIABLE = "FHY_CORE_NO_EXTENSIONS"
 
@@ -220,14 +222,48 @@ def test_disabling_the_extension_skips_the_broken_extension_warning() -> None:
     assert completed.stderr == ""
 
 
-@pytest.mark.skipif(
-    not fhy_core.RUST_BACKEND_SELECTED, reason="the Rust backend is not selected"
-)
 def test_extension_version_matches_the_installed_package_version() -> None:
-    """Test the extension reports the version of the package it was built from."""
-    extension = importlib.import_module("fhy_core._rs")
+    """Test the extension's Cargo version normalizes to the package version."""
+    extension = pytest.importorskip("fhy_core._rs")
 
-    assert extension.__version__ == importlib.metadata.version("fhy_core")
+    assert _normalize_pep440_version(
+        extension.__version__
+    ) == importlib.metadata.version("fhy_core")
+
+
+@pytest.mark.parametrize(
+    ("cargo_version", "package_version"),
+    [
+        ("0.2.0", "0.2.0"),
+        ("0.3.0-rc.1", "0.3.0rc1"),
+        ("0.3.0-rc1", "0.3.0rc1"),
+        ("0.3.0-RC.1", "0.3.0rc1"),
+        ("0.3.0-alpha.2", "0.3.0a2"),
+        ("0.3.0-a.1", "0.3.0a1"),
+        ("0.3.0-alpha", "0.3.0a0"),
+        ("0.3.0-beta.3", "0.3.0b3"),
+        ("0.3.0-c.1", "0.3.0rc1"),
+        ("0.3.0-pre.1", "0.3.0rc1"),
+        ("0.3.0-preview", "0.3.0rc0"),
+        ("0.3.0-dev.1", "0.3.0.dev1"),
+        ("0.3.0-rc.1.dev.2", "0.3.0rc1.dev2"),
+        ("0.3.0-post.1", "0.3.0.post1"),
+        ("0.3.0-1", "0.3.0.post1"),
+        ("0.2.0+build.5", "0.2.0+build.5"),
+        ("0.3.0-rc.1+Build-7", "0.3.0rc1+build.7"),
+    ],
+)
+def test_cargo_version_normalizes_to_the_version_maturin_builds(
+    cargo_version: str, package_version: str
+) -> None:
+    """Test a Cargo version normalizes to the package version maturin gives it."""
+    assert _normalize_pep440_version(cargo_version) == package_version
+
+
+@pytest.mark.parametrize("version", ["0.3.0-foo.1", "0.0.0-stale", "", "stale"])
+def test_a_non_pep440_version_does_not_normalize(version: str) -> None:
+    """Test a version maturin cannot build a package from has no normal form."""
+    assert _normalize_pep440_version(version) is None
 
 
 def _create_stale_extension_prefix(version_assignment: str) -> str:

@@ -39,8 +39,9 @@ __version__ = version("fhy_core")
 RUST_BACKEND_SELECTED: bool = _backend.IS_RUST_BACKEND_SELECTED
 """Whether this process runs on the Rust extension rather than pure Python.
 
-True only when the extension ``fhy_core._rs`` is installed, imports, and is
-not disabled through the ``FHY_CORE_NO_EXTENSIONS`` environment variable.
+True only when the extension ``fhy_core._rs`` is installed, imports, reports
+the installed package's version, and is not disabled through the
+``FHY_CORE_NO_EXTENSIONS`` environment variable.
 The variable leaves the extension enabled when it is unset, empty, or one of
 ``0``, ``false``, ``no``, and ``off`` (case-insensitive, ignoring surrounding
 whitespace); any other value disables it. The value is fixed when the package
