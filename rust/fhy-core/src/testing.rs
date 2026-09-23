@@ -70,16 +70,20 @@ thread_local! {
     static CURRENT_SCOPE: RefCell<Option<ThreadEntry>> = const { RefCell::new(None) };
 }
 
+/// Return the table of the scope recorded in `scope`, or `None` when the
+/// thread is in no scope.
+fn find_current_table(scope: &RefCell<Option<ThreadEntry>>) -> Option<Arc<ScopeTable>> {
+    scope
+        .borrow()
+        .as_ref()
+        .map(|entry| Arc::clone(&entry.table))
+}
+
 /// Return the id the current thread's scope records for `name_hint`, or
 /// `None` when the thread is in no scope.
 pub(crate) fn find_scoped_id(name_hint: &str) -> Option<u64> {
     let table = CURRENT_SCOPE
-        .try_with(|scope| {
-            scope
-                .borrow()
-                .as_ref()
-                .map(|entry| Arc::clone(&entry.table))
-        })
+        .try_with(find_current_table)
         // An identifier created while this thread's locals are being
         // destroyed is outside any scope.
         .ok()
@@ -139,12 +143,7 @@ impl DeterministicIdentifierScope {
     /// Enter a scope on the current thread: start one with an empty table, or
     /// join the one the thread is already in.
     pub fn enter() -> Self {
-        let current = CURRENT_SCOPE.with(|scope| {
-            scope
-                .borrow()
-                .as_ref()
-                .map(|entry| Arc::clone(&entry.table))
-        });
+        let current = CURRENT_SCOPE.with(find_current_table);
         Self::join(current.unwrap_or_else(|| Arc::new(ScopeTable::default())))
     }
 
