@@ -29,14 +29,9 @@ use pattern_support::{
 };
 use rstest::rstest;
 
-/// Return `left op right`.
-fn build_binary(operation: BinaryOperation, left: &Expression, right: &Expression) -> Expression {
-    Expression::new_binary(operation, left, right)
-}
-
 /// Return `x + 0` for the reference `x`.
 fn build_plus_zero(x: &Expression) -> Expression {
-    build_binary(BinaryOperation::Add, x, &build_literal(0))
+    Expression::new_binary(BinaryOperation::Add, x, build_literal(0))
 }
 
 /// Rewrite `expression` with `rules`, failing the test if the walk fails.
@@ -235,7 +230,7 @@ fn apply_rewrite_rule_returns_none_when_the_pattern_does_not_match() {
 
     let rewritten = rewrite_root(
         &rule,
-        &build_binary(BinaryOperation::Add, &x, &build_literal(1)),
+        &Expression::new_binary(BinaryOperation::Add, &x, build_literal(1)),
     );
 
     assert_eq!(rewritten, None);
@@ -350,10 +345,10 @@ fn apply_rewrite_rule_returns_the_predicate_error() {
 #[test]
 fn apply_rewrite_rule_operates_at_the_root_only() {
     let (_, x) = build_identifier("x");
-    let outer = build_binary(
+    let outer = Expression::new_binary(
         BinaryOperation::Multiply,
-        &build_plus_zero(&x),
-        &build_literal(2),
+        build_plus_zero(&x),
+        build_literal(2),
     );
 
     let rewritten = rewrite_root(&build_x_plus_zero_rule(), &outer);
@@ -382,7 +377,7 @@ fn apply_rewrite_rules_with_no_rules_returns_the_input_itself() {
 #[test]
 fn apply_rewrite_rules_preserves_identity_when_no_rule_fires() {
     let (_, x) = build_identifier("x");
-    let expression = build_binary(BinaryOperation::Add, &x, &build_literal(1));
+    let expression = Expression::new_binary(BinaryOperation::Add, &x, build_literal(1));
 
     let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
 
@@ -471,13 +466,14 @@ fn apply_rewrite_rules_rewrites_at_the_root() {
 fn apply_rewrite_rules_rewrites_a_subtree_and_rebuilds_its_parent() {
     let (_, x) = build_identifier("x");
     let sibling = build_literal(2);
-    let expression = build_binary(BinaryOperation::Multiply, &build_plus_zero(&x), &sibling);
+    let expression =
+        Expression::new_binary(BinaryOperation::Multiply, build_plus_zero(&x), &sibling);
 
     let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
 
     assert_eq!(
         outcome.output(),
-        &build_binary(BinaryOperation::Multiply, &x, &build_literal(2))
+        &Expression::new_binary(BinaryOperation::Multiply, &x, build_literal(2))
     );
     let ExpressionKind::Binary(node) = outcome.output().kind() else {
         panic!("a product at the root, got {:?}", outcome.output());
@@ -519,10 +515,10 @@ fn apply_rewrite_rules_tries_the_next_rule_after_a_refusing_guard() {
 #[test]
 fn apply_rewrite_rules_walks_bottom_up_in_one_pass() {
     let (_, x) = build_identifier("x");
-    let expression = build_binary(
+    let expression = Expression::new_binary(
         BinaryOperation::Multiply,
-        &build_plus_zero(&x),
-        &build_literal(1),
+        build_plus_zero(&x),
+        build_literal(1),
     );
 
     let outcome = rewrite(
@@ -541,10 +537,10 @@ fn apply_rewrite_rules_walks_bottom_up_in_one_pass() {
 #[test]
 fn apply_rewrite_rules_does_not_iterate_to_a_fixpoint() {
     let rule = RewriteRule::new(build_literal_pattern(0), |_| {
-        Ok(build_binary(
+        Ok(Expression::new_binary(
             BinaryOperation::Add,
-            &build_literal(0),
-            &build_literal(0),
+            build_literal(0),
+            build_literal(0),
         ))
     });
 
@@ -552,7 +548,7 @@ fn apply_rewrite_rules_does_not_iterate_to_a_fixpoint() {
 
     assert_eq!(
         outcome.output(),
-        &build_binary(BinaryOperation::Add, &build_literal(0), &build_literal(0))
+        &Expression::new_binary(BinaryOperation::Add, build_literal(0), build_literal(0))
     );
     assert_eq!(outcome.fired().len(), 1);
 }
@@ -619,7 +615,7 @@ fn apply_rewrite_rules_applies_a_repeated_capture_rule() {
     let (_, x) = build_identifier("x");
 
     let outcome = rewrite(
-        &build_binary(BinaryOperation::Subtract, &x, &x),
+        &Expression::new_binary(BinaryOperation::Subtract, &x, &x),
         &[build_x_minus_x_rule()],
     );
 
@@ -631,7 +627,7 @@ fn apply_rewrite_rules_applies_a_repeated_capture_rule() {
 fn apply_rewrite_rules_repeated_capture_rule_skips_different_operands() {
     let (_, x) = build_identifier("x");
     let (_, y) = build_identifier("y");
-    let expression = build_binary(BinaryOperation::Subtract, &x, &y);
+    let expression = Expression::new_binary(BinaryOperation::Subtract, &x, &y);
 
     let outcome = rewrite(&expression, &[build_x_minus_x_rule()]);
 
@@ -659,13 +655,13 @@ fn apply_rewrite_rules_collapses_a_long_chain_in_one_walk() {
 fn apply_rewrite_rules_rewrites_a_shared_subtree_at_each_occurrence() {
     let (_, x) = build_identifier("x");
     let shared = build_plus_zero(&x);
-    let expression = build_binary(BinaryOperation::Multiply, &shared, &shared);
+    let expression = Expression::new_binary(BinaryOperation::Multiply, &shared, &shared);
 
     let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
 
     assert_eq!(
         outcome.output(),
-        &build_binary(BinaryOperation::Multiply, &x, &x)
+        &Expression::new_binary(BinaryOperation::Multiply, &x, &x)
     );
     assert_eq!(
         describe_fired(&outcome),
@@ -815,7 +811,8 @@ fn apply_rewrite_rules_stops_at_the_first_failure() {
         rewrite_to_literal(0),
     );
     let failing_on_one = RewriteRule::new(build_literal_pattern(1), fail_rewrite);
-    let expression = build_binary(BinaryOperation::Add, &build_literal(1), &build_literal(2));
+    let expression =
+        Expression::new_binary(BinaryOperation::Add, build_literal(1), build_literal(2));
 
     let result = apply_rewrite_rules(&expression, &[counting, failing_on_one]);
 
@@ -973,10 +970,10 @@ fn fired_rule_records_index_and_name_in_walk_order() {
         ),
         rewrite_to_capture("x"),
     );
-    let expression = build_plus_zero(&build_binary(
+    let expression = build_plus_zero(&Expression::new_binary(
         BinaryOperation::Multiply,
         &x,
-        &build_literal(1),
+        build_literal(1),
     ));
 
     let outcome = rewrite(&expression, &[build_x_plus_zero_rule(), unnamed_times_one]);

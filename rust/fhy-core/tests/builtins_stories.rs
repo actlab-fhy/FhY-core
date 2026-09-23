@@ -74,16 +74,6 @@ fn build_parameter_references(function: &ComposedFunction) -> Vec<Expression> {
         .collect()
 }
 
-/// Return the binary node `left <operation> right`.
-fn build_binary(operation: BinaryOperation, left: &Expression, right: &Expression) -> Expression {
-    Expression::new_binary(operation, left.clone(), right.clone())
-}
-
-/// Return the unary node `<operation> operand`.
-fn build_unary(operation: UnaryOperation, operand: &Expression) -> Expression {
-    Expression::new_unary(operation, operand.clone())
-}
-
 /// Return the piecewise node with `cases` and `otherwise`.
 fn build_cases(cases: &[(Expression, Expression)], otherwise: &Expression) -> Expression {
     Expression::from(
@@ -118,27 +108,34 @@ fn build_expected_piecewise_body(name: &str, parameters: &[Expression]) -> Expre
     let zero_float = build_literal(0.0);
     match (name, parameters) {
         ("max", [a, b]) => build_cases(
-            &[(build_binary(BinaryOperation::Greater, a, b), a.clone())],
+            &[(
+                Expression::new_binary(BinaryOperation::Greater, a, b),
+                a.clone(),
+            )],
             b,
         ),
-        ("min", [a, b]) => {
-            build_cases(&[(build_binary(BinaryOperation::Less, a, b), a.clone())], b)
-        }
+        ("min", [a, b]) => build_cases(
+            &[(
+                Expression::new_binary(BinaryOperation::Less, a, b),
+                a.clone(),
+            )],
+            b,
+        ),
         ("abs", [x]) => build_cases(
             &[(
-                build_binary(BinaryOperation::GreaterEqual, x, &zero_float),
+                Expression::new_binary(BinaryOperation::GreaterEqual, x, &zero_float),
                 x.clone(),
             )],
-            &build_unary(UnaryOperation::Negate, x),
+            &Expression::new_unary(UnaryOperation::Negate, x),
         ),
         ("sign", [x]) => build_cases(
             &[
                 (
-                    build_binary(BinaryOperation::Greater, x, &zero_float),
+                    Expression::new_binary(BinaryOperation::Greater, x, &zero_float),
                     build_literal(1),
                 ),
                 (
-                    build_binary(BinaryOperation::Less, x, &zero_float),
+                    Expression::new_binary(BinaryOperation::Less, x, &zero_float),
                     build_literal(-1),
                 ),
             ],
@@ -146,10 +143,10 @@ fn build_expected_piecewise_body(name: &str, parameters: &[Expression]) -> Expre
         ),
         ("leaky_relu", [x, slope]) => build_cases(
             &[(
-                build_binary(BinaryOperation::Greater, x, &zero_float),
+                Expression::new_binary(BinaryOperation::Greater, x, &zero_float),
                 x.clone(),
             )],
-            &build_binary(BinaryOperation::Multiply, x, slope),
+            &Expression::new_binary(BinaryOperation::Multiply, x, slope),
         ),
         _ => panic!(
             "no piecewise body for {name} with {} parameters",
@@ -162,28 +159,28 @@ fn build_expected_piecewise_body(name: &str, parameters: &[Expression]) -> Expre
 /// `parameters`.
 fn build_expected_boolean_body(name: &str, parameters: &[Expression]) -> Expression {
     match (name, parameters) {
-        ("xor", [a, b]) => build_binary(
+        ("xor", [a, b]) => Expression::new_binary(
             BinaryOperation::LogicalAnd,
-            &build_binary(BinaryOperation::LogicalOr, a, b),
-            &build_unary(
+            Expression::new_binary(BinaryOperation::LogicalOr, a, b),
+            Expression::new_unary(
                 UnaryOperation::LogicalNot,
-                &build_binary(BinaryOperation::LogicalAnd, a, b),
+                Expression::new_binary(BinaryOperation::LogicalAnd, a, b),
             ),
         ),
-        ("nand", [a, b]) => build_unary(
+        ("nand", [a, b]) => Expression::new_unary(
             UnaryOperation::LogicalNot,
-            &build_binary(BinaryOperation::LogicalAnd, a, b),
+            Expression::new_binary(BinaryOperation::LogicalAnd, a, b),
         ),
-        ("nor", [a, b]) => build_unary(
+        ("nor", [a, b]) => Expression::new_unary(
             UnaryOperation::LogicalNot,
-            &build_binary(BinaryOperation::LogicalOr, a, b),
+            Expression::new_binary(BinaryOperation::LogicalOr, a, b),
         ),
-        ("implies", [a, b]) => build_binary(
+        ("implies", [a, b]) => Expression::new_binary(
             BinaryOperation::LogicalOr,
-            &build_unary(UnaryOperation::LogicalNot, a),
+            Expression::new_unary(UnaryOperation::LogicalNot, a),
             b,
         ),
-        ("iff", [a, b]) => build_binary(BinaryOperation::Equal, a, b),
+        ("iff", [a, b]) => Expression::new_binary(BinaryOperation::Equal, a, b),
         _ => panic!(
             "no Boolean body for {name} with {} parameters",
             parameters.len()
@@ -204,37 +201,37 @@ fn build_expected_arithmetic_body(name: &str, parameters: &[Expression]) -> Expr
             "clamp",
             &[
                 x.clone(),
-                build_unary(UnaryOperation::Negate, bound),
+                Expression::new_unary(UnaryOperation::Negate, bound),
                 bound.clone(),
             ],
         ),
         ("relu", [x]) => build_call_node("max", &[x.clone(), build_literal(0)]),
-        ("sigmoid", [x]) => build_binary(
+        ("sigmoid", [x]) => Expression::new_binary(
             BinaryOperation::Divide,
             &one_float,
-            &build_binary(
+            Expression::new_binary(
                 BinaryOperation::Add,
                 &one_float,
-                &build_call_node("exp", &[build_unary(UnaryOperation::Negate, x)]),
+                build_call_node("exp", &[Expression::new_unary(UnaryOperation::Negate, x)]),
             ),
         ),
-        ("silu", [x]) => build_binary(
+        ("silu", [x]) => Expression::new_binary(
             BinaryOperation::Multiply,
             x,
-            &build_call_node("sigmoid", std::slice::from_ref(x)),
+            build_call_node("sigmoid", std::slice::from_ref(x)),
         ),
-        ("gelu", [x]) => build_binary(
+        ("gelu", [x]) => Expression::new_binary(
             BinaryOperation::Multiply,
-            &build_binary(BinaryOperation::Multiply, &build_literal(0.5), x),
-            &build_binary(
+            Expression::new_binary(BinaryOperation::Multiply, build_literal(0.5), x),
+            Expression::new_binary(
                 BinaryOperation::Add,
                 &one_float,
-                &build_call_node(
+                build_call_node(
                     "erf",
-                    &[build_binary(
+                    &[Expression::new_binary(
                         BinaryOperation::Divide,
                         x,
-                        &build_call_node("sqrt", &[build_literal(2.0)]),
+                        build_call_node("sqrt", &[build_literal(2.0)]),
                     )],
                 ),
             ),
@@ -912,11 +909,7 @@ fn composed_function_max_body_with_literal_arguments_yields_the_literal_piecewis
 
     let expected = build_cases(
         &[(
-            build_binary(
-                BinaryOperation::Greater,
-                &build_literal(1),
-                &build_literal(2),
-            ),
+            Expression::new_binary(BinaryOperation::Greater, build_literal(1), build_literal(2)),
             build_literal(1),
         )],
         &build_literal(2),
@@ -951,14 +944,14 @@ fn composed_function_max_of_min_inlines_to_a_nested_clamp() {
 
     let inner_min = build_cases(
         &[(
-            build_binary(BinaryOperation::Less, &value, &high),
+            Expression::new_binary(BinaryOperation::Less, &value, &high),
             value.clone(),
         )],
         &high,
     );
     let expected = build_cases(
         &[(
-            build_binary(BinaryOperation::Greater, &low, &inner_min),
+            Expression::new_binary(BinaryOperation::Greater, &low, &inner_min),
             low.clone(),
         )],
         &inner_min,
@@ -979,7 +972,7 @@ fn build_piecewise_guards_a_fast_path_with_a_fallback() {
 
     let expected = build_cases(
         &[(
-            build_binary(BinaryOperation::Greater, &x, &build_literal(0)),
+            Expression::new_binary(BinaryOperation::Greater, &x, build_literal(0)),
             sqrt_path,
         )],
         &fallback_path,
