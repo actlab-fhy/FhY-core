@@ -20,6 +20,8 @@
 //! (`fhy_core::op_attribute::*`, `fhy_core::value_domain::*`) or allocate an
 //! identifier outside a script's own operations.
 
+mod common;
+
 use std::sync::{Mutex, PoisonError};
 
 use fhy_core::identifier::Identifier;
@@ -27,6 +29,13 @@ use fhy_core::testing::DeterministicIdentifierScope;
 use serde_json::Value;
 
 const GOLDEN_JSON: &str = include_str!("golden/deterministic_identifier_cases.json");
+
+/// Minimum number of golden cases this corpus must carry.
+const MIN_CASES: usize = 100;
+
+/// Minimum total number of golden ops, across every case, this corpus must
+/// carry.
+const MIN_OPS: usize = 1000;
 
 /// Serializes every script this binary replays, so exact relative ids are
 /// never disturbed by another test's identifier allocations.
@@ -90,55 +99,13 @@ fn replay_case(case: &Value, mismatches: &mut Vec<String>) {
     );
 }
 
-/// Assert the golden data is large enough that an empty or truncated file
-/// cannot pass this test.
-fn assert_case_and_op_counts(cases: &[Value]) {
-    assert!(
-        cases.len() >= 100,
-        "expected at least 100 golden cases, found {}",
-        cases.len()
-    );
-    let total_ops: usize = cases
-        .iter()
-        .map(|case| case["ops"].as_array().map_or(0, Vec::len))
-        .sum();
-    assert!(
-        total_ops >= 1000,
-        "expected at least 1000 golden ops, found {total_ops}"
-    );
-}
-
-/// Parse a golden document, check its size, replay every case, and return
-/// the mismatches found.
-fn replay_golden_document(json: &str) -> Vec<String> {
-    let document: Value = serde_json::from_str(json).expect("golden data is valid JSON");
-    let cases = document["cases"]
-        .as_array()
-        .expect("golden data has a `cases` array");
-
-    assert_case_and_op_counts(cases);
-
-    let mut mismatches = Vec::new();
-    for case in cases {
-        replay_case(case, &mut mismatches);
-    }
-    mismatches
-}
-
 /// Test the Rust `DeterministicIdentifierScope` scope reproduces every
 /// observation the Python oracle recorded for the golden operation scripts.
 #[test]
 fn deterministic_identifiers_match_the_python_oracle() {
     let _replay = lock_replay();
 
-    let mismatches = replay_golden_document(GOLDEN_JSON);
-
-    assert!(
-        mismatches.is_empty(),
-        "found {} mismatch(es):\n{}",
-        mismatches.len(),
-        mismatches.join("\n")
-    );
+    common::replay_golden_document(GOLDEN_JSON, MIN_CASES, MIN_OPS, None, |_| {}, replay_case);
 }
 
 /// Test the Rust scope reproduces every observation the Python oracle
@@ -150,16 +117,7 @@ fn deterministic_identifiers_match_the_python_oracle() {
 fn deterministic_identifiers_match_the_python_oracle_on_an_expanded_corpus() {
     let _replay = lock_replay();
 
-    let path = std::env::var("FHY_DETERMINISTIC_IDENTIFIER_CORPUS")
-        .expect("FHY_DETERMINISTIC_IDENTIFIER_CORPUS names an expanded corpus file");
-    let json = std::fs::read_to_string(&path).expect("expanded corpus file is readable");
+    let (path, json) = common::read_expanded_corpus("FHY_DETERMINISTIC_IDENTIFIER_CORPUS");
 
-    let mismatches = replay_golden_document(&json);
-
-    assert!(
-        mismatches.is_empty(),
-        "found {} mismatch(es) in {path}:\n{}",
-        mismatches.len(),
-        mismatches.join("\n")
-    );
+    common::replay_golden_document(&json, MIN_CASES, MIN_OPS, Some(&path), |_| {}, replay_case);
 }

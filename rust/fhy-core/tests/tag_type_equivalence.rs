@@ -16,6 +16,8 @@
 //! functions on separate threads, and running two of these concurrently
 //! would race a `clear()` in one script against an intern in another.
 
+mod common;
+
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -30,6 +32,13 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
 const GOLDEN_JSON: &str = include_str!("golden/tag_type_cases.json");
+
+/// Minimum number of golden cases this corpus must carry.
+const MIN_CASES: usize = 100;
+
+/// Minimum total number of golden ops, across every case, this corpus must
+/// carry.
+const MIN_OPS: usize = 1000;
 
 /// Distance above a freshly minted id at which `bind_ahead` binds a slot, and
 /// between the ids of successive ahead slots in one script, mirroring the
@@ -1105,24 +1114,6 @@ fn replay_case(case: &Value, mismatches: &mut Vec<String>) {
     }
 }
 
-/// Assert the golden data is large enough that an empty or truncated file
-/// cannot pass this test.
-fn assert_case_and_op_counts(cases: &[Value]) {
-    assert!(
-        cases.len() >= 100,
-        "expected at least 100 golden cases, found {}",
-        cases.len()
-    );
-    let total_ops: usize = cases
-        .iter()
-        .map(|case| case["ops"].as_array().map_or(0, Vec::len))
-        .sum();
-    assert!(
-        total_ops >= 1000,
-        "expected at least 1000 golden ops, found {total_ops}"
-    );
-}
-
 /// Assert the golden data's default-slot names match the slots this replay
 /// binds, so the two cannot silently drift apart.
 fn assert_default_slots_match_rust(document: &Value) {
@@ -1151,35 +1142,17 @@ fn assert_default_slots_match_rust(document: &Value) {
     }
 }
 
-/// Parse a golden document, check its size and default slots, replay every
-/// case, and return the mismatches found.
-fn replay_golden_document(json: &str) -> Vec<String> {
-    let document: Value = serde_json::from_str(json).expect("golden data is valid JSON");
-    let cases = document["cases"]
-        .as_array()
-        .expect("golden data has a `cases` array");
-
-    assert_case_and_op_counts(cases);
-    assert_default_slots_match_rust(&document);
-
-    let mut mismatches = Vec::new();
-    for case in cases {
-        replay_case(case, &mut mismatches);
-    }
-    mismatches
-}
-
 /// Test the Rust `OpAttribute` and `ValueDomain` registries reproduce every
 /// observation the Python oracle recorded for the golden operation scripts.
 #[test]
 fn tag_type_registries_match_the_python_oracle() {
-    let mismatches = replay_golden_document(GOLDEN_JSON);
-
-    assert!(
-        mismatches.is_empty(),
-        "found {} mismatch(es):\n{}",
-        mismatches.len(),
-        mismatches.join("\n")
+    common::replay_golden_document(
+        GOLDEN_JSON,
+        MIN_CASES,
+        MIN_OPS,
+        None,
+        assert_default_slots_match_rust,
+        replay_case,
     );
 }
 
@@ -1189,16 +1162,14 @@ fn tag_type_registries_match_the_python_oracle() {
 #[test]
 #[ignore = "requires an expanded corpus generated from the Python oracle"]
 fn tag_type_registries_match_the_python_oracle_on_an_expanded_corpus() {
-    let path = std::env::var("FHY_TAG_TYPE_CORPUS")
-        .expect("FHY_TAG_TYPE_CORPUS names an expanded corpus file");
-    let json = std::fs::read_to_string(&path).expect("expanded corpus file is readable");
+    let (path, json) = common::read_expanded_corpus("FHY_TAG_TYPE_CORPUS");
 
-    let mismatches = replay_golden_document(&json);
-
-    assert!(
-        mismatches.is_empty(),
-        "found {} mismatch(es) in {path}:\n{}",
-        mismatches.len(),
-        mismatches.join("\n")
+    common::replay_golden_document(
+        &json,
+        MIN_CASES,
+        MIN_OPS,
+        Some(&path),
+        assert_default_slots_match_rust,
+        replay_case,
     );
 }
