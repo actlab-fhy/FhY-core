@@ -6,10 +6,10 @@
 //! [`ValueDomain`] keeps that classification open: a layer registers the
 //! domains it needs without changing this crate.
 //!
-//! [`DATA_DOMAIN`] and [`ADDRESS_DOMAIN`] are the two domains shipped here.
-//! Import them rather than building a fresh domain with the same name hint.
-//! Identifiers compare by id, and a second `Identifier::new("data")` is a
-//! different key.
+//! [`get_data_domain`] and [`get_address_domain`] return the two domains
+//! shipped here. Call them rather than building a fresh domain with the same
+//! name hint. Identifiers compare by id, and a second `Identifier::new("data")`
+//! is a different key.
 //!
 //! Domains form a hierarchy through their parents, and
 //! [`ValueDomain::is_subdomain_of`] walks that chain, so a layer can relate
@@ -62,17 +62,17 @@ impl ValueDomain {
     ///
     /// ```
     /// use fhy_core::identifier::Identifier;
-    /// use fhy_core::value_domain::{ValueDomain, DATA_DOMAIN};
+    /// use fhy_core::value_domain::{ValueDomain, get_data_domain};
     ///
     /// let tile = ValueDomain::new(
     ///     Identifier::new("tile"),
     ///     "A tile of concrete data.",
-    ///     Some(DATA_DOMAIN.clone()),
+    ///     Some(get_data_domain().clone()),
     /// )
     /// .into_canonical();
     ///
-    /// assert!(tile.is_subdomain_of(&DATA_DOMAIN));
-    /// assert!(!DATA_DOMAIN.is_subdomain_of(&tile));
+    /// assert!(tile.is_subdomain_of(get_data_domain()));
+    /// assert!(!get_data_domain().is_subdomain_of(&tile));
     /// ```
     pub fn new(
         name: Identifier,
@@ -224,10 +224,10 @@ impl Hash for ValueDomain {
     }
 }
 
-/// Name of the domain shipped as [`DATA_DOMAIN`].
+/// Name of the domain returned by [`get_data_domain`].
 static DATA_DOMAIN_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new_unscoped("data"));
 
-/// Name of the domain shipped as [`ADDRESS_DOMAIN`].
+/// Name of the domain returned by [`get_address_domain`].
 static ADDRESS_DOMAIN_NAME: LazyLock<Identifier> =
     LazyLock::new(|| Identifier::new_unscoped("address"));
 
@@ -264,13 +264,24 @@ fn require_default(name: &Identifier) -> Canonical<ValueDomain> {
         .expect("the registry registers every default on its first use")
 }
 
-/// Concrete data values flowing through the IR.
-pub static DATA_DOMAIN: LazyLock<Canonical<ValueDomain>> =
+static DATA_DOMAIN: LazyLock<Canonical<ValueDomain>> =
     LazyLock::new(|| require_default(&DATA_DOMAIN_NAME));
 
-/// Index, offset, or address values used to access data.
-pub static ADDRESS_DOMAIN: LazyLock<Canonical<ValueDomain>> =
+static ADDRESS_DOMAIN: LazyLock<Canonical<ValueDomain>> =
     LazyLock::new(|| require_default(&ADDRESS_DOMAIN_NAME));
+
+/// Return the domain for concrete data values flowing through the IR.
+#[must_use]
+pub fn get_data_domain() -> &'static Canonical<ValueDomain> {
+    &DATA_DOMAIN
+}
+
+/// Return the domain for index, offset, or address values used to access
+/// data.
+#[must_use]
+pub fn get_address_domain() -> &'static Canonical<ValueDomain> {
+    &ADDRESS_DOMAIN
+}
 
 #[cfg(test)]
 mod tests {
@@ -432,8 +443,8 @@ mod tests {
     fn domains_with_different_parents_are_unequal() {
         let _guard = hold_registry();
         let name = Identifier::new("parent-differs");
-        let parented =
-            ValueDomain::new(name.clone(), "desc", Some(DATA_DOMAIN.clone())).into_canonical();
+        let parented = ValueDomain::new(name.clone(), "desc", Some(get_data_domain().clone()))
+            .into_canonical();
 
         let orphan = intern_and_take_discarded(name, "desc", None);
 
@@ -444,8 +455,8 @@ mod tests {
     fn the_data_domain_is_registered_under_its_name() {
         let _guard = hold_registry();
         assert_eq!(
-            ValueDomain::intern_registry().get(DATA_DOMAIN.name()),
-            Some(DATA_DOMAIN.clone())
+            ValueDomain::intern_registry().get(get_data_domain().name()),
+            Some(get_data_domain().clone())
         );
     }
 
@@ -453,29 +464,29 @@ mod tests {
     fn the_address_domain_is_registered_under_its_name() {
         let _guard = hold_registry();
         assert_eq!(
-            ValueDomain::intern_registry().get(ADDRESS_DOMAIN.name()),
-            Some(ADDRESS_DOMAIN.clone())
+            ValueDomain::intern_registry().get(get_address_domain().name()),
+            Some(get_address_domain().clone())
         );
     }
 
     #[test]
     fn the_default_domains_are_distinct() {
         let _guard = hold_registry();
-        assert_ne!(*DATA_DOMAIN, *ADDRESS_DOMAIN);
-        assert_ne!(DATA_DOMAIN.name(), ADDRESS_DOMAIN.name());
+        assert_ne!(*get_data_domain(), *get_address_domain());
+        assert_ne!(get_data_domain().name(), get_address_domain().name());
     }
 
     #[test]
     fn the_default_domains_have_no_parent() {
         let _guard = hold_registry();
-        assert_eq!(DATA_DOMAIN.parent(), None);
-        assert_eq!(ADDRESS_DOMAIN.parent(), None);
+        assert_eq!(get_data_domain().parent(), None);
+        assert_eq!(get_address_domain().parent(), None);
     }
 
     #[test]
     fn the_default_domains_carry_non_empty_descriptions() {
         let _guard = hold_registry();
-        for default in [&*DATA_DOMAIN, &*ADDRESS_DOMAIN] {
+        for default in [get_data_domain(), get_address_domain()] {
             assert!(!default.description().trim().is_empty());
         }
     }
@@ -490,7 +501,7 @@ mod tests {
         ValueDomain::intern_registry().clear();
 
         assert_eq!(ValueDomain::intern_registry().get(&name), None);
-        for default in [&DATA_DOMAIN, &ADDRESS_DOMAIN] {
+        for default in [get_data_domain(), get_address_domain()] {
             assert_eq!(
                 ValueDomain::intern_registry().get(default.name()),
                 Some((*default).clone())
@@ -535,7 +546,7 @@ mod tests {
 
         ValueDomain::intern_registry().clear();
         let root_after =
-            ValueDomain::new(root_name, "root", Some(DATA_DOMAIN.clone())).into_canonical();
+            ValueDomain::new(root_name, "root", Some(get_data_domain().clone())).into_canonical();
         let middle_after =
             ValueDomain::new(middle_name, "middle", Some(root_after)).into_canonical();
 
@@ -545,7 +556,7 @@ mod tests {
     #[test]
     fn a_domain_is_a_subdomain_of_itself() {
         let _guard = hold_registry();
-        let child = intern_child("subdomain-of-itself", &DATA_DOMAIN);
+        let child = intern_child("subdomain-of-itself", get_data_domain());
 
         assert!(child.is_subdomain_of(&child));
     }
@@ -553,34 +564,34 @@ mod tests {
     #[test]
     fn a_domain_is_a_subdomain_of_its_parent() {
         let _guard = hold_registry();
-        let child = intern_child("subdomain-of-parent", &DATA_DOMAIN);
+        let child = intern_child("subdomain-of-parent", get_data_domain());
 
-        assert!(child.is_subdomain_of(&DATA_DOMAIN));
+        assert!(child.is_subdomain_of(get_data_domain()));
     }
 
     #[test]
     fn a_domain_is_a_subdomain_of_a_distant_ancestor() {
         let _guard = hold_registry();
-        let middle = intern_child("subdomain-middle", &DATA_DOMAIN);
+        let middle = intern_child("subdomain-middle", get_data_domain());
         let leaf = intern_child("subdomain-leaf", &middle);
 
-        assert!(leaf.is_subdomain_of(&DATA_DOMAIN));
+        assert!(leaf.is_subdomain_of(get_data_domain()));
     }
 
     #[test]
     fn a_domain_is_not_a_subdomain_of_a_sibling() {
         let _guard = hold_registry();
-        let child = intern_child("subdomain-sibling", &DATA_DOMAIN);
+        let child = intern_child("subdomain-sibling", get_data_domain());
 
-        assert!(!child.is_subdomain_of(&ADDRESS_DOMAIN));
+        assert!(!child.is_subdomain_of(get_address_domain()));
     }
 
     #[test]
     fn a_parent_is_not_a_subdomain_of_its_child() {
         let _guard = hold_registry();
-        let child = intern_child("subdomain-one-way", &DATA_DOMAIN);
+        let child = intern_child("subdomain-one-way", get_data_domain());
 
-        assert!(!DATA_DOMAIN.is_subdomain_of(&child));
+        assert!(!get_data_domain().is_subdomain_of(&child));
     }
 
     #[test]
@@ -627,7 +638,7 @@ mod tests {
     #[test]
     fn a_domain_round_trips_through_json() {
         let _guard = hold_registry();
-        let domain = intern_child("round-trip", &DATA_DOMAIN);
+        let domain = intern_child("round-trip", get_data_domain());
 
         let json = serde_json::to_string(&*domain).unwrap();
         let restored: Canonical<ValueDomain> = serde_json::from_str(&json).unwrap();
@@ -638,11 +649,11 @@ mod tests {
     #[test]
     fn decoding_a_registered_name_returns_the_canonical_domain() {
         let _guard = hold_registry();
-        let json = serde_json::to_string(&*DATA_DOMAIN).unwrap();
+        let json = serde_json::to_string(get_data_domain()).unwrap();
 
         let restored: Canonical<ValueDomain> = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(restored, *DATA_DOMAIN);
+        assert_eq!(restored, *get_data_domain());
     }
 
     #[test]
@@ -667,12 +678,12 @@ mod tests {
     #[test]
     fn decoding_a_nested_parent_canonicalizes_it() {
         let _guard = hold_registry();
-        let child = intern_child("nested-parent-child", &DATA_DOMAIN);
+        let child = intern_child("nested-parent-child", get_data_domain());
         let json = serde_json::to_string(&*child).unwrap();
 
         let restored: Canonical<ValueDomain> = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(restored.parent(), Some(&*DATA_DOMAIN));
+        assert_eq!(restored.parent(), Some(get_data_domain()));
     }
 
     #[test]
@@ -698,9 +709,10 @@ mod tests {
     fn decoding_a_conflicting_parent_is_rejected() {
         let _guard = hold_registry();
         let name = Identifier::new("conflicting-parent");
-        let canonical =
-            ValueDomain::new(name.clone(), "desc", Some(DATA_DOMAIN.clone())).into_canonical();
-        let conflicting = ValueDomain::create(name.clone(), "desc", Some(ADDRESS_DOMAIN.clone()));
+        let canonical = ValueDomain::new(name.clone(), "desc", Some(get_data_domain().clone()))
+            .into_canonical();
+        let conflicting =
+            ValueDomain::create(name.clone(), "desc", Some(get_address_domain().clone()));
         let json = serde_json::to_string(&conflicting).unwrap();
 
         let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
@@ -713,8 +725,8 @@ mod tests {
     fn decoding_a_dropped_parent_is_rejected() {
         let _guard = hold_registry();
         let name = Identifier::new("dropped-parent");
-        let _canonical =
-            ValueDomain::new(name.clone(), "desc", Some(DATA_DOMAIN.clone())).into_canonical();
+        let _canonical = ValueDomain::new(name.clone(), "desc", Some(get_data_domain().clone()))
+            .into_canonical();
         let json = serde_json::to_string(&ValueDomain::create(name, "desc", None)).unwrap();
 
         let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
@@ -726,9 +738,9 @@ mod tests {
     fn decoding_a_divergent_description_under_a_matching_parent_keeps_the_canonical() {
         let _guard = hold_registry();
         let name = Identifier::new("divergent-description-parented");
-        let canonical =
-            ValueDomain::new(name.clone(), "original", Some(DATA_DOMAIN.clone())).into_canonical();
-        let divergent = ValueDomain::create(name, "divergent", Some(DATA_DOMAIN.clone()));
+        let canonical = ValueDomain::new(name.clone(), "original", Some(get_data_domain().clone()))
+            .into_canonical();
+        let divergent = ValueDomain::create(name, "divergent", Some(get_data_domain().clone()));
         let json = serde_json::to_string(&divergent).unwrap();
 
         let restored: Canonical<ValueDomain> = serde_json::from_str(&json).unwrap();
@@ -955,8 +967,8 @@ mod tests {
         let _guard = hold_registry();
         let _counter = hold_id_counter();
         let name = Identifier::new("conflict-after-fresh-parent");
-        let canonical =
-            ValueDomain::new(name.clone(), "desc", Some(DATA_DOMAIN.clone())).into_canonical();
+        let canonical = ValueDomain::new(name.clone(), "desc", Some(get_data_domain().clone()))
+            .into_canonical();
         let [parent] = reserve_far_ahead_ids("conflict-after-fresh-parent-anchor");
         let json = encode_domain_payload(name.id(), &encode_domain_payload(parent, "null", ""), "");
 
@@ -975,7 +987,7 @@ mod tests {
         let _counter = hold_id_counter();
         let parent_name = Identifier::new("conflicting-middle");
         let _canonical_parent =
-            ValueDomain::new(parent_name.clone(), "desc", Some(DATA_DOMAIN.clone()));
+            ValueDomain::new(parent_name.clone(), "desc", Some(get_data_domain().clone()));
         let [outer, grandparent] = reserve_far_ahead_ids("conflicting-middle-anchor");
         let json = encode_domain_payload(
             outer,

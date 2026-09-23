@@ -22,8 +22,10 @@ use std::hash::{Hash, Hasher};
 
 use fhy_core::identifier::Identifier;
 use fhy_core::interned::{Canonical, InternOutcome, Interned};
-use fhy_core::op_attribute::{ASSOCIATIVE, COMMUTATIVE, ELEMENTWISE, OpAttribute, PURE};
-use fhy_core::value_domain::{ADDRESS_DOMAIN, DATA_DOMAIN, ValueDomain};
+use fhy_core::op_attribute::{
+    OpAttribute, get_associative, get_commutative, get_elementwise, get_pure,
+};
+use fhy_core::value_domain::{ValueDomain, get_address_domain, get_data_domain};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
@@ -131,17 +133,17 @@ fn compute_hash<T: Hash>(value: &T) -> u64 {
 
 fn create_op_attribute_slots() -> SlotTable {
     let mut slots = SlotTable::new();
-    slots.bind_slot("commutative", COMMUTATIVE.name().clone());
-    slots.bind_slot("associative", ASSOCIATIVE.name().clone());
-    slots.bind_slot("pure", PURE.name().clone());
-    slots.bind_slot("elementwise", ELEMENTWISE.name().clone());
+    slots.bind_slot("commutative", get_commutative().name().clone());
+    slots.bind_slot("associative", get_associative().name().clone());
+    slots.bind_slot("pure", get_pure().name().clone());
+    slots.bind_slot("elementwise", get_elementwise().name().clone());
     slots
 }
 
 fn create_value_domain_slots() -> SlotTable {
     let mut slots = SlotTable::new();
-    slots.bind_slot("data", DATA_DOMAIN.name().clone());
-    slots.bind_slot("address", ADDRESS_DOMAIN.name().clone());
+    slots.bind_slot("data", get_data_domain().name().clone());
+    slots.bind_slot("address", get_address_domain().name().clone());
     slots
 }
 

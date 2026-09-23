@@ -10,8 +10,8 @@ use std::sync::LazyLock;
 
 use fhy_core::identifier::Identifier;
 use fhy_core::interned::Canonical;
-use fhy_core::op_attribute::{ASSOCIATIVE, COMMUTATIVE, OpAttribute, PURE};
-use fhy_core::value_domain::{ADDRESS_DOMAIN, DATA_DOMAIN, ValueDomain};
+use fhy_core::op_attribute::{OpAttribute, get_associative, get_commutative, get_pure};
+use fhy_core::value_domain::{ValueDomain, get_address_domain, get_data_domain};
 use serde::{Deserialize, Serialize};
 
 /// A stand-in for a compiler op, carrying the semantic tags attached to it.
@@ -55,19 +55,23 @@ fn tagging_an_operation_with_shipped_and_layer_specific_attributes() {
     )
     .into_canonical();
 
-    let op = StoryOp::create([COMMUTATIVE.clone(), PURE.clone(), idempotent.clone()]);
+    let op = StoryOp::create([
+        get_commutative().clone(),
+        get_pure().clone(),
+        idempotent.clone(),
+    ]);
 
     assert_eq!(op.count_tags(), 3);
-    assert!(op.has_tag(&COMMUTATIVE));
-    assert!(op.has_tag(&PURE));
+    assert!(op.has_tag(get_commutative()));
+    assert!(op.has_tag(get_pure()));
     assert!(op.has_tag(&idempotent));
-    assert!(!op.has_tag(&ASSOCIATIVE));
+    assert!(!op.has_tag(get_associative()));
 
     let same_name_again =
         OpAttribute::new(IDEMPOTENT_NAME.clone(), "a different description").into_canonical();
     let op_with_repeat = StoryOp::create([
-        COMMUTATIVE.clone(),
-        PURE.clone(),
+        get_commutative().clone(),
+        get_pure().clone(),
         idempotent.clone(),
         same_name_again,
     ]);
@@ -75,25 +79,25 @@ fn tagging_an_operation_with_shipped_and_layer_specific_attributes() {
     assert_eq!(op_with_repeat.count_tags(), 3);
 }
 
-/// Name of this story's middle-tier domain, a child of `DATA_DOMAIN`.
+/// Name of this story's middle-tier domain, a child of `get_data_domain()`.
 static TENSOR_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("domain-story-tensor"));
 
 /// Name of this story's leaf domain, a child of the tensor domain.
 static TILE_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("domain-story-tile"));
 
 /// Name of this story's domain on an unrelated branch, a child of
-/// `ADDRESS_DOMAIN`.
+/// `get_address_domain()`.
 static TOKEN_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("domain-story-token"));
 
-/// Test a three-level domain hierarchy registered under `DATA_DOMAIN` relates
-/// each level to its ancestors via `is_subdomain_of`, and relates none of
-/// them to a domain on an unrelated branch.
+/// Test a three-level domain hierarchy registered under `get_data_domain()`
+/// relates each level to its ancestors via `is_subdomain_of`, and relates
+/// none of them to a domain on an unrelated branch.
 #[test]
 fn a_three_level_domain_hierarchy_relates_its_levels() {
     let tensor = ValueDomain::new(
         TENSOR_NAME.clone(),
         "A tensor of concrete data.",
-        Some(DATA_DOMAIN.clone()),
+        Some(get_data_domain().clone()),
     )
     .into_canonical();
     let tile = ValueDomain::new(
@@ -105,23 +109,23 @@ fn a_three_level_domain_hierarchy_relates_its_levels() {
     let token = ValueDomain::new(
         TOKEN_NAME.clone(),
         "A control token, unrelated to the data branch.",
-        Some(ADDRESS_DOMAIN.clone()),
+        Some(get_address_domain().clone()),
     )
     .into_canonical();
 
     assert!(tile.is_subdomain_of(&tile));
     assert!(tile.is_subdomain_of(&tensor));
-    assert!(tile.is_subdomain_of(&DATA_DOMAIN));
+    assert!(tile.is_subdomain_of(get_data_domain()));
     assert!(!tile.is_subdomain_of(&token));
-    assert!(!DATA_DOMAIN.is_subdomain_of(&tile));
-    assert!(!token.is_subdomain_of(&DATA_DOMAIN));
+    assert!(!get_data_domain().is_subdomain_of(&tile));
+    assert!(!token.is_subdomain_of(get_data_domain()));
 }
 
 /// Name of the attribute this story persists.
 static PERSISTED_ATTRIBUTE_NAME: LazyLock<Identifier> =
     LazyLock::new(|| Identifier::new("persistence-story-attribute"));
 
-/// Name of the domain this story persists, a child of `ADDRESS_DOMAIN`.
+/// Name of the domain this story persists, a child of `get_address_domain()`.
 static PERSISTED_DOMAIN_NAME: LazyLock<Identifier> =
     LazyLock::new(|| Identifier::new("persistence-story-domain"));
 
@@ -142,7 +146,7 @@ fn persisting_and_restoring_a_tagged_operation() {
     let domain = ValueDomain::new(
         PERSISTED_DOMAIN_NAME.clone(),
         "a persisted domain",
-        Some(ADDRESS_DOMAIN.clone()),
+        Some(get_address_domain().clone()),
     )
     .into_canonical();
     let persisted = PersistedOp {

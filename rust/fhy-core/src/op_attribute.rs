@@ -9,9 +9,10 @@
 //!
 //! An attribute is a free-standing tag: it depends on no operation type and is
 //! specialized for no layer. Each one is canonicalized by its [`Identifier`]
-//! through [`crate::interned`], so import the constants below rather than
-//! building a fresh attribute with the same name hint. Identifiers compare by
-//! id, and a second `Identifier::new("commutative")` is a different key.
+//! through [`crate::interned`], so call the accessor functions below rather
+//! than building a fresh attribute with the same name hint. Identifiers
+//! compare by id, and a second `Identifier::new("commutative")` is a
+//! different key.
 //!
 //! A `description` is human-readable metadata. It takes no part in equality,
 //! hashing or interning: the first attribute registered under an identifier
@@ -149,18 +150,18 @@ impl Hash for OpAttribute {
     }
 }
 
-/// Name of the attribute shipped as [`COMMUTATIVE`].
+/// Name of the attribute returned by [`get_commutative`].
 static COMMUTATIVE_NAME: LazyLock<Identifier> =
     LazyLock::new(|| Identifier::new_unscoped("commutative"));
 
-/// Name of the attribute shipped as [`ASSOCIATIVE`].
+/// Name of the attribute returned by [`get_associative`].
 static ASSOCIATIVE_NAME: LazyLock<Identifier> =
     LazyLock::new(|| Identifier::new_unscoped("associative"));
 
-/// Name of the attribute shipped as [`PURE`].
+/// Name of the attribute returned by [`get_pure`].
 static PURE_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new_unscoped("pure"));
 
-/// Name of the attribute shipped as [`ELEMENTWISE`].
+/// Name of the attribute returned by [`get_elementwise`].
 static ELEMENTWISE_NAME: LazyLock<Identifier> =
     LazyLock::new(|| Identifier::new_unscoped("elementwise"));
 
@@ -203,20 +204,43 @@ fn require_default(name: &Identifier) -> Canonical<OpAttribute> {
         .expect("the registry registers every default on its first use")
 }
 
-/// Op output is invariant under operand swap.
-pub static COMMUTATIVE: LazyLock<Canonical<OpAttribute>> =
+static COMMUTATIVE: LazyLock<Canonical<OpAttribute>> =
     LazyLock::new(|| require_default(&COMMUTATIVE_NAME));
 
-/// Op composes associatively across applications.
-pub static ASSOCIATIVE: LazyLock<Canonical<OpAttribute>> =
+static ASSOCIATIVE: LazyLock<Canonical<OpAttribute>> =
     LazyLock::new(|| require_default(&ASSOCIATIVE_NAME));
 
-/// Op has no side effects and produces deterministic outputs.
-pub static PURE: LazyLock<Canonical<OpAttribute>> = LazyLock::new(|| require_default(&PURE_NAME));
+static PURE: LazyLock<Canonical<OpAttribute>> = LazyLock::new(|| require_default(&PURE_NAME));
 
-/// Op acts independently on each element of its operands.
-pub static ELEMENTWISE: LazyLock<Canonical<OpAttribute>> =
+static ELEMENTWISE: LazyLock<Canonical<OpAttribute>> =
     LazyLock::new(|| require_default(&ELEMENTWISE_NAME));
+
+/// Return the attribute for ops whose output is invariant under operand swap.
+#[must_use]
+pub fn get_commutative() -> &'static Canonical<OpAttribute> {
+    &COMMUTATIVE
+}
+
+/// Return the attribute for ops that compose associatively across
+/// applications.
+#[must_use]
+pub fn get_associative() -> &'static Canonical<OpAttribute> {
+    &ASSOCIATIVE
+}
+
+/// Return the attribute for ops that have no side effects and produce
+/// deterministic outputs.
+#[must_use]
+pub fn get_pure() -> &'static Canonical<OpAttribute> {
+    &PURE
+}
+
+/// Return the attribute for ops that act independently on each element of
+/// their operands.
+#[must_use]
+pub fn get_elementwise() -> &'static Canonical<OpAttribute> {
+    &ELEMENTWISE
+}
 
 #[cfg(test)]
 mod tests {
@@ -354,25 +378,31 @@ mod tests {
     #[test]
     fn canonical_attributes_can_be_collected_into_a_set() {
         let _guard = hold_registry();
-        let tags: HashSet<Canonical<OpAttribute>> =
-            [COMMUTATIVE.clone(), PURE.clone()].into_iter().collect();
+        let tags: HashSet<Canonical<OpAttribute>> = [get_commutative().clone(), get_pure().clone()]
+            .into_iter()
+            .collect();
 
-        assert!(tags.contains(&*COMMUTATIVE));
-        assert!(tags.contains(&*PURE));
-        assert!(!tags.contains(&*ASSOCIATIVE));
+        assert!(tags.contains(get_commutative()));
+        assert!(tags.contains(get_pure()));
+        assert!(!tags.contains(get_associative()));
         assert_eq!(tags.len(), 2);
     }
 
     #[test]
     fn a_repeated_canonical_attribute_collapses_to_one_set_entry() {
         let _guard = hold_registry();
-        let tags: HashSet<Canonical<OpAttribute>> =
-            [COMMUTATIVE.clone(), COMMUTATIVE.clone(), PURE.clone()]
-                .into_iter()
-                .collect();
+        let tags: HashSet<Canonical<OpAttribute>> = [
+            get_commutative().clone(),
+            get_commutative().clone(),
+            get_pure().clone(),
+        ]
+        .into_iter()
+        .collect();
 
         let expected: HashSet<Canonical<OpAttribute>> =
-            [COMMUTATIVE.clone(), PURE.clone()].into_iter().collect();
+            [get_commutative().clone(), get_pure().clone()]
+                .into_iter()
+                .collect();
         assert_eq!(tags, expected);
     }
 
@@ -380,8 +410,8 @@ mod tests {
     fn commutative_is_registered_under_its_name() {
         let _guard = hold_registry();
         assert_eq!(
-            OpAttribute::intern_registry().get(COMMUTATIVE.name()),
-            Some(COMMUTATIVE.clone())
+            OpAttribute::intern_registry().get(get_commutative().name()),
+            Some(get_commutative().clone())
         );
     }
 
@@ -389,8 +419,8 @@ mod tests {
     fn associative_is_registered_under_its_name() {
         let _guard = hold_registry();
         assert_eq!(
-            OpAttribute::intern_registry().get(ASSOCIATIVE.name()),
-            Some(ASSOCIATIVE.clone())
+            OpAttribute::intern_registry().get(get_associative().name()),
+            Some(get_associative().clone())
         );
     }
 
@@ -398,8 +428,8 @@ mod tests {
     fn pure_is_registered_under_its_name() {
         let _guard = hold_registry();
         assert_eq!(
-            OpAttribute::intern_registry().get(PURE.name()),
-            Some(PURE.clone())
+            OpAttribute::intern_registry().get(get_pure().name()),
+            Some(get_pure().clone())
         );
     }
 
@@ -407,8 +437,8 @@ mod tests {
     fn elementwise_is_registered_under_its_name() {
         let _guard = hold_registry();
         assert_eq!(
-            OpAttribute::intern_registry().get(ELEMENTWISE.name()),
-            Some(ELEMENTWISE.clone())
+            OpAttribute::intern_registry().get(get_elementwise().name()),
+            Some(get_elementwise().clone())
         );
     }
 
@@ -416,10 +446,10 @@ mod tests {
     fn the_default_attributes_are_pairwise_distinct() {
         let _guard = hold_registry();
         let defaults = [
-            COMMUTATIVE.clone(),
-            ASSOCIATIVE.clone(),
-            PURE.clone(),
-            ELEMENTWISE.clone(),
+            get_commutative().clone(),
+            get_associative().clone(),
+            get_pure().clone(),
+            get_elementwise().clone(),
         ];
 
         for (index, left) in defaults.iter().enumerate() {
@@ -433,7 +463,12 @@ mod tests {
     #[test]
     fn the_default_attributes_carry_non_empty_descriptions() {
         let _guard = hold_registry();
-        for default in [&*COMMUTATIVE, &*ASSOCIATIVE, &*PURE, &*ELEMENTWISE] {
+        for default in [
+            get_commutative(),
+            get_associative(),
+            get_pure(),
+            get_elementwise(),
+        ] {
             assert!(!default.description().trim().is_empty());
         }
     }
@@ -448,10 +483,15 @@ mod tests {
         OpAttribute::intern_registry().clear();
 
         assert_eq!(OpAttribute::intern_registry().get(&name), None);
-        for default in [&COMMUTATIVE, &ASSOCIATIVE, &PURE, &ELEMENTWISE] {
+        for default in [
+            get_commutative(),
+            get_associative(),
+            get_pure(),
+            get_elementwise(),
+        ] {
             assert_eq!(
                 OpAttribute::intern_registry().get(default.name()),
-                Some((*default).clone())
+                Some(default.clone())
             );
         }
     }
@@ -488,11 +528,11 @@ mod tests {
     #[test]
     fn decoding_a_registered_name_returns_the_canonical_attribute() {
         let _guard = hold_registry();
-        let json = serde_json::to_string(&*PURE).unwrap();
+        let json = serde_json::to_string(get_pure()).unwrap();
 
         let restored: Canonical<OpAttribute> = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(restored, *PURE);
+        assert_eq!(restored, *get_pure());
     }
 
     #[test]

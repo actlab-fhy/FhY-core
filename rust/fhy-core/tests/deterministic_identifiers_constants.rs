@@ -7,17 +7,17 @@
 
 use fhy_core::identifier::Identifier;
 use fhy_core::interned::Interned;
-use fhy_core::op_attribute::{COMMUTATIVE, OpAttribute};
+use fhy_core::op_attribute::{OpAttribute, get_commutative};
 use fhy_core::testing::DeterministicIdentifierScope;
-use fhy_core::value_domain::{DATA_DOMAIN, ValueDomain};
+use fhy_core::value_domain::{ValueDomain, get_data_domain};
 
 /// Test a scope that first creates the shipped constants does not give a
 /// same-hint identifier their ids, so no registry mistakes it for a constant.
 #[test]
 fn a_scope_that_first_creates_the_shipped_constants_does_not_alias_them() {
     let _scope = DeterministicIdentifierScope::enter();
-    let data = DATA_DOMAIN.clone();
-    let commutative = COMMUTATIVE.clone();
+    let data = get_data_domain().clone();
+    let commutative = get_commutative().clone();
 
     let data_lookalike = Identifier::new("data");
     let commutative_lookalike = Identifier::new("commutative");
