@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use crate::identifier::Identifier;
 
+use super::alpha::AlphaRenaming;
 use super::error::ExpressionBuildError;
 use super::literal::{LiteralKind, LiteralValue};
 use super::operation::{BinaryOperation, UnaryOperation};
@@ -120,20 +121,6 @@ fn move_children(kind: ExpressionKind, pending: &mut Vec<Expression>) {
         }
         ExpressionKind::Call(node) => pending.extend(node.arguments),
         ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) => {}
-    }
-}
-
-/// Compare the identifiers of two leaves under a free-identifier renaming
-/// whose images are `images`.
-fn is_identifier_renamed<S: BuildHasher>(
-    left: &Identifier,
-    right: &Identifier,
-    renaming: &HashMap<Identifier, Identifier, S>,
-    images: &HashSet<&Identifier>,
-) -> bool {
-    match renaming.get(left) {
-        Some(image) => image == right,
-        None => !images.contains(right) && left == right,
     }
 }
 
@@ -466,16 +453,11 @@ impl Expression {
     /// to an identifier `renaming` maps, `other` must refer to its image;
     /// where it refers to an unmapped identifier, `other` must refer to the
     /// same identifier, and that identifier must not be an image of
-    /// `renaming`. With an empty `renaming` this is structural equality.
+    /// `renaming`. Under the empty renaming this is structural equality.
     #[must_use]
-    pub fn is_alpha_equivalent_under<S: BuildHasher>(
-        &self,
-        other: &Expression,
-        renaming: &HashMap<Identifier, Identifier, S>,
-    ) -> bool {
-        let images: HashSet<&Identifier> = renaming.values().collect();
+    pub fn is_alpha_equivalent_under(&self, other: &Expression, renaming: &AlphaRenaming) -> bool {
         is_tree_equal(self, other, renaming.is_empty(), &|left, right| {
-            is_identifier_renamed(left, right, renaming, &images)
+            renaming.are_identifiers_alpha_equivalent(left, right)
         })
     }
 

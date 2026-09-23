@@ -1,7 +1,9 @@
-//! Errors raised while building or screening expressions.
+//! Errors raised while building, comparing, or screening expressions.
 //!
 //! [`ExpressionBuildError`] reports a node that could not be built because
 //! its operands or its child list break a node invariant.
+//! [`NonInjectiveRenamingError`] reports a free-identifier renaming that
+//! sends two identifiers to one image.
 //! [`NonBooleanLogicalOperandError`] reports a Boolean position that holds
 //! an operand provably denoting a number, as found by
 //! [`validate_logical_operands`](super::validate_logical_operands) and
@@ -10,6 +12,8 @@
 
 use std::error::Error;
 use std::fmt;
+
+use crate::identifier::Identifier;
 
 use super::node::Expression;
 use super::operation::BinaryOperation;
@@ -92,6 +96,44 @@ impl fmt::Display for ExpressionBuildError {
 }
 
 impl Error for ExpressionBuildError {}
+
+/// A free-identifier renaming that sends two identifiers to one image.
+///
+/// Returned by [`AlphaRenaming::try_new`](super::AlphaRenaming::try_new).
+/// Displays as `a free-identifier renaming must be injective, but more than
+/// one identifier maps to {name}::{id}`, with the shared image's name hint
+/// and id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NonInjectiveRenamingError {
+    image: Identifier,
+}
+
+impl NonInjectiveRenamingError {
+    /// Construct the error for the shared `image`.
+    pub(super) fn new(image: Identifier) -> Self {
+        Self { image }
+    }
+
+    /// Return an image that more than one identifier maps to.
+    #[must_use]
+    pub fn image(&self) -> &Identifier {
+        &self.image
+    }
+}
+
+impl fmt::Display for NonInjectiveRenamingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "a free-identifier renaming must be injective, but more than one identifier maps to \
+             {}::{}",
+            self.image.name_hint(),
+            self.image.id()
+        )
+    }
+}
+
+impl Error for NonInjectiveRenamingError {}
 
 /// Where a Boolean position sits relative to the node that imposes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

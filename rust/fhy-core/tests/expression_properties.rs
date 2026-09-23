@@ -20,7 +20,9 @@ use expression_support::{
     IDENTIFIER_POOL as POOL, build_expression_strategy, build_literal_strategy, coerce_to_condition,
 };
 use fhy_core::identifier::Identifier;
-use fhy_core::symbolic::expression::{Expression, ExpressionKind, LiteralValue, build_piecewise};
+use fhy_core::symbolic::expression::{
+    AlphaRenaming, Expression, ExpressionKind, LiteralValue, build_piecewise,
+};
 use proptest::prelude::*;
 use proptest::sample::select;
 
@@ -138,8 +140,9 @@ proptest! {
         prop_assert_eq!(substituted.free_identifiers(), expected);
     }
 
-    /// Test a tree equals a copy sharing no node with it, NaN literals
-    /// included, and the two hash equally.
+    /// Test a tree equals, and is equivalent under the empty renaming to,
+    /// itself and a copy sharing no node with it, NaN literals included,
+    /// and the two hash equally.
     #[test]
     fn expression_equality_is_reflexive_and_agrees_with_hash(
         expression in build_expression_strategy(true),
@@ -148,18 +151,30 @@ proptest! {
 
         prop_assert_eq!(&copy, &expression);
         prop_assert_eq!(hash_of(&copy), hash_of(&expression));
+        prop_assert!(expression.is_alpha_equivalent_under(&expression, &AlphaRenaming::default()));
+        prop_assert!(expression.is_alpha_equivalent_under(&copy, &AlphaRenaming::default()));
     }
 
-    /// Test equality answers alike in both directions.
+    /// Test equality and equivalence under the empty renaming answer alike
+    /// in both directions.
     #[test]
     fn expression_equality_is_symmetric(
         left in build_expression_strategy(true),
         right in build_expression_strategy(true),
     ) {
         let left_copy = copy_deeply(&left);
+        let empty = AlphaRenaming::default();
 
         prop_assert_eq!(left == right, right == left);
         prop_assert_eq!(left == left_copy, left_copy == left);
+        prop_assert_eq!(
+            left.is_alpha_equivalent_under(&right, &empty),
+            right.is_alpha_equivalent_under(&left, &empty)
+        );
+        prop_assert_eq!(
+            left.is_alpha_equivalent_under(&left_copy, &empty),
+            left_copy.is_alpha_equivalent_under(&left, &empty)
+        );
     }
 
     /// Test rebuilding a node from its own children yields an equal tree.
@@ -218,24 +233,32 @@ proptest! {
     }
 
     /// Test renaming every pool identifier to a fresh one is equivalence
-    /// under that renaming, and, when the tree has a free identifier, is
+    /// under that renaming, and of the renamed tree to the original under
+    /// the inverse renaming, and, when the tree has a free identifier, is
     /// neither equality nor equivalence under no renaming.
     #[test]
     fn expression_renaming_free_identifiers_holds_only_under_the_declared_renaming(
         expression in build_expression_strategy(false),
     ) {
-        let renaming: HashMap<Identifier, Identifier> =
+        let pairs: HashMap<Identifier, Identifier> =
             POOL.iter().cloned().zip(FRESH_POOL.iter().cloned()).collect();
-        let substitution: HashMap<Identifier, Expression> = renaming
+        let inverse_pairs: HashMap<Identifier, Identifier> =
+            pairs.iter().map(|(from, to)| (to.clone(), from.clone())).collect();
+        let substitution: HashMap<Identifier, Expression> = pairs
             .iter()
             .map(|(from, to)| (from.clone(), Expression::from(to.clone())))
             .collect();
+        let renaming = AlphaRenaming::try_new(pairs).expect("the pools are distinct");
+        let inverse = AlphaRenaming::try_new(inverse_pairs).expect("the pools are distinct");
         let renamed = expression.substitute(&substitution).expect("identifiers replace identifiers");
 
         let under_renaming = expression.is_alpha_equivalent_under(&renamed, &renaming);
-        let under_no_renaming = expression.is_alpha_equivalent_under(&renamed, &HashMap::new());
+        let under_inverse = renamed.is_alpha_equivalent_under(&expression, &inverse);
+        let under_no_renaming =
+            expression.is_alpha_equivalent_under(&renamed, &AlphaRenaming::default());
 
         prop_assert!(under_renaming);
+        prop_assert!(under_inverse);
         let has_free_identifiers = !expression.free_identifiers().is_empty();
         prop_assert_eq!(expression == renamed, !has_free_identifiers);
         prop_assert_eq!(under_no_renaming, !has_free_identifiers);

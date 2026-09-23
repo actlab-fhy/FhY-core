@@ -3,6 +3,7 @@
 pub mod builtins;
 pub mod pattern;
 
+mod alpha;
 mod build;
 mod error;
 mod literal;
@@ -13,8 +14,11 @@ mod screen;
 mod sort;
 mod wire;
 
+pub use alpha::AlphaRenaming;
 pub use build::{IntoOperand, build_call, build_logical_and, build_logical_or, build_piecewise};
-pub use error::{BooleanPosition, ExpressionBuildError, NonBooleanLogicalOperandError};
+pub use error::{
+    BooleanPosition, ExpressionBuildError, NonBooleanLogicalOperandError, NonInjectiveRenamingError,
+};
 pub use literal::{LiteralKind, LiteralTextError, LiteralValue};
 pub use node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, PiecewiseExpression,

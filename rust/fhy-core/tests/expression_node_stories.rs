@@ -18,8 +18,8 @@ use expression_support::{
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
-    BinaryExpression, BinaryOperation, CallExpression, Expression, ExpressionBuildError,
-    ExpressionKind, PiecewiseExpression, UnaryExpression, UnaryOperation,
+    AlphaRenaming, BinaryExpression, BinaryOperation, CallExpression, Expression,
+    ExpressionBuildError, ExpressionKind, PiecewiseExpression, UnaryExpression, UnaryOperation,
 };
 use rstest::rstest;
 
@@ -1001,6 +1001,11 @@ fn expression_trees_differing_anywhere_are_unequal(
 // Equivalence under a free-identifier renaming
 // =============================================================================
 
+/// Return the renaming `pairs` describe, failing the test if it is refused.
+fn build_renaming<const N: usize>(pairs: [(Identifier, Identifier); N]) -> AlphaRenaming {
+    AlphaRenaming::try_new(HashMap::from(pairs)).expect("the renaming is injective")
+}
+
 /// Test a tree is equivalent to its renamed copy under the renaming.
 #[test]
 fn expression_is_alpha_equivalent_under_the_renaming_it_was_renamed_by() {
@@ -1009,17 +1014,31 @@ fn expression_is_alpha_equivalent_under_the_renaming_it_was_renamed_by() {
     let expression = &x_reference * 2 + &x_reference;
     let renamed = &w_reference * 2 + &w_reference;
 
-    let equivalent = expression.is_alpha_equivalent_under(&renamed, &HashMap::from([(x, w)]));
+    let equivalent = expression.is_alpha_equivalent_under(&renamed, &build_renaming([(x, w)]));
 
     assert!(equivalent);
 }
 
-/// Test an empty renaming makes the check structural equality.
+/// Test a renaming that swaps two identifiers relates a tree to its swapped
+/// copy.
+#[test]
+fn expression_is_alpha_equivalent_under_a_swap() {
+    let (a, a_reference) = build_identifier("a");
+    let (b, b_reference) = build_identifier("b");
+    let renaming = build_renaming([(a.clone(), b.clone()), (b, a)]);
+
+    let equivalent = (&a_reference - &b_reference)
+        .is_alpha_equivalent_under(&(&b_reference - &a_reference), &renaming);
+
+    assert!(equivalent);
+}
+
+/// Test the empty renaming makes the check structural equality.
 #[test]
 fn expression_is_alpha_equivalent_under_empty_renaming_is_structural_equality() {
     let (_, x) = build_identifier("x");
     let (_, w) = build_identifier("w");
-    let renaming: HashMap<Identifier, Identifier> = HashMap::new();
+    let renaming = AlphaRenaming::default();
 
     assert!((&x + 1).is_alpha_equivalent_under(&(&x + 1), &renaming));
     assert!(!(&x + 1).is_alpha_equivalent_under(&(&w + 1), &renaming));
@@ -1032,7 +1051,7 @@ fn expression_is_alpha_equivalent_under_requires_the_image() {
     let (x, x_reference) = build_identifier("x");
     let (w, _) = build_identifier("w");
     let (_, v_reference) = build_identifier("v");
-    let renaming = HashMap::from([(x, w)]);
+    let renaming = build_renaming([(x, w)]);
 
     assert!(!x_reference.is_alpha_equivalent_under(&x_reference, &renaming));
     assert!(!x_reference.is_alpha_equivalent_under(&v_reference, &renaming));
@@ -1043,7 +1062,7 @@ fn expression_is_alpha_equivalent_under_requires_the_image() {
 fn expression_is_alpha_equivalent_under_rejects_an_unmapped_identifier_matching_an_image() {
     let (x, _) = build_identifier("x");
     let (w, w_reference) = build_identifier("w");
-    let renaming = HashMap::from([(x, w)]);
+    let renaming = build_renaming([(x, w)]);
 
     let equivalent = w_reference.is_alpha_equivalent_under(&w_reference, &renaming);
 
@@ -1056,10 +1075,86 @@ fn expression_is_alpha_equivalent_under_rejects_a_different_structure() {
     let (x, x_reference) = build_identifier("x");
     let (w, w_reference) = build_identifier("w");
 
-    let equivalent =
-        (&x_reference + 1).is_alpha_equivalent_under(&(&w_reference - 1), &HashMap::from([(x, w)]));
+    let equivalent = (&x_reference + 1)
+        .is_alpha_equivalent_under(&(&w_reference - 1), &build_renaming([(x, w)]));
 
     assert!(!equivalent);
+}
+
+/// Test a renaming sending two identifiers to one image is refused, which
+/// keeps `a + b` from being equivalent to `c + c`, whichever colliding pair
+/// comes first.
+#[rstest]
+#[case::a_first(false)]
+#[case::b_first(true)]
+fn alpha_renaming_try_new_refuses_a_non_injective_map(#[case] is_b_first: bool) {
+    let (a, _) = build_identifier("a");
+    let (b, _) = build_identifier("b");
+    let (c, _) = build_identifier("c");
+    let mut pairs = vec![(a, c.clone()), (b, c.clone())];
+    if is_b_first {
+        pairs.reverse();
+    }
+
+    let error = AlphaRenaming::try_new(pairs.into_iter().collect::<HashMap<_, _>>())
+        .expect_err("two identifiers share the image c");
+
+    assert_eq!(error.image(), &c);
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "a free-identifier renaming must be injective, but more than one identifier maps \
+             to c::{}",
+            c.id()
+        )
+    );
+}
+
+/// Test the refusal comes from the renaming, whichever side of the
+/// comparison the trees sit on: neither `a + b` against `c + c` nor
+/// `c + c` against `a + b` can be asked under the colliding map.
+#[test]
+fn alpha_renaming_non_injective_refusal_is_symmetric() {
+    let (a, a_reference) = build_identifier("a");
+    let (b, b_reference) = build_identifier("b");
+    let (c, c_reference) = build_identifier("c");
+    let colliding = HashMap::from([(a.clone(), c.clone()), (b.clone(), c.clone())]);
+    let sum = &a_reference + &b_reference;
+    let doubled = &c_reference + &c_reference;
+
+    let refused = AlphaRenaming::try_new(colliding);
+
+    assert_eq!(refused.expect_err("c is a shared image").image(), &c);
+    let forward = build_renaming([(a.clone(), c.clone())]);
+    let backward = build_renaming([(c, a)]);
+    assert!(!sum.is_alpha_equivalent_under(&doubled, &forward));
+    assert!(!doubled.is_alpha_equivalent_under(&sum, &backward));
+}
+
+/// Test the identifier check follows the renaming, then identity, and
+/// refuses an unmapped identifier standing for an image.
+#[rstest]
+#[case::mapped_to_its_image("x", "w", true)]
+#[case::mapped_to_itself("x", "x", false)]
+#[case::mapped_to_another("x", "v", false)]
+#[case::unmapped_to_itself("v", "v", true)]
+#[case::unmapped_to_another("v", "u", false)]
+#[case::unmapped_to_an_image("w", "w", false)]
+fn alpha_renaming_are_identifiers_alpha_equivalent_follows_the_renaming(
+    #[case] left: &str,
+    #[case] right: &str,
+    #[case] expected: bool,
+) {
+    let identifiers: HashMap<&str, Identifier> = ["x", "w", "v", "u"]
+        .into_iter()
+        .map(|name| (name, Identifier::new(name)))
+        .collect();
+    let renaming = build_renaming([(identifiers["x"].clone(), identifiers["w"].clone())]);
+
+    let equivalent =
+        renaming.are_identifiers_alpha_equivalent(&identifiers[left], &identifiers[right]);
+
+    assert_eq!(equivalent, expected);
 }
 
 // =============================================================================
