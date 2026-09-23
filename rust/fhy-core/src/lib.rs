@@ -15,9 +15,6 @@ pub mod value_domain;
 
 mod buffered_payload;
 
-#[cfg(feature = "python")]
-mod python;
-
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 

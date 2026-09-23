@@ -1,3 +1,6 @@
+//! `PyO3` extension module exposing `fhy-core`'s Rust implementation to
+//! Python as `fhy_core._rs`.
+
 mod identifier;
 
 use pyo3::prelude::*;

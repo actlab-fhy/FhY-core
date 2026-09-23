@@ -65,18 +65,19 @@ jobs:
       - name: Code Formatting
         run: cargo fmt --all --check
       - name: Code Linting
-        # Clippy only checks, so the python feature costs it no libpython.
-        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+        # fhy-core-py pulls in pyo3, so the workspace clippy run also checks
+        # it; clippy only checks, so that costs no libpython.
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Unit, Integration & Doc Testing
-        # --all-features compiles the python feature into the test binaries
-        # too. pyo3 leaves libpython unlinked only when maturin sets
+        # pyo3 leaves libpython unlinked only when maturin sets
         # PYO3_BUILD_EXTENSION_MODULE for a wheel build, so a plain cargo
-        # build links the runner's Python and the test binaries run.
-        run: cargo test --locked --all-features
+        # build links the runner's Python and the fhy-core-py test binaries
+        # run.
+        run: cargo test --workspace --locked --all-features
       - name: Packaging
-        # Pack the crate as crates.io would receive it and build the
-        # library from it.
-        run: cargo package --locked
+        # Pack fhy-core, the only published workspace member, as crates.io
+        # would receive it and build the library from it.
+        run: cargo package --locked -p fhy-core
       - name: Testing the Packaged Crate
         # cargo package only builds the library, so run the tests from the
         # packed crate as a consumer would get them. The published manifest
@@ -115,10 +116,11 @@ jobs:
       - name: Build the Library on the MSRV
         # `cargo +<toolchain>`: rust-toolchain.toml pins the channel to stable
         # and would otherwise win over the toolchain installed here. Both
-        # feature sets, since each drops code the other compiles.
+        # feature sets, since `--all-features` turns on `testing`, which
+        # `default` does not compile.
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} check --lib --locked
-          cargo +${{ steps.toolchain.outputs.name }} check --lib --all-features --locked
+          cargo +${{ steps.toolchain.outputs.name }} check --workspace --lib --locked
+          cargo +${{ steps.toolchain.outputs.name }} check --workspace --lib --all-features --locked
 
   config:
     runs-on: ubuntu-latest

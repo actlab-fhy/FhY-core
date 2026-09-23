@@ -1,0 +1,21 @@
+[package]
+name = "fhy-core-py"
+description = "PyO3 extension module exposing fhy-core to Python as fhy_core._rs."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "fhy_core_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+fhy-core = { workspace = true }
+pyo3 = { workspace = true }
+
+[lints]
+workspace = true

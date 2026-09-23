@@ -7,9 +7,16 @@ name = "fhy-core"
 version = "0.2.0"
 dependencies = [
  "fhy-core",
- "pyo3",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "fhy-core-py"
+version = "0.2.0"
+dependencies = [
+ "fhy-core",
+ "pyo3",
 ]
 
 [[package]]

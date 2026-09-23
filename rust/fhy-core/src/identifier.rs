@@ -30,7 +30,8 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Error for an id counter that cannot advance without wrapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct IdSpaceExhausted;
+#[non_exhaustive]
+pub struct IdSpaceExhausted;
 
 impl fmt::Display for IdSpaceExhausted {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -148,10 +149,14 @@ pub(crate) fn allocate_id() -> u64 {
 /// Draw the next id from the process-global counter, leaving the counter
 /// unchanged when it cannot advance.
 ///
+/// Serves callers that store ids themselves, such as language bindings: it
+/// draws from the same counter as [`Identifier::new`], but ignores any
+/// deterministic-identifier scope.
+///
 /// # Errors
 ///
 /// Returns [`IdSpaceExhausted`] if the counter has reached `u64::MAX`.
-pub(crate) fn try_allocate_id() -> Result<u64, IdSpaceExhausted> {
+pub fn try_allocate_id() -> Result<u64, IdSpaceExhausted> {
     take_next_id(&NEXT_ID)
 }
 
@@ -168,11 +173,15 @@ pub(crate) fn advance_counter_past(id: u64) {
 /// Advance the process-global counter so `id` is never issued, leaving it
 /// unchanged when it is already past `id`.
 ///
+/// Serves callers that store ids themselves, such as language bindings: it
+/// draws from the same counter as [`Identifier::new`], but ignores any
+/// deterministic-identifier scope.
+///
 /// # Errors
 ///
 /// Returns [`IdSpaceExhausted`], leaving the counter unchanged, if `id` is
 /// `u64::MAX`, since the counter cannot advance past it.
-pub(crate) fn try_advance_counter_past(id: u64) -> Result<(), IdSpaceExhausted> {
+pub fn try_advance_counter_past(id: u64) -> Result<(), IdSpaceExhausted> {
     advance_past(&NEXT_ID, id)
 }
 

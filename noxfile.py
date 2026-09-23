@@ -190,7 +190,10 @@ def golden_expanded(session: nox.Session) -> None:
         )
     _sync(session)
     _select_backend(session, "python")
-    output_directory = pathlib.Path(session.create_tmp())
+    # Absolute: `cargo test -p fhy-core` runs its test binaries with the
+    # fhy-core crate directory as the working directory, not the repository
+    # root nox itself runs from, so a relative corpus path would miss.
+    output_directory = pathlib.Path(session.create_tmp()).resolve()
     for generator in generators:
         corpus = EXPANDED_GOLDEN_CORPORA[generator.name]
         corpus_path = output_directory / (

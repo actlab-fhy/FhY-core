@@ -14,14 +14,12 @@ name = "fhy_core"
 
 [features]
 default = []
-python = ["dep:pyo3"]
 # Exposes `fhy_core::testing`, the deterministic-identifier scope, to other
 # crates' tests. Enable it from `[dev-dependencies]`, never for a production
 # build.
 testing = []
 
 [dependencies]
-pyo3 = { workspace = true, optional = true }
 serde = { workspace = true }
 
 [dev-dependencies]

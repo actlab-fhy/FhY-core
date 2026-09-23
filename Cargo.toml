@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["rust/fhy-core"]
+members = ["rust/fhy-core", "rust/fhy-core-py"]
 
 [workspace.package]
 version = "0.2.0"

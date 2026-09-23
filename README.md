@@ -157,10 +157,10 @@ This project uses [uv](https://docs.astral.sh/uv/) for environment and dependenc
 
 Parts of FhY Core are implemented in Rust, in the crate `fhy-core` under `rust/fhy-core/`: identifiers, interning, and the `OpAttribute` and `ValueDomain` tag types. The crate serves two purposes:
 
-- **Standalone Rust library**: usable by any Rust project. The crate is not published to crates.io, so depend on it through git: `fhy-core = { git = "https://github.com/actlab-fhy/FhY-core.git" }`.
-- **Python extension module**: compiled with [maturin](https://www.maturin.rs/) and exposed to the Python package as `fhy_core._rs`, which currently backs identifier id allocation. The Python API is the same with or without the extension.
+- **Standalone Rust library**: usable by any Rust project. The crate is not published to crates.io, so depend on it through git: `fhy-core = { git = "https://github.com/actlab-fhy/FhY-core.git" }`. Cargo finds it by package name, so the git dependency works whether the repository is a single crate or, as it is now, a workspace.
+- **Python extension module**: the separate `fhy-core-py` crate under `rust/fhy-core-py/` depends on `fhy-core` and wraps it with [PyO3](https://pyo3.rs/) bindings. [maturin](https://www.maturin.rs/) compiles it into the Python package as `fhy_core._rs`, which currently backs identifier id allocation. The Python API is the same with or without the extension.
 
-PyO3 is an optional dependency gated behind the `python` feature, so pure-Rust consumers never pull in a Python dependency.
+`fhy-core` itself has no PyO3 dependency, so pure-Rust consumers never pull in a Python dependency; only `fhy-core-py` does.
 
 The `testing` feature exposes `fhy_core::testing`, the Rust counterpart of `fhy_core.testing_patches`. Inside a `DeterministicIdentifierScope` scope, identifiers created with the same name hint compare equal, so a test can compare an object graph whose identifiers were created inside the code under test with one it built itself. A scope belongs to the thread that entered it; other threads join it through a handle from `share()`. Enable the feature only for tests:
 
@@ -175,22 +175,22 @@ Requires a stable Rust toolchain (1.83+). The `rust-toolchain.toml` at the repo 
 
 ```bash
 # Check the pure-Rust library (no Python dependency)
-cargo check
+cargo check -p fhy-core
 
-# Check with the Python extension module included
-cargo check --features python
+# Check the PyO3 extension crate too
+cargo check -p fhy-core-py
 
 # Run all Rust tests, as CI does
-cargo test --locked --all-features
+cargo test --workspace --locked --all-features
 
 # Format and lint, as CI does
 cargo fmt --all --check
-cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 ```
 
 ### Rebuilding the Python Extension
 
-`uv sync` builds the extension: maturin compiles the crate with the `python` feature enabled and installs the native module as `fhy_core._rs`. The project's uv cache keys cover `rust/**/*.rs`, every workspace member's `Cargo.toml`, the root `Cargo.toml`, and `Cargo.lock`, so after a Rust edit the next `uv sync`, or any `uv run` (which syncs first), rebuilds the extension.
+`uv sync` builds the extension: maturin compiles `fhy-core-py` and installs the native module as `fhy_core._rs`. The project's uv cache keys cover `rust/**/*.rs`, every workspace member's `Cargo.toml`, the root `Cargo.toml`, and `Cargo.lock`, so after a Rust edit the next `uv sync`, or any `uv run` (which syncs first), rebuilds the extension.
 
 ```bash
 # Rebuild the extension after editing Rust sources
