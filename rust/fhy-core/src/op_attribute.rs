@@ -248,6 +248,16 @@ mod tests {
     /// tests that need their own entries to survive.
     static REGISTRY_GUARD: RegistryGuard = RegistryGuard::new();
 
+    /// Return every attribute this module ships as a default.
+    fn list_default_attributes() -> [&'static Canonical<OpAttribute>; 4] {
+        [
+            get_commutative(),
+            get_associative(),
+            get_pure(),
+            get_elementwise(),
+        ]
+    }
+
     #[test]
     fn new_stores_the_name_and_description() {
         let _guard = REGISTRY_GUARD.hold();
@@ -377,50 +387,22 @@ mod tests {
     }
 
     #[test]
-    fn commutative_is_registered_under_its_name() {
+    fn every_default_attribute_is_registered_under_its_name() {
         let _guard = REGISTRY_GUARD.hold();
-        assert_eq!(
-            OpAttribute::intern_registry().get(get_commutative().name()),
-            Some(get_commutative().clone())
-        );
-    }
-
-    #[test]
-    fn associative_is_registered_under_its_name() {
-        let _guard = REGISTRY_GUARD.hold();
-        assert_eq!(
-            OpAttribute::intern_registry().get(get_associative().name()),
-            Some(get_associative().clone())
-        );
-    }
-
-    #[test]
-    fn pure_is_registered_under_its_name() {
-        let _guard = REGISTRY_GUARD.hold();
-        assert_eq!(
-            OpAttribute::intern_registry().get(get_pure().name()),
-            Some(get_pure().clone())
-        );
-    }
-
-    #[test]
-    fn elementwise_is_registered_under_its_name() {
-        let _guard = REGISTRY_GUARD.hold();
-        assert_eq!(
-            OpAttribute::intern_registry().get(get_elementwise().name()),
-            Some(get_elementwise().clone())
-        );
+        for default in list_default_attributes() {
+            assert_eq!(
+                OpAttribute::intern_registry().get(default.name()),
+                Some(default.clone()),
+                "{} is not registered under its name",
+                default.name().name_hint()
+            );
+        }
     }
 
     #[test]
     fn the_default_attributes_are_pairwise_distinct() {
         let _guard = REGISTRY_GUARD.hold();
-        let defaults = [
-            get_commutative().clone(),
-            get_associative().clone(),
-            get_pure().clone(),
-            get_elementwise().clone(),
-        ];
+        let defaults = list_default_attributes();
 
         for (index, left) in defaults.iter().enumerate() {
             for right in &defaults[index + 1..] {
@@ -433,12 +415,7 @@ mod tests {
     #[test]
     fn the_default_attributes_carry_non_empty_descriptions() {
         let _guard = REGISTRY_GUARD.hold();
-        for default in [
-            get_commutative(),
-            get_associative(),
-            get_pure(),
-            get_elementwise(),
-        ] {
+        for default in list_default_attributes() {
             assert!(!default.description().trim().is_empty());
         }
     }
@@ -453,12 +430,7 @@ mod tests {
         OpAttribute::intern_registry().clear();
 
         assert_eq!(OpAttribute::intern_registry().get(&name), None);
-        for default in [
-            get_commutative(),
-            get_associative(),
-            get_pure(),
-            get_elementwise(),
-        ] {
+        for default in list_default_attributes() {
             assert_eq!(
                 OpAttribute::intern_registry().get(default.name()),
                 Some(default.clone())
