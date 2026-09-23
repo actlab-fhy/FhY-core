@@ -8,7 +8,11 @@
 //! Construction and deserialization share the same counter: a deserialized
 //! id can never collide with a subsequently constructed id, regardless of
 //! interleaving across threads. Deserializing an id greater than or equal to
-//! the next-to-be-issued value advances the counter past it.
+//! the next-to-be-issued value advances the counter past it. Before any
+//! restored id advances the counter, every identifier the crate's shipped
+//! statics hold (the shipped note kinds, op attributes, value domains and
+//! composed built-in functions) is created, so a restored id near the end of
+//! the id space never leaves them without ids.
 //!
 //! Ids are `u64`s, so the largest id this module ever issues is
 //! `u64::MAX - 1`, and the counter never wraps to reissue a live id. Once
@@ -26,6 +30,7 @@ use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 
 use crate::decode::{self, Decode};
+use crate::shipped::initialize_shipped_statics;
 
 /// The process-global, monotonically-increasing id counter.
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -176,11 +181,17 @@ pub(crate) fn advance_counter_past(id: u64) {
 /// Serves callers that store ids themselves, such as language bindings: it
 /// advances the same counter [`Identifier::new`] draws from.
 ///
+/// Every shipped static that holds an identifier, such as the note kind
+/// [`get_other_note_kind`](crate::diagnostic::get_other_note_kind) returns,
+/// is created first if it does not exist yet, so its identifiers draw ids
+/// below `id` however few ids `id` leaves.
+///
 /// # Errors
 ///
 /// Returns [`IdSpaceExhausted`], leaving the counter unchanged, if `id` is
 /// `u64::MAX`, since the counter cannot advance past it.
 pub fn try_advance_counter_past(id: u64) -> Result<(), IdSpaceExhausted> {
+    initialize_shipped_statics();
     advance_past(&NEXT_ID, id)
 }
 

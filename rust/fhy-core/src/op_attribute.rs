@@ -47,15 +47,15 @@ impl Decode for OpAttribute {
     type Payload = OpAttributePayload;
 
     fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
-        Self::intern_registry().initialize();
         Ok(Self::create(payload.name.restore(), payload.description))
     }
 }
 
 /// Decoding checks every field of the payload before it restores the name, so
-/// a rejected payload leaves the id counter untouched. An accepted payload
-/// registers the shipped defaults first if this is the registry's first use,
-/// so their names draw ids before the payload's name can exhaust the counter.
+/// a rejected payload leaves the id counter untouched. Restoring the name of
+/// an accepted payload creates the shipped defaults first if they do not
+/// exist yet, so their names draw ids before the payload's name can exhaust
+/// the counter.
 impl<'de> Deserialize<'de> for OpAttribute {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         decode::deserialize_via_payload(deserializer)
@@ -205,6 +205,14 @@ static PURE: LazyLock<Canonical<OpAttribute>> = LazyLock::new(|| require_default
 
 static ELEMENTWISE: LazyLock<Canonical<OpAttribute>> =
     LazyLock::new(|| require_default(&*ELEMENTWISE_NAME));
+
+/// Create the shipped attributes, and their names, if this is their first
+/// use.
+pub(crate) fn initialize_shipped_attributes() {
+    for attribute in [&COMMUTATIVE, &ASSOCIATIVE, &PURE, &ELEMENTWISE] {
+        LazyLock::force(attribute);
+    }
+}
 
 /// Return the attribute for ops whose output is invariant under operand swap.
 #[must_use]

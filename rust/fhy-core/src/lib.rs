@@ -18,6 +18,7 @@ pub mod value_domain;
 
 mod decode;
 mod python_text;
+mod shipped;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

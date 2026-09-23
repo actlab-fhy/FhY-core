@@ -143,14 +143,13 @@ impl Decode for NoteKind {
     type Payload = NoteKindPayload;
 
     fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
-        Self::intern_registry().initialize();
         Ok(Self::create(payload.name.restore(), payload.description))
     }
 }
 
-/// Decoding registers the shipped kinds first if this is the registry's
-/// first use, so their names draw ids before the payload's name can exhaust
-/// the counter.
+/// Restoring the payload's name creates the shipped kinds first if they do
+/// not exist yet, so their names draw ids before the payload's name can
+/// exhaust the counter.
 impl<'de> Deserialize<'de> for NoteKind {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         decode::deserialize_via_payload(deserializer)
@@ -208,6 +207,13 @@ static SUGGESTION: LazyLock<Canonical<NoteKind>> =
 static REMARK: LazyLock<Canonical<NoteKind>> = LazyLock::new(|| require_default(&*REMARK_NAME));
 
 static OTHER: LazyLock<Canonical<NoteKind>> = LazyLock::new(|| require_default(&*OTHER_NAME));
+
+/// Create the shipped kinds, and their names, if this is their first use.
+pub(crate) fn initialize_shipped_note_kinds() {
+    for kind in [&RATIONALE, &SUGGESTION, &REMARK, &OTHER] {
+        LazyLock::force(kind);
+    }
+}
 
 /// Returns the kind for notes that explain why a decision, transformation,
 /// or result occurred.

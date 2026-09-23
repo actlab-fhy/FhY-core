@@ -147,17 +147,16 @@ impl Decode for ValueDomain {
 
     /// Build the domain this level describes, leaving it unregistered.
     ///
-    /// Register the shipped defaults if this is the registry's first use,
-    /// then restore the name, then check, build and intern the parent level.
-    /// Python likewise restores the name before decoding the parent, and its
-    /// defaults exist from import, before any id is restored.
+    /// Restore the name, then check, build and intern the parent level.
+    /// Python likewise restores the name before decoding the parent.
+    /// Restoring the name creates the shipped defaults first if they do not
+    /// exist yet, as Python's exist from import, before any id is restored.
     ///
     /// # Errors
     ///
     /// Returns an error if a nested level is malformed or conflicts with the
     /// canonical instance for its name.
     fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
-        Self::intern_registry().initialize();
         let name = payload.name.restore();
         let parent = match payload.parent {
             None => None,
@@ -268,6 +267,13 @@ static DATA_DOMAIN: LazyLock<Canonical<ValueDomain>> =
 
 static ADDRESS_DOMAIN: LazyLock<Canonical<ValueDomain>> =
     LazyLock::new(|| require_default(&*ADDRESS_DOMAIN_NAME));
+
+/// Create the shipped domains, and their names, if this is their first use.
+pub(crate) fn initialize_shipped_domains() {
+    for domain in [&DATA_DOMAIN, &ADDRESS_DOMAIN] {
+        LazyLock::force(domain);
+    }
+}
 
 /// Return the domain for concrete data values flowing through the IR.
 #[must_use]
