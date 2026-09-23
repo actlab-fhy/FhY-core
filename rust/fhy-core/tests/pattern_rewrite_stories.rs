@@ -25,18 +25,13 @@ use fhy_core::symbolic::expression::{
 };
 use pattern_support::{
     ProbeError, build_capture, build_literal_pattern, build_x_minus_x_rule, build_x_plus_zero_rule,
-    build_x_times_one_rule, expect_probe_error, rewrite_to_capture, rewrite_to_literal,
+    build_x_times_one_rule, expect_probe_error, rewrite, rewrite_to_capture, rewrite_to_literal,
 };
 use rstest::rstest;
 
 /// Return `x + 0` for the reference `x`.
 fn build_plus_zero(x: &Expression) -> Expression {
     Expression::new_binary(BinaryOperation::Add, x, build_literal(0))
-}
-
-/// Rewrite `expression` with `rules`, failing the test if the walk fails.
-fn rewrite(expression: &Expression, rules: &[RewriteRule]) -> RewriteOutcome {
-    apply_rewrite_rules(expression, rules).expect("no callback or rebuild fails")
 }
 
 /// Apply `rule` at the root of `expression`, failing the test if a callback

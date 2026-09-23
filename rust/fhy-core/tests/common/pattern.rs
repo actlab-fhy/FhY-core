@@ -8,7 +8,8 @@ use std::error::Error;
 use std::fmt;
 
 use fhy_core::symbolic::expression::pattern::{
-    CallbackError, MatchBindings, Pattern, RewriteRule, match_pattern,
+    CallbackError, MatchBindings, Pattern, RewriteOutcome, RewriteRule, apply_rewrite_rules,
+    match_pattern,
 };
 use fhy_core::symbolic::expression::{BinaryOperation, Expression, LiteralValue, UnaryOperation};
 
@@ -119,6 +120,16 @@ pub fn expect_bound<'a>(bindings: &'a MatchBindings, name: &str) -> &'a Expressi
     bindings
         .get(name)
         .unwrap_or_else(|| panic!("{name} is unbound in {bindings:?}"))
+}
+
+/// Rewrite `expression` with `rules`, failing the test if the walk fails.
+///
+/// # Panics
+///
+/// Panics if a rule's callback or rebuild fails.
+#[must_use]
+pub fn rewrite(expression: &Expression, rules: &[RewriteRule]) -> RewriteOutcome {
+    apply_rewrite_rules(expression, rules).expect("no callback or rebuild fails")
 }
 
 /// Return a rewrite returning the expression bound to `name`, failing when

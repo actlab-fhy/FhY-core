@@ -10,14 +10,12 @@ pub mod expression_support;
 pub mod pattern_support;
 
 use expression_support::{build_identifier, build_literal};
-use fhy_core::symbolic::expression::pattern::{
-    MatchBindings, Pattern, RewriteOutcome, RewriteRule, apply_rewrite_rules, match_pattern,
-};
+use fhy_core::symbolic::expression::pattern::{MatchBindings, Pattern, RewriteRule, match_pattern};
 use fhy_core::symbolic::expression::{BinaryOperation, Expression, UnaryOperation};
 use pattern_support::{
     build_capture, build_capture_of, build_double_application_rule, build_literal_pattern,
     build_x_minus_x_rule, build_x_plus_zero_rule, build_x_times_one_rule, build_zero_plus_x_rule,
-    expect_bound,
+    expect_bound, rewrite,
 };
 
 /// Return the four algebraic simplifications `x + 0 -> x`, `0 + x -> x`,
@@ -29,11 +27,6 @@ fn build_algebraic_rule_set() -> Vec<RewriteRule> {
         build_x_times_one_rule(),
         build_x_minus_x_rule(),
     ]
-}
-
-/// Rewrite `expression` with `rules`, failing the test if the walk fails.
-fn rewrite(expression: &Expression, rules: &[RewriteRule]) -> RewriteOutcome {
-    apply_rewrite_rules(expression, rules).expect("no callback or rebuild fails")
 }
 
 /// Collect every subexpression of `expression` that `pattern` matches, with
