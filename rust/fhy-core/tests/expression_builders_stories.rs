@@ -11,7 +11,8 @@ use expression_support::{build_identifier, build_literal, build_text_literal};
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
     BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, IntoOperand,
-    LiteralValue, UnaryOperation, build_call, build_logical_and, build_logical_or, build_piecewise,
+    LiteralKind, LiteralValue, UnaryOperation, build_call, build_logical_and, build_logical_or,
+    build_piecewise,
 };
 use rstest::rstest;
 
@@ -388,7 +389,17 @@ fn build_big_operand() -> BigInt {
     "-100000000000000000000".parse().expect("digits")
 }
 
-/// Test every operand type lifts to the expression it stands for.
+/// Return the literal kind of `expression`, or `None` if it is not a
+/// literal.
+fn find_literal_kind(expression: &Expression) -> Option<LiteralKind<'_>> {
+    match expression.kind() {
+        ExpressionKind::Literal(literal) => Some(literal.kind()),
+        _ => None,
+    }
+}
+
+/// Test every operand type lifts to the expression it stands for, a literal
+/// operand keeping its stored kind.
 #[rstest]
 #[case::owned_expression(|_: &Identifier, reference: &Expression| (
     Expression::new_unary(UnaryOperation::Negate, reference.clone()),
@@ -410,6 +421,13 @@ fn build_big_operand() -> BigInt {
     Expression::new_unary(UnaryOperation::Negate, LiteralValue::from(true)),
     build_literal(true),
 ))]
+#[case::integer_text_literal_value(|_: &Identifier, _: &Expression| (
+    Expression::new_unary(
+        UnaryOperation::Negate,
+        LiteralValue::parse_text("5").expect("an integer text"),
+    ),
+    build_text_literal("5"),
+))]
 #[case::i64(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7_i64), build_literal(7)))]
 #[case::i32(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7_i32), build_literal(7)))]
 #[case::u32(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7_u32), build_literal(7)))]
@@ -423,6 +441,13 @@ fn expression_new_binary_lifts_every_operand_type(#[case] lift: LiftOperand) {
 
     let (built, operand) = lift(&identifier, &reference);
 
+    let ExpressionKind::Unary(node) = built.kind() else {
+        panic!("expected a unary node, got {built:?}");
+    };
+    assert_eq!(
+        find_literal_kind(node.operand()),
+        find_literal_kind(&operand)
+    );
     assert_eq!(
         built,
         Expression::new_unary(UnaryOperation::Negate, operand)
@@ -464,11 +489,15 @@ fn expression_new_unary_constructs_with_literal_coercion() {
     );
 }
 
-/// Test a numeric text becomes an operand through an explicit literal value.
+/// Test a numeric text becomes an operand through an explicit literal value,
+/// keeping its spelling and its text kind.
 #[rstest]
-#[case::integer_text("5")]
-#[case::decimal_text("1.5")]
-fn expression_binary_builder_takes_a_parsed_text_operand(#[case] text: &str) {
+#[case::integer_text("5", LiteralKind::IntegerText("5"))]
+#[case::decimal_text("1.5", LiteralKind::DecimalText("1.5"))]
+fn expression_binary_builder_takes_a_parsed_text_operand(
+    #[case] text: &str,
+    #[case] expected: LiteralKind<'static>,
+) {
     let parsed = LiteralValue::parse_text(text).expect("a literal text");
 
     let built = build_literal(1) + parsed;
@@ -479,6 +508,7 @@ fn expression_binary_builder_takes_a_parsed_text_operand(#[case] text: &str) {
     let ExpressionKind::Literal(right) = node.right().kind() else {
         panic!("expected a literal right operand, got {:?}", node.right());
     };
+    assert_eq!(right.kind(), expected);
     assert_eq!(right.to_string(), text);
 }
 
@@ -487,15 +517,15 @@ fn expression_binary_builder_takes_a_parsed_text_operand(#[case] text: &str) {
 // =============================================================================
 
 /// Test the variadic logical builders fold three operands to the right,
-/// wrapping an identifier operand.
+/// wrapping each bare identifier operand in a reference to it.
 #[rstest]
 #[case::and(BinaryOperation::LogicalAnd)]
 #[case::or(BinaryOperation::LogicalOr)]
 fn build_logical_folds_three_operands_to_the_right(#[case] operation: BinaryOperation) {
-    let first = build_literal(true);
-    let second = build_literal(false);
+    let (first, first_reference) = build_identifier("a");
+    let (second, second_reference) = build_identifier("b");
     let (third, third_reference) = build_identifier("c");
-    let operands = [first.clone(), second.clone(), Expression::from(third)];
+    let operands: [Identifier; 3] = [first, second, third];
 
     let built = match operation {
         BinaryOperation::LogicalAnd => build_logical_and(operands),
@@ -505,8 +535,8 @@ fn build_logical_folds_three_operands_to_the_right(#[case] operation: BinaryOper
 
     let expected = Expression::new_binary(
         operation,
-        &first,
-        Expression::new_binary(operation, &second, &third_reference),
+        &first_reference,
+        Expression::new_binary(operation, &second_reference, &third_reference),
     );
     assert_eq!(built, expected);
 }
@@ -573,8 +603,9 @@ fn build_logical_and_folds_four_operands_to_the_right() {
     assert_eq!(built, expected);
 }
 
-/// Test a conjunction whose first operand is an existing expression includes
-/// it, as a method-style call `a.logical_and(b, c)` would.
+/// Test `build_logical_and` and `build_logical_or` keep an existing
+/// expression given as the first operand as the outermost left operand, with
+/// the other operands folded to its right.
 #[rstest]
 #[case::and(BinaryOperation::LogicalAnd)]
 #[case::or(BinaryOperation::LogicalOr)]
