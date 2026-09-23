@@ -37,6 +37,13 @@ class ExpandedGoldenCorpus(NamedTuple):
 # (its helpers are private) names that test's full path in `library_test`
 # instead, and `rust_test` is only its label.
 EXPANDED_GOLDEN_CORPORA = {
+    # The catalogue has no random mode: its "expanded" corpus is a fresh
+    # copy of the committed one, replayed from the oracle.
+    "generate_builtin_cases.py": ExpandedGoldenCorpus(
+        options="",
+        rust_test="builtins_equivalence",
+        variable="FHY_BUILTIN_CORPUS",
+    ),
     "generate_deterministic_identifier_cases.py": ExpandedGoldenCorpus(
         options="--seed 7 --random-count 2000 --max-ops 40 --hints a,b,c,d,e",
         rust_test="deterministic_identifiers_equivalence",

@@ -1,0 +1,1110 @@
+{
+ "provenance": {
+  "package": "fhy_core",
+  "package_version": "0.2.0",
+  "git_commit": "b3a0a5d4697e90669f6bc1b83172f9d2801383a3",
+  "python_version": "3.11.15 (main, Jun 27 2026, 16:18:26) [Clang 15.0.0 (clang-1500.0.40.1)]",
+  "generator_command": "uv run --no-sync python rust/fhy-core/tests/golden/generate_builtin_cases.py"
+ },
+ "composed_functions": [
+  {
+   "name": "max",
+   "parameter_names": [
+    "a",
+    "b"
+   ],
+   "parameter_sorts": [
+    "real",
+    "real"
+   ],
+   "result_sort": "real",
+   "body": {
+    "__type__": "piecewise_expression",
+    "__data__": {
+     "conditions": [
+      {
+       "__type__": "binary_expression",
+       "__data__": {
+        "operation": "greater",
+        "left": {
+         "__type__": "identifier_expression",
+         "__data__": {
+          "identifier": {
+           "parameter": 0
+          }
+         }
+        },
+        "right": {
+         "__type__": "identifier_expression",
+         "__data__": {
+          "identifier": {
+           "parameter": 1
+          }
+         }
+        }
+       }
+      }
+     ],
+     "values": [
+      {
+       "__type__": "identifier_expression",
+       "__data__": {
+        "identifier": {
+         "parameter": 0
+        }
+       }
+      }
+     ],
+     "otherwise": {
+      "__type__": "identifier_expression",
+      "__data__": {
+       "identifier": {
+        "parameter": 1
+       }
+      }
+     }
+    }
+   },
+   "symbolic_print": "{a if (a > b); b otherwise}",
+   "functional_print": "(piecewise (greater a b) a b)"
+  },
+  {
+   "name": "min",
+   "parameter_names": [
+    "a",
+    "b"
+   ],
+   "parameter_sorts": [
+    "real",
+    "real"
+   ],
+   "result_sort": "real",
+   "body": {
+    "__type__": "piecewise_expression",
+    "__data__": {
+     "conditions": [
+      {
+       "__type__": "binary_expression",
+       "__data__": {
+        "operation": "less",
+        "left": {
+         "__type__": "identifier_expression",
+         "__data__": {
+          "identifier": {
+           "parameter": 0
+          }
+         }
+        },
+        "right": {
+         "__type__": "identifier_expression",
+         "__data__": {
+          "identifier": {
+           "parameter": 1
+          }
+         }
+        }
+       }
+      }
+     ],
+     "values": [
+      {
+       "__type__": "identifier_expression",
+       "__data__": {
+        "identifier": {
+         "parameter": 0
+        }
+       }
+      }
+     ],
+     "otherwise": {
+      "__type__": "identifier_expression",
+      "__data__": {
+       "identifier": {
+        "parameter": 1
+       }
+      }
+     }
+    }
+   },
+   "symbolic_print": "{a if (a < b); b otherwise}",
+   "functional_print": "(piecewise (less a b) a b)"
+  },
+  {
+   "name": "abs",
+   "parameter_names": [
+    "x"
+   ],
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real",
+   "body": {
+    "__type__": "piecewise_expression",
+    "__data__": {
+     "conditions": [
+      {
+       "__type__": "binary_expression",
+       "__data__": {
+        "operation": "greater_equal",
+        "left": {
+         "__type__": "identifier_expression",
+         "__data__": {
+          "identifier": {
+           "parameter": 0
+          }
+         }
+        },
+        "right": {
+         "__type__": "literal_expression",
+         "__data__": {
+          "value": 0.0
+         }
+        }
+       }
+      }
+     ],
+     "values": [
+      {
+       "__type__": "identifier_expression",
+       "__data__": {
+        "identifier": {
+         "parameter": 0
+        }
+       }
+      }
+     ],
+     "otherwise": {
+      "__type__": "unary_expression",
+      "__data__": {
+       "operation": "negate",
+       "operand": {
+        "__type__": "identifier_expression",
+        "__data__": {
+         "identifier": {
+          "parameter": 0
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "symbolic_print": "{x if (x >= 0.0); (-x) otherwise}",
+   "functional_print": "(piecewise (greater_equal x 0.0) x (negate x))"
+  },
+  {
+   "name": "sign",
+   "parameter_names": [
+    "x"
+   ],
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "int",
+   "body": {
+    "__type__": "piecewise_expression",
+    "__data__": {
+     "conditions": [
+      {
+       "__type__": "binary_expression",
+       "__data__": {
+        "operation": "greater",
+        "left": {
+         "__type__": "identifier_expression",
+         "__data__": {
+          "identifier": {
+           "parameter": 0
+          }
+         }
+        },
+        "right": {
+         "__type__": "literal_expression",
+         "__data__": {
+          "value": 0.0
+         }
+        }
+       }
+      },
+      {
+       "__type__": "binary_expression",
+       "__data__": {
+        "operation": "less",
+        "left": {
+         "__type__": "identifier_expression",
+         "__data__": {
+          "identifier": {
+           "parameter": 0
+          }
+         }
+        },
+        "right": {
+         "__type__": "literal_expression",
+         "__data__": {
+          "value": 0.0
+         }
+        }
+       }
+      }
+     ],
+     "values": [
+      {
+       "__type__": "literal_expression",
+       "__data__": {
+        "value": 1
+       }
+      },
+      {
+       "__type__": "literal_expression",
+       "__data__": {
+        "value": -1
+       }
+      }
+     ],
+     "otherwise": {
+      "__type__": "literal_expression",
+      "__data__": {
+       "value": 0
+      }
+     }
+    }
+   },
+   "symbolic_print": "{1 if (x > 0.0); -1 if (x < 0.0); 0 otherwise}",
+   "functional_print": "(piecewise (greater x 0.0) 1 (less x 0.0) -1 0)"
+  },
+  {
+   "name": "clamp",
+   "parameter_names": [
+    "x",
+    "lo",
+    "hi"
+   ],
+   "parameter_sorts": [
+    "real",
+    "real",
+    "real"
+   ],
+   "result_sort": "real",
+   "body": {
+    "__type__": "call_expression",
+    "__data__": {
+     "function_name": "min",
+     "arguments": [
+      {
+       "__type__": "call_expression",
+       "__data__": {
+        "function_name": "max",
+        "arguments": [
+         {
+          "__type__": "identifier_expression",
+          "__data__": {
+           "identifier": {
+            "parameter": 0
+           }
+          }
+         },
+         {
+          "__type__": "identifier_expression",
+          "__data__": {
+           "identifier": {
+            "parameter": 1
+           }
+          }
+         }
+        ]
+       }
+      },
+      {
+       "__type__": "identifier_expression",
+       "__data__": {
+        "identifier": {
+         "parameter": 2
+        }
+       }
+      }
+     ]
+    }
+   },
+   "symbolic_print": "min(max(x, lo), hi)",
+   "functional_print": "(min (max x lo) hi)"
+  },
+  {
+   "name": "clamp_symmetric",
+   "parameter_names": [
+    "x",
+    "bound"
+   ],
+   "parameter_sorts": [
+    "real",
+    "real"
+   ],
+   "result_sort": "real",
+   "body": {
+    "__type__": "call_expression",
+    "__data__": {
+     "function_name": "clamp",
+     "arguments": [
+      {
+       "__type__": "identifier_expression",
+       "__data__": {
+        "identifier": {
+         "parameter": 0
+        }
+       }
+      },
+      {
+       "__type__": "unary_expression",
+       "__data__": {
+        "operation": "negate",
+        "operand": {
+         "__type__": "identifier_expression",
+         "__data__": {
+          "identifier": {
+           "parameter": 1
+          }
+         }
+        }
+       }
+      },
+      {
+       "__type__": "identifier_expression",
+       "__data__": {
+        "identifier": {
+         "parameter": 1
+        }
+       }
+      }
+     ]
+    }
+   },
+   "symbolic_print": "clamp(x, (-bound), bound)",
+   "functional_print": "(clamp x (negate bound) bound)"
+  },
+  {
+   "name": "relu",
+   "parameter_names": [
+    "x"
+   ],
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real",
+   "body": {
+    "__type__": "call_expression",
+    "__data__": {
+     "function_name": "max",
+     "arguments": [
+      {
+       "__type__": "identifier_expression",
+       "__data__": {
+        "identifier": {
+         "parameter": 0
+        }
+       }
+      },
+      {
+       "__type__": "literal_expression",
+       "__data__": {
+        "value": 0
+       }
+      }
+     ]
+    }
+   },
+   "symbolic_print": "max(x, 0)",
+   "functional_print": "(max x 0)"
+  },
+  {
+   "name": "leaky_relu",
+   "parameter_names": [
+    "x",
+    "slope"
+   ],
+   "parameter_sorts": [
+    "real",
+    "real"
+   ],
+   "result_sort": "real",
+   "body": {
+    "__type__": "piecewise_expression",
+    "__data__": {
+     "conditions": [
+      {
+       "__type__": "binary_expression",
+       "__data__": {
+        "operation": "greater",
+        "left": {
+         "__type__": "identifier_expression",
+         "__data__": {
+          "identifier": {
+           "parameter": 0
+          }
+         }
+        },
+        "right": {
+         "__type__": "literal_expression",
+         "__data__": {
+          "value": 0.0
+         }
+        }
+       }
+      }
+     ],
+     "values": [
+      {
+       "__type__": "identifier_expression",
+       "__data__": {
+        "identifier": {
+         "parameter": 0
+        }
+       }
+      }
+     ],
+     "otherwise": {
+      "__type__": "binary_expression",
+      "__data__": {
+       "operation": "multiply",
+       "left": {
+        "__type__": "identifier_expression",
+        "__data__": {
+         "identifier": {
+          "parameter": 0
+         }
+        }
+       },
+       "right": {
+        "__type__": "identifier_expression",
+        "__data__": {
+         "identifier": {
+          "parameter": 1
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "symbolic_print": "{x if (x > 0.0); (x * slope) otherwise}",
+   "functional_print": "(piecewise (greater x 0.0) x (multiply x slope))"
+  },
+  {
+   "name": "xor",
+   "parameter_names": [
+    "a",
+    "b"
+   ],
+   "parameter_sorts": [
+    "bool",
+    "bool"
+   ],
+   "result_sort": "bool",
+   "body": {
+    "__type__": "binary_expression",
+    "__data__": {
+     "operation": "logical_and",
+     "left": {
+      "__type__": "binary_expression",
+      "__data__": {
+       "operation": "logical_or",
+       "left": {
+        "__type__": "identifier_expression",
+        "__data__": {
+         "identifier": {
+          "parameter": 0
+         }
+        }
+       },
+       "right": {
+        "__type__": "identifier_expression",
+        "__data__": {
+         "identifier": {
+          "parameter": 1
+         }
+        }
+       }
+      }
+     },
+     "right": {
+      "__type__": "unary_expression",
+      "__data__": {
+       "operation": "logical_not",
+       "operand": {
+        "__type__": "binary_expression",
+        "__data__": {
+         "operation": "logical_and",
+         "left": {
+          "__type__": "identifier_expression",
+          "__data__": {
+           "identifier": {
+            "parameter": 0
+           }
+          }
+         },
+         "right": {
+          "__type__": "identifier_expression",
+          "__data__": {
+           "identifier": {
+            "parameter": 1
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "symbolic_print": "((a || b) && (!(a && b)))",
+   "functional_print": "(logical_and (logical_or a b) (logical_not (logical_and a b)))"
+  },
+  {
+   "name": "nand",
+   "parameter_names": [
+    "a",
+    "b"
+   ],
+   "parameter_sorts": [
+    "bool",
+    "bool"
+   ],
+   "result_sort": "bool",
+   "body": {
+    "__type__": "unary_expression",
+    "__data__": {
+     "operation": "logical_not",
+     "operand": {
+      "__type__": "binary_expression",
+      "__data__": {
+       "operation": "logical_and",
+       "left": {
+        "__type__": "identifier_expression",
+        "__data__": {
+         "identifier": {
+          "parameter": 0
+         }
+        }
+       },
+       "right": {
+        "__type__": "identifier_expression",
+        "__data__": {
+         "identifier": {
+          "parameter": 1
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "symbolic_print": "(!(a && b))",
+   "functional_print": "(logical_not (logical_and a b))"
+  },
+  {
+   "name": "nor",
+   "parameter_names": [
+    "a",
+    "b"
+   ],
+   "parameter_sorts": [
+    "bool",
+    "bool"
+   ],
+   "result_sort": "bool",
+   "body": {
+    "__type__": "unary_expression",
+    "__data__": {
+     "operation": "logical_not",
+     "operand": {
+      "__type__": "binary_expression",
+      "__data__": {
+       "operation": "logical_or",
+       "left": {
+        "__type__": "identifier_expression",
+        "__data__": {
+         "identifier": {
+          "parameter": 0
+         }
+        }
+       },
+       "right": {
+        "__type__": "identifier_expression",
+        "__data__": {
+         "identifier": {
+          "parameter": 1
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "symbolic_print": "(!(a || b))",
+   "functional_print": "(logical_not (logical_or a b))"
+  },
+  {
+   "name": "implies",
+   "parameter_names": [
+    "a",
+    "b"
+   ],
+   "parameter_sorts": [
+    "bool",
+    "bool"
+   ],
+   "result_sort": "bool",
+   "body": {
+    "__type__": "binary_expression",
+    "__data__": {
+     "operation": "logical_or",
+     "left": {
+      "__type__": "unary_expression",
+      "__data__": {
+       "operation": "logical_not",
+       "operand": {
+        "__type__": "identifier_expression",
+        "__data__": {
+         "identifier": {
+          "parameter": 0
+         }
+        }
+       }
+      }
+     },
+     "right": {
+      "__type__": "identifier_expression",
+      "__data__": {
+       "identifier": {
+        "parameter": 1
+       }
+      }
+     }
+    }
+   },
+   "symbolic_print": "((!a) || b)",
+   "functional_print": "(logical_or (logical_not a) b)"
+  },
+  {
+   "name": "iff",
+   "parameter_names": [
+    "a",
+    "b"
+   ],
+   "parameter_sorts": [
+    "bool",
+    "bool"
+   ],
+   "result_sort": "bool",
+   "body": {
+    "__type__": "binary_expression",
+    "__data__": {
+     "operation": "equal",
+     "left": {
+      "__type__": "identifier_expression",
+      "__data__": {
+       "identifier": {
+        "parameter": 0
+       }
+      }
+     },
+     "right": {
+      "__type__": "identifier_expression",
+      "__data__": {
+       "identifier": {
+        "parameter": 1
+       }
+      }
+     }
+    }
+   },
+   "symbolic_print": "(a == b)",
+   "functional_print": "(equal a b)"
+  },
+  {
+   "name": "sigmoid",
+   "parameter_names": [
+    "x"
+   ],
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real",
+   "body": {
+    "__type__": "binary_expression",
+    "__data__": {
+     "operation": "divide",
+     "left": {
+      "__type__": "literal_expression",
+      "__data__": {
+       "value": 1.0
+      }
+     },
+     "right": {
+      "__type__": "binary_expression",
+      "__data__": {
+       "operation": "add",
+       "left": {
+        "__type__": "literal_expression",
+        "__data__": {
+         "value": 1.0
+        }
+       },
+       "right": {
+        "__type__": "call_expression",
+        "__data__": {
+         "function_name": "exp",
+         "arguments": [
+          {
+           "__type__": "unary_expression",
+           "__data__": {
+            "operation": "negate",
+            "operand": {
+             "__type__": "identifier_expression",
+             "__data__": {
+              "identifier": {
+               "parameter": 0
+              }
+             }
+            }
+           }
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   },
+   "symbolic_print": "(1.0 / (1.0 + exp((-x))))",
+   "functional_print": "(divide 1.0 (add 1.0 (exp (negate x))))"
+  },
+  {
+   "name": "silu",
+   "parameter_names": [
+    "x"
+   ],
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real",
+   "body": {
+    "__type__": "binary_expression",
+    "__data__": {
+     "operation": "multiply",
+     "left": {
+      "__type__": "identifier_expression",
+      "__data__": {
+       "identifier": {
+        "parameter": 0
+       }
+      }
+     },
+     "right": {
+      "__type__": "call_expression",
+      "__data__": {
+       "function_name": "sigmoid",
+       "arguments": [
+        {
+         "__type__": "identifier_expression",
+         "__data__": {
+          "identifier": {
+           "parameter": 0
+          }
+         }
+        }
+       ]
+      }
+     }
+    }
+   },
+   "symbolic_print": "(x * sigmoid(x))",
+   "functional_print": "(multiply x (sigmoid x))"
+  },
+  {
+   "name": "gelu",
+   "parameter_names": [
+    "x"
+   ],
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real",
+   "body": {
+    "__type__": "binary_expression",
+    "__data__": {
+     "operation": "multiply",
+     "left": {
+      "__type__": "binary_expression",
+      "__data__": {
+       "operation": "multiply",
+       "left": {
+        "__type__": "literal_expression",
+        "__data__": {
+         "value": 0.5
+        }
+       },
+       "right": {
+        "__type__": "identifier_expression",
+        "__data__": {
+         "identifier": {
+          "parameter": 0
+         }
+        }
+       }
+      }
+     },
+     "right": {
+      "__type__": "binary_expression",
+      "__data__": {
+       "operation": "add",
+       "left": {
+        "__type__": "literal_expression",
+        "__data__": {
+         "value": 1.0
+        }
+       },
+       "right": {
+        "__type__": "call_expression",
+        "__data__": {
+         "function_name": "erf",
+         "arguments": [
+          {
+           "__type__": "binary_expression",
+           "__data__": {
+            "operation": "divide",
+            "left": {
+             "__type__": "identifier_expression",
+             "__data__": {
+              "identifier": {
+               "parameter": 0
+              }
+             }
+            },
+            "right": {
+             "__type__": "call_expression",
+             "__data__": {
+              "function_name": "sqrt",
+              "arguments": [
+               {
+                "__type__": "literal_expression",
+                "__data__": {
+                 "value": 2.0
+                }
+               }
+              ]
+             }
+            }
+           }
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   },
+   "symbolic_print": "((0.5 * x) * (1.0 + erf((x / sqrt(2.0)))))",
+   "functional_print": "(multiply (multiply 0.5 x) (add 1.0 (erf (divide x (sqrt 2.0)))))"
+  }
+ ],
+ "native_functions": [
+  {
+   "name": "exp",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "exp2",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "log",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "log2",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "log10",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "sqrt",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "sin",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "cos",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "tan",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "arcsin",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "arccos",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "arctan",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "sinh",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "cosh",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "tanh",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "erf",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "real"
+  },
+  {
+   "name": "round",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "int"
+  },
+  {
+   "name": "floor",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "int"
+  },
+  {
+   "name": "ceil",
+   "parameter_sorts": [
+    "real"
+   ],
+   "result_sort": "int"
+  }
+ ],
+ "native_constants": [
+  {
+   "name": "pi",
+   "sort": "real",
+   "value_repr": "3.141592653589793",
+   "value_bits": "0x400921fb54442d18"
+  },
+  {
+   "name": "e",
+   "sort": "real",
+   "value_repr": "2.718281828459045",
+   "value_bits": "0x4005bf0a8b145769"
+  },
+  {
+   "name": "inf",
+   "sort": "real",
+   "value_repr": "inf",
+   "value_bits": "0x7ff0000000000000"
+  },
+  {
+   "name": "nan",
+   "sort": "real",
+   "value_repr": "nan",
+   "value_bits": "0x7ff8000000000000"
+  }
+ ],
+ "registration_order": [
+  "pi",
+  "e",
+  "inf",
+  "nan",
+  "exp",
+  "exp2",
+  "log",
+  "log2",
+  "log10",
+  "sqrt",
+  "sin",
+  "cos",
+  "tan",
+  "arcsin",
+  "arccos",
+  "arctan",
+  "sinh",
+  "cosh",
+  "tanh",
+  "erf",
+  "round",
+  "floor",
+  "ceil",
+  "max",
+  "min",
+  "abs",
+  "sign",
+  "clamp",
+  "clamp_symmetric",
+  "relu",
+  "leaky_relu",
+  "xor",
+  "nand",
+  "nor",
+  "implies",
+  "iff",
+  "sigmoid",
+  "silu",
+  "gelu"
+ ]
+}
