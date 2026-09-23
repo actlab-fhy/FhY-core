@@ -330,12 +330,20 @@ impl<'de> Deserialize<'de> for IdentifierPayload {
     }
 }
 
+impl crate::decode::Decode for Identifier {
+    type Payload = IdentifierPayload;
+
+    fn build_from_payload<E: serde::de::Error>(payload: Self::Payload) -> Result<Self, E> {
+        Ok(payload.restore())
+    }
+}
+
 impl<'de> Deserialize<'de> for Identifier {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        IdentifierPayload::deserialize(deserializer).map(IdentifierPayload::restore)
+        crate::decode::deserialize_via_payload(deserializer)
     }
 }
 

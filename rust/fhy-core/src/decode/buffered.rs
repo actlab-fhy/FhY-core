@@ -1,10 +1,9 @@
 //! Payload subtrees read now and decoded later.
 //!
-//! A payload whose decode has side effects, such as restoring an identifier or
-//! interning a nested value, must sometimes check one level of the payload
-//! before it decodes the level nested inside it. A streaming format hands over
-//! fields in whatever order the payload lists them, so the nested level is
-//! read into a [`BufferedMap`] first and decoded from it once its turn comes.
+//! [`super::DeferredPayload`] holds its nested level as a [`BufferedMap`], read
+//! now and decoded from once the holder's build reaches it. A streaming
+//! format hands over fields in whatever order the payload lists them, so the
+//! nested level must be read into a value before it can wait for its turn.
 //!
 //! Buffering reads the subtree through `deserialize_any`, so it needs a
 //! self-describing format such as JSON.
@@ -17,7 +16,7 @@ use serde::{forward_to_deserialize_any, Deserialize};
 
 /// Any value of a self-describing payload, held until something decodes it.
 #[derive(Debug)]
-pub(crate) enum BufferedValue {
+pub(super) enum BufferedValue {
     Unit,
     Bool(bool),
     Unsigned(u64),
@@ -33,7 +32,7 @@ pub(crate) enum BufferedValue {
 /// Reading one rejects any value that is not a map, so a caller learns that
 /// the subtree has the wrong shape before it decodes anything else.
 #[derive(Debug)]
-pub(crate) struct BufferedMap(Vec<(BufferedValue, BufferedValue)>);
+pub(super) struct BufferedMap(Vec<(BufferedValue, BufferedValue)>);
 
 /// Collect a map's entries without interpreting them.
 fn collect_map_entries<'de, A: MapAccess<'de>>(

@@ -40,19 +40,26 @@ pub struct OpAttribute {
     description: String,
 }
 
+impl crate::decode::Decode for OpAttribute {
+    type Payload = OpAttributePayload;
+
+    fn build_from_payload<E: serde::de::Error>(payload: Self::Payload) -> Result<Self, E> {
+        Ok(Self::create(payload.name.restore(), payload.description))
+    }
+}
+
 /// Decoding checks every field of the payload before it restores the name, so
 /// a rejected payload leaves the id counter untouched.
 impl<'de> Deserialize<'de> for OpAttribute {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let payload = OpAttributePayload::deserialize(deserializer)?;
-        Ok(Self::create(payload.name.restore(), payload.description))
+        crate::decode::deserialize_via_payload(deserializer)
     }
 }
 
 /// An attribute payload, checked but with its name not yet restored.
 #[derive(Deserialize)]
 #[serde(rename = "OpAttribute", deny_unknown_fields)]
-struct OpAttributePayload {
+pub(crate) struct OpAttributePayload {
     name: IdentifierPayload,
     description: String,
 }

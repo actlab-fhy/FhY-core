@@ -25,7 +25,7 @@ use std::sync::LazyLock;
 
 use serde::{de, Deserialize, Deserializer, Serialize};
 
-use crate::buffered_payload::{BufferedMap, BufferedValue};
+use crate::decode::{Decode, DeferredPayload};
 use crate::identifier::{HasIdentifier, Identifier, IdentifierPayload};
 use crate::interned::{intern_decoded, Canonical, InternOutcome, InternRegistry, Interned};
 
@@ -134,6 +134,26 @@ impl ValueDomain {
     }
 }
 
+impl Decode for ValueDomain {
+    type Payload = ValueDomainPayload;
+
+    /// Restores the name, then checks, builds and interns the parent level,
+    /// the order in which the Python deserializer takes these steps.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a nested level is malformed or conflicts with the
+    /// canonical instance for its name.
+    fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
+        let name = payload.name.restore();
+        let parent = match payload.parent {
+            None => None,
+            Some(parent) => Some(intern_decoded(parent.decode()?)?),
+        };
+        Ok(ValueDomain::create(name, payload.description, parent))
+    }
+}
+
 /// Decoding checks one level of the payload at a time, outermost first. A
 /// level whose fields are all present, known and well typed restores its name
 /// before the level nested in its `parent` is checked, and each parent is
@@ -147,7 +167,7 @@ impl ValueDomain {
 /// self-describing format such as JSON.
 impl<'de> Deserialize<'de> for ValueDomain {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        ValueDomainPayload::deserialize(deserializer)?.build()
+        crate::decode::deserialize_via_payload(deserializer)
     }
 }
 
@@ -157,38 +177,14 @@ impl<'de> Deserialize<'de> for ValueDomain {
 /// is held unrestored and its parent is held unread.
 #[derive(Deserialize)]
 #[serde(rename = "ValueDomain", deny_unknown_fields)]
-struct ValueDomainPayload {
+pub(crate) struct ValueDomainPayload {
     name: IdentifierPayload,
     description: String,
     // `serde` lets an `Option` field be missing and decode as `None`, but the
     // Python payload always carries `parent`. Naming a `deserialize_with`
     // turns off that special case, so a payload without the key is rejected.
     #[serde(deserialize_with = "Option::deserialize")]
-    parent: Option<BufferedMap>,
-}
-
-impl ValueDomainPayload {
-    /// Build the domain this level describes, leaving it unregistered.
-    ///
-    /// Restores the name, then checks, builds and interns the parent level,
-    /// the order in which the Python deserializer takes these steps.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if a nested level is malformed or conflicts with the
-    /// canonical instance for its name.
-    fn build<E: de::Error>(self) -> Result<ValueDomain, E> {
-        let name = self.name.restore();
-        let parent = match self.parent {
-            None => None,
-            Some(parent) => {
-                let parent = ValueDomainPayload::deserialize(BufferedValue::from(parent))
-                    .map_err(E::custom)?;
-                Some(intern_decoded(parent.build()?)?)
-            }
-        };
-        Ok(ValueDomain::create(name, self.description, parent))
-    }
+    parent: Option<DeferredPayload<ValueDomain>>,
 }
 
 impl HasIdentifier for ValueDomain {

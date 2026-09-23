@@ -13,7 +13,7 @@ pub mod interned;
 pub mod op_attribute;
 pub mod value_domain;
 
-mod buffered_payload;
+mod decode;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
