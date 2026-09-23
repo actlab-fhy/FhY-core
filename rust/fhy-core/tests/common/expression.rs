@@ -169,14 +169,14 @@ pub static IDENTIFIER_POOL: LazyLock<[Identifier; 3]> = LazyLock::new(|| {
     ]
 });
 
-/// Every unary operation.
+/// Every unary operation, in declaration order.
 pub const ALL_UNARY_OPERATIONS: [UnaryOperation; 3] = [
     UnaryOperation::Negate,
     UnaryOperation::Positive,
     UnaryOperation::LogicalNot,
 ];
 
-/// Every binary operation.
+/// Every binary operation, in declaration order.
 pub const ALL_BINARY_OPERATIONS: [BinaryOperation; 15] = [
     BinaryOperation::Add,
     BinaryOperation::Subtract,

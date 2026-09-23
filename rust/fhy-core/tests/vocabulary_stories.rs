@@ -6,9 +6,13 @@
 //! deserialization refuses; the stories at the end use the enums the way an
 //! expression payload or a function signature does.
 
+#[path = "common/expression.rs"]
+pub mod expression_support;
+
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 
+use expression_support::{ALL_BINARY_OPERATIONS, ALL_UNARY_OPERATIONS};
 use fhy_core::symbolic::expression::{BinaryOperation, FunctionSort, UnaryOperation};
 use fhy_core::symbolic::symbol_type::SymbolType;
 use rstest::rstest;
@@ -25,32 +29,6 @@ const ALL_FUNCTION_SORTS: [FunctionSort; 4] = [
     FunctionSort::Nat,
     FunctionSort::Int,
     FunctionSort::Real,
-];
-
-/// Every `UnaryOperation`, in declaration order.
-const ALL_UNARY_OPERATIONS: [UnaryOperation; 3] = [
-    UnaryOperation::Negate,
-    UnaryOperation::Positive,
-    UnaryOperation::LogicalNot,
-];
-
-/// Every `BinaryOperation`, in declaration order.
-const ALL_BINARY_OPERATIONS: [BinaryOperation; 15] = [
-    BinaryOperation::Add,
-    BinaryOperation::Subtract,
-    BinaryOperation::Multiply,
-    BinaryOperation::Divide,
-    BinaryOperation::FloorDivide,
-    BinaryOperation::Modulo,
-    BinaryOperation::Power,
-    BinaryOperation::LogicalAnd,
-    BinaryOperation::LogicalOr,
-    BinaryOperation::Equal,
-    BinaryOperation::NotEqual,
-    BinaryOperation::Less,
-    BinaryOperation::LessEqual,
-    BinaryOperation::Greater,
-    BinaryOperation::GreaterEqual,
 ];
 
 /// Every wire word of the four vocabularies, plus near misses of each: the
