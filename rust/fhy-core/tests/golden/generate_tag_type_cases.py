@@ -194,23 +194,20 @@ def _create_context(kind: str) -> _ScriptContext:
 def _normalize_identifier_dict(
     raw: dict[str, Any], ctx: _ScriptContext
 ) -> dict[str, Any]:
-    return {"id": ctx.find_slot_for_id(raw["id"]), "name_hint": raw["name_hint"]}
+    return {**raw, "id": ctx.find_slot_for_id(raw["id"])}
 
 
 def _normalize_attribute_dict(
     raw: dict[str, Any], ctx: _ScriptContext
 ) -> dict[str, Any]:
-    return {
-        "name": _normalize_identifier_dict(raw["name"], ctx),
-        "description": raw["description"],
-    }
+    return {**raw, "name": _normalize_identifier_dict(raw["name"], ctx)}
 
 
 def _normalize_domain_dict(raw: dict[str, Any], ctx: _ScriptContext) -> dict[str, Any]:
     parent = raw["parent"]
     return {
+        **raw,
         "name": _normalize_identifier_dict(raw["name"], ctx),
-        "description": raw["description"],
         "parent": None if parent is None else _normalize_domain_dict(parent, ctx),
     }
 

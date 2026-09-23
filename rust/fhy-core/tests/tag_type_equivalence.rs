@@ -192,30 +192,31 @@ fn denormalize_value_domain(value: &Value, slots: &mut SlotTable) -> Value {
     })
 }
 
-fn normalize_identifier(identifier: &Identifier, slots: &SlotTable) -> Value {
-    json!({
-        "id": slots.find_slot_for_id(identifier.id()),
-        "name_hint": identifier.name_hint(),
-    })
+/// Return an encoded identifier with its id replaced by the id's slot, as the
+/// generator's `_normalize_identifier_dict` does. Every other field is kept,
+/// so a field the Rust encoding adds or drops still differs from the golden
+/// encoding.
+fn normalize_encoded_identifier(encoded: &Value, slots: &SlotTable) -> Value {
+    let mut normalized = encoded.clone();
+    if let Some(id) = encoded["id"].as_u64() {
+        normalized["id"] = Value::from(slots.find_slot_for_id(id));
+    }
+    normalized
 }
 
-fn normalize_op_attribute(attribute: &OpAttribute, slots: &SlotTable) -> Value {
-    json!({
-        "name": normalize_identifier(attribute.name(), slots),
-        "description": attribute.description(),
-    })
-}
-
-fn normalize_value_domain(domain: &ValueDomain, slots: &SlotTable) -> Value {
-    let parent = match domain.parent() {
-        Some(parent) => normalize_value_domain(parent, slots),
-        None => Value::Null,
-    };
-    json!({
-        "name": normalize_identifier(domain.name(), slots),
-        "description": domain.description(),
-        "parent": parent,
-    })
+/// Return an encoded attribute or domain with each identifier's id replaced
+/// by its slot, recursing into a domain's parent, as the generator's
+/// `_normalize_attribute_dict` and `_normalize_domain_dict` do. Every other
+/// field is kept.
+fn normalize_encoded_tag(encoded: &Value, slots: &SlotTable) -> Value {
+    let mut normalized = encoded.clone();
+    if let Some(name) = encoded.get("name") {
+        normalized["name"] = normalize_encoded_identifier(name, slots);
+    }
+    if let Some(parent) = encoded.get("parent").filter(|parent| !parent.is_null()) {
+        normalized["parent"] = normalize_encoded_tag(parent, slots);
+    }
+    normalized
 }
 
 /// Return a real (denormalized) payload with one structural defect applied,
@@ -507,7 +508,8 @@ fn check_encode_attribute(
         .require(&identifier)
         .expect("golden data only encodes an already-registered slot");
 
-    let actual_encoding = normalize_op_attribute(&canonical, slots);
+    let encoded = serde_json::to_value(&*canonical).expect("a canonical attribute encodes to JSON");
+    let actual_encoding = normalize_encoded_tag(&encoded, slots);
     let expected_encoding = &op["expected"]["encoding"];
 
     if &actual_encoding != expected_encoding {
@@ -805,7 +807,8 @@ fn check_encode_domain(
         .require(&identifier)
         .expect("golden data only encodes an already-registered slot");
 
-    let actual_encoding = normalize_value_domain(&canonical, slots);
+    let encoded = serde_json::to_value(&*canonical).expect("a canonical domain encodes to JSON");
+    let actual_encoding = normalize_encoded_tag(&encoded, slots);
     let expected_encoding = &op["expected"]["encoding"];
 
     if &actual_encoding != expected_encoding {
