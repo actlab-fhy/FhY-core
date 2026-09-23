@@ -125,11 +125,10 @@ fn schedule_piecewise<'a>(
                         Step::Print(condition),
                     ]
                 });
-            let otherwise_separator = if cases.is_empty() { "" } else { "; " };
             schedule(
                 pending,
                 iter::once(Step::Write("{")).chain(clauses).chain([
-                    Step::Write(otherwise_separator),
+                    Step::Write("; "),
                     Step::Print(node.otherwise()),
                     Step::Write(" otherwise}"),
                 ]),
@@ -214,23 +213,56 @@ pub enum IdentifierStyle {
 
 /// The options of [`format_expression`].
 ///
-/// The default is [`Notation::Symbolic`] with [`IdentifierStyle::NameHint`].
+/// The default is [`Notation::Symbolic`] with [`IdentifierStyle::NameHint`];
+/// [`with_notation`](Self::with_notation) and
+/// [`with_identifier_style`](Self::with_identifier_style) change one option
+/// at a time.
+///
+/// # Examples
+///
+/// ```
+/// use fhy_core::symbolic::expression::{FormatOptions, IdentifierStyle, Notation};
+///
+/// let options = FormatOptions::default()
+///     .with_notation(Notation::Functional)
+///     .with_identifier_style(IdentifierStyle::NameHintWithId);
+///
+/// assert_eq!(options.notation(), Notation::Functional);
+/// assert_eq!(options.identifier_style(), IdentifierStyle::NameHintWithId);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub struct FormatOptions {
     notation: Notation,
-    identifiers: IdentifierStyle,
+    identifier_style: IdentifierStyle,
 }
 
 impl FormatOptions {
-    /// Construct options writing nodes in `notation` and identifier
-    /// references in the `identifiers` style.
+    /// Return these options writing nodes in `notation`.
     #[must_use]
-    pub fn new(notation: Notation, identifiers: IdentifierStyle) -> Self {
+    pub fn with_notation(self, notation: Notation) -> Self {
+        Self { notation, ..self }
+    }
+
+    /// Return these options writing identifier references in `style`.
+    #[must_use]
+    pub fn with_identifier_style(self, style: IdentifierStyle) -> Self {
         Self {
-            notation,
-            identifiers,
+            identifier_style: style,
+            ..self
         }
+    }
+
+    /// Return the notation nodes are written in.
+    #[must_use]
+    pub fn notation(&self) -> Notation {
+        self.notation
+    }
+
+    /// Return the style identifier references are written in.
+    #[must_use]
+    pub fn identifier_style(&self) -> IdentifierStyle {
+        self.identifier_style
     }
 }
 
@@ -245,7 +277,7 @@ fn print_node<'a>(
     let notation = options.notation;
     match node.kind() {
         ExpressionKind::Identifier(identifier) => {
-            write_identifier(text, identifier, options.identifiers);
+            write_identifier(text, identifier, options.identifier_style);
         }
         ExpressionKind::Literal(value) => text.push_str(&value.to_string()),
         ExpressionKind::Unary(unary) => schedule_unary(pending, unary, notation),
@@ -287,14 +319,14 @@ fn print_node<'a>(
 /// ```
 /// use fhy_core::identifier::Identifier;
 /// use fhy_core::symbolic::expression::{
-///     Expression, FormatOptions, IdentifierStyle, Notation, format_expression,
+///     Expression, FormatOptions, Notation, format_expression,
 /// };
 ///
 /// let x = Expression::from(Identifier::new("x"));
 /// let tree = (&x + 1) * 2;
 ///
 /// assert_eq!(format_expression(&tree, FormatOptions::default()), "((x + 1) * 2)");
-/// let functional = FormatOptions::new(Notation::Functional, IdentifierStyle::NameHint);
+/// let functional = FormatOptions::default().with_notation(Notation::Functional);
 /// assert_eq!(format_expression(&tree, functional), "(multiply (add x 1) 2)");
 /// ```
 #[must_use]

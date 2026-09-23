@@ -74,7 +74,9 @@ proptest! {
         let restored: Expression = serde_json::from_str(&json).expect("its own JSON decodes");
 
         for (notation, identifiers) in ALL_OPTIONS {
-            let options = FormatOptions::new(notation, identifiers);
+            let options = FormatOptions::default()
+.with_notation(notation)
+.with_identifier_style(identifiers);
             prop_assert_eq!(
                 format_expression(&restored, options),
                 format_expression(&expression, options),
@@ -92,7 +94,7 @@ proptest! {
         for notation in NOTATIONS {
             let text = format_expression(
                 &expression,
-                FormatOptions::new(notation, IdentifierStyle::NameHint),
+                FormatOptions::default().with_notation(notation),
             );
 
             for identifier in expression.free_identifiers() {
@@ -113,7 +115,9 @@ proptest! {
         for notation in NOTATIONS {
             let text = format_expression(
                 &expression,
-                FormatOptions::new(notation, IdentifierStyle::NameHintWithId),
+                FormatOptions::default()
+.with_notation(notation)
+.with_identifier_style(IdentifierStyle::NameHintWithId),
             );
 
             for identifier in expression.free_identifiers() {
@@ -133,11 +137,13 @@ proptest! {
         for notation in NOTATIONS {
             let with_ids = format_expression(
                 &expression,
-                FormatOptions::new(notation, IdentifierStyle::NameHintWithId),
+                FormatOptions::default()
+.with_notation(notation)
+.with_identifier_style(IdentifierStyle::NameHintWithId),
             );
             let name_hints = format_expression(
                 &expression,
-                FormatOptions::new(notation, IdentifierStyle::NameHint),
+                FormatOptions::default().with_notation(notation),
             );
 
             let stripped = POOL.iter().fold(with_ids, |text, identifier| {
@@ -162,7 +168,7 @@ proptest! {
 
         let text = format_expression(
             &expression,
-            FormatOptions::new(Notation::Functional, IdentifierStyle::NameHint),
+            FormatOptions::default().with_notation(Notation::Functional),
         );
 
         prop_assert_eq!(count_occurrences(&text, '('), inner_nodes);
@@ -181,7 +187,7 @@ proptest! {
 
         let text = format_expression(
             &expression,
-            FormatOptions::new(Notation::Symbolic, IdentifierStyle::NameHint),
+            FormatOptions::default().with_notation(Notation::Symbolic),
         );
 
         prop_assert_eq!(count_occurrences(&text, '('), parenthesized);
@@ -200,7 +206,9 @@ proptest! {
         let literal = Expression::from(value);
 
         for (notation, identifiers) in ALL_OPTIONS {
-            let options = FormatOptions::new(notation, identifiers);
+            let options = FormatOptions::default()
+.with_notation(notation)
+.with_identifier_style(identifiers);
             prop_assert_eq!(format_expression(&literal, options), expected.as_str());
         }
     }

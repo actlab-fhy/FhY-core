@@ -23,8 +23,7 @@ use fhy_core::symbolic::expression::builtins::{
 };
 use fhy_core::symbolic::expression::{
     BinaryOperation, CallExpression, Expression, ExpressionKind, FormatOptions, FunctionSort,
-    IdentifierStyle, LiteralKind, Notation, PiecewiseExpression, UnaryOperation, build_piecewise,
-    format_expression,
+    LiteralKind, Notation, PiecewiseExpression, UnaryOperation, build_piecewise, format_expression,
 };
 use num_bigint::BigInt;
 use rstest::rstest;
@@ -672,11 +671,11 @@ fn composed_function_body_prints_as_its_documented_text(
 
     let symbolic = format_expression(
         body,
-        FormatOptions::new(Notation::Symbolic, IdentifierStyle::NameHint),
+        FormatOptions::default().with_notation(Notation::Symbolic),
     );
     let functional = format_expression(
         body,
-        FormatOptions::new(Notation::Functional, IdentifierStyle::NameHint),
+        FormatOptions::default().with_notation(Notation::Functional),
     );
 
     assert_eq!(symbolic, expected_symbolic);

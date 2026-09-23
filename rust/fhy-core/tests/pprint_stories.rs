@@ -29,12 +29,14 @@ const SMALL_STACK_BYTES: usize = 128 << 10;
 
 /// Return the options writing `notation` with name hints only.
 fn build_name_hint_options(notation: Notation) -> FormatOptions {
-    FormatOptions::new(notation, IdentifierStyle::NameHint)
+    FormatOptions::default().with_notation(notation)
 }
 
 /// Return the options writing `notation` with identifier ids.
 fn build_id_options(notation: Notation) -> FormatOptions {
-    FormatOptions::new(notation, IdentifierStyle::NameHintWithId)
+    FormatOptions::default()
+        .with_notation(notation)
+        .with_identifier_style(IdentifierStyle::NameHintWithId)
 }
 
 /// Return `expression` printed symbolically with name hints only.
@@ -136,10 +138,35 @@ fn build_deep_call_in_first_argument(leaf: &Expression, depth: usize) -> Express
 fn format_options_default_is_symbolic_with_name_hints() {
     let default = FormatOptions::default();
 
-    assert_eq!(
-        default,
-        FormatOptions::new(Notation::Symbolic, IdentifierStyle::NameHint)
-    );
+    assert_eq!(default.notation(), Notation::Symbolic);
+    assert_eq!(default.identifier_style(), IdentifierStyle::NameHint);
+}
+
+/// Test `with_notation` sets the notation and keeps the identifier style.
+#[rstest]
+#[case::symbolic(Notation::Symbolic)]
+#[case::functional(Notation::Functional)]
+fn format_options_with_notation_sets_only_the_notation(#[case] notation: Notation) {
+    let base = FormatOptions::default().with_identifier_style(IdentifierStyle::NameHintWithId);
+
+    let options = base.with_notation(notation);
+
+    assert_eq!(options.notation(), notation);
+    assert_eq!(options.identifier_style(), IdentifierStyle::NameHintWithId);
+}
+
+/// Test `with_identifier_style` sets the identifier style and keeps the
+/// notation.
+#[rstest]
+#[case::name_hint(IdentifierStyle::NameHint)]
+#[case::name_hint_with_id(IdentifierStyle::NameHintWithId)]
+fn format_options_with_identifier_style_sets_only_the_style(#[case] style: IdentifierStyle) {
+    let base = FormatOptions::default().with_notation(Notation::Functional);
+
+    let options = base.with_identifier_style(style);
+
+    assert_eq!(options.identifier_style(), style);
+    assert_eq!(options.notation(), Notation::Functional);
 }
 
 /// Test the default options write an identifier as its name hint alone.
