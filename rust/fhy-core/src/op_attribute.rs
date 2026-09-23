@@ -21,7 +21,9 @@
 use std::hash::{Hash, Hasher};
 use std::sync::LazyLock;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
+
+use crate::decode::{self, Decode};
 
 use crate::identifier::{HasIdentifier, Identifier, IdentifierPayload};
 use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned};
@@ -40,10 +42,10 @@ pub struct OpAttribute {
     description: String,
 }
 
-impl crate::decode::Decode for OpAttribute {
+impl Decode for OpAttribute {
     type Payload = OpAttributePayload;
 
-    fn build_from_payload<E: serde::de::Error>(payload: Self::Payload) -> Result<Self, E> {
+    fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
         Ok(Self::create(payload.name.restore(), payload.description))
     }
 }
@@ -52,7 +54,7 @@ impl crate::decode::Decode for OpAttribute {
 /// a rejected payload leaves the id counter untouched.
 impl<'de> Deserialize<'de> for OpAttribute {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::decode::deserialize_via_payload(deserializer)
+        decode::deserialize_via_payload(deserializer)
     }
 }
 

@@ -25,7 +25,7 @@ use std::sync::LazyLock;
 
 use serde::{de, Deserialize, Deserializer, Serialize};
 
-use crate::decode::{Decode, DeferredPayload};
+use crate::decode::{self, Decode, DeferredPayload};
 use crate::identifier::{HasIdentifier, Identifier, IdentifierPayload};
 use crate::interned::{intern_decoded, Canonical, InternOutcome, InternRegistry, Interned};
 
@@ -137,8 +137,10 @@ impl ValueDomain {
 impl Decode for ValueDomain {
     type Payload = ValueDomainPayload;
 
-    /// Restores the name, then checks, builds and interns the parent level,
-    /// the order in which the Python deserializer takes these steps.
+    /// Build the domain this level describes, leaving it unregistered.
+    ///
+    /// Restore the name, then check, build and intern the parent level, the
+    /// order in which the Python deserializer takes these steps.
     ///
     /// # Errors
     ///
@@ -167,7 +169,7 @@ impl Decode for ValueDomain {
 /// self-describing format such as JSON.
 impl<'de> Deserialize<'de> for ValueDomain {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        crate::decode::deserialize_via_payload(deserializer)
+        decode::deserialize_via_payload(deserializer)
     }
 }
 

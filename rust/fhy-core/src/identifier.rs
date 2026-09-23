@@ -21,9 +21,11 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use serde::de::{Deserializer, MapAccess, Unexpected, Visitor};
+use serde::de::{self, Deserializer, MapAccess, Unexpected, Visitor};
 use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
+
+use crate::decode::{self, Decode};
 
 /// The process-global, monotonically-increasing id counter.
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
@@ -330,10 +332,10 @@ impl<'de> Deserialize<'de> for IdentifierPayload {
     }
 }
 
-impl crate::decode::Decode for Identifier {
+impl Decode for Identifier {
     type Payload = IdentifierPayload;
 
-    fn build_from_payload<E: serde::de::Error>(payload: Self::Payload) -> Result<Self, E> {
+    fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
         Ok(payload.restore())
     }
 }
@@ -343,7 +345,7 @@ impl<'de> Deserialize<'de> for Identifier {
     where
         D: Deserializer<'de>,
     {
-        crate::decode::deserialize_via_payload(deserializer)
+        decode::deserialize_via_payload(deserializer)
     }
 }
 

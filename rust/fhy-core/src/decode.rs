@@ -41,7 +41,11 @@ pub(crate) trait Decode: Sized {
     /// side effects (restoring identifiers, decoding and interning nested
     /// levels).
     ///
+    /// The built value itself is left unregistered; decoding a
+    /// [`Canonical`](crate::interned::Canonical) is what interns it.
+    ///
     /// # Errors
+    ///
     /// Returns an error if a nested level is malformed or conflicts with a
     /// canonical instance.
     fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E>;
@@ -74,6 +78,7 @@ impl<T: Decode> DeferredPayload<T> {
     /// Decode the deferred level, performing its build's side effects.
     ///
     /// # Errors
+    ///
     /// Returns an error if the level is malformed or conflicts with a
     /// canonical instance.
     pub(crate) fn decode<E: de::Error>(self) -> Result<T, E> {
