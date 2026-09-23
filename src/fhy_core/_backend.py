@@ -33,6 +33,7 @@ import os
 import re
 import warnings
 from pathlib import Path
+from typing import Final
 
 _EXTENSION_MODULE = "fhy_core._rs"
 _EXTENSION_STEM = "_rs"
@@ -178,7 +179,7 @@ def _normalize_pep440_version(version: str) -> str | None:
     return normalized
 
 
-def _is_extension_importable() -> bool:
+def _is_extension_usable() -> bool:
     try:
         extension = importlib.import_module(_EXTENSION_MODULE)
     except ModuleNotFoundError as error:
@@ -208,7 +209,7 @@ def _is_extension_importable() -> bool:
     return True
 
 
-IS_RUST_BACKEND_SELECTED: bool = (
-    not _is_extension_disabled_by_environment() and _is_extension_importable()
+IS_RUST_BACKEND_SELECTED: Final[bool] = (
+    not _is_extension_disabled_by_environment() and _is_extension_usable()
 )
 """Whether the package runs on the Rust extension in this process."""

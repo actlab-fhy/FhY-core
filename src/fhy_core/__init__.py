@@ -11,6 +11,7 @@ the top level.
 """
 
 from importlib.metadata import version
+from typing import Final
 
 from . import (
     _backend,
@@ -36,7 +37,7 @@ from .identifier import Identifier
 
 __version__ = version("fhy_core")
 
-RUST_BACKEND_SELECTED: bool = _backend.IS_RUST_BACKEND_SELECTED
+RUST_BACKEND_SELECTED: Final[bool] = _backend.IS_RUST_BACKEND_SELECTED
 """Whether this process runs on the Rust extension rather than pure Python.
 
 True only when the extension ``fhy_core._rs`` is installed, imports, reports
