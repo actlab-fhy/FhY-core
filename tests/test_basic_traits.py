@@ -262,6 +262,31 @@ class _DataclassInternedValue(InternedMixin[str]):
         return self.key
 
 
+@dataclass(eq=False)
+class _CustomEqualityInternedValue(InternedMixin[str]):
+    """Interned value whose own equality also compares an excluded field."""
+
+    key: str
+    note: str = field(compare=False)
+
+    def __post_init__(self) -> None:
+        self.register_interned_instance()
+
+    @override
+    def get_intern_key(self) -> str:
+        return self.key
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, _CustomEqualityInternedValue):
+            return NotImplemented
+        return (self.key, self.note) == (other.key, other.note)
+
+    @override
+    def __hash__(self) -> int:
+        return hash((self.key, self.note))
+
+
 @dataclass
 class _NotedInternedValue(InternedMixin[str]):
     key: str
@@ -656,11 +681,33 @@ def test_interned_construct_from_fields_rejects_a_conflicting_compared_field() -
     with pytest.raises(DeserializationValueError) as exc_info:
         _DataclassInternedValue.construct_from_fields({"key": "conflict", "value": 2})
 
-    message = str(exc_info.value)
-    assert "_DataclassInternedValue" in message
-    assert "'conflict'" in message
-    assert "value" in message
+    assert str(exc_info.value) == (
+        "Payload for \"_DataclassInternedValue\" key 'conflict' conflicts with the "
+        "canonical instance on value (canonical 1, payload 2)."
+    )
     assert _DataclassInternedValue.get_interned("conflict") is canonical
+
+
+def test_interned_conflict_error_falls_back_when_no_compared_field_differs() -> None:
+    """Test an unequal duplicate whose compared fields all match is still named.
+
+    A subclass with its own `__eq__` can be unequal to the canonical while
+    every equality-relevant dataclass field matches, so the error cannot list
+    a field and describes the conflict as on the compared fields as a whole.
+    """
+    _CustomEqualityInternedValue.clear_interned_registry()
+    canonical = _CustomEqualityInternedValue("custom", "first")
+
+    with pytest.raises(DeserializationValueError) as exc_info:
+        _CustomEqualityInternedValue.construct_from_fields(
+            {"key": "custom", "note": "second"}
+        )
+
+    assert str(exc_info.value) == (
+        "Payload for \"_CustomEqualityInternedValue\" key 'custom' conflicts with "
+        "the canonical instance on its compared fields."
+    )
+    assert _CustomEqualityInternedValue.get_interned("custom") is canonical
 
 
 def test_interned_construct_from_fields_accepts_an_immutabledict() -> None:
