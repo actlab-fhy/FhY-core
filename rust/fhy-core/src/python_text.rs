@@ -180,7 +180,7 @@ fn find_shortest_digits(value: f64) -> (String, i64) {
 }
 
 /// Return whether `text` is a non-empty run of ASCII digits.
-fn is_ascii_digit_run(text: &str) -> bool {
+pub(crate) fn is_ascii_digit_run(text: &str) -> bool {
     !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
 }
 

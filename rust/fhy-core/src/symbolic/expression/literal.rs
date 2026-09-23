@@ -8,7 +8,7 @@ use num_bigint::{BigInt, Sign};
 
 use crate::python_text::{
     NormalizedDecimal, format_bool, format_float_repr, format_normalized_decimal,
-    normalize_decimal_text,
+    is_ascii_digit_run, normalize_decimal_text,
 };
 
 use super::sort::FunctionSort;
@@ -43,11 +43,6 @@ enum CanonicalForm<'a> {
     /// for every NaN.
     BinaryFloat(Option<u64>),
     ExactDecimal(&'a NormalizedDecimal),
-}
-
-/// Return whether `text` is one or more ASCII digits.
-fn is_integer_text(text: &str) -> bool {
-    !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 /// Return `value` with negative zero folded into positive zero.
@@ -136,7 +131,7 @@ impl LiteralValue {
     /// Returns [`LiteralTextError`] if `text` is neither an integer text nor
     /// a decimal text.
     pub fn parse_text(text: &str) -> Result<Self, LiteralTextError> {
-        let representation = if is_integer_text(text) {
+        let representation = if is_ascii_digit_run(text) {
             let value = BigInt::parse_bytes(text.as_bytes(), 10)
                 .ok_or_else(|| LiteralTextError { text: text.into() })?;
             Representation::IntegerText {
