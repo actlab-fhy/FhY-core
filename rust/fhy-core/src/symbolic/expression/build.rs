@@ -8,7 +8,8 @@
 //! compares expressions structurally.
 //!
 //! The arithmetic operators `+ - * / %` and unary `-` build binary and unary
-//! nodes, with an expression on either side of a binary operator. The other
+//! nodes, with an expression on either side of a binary operator and any
+//! operand on the other side. The other
 //! operations are methods named after them: [`Expression::equals`],
 //! [`Expression::less`], [`Expression::floor_divide`],
 //! [`Expression::power`], [`Expression::logical_not`], and so on.
@@ -306,36 +307,30 @@ macro_rules! impl_arithmetic_operator {
     };
 }
 
-impl_arithmetic_operator!(
-    Add,
-    add,
-    BinaryOperation::Add,
-    [i64, f64, BigInt, Identifier, LiteralValue]
-);
-impl_arithmetic_operator!(
-    Sub,
-    sub,
-    BinaryOperation::Subtract,
-    [i64, f64, BigInt, Identifier, LiteralValue]
-);
-impl_arithmetic_operator!(
-    Mul,
-    mul,
-    BinaryOperation::Multiply,
-    [i64, f64, BigInt, Identifier, LiteralValue]
-);
-impl_arithmetic_operator!(
-    Div,
-    div,
-    BinaryOperation::Divide,
-    [i64, f64, BigInt, Identifier, LiteralValue]
-);
-impl_arithmetic_operator!(
-    Rem,
-    rem,
-    BinaryOperation::Modulo,
-    [i64, f64, BigInt, Identifier, LiteralValue]
-);
+/// Implement every arithmetic operator trait, with each listed operand
+/// type on the left.
+macro_rules! impl_arithmetic_operators {
+    ([$($left:ty),*]) => {
+        impl_arithmetic_operator!(Add, add, BinaryOperation::Add, [$($left),*]);
+        impl_arithmetic_operator!(Sub, sub, BinaryOperation::Subtract, [$($left),*]);
+        impl_arithmetic_operator!(Mul, mul, BinaryOperation::Multiply, [$($left),*]);
+        impl_arithmetic_operator!(Div, div, BinaryOperation::Divide, [$($left),*]);
+        impl_arithmetic_operator!(Rem, rem, BinaryOperation::Modulo, [$($left),*]);
+    };
+}
+
+// Every `IntoOperand` type other than `Expression` and `&Expression`, which
+// the generic impls cover.
+impl_arithmetic_operators!([
+    i64,
+    i32,
+    u32,
+    BigInt,
+    f64,
+    Identifier,
+    &Identifier,
+    LiteralValue
+]);
 
 impl Neg for Expression {
     type Output = Expression;

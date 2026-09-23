@@ -291,6 +291,95 @@ fn expression_reflected_operators_accept_every_left_operand_type(#[case] build: 
     assert_eq!(built, expected);
 }
 
+/// Build `left op right` with each arithmetic operator `+ - * / %`, for an
+/// owned and a borrowed expression `right`, each paired with the node
+/// `new_binary` builds from the same operands. `left` is evaluated once per
+/// use.
+macro_rules! build_with_every_operator {
+    ($left:expr, $right:expr) => {{
+        let right: &Expression = $right;
+        vec![
+            (
+                $left + right,
+                Expression::new_binary(BinaryOperation::Add, $left, right),
+            ),
+            (
+                $left + right.clone(),
+                Expression::new_binary(BinaryOperation::Add, $left, right),
+            ),
+            (
+                $left - right,
+                Expression::new_binary(BinaryOperation::Subtract, $left, right),
+            ),
+            (
+                $left - right.clone(),
+                Expression::new_binary(BinaryOperation::Subtract, $left, right),
+            ),
+            (
+                $left * right,
+                Expression::new_binary(BinaryOperation::Multiply, $left, right),
+            ),
+            (
+                $left * right.clone(),
+                Expression::new_binary(BinaryOperation::Multiply, $left, right),
+            ),
+            (
+                $left / right,
+                Expression::new_binary(BinaryOperation::Divide, $left, right),
+            ),
+            (
+                $left / right.clone(),
+                Expression::new_binary(BinaryOperation::Divide, $left, right),
+            ),
+            (
+                $left % right,
+                Expression::new_binary(BinaryOperation::Modulo, $left, right),
+            ),
+            (
+                $left % right.clone(),
+                Expression::new_binary(BinaryOperation::Modulo, $left, right),
+            ),
+        ]
+    }};
+}
+
+/// Build every arithmetic operator's node from one left operand type and a
+/// reference, each paired with the node `new_binary` builds.
+type BuildWithEveryOperator = fn(&Expression) -> Vec<(Expression, Expression)>;
+
+/// Test every non-expression operand type is accepted on the left of every
+/// arithmetic operator, the same types [`IntoOperand`] accepts on the
+/// right, with an owned or a borrowed expression on the right.
+#[rstest]
+#[case::i64(|x: &Expression| build_with_every_operator!(3_i64, x))]
+#[case::i32(|x: &Expression| build_with_every_operator!(3_i32, x))]
+#[case::u32(|x: &Expression| build_with_every_operator!(3_u32, x))]
+#[case::big_integer(|x: &Expression| build_with_every_operator!(build_big_operand(), x))]
+#[case::f64(|x: &Expression| build_with_every_operator!(2.5_f64, x))]
+#[case::owned_identifier(|x: &Expression| {
+    let y = Identifier::new("y");
+    build_with_every_operator!(y.clone(), x)
+})]
+#[case::borrowed_identifier(|x: &Expression| {
+    let y = Identifier::new("y");
+    build_with_every_operator!(&y, x)
+})]
+#[case::literal_value(|x: &Expression| {
+    build_with_every_operator!(LiteralValue::parse_text("1.50").expect("a decimal text"), x)
+})]
+fn expression_arithmetic_operators_accept_every_operand_type_on_the_left(
+    #[case] build: BuildWithEveryOperator,
+) {
+    let (_, x) = build_identifier("x");
+
+    let pairs = build(&x);
+
+    assert_eq!(pairs.len(), 10);
+    for (built, expected) in pairs {
+        assert_eq!(built, expected);
+    }
+}
+
 /// Build a negation of one operand type from an identifier and a reference
 /// to it, paired with the expression that operand stands for.
 type LiftOperand = fn(&Identifier, &Expression) -> (Expression, Expression);
