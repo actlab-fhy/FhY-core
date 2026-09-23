@@ -237,43 +237,20 @@ pub fn get_elementwise() -> &'static Canonical<OpAttribute> {
 mod tests {
     use super::*;
     use std::collections::HashSet;
-    use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
     use crate::identifier::{IdSpaceExhausted, try_allocate_id};
     use crate::test_support::{
-        assert_isolated_test_passes, compute_hash, has_counter_passed, hold_id_counter,
-        is_isolated_run, reserve_far_ahead_ids, reserve_pinned_id,
+        RegistryGuard, assert_isolated_test_passes, compute_hash, has_counter_passed,
+        hold_id_counter, is_isolated_run, reserve_far_ahead_ids, reserve_pinned_id, take_discarded,
     };
 
     /// Serializes the test that clears the process-wide registry against the
-    /// tests that need their own entries to survive. Registering tests hold
-    /// the read side; the clearing test holds the write side.
-    static REGISTRY_GUARD: RwLock<()> = RwLock::new(());
-
-    fn hold_registry() -> RwLockReadGuard<'static, ()> {
-        REGISTRY_GUARD
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn hold_registry_exclusively() -> RwLockWriteGuard<'static, ()> {
-        REGISTRY_GUARD
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Intern `description` under `name`, expecting the key to be taken, and
-    /// return the value that lost the race.
-    fn intern_and_take_discarded(name: Identifier, description: &str) -> OpAttribute {
-        match OpAttribute::new(name, description) {
-            InternOutcome::AlreadyCanonical { discarded, .. } => discarded,
-            InternOutcome::Registered(_) => panic!("expected {description:?} to be discarded"),
-        }
-    }
+    /// tests that need their own entries to survive.
+    static REGISTRY_GUARD: RegistryGuard = RegistryGuard::new();
 
     #[test]
     fn new_stores_the_name_and_description() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let name = Identifier::new("stores-name-and-description");
         let attribute = OpAttribute::new(name.clone(), "an attribute").into_canonical();
 
@@ -283,7 +260,7 @@ mod tests {
 
     #[test]
     fn has_identifier_returns_the_name() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let name = Identifier::new("has-identifier");
         let attribute = OpAttribute::new(name.clone(), "desc").into_canonical();
 
@@ -292,7 +269,7 @@ mod tests {
 
     #[test]
     fn intern_key_is_the_name() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let name = Identifier::new("intern-key");
         let attribute = OpAttribute::new(name.clone(), "desc").into_canonical();
 
@@ -301,7 +278,7 @@ mod tests {
 
     #[test]
     fn new_keeps_the_first_attribute_canonical_for_a_repeated_name() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let name = Identifier::new("repeated-name");
         let first = OpAttribute::new(name.clone(), "first").into_canonical();
 
@@ -322,7 +299,7 @@ mod tests {
 
     #[test]
     fn identifiers_sharing_a_name_hint_intern_separately() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let first_name = Identifier::new("dup");
         let second_name = Identifier::new("dup");
         let first = OpAttribute::new(first_name.clone(), "a").into_canonical();
@@ -338,11 +315,11 @@ mod tests {
 
     #[test]
     fn attributes_with_the_same_name_are_equal_whatever_the_description() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let name = Identifier::new("equality-ignores-description");
         let canonical = OpAttribute::new(name.clone(), "first description").into_canonical();
 
-        let other = intern_and_take_discarded(name, "second description");
+        let other = take_discarded(OpAttribute::new(name, "second description"));
 
         assert_eq!(*canonical, other);
         assert_eq!(other, *canonical);
@@ -350,18 +327,18 @@ mod tests {
 
     #[test]
     fn equal_attributes_hash_equally() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let name = Identifier::new("hash-ignores-description");
         let canonical = OpAttribute::new(name.clone(), "first description").into_canonical();
 
-        let other = intern_and_take_discarded(name, "second description");
+        let other = take_discarded(OpAttribute::new(name, "second description"));
 
         assert_eq!(compute_hash(&*canonical), compute_hash(&other));
     }
 
     #[test]
     fn attributes_with_different_names_are_unequal() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let left = OpAttribute::new(Identifier::new("a"), "desc").into_canonical();
         let right = OpAttribute::new(Identifier::new("b"), "desc").into_canonical();
 
@@ -370,7 +347,7 @@ mod tests {
 
     #[test]
     fn canonical_attributes_can_be_collected_into_a_set() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let tags: HashSet<Canonical<OpAttribute>> = [get_commutative().clone(), get_pure().clone()]
             .into_iter()
             .collect();
@@ -383,7 +360,7 @@ mod tests {
 
     #[test]
     fn a_repeated_canonical_attribute_collapses_to_one_set_entry() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let tags: HashSet<Canonical<OpAttribute>> = [
             get_commutative().clone(),
             get_commutative().clone(),
@@ -401,7 +378,7 @@ mod tests {
 
     #[test]
     fn commutative_is_registered_under_its_name() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         assert_eq!(
             OpAttribute::intern_registry().get(get_commutative().name()),
             Some(get_commutative().clone())
@@ -410,7 +387,7 @@ mod tests {
 
     #[test]
     fn associative_is_registered_under_its_name() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         assert_eq!(
             OpAttribute::intern_registry().get(get_associative().name()),
             Some(get_associative().clone())
@@ -419,7 +396,7 @@ mod tests {
 
     #[test]
     fn pure_is_registered_under_its_name() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         assert_eq!(
             OpAttribute::intern_registry().get(get_pure().name()),
             Some(get_pure().clone())
@@ -428,7 +405,7 @@ mod tests {
 
     #[test]
     fn elementwise_is_registered_under_its_name() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         assert_eq!(
             OpAttribute::intern_registry().get(get_elementwise().name()),
             Some(get_elementwise().clone())
@@ -437,7 +414,7 @@ mod tests {
 
     #[test]
     fn the_default_attributes_are_pairwise_distinct() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let defaults = [
             get_commutative().clone(),
             get_associative().clone(),
@@ -455,7 +432,7 @@ mod tests {
 
     #[test]
     fn the_default_attributes_carry_non_empty_descriptions() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         for default in [
             get_commutative(),
             get_associative(),
@@ -468,7 +445,7 @@ mod tests {
 
     #[test]
     fn clearing_the_registry_keeps_the_default_attributes_canonical() {
-        let _guard = hold_registry_exclusively();
+        let _guard = REGISTRY_GUARD.hold_exclusively();
         let name = Identifier::new("dropped-by-clear");
         let dropped = OpAttribute::new(name.clone(), "dropped").into_canonical();
         assert_eq!(OpAttribute::intern_registry().get(&name), Some(dropped));
@@ -491,7 +468,7 @@ mod tests {
 
     #[test]
     fn an_attribute_encodes_as_its_name_and_description() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let id = reserve_pinned_id("encode-anchor");
         let name = Identifier::restore(id, "encoded".to_string());
         let attribute = OpAttribute::new(name, "a description").into_canonical();
@@ -509,7 +486,7 @@ mod tests {
 
     #[test]
     fn an_attribute_round_trips_through_json() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let attribute = OpAttribute::new(Identifier::new("round-trip"), "desc").into_canonical();
 
         let json = serde_json::to_string(&*attribute).unwrap();
@@ -520,7 +497,7 @@ mod tests {
 
     #[test]
     fn decoding_a_registered_name_returns_the_canonical_attribute() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let json = serde_json::to_string(get_pure()).unwrap();
 
         let restored: Canonical<OpAttribute> = serde_json::from_str(&json).unwrap();
@@ -530,7 +507,7 @@ mod tests {
 
     #[test]
     fn decoding_an_unregistered_name_registers_the_decoded_attribute() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let id = reserve_pinned_id("unregistered-decode-anchor");
         let json = format!(
             "{{\"name\":{{\"id\":{id},\"name_hint\":\"never-registered\"}},\
@@ -548,7 +525,7 @@ mod tests {
 
     #[test]
     fn decoding_a_divergent_description_keeps_the_canonical_one() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let name = Identifier::new("divergent-description");
         let canonical = OpAttribute::new(name.clone(), "original description").into_canonical();
         let json = format!(
@@ -566,11 +543,11 @@ mod tests {
 
     #[test]
     fn new_reports_a_matching_duplicate_as_already_canonical() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let name = Identifier::new("matching-description");
         let canonical = OpAttribute::new(name.clone(), "matching").into_canonical();
 
-        let discarded = intern_and_take_discarded(name, "matching");
+        let discarded = take_discarded(OpAttribute::new(name, "matching"));
 
         assert_eq!(discarded.description(), canonical.description());
         assert_eq!(discarded, *canonical);
@@ -578,7 +555,7 @@ mod tests {
 
     #[test]
     fn decoding_a_payload_with_an_unknown_field_is_rejected() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let id = reserve_pinned_id("unknown-field-anchor");
         let json = format!(
             "{{\"name\":{{\"id\":{id},\"name_hint\":\"extra\"}},\
@@ -592,7 +569,7 @@ mod tests {
 
     #[test]
     fn decoding_a_payload_missing_the_description_is_rejected() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let id = reserve_pinned_id("missing-field-anchor");
         let json = format!("{{\"name\":{{\"id\":{id},\"name_hint\":\"partial\"}}}}");
 
@@ -603,7 +580,7 @@ mod tests {
 
     #[test]
     fn a_payload_rejected_for_a_trailing_unknown_field_restores_no_name() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let _counter = hold_id_counter();
         let [id] = reserve_far_ahead_ids("trailing-unknown-attribute-anchor");
         let json = format!(
@@ -619,7 +596,7 @@ mod tests {
 
     #[test]
     fn a_payload_rejected_for_a_mistyped_trailing_description_restores_no_name() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let _counter = hold_id_counter();
         let [id] = reserve_far_ahead_ids("mistyped-description-anchor");
         let json = format!("{{\"name\":{{\"id\":{id},\"name_hint\":\"a\"}},\"description\":3}}");
@@ -632,7 +609,7 @@ mod tests {
 
     #[test]
     fn debug_mentions_the_name_hint_and_description() {
-        let _guard = hold_registry();
+        let _guard = REGISTRY_GUARD.hold();
         let attribute =
             OpAttribute::new(Identifier::new("debug-attribute"), "debug desc").into_canonical();
 
