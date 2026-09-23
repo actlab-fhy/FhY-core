@@ -362,6 +362,8 @@ mod tests {
     use std::collections::HashSet;
     use std::thread;
 
+    use crate::test_support::{assert_isolated_test_passes, is_isolated_run};
+
     #[test]
     fn new_identifiers_get_increasing_ids() {
         let a = Identifier::new("a");
@@ -546,33 +548,13 @@ mod tests {
         );
     }
 
-    /// Environment variable that marks a child process running one isolated
-    /// test.
-    const ISOLATED_TEST_VARIABLE: &str = "FHY_CORE_ISOLATED_IDENTIFIER_TEST";
-
-    /// Run the named test of this module alone in a child process of the
-    /// test binary, so its effect on the process-global counter stays there.
-    fn run_isolated(test_name: &str) -> std::process::Output {
-        let test_binary = std::env::current_exe().expect("the test binary has a path");
-        std::process::Command::new(test_binary)
-            .args([
-                &format!("identifier::tests::{test_name}"),
-                "--exact",
-                "--ignored",
-                "--test-threads=1",
-            ])
-            .env(ISOLATED_TEST_VARIABLE, "1")
-            .output()
-            .expect("the test binary runs")
-    }
-
     /// Deserialize the largest issuable id, then check the counter is
     /// exhausted. Only meaningful in the child process that
     /// [`serde_accepts_the_largest_issuable_id`] starts.
     #[test]
-    #[ignore = "exhausts the process-global counter; run through run_isolated"]
+    #[ignore = "exhausts the process-global counter; run through assert_isolated_test_passes"]
     fn serde_accepts_the_largest_issuable_id_in_isolation() {
-        if std::env::var_os(ISOLATED_TEST_VARIABLE).is_none() {
+        if !is_isolated_run() {
             return;
         }
         let json = format!("{{\"id\":{},\"name_hint\":\"largest\"}}", u64::MAX - 1);
@@ -585,13 +567,8 @@ mod tests {
 
     #[test]
     fn serde_accepts_the_largest_issuable_id() {
-        let output = run_isolated("serde_accepts_the_largest_issuable_id_in_isolation");
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            output.status.success() && stdout.contains("1 passed"),
-            "isolated test failed:\n{stdout}\n{}",
-            String::from_utf8_lossy(&output.stderr)
+        assert_isolated_test_passes(
+            "identifier::tests::serde_accepts_the_largest_issuable_id_in_isolation",
         );
     }
 
