@@ -19,6 +19,9 @@
 //! that id is issued or restored, the counter holds `u64::MAX` and
 //! constructing another identifier panics. No identifier ever holds
 //! `u64::MAX`, so a serialized payload carrying it is rejected as invalid.
+//! A payload id outside `0..=u64::MAX - 1`, however large or negative, is
+//! reported as out of range together with that range, wherever the
+//! identifier is nested.
 
 use std::error::Error;
 use std::fmt;
@@ -28,6 +31,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::de::{self, Deserializer, MapAccess, Unexpected, Visitor};
 use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
+use serde_json::Number;
 
 use crate::decode::{self, Decode};
 use crate::shipped::initialize_shipped_statics;
@@ -261,6 +265,53 @@ impl Serialize for Identifier {
     }
 }
 
+/// The ids an identifier can hold, described for a decode error.
+struct IdRange;
+
+impl de::Expected for IdRange {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "an id from 0 to {}", u64::MAX - 1)
+    }
+}
+
+/// An identifier payload's id, checked to be one an identifier can hold.
+///
+/// Decoding reads any number, so an integer outside the id range, however
+/// large, is reported as out of range with the range it must lie in, and a
+/// fractional number as the wrong type.
+struct PayloadId(u64);
+
+impl<'de> Deserialize<'de> for PayloadId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let number = Number::deserialize(deserializer)?;
+        if let Some(id) = number.as_u64() {
+            if id == u64::MAX {
+                return Err(de::Error::invalid_value(Unexpected::Unsigned(id), &IdRange));
+            }
+            return Ok(Self(id));
+        }
+        if let Some(id) = number.as_i64() {
+            return Err(de::Error::invalid_value(Unexpected::Signed(id), &IdRange));
+        }
+        let token = number.to_string();
+        if token.contains(['.', 'e', 'E']) {
+            let unexpected = format!("floating point `{token}`");
+            return Err(de::Error::invalid_type(
+                Unexpected::Other(&unexpected),
+                &IdRange,
+            ));
+        }
+        let unexpected = format!("integer `{token}`");
+        Err(de::Error::invalid_value(
+            Unexpected::Other(&unexpected),
+            &IdRange,
+        ))
+    }
+}
+
 /// A decoded identifier payload whose id has not been restored yet.
 ///
 /// Decoding one checks the payload's fields and rejects the id `u64::MAX`
@@ -311,7 +362,7 @@ impl<'de> Deserialize<'de> for IdentifierPayload {
                             if id.is_some() {
                                 return Err(serde::de::Error::duplicate_field("id"));
                             }
-                            id = Some(map.next_value()?);
+                            id = Some(map.next_value::<PayloadId>()?.0);
                         }
                         Field::NameHint => {
                             if name_hint.is_some() {
@@ -324,12 +375,6 @@ impl<'de> Deserialize<'de> for IdentifierPayload {
                 let id = id.ok_or_else(|| serde::de::Error::missing_field("id"))?;
                 let name_hint =
                     name_hint.ok_or_else(|| serde::de::Error::missing_field("name_hint"))?;
-                if id == u64::MAX {
-                    return Err(serde::de::Error::invalid_value(
-                        Unexpected::Unsigned(id),
-                        &"an id below u64::MAX",
-                    ));
-                }
                 Ok(IdentifierPayload { id, name_hint })
             }
         }
@@ -642,26 +687,145 @@ mod tests {
         assert!(allocated.is_ok_and(|id| id < constructed.id()));
     }
 
+    /// The paths along which an identifier payload is decoded.
+    #[derive(Debug, Clone, Copy)]
+    enum IdentifierPath {
+        /// A bare identifier, from JSON text.
+        Text,
+        /// A bare identifier, from a JSON value.
+        Value,
+        /// The name of a note's kind, read after the note.
+        NoteKind,
+        /// The name of a canonical op attribute.
+        OpAttribute,
+        /// The name of a value domain's parent, read after the domain.
+        ValueDomainParent,
+        /// The identifier of an identifier reference expression.
+        Expression,
+    }
+
+    impl IdentifierPath {
+        /// Decode an identifier payload with the id token `id` along this
+        /// path, returning the error text.
+        fn decode_error(self, id: &str) -> String {
+            use crate::diagnostic::Note;
+            use crate::interned::Canonical;
+            use crate::op_attribute::OpAttribute;
+            use crate::symbolic::expression::Expression;
+            use crate::value_domain::ValueDomain;
+
+            let identifier = format!("{{\"id\":{id},\"name_hint\":\"x\"}}");
+            let error = match self {
+                Self::Text => serde_json::from_str::<Identifier>(&identifier).map(drop),
+                Self::Value => serde_json::from_str::<serde_json::Value>(&identifier)
+                    .and_then(serde_json::from_value::<Identifier>)
+                    .map(drop),
+                Self::NoteKind => serde_json::from_str::<Note>(&format!(
+                    "{{\"message\":\"m\",\"kind\":{{\"name\":{identifier},\"description\":\"d\"}}}}"
+                ))
+                .map(drop),
+                Self::OpAttribute => serde_json::from_str::<Canonical<OpAttribute>>(&format!(
+                    "{{\"name\":{identifier},\"description\":\"d\"}}"
+                ))
+                .map(drop),
+                Self::ValueDomainParent => {
+                    let parent = format!(
+                        "{{\"name\":{identifier},\"description\":\"d\",\"parent\":null}}"
+                    );
+                    let valid = format!(
+                        "{{\"id\":{},\"name_hint\":\"child\"}}",
+                        Identifier::new("out-of-range-child").id()
+                    );
+                    serde_json::from_str::<ValueDomain>(&format!(
+                        "{{\"name\":{valid},\"description\":\"d\",\"parent\":{parent}}}"
+                    ))
+                    .map(drop)
+                }
+                Self::Expression => serde_json::from_str::<Expression>(&format!(
+                    "{{\"__type__\":\"identifier_expression\",\"__data__\":{{\"identifier\":{identifier}}}}}"
+                ))
+                .map(drop),
+            }
+            .expect_err("the id is out of range");
+            error.to_string()
+        }
+
+        /// Return the text the error along this path starts with, before the
+        /// identifier's own message.
+        fn describe_prefix(self) -> &'static str {
+            match self {
+                Self::Text | Self::Value | Self::OpAttribute => "",
+                Self::NoteKind => "in `kind`: ",
+                Self::ValueDomainParent => "in `parent`: ",
+                Self::Expression => "in `identifier`: ",
+            }
+        }
+    }
+
     /// Test that serde rejects an id of `u64::MAX`, which no identifier ever
-    /// holds, and any id too large for a `u64`.
+    /// holds, or beyond, saying the id is out of range and what the range
+    /// is, whichever payload the identifier is nested in.
     #[rstest]
-    #[case::two_pow_64_minus_one("18446744073709551615", "an id below u64::MAX")]
-    #[case::two_pow_64("18446744073709551616", "expected u64")]
-    #[case::just_above_two_pow_64("18446744073709551617", "expected u64")]
-    #[case::two_pow_200(
-        "1606938044258990275541962092341162602522202993782792835301376",
-        "expected u64"
-    )]
-    fn serde_rejects_an_id_of_u64_max_or_more(#[case] id: &str, #[case] expected_message: &str) {
-        let json = format!("{{\"id\":{id},\"name_hint\":\"x\"}}");
+    fn serde_rejects_an_id_of_u64_max_or_more_as_out_of_range(
+        #[values(
+            IdentifierPath::Text,
+            IdentifierPath::Value,
+            IdentifierPath::NoteKind,
+            IdentifierPath::OpAttribute,
+            IdentifierPath::ValueDomainParent,
+            IdentifierPath::Expression
+        )]
+        path: IdentifierPath,
+        #[values(
+            "18446744073709551615",
+            "18446744073709551616",
+            "18446744073709551617",
+            "1606938044258990275541962092341162602522202993782792835301376"
+        )]
+        id: &str,
+    ) {
+        let message = path.decode_error(id);
 
-        let error = serde_json::from_str::<Identifier>(&json)
-            .expect_err("no identifier ever holds u64::MAX or more");
-
-        assert!(
-            error.to_string().contains(expected_message),
-            "unexpected error: {error}"
+        let expected = format!(
+            "{}invalid value: integer `{id}`, expected an id from 0 to 18446744073709551614",
+            path.describe_prefix()
         );
+        assert!(message.starts_with(&expected), "{path:?}: {message}");
+    }
+
+    /// Test that serde rejects a negative or fractional id, whichever payload
+    /// the identifier is nested in.
+    #[rstest]
+    fn serde_rejects_a_negative_or_fractional_id(
+        #[values(
+            IdentifierPath::Text,
+            IdentifierPath::Value,
+            IdentifierPath::NoteKind,
+            IdentifierPath::OpAttribute,
+            IdentifierPath::ValueDomainParent,
+            IdentifierPath::Expression
+        )]
+        path: IdentifierPath,
+        #[values(
+            ("-1", "invalid value: integer `-1`, expected an id from 0 to 18446744073709551614"),
+            (
+                "-18446744073709551616",
+                "invalid value: integer `-18446744073709551616`, expected an id from 0 to \
+                 18446744073709551614"
+            ),
+            ("1.5", "invalid type: floating point `1.5`, expected an id from 0 to \
+                     18446744073709551614"),
+            ("1e3", "invalid type: floating point `1e+3`, expected an id from 0 to \
+                     18446744073709551614")
+        )]
+        case: (&str, &str),
+    ) {
+        let (id, expected_message) = case;
+
+        let message = path.decode_error(id);
+
+        let expected = format!("{}{expected_message}", path.describe_prefix());
+        assert!(message.starts_with(&expected), "{path:?}: {message}");
     }
 
     /// Deserialize the largest issuable id, then check the counter is

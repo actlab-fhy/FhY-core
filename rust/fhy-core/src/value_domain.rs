@@ -1070,7 +1070,9 @@ mod tests {
         let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
 
         assert!(
-            error.to_string().contains("an id below u64::MAX"),
+            error
+                .to_string()
+                .contains("an id from 0 to 18446744073709551614"),
             "{error}"
         );
         assert!(has_counter_passed(outer));
