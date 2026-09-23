@@ -19,6 +19,7 @@ use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use crate::identifier::Identifier;
+use crate::pass_infrastructure::{NodeHandle, NodeIdentity, Tree};
 
 use super::alpha::AlphaRenaming;
 use super::error::ExpressionBuildError;
@@ -558,6 +559,28 @@ impl Hash for Expression {
             }
             pending.extend(expression.children().rev());
         }
+    }
+}
+
+/// The identity of the node the handle shares: equal for clones, distinct
+/// for separately built nodes, even structurally equal ones.
+impl NodeHandle for Expression {
+    fn identity(&self) -> NodeIdentity {
+        NodeIdentity::of_arc(&self.0)
+    }
+}
+
+/// The tree view of an expression: [`Expression::children`] and
+/// [`Expression::rebuild_with_children`].
+impl Tree for Expression {
+    type RebuildError = ExpressionBuildError;
+
+    fn children(&self) -> impl Iterator<Item = &Self> {
+        Expression::children(self)
+    }
+
+    fn rebuild_with_children(&self, children: Vec<Self>) -> Result<Self, ExpressionBuildError> {
+        Expression::rebuild_with_children(self, children)
     }
 }
 

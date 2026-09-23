@@ -7,20 +7,14 @@
 //! when the tree shares it. Both keep their own work stack, so the depth of
 //! a tree is bounded by memory, not by the call stack.
 
-#![expect(
-    dead_code,
-    unused_variables,
-    clippy::needless_pass_by_value,
-    clippy::todo,
-    reason = "interface stub; the tree traversals are not implemented yet"
-)]
-
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
-use super::analysis::NodeHandle;
+use super::analysis::{NodeHandle, NodeIdentity};
 use super::context::PassContext;
 use super::pass::{CompilerPass, PassFailure};
+use super::registry;
 
 /// An IR node handle whose node has an ordered list of children of the same
 /// type.
@@ -69,6 +63,7 @@ pub trait TreeVisitor<N: Tree> {
     ///
     /// Returns an error to stop the walk. By default, does nothing.
     fn before_visit(&mut self, node: &N, cx: &mut PassContext<'_>) -> Result<(), Self::Error> {
+        let _ = (node, cx);
         Ok(())
     }
 
@@ -78,6 +73,7 @@ pub trait TreeVisitor<N: Tree> {
     ///
     /// Returns an error to stop the walk. By default, does nothing.
     fn visit(&mut self, node: &N, cx: &mut PassContext<'_>) -> Result<(), Self::Error> {
+        let _ = (node, cx);
         Ok(())
     }
 
@@ -87,14 +83,27 @@ pub trait TreeVisitor<N: Tree> {
     ///
     /// Returns an error to stop the walk. By default, does nothing.
     fn after_visit(&mut self, node: &N, cx: &mut PassContext<'_>) -> Result<(), Self::Error> {
+        let _ = (node, cx);
         Ok(())
     }
 
     /// Return whether the walk descends into `node`'s children. By default,
     /// it always does.
+    ///
+    /// The walk asks once per occurrence of `node`, when it would descend. A
+    /// node whose children are skipped still gets all three of its own
+    /// hooks.
     fn walks_children(&mut self, node: &N) -> bool {
+        let _ = node;
         true
     }
+}
+
+/// One step of a walk: start walking a node, or finish it once its children
+/// are walked.
+enum WalkStep<'t, N> {
+    Enter(&'t N),
+    Leave(&'t N),
 }
 
 /// Walk the tree under `root` with `visitor`, visiting every occurrence of
@@ -113,7 +122,30 @@ where
     N: Tree,
     V: TreeVisitor<N> + ?Sized,
 {
-    todo!()
+    let mut steps = vec![WalkStep::Enter(root)];
+    while let Some(step) = steps.pop() {
+        match step {
+            WalkStep::Enter(node) => {
+                visitor.before_visit(node, cx)?;
+                if order == TraversalOrder::Pre {
+                    visitor.visit(node, cx)?;
+                }
+                steps.push(WalkStep::Leave(node));
+                if visitor.walks_children(node) {
+                    let first_child = steps.len();
+                    steps.extend(node.children().map(WalkStep::Enter));
+                    steps[first_child..].reverse();
+                }
+            }
+            WalkStep::Leave(node) => {
+                if order == TraversalOrder::Post {
+                    visitor.visit(node, cx)?;
+                }
+                visitor.after_visit(node, cx)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The hook [`rewrite_tree`] calls for each distinct node.
@@ -125,7 +157,8 @@ pub trait Rewriter<N: Tree> {
     ///
     /// `node` is seen after its children were rewritten: when any child
     /// changed, `node` is the original rebuilt around the rewritten
-    /// children.
+    /// children. A replacement counts as a change even when it is `node`
+    /// itself, so the parent is rebuilt around it.
     ///
     /// # Errors
     ///
@@ -133,11 +166,89 @@ pub trait Rewriter<N: Tree> {
     fn rewrite(&mut self, node: &N, cx: &mut PassContext<'_>) -> Result<Option<N>, Self::Error>;
 }
 
+/// A node of a rewrite whose children are being rewritten: the node, its
+/// children, and the results of the children rewritten so far (`None` for a
+/// child that stays as it was).
+struct RewriteFrame<'t, N> {
+    node: &'t N,
+    children: Vec<&'t N>,
+    results: Vec<Option<N>>,
+}
+
+impl<'t, N: Tree> RewriteFrame<'t, N> {
+    /// Start rewriting `node`.
+    fn new(node: &'t N) -> Self {
+        let children: Vec<&'t N> = node.children().collect();
+        Self {
+            node,
+            results: Vec::with_capacity(children.len()),
+            children,
+        }
+    }
+
+    /// Return the next child to rewrite, or `None` once every child is
+    /// rewritten.
+    fn next_child(&self) -> Option<&'t N> {
+        self.children.get(self.results.len()).copied()
+    }
+
+    /// Return the node's children with each rewritten child in place of the
+    /// original.
+    fn merge_children(&self) -> Vec<N> {
+        self.children
+            .iter()
+            .zip(&self.results)
+            .map(|(&original, result)| result.as_ref().unwrap_or(original).clone())
+            .collect()
+    }
+}
+
+/// Finish a node whose children are all rewritten: rebuild it if a child
+/// changed, then ask `rewriter` for its replacement. Return the result, or
+/// `None` when the node stays as it was.
+fn finish_node<N, R>(
+    frame: &RewriteFrame<'_, N>,
+    rewriter: &mut R,
+    cx: &mut PassContext<'_>,
+) -> Result<Option<N>, RewriteTreeError<N, R::Error>>
+where
+    N: Tree,
+    R: Rewriter<N> + ?Sized,
+{
+    let rebuilt = if frame.results.iter().any(Option::is_some) {
+        let rebuilt = frame
+            .node
+            .rebuild_with_children(frame.merge_children())
+            .map_err(|source| RewriteTreeError::Rebuild {
+                node: frame.node.clone(),
+                children: frame.merge_children(),
+                source,
+            })?;
+        Some(rebuilt)
+    } else {
+        None
+    };
+    let visited = rebuilt.as_ref().unwrap_or(frame.node);
+    let replacement = rewriter
+        .rewrite(visited, cx)
+        .map_err(RewriteTreeError::Rewrite)?;
+    Ok(replacement.or(rebuilt))
+}
+
 /// Rewrite the tree under `root` bottom-up with `rewriter`.
 ///
+/// Every node's children are rewritten first, in
+/// [`Tree::children`] order. A node with a rewritten child is rebuilt from
+/// the rewritten children, keeping the handles of the children no rewrite
+/// touched, and [`Rewriter::rewrite`] then sees the rebuilt node (or the
+/// node itself when no child changed). A replacement is not rewritten
+/// again.
+///
 /// A node the tree shares is rewritten once and its result reused at every
-/// occurrence. When nothing changes, the result is a handle to `root`
-/// itself.
+/// occurrence, so the rewriter sees each distinct node once and a DAG costs
+/// time linear in its distinct nodes. When nothing changes, the result is a
+/// handle to `root` itself, and every subtree nothing changed in keeps its
+/// handle.
 ///
 /// # Errors
 ///
@@ -147,40 +258,133 @@ pub fn rewrite_tree<N, R>(
     rewriter: &mut R,
     root: &N,
     cx: &mut PassContext<'_>,
-) -> Result<N, RewriteTreeError<R::Error, N::RebuildError>>
+) -> Result<N, RewriteTreeError<N, R::Error>>
 where
     N: Tree,
     R: Rewriter<N> + ?Sized,
 {
-    todo!()
-}
-
-/// A failed [`rewrite_tree`].
-#[derive(Debug)]
-pub enum RewriteTreeError<E, B> {
-    /// The rewriter returned an error.
-    Rewrite(E),
-    /// Rebuilding a node around rewritten children failed.
-    Rebuild(B),
-}
-
-impl<E: fmt::Display, B: fmt::Display> fmt::Display for RewriteTreeError<E, B> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+    // Every original node stays alive through `root` while the rewrite runs,
+    // so its identity keys its result unambiguously.
+    let mut results: HashMap<NodeIdentity, Option<N>> = HashMap::new();
+    let mut ancestors: Vec<RewriteFrame<'_, N>> = Vec::new();
+    let mut current = RewriteFrame::new(root);
+    loop {
+        if let Some(child) = current.next_child() {
+            if let Some(result) = results.get(&child.identity()) {
+                current.results.push(result.clone());
+            } else {
+                ancestors.push(std::mem::replace(&mut current, RewriteFrame::new(child)));
+            }
+            continue;
+        }
+        let result = finish_node(&current, rewriter, cx)?;
+        let Some(mut parent) = ancestors.pop() else {
+            return Ok(result.unwrap_or_else(|| root.clone()));
+        };
+        results.insert(current.node.identity(), result.clone());
+        parent.results.push(result);
+        current = parent;
     }
 }
 
-impl<E, B> Error for RewriteTreeError<E, B>
-where
-    E: Error + 'static,
-    B: Error + 'static,
-{
+/// A failed [`rewrite_tree`].
+pub enum RewriteTreeError<N: Tree, E> {
+    /// The rewriter returned an error.
+    ///
+    /// Displays as `rewriting a node failed`; the rewriter's error is the
+    /// [`source`](Error::source).
+    Rewrite(E),
+    /// Rebuilding a node around its rewritten children failed.
+    ///
+    /// Displays as `rebuilding a node around its rewritten children failed`;
+    /// the rebuild error is the [`source`](Error::source).
+    Rebuild {
+        /// The node that could not be rebuilt.
+        node: N,
+        /// The children it was given: the rewritten children, with the
+        /// children no rewrite touched in their places.
+        children: Vec<N>,
+        /// The rebuild error.
+        source: N::RebuildError,
+    },
+}
+
+impl<N: Tree, E: fmt::Debug> fmt::Debug for RewriteTreeError<N, E> {
+    /// Show the rewriter's or the rebuild error; the nodes are opaque.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Rewrite(error) => f.debug_tuple("Rewrite").field(error).finish(),
+            Self::Rebuild { source, .. } => f
+                .debug_struct("Rebuild")
+                .field("source", source)
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
+impl<N: Tree, E> fmt::Display for RewriteTreeError<N, E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Rewrite(_) => f.write_str("rewriting a node failed"),
+            Self::Rebuild { .. } => {
+                f.write_str("rebuilding a node around its rewritten children failed")
+            }
+        }
+    }
+}
+
+impl<N: Tree, E: Error + 'static> Error for RewriteTreeError<N, E> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        todo!()
+        match self {
+            Self::Rewrite(error) => Some(error),
+            Self::Rebuild { source, .. } => Some(source),
+        }
     }
 }
 
 /// A pass that walks its input with a [`TreeVisitor`] and never changes it.
+///
+/// The pass outputs `()`, so it fits a
+/// [`ValidationManager`](super::ValidationManager) or a standalone
+/// [`execute`](super::ExecutePass::execute) rather than a pipeline step. Its
+/// default name is the name its own type is registered under, else the
+/// visitor's default name: the name the visitor's type is registered under,
+/// else the visitor's type name without its module path and generic
+/// arguments. An unregistered pass's runs therefore count under
+/// [`run_count::<V>()`](super::run_count).
+///
+/// # Examples
+///
+/// ```
+/// use std::convert::Infallible;
+///
+/// use fhy_core::identifier::Identifier;
+/// use fhy_core::pass_infrastructure::{
+///     CompilerPass, ExecutePass, PassContext, TraversalOrder, TreeVisitor, WalkPass,
+/// };
+/// use fhy_core::symbolic::expression::Expression;
+///
+/// #[derive(Default)]
+/// struct NodeCounter(usize);
+///
+/// impl TreeVisitor<Expression> for NodeCounter {
+///     type Error = Infallible;
+///
+///     fn visit(&mut self, _node: &Expression, _cx: &mut PassContext<'_>) -> Result<(), Infallible> {
+///         self.0 += 1;
+///         Ok(())
+///     }
+/// }
+///
+/// let x = Expression::from(Identifier::new("x"));
+/// let mut pass = WalkPass::new(NodeCounter::default(), TraversalOrder::Pre);
+///
+/// pass.execute(&(-&x + 1))?;
+///
+/// assert_eq!(pass.visitor().0, 4);
+/// assert_eq!(CompilerPass::<Expression, ()>::name(&pass), "NodeCounter");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct WalkPass<V> {
     visitor: V,
@@ -191,25 +395,25 @@ impl<V> WalkPass<V> {
     /// Create the pass that walks with `visitor` in `order`.
     #[must_use]
     pub fn new(visitor: V, order: TraversalOrder) -> Self {
-        todo!()
+        Self { visitor, order }
     }
 
     /// Return the visitor.
     #[must_use]
     pub fn visitor(&self) -> &V {
-        todo!()
+        &self.visitor
     }
 
     /// Return the visitor for mutation.
     #[must_use]
     pub fn visitor_mut(&mut self) -> &mut V {
-        todo!()
+        &mut self.visitor
     }
 
     /// Return the visitor, consuming the pass.
     #[must_use]
     pub fn into_visitor(self) -> V {
-        todo!()
+        self.visitor
     }
 }
 
@@ -219,23 +423,75 @@ where
     V: TreeVisitor<N>,
     V::Error: Into<PassFailure>,
 {
+    fn name(&self) -> String {
+        registry::find_registered_pass_name::<Self>()
+            .unwrap_or_else(registry::find_default_pass_name::<V>)
+    }
+
     fn noop_output(&mut self, ir: &N, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
-        todo!()
+        let _ = (ir, cx);
+        Ok(())
     }
 
     fn run(&mut self, ir: &N, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
-        todo!()
+        walk_tree(&mut self.visitor, ir, self.order, cx).map_err(Into::into)
     }
 
     fn did_change(&mut self, input: &N, output: &()) -> Result<bool, PassFailure> {
-        todo!()
+        let _ = (input, output);
+        Ok(false)
     }
 }
 
 /// A pass that rewrites its input with a [`Rewriter`].
 ///
 /// The run changed the IR exactly when its output is a different node from
-/// its input, and a skipped run outputs its input.
+/// its input, and a skipped run outputs its input. Its default name is the
+/// name its own type is registered under, else the rewriter's default name,
+/// as for [`WalkPass`].
+///
+/// # Examples
+///
+/// ```
+/// use std::convert::Infallible;
+///
+/// use fhy_core::identifier::Identifier;
+/// use fhy_core::pass_infrastructure::{ExecutePass, PassContext, RewritePass, Rewriter};
+/// use fhy_core::symbolic::expression::{Expression, ExpressionKind};
+///
+/// /// Replaces `x` by `y`.
+/// struct Rename {
+///     x: Identifier,
+///     y: Expression,
+/// }
+///
+/// impl Rewriter<Expression> for Rename {
+///     type Error = Infallible;
+///
+///     fn rewrite(
+///         &mut self,
+///         node: &Expression,
+///         _cx: &mut PassContext<'_>,
+///     ) -> Result<Option<Expression>, Infallible> {
+///         Ok(match node.kind() {
+///             ExpressionKind::Identifier(identifier) if identifier == &self.x => {
+///                 Some(self.y.clone())
+///             }
+///             _ => None,
+///         })
+///     }
+/// }
+///
+/// let x = Identifier::new("x");
+/// let y = Expression::from(Identifier::new("y"));
+/// let mut pass = RewritePass::new(Rename { x: x.clone(), y: y.clone() });
+///
+/// let outcome = pass.execute(&(Expression::from(x) + 1))?;
+///
+/// assert!(outcome.is_changed());
+/// assert_eq!(outcome.output(), &(y + 1));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct RewritePass<R> {
     rewriter: R,
@@ -245,25 +501,25 @@ impl<R> RewritePass<R> {
     /// Create the pass that rewrites with `rewriter`.
     #[must_use]
     pub fn new(rewriter: R) -> Self {
-        todo!()
+        Self { rewriter }
     }
 
     /// Return the rewriter.
     #[must_use]
     pub fn rewriter(&self) -> &R {
-        todo!()
+        &self.rewriter
     }
 
     /// Return the rewriter for mutation.
     #[must_use]
     pub fn rewriter_mut(&mut self) -> &mut R {
-        todo!()
+        &mut self.rewriter
     }
 
     /// Return the rewriter, consuming the pass.
     #[must_use]
     pub fn into_rewriter(self) -> R {
-        todo!()
+        self.rewriter
     }
 }
 
@@ -273,15 +529,21 @@ where
     R: Rewriter<N>,
     R::Error: Error + Send + Sync + 'static,
 {
+    fn name(&self) -> String {
+        registry::find_registered_pass_name::<Self>()
+            .unwrap_or_else(registry::find_default_pass_name::<R>)
+    }
+
     fn noop_output(&mut self, ir: &N, cx: &mut PassContext<'_>) -> Result<N, PassFailure> {
-        todo!()
+        let _ = cx;
+        Ok(ir.clone())
     }
 
     fn run(&mut self, ir: &N, cx: &mut PassContext<'_>) -> Result<N, PassFailure> {
-        todo!()
+        rewrite_tree(&mut self.rewriter, ir, cx).map_err(|error| Box::new(error) as PassFailure)
     }
 
     fn did_change(&mut self, input: &N, output: &N) -> Result<bool, PassFailure> {
-        todo!()
+        Ok(input.identity() != output.identity())
     }
 }

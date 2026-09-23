@@ -103,12 +103,16 @@ fn lock_registry() -> MutexGuard<'static, Registry> {
     REGISTRY.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Return the name the pass type `P` is registered under, or `None` if it is
+/// not registered.
+pub(super) fn find_registered_pass_name<P: ?Sized>() -> Option<String> {
+    lock_registry().names_by_type.get(type_name::<P>()).cloned()
+}
+
 /// Return the default name of the pass type `P`: its registered name, else
 /// the last segment of its type name without generic arguments.
 pub(super) fn find_default_pass_name<P: ?Sized>() -> String {
-    let type_name = type_name::<P>();
-    let registered = lock_registry().names_by_type.get(type_name).cloned();
-    registered.unwrap_or_else(|| strip_type_path(type_name).to_owned())
+    find_registered_pass_name::<P>().unwrap_or_else(|| strip_type_path(type_name::<P>()).to_owned())
 }
 
 /// Return the description registered for the pass type `P`, if it is
