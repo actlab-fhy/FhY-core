@@ -21,6 +21,7 @@
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
@@ -126,17 +127,14 @@ impl<T: Interned> RegistryState<T> {
     /// only the first value registered under each key.
     fn from_defaults(values: Vec<T>) -> Self {
         let mut defaults: Vec<Arc<T>> = Vec::with_capacity(values.len());
+        let mut entries: HashMap<T::Key, Arc<T>> = HashMap::with_capacity(values.len());
         for value in values {
-            if defaults
-                .iter()
-                .any(|instance| instance.intern_key() == value.intern_key())
-            {
-                continue;
+            if let Entry::Vacant(slot) = entries.entry(value.intern_key().clone()) {
+                let instance = Arc::new(value);
+                slot.insert(Arc::clone(&instance));
+                defaults.push(instance);
             }
-            defaults.push(Arc::new(value));
         }
-
-        let entries = index_by_key(&defaults);
         Self { defaults, entries }
     }
 
