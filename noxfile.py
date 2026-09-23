@@ -69,6 +69,11 @@ EXPANDED_GOLDEN_CORPORA = {
         rust_test="expression_literal_equivalence",
         variable="FHY_LITERAL_CORPUS",
     ),
+    "generate_pattern_cases.py": ExpandedGoldenCorpus(
+        options="--seed 7 --random-count 500 --max-ops 14",
+        rust_test="pattern_equivalence",
+        variable="FHY_PATTERN_CORPUS",
+    ),
     "generate_pprint_cases.py": ExpandedGoldenCorpus(
         options="--seed 7 --random-count 1000 --max-ops 16",
         rust_test="pprint_equivalence",

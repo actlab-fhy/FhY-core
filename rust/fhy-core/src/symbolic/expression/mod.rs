@@ -1,6 +1,7 @@
 //! The symbolic expression tree, its builders, and the analyses over it.
 
 pub mod builtins;
+pub mod pattern;
 
 mod build;
 mod error;
