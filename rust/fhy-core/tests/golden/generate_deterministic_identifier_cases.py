@@ -25,33 +25,21 @@ Run from the repository root:
         rust/fhy-core/tests/golden/generate_deterministic_identifier_cases.py
 
 This overwrites `rust/fhy-core/tests/golden/deterministic_identifier_cases.json`.
-Options select a larger random corpus written elsewhere, for the ignored
-expanded-corpus equivalence test:
-
-    uv run --no-sync python \
-        rust/fhy-core/tests/golden/generate_deterministic_identifier_cases.py \
-        --seed 7 --random-count 2000 --max-ops 40 \
-        --hints a,b,c,d,e --output /tmp/deterministic_identifier_corpus.json
-
-then replay it by naming the file in `FHY_DETERMINISTIC_IDENTIFIER_CORPUS`:
-
-    FHY_DETERMINISTIC_IDENTIFIER_CORPUS=/tmp/deterministic_identifier_corpus.json \
-        cargo test --test deterministic_identifiers_equivalence -- --ignored
-
-`uv run nox -s golden_expanded` does both for every generator.
+Options select a larger random corpus written elsewhere, which the ignored
+expanded-corpus equivalence test replays from the file named in
+`FHY_DETERMINISTIC_IDENTIFIER_CORPUS`. `uv run nox -s golden_expanded`
+generates and replays an expanded corpus for every generator.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import random
-import subprocess
-import sys
 from collections.abc import Sequence
-from importlib.metadata import version
 from pathlib import Path
 from typing import Any
+
+from _golden_support import add_corpus_arguments, build_provenance, write_document
 
 from fhy_core.identifier import Identifier
 from fhy_core.testing_patches import deterministic_identifiers_by_name_hint
@@ -351,23 +339,6 @@ def _run_random_script(
 # =============================================================================
 
 
-def _build_provenance(repository_root: Path) -> dict[str, Any]:
-    git_commit = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repository_root,
-        capture_output=True,
-        check=True,
-        text=True,
-    ).stdout.strip()
-    return {
-        "package": "fhy_core",
-        "package_version": version("fhy_core"),
-        "git_commit": git_commit,
-        "python_version": sys.version,
-        "generator_command": GENERATOR_COMMAND,
-    }
-
-
 def _print_summary(cases: list[dict[str, Any]], output_path: Path) -> None:
     """Print case, op-kind, nesting-depth, and repeat/fresh `new` counts."""
     op_counts: dict[str, int] = {"enter": 0, "exit": 0, "new": 0}
@@ -405,15 +376,18 @@ def _print_summary(cases: list[dict[str, Any]], output_path: Path) -> None:
 
 def _parse_arguments(default_output: Path) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=(__doc__ or "").partition("\n")[0])
-    parser.add_argument("--seed", type=int, default=_RANDOM_SEED)
-    parser.add_argument("--random-count", type=int, default=_RANDOM_SCRIPT_COUNT)
-    parser.add_argument("--max-ops", type=int, default=_RANDOM_MAX_OPS)
+    add_corpus_arguments(
+        parser,
+        seed=_RANDOM_SEED,
+        random_count=_RANDOM_SCRIPT_COUNT,
+        max_ops=_RANDOM_MAX_OPS,
+        default_output=default_output,
+    )
     parser.add_argument(
         "--hints",
         default=",".join(_RANDOM_HINTS),
         help="comma-separated alphabet of name hints for random scripts",
     )
-    parser.add_argument("--output", type=Path, default=default_output)
     return parser.parse_args()
 
 
@@ -436,13 +410,11 @@ def main() -> None:
         )
 
     document = {
-        "provenance": _build_provenance(repository_root),
+        "provenance": build_provenance(repository_root, GENERATOR_COMMAND),
         "cases": cases,
     }
 
-    with output_path.open("w", encoding="utf-8") as output_file:
-        json.dump(document, output_file, ensure_ascii=False, indent=1)
-        output_file.write("\n")
+    write_document(output_path, document)
 
     _print_summary(cases, output_path)
 

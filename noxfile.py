@@ -30,9 +30,9 @@ class ExpandedGoldenCorpus(NamedTuple):
 
 
 # Expanded corpus settings for each generator under GOLDEN_DIRECTORY, keyed by
-# file name: the generator options its docstring gives (space-separated), the
-# Rust test target whose ignored test replays the corpus, and the variable that
-# names the corpus file for that test.
+# file name: the generator options (space-separated), the Rust test target
+# whose ignored test replays the corpus, and the variable that names the corpus
+# file for that test.
 EXPANDED_GOLDEN_CORPORA = {
     "generate_deterministic_identifier_cases.py": ExpandedGoldenCorpus(
         options="--seed 7 --random-count 2000 --max-ops 40 --hints a,b,c,d,e",

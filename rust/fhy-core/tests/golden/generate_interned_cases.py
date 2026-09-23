@@ -11,32 +11,21 @@ Run from the repository root:
     uv run --no-sync python rust/fhy-core/tests/golden/generate_interned_cases.py
 
 This overwrites `rust/fhy-core/tests/golden/interned_cases.json`. Options select a
-larger random corpus written elsewhere, for the ignored expanded-corpus
-equivalence test:
-
-    uv run --no-sync python rust/fhy-core/tests/golden/generate_interned_cases.py \
-        --seed 7 --random-count 2000 --max-ops 60 \
-        --keys a,b,c,d,e --output /tmp/interned_corpus.json
-
-then replay it by naming the file in `FHY_INTERNED_CORPUS`:
-
-    FHY_INTERNED_CORPUS=/tmp/interned_corpus.json \
-        cargo test --test interned_equivalence -- --ignored
-
-`uv run nox -s golden_expanded` does both for every generator.
+larger random corpus written elsewhere, which the ignored expanded-corpus
+equivalence test replays from the file named in `FHY_INTERNED_CORPUS`.
+`uv run nox -s golden_expanded` generates and replays an expanded corpus for
+every generator.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import random
-import subprocess
-import sys
 from dataclasses import dataclass, field
-from importlib.metadata import version
 from pathlib import Path
 from typing import Any, ClassVar
+
+from _golden_support import add_corpus_arguments, build_provenance, write_document
 
 from fhy_core.traits.interned import InternedMixin
 from fhy_core.utils.override import override
@@ -242,23 +231,6 @@ def _random_scripts(
     return scripts
 
 
-def _build_provenance(repository_root: Path) -> dict[str, Any]:
-    git_commit = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repository_root,
-        capture_output=True,
-        check=True,
-        text=True,
-    ).stdout.strip()
-    return {
-        "package": "fhy_core",
-        "package_version": version("fhy_core"),
-        "git_commit": git_commit,
-        "python_version": sys.version,
-        "generator_command": GENERATOR_COMMAND,
-    }
-
-
 def _defaults_catalogue_as_json() -> dict[str, list[dict[str, str]]]:
     return {
         defaults_id: [{"key": key, "note": note} for key, note in pairs]
@@ -268,15 +240,18 @@ def _defaults_catalogue_as_json() -> dict[str, list[dict[str, str]]]:
 
 def _parse_arguments(default_output: Path) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=(__doc__ or "").partition("\n")[0])
-    parser.add_argument("--seed", type=int, default=_RANDOM_SEED)
-    parser.add_argument("--random-count", type=int, default=_RANDOM_CASE_COUNT)
-    parser.add_argument("--max-ops", type=int, default=30)
+    add_corpus_arguments(
+        parser,
+        seed=_RANDOM_SEED,
+        random_count=_RANDOM_CASE_COUNT,
+        max_ops=30,
+        default_output=default_output,
+    )
     parser.add_argument(
         "--keys",
         default=",".join(_RANDOM_KEYS),
         help="comma-separated key alphabet; an empty item is the empty key",
     )
-    parser.add_argument("--output", type=Path, default=default_output)
     return parser.parse_args()
 
 
@@ -296,14 +271,12 @@ def main() -> None:
     cases = [_run_script(name, defaults_id, ops) for name, defaults_id, ops in scripts]
 
     document = {
-        "provenance": _build_provenance(repository_root),
+        "provenance": build_provenance(repository_root, GENERATOR_COMMAND),
         "defaults_catalogue": _defaults_catalogue_as_json(),
         "cases": cases,
     }
 
-    with output_path.open("w", encoding="utf-8") as output_file:
-        json.dump(document, output_file, ensure_ascii=False, indent=1)
-        output_file.write("\n")
+    write_document(output_path, document)
 
     total_ops = sum(len(case["ops"]) for case in cases)
     print(f"wrote {len(cases)} cases, {total_ops} ops, to {output_path}")
