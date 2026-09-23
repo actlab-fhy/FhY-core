@@ -228,3 +228,76 @@ def test_extension_version_matches_the_installed_package_version() -> None:
     extension = importlib.import_module("fhy_core._rs")
 
     assert extension.__version__ == importlib.metadata.version("fhy_core")
+
+
+def _create_stale_extension_prefix(version_assignment: str) -> str:
+    """Return source that fakes a built extension reporting a given version.
+
+    Args:
+        version_assignment: Source assigning the fake module's
+            ``__version__`` attribute, or an empty string to omit it.
+
+    Returns:
+        Source that installs a fake ``fhy_core._rs`` module in
+        ``sys.modules`` before ``fhy_core`` is imported.
+
+    """
+    return (
+        "import sys, types\n"
+        "_fake_extension = types.ModuleType('fhy_core._rs')\n"
+        "_fake_extension.allocate_identifier_id = lambda: 0\n"
+        "_fake_extension.advance_identifier_counter_past = lambda _id: None\n"
+        f"{version_assignment}\n"
+        "sys.modules['fhy_core._rs'] = _fake_extension\n"
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_a_stale_extension_selects_the_python_backend_with_a_warning() -> None:
+    """Test an extension reporting the wrong version warns, then falls back."""
+    completed = _run_backend_report(
+        None,
+        program_prefix=_create_stale_extension_prefix(
+            "_fake_extension.__version__ = '0.0.0-stale'"
+        ),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.split() == ["False", "1"]
+    assert "RuntimeWarning" in completed.stderr
+    assert "fhy_core._rs" in completed.stderr
+    assert "0.0.0-stale" in completed.stderr
+    assert importlib.metadata.version("fhy_core") in completed.stderr
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_a_versionless_extension_selects_the_python_backend_with_a_warning() -> None:
+    """Test an extension with no `__version__` warns, then falls back."""
+    completed = _run_backend_report(
+        None, program_prefix=_create_stale_extension_prefix("")
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.split() == ["False", "1"]
+    assert "RuntimeWarning" in completed.stderr
+    assert "fhy_core._rs" in completed.stderr
+    assert "no __version__ attribute" in completed.stderr
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_disabling_the_extension_skips_the_version_check() -> None:
+    """Test a disabled extension is never imported, so a stale one never warns."""
+    completed = _run_backend_report(
+        "1",
+        program_prefix=_create_stale_extension_prefix(
+            "_fake_extension.__version__ = '0.0.0-stale'"
+        ),
+        python_options=("-W", "error::RuntimeWarning"),
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.split() == ["False", "1"]
+    assert completed.stderr == ""
