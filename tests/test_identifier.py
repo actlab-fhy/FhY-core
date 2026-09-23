@@ -590,7 +590,9 @@ def test_rejected_deserialization_of_2_pow_64_minus_1_leaves_the_counter() -> No
 
 
 _EXHAUST_THEN_CONSTRUCT_PROGRAM = (
+    "import fhy_core\n"
     "from fhy_core.identifier import Identifier\n"
+    "print(fhy_core.RUST_BACKEND_SELECTED, flush=True)\n"
     "largest = Identifier.deserialize_from_dict("
     "{'id': 2**64 - 2, 'name_hint': 'largest'})\n"
     "print(largest.id, flush=True)\n"
@@ -613,7 +615,9 @@ def test_constructing_past_the_largest_issuable_id_raises_runtime_error(
     The child process deserializes the largest issuable id, which leaves the
     counter at `2**64 - 1`, and then tries to construct two more identifiers.
     Both backends raise the same catchable error, and a failed construction
-    leaves the counter exhausted rather than wrapped.
+    leaves the counter exhausted rather than wrapped. The child reports the
+    backend it selected, so a stale extension that falls back to Python
+    cannot pass as the Rust case.
     """
     environment = dict(os.environ)
     if backend == "rust":
@@ -632,6 +636,7 @@ def test_constructing_past_the_largest_issuable_id_raises_runtime_error(
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.splitlines() == [
+        str(backend == "rust"),
         str(2**64 - 2),
         "RuntimeError: identifier id space exhausted",
         "RuntimeError: identifier id space exhausted",
