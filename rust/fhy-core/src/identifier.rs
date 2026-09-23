@@ -174,8 +174,7 @@ pub(crate) fn advance_counter_past(id: u64) {
 /// unchanged when it is already past `id`.
 ///
 /// Serves callers that store ids themselves, such as language bindings: it
-/// draws from the same counter as [`Identifier::new`], but ignores any
-/// deterministic-identifier scope.
+/// advances the same counter [`Identifier::new`] draws from.
 ///
 /// # Errors
 ///
