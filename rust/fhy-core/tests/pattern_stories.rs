@@ -1469,26 +1469,29 @@ fn pattern_alternatives_fails_when_every_alternative_fails() {
     assert!(result.is_none(), "got {result:?}");
 }
 
-/// Test a failed alternative's partial captures do not constrain the next
-/// alternative.
+/// Test a capture bound by an alternative that then fails does not
+/// constrain the next alternative: in `1 + 2`, the first alternative binds
+/// `x` to the left operand before its right operand fails to match, and the
+/// second binds `x` to the right operand alone.
 #[test]
 fn pattern_alternatives_isolates_failed_attempts() {
     let pattern = build_alternatives(vec![
         Pattern::binary(
             Some(BinaryOperation::Add),
-            build_capture_of("x", build_literal_pattern(99)),
-            Pattern::wildcard(),
+            build_capture("x"),
+            build_literal_pattern(99),
         ),
         Pattern::binary(
             Some(BinaryOperation::Add),
-            build_capture("x"),
             Pattern::wildcard(),
+            build_capture("x"),
         ),
     ]);
 
     let bindings = expect_match(&pattern, &build_simple_binary(BinaryOperation::Add));
 
-    assert_eq!(expect_bound(&bindings, "x"), &build_literal(1));
+    assert_eq!(collect_names(&bindings), vec!["x"]);
+    assert_eq!(expect_bound(&bindings, "x"), &build_literal(2));
 }
 
 /// Test a capture made inside a failed alternative is discarded.
@@ -1780,6 +1783,37 @@ fn match_pattern_with_a_shallow_pattern_matches_a_deep_tree_on_a_small_stack() {
         };
         let rest = bindings.get("rest").expect("rest is bound");
         assert!(Expression::ptr_eq(rest, root.left()));
+    });
+}
+
+/// Test a capture repeated across both operands compares two separately
+/// built trees [`SMALL_STACK_DEPTH`] levels deep on a small thread stack:
+/// equal operands match, binding the capture to the left one, and operands
+/// differing only at the bottom do not.
+#[test]
+fn match_pattern_with_a_repeated_capture_compares_deep_operands_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let (_, x) = build_identifier("x");
+        let (_, y) = build_identifier("y");
+        let left = build_deep_sum(&x, SMALL_STACK_DEPTH);
+        let equal = build_deep_sum(&x, SMALL_STACK_DEPTH);
+        let unequal = build_deep_sum(&y, SMALL_STACK_DEPTH);
+        let pattern = Pattern::binary(
+            Some(BinaryOperation::Subtract),
+            build_capture("operand"),
+            build_capture("operand"),
+        );
+
+        let matched = match_infallibly(&pattern, &(&left - &equal));
+        let mismatched = match_infallibly(&pattern, &(&left - &unequal));
+
+        let bindings = matched.expect("equal operands match");
+        let bound = bindings.get("operand").expect("operand is bound");
+        assert!(Expression::ptr_eq(bound, &left));
+        assert!(
+            mismatched.is_none(),
+            "operands differing at the bottom match"
+        );
     });
 }
 

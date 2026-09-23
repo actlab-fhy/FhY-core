@@ -359,6 +359,59 @@ fn format_expression_writes_unary_of_negative_literal_with_two_signs(
     assert_eq!(texts, (symbolic.to_owned(), functional.to_owned()));
 }
 
+/// Test a negative literal operand of a binary node is written bare, with
+/// its sign, as the Python printer writes it, so a negative literal base
+/// reads `(-1 ** 2)` while a negation of a positive base reads `((-1) ** 2)`.
+#[rstest]
+#[case::subtract_negative_integer(
+    || Expression::new_binary(BinaryOperation::Subtract, build_identifier("x").1, -1),
+    "(x - -1)",
+    "(subtract x -1)"
+)]
+#[case::add_negative_float(
+    || Expression::new_binary(BinaryOperation::Add, build_identifier("x").1, -1.5),
+    "(x + -1.5)",
+    "(add x -1.5)"
+)]
+#[case::multiply_negative_zero(
+    || Expression::new_binary(BinaryOperation::Multiply, build_identifier("x").1, -0.0),
+    "(x * -0.0)",
+    "(multiply x -0.0)"
+)]
+#[case::negative_literal_base(
+    || Expression::new_binary(BinaryOperation::Power, -1, 2),
+    "(-1 ** 2)",
+    "(power -1 2)"
+)]
+#[case::negated_base(
+    || Expression::new_binary(
+        BinaryOperation::Power,
+        Expression::new_unary(UnaryOperation::Negate, 1),
+        2,
+    ),
+    "((-1) ** 2)",
+    "(power (negate 1) 2)"
+)]
+#[case::negated_power(
+    || Expression::new_unary(
+        UnaryOperation::Negate,
+        Expression::new_binary(BinaryOperation::Power, 1, 2),
+    ),
+    "(-(1 ** 2))",
+    "(negate (power 1 2))"
+)]
+fn format_expression_writes_a_negative_literal_operand_bare(
+    #[case] build: fn() -> Expression,
+    #[case] symbolic: &str,
+    #[case] functional: &str,
+) {
+    let expression = build();
+
+    let texts = (format_symbolic(&expression), format_functional(&expression));
+
+    assert_eq!(texts, (symbolic.to_owned(), functional.to_owned()));
+}
+
 /// Test an integer and the integer text of the same value print alike.
 #[test]
 fn format_expression_writes_integer_and_integer_text_alike() {
