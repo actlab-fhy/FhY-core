@@ -30,6 +30,7 @@ use fhy_core::op_attribute::{
     OpAttribute, get_associative, get_commutative, get_elementwise, get_pure,
 };
 use fhy_core::value_domain::{ValueDomain, get_address_domain, get_data_domain};
+use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
@@ -369,10 +370,107 @@ fn check_is_counter_past(
 }
 
 // =============================================================================
-// `op_attribute` op replay
+// Replay shared by `op_attribute` and `value_domain`
 // =============================================================================
 
-fn check_new_attribute(
+/// The parts of `OpAttribute` and `ValueDomain` the shared op checks need, so
+/// one check replays an op for either type.
+///
+/// An attribute has no parent: it reports no parent slot, and the golden data
+/// records no `canonical_parent_slot` for it, so a check's parent comparison
+/// always holds for an attribute.
+trait TagType: Interned<Key = Identifier> + Eq + Serialize + DeserializeOwned {
+    /// Case `type` naming this tag type in the golden data.
+    const KIND: &'static str;
+
+    /// Return the value's name.
+    fn get_name(&self) -> &Identifier;
+
+    /// Return the value's description.
+    fn get_description(&self) -> &str;
+
+    /// Return the slot bound to the value's parent, or `None` for a value
+    /// with no parent.
+    fn find_parent_slot<'s>(&self, slots: &'s SlotTable) -> Option<&'s str>;
+
+    /// Return a normalized golden payload with every slot replaced by the id
+    /// it is bound to.
+    fn denormalize(value: &Value, slots: &mut SlotTable) -> Value;
+
+    /// Build a value named `identifier` and intern it, taking its parent, for
+    /// a type that has one, from the slot named by `op[parent_key]`.
+    fn intern_from_op(
+        slots: &mut SlotTable,
+        identifier: Identifier,
+        description: &str,
+        op: &Value,
+        parent_key: &str,
+    ) -> InternOutcome<Self>;
+}
+
+impl TagType for OpAttribute {
+    const KIND: &'static str = "op_attribute";
+
+    fn get_name(&self) -> &Identifier {
+        self.name()
+    }
+
+    fn get_description(&self) -> &str {
+        self.description()
+    }
+
+    fn find_parent_slot<'s>(&self, _slots: &'s SlotTable) -> Option<&'s str> {
+        None
+    }
+
+    fn denormalize(value: &Value, slots: &mut SlotTable) -> Value {
+        denormalize_op_attribute(value, slots)
+    }
+
+    fn intern_from_op(
+        _slots: &mut SlotTable,
+        identifier: Identifier,
+        description: &str,
+        _op: &Value,
+        _parent_key: &str,
+    ) -> InternOutcome<Self> {
+        OpAttribute::new(identifier, description)
+    }
+}
+
+impl TagType for ValueDomain {
+    const KIND: &'static str = "value_domain";
+
+    fn get_name(&self) -> &Identifier {
+        self.name()
+    }
+
+    fn get_description(&self) -> &str {
+        self.description()
+    }
+
+    fn find_parent_slot<'s>(&self, slots: &'s SlotTable) -> Option<&'s str> {
+        self.parent()
+            .map(|parent| slots.find_slot_for_id(parent.name().id()))
+    }
+
+    fn denormalize(value: &Value, slots: &mut SlotTable) -> Value {
+        denormalize_value_domain(value, slots)
+    }
+
+    fn intern_from_op(
+        slots: &mut SlotTable,
+        identifier: Identifier,
+        description: &str,
+        op: &Value,
+        parent_key: &str,
+    ) -> InternOutcome<Self> {
+        let parent = resolve_optional_parent(slots, op, parent_key);
+        ValueDomain::new(identifier, description, parent)
+    }
+}
+
+fn check_new<T: TagType>(
     slots: &mut SlotTable,
     name: &str,
     index: usize,
@@ -385,7 +483,7 @@ fn check_new_attribute(
         .expect("new op has a description");
     let identifier = slots.resolve_identifier(slot);
 
-    let outcome = OpAttribute::new(identifier, description);
+    let outcome = T::intern_from_op(slots, identifier, description, op, "parent_slot");
     let expected = &op["expected"];
     let expected_registered = expected["registered"]
         .as_bool()
@@ -393,21 +491,27 @@ fn check_new_attribute(
     let expected_description = expected["canonical_description"]
         .as_str()
         .expect("new expectation has `canonical_description`");
+    let expected_parent_slot = expected["canonical_parent_slot"].as_str();
 
     let actual_registered = outcome.is_registered();
     let canonical = outcome.into_canonical();
+    let actual_parent_slot = canonical.find_parent_slot(slots);
 
-    if actual_registered != expected_registered || canonical.description() != expected_description {
+    if actual_registered != expected_registered
+        || canonical.get_description() != expected_description
+        || actual_parent_slot != expected_parent_slot
+    {
         mismatches.push(format!(
             "case {name} op {index}: expected registered={expected_registered} \
-             canonical_description={expected_description:?}, got registered={actual_registered} \
-             canonical_description={:?}",
-            canonical.description()
+             canonical_description={expected_description:?} \
+             canonical_parent_slot={expected_parent_slot:?}, got registered={actual_registered} \
+             canonical_description={:?} canonical_parent_slot={actual_parent_slot:?}",
+            canonical.get_description()
         ));
     }
 }
 
-fn check_get_attribute(
+fn check_get<T: TagType>(
     slots: &mut SlotTable,
     name: &str,
     index: usize,
@@ -416,20 +520,26 @@ fn check_get_attribute(
 ) {
     let slot = op["slot"].as_str().expect("get op has a slot");
     let identifier = slots.resolve_identifier(slot);
-    let expected_description = op["expected"]["canonical_description"].as_str();
+    let expected = &op["expected"];
+    let expected_description = expected["canonical_description"].as_str();
+    let expected_parent_slot = expected["canonical_parent_slot"].as_str();
 
-    let actual = OpAttribute::intern_registry().get(&identifier);
-    let actual_description = actual.as_ref().map(|canonical| canonical.description());
+    let actual = T::intern_registry().get(&identifier);
+    let actual_description = actual.as_ref().map(|canonical| canonical.get_description());
+    let actual_parent_slot = actual
+        .as_ref()
+        .and_then(|canonical| canonical.find_parent_slot(slots));
 
-    if actual_description != expected_description {
+    if actual_description != expected_description || actual_parent_slot != expected_parent_slot {
         mismatches.push(format!(
-            "case {name} op {index}: expected canonical_description={expected_description:?}, \
-             got {actual_description:?}"
+            "case {name} op {index}: expected canonical_description={expected_description:?} \
+             canonical_parent_slot={expected_parent_slot:?}, got \
+             canonical_description={actual_description:?} canonical_parent_slot={actual_parent_slot:?}"
         ));
     }
 }
 
-fn check_require_attribute(
+fn check_require<T: TagType>(
     slots: &mut SlotTable,
     name: &str,
     index: usize,
@@ -440,14 +550,19 @@ fn check_require_attribute(
     let identifier = slots.resolve_identifier(slot);
     let expected = &op["expected"];
 
-    match OpAttribute::intern_registry().require(&identifier) {
+    match T::intern_registry().require(&identifier) {
         Ok(canonical) => {
             let expected_description = expected["canonical_description"].as_str();
-            if Some(canonical.description()) != expected_description {
+            let expected_parent_slot = expected["canonical_parent_slot"].as_str();
+            let actual_parent_slot = canonical.find_parent_slot(slots);
+            if Some(canonical.get_description()) != expected_description
+                || actual_parent_slot != expected_parent_slot
+            {
                 mismatches.push(format!(
-                    "case {name} op {index}: expected canonical_description={expected_description:?}, \
-                     got {:?}",
-                    canonical.description()
+                    "case {name} op {index}: expected canonical_description={expected_description:?} \
+                     canonical_parent_slot={expected_parent_slot:?}, got \
+                     canonical_description={:?} canonical_parent_slot={actual_parent_slot:?}",
+                    canonical.get_description()
                 ));
             }
         }
@@ -457,12 +572,18 @@ fn check_require_attribute(
                 mismatches.push(format!(
                     "case {name} op {index}: expected {expected:?}, got error {error}"
                 ));
+            } else if error.key() != &identifier {
+                mismatches.push(format!(
+                    "case {name} op {index}: error key {:?} does not match requested \
+                     identifier {identifier:?}",
+                    error.key()
+                ));
             }
         }
     }
 }
 
-fn check_encode_attribute(
+fn check_encode<T: TagType>(
     slots: &mut SlotTable,
     name: &str,
     index: usize,
@@ -471,11 +592,12 @@ fn check_encode_attribute(
 ) {
     let slot = op["slot"].as_str().expect("encode op has a slot");
     let identifier = slots.resolve_identifier(slot);
-    let canonical = OpAttribute::intern_registry()
+    let canonical = T::intern_registry()
         .require(&identifier)
         .expect("golden data only encodes an already-registered slot");
 
-    let encoded = serde_json::to_value(&*canonical).expect("a canonical attribute encodes to JSON");
+    let encoded = serde_json::to_value(&*canonical)
+        .unwrap_or_else(|error| panic!("a canonical {} encodes to JSON: {error}", T::KIND));
     let actual_encoding = normalize_encoded_tag(&encoded, slots);
     let expected_encoding = &op["expected"]["encoding"];
 
@@ -486,17 +608,17 @@ fn check_encode_attribute(
     }
 }
 
-fn check_decode_attribute(
+fn check_decode<T: TagType>(
     slots: &mut SlotTable,
     name: &str,
     index: usize,
     op: &Value,
     mismatches: &mut Vec<String>,
 ) {
-    let real_payload = build_decode_payload(op, |payload| denormalize_op_attribute(payload, slots));
+    let real_payload = build_decode_payload(op, |payload| T::denormalize(payload, slots));
     let expected = &op["expected"];
     let Some(restored) =
-        decode_or_check_rejection::<OpAttribute>(real_payload, name, index, expected, mismatches)
+        decode_or_check_rejection::<T>(real_payload, name, index, expected, mismatches)
     else {
         return;
     };
@@ -507,19 +629,25 @@ fn check_decode_attribute(
     let expected_description = expected["canonical_description"]
         .as_str()
         .expect("decode expectation has `canonical_description`");
-    let actual_slot = slots.find_slot_for_id(restored.name().id());
+    let expected_parent_slot = expected["canonical_parent_slot"].as_str();
+    let actual_slot = slots.find_slot_for_id(restored.get_name().id());
+    let actual_parent_slot = restored.find_parent_slot(slots);
 
-    if actual_slot != expected_slot || restored.description() != expected_description {
+    if actual_slot != expected_slot
+        || restored.get_description() != expected_description
+        || actual_parent_slot != expected_parent_slot
+    {
         mismatches.push(format!(
             "case {name} op {index}: expected canonical_slot={expected_slot:?} \
-             canonical_description={expected_description:?}, got canonical_slot={actual_slot:?} \
-             canonical_description={:?}",
-            restored.description()
+             canonical_description={expected_description:?} \
+             canonical_parent_slot={expected_parent_slot:?}, got canonical_slot={actual_slot:?} \
+             canonical_description={:?} canonical_parent_slot={actual_parent_slot:?}",
+            restored.get_description()
         ));
     }
 }
 
-fn check_eq_attribute(
+fn check_eq<T: TagType>(
     slots: &mut SlotTable,
     name: &str,
     index: usize,
@@ -528,10 +656,10 @@ fn check_eq_attribute(
 ) {
     let slot_a = op["slot_a"].as_str().expect("eq op has slot_a");
     let slot_b = op["slot_b"].as_str().expect("eq op has slot_b");
-    let a = OpAttribute::intern_registry()
+    let a = T::intern_registry()
         .require(&slots.resolve_identifier(slot_a))
         .expect("golden data only asks eq about registered slots");
-    let b = OpAttribute::intern_registry()
+    let b = T::intern_registry()
         .require(&slots.resolve_identifier(slot_b))
         .expect("golden data only asks eq about registered slots");
     let expected = op["expected"]["result"]
@@ -546,16 +674,17 @@ fn check_eq_attribute(
     }
 }
 
-/// Compare a slot's canonical attribute against a fresh, non-canonical
-/// duplicate built for the same identifier.
+/// Compare a slot's canonical value against a fresh, non-canonical duplicate
+/// built for the same identifier.
 ///
-/// `OpAttribute::new` on an already-registered identifier returns
-/// `AlreadyCanonical { canonical, discarded }`; comparing those two exercises
-/// `==` the way a discarded duplicate would, which `check_eq_attribute`
-/// (always comparing two already-canonical, differently-named instances)
-/// never reaches. This is the only way the golden data can catch `==`
-/// wrongly including `description`, which equality must ignore.
-fn check_eq_with_duplicate_attribute(
+/// `new` on an already-registered identifier returns `AlreadyCanonical {
+/// canonical, discarded }`; comparing those two exercises `==` the way a
+/// discarded duplicate would, which `check_eq` (always comparing two
+/// already-canonical, differently-named instances) never reaches. This is the
+/// only way the golden data can catch `==` wrongly including `description`,
+/// which equality must ignore, or, for a domain, wrongly dropping the
+/// `parent` comparison, which equality must include.
+fn check_eq_with_duplicate<T: TagType>(
     slots: &mut SlotTable,
     name: &str,
     index: usize,
@@ -570,7 +699,13 @@ fn check_eq_with_duplicate_attribute(
         .expect("eq_with_duplicate op has an other_description");
     let identifier = slots.resolve_identifier(slot);
 
-    let outcome = OpAttribute::new(identifier, other_description);
+    let outcome = T::intern_from_op(
+        slots,
+        identifier,
+        other_description,
+        op,
+        "other_parent_slot",
+    );
     let InternOutcome::AlreadyCanonical {
         canonical,
         discarded,
@@ -593,6 +728,10 @@ fn check_eq_with_duplicate_attribute(
     }
 }
 
+// =============================================================================
+// `op_attribute` op replay
+// =============================================================================
+
 fn replay_op_attribute_case(case: &Value, mismatches: &mut Vec<String>) {
     let name = case["name"].as_str().expect("case has a name");
     let ops = case["ops"].as_array().expect("case has an ops array");
@@ -600,15 +739,15 @@ fn replay_op_attribute_case(case: &Value, mismatches: &mut Vec<String>) {
 
     for (index, op) in ops.iter().enumerate() {
         match op["op"].as_str().expect("op has a kind") {
-            "new" => check_new_attribute(&mut slots, name, index, op, mismatches),
-            "get" => check_get_attribute(&mut slots, name, index, op, mismatches),
-            "require" => check_require_attribute(&mut slots, name, index, op, mismatches),
+            "new" => check_new::<OpAttribute>(&mut slots, name, index, op, mismatches),
+            "get" => check_get::<OpAttribute>(&mut slots, name, index, op, mismatches),
+            "require" => check_require::<OpAttribute>(&mut slots, name, index, op, mismatches),
             "clear" => OpAttribute::intern_registry().clear(),
-            "encode" => check_encode_attribute(&mut slots, name, index, op, mismatches),
-            "decode" => check_decode_attribute(&mut slots, name, index, op, mismatches),
-            "eq" => check_eq_attribute(&mut slots, name, index, op, mismatches),
+            "encode" => check_encode::<OpAttribute>(&mut slots, name, index, op, mismatches),
+            "decode" => check_decode::<OpAttribute>(&mut slots, name, index, op, mismatches),
+            "eq" => check_eq::<OpAttribute>(&mut slots, name, index, op, mismatches),
             "eq_with_duplicate" => {
-                check_eq_with_duplicate_attribute(&mut slots, name, index, op, mismatches);
+                check_eq_with_duplicate::<OpAttribute>(&mut slots, name, index, op, mismatches);
             }
             "bind_ahead" => slots.bind_ahead(op["slot"].as_str().expect("op has a slot")),
             "is_counter_past" => check_is_counter_past(&mut slots, name, index, op, mismatches),
@@ -642,184 +781,6 @@ fn resolve_optional_parent(
     })
 }
 
-fn check_new_domain(
-    slots: &mut SlotTable,
-    name: &str,
-    index: usize,
-    op: &Value,
-    mismatches: &mut Vec<String>,
-) {
-    let slot = op["slot"].as_str().expect("new op has a slot");
-    let description = op["description"]
-        .as_str()
-        .expect("new op has a description");
-    let identifier = slots.resolve_identifier(slot);
-    let parent = resolve_optional_parent(slots, op, "parent_slot");
-
-    let outcome = ValueDomain::new(identifier, description, parent);
-    let expected = &op["expected"];
-    let expected_registered = expected["registered"]
-        .as_bool()
-        .expect("new expectation has `registered`");
-    let expected_description = expected["canonical_description"]
-        .as_str()
-        .expect("new expectation has `canonical_description`");
-    let expected_parent_slot = expected["canonical_parent_slot"].as_str();
-
-    let actual_registered = outcome.is_registered();
-    let canonical = outcome.into_canonical();
-    let actual_parent_slot = canonical
-        .parent()
-        .map(|parent| slots.find_slot_for_id(parent.name().id()));
-
-    if actual_registered != expected_registered
-        || canonical.description() != expected_description
-        || actual_parent_slot != expected_parent_slot
-    {
-        mismatches.push(format!(
-            "case {name} op {index}: expected registered={expected_registered} \
-             canonical_description={expected_description:?} \
-             canonical_parent_slot={expected_parent_slot:?}, got registered={actual_registered} \
-             canonical_description={:?} canonical_parent_slot={actual_parent_slot:?}",
-            canonical.description()
-        ));
-    }
-}
-
-fn check_get_domain(
-    slots: &mut SlotTable,
-    name: &str,
-    index: usize,
-    op: &Value,
-    mismatches: &mut Vec<String>,
-) {
-    let slot = op["slot"].as_str().expect("get op has a slot");
-    let identifier = slots.resolve_identifier(slot);
-    let expected = &op["expected"];
-    let expected_description = expected["canonical_description"].as_str();
-    let expected_parent_slot = expected["canonical_parent_slot"].as_str();
-
-    let actual = ValueDomain::intern_registry().get(&identifier);
-    let actual_description = actual.as_ref().map(|canonical| canonical.description());
-    let actual_parent_slot = actual
-        .as_ref()
-        .and_then(|canonical| canonical.parent())
-        .map(|parent| slots.find_slot_for_id(parent.name().id()));
-
-    if actual_description != expected_description || actual_parent_slot != expected_parent_slot {
-        mismatches.push(format!(
-            "case {name} op {index}: expected canonical_description={expected_description:?} \
-             canonical_parent_slot={expected_parent_slot:?}, got \
-             canonical_description={actual_description:?} canonical_parent_slot={actual_parent_slot:?}"
-        ));
-    }
-}
-
-fn check_require_domain(
-    slots: &mut SlotTable,
-    name: &str,
-    index: usize,
-    op: &Value,
-    mismatches: &mut Vec<String>,
-) {
-    let slot = op["slot"].as_str().expect("require op has a slot");
-    let identifier = slots.resolve_identifier(slot);
-    let expected = &op["expected"];
-
-    match ValueDomain::intern_registry().require(&identifier) {
-        Ok(canonical) => {
-            let expected_description = expected["canonical_description"].as_str();
-            let expected_parent_slot = expected["canonical_parent_slot"].as_str();
-            let actual_parent_slot = canonical
-                .parent()
-                .map(|parent| slots.find_slot_for_id(parent.name().id()));
-            if Some(canonical.description()) != expected_description
-                || actual_parent_slot != expected_parent_slot
-            {
-                mismatches.push(format!(
-                    "case {name} op {index}: expected canonical_description={expected_description:?} \
-                     canonical_parent_slot={expected_parent_slot:?}, got \
-                     canonical_description={:?} canonical_parent_slot={actual_parent_slot:?}",
-                    canonical.description()
-                ));
-            }
-        }
-        Err(error) => {
-            let expected_error = expected["error"].as_str();
-            if expected_error != Some("KeyError") {
-                mismatches.push(format!(
-                    "case {name} op {index}: expected {expected:?}, got error {error}"
-                ));
-            }
-        }
-    }
-}
-
-fn check_encode_domain(
-    slots: &mut SlotTable,
-    name: &str,
-    index: usize,
-    op: &Value,
-    mismatches: &mut Vec<String>,
-) {
-    let slot = op["slot"].as_str().expect("encode op has a slot");
-    let identifier = slots.resolve_identifier(slot);
-    let canonical = ValueDomain::intern_registry()
-        .require(&identifier)
-        .expect("golden data only encodes an already-registered slot");
-
-    let encoded = serde_json::to_value(&*canonical).expect("a canonical domain encodes to JSON");
-    let actual_encoding = normalize_encoded_tag(&encoded, slots);
-    let expected_encoding = &op["expected"]["encoding"];
-
-    if &actual_encoding != expected_encoding {
-        mismatches.push(format!(
-            "case {name} op {index}: expected encoding={expected_encoding}, got {actual_encoding}"
-        ));
-    }
-}
-
-fn check_decode_domain(
-    slots: &mut SlotTable,
-    name: &str,
-    index: usize,
-    op: &Value,
-    mismatches: &mut Vec<String>,
-) {
-    let real_payload = build_decode_payload(op, |payload| denormalize_value_domain(payload, slots));
-    let expected = &op["expected"];
-    let Some(restored) =
-        decode_or_check_rejection::<ValueDomain>(real_payload, name, index, expected, mismatches)
-    else {
-        return;
-    };
-
-    let expected_slot = expected["canonical_slot"]
-        .as_str()
-        .expect("decode expectation has `canonical_slot`");
-    let expected_description = expected["canonical_description"]
-        .as_str()
-        .expect("decode expectation has `canonical_description`");
-    let expected_parent_slot = expected["canonical_parent_slot"].as_str();
-    let actual_slot = slots.find_slot_for_id(restored.name().id());
-    let actual_parent_slot = restored
-        .parent()
-        .map(|parent| slots.find_slot_for_id(parent.name().id()));
-
-    if actual_slot != expected_slot
-        || restored.description() != expected_description
-        || actual_parent_slot != expected_parent_slot
-    {
-        mismatches.push(format!(
-            "case {name} op {index}: expected canonical_slot={expected_slot:?} \
-             canonical_description={expected_description:?} \
-             canonical_parent_slot={expected_parent_slot:?}, got canonical_slot={actual_slot:?} \
-             canonical_description={:?} canonical_parent_slot={actual_parent_slot:?}",
-            restored.description()
-        ));
-    }
-}
-
 fn check_is_subdomain_of(
     slots: &mut SlotTable,
     name: &str,
@@ -851,85 +812,10 @@ fn check_is_subdomain_of(
     }
 }
 
-fn check_eq_domain(
-    slots: &mut SlotTable,
-    name: &str,
-    index: usize,
-    op: &Value,
-    mismatches: &mut Vec<String>,
-) {
-    let slot_a = op["slot_a"].as_str().expect("eq op has slot_a");
-    let slot_b = op["slot_b"].as_str().expect("eq op has slot_b");
-    let a = ValueDomain::intern_registry()
-        .require(&slots.resolve_identifier(slot_a))
-        .expect("golden data only asks eq about registered slots");
-    let b = ValueDomain::intern_registry()
-        .require(&slots.resolve_identifier(slot_b))
-        .expect("golden data only asks eq about registered slots");
-    let expected = op["expected"]["result"]
-        .as_bool()
-        .expect("eq expectation has `result`");
-
-    let actual = *a == *b;
-    if actual != expected {
-        mismatches.push(format!(
-            "case {name} op {index}: expected result={expected}, got {actual}"
-        ));
-    }
-}
-
-/// Compare a slot's canonical domain against a fresh, non-canonical
-/// duplicate built for the same identifier.
-///
-/// `ValueDomain::new` on an already-registered identifier returns
-/// `AlreadyCanonical { canonical, discarded }`; comparing those two exercises
-/// `==` the way a discarded duplicate would, which `check_eq_domain` (always
-/// comparing two already-canonical, differently-named instances) never
-/// reaches. This is the only way the golden data can catch `==` wrongly
-/// dropping the `parent` comparison, which equality must include.
-fn check_eq_with_duplicate_domain(
-    slots: &mut SlotTable,
-    name: &str,
-    index: usize,
-    op: &Value,
-    mismatches: &mut Vec<String>,
-) {
-    let slot = op["slot"]
-        .as_str()
-        .expect("eq_with_duplicate op has a slot");
-    let other_description = op["other_description"]
-        .as_str()
-        .expect("eq_with_duplicate op has an other_description");
-    let identifier = slots.resolve_identifier(slot);
-    let other_parent = resolve_optional_parent(slots, op, "other_parent_slot");
-
-    let outcome = ValueDomain::new(identifier, other_description, other_parent);
-    let InternOutcome::AlreadyCanonical {
-        canonical,
-        discarded,
-    } = outcome
-    else {
-        panic!(
-            "case {name} op {index}: golden data only builds eq_with_duplicate for an \
-             already-registered slot"
-        );
-    };
-    let expected = op["expected"]["result"]
-        .as_bool()
-        .expect("eq_with_duplicate expectation has `result`");
-
-    let actual = *canonical == discarded;
-    if actual != expected {
-        mismatches.push(format!(
-            "case {name} op {index}: expected result={expected}, got {actual}"
-        ));
-    }
-}
-
 /// Test `is_subdomain_of` against a fresh duplicate rather than a canonical.
 ///
 /// `is_subdomain_of` is defined in terms of `==`; passing a duplicate (built
-/// the same way as `check_eq_with_duplicate_domain`) as `other` forces the
+/// the same way as `check_eq_with_duplicate`) as `other` forces the
 /// walk to compare against a value that shares a registered slot's name but
 /// not necessarily its parent, which comparing two canonical handles never
 /// exercises.
@@ -1037,16 +923,16 @@ fn replay_value_domain_case(case: &Value, mismatches: &mut Vec<String>) {
 
     for (index, op) in ops.iter().enumerate() {
         match op["op"].as_str().expect("op has a kind") {
-            "new" => check_new_domain(&mut slots, name, index, op, mismatches),
-            "get" => check_get_domain(&mut slots, name, index, op, mismatches),
-            "require" => check_require_domain(&mut slots, name, index, op, mismatches),
+            "new" => check_new::<ValueDomain>(&mut slots, name, index, op, mismatches),
+            "get" => check_get::<ValueDomain>(&mut slots, name, index, op, mismatches),
+            "require" => check_require::<ValueDomain>(&mut slots, name, index, op, mismatches),
             "clear" => ValueDomain::intern_registry().clear(),
-            "encode" => check_encode_domain(&mut slots, name, index, op, mismatches),
-            "decode" => check_decode_domain(&mut slots, name, index, op, mismatches),
+            "encode" => check_encode::<ValueDomain>(&mut slots, name, index, op, mismatches),
+            "decode" => check_decode::<ValueDomain>(&mut slots, name, index, op, mismatches),
             "is_subdomain_of" => check_is_subdomain_of(&mut slots, name, index, op, mismatches),
-            "eq" => check_eq_domain(&mut slots, name, index, op, mismatches),
+            "eq" => check_eq::<ValueDomain>(&mut slots, name, index, op, mismatches),
             "eq_with_duplicate" => {
-                check_eq_with_duplicate_domain(&mut slots, name, index, op, mismatches);
+                check_eq_with_duplicate::<ValueDomain>(&mut slots, name, index, op, mismatches);
             }
             "is_subdomain_of_with_duplicate" => {
                 check_is_subdomain_of_with_duplicate(&mut slots, name, index, op, mismatches);
