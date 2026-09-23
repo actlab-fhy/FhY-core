@@ -6,7 +6,7 @@ __all__ = ["Interned", "InternedMixin"]
 
 import dataclasses
 from abc import ABC, abstractmethod
-from collections.abc import Hashable, Mapping
+from collections.abc import Hashable, Iterator, Mapping
 from functools import wraps
 from typing import Any, ClassVar, Generic, Protocol, TypeVar, cast, runtime_checkable
 
@@ -31,24 +31,44 @@ class Interned(Protocol[_K_co]):
         """Return the stable key used to look up the canonical instance."""
 
 
-def _warn_interned_metadata_ignored(
-    payload: "InternedMixin[Any]", canonical: "InternedMixin[Any]"
-) -> None:
-    """Log equality-excluded fields whose payload value the canonical ignores."""
+def _iter_differing_fields(
+    payload: "InternedMixin[Any]", canonical: "InternedMixin[Any]", *, compared: bool
+) -> Iterator[tuple[str, Any, Any]]:
+    """Yield each field whose payload value differs from the canonical's.
+
+    Args:
+        payload: The instance reconstructed from a payload.
+        canonical: The canonical instance registered under the same key.
+        compared: Whether to visit the equality-relevant fields (``True``) or
+            the equality-excluded ones (``False``).
+
+    Yields:
+        The field's name, the payload's value, then the canonical's value.
+    """
     for field_definition in dataclasses.fields(cast(Any, payload)):
-        if field_definition.compare:
+        if field_definition.compare != compared:
             continue
         payload_value = getattr(payload, field_definition.name)
         canonical_value = getattr(canonical, field_definition.name)
         if payload_value != canonical_value:
-            _LOGGER.warning(
-                "%s %r already canonical; keeping %s=%r and ignoring payload %r.",
-                type(payload).__name__,
-                payload.get_intern_key(),
-                field_definition.name,
-                canonical_value,
-                payload_value,
-            )
+            yield field_definition.name, payload_value, canonical_value
+
+
+def _warn_interned_metadata_ignored(
+    payload: "InternedMixin[Any]", canonical: "InternedMixin[Any]"
+) -> None:
+    """Log equality-excluded fields whose payload value the canonical ignores."""
+    for name, payload_value, canonical_value in _iter_differing_fields(
+        payload, canonical, compared=False
+    ):
+        _LOGGER.warning(
+            "%s %r already canonical; keeping %s=%r and ignoring payload %r.",
+            type(payload).__name__,
+            payload.get_intern_key(),
+            name,
+            canonical_value,
+            payload_value,
+        )
 
 
 def _build_interned_conflict_error(
@@ -59,17 +79,12 @@ def _build_interned_conflict_error(
     Names every equality-relevant field whose payload value differs from the
     canonical's.
     """
-    conflicts: list[str] = []
-    for field_definition in dataclasses.fields(cast(Any, payload)):
-        if not field_definition.compare:
-            continue
-        payload_value = getattr(payload, field_definition.name)
-        canonical_value = getattr(canonical, field_definition.name)
-        if payload_value != canonical_value:
-            conflicts.append(
-                f"{field_definition.name} (canonical {canonical_value!r}, "
-                f"payload {payload_value!r})"
-            )
+    conflicts = [
+        f"{name} (canonical {canonical_value!r}, payload {payload_value!r})"
+        for name, payload_value, canonical_value in _iter_differing_fields(
+            payload, canonical, compared=True
+        )
+    ]
     conflict_description = "; ".join(conflicts) or "its compared fields"
     return DeserializationValueError(
         f'Payload for "{type(payload).__name__}" key {payload.get_intern_key()!r} '
