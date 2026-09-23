@@ -11,7 +11,7 @@ git clone https://github.com/actlab-fhy/FhY-core.git -b dev
 cd FhY-core
 ```
 
-2. Install [uv](https://docs.astral.sh/uv/) (used for environment and dependency management), then create the development environment. This installs *FhY* Core in editable mode along with the default `dev` dependency group.
+2. Install [uv](https://docs.astral.sh/uv/) (used for environment and dependency management) and a Rust toolchain (stable, 1.85 or newer; [rustup](https://rustup.rs/) picks the channel from `rust-toolchain.toml`), then create the development environment. This installs *FhY* Core in editable mode along with the default `dev` dependency group, and compiles the Rust extension `fhy_core._rs` with maturin.
 
 ```bash
 uv sync
@@ -240,16 +240,17 @@ Run `uv run nox -s property` and `uv run nox -s golden_expanded` locally
 before opening a release pull request.
 
 The `rust` and `rust-msrv` jobs run on every pull request, and `ci-ok`
-requires both. `rust` runs `cargo fmt --all --check`, `cargo
-clippy --all-targets --all-features --locked -- -D warnings`, `cargo test
---locked --all-features`, and `cargo package --locked`, then unpacks the
-packaged crate and runs `cargo test --locked --features testing` in it, so
-the tests pass on the crate as a consumer receives it. `rust-msrv`
-type-checks the library with `cargo check --lib --locked` on the
-`rust-version` in `Cargo.toml`, once with default features and once with
-`--all-features`. That version is a promise to the crate's consumers, so
-`.cargo/config.toml` has the resolver fall back to dependency releases that
-build on it and `cargo update` keeps `Cargo.lock` within it.
+requires both. `rust` runs `cargo fmt --all --check`, `cargo clippy
+--workspace --all-targets --all-features --locked -- -D warnings`, `cargo
+test --workspace --locked --all-features`, and `cargo package --locked -p
+fhy-core`, then unpacks the packaged crate and runs `cargo test --locked
+--features testing` in it, so the tests pass on the crate as a consumer
+receives it. `rust-msrv` runs `cargo check --workspace --lib --locked` on
+the `rust-version` in `Cargo.toml`, once with default features and once
+with `--all-features`, so the MSRV covers both `fhy-core` and the PyO3
+binding crate `fhy-core-py`. That version is a promise to the crate's
+consumers, so `.cargo/config.toml` has the resolver fall back to dependency
+releases that build on it and `cargo update` keeps `Cargo.lock` within it.
 
 The Rust equivalence tests replay golden corpora under `rust/fhy-core/tests/golden/`,
 each recorded from the Python implementation by the `generate_*.py` script
@@ -258,8 +259,10 @@ interpreter on the backend the test run selected, so the `tests` sessions
 check the corpora on both backends and every supported Python. It fails,
 printing the regeneration command and a diff, if a committed corpus differs
 outside its `provenance` block or a generator has no committed corpus. The
-`golden-corpora` pre-commit hook runs the same module, in about two seconds,
-whenever a commit touches `src/fhy_core/` or `rust/fhy-core/tests/golden/`. After
+`golden-corpora` pre-commit hook runs the same module whenever a commit
+touches `src/fhy_core/`, `rust/fhy-core/tests/golden/`, or
+`tests/test_golden_corpora.py`. The generators are type-checked and linted
+with the package, since they are the oracle the Rust port is held to. After
 changing the Python behavior a corpus records, regenerate it and commit the
 result.
 
@@ -278,9 +281,12 @@ module has its own config under `cosmic-ray/`; run one with
 
 ## Porting to Rust
 
-*FhY* Core is moving to Rust one module at a time. The crate lives in
-`rust/`, and `fhy_core._rs` is the extension module built from it. Every
-port follows these rules.
+*FhY* Core is moving to Rust one module at a time. The Rust code is a
+Cargo workspace with two crates. `rust/fhy-core` is the pure-Rust library
+and never depends on PyO3. `rust/fhy-core-py` holds the PyO3 bindings, and
+maturin builds it into the extension module `fhy_core._rs`. A port adds its
+types to `fhy-core` and their bindings to `fhy-core-py`. Every port follows
+these rules.
 
 ### One extension module per process
 
@@ -297,10 +303,26 @@ of its own that links the crate.
 
 ### Registries are process-global statics
 
-A registry ported from Python lives in a Rust `static`, as
-`InternRegistry` does, mirroring the module-level registry it replaces so
-the Rust behavior can be checked against the Python implementation. This
-is sound only because of the one-extension rule above.
+A registry ported from Python lives in a Rust `static`, as each `Interned`
+type's `InternRegistry` does, mirroring the module-level registry it
+replaces so the Rust behavior can be checked against the Python
+implementation. This is sound only because of the one-extension rule
+above.
+
+### Decoding checks the payload before its side effects
+
+Decoding an identifier advances the id counter, and decoding a canonical
+value interns it, so a decode has side effects that the Python
+deserializer performs in a set order: it checks one level of the payload,
+then restores that level's identifiers, then decodes the nested levels. A
+Rust type whose decode has such side effects implements the crate-private
+`decode::Decode` trait. Its `Payload` is the checked, side-effect-free form
+of one level, with identifier ids held unrestored and nested levels held as
+`DeferredPayload`s, and `build_from_payload` performs the side effects in
+Python's order. The type's `Deserialize` impl is then one call to
+`decode::deserialize_via_payload`. A type with a registry also initializes
+that registry before it restores any id, since Python's defaults exist from
+import.
 
 ### Replacing a Python class
 
@@ -321,9 +343,10 @@ is sound only because of the one-extension rule above.
   `fhy_core.identifier` is the example: `Identifier` stays in Python and
   only its id counter runs in Rust.
 - Freeze the golden corpus. Once a module's Python implementation is
-  deleted, its generator has no oracle left to run, so take it out of the
-  drift check and `EXPANDED_GOLDEN_CORPORA` and keep the committed JSON as
-  a fixed regression corpus.
+  deleted, its generator has no oracle left to run. Delete the generator
+  (the drift check and `golden_expanded` find generators by the
+  `generate_*.py` pattern) and its `EXPANDED_GOLDEN_CORPORA` entry, and
+  keep the committed JSON as a fixed regression corpus.
 - From the first deletion on, the package requires the extension, and
   `FHY_CORE_NO_EXTENSIONS` selects the pure-Python implementation only for
   modules that still have one.
@@ -336,7 +359,8 @@ and a package's `core.py` folds into the package's own module. Packages
 that group items by kind, `traits/` and `utils/`, have no Rust
 counterpart; each of their items moves to the module whose concept it
 serves, as `HasIdentifier` lives in `identifier` and `Interned` in
-`interned`.
+`interned`. Test support is the exception: `fhy_core.testing_patches`
+becomes the feature-gated `fhy_core::testing`.
 
 ### Errors belong to their module
 

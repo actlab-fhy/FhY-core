@@ -216,8 +216,9 @@ class InternedMixin(Generic[_K], ABC):
         """Re-register the canonical default instances shipped by this class.
 
         Override on subclasses that bind module-level canonical defaults
-        (e.g. ``ValueDomain.DATA_DOMAIN``, ``OpAttribute.COMMUTATIVE``) so
-        callers can restore them after :meth:`clear_interned_registry`.
+        (e.g. ``ValueDomain`` with ``DATA_DOMAIN``, ``OpAttribute`` with
+        ``COMMUTATIVE``) so callers can restore them after
+        :meth:`clear_interned_registry`.
         The base implementation is a no-op for classes without defaults.
         """
 

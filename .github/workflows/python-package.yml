@@ -75,7 +75,7 @@ jobs:
         # run.
         run: cargo test --workspace --locked --all-features
       - name: Packaging
-        # Pack fhy-core, the only published workspace member, as crates.io
+        # Pack fhy-core, the only publishable workspace member, as crates.io
         # would receive it and build the library from it.
         run: cargo package --locked -p fhy-core
       - name: Testing the Packaged Crate

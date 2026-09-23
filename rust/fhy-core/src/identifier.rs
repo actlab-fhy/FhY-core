@@ -63,8 +63,9 @@ impl Identifier {
     ///
     /// # Panics
     ///
-    /// Panics if the counter has reached `u64::MAX`, which only
-    /// deserializing the id `u64::MAX - 1` can cause.
+    /// Panics if the counter has reached `u64::MAX`, which only restoring
+    /// or deserializing the id `u64::MAX - 1`, or advancing the counter past
+    /// it, can cause.
     #[must_use]
     pub fn new(name_hint: &str) -> Self {
         let id = Self::next_id(name_hint);

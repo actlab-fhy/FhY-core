@@ -13,7 +13,9 @@
 //! A scope belongs to the thread that entered it, so tests that `cargo test`
 //! runs in parallel never see each other's scopes. Code under test that
 //! creates identifiers on other threads needs those threads to join the scope
-//! through a [`DeterministicIdentifierScopeHandle`].
+//! through a [`DeterministicIdentifierScopeHandle`]. This is where the scope
+//! departs from the Python one, which patches `Identifier` itself and so
+//! applies to every thread.
 //!
 //! A scope is only safe when every semantically distinct identifier created
 //! inside it has a unique name hint. An identifier held by a lazily

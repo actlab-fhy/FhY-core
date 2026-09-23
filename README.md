@@ -157,7 +157,7 @@ This project uses [uv](https://docs.astral.sh/uv/) for environment and dependenc
 
 Parts of FhY Core are implemented in Rust, in the crate `fhy-core` under `rust/fhy-core/`: identifiers, interning, and the `OpAttribute` and `ValueDomain` tag types. The crate serves two purposes:
 
-- **Standalone Rust library**: usable by any Rust project. The crate is not published to crates.io, so depend on it through git: `fhy-core = { git = "https://github.com/actlab-fhy/FhY-core.git" }`. Cargo finds it by package name, so the git dependency works whether the repository is a single crate or, as it is now, a workspace.
+- **Standalone Rust library**: usable by any Rust project. The crate is not published to crates.io, so depend on it through git: `fhy-core = { git = "https://github.com/actlab-fhy/FhY-core.git" }`. Cargo finds the crate in the repository's workspace by package name.
 - **Python extension module**: the separate `fhy-core-py` crate under `rust/fhy-core-py/` depends on `fhy-core` and wraps it with [PyO3](https://pyo3.rs/) bindings. [maturin](https://www.maturin.rs/) compiles it into the Python package as `fhy_core._rs`, which currently backs identifier id allocation. The Python API is the same with or without the extension.
 
 `fhy-core` itself has no PyO3 dependency, so pure-Rust consumers never pull in a Python dependency; only `fhy-core-py` does.
