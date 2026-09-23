@@ -148,7 +148,7 @@ This project uses [uv](https://docs.astral.sh/uv/) for environment and dependenc
     ```
 
    `uv sync` creates `.venv` and installs `fhy_core` in editable mode.
-   It also compiles the Rust extension `fhy_core._rs` with maturin, so building from source needs a Rust toolchain (stable, 1.83 or newer; `rust-toolchain.toml` selects the channel for rustup).
+   It also compiles the Rust extension `fhy_core._rs` with maturin, so building from source needs a Rust toolchain (stable, 1.85 or newer; `rust-toolchain.toml` selects the channel for rustup).
    Editable mode covers only the Python sources: edits under `src/` take effect immediately, while the compiled extension changes only when it is rebuilt (see [Rebuilding the Python Extension](#rebuilding-the-python-extension)).
    Prefix commands with `uv run` (e.g. `uv run python`) or activate the environment with `source .venv/bin/activate`.
    Contributors also have three opt-in nox sessions not run by default: `uv run nox -s property` (the Hypothesis property suite under the thorough profile, on both backends), `uv run nox -s golden_expanded` (large random golden corpora from the Python oracle, replayed by the Rust equivalence tests; needs `cargo`), and `uv run nox -s mutation -- <module>` (cosmic-ray mutation testing for one module); see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
@@ -171,7 +171,7 @@ fhy-core = { git = "https://github.com/actlab-fhy/FhY-core.git", features = ["te
 
 ### Building and Testing the Rust Crate
 
-Requires a stable Rust toolchain (1.83+). The `rust-toolchain.toml` at the repo root pins the channel.
+Requires a stable Rust toolchain (1.85+). The `rust-toolchain.toml` at the repo root pins the channel.
 
 ```bash
 # Check the pure-Rust library (no Python dependency)

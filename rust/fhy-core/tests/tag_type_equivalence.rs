@@ -16,16 +16,16 @@
 //! functions on separate threads, and running two of these concurrently
 //! would race a `clear()` in one script against an intern in another.
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use fhy_core::identifier::Identifier;
 use fhy_core::interned::{Canonical, InternOutcome, Interned};
-use fhy_core::op_attribute::{OpAttribute, ASSOCIATIVE, COMMUTATIVE, ELEMENTWISE, PURE};
-use fhy_core::value_domain::{ValueDomain, ADDRESS_DOMAIN, DATA_DOMAIN};
+use fhy_core::op_attribute::{ASSOCIATIVE, COMMUTATIVE, ELEMENTWISE, OpAttribute, PURE};
+use fhy_core::value_domain::{ADDRESS_DOMAIN, DATA_DOMAIN, ValueDomain};
 use serde::de::DeserializeOwned;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 const GOLDEN_JSON: &str = include_str!("golden/tag_type_cases.json");
 

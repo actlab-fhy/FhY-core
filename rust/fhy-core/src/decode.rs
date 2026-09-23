@@ -23,9 +23,9 @@ mod buffered;
 
 use std::marker::PhantomData;
 
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde::de::{self, Deserializer};
-use serde::Deserialize;
 
 use buffered::{BufferedMap, BufferedValue};
 

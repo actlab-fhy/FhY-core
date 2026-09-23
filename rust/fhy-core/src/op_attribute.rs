@@ -21,7 +21,7 @@
 use std::hash::{Hash, Hasher};
 use std::sync::LazyLock;
 
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 
 use crate::decode::{self, Decode};
 

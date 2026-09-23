@@ -23,11 +23,11 @@
 use std::hash::{Hash, Hasher};
 use std::sync::LazyLock;
 
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 
 use crate::decode::{self, Decode, DeferredPayload};
 use crate::identifier::{HasIdentifier, Identifier, IdentifierPayload};
-use crate::interned::{intern_decoded, Canonical, InternOutcome, InternRegistry, Interned};
+use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned, intern_decoded};
 
 /// Open classification of the kind of value an IR operation handles.
 ///

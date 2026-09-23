@@ -10,8 +10,8 @@ use std::sync::LazyLock;
 
 use fhy_core::identifier::Identifier;
 use fhy_core::interned::Canonical;
-use fhy_core::op_attribute::{OpAttribute, ASSOCIATIVE, COMMUTATIVE, PURE};
-use fhy_core::value_domain::{ValueDomain, ADDRESS_DOMAIN, DATA_DOMAIN};
+use fhy_core::op_attribute::{ASSOCIATIVE, COMMUTATIVE, OpAttribute, PURE};
+use fhy_core::value_domain::{ADDRESS_DOMAIN, DATA_DOMAIN, ValueDomain};
 use serde::{Deserialize, Serialize};
 
 /// A stand-in for a compiler op, carrying the semantic tags attached to it.

@@ -7,9 +7,9 @@
 
 use fhy_core::identifier::Identifier;
 use fhy_core::interned::Interned;
-use fhy_core::op_attribute::{OpAttribute, COMMUTATIVE};
+use fhy_core::op_attribute::{COMMUTATIVE, OpAttribute};
 use fhy_core::testing::DeterministicIdentifierScope;
-use fhy_core::value_domain::{ValueDomain, DATA_DOMAIN};
+use fhy_core::value_domain::{DATA_DOMAIN, ValueDomain};
 
 /// Test a scope that first creates the shipped constants does not give a
 /// same-hint identifier their ids, so no registry mistakes it for a constant.

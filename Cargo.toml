@@ -4,8 +4,8 @@ members = ["rust/fhy-core", "rust/fhy-core-py"]
 
 [workspace.package]
 version = "0.2.0"
-edition = "2021"
-rust-version = "1.83"
+edition = "2024"
+rust-version = "1.85"
 authors = ["Christopher Priebe <cpriebe@ucsd.edu>"]
 license = "BSD-3-Clause"
 repository = "https://github.com/actlab-fhy/FhY-core.git"
