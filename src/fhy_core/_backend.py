@@ -1,15 +1,10 @@
 """Selection between the Rust extension and the pure-Python implementation.
 
-The package runs on the compiled extension ``fhy_core._rs`` iff the
-extension imports, its ``__version__`` matches the installed ``fhy_core``
-package, and the ``FHY_CORE_NO_EXTENSIONS`` environment variable does not
-disable it. The extension reports its Cargo version, from which maturin
-derives the package version by PEP 440 normalization, so the two match when
-the extension's version normalizes to the package's (``0.3.0-rc.1`` matches
-``0.3.0rc1``). The variable disables the extension when it holds anything
-other than an empty string or one of ``0``, ``false``, ``no``, and ``off``
-(compared case-insensitively, ignoring surrounding whitespace). The
-selection is made once, when this module is first imported.
+``fhy_core.RUST_BACKEND_SELECTED`` documents when the package runs on the
+compiled extension ``fhy_core._rs`` and how the ``FHY_CORE_NO_EXTENSIONS``
+environment variable is read. This module makes that selection once, when it
+is first imported, and falls back to the pure-Python implementation as
+follows.
 
 An extension that is not installed selects the pure-Python implementation
 silently. An extension that is installed but fails to import, for example
@@ -17,8 +12,7 @@ because its shared library fails to load, selects it with a
 ``RuntimeWarning`` naming the error. So does an extension built only for
 other interpreters, which the import system skips as if it were missing: a
 ``RuntimeWarning`` names the builds found and the file name this interpreter
-loads. An
-extension that imports but whose ``__version__`` does not match the
+loads. An extension that imports but whose ``__version__`` does not match the
 installed package, is not a PEP 440 version, or is missing, is stale: it
 selects the pure-Python implementation with a ``RuntimeWarning`` naming
 both versions. A disabled extension is never imported, so it never warns.
