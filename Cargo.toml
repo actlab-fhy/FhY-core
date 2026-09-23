@@ -14,6 +14,12 @@ repository = "https://github.com/actlab-fhy/FhY-core.git"
 [workspace.dependencies]
 pyo3 = "0.29"
 serde = { version = "1", features = ["derive"] }
+# Integer literals of any size serialize as JSON integers, as Python writes
+# them; `arbitrary_precision` lets `serde_json::Number` carry the digits.
+# Cargo unifies features across the build graph, so this turns the feature
+# on for every crate in a build that includes fhy-core: there a `Number`
+# keeps its source text, so `1.0` and `1.00` compare unequal. The fhy-core
+# crate docs tell dependents.
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 num-bigint = "0.5"
 num-traits = "0.2"

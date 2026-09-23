@@ -23,8 +23,7 @@ testing = []
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
 serde = { workspace = true }
-# Integer literals of any size serialize as JSON integers, as Python writes
-# them; `arbitrary_precision` lets `serde_json::Number` carry the digits.
+# Takes `arbitrary_precision` from the workspace; see the root Cargo.toml.
 serde_json = { workspace = true }
 
 [dev-dependencies]
