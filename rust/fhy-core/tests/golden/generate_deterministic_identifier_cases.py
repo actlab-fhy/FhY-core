@@ -2,9 +2,10 @@
 
 Drives the real
 `fhy_core.testing_patches.deterministic_identifiers_by_name_hint` oracle
-through hand-picked and randomly generated scripts of `enter`, `exit` and
-`new(hint)` operations, recording the id each `new` receives relative to a
-per-script anchor identifier. The Rust equivalence test
+through hand-picked and randomly generated scripts of `enter`, `exit`,
+`new(hint)` and `restore(hint, offset)` operations, recording the id each
+`new` and `restore` yields relative to a per-script anchor identifier. The
+Rust equivalence test
 (`rust/fhy-core/tests/deterministic_identifiers_equivalence.rs`) replays these scripts
 against `fhy_core::testing::DeterministicIdentifierScope` and compares every
 observation.
@@ -17,7 +18,11 @@ script starts outside any scope by creating an anchor identifier,
 `Identifier("anchor")`. The one observation recorded for each `new(hint)` is
 the constructed identifier's id minus the anchor's id, which alone pins
 sharing within a scope, forgetting across scopes, nesting, and the rule that
-a repeated hint allocates no id.
+a repeated hint allocates no id. `restore(hint, offset)` deserializes an
+identifier with the id `offset` past the anchor, behind or ahead of the
+counter, and records its id the same way; the `new` observations after it
+pin how a restored id moves the counter and whether the scope shares the
+restored identifier's hint.
 
 Run from the repository root:
 
@@ -62,7 +67,11 @@ _RANDOM_MAX_DEPTH = 3
 # operations feasible at the script's current nesting depth (see
 # `_list_feasible_op_kinds`). Skewed toward `new` so most operations are
 # actually observable creations rather than scope bookkeeping.
-_OP_WEIGHTS: dict[str, int] = {"new": 60, "enter": 22, "exit": 18}
+_OP_WEIGHTS: dict[str, int] = {"new": 60, "enter": 22, "exit": 18, "restore": 10}
+# Largest offset past the anchor a random `restore` uses. A script allocates
+# at most one id per `new`, so offsets up to this land both behind and ahead
+# of the counter.
+_RANDOM_MAX_RESTORE_OFFSET = 60
 
 
 # =============================================================================
@@ -82,6 +91,10 @@ def _build_new_op(hint: str) -> dict[str, Any]:
     return {"op": "new", "hint": hint}
 
 
+def _build_restore_op(hint: str, offset: int) -> dict[str, Any]:
+    return {"op": "restore", "hint": hint, "offset": offset}
+
+
 # =============================================================================
 # Op execution (records the oracle's observation for one operation)
 # =============================================================================
@@ -93,7 +106,8 @@ def _run_op(op: dict[str, Any], anchor_id: int) -> dict[str, Any]:
     `enter` and `exit` record nothing. `new` records the constructed
     identifier's id relative to the script's anchor id, which is the only
     thing that pins sharing, forgetting, nesting, and the no-allocation rule
-    for a repeat.
+    for a repeat. `restore` deserializes the id `offset` past the anchor and
+    records the restored identifier's id the same way.
     """
     kind = op["op"]
     if kind == "enter":
@@ -105,6 +119,11 @@ def _run_op(op: dict[str, Any], anchor_id: int) -> dict[str, Any]:
     if kind == "new":
         identifier = Identifier(op["hint"])
         return {"relative_id": identifier.id - anchor_id}
+    if kind == "restore":
+        restored = Identifier.deserialize_from_dict(
+            {"id": anchor_id + op["offset"], "name_hint": op["hint"]}
+        )
+        return {"relative_id": restored.id - anchor_id}
     raise ValueError(f"unknown op {kind!r}")
 
 
@@ -158,6 +177,30 @@ def _run_script(name: str, ops: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _list_hand_picked_scripts() -> list[tuple[str, list[dict[str, Any]]]]:
     return [
+        (
+            "a_restore_ahead_inside_a_scope_moves_the_counter_past_it",
+            [
+                _build_enter_op(),
+                _build_new_op("a"),
+                _build_restore_op("b", 40),
+                _build_new_op("b"),
+                _build_new_op("c"),
+                _build_new_op("a"),
+                _build_restore_op("a", 45),
+                _build_new_op("a"),
+            ],
+        ),
+        (
+            "a_restore_behind_the_counter_leaves_it_in_place",
+            [
+                _build_new_op("a"),
+                _build_new_op("b"),
+                _build_enter_op(),
+                _build_restore_op("c", 1),
+                _build_new_op("c"),
+                _build_new_op("d"),
+            ],
+        ),
         (
             "a_repeated_hint_in_one_scope_returns_the_earlier_number",
             [
@@ -291,7 +334,7 @@ def _list_hand_picked_scripts() -> list[tuple[str, list[dict[str, Any]]]]:
 
 
 def _list_feasible_op_kinds(depth: int, max_depth: int) -> list[str]:
-    kinds = ["new"]
+    kinds = ["new", "restore"]
     if depth < max_depth:
         kinds.append("enter")
     if depth > 0:
@@ -306,6 +349,10 @@ def _choose_random_op(
     kind = rng.choices(feasible, weights=[_OP_WEIGHTS[k] for k in feasible], k=1)[0]
     if kind == "new":
         return _build_new_op(rng.choice(hints))
+    if kind == "restore":
+        return _build_restore_op(
+            rng.choice(hints), rng.randint(0, _RANDOM_MAX_RESTORE_OFFSET)
+        )
     if kind == "enter":
         return _build_enter_op()
     return _build_exit_op()
@@ -341,7 +388,7 @@ def _run_random_script(
 
 def _print_summary(cases: list[dict[str, Any]], output_path: Path) -> None:
     """Print case, op-kind, nesting-depth, and repeat/fresh `new` counts."""
-    op_counts: dict[str, int] = {"enter": 0, "exit": 0, "new": 0}
+    op_counts: dict[str, int] = {"enter": 0, "exit": 0, "new": 0, "restore": 0}
     repeats = 0
     fresh = 0
     max_depth = 0
@@ -356,7 +403,7 @@ def _print_summary(cases: list[dict[str, Any]], output_path: Path) -> None:
                 case_max_depth = max(case_max_depth, depth)
             elif op["op"] == "exit":
                 depth -= 1
-            else:
+            elif op["op"] == "new":
                 relative_id = op["expected"]["relative_id"]
                 if relative_id in seen_relative_ids:
                     repeats += 1
@@ -369,7 +416,8 @@ def _print_summary(cases: list[dict[str, Any]], output_path: Path) -> None:
     print(
         f"wrote {len(cases)} cases, {total_ops} ops "
         f"(enter={op_counts['enter']} exit={op_counts['exit']} "
-        f"new={op_counts['new']}), max nesting depth {max_depth}, "
+        f"new={op_counts['new']} restore={op_counts['restore']}), "
+        f"max nesting depth {max_depth}, "
         f"new repeats={repeats} fresh={fresh}, to {output_path}"
     )
 

@@ -9,10 +9,12 @@
 //! `fhy_core::testing` APIs.
 //!
 //! Every script starts outside any scope by creating an anchor identifier,
-//! then runs `enter`, `exit` (LIFO, via a stack of guards) and `new(hint)`
-//! operations on one thread. The one observation checked for each `new` is
-//! its identifier's id minus the anchor's id, which is only meaningful when
-//! nothing else in this process allocates an id while a script runs. Both
+//! then runs `enter`, `exit` (LIFO, via a stack of guards), `new(hint)` and
+//! `restore(hint, offset)` operations on one thread. `restore` restores the id
+//! `offset` past the anchor's. The one observation checked for each `new` and
+//! `restore` is its identifier's id minus the anchor's id, which is only
+//! meaningful when nothing else in this process allocates an id while a
+//! script runs. Both
 //! `#[test]` functions below therefore hold one shared `static` `Mutex<()>`
 //! for their whole duration, so the default and the ignored expanded-corpus
 //! test can never interleave, even under `--include-ignored`. Nothing in
@@ -71,22 +73,16 @@ fn replay_case(case: &Value, mismatches: &mut Vec<String>) {
             }
             "new" => {
                 let hint = op["hint"].as_str().expect("new op has a hint");
-                let expected_relative_id = op["expected"]["relative_id"]
-                    .as_u64()
-                    .expect("new expectation has a non-negative `relative_id`");
-
                 let identifier = Identifier::new(hint);
-                let actual_relative_id = identifier
-                    .id()
-                    .checked_sub(anchor_id)
-                    .expect("a script's identifier id must not precede its anchor's id");
-
-                if actual_relative_id != expected_relative_id {
-                    mismatches.push(format!(
-                        "case {name} op {index}: expected relative_id={expected_relative_id}, \
-                         got {actual_relative_id}"
-                    ));
-                }
+                check_relative_id(name, index, op, &identifier, anchor_id, mismatches);
+            }
+            "restore" => {
+                let hint = op["hint"].as_str().expect("restore op has a hint");
+                let offset = op["offset"]
+                    .as_u64()
+                    .expect("restore op has a non-negative `offset`");
+                let identifier = Identifier::restore(anchor_id + offset, hint.to_owned());
+                check_relative_id(name, index, op, &identifier, anchor_id, mismatches);
             }
             other => panic!("case {name} op {index}: unknown op kind {other:?}"),
         }
@@ -97,6 +93,32 @@ fn replay_case(case: &Value, mismatches: &mut Vec<String>) {
         "case {name}: golden script left {} scope(s) open",
         guards.len()
     );
+}
+
+/// Compare `identifier`'s id, relative to the script's anchor, with the
+/// relative id the oracle recorded for the op.
+fn check_relative_id(
+    name: &str,
+    index: usize,
+    op: &Value,
+    identifier: &Identifier,
+    anchor_id: u64,
+    mismatches: &mut Vec<String>,
+) {
+    let expected_relative_id = op["expected"]["relative_id"]
+        .as_u64()
+        .expect("the expectation has a non-negative `relative_id`");
+    let actual_relative_id = identifier
+        .id()
+        .checked_sub(anchor_id)
+        .expect("a script's identifier id must not precede its anchor's id");
+
+    if actual_relative_id != expected_relative_id {
+        mismatches.push(format!(
+            "case {name} op {index}: expected relative_id={expected_relative_id}, \
+             got {actual_relative_id}"
+        ));
+    }
 }
 
 /// Test the Rust `DeterministicIdentifierScope` scope reproduces every
