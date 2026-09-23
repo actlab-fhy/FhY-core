@@ -196,9 +196,7 @@ jobs:
         run: uv run nox -s property
 
   golden-expanded:
-    # Release gate only, like property: the tests job checks the committed
-    # golden corpora on every PR; this replays much larger random corpora
-    # from the Python oracle through the Rust equivalence tests.
+    # Release gate only, like property (see the header).
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && github.base_ref == 'main')

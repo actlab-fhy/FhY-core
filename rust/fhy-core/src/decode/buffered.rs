@@ -1,12 +1,8 @@
 //! Payload subtrees read now and decoded later.
 //!
-//! [`super::DeferredPayload`] holds its nested level as a [`BufferedMap`], read
-//! now and decoded from once the holder's build reaches it. A streaming
-//! format hands over fields in whatever order the payload lists them, so the
-//! nested level must be read into a value before it can wait for its turn.
-//!
-//! Buffering reads the subtree through `deserialize_any`, so it needs a
-//! self-describing format such as JSON.
+//! A [`super::DeferredPayload`]'s nested level is read into a [`BufferedMap`]
+//! now, because a streaming format hands over fields in payload order and the
+//! level must wait for its holder's build.
 
 use std::fmt;
 

@@ -77,11 +77,8 @@ fn select_catalogue_defaults(id: &str) -> fn() -> Vec<GoldenTag> {
 
 const GOLDEN_JSON: &str = include_str!("golden/interned_cases.json");
 
-/// Minimum number of golden cases this corpus must carry.
 const MIN_CASES: usize = 120;
 
-/// Minimum total number of golden ops, across every case, this corpus must
-/// carry.
 const MIN_OPS: usize = 1000;
 
 /// Assert every defaults-catalogue entry in the golden data matches the

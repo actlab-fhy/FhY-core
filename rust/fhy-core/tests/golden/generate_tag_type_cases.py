@@ -84,7 +84,7 @@ _description_counter = 0
 
 
 def _next_description() -> str:
-    """Return a description text no other operation in this document uses."""
+    """Return a description no earlier call returned."""
     global _description_counter  # noqa: PLW0603
     description = f"d{_description_counter}"
     _description_counter += 1
@@ -92,18 +92,11 @@ def _next_description() -> str:
 
 
 class _ScriptContext:
-    """Per-script identifier-slot bookkeeping for one generated script.
+    """Map one script's slots to identifier ids and track its registry state.
 
-    Every fresh (non-default) slot gets exactly one `Identifier`, minted the
-    first time the script refers to it; a default slot resolves to the
-    shipped constant's identifier instead. `registered_slots` tracks which
-    slots currently hold the canonical instance for their identifier, so
-    script construction can restrict operations such as `encode` or a
-    `parent_slot` reference to slots that are actually interned. `held`
-    keeps instances a `hold` operation set aside under a label, so a later
-    operation can compare them with instances built after a clear.
-    `ahead_slots` holds the slots `bind_ahead` bound to an id ahead of the
-    counter.
+    `registered_slots` holds the slots that are currently canonical, so ops
+    needing an interned slot pick only those; `held` keeps instances set aside
+    by `hold`; `ahead_slots` holds the slots bound by `bind_ahead`.
     """
 
     def __init__(
@@ -512,15 +505,9 @@ _CANONICAL_CONFLICT_MESSAGE = "conflicts with the canonical instance"
 def _run_decode(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
     """Decode a payload, recording the canonical it yields or its rejection.
 
-    A payload whose key is already canonical must equal that canonical: one
-    that names a different parent is rejected with a
-    `DeserializationValueError`, recorded as the op's `error`. An op with a
-    `defect` damages the payload's structure before decoding it (see
-    `_apply_defect`); the oracle's rejection of the damaged payload is
-    recorded as the op's `error`, named by the raised error's class. Every
-    rejection also records as `conflict` whether it reported a conflict with
-    the canonical instance, since both kinds of rejection raise the same
-    class.
+    An op with a `defect` damages the payload first (see `_apply_defect`). A
+    rejection records its error class as `error` and, as `conflict`, whether
+    it reported a canonical conflict.
     """
     payload = op["payload"]
     if ctx.kind == _OP_ATTRIBUTE_KIND:
@@ -567,14 +554,11 @@ def _run_eq(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run_eq_with_duplicate(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
-    """Compare a slot's canonical instance against a fresh, non-canonical duplicate.
+    """Compare a slot's canonical instance with a fresh duplicate of it.
 
-    Builds a second instance for `op["slot"]`'s already-registered identifier.
-    Interning it loses the registration race, so the constructor hands back a
-    plain, unregistered value (the canonical stays put); comparing the two
-    exercises `==` the way a discarded duplicate would, which the ordinary
-    `eq` op (always comparing two already-canonical, differently-named
-    instances) never reaches.
+    Interning the duplicate finds the canonical already registered, so it
+    stays unregistered. This reaches `==` against a discarded duplicate, which
+    `eq`, comparing canonical instances only, never does.
     """
     slot = op["slot"]
     identifier = ctx.resolve_identifier(slot)
@@ -1265,6 +1249,8 @@ def _list_side_effect_domain_scripts() -> list[tuple[str, list[dict[str, Any]]]]
             _build_set_defect(["parent", "name", "id"], 2**64 - 1),
         ),
     ]
+    # Building the parent's name after the first rejected decode must register
+    # it afresh, showing the decode left nothing registered under it.
     trailing_script_name, trailing_ops = scripts[0]
     scripts[0] = (
         trailing_script_name,
@@ -1332,12 +1318,9 @@ _OP_WEIGHTS: dict[str, int] = {
 # attaches a parent rather than leaving it `None`.
 _RANDOM_PARENT_PROBABILITY = 0.6
 
-# Chance a random duplicate (for `eq_with_duplicate` and
-# `is_subdomain_of_with_duplicate`) reuses the canonical's actual current
-# description/parent rather than a value guaranteed to differ from it. Kept
-# away from the extremes so a run exercises both the "same" and "different"
-# branches of the two equality rules: a description never affects equality,
-# and a parent always does.
+# Chance a random duplicate reuses the canonical's current description rather
+# than a fresh one. Kept at 0.5 so both branches run; a description never
+# affects equality.
 _DUPLICATE_SAME_VALUE_PROBABILITY = 0.5
 
 
@@ -1444,9 +1427,8 @@ def _choose_random_duplicate_description(
 ) -> str:
     """Return a description for a duplicate of `slot`'s canonical instance.
 
-    Reuses the canonical's actual current description about half the time
-    (the "same" branch), and a fresh, guaranteed-different one the rest of
-    the time (the "different" branch, which equality must ignore).
+    Reuse the canonical's current description with probability
+    `_DUPLICATE_SAME_VALUE_PROBABILITY`, otherwise draw a fresh one.
     """
     if rng.random() < _DUPLICATE_SAME_VALUE_PROBABILITY:
         canonical = ctx.cls.require_interned(ctx.resolve_identifier(slot))

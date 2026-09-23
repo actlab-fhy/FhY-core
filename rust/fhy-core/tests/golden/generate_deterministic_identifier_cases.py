@@ -101,13 +101,10 @@ def _build_restore_op(hint: str, offset: int) -> dict[str, Any]:
 
 
 def _run_op(op: dict[str, Any], anchor_id: int) -> dict[str, Any]:
-    """Run one operation against the real oracle and return its observation.
+    """Run one operation against the oracle and return its observation.
 
-    `enter` and `exit` record nothing. `new` records the constructed
-    identifier's id relative to the script's anchor id, which is the only
-    thing that pins sharing, forgetting, nesting, and the no-allocation rule
-    for a repeat. `restore` deserializes the id `offset` past the anchor and
-    records the restored identifier's id the same way.
+    `enter` and `exit` record nothing; `new` and `restore` record the
+    resulting id relative to `anchor_id`.
     """
     kind = op["op"]
     if kind == "enter":

@@ -32,11 +32,8 @@ use serde_json::Value;
 
 const GOLDEN_JSON: &str = include_str!("golden/deterministic_identifier_cases.json");
 
-/// Minimum number of golden cases this corpus must carry.
 const MIN_CASES: usize = 100;
 
-/// Minimum total number of golden ops, across every case, this corpus must
-/// carry.
 const MIN_OPS: usize = 1000;
 
 /// Serializes every script this binary replays, so exact relative ids are
@@ -51,7 +48,7 @@ fn lock_replay() -> std::sync::MutexGuard<'static, ()> {
 }
 
 /// Replay one script's operations on the current thread, comparing each
-/// `new`'s observation against the golden data.
+/// `new` and `restore` observation against the golden data.
 ///
 /// `enter` and `exit` push and pop a stack of guards, since Rust drives a
 /// scope through RAII rather than the Python singleton's own enter/exit
@@ -121,7 +118,7 @@ fn check_relative_id(
     }
 }
 
-/// Test the Rust `DeterministicIdentifierScope` scope reproduces every
+/// Test the Rust `DeterministicIdentifierScope` reproduces every
 /// observation the Python oracle recorded for the golden operation scripts.
 #[test]
 fn deterministic_identifiers_match_the_python_oracle() {

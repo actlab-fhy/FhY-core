@@ -171,11 +171,9 @@ def test_constructor_accepts_non_ascii_name_hint(name_hint: str) -> None:
 # =============================================================================
 # Pure-Python id counter locking
 #
-# The pure-Python backend's `_PythonIdCounter` must read and write its next id
-# only while holding its lock. Racing threads rarely expose a missing lock
-# under the GIL, so these tests check the discipline directly: the counter's
-# lock records whether it is held, and its next-id state is a property that
-# records whether each access happened while that lock was held.
+# `_PythonIdCounter` must touch its next id only under its lock. Racing threads
+# rarely expose a missing lock under the GIL, so these tests check the
+# discipline directly.
 # =============================================================================
 
 
@@ -889,8 +887,8 @@ def test_pickle_round_trip_preserves_equality_and_frozen_state() -> None:
 def test_pickle_refers_to_no_class_but_the_public_identifier(protocol: int) -> None:
     """Test a pickled identifier holds plain data plus the public class only.
 
-    No backend core class (Rust or pure Python) may appear in the pickle,
-    so a pickle loads under either backend.
+    Only the public class appears in the pickle, so it loads under either
+    backend.
     """
     identifier = Identifier("plain")
     unpickler = _GlobalRecordingUnpickler(pickle.dumps(identifier, protocol))

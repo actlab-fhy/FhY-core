@@ -245,9 +245,8 @@ class InternedMixin(Generic[_K], ABC):
         ``fhy_core.serialization``) for interned dataclasses: builds the
         instance from ``fields``, then returns the canonical instance for its
         intern key -- the freshly built one when the key is new, otherwise the
-        pre-existing canonical. A payload for an existing key must equal the
-        canonical under the class's equality: one that differs in an
-        equality-relevant field is rejected. Equality-excluded fields
+        pre-existing canonical. A payload for an existing key that is unequal
+        to the canonical is rejected. Equality-excluded fields
         (``field(compare=False)``) whose payload value differs from the
         canonical's are logged as ignored.
 

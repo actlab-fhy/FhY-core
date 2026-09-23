@@ -109,7 +109,7 @@ mod tests {
         BUILD_LOG.with(|log| log.borrow_mut().push(name.to_owned()));
     }
 
-    /// Return the names built so far, in build order.
+    /// Drain and return the names built so far, in build order.
     fn take_build_log() -> Vec<String> {
         BUILD_LOG.with(|log| std::mem::take(&mut *log.borrow_mut()))
     }

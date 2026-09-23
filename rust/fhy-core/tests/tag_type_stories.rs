@@ -43,10 +43,8 @@ impl StoryOp {
 static IDEMPOTENT_NAME: LazyLock<Identifier> =
     LazyLock::new(|| Identifier::new("tagging-story-idempotent"));
 
-/// Test tagging an op with shipped attributes plus a layer-registered one,
-/// querying membership with `has_tag`, and showing a second `OpAttribute`
-/// built with the same `Identifier` collapses into the existing set entry
-/// instead of adding a new one.
+/// Test an op's tag set holds shipped and layer-registered attributes, and a
+/// same-name `OpAttribute` collapses into the existing entry.
 #[test]
 fn tagging_an_operation_with_shipped_and_layer_specific_attributes() {
     let idempotent = OpAttribute::new(

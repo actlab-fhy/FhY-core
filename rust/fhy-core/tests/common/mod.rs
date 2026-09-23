@@ -4,11 +4,7 @@
 //! `deterministic_identifiers_equivalence` each replay a golden JSON document
 //! recorded by a Python oracle against the matching Rust API, and each reads
 //! an expanded corpus from an environment variable for its `#[ignore]`d
-//! variant. This module holds the replay loop the three share: parsing the
-//! document, checking it is large enough to be a meaningful replay, running
-//! an optional document-level check, replaying every case through a
-//! per-file callback, and failing the test with whatever mismatches that
-//! callback collects.
+//! variant. This module holds the replay loop the three share.
 
 use serde_json::Value;
 

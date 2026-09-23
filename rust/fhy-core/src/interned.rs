@@ -113,8 +113,8 @@ fn index_by_key<T: Interned>(instances: &[Arc<T>]) -> HashMap<T::Key, Arc<T>> {
 /// Registered instances, and the defaults a clear restores.
 ///
 /// For keys whose `Hash` and `Eq` behave the same on every call, every
-/// method that mutates this state either completes or panics before changing
-/// anything (for example, a key's `Hash` panicking mid-lookup), so a panic
+/// registry operation that mutates this state either completes or panics
+/// before changing anything (for example, a key's `Hash` panicking mid-lookup), so a panic
 /// inside a critical section never leaves the state half-updated. That is
 /// what makes recovering a poisoned lock over this state safe.
 struct RegistryState<T: Interned> {
@@ -391,12 +391,9 @@ impl<T: Serialize> Serialize for Canonical<T> {
     }
 }
 
-/// Decoding interns the decoded value. When its key is already canonical, the
-/// decoded value must equal the canonical instance under `T`'s `Eq`, and an
-/// unequal one is rejected with an error naming the type and key. A value
-/// that differs only in fields `Eq` ignores, such as a description, decodes to
-/// the canonical instance without any report: this crate has no logger, so
-/// the ignored metadata is dropped silently.
+/// A value that differs only in fields `Eq` ignores, such as a description,
+/// decodes to the canonical instance without any report: this crate has no
+/// logger, so the ignored metadata is dropped silently.
 ///
 /// `T`'s own decode runs first and decides what the payload's nested handles
 /// register before the value itself is interned. Rejecting the value as a

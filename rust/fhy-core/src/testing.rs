@@ -134,8 +134,6 @@ fn leave_scope(scope: &RefCell<Option<ThreadEntry>>) {
 #[derive(Debug)]
 pub struct DeterministicIdentifierScope {
     table: Arc<ScopeTable>,
-    // The guard counts toward one thread's scope, so it must not move to
-    // another thread.
     not_send: PhantomData<*const ()>,
 }
 

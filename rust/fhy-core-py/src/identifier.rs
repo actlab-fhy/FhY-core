@@ -15,9 +15,8 @@ use fhy_core::identifier::{self as rust_identifier, IdSpaceExhausted};
 /// Convert the core crate's exhaustion error into the `RuntimeError`
 /// `PyO3` raises into Python.
 ///
-/// The orphan rule forbids `impl From<IdSpaceExhausted> for PyErr` in this
-/// crate, since neither type is defined here, so callers reach for this
-/// function through `.map_err`.
+/// The orphan rule forbids `impl From<IdSpaceExhausted> for PyErr` here,
+/// since neither type is local.
 fn convert_id_space_exhausted(exhausted: IdSpaceExhausted) -> PyErr {
     PyRuntimeError::new_err(exhausted.to_string())
 }

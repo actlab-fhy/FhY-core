@@ -47,10 +47,6 @@ impl Error for IdSpaceExhausted {}
 ///
 /// Cloning an `Identifier` is cheap: `name_hint` is stored behind an
 /// [`Arc<str>`] so clones share the underlying string.
-///
-/// Ids are `u64`s; the largest id an `Identifier` ever holds is
-/// `u64::MAX - 1`. Issuing or restoring that id leaves the counter at
-/// `u64::MAX`, after which construction panics instead of wrapping.
 #[derive(Clone)]
 pub struct Identifier {
     id: u64,
@@ -139,7 +135,8 @@ impl Identifier {
 
 /// Draw the next id from the process-global counter.
 ///
-/// Every id an [`Identifier`] is constructed with comes from here.
+/// Every fresh id comes from here; a restored id is taken from its payload
+/// instead.
 ///
 /// # Panics
 ///
@@ -266,8 +263,6 @@ pub(crate) struct IdentifierPayload {
 impl IdentifierPayload {
     /// Restore the identifier, advancing the global counter past its id.
     pub(crate) fn restore(self) -> Identifier {
-        // Always consult the real counter, even inside a
-        // deterministic-identifier scope.
         Identifier::restore(self.id, self.name_hint)
     }
 }
@@ -432,8 +427,6 @@ mod tests {
     fn restore_is_a_no_op_when_counter_already_ahead() {
         let first = Identifier::new("first");
         let stale_id = first.id();
-        // Restoring an already-issued id must not rewind the
-        // counter.
         let _stale = Identifier::restore(stale_id, "stale".to_string());
         let next = Identifier::new("next");
         assert!(next.id() > stale_id);
@@ -636,13 +629,10 @@ mod tests {
     /// ids far ahead of the counter never yields a constructed id equal to
     /// a deserialized one.
     ///
-    /// Deserialize targets are spaced `CONSTRUCTION_BUDGET` apart, a bound
-    /// deliberately far larger than the number of ids this test's
-    /// construction threads (and any other test racing the same global
-    /// counter) could plausibly consume while it runs. That keeps every
-    /// target unreachable by ordinary sequential construction until its own
-    /// deserialize call has already fired, regardless of how the threads
-    /// below are scheduled.
+    /// Deserialize targets are spaced `CONSTRUCTION_BUDGET` apart, far more
+    /// ids than this test or any concurrent test could consume while it
+    /// runs, so construction cannot reach a target before its deserialize
+    /// fires.
     #[test]
     fn concurrent_construction_never_collides_with_ids_deserialized_ahead_of_it() {
         const CONSTRUCTION_BUDGET: u64 = 1_000_000;

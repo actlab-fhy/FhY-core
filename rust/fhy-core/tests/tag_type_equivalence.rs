@@ -36,11 +36,8 @@ use serde_json::{Map, Value, json};
 
 const GOLDEN_JSON: &str = include_str!("golden/tag_type_cases.json");
 
-/// Minimum number of golden cases this corpus must carry.
 const MIN_CASES: usize = 100;
 
-/// Minimum total number of golden ops, across every case, this corpus must
-/// carry.
 const MIN_OPS: usize = 1000;
 
 /// Distance above a freshly minted id at which `bind_ahead` binds a slot, and
@@ -126,7 +123,6 @@ impl SlotTable {
     }
 }
 
-/// Return `value`'s hash under the default hasher.
 fn compute_hash<T: Hash>(value: &T) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
@@ -393,10 +389,8 @@ trait TagType: Interned<Key = Identifier> + Eq + Serialize + DeserializeOwned {
     /// Case `type` naming this tag type in the golden data.
     const KIND: &'static str;
 
-    /// Return the value's name.
     fn get_name(&self) -> &Identifier;
 
-    /// Return the value's description.
     fn get_description(&self) -> &str;
 
     /// Return the slot bound to the value's parent, or `None` for a value
@@ -687,13 +681,11 @@ fn check_eq<T: TagType>(
 /// Compare a slot's canonical value against a fresh, non-canonical duplicate
 /// built for the same identifier.
 ///
-/// `new` on an already-registered identifier returns `AlreadyCanonical {
-/// canonical, discarded }`; comparing those two exercises `==` the way a
-/// discarded duplicate would, which `check_eq` (always comparing two
-/// already-canonical, differently-named instances) never reaches. This is the
-/// only way the golden data can catch `==` wrongly including `description`,
-/// which equality must ignore, or, for a domain, wrongly dropping the
-/// `parent` comparison, which equality must include.
+/// `check_eq` compares canonical handles, which are distinct instances only
+/// when their slots differ. Comparing a canonical with the `discarded`
+/// duplicate from `new` exercises `==` on two instances sharing a name,
+/// catching `==` wrongly including `description` or, for a domain, wrongly
+/// dropping `parent`.
 fn check_eq_with_duplicate<T: TagType>(
     slots: &mut SlotTable,
     name: &str,

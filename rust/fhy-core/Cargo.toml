@@ -32,11 +32,9 @@ serde_json = { workspace = true }
 [lints]
 workspace = true
 
-# Integration tests are auto-discovered from `tests/`. These three reach
-# `fhy_core::testing`, which the dev-dependency above turns on for this
-# crate's own tests. `cargo package` drops that dev-dependency, because it
-# carries only a path, so `required-features` is what lets them be skipped
-# rather than fail to compile from the published crate; there, `cargo test
+# These three tests need `fhy_core::testing`. `cargo package` drops the
+# path-only dev-dependency that enables it, so `required-features` makes the
+# published crate skip them instead of failing to compile; `cargo test
 # --features testing` runs them.
 [[test]]
 name = "deterministic_identifiers_stories"

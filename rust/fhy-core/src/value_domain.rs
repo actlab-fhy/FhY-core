@@ -149,8 +149,8 @@ impl Decode for ValueDomain {
     ///
     /// Register the shipped defaults if this is the registry's first use,
     /// then restore the name, then check, build and intern the parent level.
-    /// The Python deserializer takes the last three steps in this order, and
-    /// its defaults exist from import, before any id is restored.
+    /// Python likewise restores the name before decoding the parent, and its
+    /// defaults exist from import, before any id is restored.
     ///
     /// # Errors
     ///
@@ -292,7 +292,7 @@ mod tests {
         hold_id_counter, is_isolated_run, reserve_far_ahead_ids, reserve_pinned_id, take_discarded,
     };
 
-    /// Serializes the test that clears the process-wide registry against the
+    /// Serializes the tests that clear the process-wide registry against the
     /// tests that need their own entries to survive.
     static REGISTRY_GUARD: RegistryGuard = RegistryGuard::new();
 
