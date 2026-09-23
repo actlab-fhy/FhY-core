@@ -1,0 +1,311 @@
+//! Text rendering of expressions in symbolic or functional notation.
+//!
+//! [`format_expression`] renders an [`Expression`] as text under
+//! [`FormatOptions`]: a [`Notation`] choosing between infix operator symbols
+//! and prefix operation names, and an [`IdentifierStyle`] choosing whether an
+//! identifier reference shows its id. Every unary and binary node is
+//! parenthesized, so the text shows the tree's shape exactly and needs no
+//! precedence rules. The text is meant for people: it is not parsed back,
+//! and distinct trees may print alike (the literal `5` and the literal text
+//! `"5"`, or two identifiers with the same name hint when ids are hidden).
+
+use std::iter;
+
+use crate::identifier::Identifier;
+
+use super::node::{
+    BinaryExpression, CallExpression, Expression, ExpressionKind, PiecewiseExpression,
+    UnaryExpression,
+};
+
+/// One pending piece of output: a node still to print, or text to write.
+enum Step<'a> {
+    Print(&'a Expression),
+    Write(&'a str),
+}
+
+/// Push `steps` onto the `pending` stack so that they pop in the order given.
+fn schedule<'a>(pending: &mut Vec<Step<'a>>, steps: impl IntoIterator<Item = Step<'a>>) {
+    let start = pending.len();
+    pending.extend(steps);
+    pending[start..].reverse();
+}
+
+/// Write `identifier` to `text` in `style`.
+fn write_identifier(text: &mut String, identifier: &Identifier, style: IdentifierStyle) {
+    text.push_str(identifier.name_hint());
+    match style {
+        IdentifierStyle::NameHint => {}
+        IdentifierStyle::NameHintWithId => {
+            text.push_str("::");
+            text.push_str(&identifier.id().to_string());
+        }
+    }
+}
+
+/// Schedule the pieces of a unary node.
+fn schedule_unary<'a>(pending: &mut Vec<Step<'a>>, node: &'a UnaryExpression, notation: Notation) {
+    let operation = node.operation();
+    match notation {
+        Notation::Symbolic => schedule(
+            pending,
+            [
+                Step::Write("("),
+                Step::Write(operation.symbol()),
+                Step::Print(node.operand()),
+                Step::Write(")"),
+            ],
+        ),
+        Notation::Functional => schedule(
+            pending,
+            [
+                Step::Write("("),
+                Step::Write(operation.as_str()),
+                Step::Write(" "),
+                Step::Print(node.operand()),
+                Step::Write(")"),
+            ],
+        ),
+    }
+}
+
+/// Schedule the pieces of a binary node.
+fn schedule_binary<'a>(
+    pending: &mut Vec<Step<'a>>,
+    node: &'a BinaryExpression,
+    notation: Notation,
+) {
+    let operation = node.operation();
+    match notation {
+        Notation::Symbolic => schedule(
+            pending,
+            [
+                Step::Write("("),
+                Step::Print(node.left()),
+                Step::Write(" "),
+                Step::Write(operation.symbol()),
+                Step::Write(" "),
+                Step::Print(node.right()),
+                Step::Write(")"),
+            ],
+        ),
+        Notation::Functional => schedule(
+            pending,
+            [
+                Step::Write("("),
+                Step::Write(operation.as_str()),
+                Step::Write(" "),
+                Step::Print(node.left()),
+                Step::Write(" "),
+                Step::Print(node.right()),
+                Step::Write(")"),
+            ],
+        ),
+    }
+}
+
+/// Schedule the pieces of a piecewise node: `{v0 if c0; ...; o otherwise}`
+/// or `(piecewise c0 v0 ... o)`.
+fn schedule_piecewise<'a>(
+    pending: &mut Vec<Step<'a>>,
+    node: &'a PiecewiseExpression,
+    notation: Notation,
+) {
+    let cases = node.cases();
+    match notation {
+        Notation::Symbolic => {
+            let clauses = cases
+                .iter()
+                .enumerate()
+                .flat_map(|(index, (condition, value))| {
+                    [
+                        Step::Write(if index == 0 { "" } else { "; " }),
+                        Step::Print(value),
+                        Step::Write(" if "),
+                        Step::Print(condition),
+                    ]
+                });
+            let otherwise_separator = if cases.is_empty() { "" } else { "; " };
+            schedule(
+                pending,
+                iter::once(Step::Write("{")).chain(clauses).chain([
+                    Step::Write(otherwise_separator),
+                    Step::Print(node.otherwise()),
+                    Step::Write(" otherwise}"),
+                ]),
+            );
+        }
+        Notation::Functional => {
+            let parts = cases.iter().flat_map(|(condition, value)| {
+                [
+                    Step::Write(" "),
+                    Step::Print(condition),
+                    Step::Write(" "),
+                    Step::Print(value),
+                ]
+            });
+            schedule(
+                pending,
+                iter::once(Step::Write("(piecewise")).chain(parts).chain([
+                    Step::Write(" "),
+                    Step::Print(node.otherwise()),
+                    Step::Write(")"),
+                ]),
+            );
+        }
+    }
+}
+
+/// Schedule the pieces of a call: `f(a, b)` or `(f a b)`.
+fn schedule_call<'a>(pending: &mut Vec<Step<'a>>, node: &'a CallExpression, notation: Notation) {
+    let arguments = node.arguments();
+    match notation {
+        Notation::Symbolic => {
+            let listed = arguments.iter().enumerate().flat_map(|(index, argument)| {
+                [
+                    Step::Write(if index == 0 { "" } else { ", " }),
+                    Step::Print(argument),
+                ]
+            });
+            schedule(
+                pending,
+                [Step::Write(node.function_name()), Step::Write("(")]
+                    .into_iter()
+                    .chain(listed)
+                    .chain(iter::once(Step::Write(")"))),
+            );
+        }
+        Notation::Functional => {
+            let listed = arguments
+                .iter()
+                .flat_map(|argument| [Step::Write(" "), Step::Print(argument)]);
+            schedule(
+                pending,
+                [Step::Write("("), Step::Write(node.function_name())]
+                    .into_iter()
+                    .chain(listed)
+                    .chain(iter::once(Step::Write(")"))),
+            );
+        }
+    }
+}
+
+/// How operations, piecewise nodes, and calls are written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Notation {
+    /// Infix operator symbols: `(-x)`, `(x + 1)`, `{1 if (x > 0); 0 otherwise}`,
+    /// `f(x, 1)`.
+    #[default]
+    Symbolic,
+    /// Prefix operation names in parentheses: `(negate x)`, `(add x 1)`,
+    /// `(piecewise (greater x 0) 1 0)`, `(f x 1)`.
+    Functional,
+}
+
+/// How an identifier reference is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum IdentifierStyle {
+    /// The identifier's name hint alone: `x`.
+    #[default]
+    NameHint,
+    /// The name hint, two colons, and the id: `x::41`.
+    NameHintWithId,
+}
+
+/// The options of [`format_expression`].
+///
+/// The default is [`Notation::Symbolic`] with [`IdentifierStyle::NameHint`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub struct FormatOptions {
+    notation: Notation,
+    identifiers: IdentifierStyle,
+}
+
+impl FormatOptions {
+    /// Construct options writing nodes in `notation` and identifier
+    /// references in the `identifiers` style.
+    #[must_use]
+    pub fn new(notation: Notation, identifiers: IdentifierStyle) -> Self {
+        Self {
+            notation,
+            identifiers,
+        }
+    }
+}
+
+/// Write a leaf `node` to `text`, or schedule the pieces of an inner `node`
+/// on `pending`.
+fn print_node<'a>(
+    node: &'a Expression,
+    options: FormatOptions,
+    text: &mut String,
+    pending: &mut Vec<Step<'a>>,
+) {
+    let notation = options.notation;
+    match node.kind() {
+        ExpressionKind::Identifier(identifier) => {
+            write_identifier(text, identifier, options.identifiers);
+        }
+        ExpressionKind::Literal(value) => text.push_str(&value.to_string()),
+        ExpressionKind::Unary(unary) => schedule_unary(pending, unary, notation),
+        ExpressionKind::Binary(binary) => schedule_binary(pending, binary, notation),
+        ExpressionKind::Piecewise(piecewise) => schedule_piecewise(pending, piecewise, notation),
+        ExpressionKind::Call(call) => schedule_call(pending, call, notation),
+    }
+}
+
+/// Render `expression` as text under `options`.
+///
+/// Each node is written as follows, in [`Notation::Symbolic`] and then in
+/// [`Notation::Functional`]:
+///
+/// | Node | Symbolic | Functional |
+/// |---|---|---|
+/// | unary | `(` symbol operand `)`: `(-x)`, `(+x)`, `(!p)` | `(negate x)`, `(positive x)`, `(logical_not p)` |
+/// | binary | `(left symbol right)`: `(x // 2)` | `(floor_divide x 2)` |
+/// | piecewise | `{v0 if c0; v1 if c1; o otherwise}` | `(piecewise c0 v0 c1 v1 o)` |
+/// | call | `f(a, b)`, `f()` | `(f a b)`, `(f)` |
+///
+/// The symbols and names are the operations'
+/// [`symbol`](super::BinaryOperation::symbol) and
+/// [`as_str`](super::BinaryOperation::as_str) texts. Cases are written in
+/// order, then the otherwise branch; arguments in order.
+///
+/// A literal is written as its [`Display`](std::fmt::Display) text in both
+/// notations (`True`, `-1`, `1e+16`, `nan`, `1.50`); a unary node over a
+/// negative literal therefore reads `(--1)`. An identifier reference is
+/// written as its name hint, or as `name::id` under
+/// [`IdentifierStyle::NameHintWithId`], in both notations and with no
+/// quoting or escaping of the name hint.
+///
+/// Formatting does not recurse, so a tree of any depth formats without
+/// exhausting the thread's stack.
+///
+/// # Examples
+///
+/// ```
+/// use fhy_core::identifier::Identifier;
+/// use fhy_core::symbolic::expression::{
+///     Expression, FormatOptions, IdentifierStyle, Notation, format_expression,
+/// };
+///
+/// let x = Expression::from(Identifier::new("x"));
+/// let tree = (&x + 1) * 2;
+///
+/// assert_eq!(format_expression(&tree, FormatOptions::default()), "((x + 1) * 2)");
+/// let functional = FormatOptions::new(Notation::Functional, IdentifierStyle::NameHint);
+/// assert_eq!(format_expression(&tree, functional), "(multiply (add x 1) 2)");
+/// ```
+#[must_use]
+pub fn format_expression(expression: &Expression, options: FormatOptions) -> String {
+    let mut text = String::new();
+    let mut pending = vec![Step::Print(expression)];
+    while let Some(step) = pending.pop() {
+        match step {
+            Step::Write(piece) => text.push_str(piece),
+            Step::Print(node) => print_node(node, options, &mut text, &mut pending),
+        }
+    }
+    text
+}

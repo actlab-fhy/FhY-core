@@ -5,6 +5,7 @@ mod error;
 mod literal;
 mod node;
 mod operation;
+mod pprint;
 mod screen;
 mod sort;
 mod wire;
@@ -17,5 +18,6 @@ pub use node::{
     UnaryExpression,
 };
 pub use operation::{BinaryOperation, UnaryOperation};
+pub use pprint::{FormatOptions, IdentifierStyle, Notation, format_expression};
 pub use screen::{NoRegisteredSorts, SortLookup, validate_logical_operands, validate_predicate};
 pub use sort::FunctionSort;
