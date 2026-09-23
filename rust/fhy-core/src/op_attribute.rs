@@ -238,6 +238,8 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
+    use rstest::rstest;
+
     use crate::identifier::{IdSpaceExhausted, try_allocate_id};
     use crate::test_support::{
         RegistryGuard, assert_isolated_test_passes, compute_hash, has_counter_passed,
@@ -386,17 +388,23 @@ mod tests {
         assert_eq!(tags, expected);
     }
 
-    #[test]
-    fn every_default_attribute_is_registered_under_its_name() {
+    /// Test each shipped default attribute is the canonical entry for its
+    /// name.
+    #[rstest]
+    #[case::commutative(get_commutative)]
+    #[case::associative(get_associative)]
+    #[case::pure(get_pure)]
+    #[case::elementwise(get_elementwise)]
+    fn a_default_attribute_is_registered_under_its_name(
+        #[case] get_default: fn() -> &'static Canonical<OpAttribute>,
+    ) {
         let _guard = REGISTRY_GUARD.hold();
-        for default in list_default_attributes() {
-            assert_eq!(
-                OpAttribute::intern_registry().get(default.name()),
-                Some(default.clone()),
-                "{} is not registered under its name",
-                default.name().name_hint()
-            );
-        }
+        let default = get_default();
+
+        assert_eq!(
+            OpAttribute::intern_registry().get(default.name()),
+            Some(default.clone())
+        );
     }
 
     #[test]
@@ -412,12 +420,20 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_default_attributes_carry_non_empty_descriptions() {
+    /// Test each shipped default attribute carries a non-empty description.
+    #[rstest]
+    #[case::commutative(get_commutative)]
+    #[case::associative(get_associative)]
+    #[case::pure(get_pure)]
+    #[case::elementwise(get_elementwise)]
+    fn a_default_attribute_carries_a_non_empty_description(
+        #[case] get_default: fn() -> &'static Canonical<OpAttribute>,
+    ) {
         let _guard = REGISTRY_GUARD.hold();
-        for default in list_default_attributes() {
-            assert!(!default.description().trim().is_empty());
-        }
+
+        let description = get_default().description();
+
+        assert!(!description.trim().is_empty(), "{description:?}");
     }
 
     #[test]
@@ -525,57 +541,43 @@ mod tests {
         assert_eq!(discarded, *canonical);
     }
 
-    #[test]
-    fn decoding_a_payload_with_an_unknown_field_is_rejected() {
+    /// Test a payload with an unknown field or without its description is
+    /// rejected, naming the offending field.
+    #[rstest]
+    #[case::unknown_field(",\"description\":\"desc\",\"surprise\":1", "surprise")]
+    #[case::missing_description("", "description")]
+    fn decoding_a_malformed_payload_is_rejected(
+        #[case] fields_after_the_name: &str,
+        #[case] expected_message: &str,
+    ) {
         let _guard = REGISTRY_GUARD.hold();
-        let id = reserve_pinned_id("unknown-field-anchor");
-        let json = format!(
-            "{{\"name\":{{\"id\":{id},\"name_hint\":\"extra\"}},\
-             \"description\":\"desc\",\"surprise\":1}}"
-        );
+        let id = reserve_pinned_id("malformed-payload-anchor");
+        let json =
+            format!("{{\"name\":{{\"id\":{id},\"name_hint\":\"x\"}}{fields_after_the_name}}}");
 
         let error = serde_json::from_str::<Canonical<OpAttribute>>(&json).unwrap_err();
 
-        assert!(error.to_string().contains("surprise"), "{error}");
+        assert!(error.to_string().contains(expected_message), "{error}");
     }
 
-    #[test]
-    fn decoding_a_payload_missing_the_description_is_rejected() {
-        let _guard = REGISTRY_GUARD.hold();
-        let id = reserve_pinned_id("missing-field-anchor");
-        let json = format!("{{\"name\":{{\"id\":{id},\"name_hint\":\"partial\"}}}}");
-
-        let error = serde_json::from_str::<Canonical<OpAttribute>>(&json).unwrap_err();
-
-        assert!(error.to_string().contains("description"), "{error}");
-    }
-
-    #[test]
-    fn a_payload_rejected_for_a_trailing_unknown_field_restores_no_name() {
+    /// Test a payload rejected for a field after its name leaves the name's
+    /// id unrestored.
+    #[rstest]
+    #[case::trailing_unknown_field(",\"description\":\"desc\",\"zzz\":1", "zzz")]
+    #[case::mistyped_trailing_description(",\"description\":3", "invalid type")]
+    fn a_payload_rejected_after_its_name_restores_no_name(
+        #[case] fields_after_the_name: &str,
+        #[case] expected_message: &str,
+    ) {
         let _guard = REGISTRY_GUARD.hold();
         let _counter = hold_id_counter();
-        let [id] = reserve_far_ahead_ids("trailing-unknown-attribute-anchor");
-        let json = format!(
-            "{{\"name\":{{\"id\":{id},\"name_hint\":\"a\"}},\
-             \"description\":\"desc\",\"zzz\":1}}"
-        );
+        let [id] = reserve_far_ahead_ids("rejected-after-name-anchor");
+        let json =
+            format!("{{\"name\":{{\"id\":{id},\"name_hint\":\"a\"}}{fields_after_the_name}}}");
 
         let error = serde_json::from_str::<Canonical<OpAttribute>>(&json).unwrap_err();
 
-        assert!(error.to_string().contains("zzz"), "{error}");
-        assert!(!has_counter_passed(id));
-    }
-
-    #[test]
-    fn a_payload_rejected_for_a_mistyped_trailing_description_restores_no_name() {
-        let _guard = REGISTRY_GUARD.hold();
-        let _counter = hold_id_counter();
-        let [id] = reserve_far_ahead_ids("mistyped-description-anchor");
-        let json = format!("{{\"name\":{{\"id\":{id},\"name_hint\":\"a\"}},\"description\":3}}");
-
-        let error = serde_json::from_str::<Canonical<OpAttribute>>(&json).unwrap_err();
-
-        assert!(error.to_string().contains("invalid type"), "{error}");
+        assert!(error.to_string().contains(expected_message), "{error}");
         assert!(!has_counter_passed(id));
     }
 

@@ -7,25 +7,16 @@
 //!
 //! Public API only (`fhy_core::symbolic::expression`).
 
-use std::sync::LazyLock;
+#[path = "common/expression.rs"]
+pub mod expression_support;
 
-use fhy_core::identifier::Identifier;
-use fhy_core::symbolic::expression::{
-    BinaryOperation, Expression, ExpressionKind, FormatOptions, IdentifierStyle, LiteralKind,
-    LiteralValue, Notation, UnaryOperation, build_call, build_piecewise, format_expression,
+use expression_support::{
+    IDENTIFIER_POOL as POOL, build_expression_strategy, build_literal_strategy,
 };
-use num_bigint::BigInt;
+use fhy_core::symbolic::expression::{
+    Expression, ExpressionKind, FormatOptions, IdentifierStyle, Notation, format_expression,
+};
 use proptest::prelude::*;
-use proptest::sample::select;
-
-/// Identifiers the generated trees refer to, with distinct name hints.
-static POOL: LazyLock<[Identifier; 3]> = LazyLock::new(|| {
-    [
-        Identifier::new("v0"),
-        Identifier::new("v1"),
-        Identifier::new("v2"),
-    ]
-});
 
 /// Both notations.
 const NOTATIONS: [Notation; 2] = [Notation::Symbolic, Notation::Functional];
@@ -36,32 +27,6 @@ const ALL_OPTIONS: [(Notation, IdentifierStyle); 4] = [
     (Notation::Symbolic, IdentifierStyle::NameHintWithId),
     (Notation::Functional, IdentifierStyle::NameHint),
     (Notation::Functional, IdentifierStyle::NameHintWithId),
-];
-
-/// Every unary operation.
-const UNARY_OPERATIONS: [UnaryOperation; 3] = [
-    UnaryOperation::Negate,
-    UnaryOperation::Positive,
-    UnaryOperation::LogicalNot,
-];
-
-/// Every binary operation.
-const BINARY_OPERATIONS: [BinaryOperation; 15] = [
-    BinaryOperation::Add,
-    BinaryOperation::Subtract,
-    BinaryOperation::Multiply,
-    BinaryOperation::Divide,
-    BinaryOperation::FloorDivide,
-    BinaryOperation::Modulo,
-    BinaryOperation::Power,
-    BinaryOperation::LogicalAnd,
-    BinaryOperation::LogicalOr,
-    BinaryOperation::Equal,
-    BinaryOperation::NotEqual,
-    BinaryOperation::Less,
-    BinaryOperation::LessEqual,
-    BinaryOperation::Greater,
-    BinaryOperation::GreaterEqual,
 ];
 
 /// The number of inner nodes of a tree, by kind.
@@ -96,83 +61,6 @@ fn count_occurrences(text: &str, character: char) -> usize {
     text.chars()
         .filter(|&candidate| candidate == character)
         .count()
-}
-
-/// Return `expression` unless it is a literal other than a Boolean, which
-/// becomes a Boolean literal, so it can stand as a case condition.
-fn coerce_to_condition(expression: Expression) -> Expression {
-    match expression.kind() {
-        ExpressionKind::Literal(literal) if !matches!(literal.kind(), LiteralKind::Bool(_)) => {
-            Expression::from(LiteralValue::from(true))
-        }
-        _ => expression,
-    }
-}
-
-/// Return a strategy for literals of every kind; floats are finite unless
-/// `with_non_finite_floats` is set.
-fn build_literal_strategy(with_non_finite_floats: bool) -> BoxedStrategy<LiteralValue> {
-    let finite_float = any::<f64>().prop_filter("a finite float", |value| value.is_finite());
-    let float = if with_non_finite_floats {
-        prop_oneof![
-            4 => finite_float,
-            1 => select(vec![f64::NAN, -f64::NAN, f64::INFINITY, f64::NEG_INFINITY]),
-        ]
-        .boxed()
-    } else {
-        finite_float.boxed()
-    };
-    prop_oneof![
-        any::<bool>().prop_map(LiteralValue::from),
-        (-1000_i64..1000).prop_map(LiteralValue::from),
-        "-?[1-9][0-9]{18,40}".prop_map(|digits| {
-            LiteralValue::from(digits.parse::<BigInt>().expect("generated digits"))
-        }),
-        float.prop_map(LiteralValue::from),
-        "[0-9]{1,6}".prop_map(|text| LiteralValue::parse_text(&text).expect("an integer text")),
-        "[0-9]{0,4}\\.[0-9]{1,4}|[0-9]{1,4}\\.[0-9]{0,4}"
-            .prop_map(|text| LiteralValue::parse_text(&text).expect("a decimal text")),
-    ]
-    .boxed()
-}
-
-/// Return a strategy for trees over [`POOL`] of every node kind; float
-/// literals are finite unless `with_non_finite_floats` is set.
-fn build_expression_strategy(with_non_finite_floats: bool) -> BoxedStrategy<Expression> {
-    let leaf = prop_oneof![
-        (0..POOL.len()).prop_map(|index| Expression::from(POOL[index].clone())),
-        build_literal_strategy(with_non_finite_floats).prop_map(Expression::from),
-    ];
-    leaf.prop_recursive(5, 32, 4, |inner| {
-        prop_oneof![
-            (select(UNARY_OPERATIONS.to_vec()), inner.clone())
-                .prop_map(|(operation, operand)| Expression::new_unary(operation, operand)),
-            (
-                select(BINARY_OPERATIONS.to_vec()),
-                inner.clone(),
-                inner.clone()
-            )
-                .prop_map(|(operation, left, right)| Expression::new_binary(
-                    operation, left, right
-                )),
-            (
-                prop::collection::vec(
-                    (inner.clone().prop_map(coerce_to_condition), inner.clone()),
-                    1..4
-                ),
-                inner.clone(),
-            )
-                .prop_map(|(cases, otherwise)| {
-                    build_piecewise(cases, otherwise).expect("conditions are coerced")
-                }),
-            (select(vec!["f", "g"]), prop::collection::vec(inner, 0..4)).prop_map(
-                |(function_name, arguments)| {
-                    build_call(function_name, arguments).expect("a named call")
-                }
-            ),
-        ]
-    })
-    .boxed()
 }
 
 proptest! {

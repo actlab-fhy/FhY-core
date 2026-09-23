@@ -454,14 +454,24 @@ fn expression_rebuild_with_children_round_trips_multiple_case_piecewise() {
 
     assert_eq!(rebuilt, expression);
     let node = expect_piecewise(&rebuilt);
-    for (index, (condition, value)) in node.cases().iter().enumerate() {
-        assert!(
-            Expression::ptr_eq(condition, &conditions[index]),
-            "condition {index}"
-        );
-        assert!(Expression::ptr_eq(value, &values[index]), "value {index}");
-    }
-    assert!(Expression::ptr_eq(node.otherwise(), &otherwise));
+    let parts: Vec<&Expression> = node
+        .cases()
+        .iter()
+        .flat_map(|(condition, value)| [condition, value])
+        .chain([node.otherwise()])
+        .collect();
+    assert_same_nodes(
+        &parts,
+        &[
+            &conditions[0],
+            &values[0],
+            &conditions[1],
+            &values[1],
+            &conditions[2],
+            &values[2],
+            &otherwise,
+        ],
+    );
 }
 
 /// Test rebuilding a one-case piecewise from any other number of children is
@@ -894,10 +904,15 @@ fn expression_references_to_distinct_identifiers_are_unequal() {
 }
 
 /// Test a set of equal trees built separately keeps one member.
-#[test]
-fn expression_set_of_equal_trees_keeps_one_member() {
-    let first = Expression::new_binary(BinaryOperation::Add, 1, 2);
-    let second = Expression::new_binary(BinaryOperation::Add, 1, 2);
+#[rstest]
+#[case::literal(|| build_literal(42))]
+#[case::unary(|| Expression::new_unary(UnaryOperation::Negate, 1))]
+#[case::binary(|| Expression::new_binary(BinaryOperation::Add, 1, 2))]
+#[case::piecewise(|| build_piecewise_node(vec![(build_literal(true), build_literal(1))], build_literal(0)))]
+#[case::call(|| build_call_node("max", vec![build_literal(1), build_literal(2)]))]
+fn expression_set_of_equal_trees_keeps_one_member(#[case] build: fn() -> Expression) {
+    let first = build();
+    let second = build();
 
     let set: HashSet<Expression> = [first, second].into_iter().collect();
 

@@ -9,11 +9,16 @@
 //!
 //! Public API only (`fhy_core::symbolic::expression::pattern`).
 
+#[path = "common/expression.rs"]
+pub mod expression_support;
+
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use expression_support::{
+    ALL_BINARY_OPERATIONS as BINARY_OPERATIONS, IDENTIFIER_POOL as POOL, build_expression_strategy,
+};
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::pattern::{
     CallbackError, MatchBindings, Pattern, RewriteRule, apply_rewrite_rules, does_pattern_match,
@@ -21,52 +26,35 @@ use fhy_core::symbolic::expression::pattern::{
 };
 use fhy_core::symbolic::expression::{
     BinaryOperation, Expression, ExpressionKind, LiteralKind, LiteralValue, UnaryOperation,
-    build_call, build_piecewise,
+    build_call,
 };
 use proptest::prelude::*;
 use proptest::sample::select;
 
-/// Identifiers the generated trees refer to.
-static POOL: LazyLock<[Identifier; 3]> = LazyLock::new(|| {
-    [
-        Identifier::new("v0"),
-        Identifier::new("v1"),
-        Identifier::new("v2"),
-    ]
-});
+/// The unary operations of the numeric fragment the reference evaluator
+/// knows.
+const NUMERIC_UNARY_OPERATIONS: [UnaryOperation; 2] =
+    [UnaryOperation::Negate, UnaryOperation::Positive];
 
-/// Every unary operation.
-const UNARY_OPERATIONS: [UnaryOperation; 3] = [
-    UnaryOperation::Negate,
-    UnaryOperation::Positive,
-    UnaryOperation::LogicalNot,
-];
-
-/// Every binary operation.
-const BINARY_OPERATIONS: [BinaryOperation; 15] = [
-    BinaryOperation::Add,
-    BinaryOperation::Subtract,
-    BinaryOperation::Multiply,
-    BinaryOperation::Divide,
-    BinaryOperation::FloorDivide,
-    BinaryOperation::Modulo,
-    BinaryOperation::Power,
-    BinaryOperation::LogicalAnd,
-    BinaryOperation::LogicalOr,
-    BinaryOperation::Equal,
-    BinaryOperation::NotEqual,
-    BinaryOperation::Less,
-    BinaryOperation::LessEqual,
-    BinaryOperation::Greater,
-    BinaryOperation::GreaterEqual,
-];
-
-/// The operations of the numeric fragment the reference evaluator knows.
+/// The ring operations of the numeric fragment the reference evaluator
+/// knows.
 const NUMERIC_BINARY_OPERATIONS: [BinaryOperation; 3] = [
     BinaryOperation::Add,
     BinaryOperation::Subtract,
     BinaryOperation::Multiply,
 ];
+
+/// The division operations of the numeric fragment, whose divisor is always
+/// a non-zero literal.
+const NUMERIC_DIVISION_OPERATIONS: [BinaryOperation; 2] =
+    [BinaryOperation::FloorDivide, BinaryOperation::Modulo];
+
+/// The divisors of the division operations.
+const NONZERO_DIVISORS: [i64; 16] = [-8, -7, -6, -5, -4, -3, -2, -1, 1, 2, 3, 4, 5, 6, 7, 8];
+
+/// The built-in functions of the numeric fragment, each the identity on an
+/// integer.
+const INTEGER_RESULT_FUNCTIONS: [&str; 3] = ["floor", "ceil", "round"];
 
 /// How a node of a numeric tree is wrapped in a value-preserving no-op.
 #[derive(Debug, Clone, Copy)]
@@ -97,75 +85,13 @@ fn build_wrap_strategy() -> impl Strategy<Value = Wrap> {
     ]
 }
 
-/// Return a literal other than a Boolean as a Boolean, so it can stand as a
-/// case condition.
-fn coerce_to_condition(expression: Expression) -> Expression {
-    match expression.kind() {
-        ExpressionKind::Literal(literal) if !matches!(literal.kind(), LiteralKind::Bool(_)) => {
-            Expression::from(LiteralValue::from(true))
-        }
-        _ => expression,
-    }
-}
-
-/// Return a strategy for literals of every stored form, from a small value
-/// space so equal literals recur.
-fn build_literal_strategy() -> BoxedStrategy<LiteralValue> {
-    prop_oneof![
-        any::<bool>().prop_map(LiteralValue::from),
-        (-3_i64..=3).prop_map(LiteralValue::from),
-        select(vec![0.0, -0.0, 1.0, 2.5]).prop_map(LiteralValue::from),
-        select(vec!["0", "05", "1", "1.5", "1.50"])
-            .prop_map(|text| LiteralValue::parse_text(text).expect("a literal text")),
-    ]
-    .boxed()
-}
-
-/// Return a strategy for trees over [`POOL`] of every node kind.
-fn build_expression_strategy() -> BoxedStrategy<Expression> {
-    let leaf = prop_oneof![
-        (0..POOL.len()).prop_map(|index| Expression::from(POOL[index].clone())),
-        build_literal_strategy().prop_map(Expression::from),
-    ];
-    leaf.prop_recursive(4, 24, 3, |inner| {
-        prop_oneof![
-            (select(UNARY_OPERATIONS.to_vec()), inner.clone())
-                .prop_map(|(operation, operand)| Expression::new_unary(operation, operand)),
-            (
-                select(BINARY_OPERATIONS.to_vec()),
-                inner.clone(),
-                inner.clone()
-            )
-                .prop_map(|(operation, left, right)| Expression::new_binary(
-                    operation, left, right
-                )),
-            (
-                prop::collection::vec(
-                    (inner.clone().prop_map(coerce_to_condition), inner.clone()),
-                    1..3
-                ),
-                inner.clone(),
-            )
-                .prop_map(|(cases, otherwise)| {
-                    build_piecewise(cases, otherwise).expect("conditions are coerced")
-                }),
-            (select(vec!["f", "g"]), prop::collection::vec(inner, 0..3)).prop_map(
-                |(function_name, arguments)| {
-                    build_call(function_name, arguments).expect("a named call")
-                }
-            ),
-        ]
-    })
-    .boxed()
-}
-
 /// Return a strategy for binary trees at the root, with a binary operation
 /// other than the root's.
 fn build_binary_root_strategy() -> impl Strategy<Value = (Expression, BinaryOperation)> {
     (
         select(BINARY_OPERATIONS.to_vec()),
-        build_expression_strategy(),
-        build_expression_strategy(),
+        build_expression_strategy(true),
+        build_expression_strategy(true),
         1..BINARY_OPERATIONS.len(),
     )
         .prop_map(|(operation, left, right, offset)| {
@@ -178,27 +104,41 @@ fn build_binary_root_strategy() -> impl Strategy<Value = (Expression, BinaryOper
         })
 }
 
-/// Return a strategy for a numeric tree over [`POOL`] (integer literals,
-/// identifiers, addition, subtraction, multiplication, negation) paired
-/// with a copy in which some nodes, possibly the root, are wrapped in
-/// `+ 0`, `* 1`, or `-(-...)`.
+/// Return a strategy for a numeric tree over [`POOL`] paired with a copy in
+/// which some nodes, possibly the root, are wrapped in `+ 0`, `* 1`, or
+/// `-(-...)`.
+///
+/// The tree holds identifiers, integer literals of every size, negation and
+/// unary plus, addition, subtraction and multiplication, floor division and
+/// modulo by a non-zero literal, and one-argument calls to `floor`, `ceil`
+/// and `round`.
 fn build_wrapped_numeric_tree_strategy() -> BoxedStrategy<(Expression, Expression)> {
     let leaf = (
         prop_oneof![
             (0..POOL.len()).prop_map(|index| Expression::from(POOL[index].clone())),
-            (-3_i64..=3).prop_map(|value| Expression::from(LiteralValue::from(value))),
+            (-64_i64..=64).prop_map(|value| Expression::from(LiteralValue::from(value))),
+            any::<i64>().prop_map(|value| Expression::from(LiteralValue::from(value))),
         ],
         build_wrap_strategy(),
     )
         .prop_map(|(expression, wrap)| (expression.clone(), apply_wrap(expression, wrap)));
     leaf.prop_recursive(4, 24, 2, |inner| {
         prop_oneof![
-            (inner.clone(), build_wrap_strategy())
-                .prop_map(|((plain, wrapped), wrap)| { (-plain, apply_wrap(-wrapped, wrap)) }),
+            (
+                select(NUMERIC_UNARY_OPERATIONS.to_vec()),
+                inner.clone(),
+                build_wrap_strategy()
+            )
+                .prop_map(|(operation, (plain, wrapped), wrap)| {
+                    (
+                        Expression::new_unary(operation, plain),
+                        apply_wrap(Expression::new_unary(operation, wrapped), wrap),
+                    )
+                }),
             (
                 select(NUMERIC_BINARY_OPERATIONS.to_vec()),
                 inner.clone(),
-                inner,
+                inner.clone(),
                 build_wrap_strategy(),
             )
                 .prop_map(
@@ -217,6 +157,43 @@ fn build_wrapped_numeric_tree_strategy() -> BoxedStrategy<(Expression, Expressio
                         )
                     }
                 ),
+            (
+                select(NUMERIC_DIVISION_OPERATIONS.to_vec()),
+                inner.clone(),
+                select(NONZERO_DIVISORS.to_vec()),
+                build_wrap_strategy(),
+                build_wrap_strategy(),
+            )
+                .prop_map(
+                    |(operation, (plain, wrapped), divisor, divisor_wrap, wrap)| {
+                        let divisor = Expression::from(LiteralValue::from(divisor));
+                        (
+                            Expression::new_binary(operation, plain, divisor.clone()),
+                            apply_wrap(
+                                Expression::new_binary(
+                                    operation,
+                                    wrapped,
+                                    apply_wrap(divisor, divisor_wrap),
+                                ),
+                                wrap,
+                            ),
+                        )
+                    }
+                ),
+            (
+                select(INTEGER_RESULT_FUNCTIONS.to_vec()),
+                inner,
+                build_wrap_strategy()
+            )
+                .prop_map(|(function_name, (plain, wrapped), wrap)| {
+                    (
+                        build_call(function_name, [plain]).expect("a named call"),
+                        apply_wrap(
+                            build_call(function_name, [wrapped]).expect("a named call"),
+                            wrap,
+                        ),
+                    )
+                }),
         ]
     })
     .boxed()
@@ -232,19 +209,25 @@ fn build_environment_strategy() -> impl Strategy<Value = HashMap<Identifier, i64
     })
 }
 
-/// Evaluate a numeric tree with wrapping 64-bit integer arithmetic.
+/// Evaluate a numeric tree with wrapping 64-bit integer arithmetic, floor
+/// division and modulo rounding toward negative infinity as Python's do.
 ///
 /// Wrapping arithmetic is a ring, so `x + 0`, `x * 1` and `-(-x)` equal `x`
 /// for every `x`.
 fn evaluate_numeric(expression: &Expression, environment: &HashMap<Identifier, i64>) -> i64 {
     match expression.kind() {
         ExpressionKind::Literal(literal) => match literal.kind() {
-            LiteralKind::Int(value) => i64::try_from(value).expect("a small integer literal"),
+            LiteralKind::Int(value) => i64::try_from(value).expect("a 64-bit integer literal"),
             other => panic!("a numeric tree holds only integers, got {other:?}"),
         },
         ExpressionKind::Identifier(identifier) => environment[identifier],
-        ExpressionKind::Unary(node) if node.operation() == UnaryOperation::Negate => {
-            evaluate_numeric(node.operand(), environment).wrapping_neg()
+        ExpressionKind::Unary(node) => {
+            let operand = evaluate_numeric(node.operand(), environment);
+            match node.operation() {
+                UnaryOperation::Negate => operand.wrapping_neg(),
+                UnaryOperation::Positive => operand,
+                UnaryOperation::LogicalNot => panic!("a numeric tree has no logical not"),
+            }
         }
         ExpressionKind::Binary(node) => {
             let left = evaluate_numeric(node.left(), environment);
@@ -253,8 +236,28 @@ fn evaluate_numeric(expression: &Expression, environment: &HashMap<Identifier, i
                 BinaryOperation::Add => left.wrapping_add(right),
                 BinaryOperation::Subtract => left.wrapping_sub(right),
                 BinaryOperation::Multiply => left.wrapping_mul(right),
+                BinaryOperation::FloorDivide => {
+                    let quotient = left.wrapping_div(right);
+                    let rounds_toward_zero =
+                        left.wrapping_rem(right) != 0 && (left < 0) != (right < 0);
+                    quotient - i64::from(rounds_toward_zero)
+                }
+                BinaryOperation::Modulo => {
+                    let remainder = left.wrapping_rem(right);
+                    if remainder != 0 && (remainder < 0) != (right < 0) {
+                        remainder + right
+                    } else {
+                        remainder
+                    }
+                }
                 other => panic!("a numeric tree has no {other:?}"),
             }
+        }
+        ExpressionKind::Call(node) if INTEGER_RESULT_FUNCTIONS.contains(&node.function_name()) => {
+            let [argument] = node.arguments() else {
+                panic!("a numeric call takes one argument, got {node:?}");
+            };
+            evaluate_numeric(argument, environment)
         }
         _ => panic!("a numeric tree has no {expression:?}"),
     }
@@ -387,7 +390,7 @@ proptest! {
     /// Test a pattern mirroring a tree matches it and binds each leaf
     /// capture to a handle to that leaf, in leaf order.
     #[test]
-    fn mirroring_pattern_matches_and_binds_every_leaf(expression in build_expression_strategy()) {
+    fn mirroring_pattern_matches_and_binds_every_leaf(expression in build_expression_strategy(true)) {
         let (mirror, captures) = build_mirroring_pattern(&expression);
 
         let bindings = match_pattern(&mirror, &expression).expect("no predicate");
@@ -404,7 +407,7 @@ proptest! {
 
     /// Test the wildcard matches every tree and binds nothing.
     #[test]
-    fn wildcard_pattern_matches_every_expression(expression in build_expression_strategy()) {
+    fn wildcard_pattern_matches_every_expression(expression in build_expression_strategy(true)) {
         let bindings = match_pattern(&Pattern::wildcard(), &expression).expect("no predicate");
 
         prop_assert!(bindings.is_some_and(|bindings| bindings.is_empty()));
@@ -413,7 +416,7 @@ proptest! {
     /// Test `does_pattern_match` agrees with `match_pattern` for a mirror,
     /// the wildcard, and a literal outside the generated alphabet.
     #[test]
-    fn does_pattern_match_agrees_with_match_pattern(expression in build_expression_strategy()) {
+    fn does_pattern_match_agrees_with_match_pattern(expression in build_expression_strategy(true)) {
         let (mirror, _) = build_mirroring_pattern(&expression);
         let outside_alphabet = Pattern::literal(Some(
             LiteralValue::parse_text("99999.99999").expect("a decimal text"),
@@ -423,7 +426,7 @@ proptest! {
             let answer = does_pattern_match(&pattern, &expression).expect("no predicate");
             let bindings = match_pattern(&pattern, &expression).expect("no predicate");
 
-            prop_assert_eq!(answer, bindings.is_some());
+            prop_assert_eq!(answer, bindings.is_some(), "for {:?}", pattern);
         }
     }
 
@@ -442,7 +445,7 @@ proptest! {
 
     /// Test an empty rule list returns the input itself, unchanged.
     #[test]
-    fn apply_rewrite_rules_with_no_rules_is_the_identity(expression in build_expression_strategy()) {
+    fn apply_rewrite_rules_with_no_rules_is_the_identity(expression in build_expression_strategy(true)) {
         let outcome = apply_rewrite_rules(&expression, &[]).expect("no rule to fail");
 
         prop_assert!(Expression::ptr_eq(outcome.output(), &expression));
@@ -490,7 +493,7 @@ proptest! {
     /// it fired below the root.
     #[test]
     fn identity_rewrite_changes_exactly_trees_it_fires_below_the_root(
-        expression in build_expression_strategy()
+        expression in build_expression_strategy(true)
     ) {
         let rule = RewriteRule::new(
             Pattern::capture("x", Pattern::literal(None)).expect("a non-empty capture name"),

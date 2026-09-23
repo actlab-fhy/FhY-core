@@ -286,6 +286,9 @@ pub fn get_address_domain() -> &'static Canonical<ValueDomain> {
 mod tests {
     use super::*;
 
+    use proptest::prelude::*;
+    use rstest::rstest;
+
     use crate::identifier::{IdSpaceExhausted, try_allocate_id};
     use crate::test_support::{
         RegistryGuard, assert_isolated_test_passes, compute_hash, has_counter_passed,
@@ -425,21 +428,19 @@ mod tests {
         assert_ne!(*parented, orphan);
     }
 
-    #[test]
-    fn the_data_domain_is_registered_under_its_name() {
+    /// Test each shipped default domain is the canonical entry for its name.
+    #[rstest]
+    #[case::data(get_data_domain)]
+    #[case::address(get_address_domain)]
+    fn a_default_domain_is_registered_under_its_name(
+        #[case] get_default: fn() -> &'static Canonical<ValueDomain>,
+    ) {
         let _guard = REGISTRY_GUARD.hold();
-        assert_eq!(
-            ValueDomain::intern_registry().get(get_data_domain().name()),
-            Some(get_data_domain().clone())
-        );
-    }
+        let default = get_default();
 
-    #[test]
-    fn the_address_domain_is_registered_under_its_name() {
-        let _guard = REGISTRY_GUARD.hold();
         assert_eq!(
-            ValueDomain::intern_registry().get(get_address_domain().name()),
-            Some(get_address_domain().clone())
+            ValueDomain::intern_registry().get(default.name()),
+            Some(default.clone())
         );
     }
 
@@ -450,19 +451,30 @@ mod tests {
         assert_ne!(get_data_domain().name(), get_address_domain().name());
     }
 
-    #[test]
-    fn the_default_domains_have_no_parent() {
+    /// Test each shipped default domain is a root domain.
+    #[rstest]
+    #[case::data(get_data_domain)]
+    #[case::address(get_address_domain)]
+    fn a_default_domain_has_no_parent(
+        #[case] get_default: fn() -> &'static Canonical<ValueDomain>,
+    ) {
         let _guard = REGISTRY_GUARD.hold();
-        assert_eq!(get_data_domain().parent(), None);
-        assert_eq!(get_address_domain().parent(), None);
+
+        assert_eq!(get_default().parent(), None);
     }
 
-    #[test]
-    fn the_default_domains_carry_non_empty_descriptions() {
+    /// Test each shipped default domain carries a non-empty description.
+    #[rstest]
+    #[case::data(get_data_domain)]
+    #[case::address(get_address_domain)]
+    fn a_default_domain_carries_a_non_empty_description(
+        #[case] get_default: fn() -> &'static Canonical<ValueDomain>,
+    ) {
         let _guard = REGISTRY_GUARD.hold();
-        for default in [get_data_domain(), get_address_domain()] {
-            assert!(!default.description().trim().is_empty());
-        }
+
+        let description = get_default().description();
+
+        assert!(!description.trim().is_empty(), "{description:?}");
     }
 
     #[test]
@@ -592,6 +604,140 @@ mod tests {
         let child = intern_child("subdomain-one-way", get_data_domain());
 
         assert!(!get_data_domain().is_subdomain_of(&child));
+    }
+
+    /// Largest number of domains one generated hierarchy holds.
+    const MAXIMUM_HIERARCHY_SIZE: usize = 8;
+
+    /// Where a generated domain hangs: at the top, under a shipped default, or
+    /// under a domain generated before it. The first domain has none before
+    /// it, so `Earlier` makes it a root.
+    #[derive(Debug, Clone, Copy)]
+    enum ParentChoice {
+        Root,
+        Data,
+        Address,
+        Earlier(prop::sample::Index),
+    }
+
+    /// A domain of a generated hierarchy as the reference model sees it.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum HierarchyNode {
+        Data,
+        Address,
+        Built(usize),
+    }
+
+    /// Build a strategy for the parent choices of a hierarchy, favoring
+    /// domains nested under earlier ones so chains grow deep.
+    fn build_hierarchy_strategy() -> impl Strategy<Value = Vec<ParentChoice>> {
+        let choice = prop_oneof![
+            1 => Just(ParentChoice::Root),
+            1 => Just(ParentChoice::Data),
+            1 => Just(ParentChoice::Address),
+            3 => any::<prop::sample::Index>().prop_map(ParentChoice::Earlier),
+        ];
+        prop::collection::vec(choice, 1..=MAXIMUM_HIERARCHY_SIZE)
+    }
+
+    /// Return the domain `node` stands for.
+    fn resolve_node(
+        node: HierarchyNode,
+        domains: &[Canonical<ValueDomain>],
+    ) -> &Canonical<ValueDomain> {
+        match node {
+            HierarchyNode::Data => get_data_domain(),
+            HierarchyNode::Address => get_address_domain(),
+            HierarchyNode::Built(index) => &domains[index],
+        }
+    }
+
+    /// Intern one domain under a fresh name per choice, and return the
+    /// domains with the parent node of each.
+    fn intern_hierarchy(
+        choices: &[ParentChoice],
+    ) -> (Vec<Canonical<ValueDomain>>, Vec<Option<HierarchyNode>>) {
+        let mut domains = Vec::with_capacity(choices.len());
+        let mut parents = Vec::with_capacity(choices.len());
+        for (index, choice) in choices.iter().enumerate() {
+            let parent_node = match *choice {
+                ParentChoice::Root => None,
+                ParentChoice::Data => Some(HierarchyNode::Data),
+                ParentChoice::Address => Some(HierarchyNode::Address),
+                ParentChoice::Earlier(_) if index == 0 => None,
+                ParentChoice::Earlier(earlier) => Some(HierarchyNode::Built(earlier.index(index))),
+            };
+            let parent = parent_node.map(|node| resolve_node(node, &domains).clone());
+            let name = Identifier::new(&format!("hierarchy-{index}"));
+            domains.push(ValueDomain::new(name, "generated", parent).into_canonical());
+            parents.push(parent_node);
+        }
+        (domains, parents)
+    }
+
+    /// Return `node` and every node above it, following `parents`.
+    fn list_model_ancestors(
+        node: HierarchyNode,
+        parents: &[Option<HierarchyNode>],
+    ) -> Vec<HierarchyNode> {
+        let mut ancestors = vec![node];
+        let mut current = node;
+        while let HierarchyNode::Built(index) = current {
+            let Some(parent) = parents[index] else {
+                break;
+            };
+            ancestors.push(parent);
+            current = parent;
+        }
+        ancestors
+    }
+
+    proptest! {
+        /// Test `is_subdomain_of` holds exactly when the other domain is the
+        /// domain itself or one of its ancestors, for every pair of domains in
+        /// any hierarchy built under the shipped defaults.
+        #[test]
+        fn is_subdomain_of_matches_the_ancestor_relation_for_any_hierarchy(
+            choices in build_hierarchy_strategy(),
+        ) {
+            let _guard = REGISTRY_GUARD.hold();
+            let (domains, parents) = intern_hierarchy(&choices);
+            let nodes: Vec<HierarchyNode> = [HierarchyNode::Data, HierarchyNode::Address]
+                .into_iter()
+                .chain((0..domains.len()).map(HierarchyNode::Built))
+                .collect();
+
+            for &subject in &nodes {
+                let ancestors = list_model_ancestors(subject, &parents);
+                for &other in &nodes {
+                    prop_assert_eq!(
+                        resolve_node(subject, &domains)
+                            .is_subdomain_of(resolve_node(other, &domains)),
+                        ancestors.contains(&other),
+                        "{:?} is_subdomain_of {:?}",
+                        subject,
+                        other
+                    );
+                }
+            }
+        }
+
+        /// Test every domain of any hierarchy decodes from its JSON back to
+        /// its own canonical handle.
+        #[test]
+        fn a_domain_in_any_hierarchy_round_trips_through_json(
+            choices in build_hierarchy_strategy(),
+        ) {
+            let _guard = REGISTRY_GUARD.hold();
+            let (domains, _parents) = intern_hierarchy(&choices);
+
+            for domain in &domains {
+                let json = serde_json::to_string(&**domain).unwrap();
+                let restored: Canonical<ValueDomain> = serde_json::from_str(&json).unwrap();
+
+                prop_assert_eq!(&restored, domain);
+            }
+        }
     }
 
     #[test]
@@ -761,31 +907,25 @@ mod tests {
         assert_eq!(discarded, *canonical);
     }
 
-    #[test]
-    fn decoding_a_payload_with_an_unknown_field_is_rejected() {
+    /// Test a payload with an unknown field or without its parent is
+    /// rejected, naming the offending field.
+    #[rstest]
+    #[case::unknown_field(",\"parent\":null,\"surprise\":1", "surprise")]
+    #[case::missing_parent("", "missing field `parent`")]
+    fn decoding_a_malformed_payload_is_rejected(
+        #[case] fields_after_the_description: &str,
+        #[case] expected_message: &str,
+    ) {
         let _guard = REGISTRY_GUARD.hold();
-        let id = reserve_pinned_id("unknown-field-anchor");
+        let id = reserve_pinned_id("malformed-payload-anchor");
         let json = format!(
-            "{{\"name\":{{\"id\":{id},\"name_hint\":\"extra\"}},\
-             \"description\":\"desc\",\"parent\":null,\"surprise\":1}}"
+            "{{\"name\":{{\"id\":{id},\"name_hint\":\"x\"}},\
+             \"description\":\"desc\"{fields_after_the_description}}}"
         );
 
         let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
 
-        assert!(error.to_string().contains("surprise"), "{error}");
-    }
-
-    #[test]
-    fn decoding_a_payload_missing_the_parent_is_rejected() {
-        let _guard = REGISTRY_GUARD.hold();
-        let id = reserve_pinned_id("missing-parent-anchor");
-        let json = format!(
-            "{{\"name\":{{\"id\":{id},\"name_hint\":\"partial\"}},\"description\":\"desc\"}}"
-        );
-
-        let error = serde_json::from_str::<Canonical<ValueDomain>>(&json).unwrap_err();
-
-        assert!(error.to_string().contains("parent"), "{error}");
+        assert!(error.to_string().contains(expected_message), "{error}");
     }
 
     /// Return the JSON payload of a domain named `id` whose `parent` field

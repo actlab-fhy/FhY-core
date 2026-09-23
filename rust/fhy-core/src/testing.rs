@@ -218,6 +218,9 @@ mod tests {
     use std::sync::Barrier;
     use std::thread;
 
+    use proptest::prelude::*;
+    use rstest::rstest;
+
     use crate::identifier::Identifier;
     use crate::test_support::{assert_send_sync, compute_hash, reserve_pinned_id};
 
@@ -349,27 +352,58 @@ mod tests {
         assert_ne!(deserialized, constructed);
     }
 
-    #[test]
-    fn clones_inside_a_scope_stay_equal() {
-        let _scope = DeterministicIdentifierScope::enter();
-        let original = Identifier::new("shared");
-
-        let cloned = original.clone();
-
-        assert_eq!(cloned, original);
-        assert_eq!(cloned.name_hint(), "shared");
+    /// Return a clone of `identifier`.
+    fn clone_identifier(identifier: &Identifier) -> Identifier {
+        identifier.clone()
     }
 
-    #[test]
-    fn a_serde_round_trip_inside_a_scope_keeps_the_identifier() {
+    /// Return `identifier` decoded from its own JSON.
+    fn round_trip_identifier_through_json(identifier: &Identifier) -> Identifier {
+        let json = serde_json::to_string(identifier).unwrap();
+        serde_json::from_str(&json).unwrap()
+    }
+
+    /// Test a clone or a serde round trip made inside a scope equals the
+    /// original.
+    #[rstest]
+    #[case::clone(clone_identifier)]
+    #[case::serde_round_trip(round_trip_identifier_through_json)]
+    fn a_duplicate_made_inside_a_scope_equals_the_original(
+        #[case] duplicate: fn(&Identifier) -> Identifier,
+    ) {
         let _scope = DeterministicIdentifierScope::enter();
         let original = Identifier::new("shared");
 
-        let json = serde_json::to_string(&original).unwrap();
-        let restored: Identifier = serde_json::from_str(&json).unwrap();
+        let duplicated = duplicate(&original);
 
-        assert_eq!(restored, original);
-        assert_eq!(restored.name_hint(), "shared");
+        assert_eq!(duplicated, original);
+        assert_eq!(duplicated.name_hint(), "shared");
+    }
+
+    proptest! {
+        /// Test identifiers built inside one scope are equal exactly when
+        /// their name hints are, for any sequence of name hints.
+        #[test]
+        fn identifiers_in_a_scope_are_equal_exactly_when_their_name_hints_are(
+            name_hints in prop::collection::vec("[a-c]{0,2}", 0..16),
+        ) {
+            let _scope = DeterministicIdentifierScope::enter();
+
+            let identifiers: Vec<Identifier> =
+                name_hints.iter().map(|name_hint| Identifier::new(name_hint)).collect();
+
+            for (left_hint, left) in name_hints.iter().zip(&identifiers) {
+                for (right_hint, right) in name_hints.iter().zip(&identifiers) {
+                    prop_assert_eq!(
+                        left == right,
+                        left_hint == right_hint,
+                        "{:?} vs {:?}",
+                        left,
+                        right
+                    );
+                }
+            }
+        }
     }
 
     #[test]

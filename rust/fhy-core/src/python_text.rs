@@ -614,8 +614,39 @@ mod tests {
     /// Build a strategy over the digit strings of `1..=max_length` ASCII
     /// digits.
     fn generate_digit_strings(max_length: usize) -> impl Strategy<Value = String> {
-        proptest::collection::vec(proptest::char::range('0', '9'), 1..=max_length)
+        generate_digit_strings_in(1..=max_length)
+    }
+
+    /// Build a strategy over the digit strings whose length is in `lengths`.
+    fn generate_digit_strings_in(
+        lengths: std::ops::RangeInclusive<usize>,
+    ) -> impl Strategy<Value = String> {
+        proptest::collection::vec(proptest::char::range('0', '9'), lengths)
             .prop_map(|digits| digits.into_iter().collect())
+    }
+
+    /// Build a strategy over the parts of a decimal text in every form of
+    /// the grammar: the integer digits and, when the text has a point, the
+    /// fraction digits (`[0-9]+`, `[0-9]+.[0-9]*`, or `.[0-9]+`).
+    fn generate_decimal_parts() -> impl Strategy<Value = (String, Option<String>)> {
+        prop_oneof![
+            generate_digit_strings(30).prop_map(|integer_part| (integer_part, None)),
+            (
+                generate_digit_strings(30),
+                generate_digit_strings_in(0..=30)
+            )
+                .prop_map(|(integer_part, fraction_part)| (integer_part, Some(fraction_part))),
+            generate_digit_strings(30)
+                .prop_map(|fraction_part| (String::new(), Some(fraction_part))),
+        ]
+    }
+
+    /// Join decimal parts into their text.
+    fn join_decimal_parts(integer_part: &str, fraction_part: Option<&str>) -> String {
+        match fraction_part {
+            Some(fraction_part) => format!("{integer_part}.{fraction_part}"),
+            None => integer_part.to_owned(),
+        }
     }
 
     proptest! {
@@ -647,16 +678,18 @@ mod tests {
         /// fractional zeros leaves its normalized form unchanged.
         #[test]
         fn normalize_decimal_text_ignores_zero_padding(
-            integer_part in generate_digit_strings(30),
-            fraction_part in generate_digit_strings(30),
+            (integer_part, fraction_part) in generate_decimal_parts(),
             leading_zeros in 0_usize..8,
             trailing_zeros in 0_usize..8,
         ) {
-            let plain = format!("{integer_part}.{fraction_part}");
-            let padded = format!(
-                "{}{integer_part}.{fraction_part}{}",
-                "0".repeat(leading_zeros),
-                "0".repeat(trailing_zeros)
+            let plain = join_decimal_parts(&integer_part, fraction_part.as_deref());
+            let padded_fraction = fraction_part.map_or_else(
+                || (trailing_zeros > 0).then(|| "0".repeat(trailing_zeros)),
+                |fraction_part| Some(format!("{fraction_part}{}", "0".repeat(trailing_zeros))),
+            );
+            let padded = join_decimal_parts(
+                &format!("{}{integer_part}", "0".repeat(leading_zeros)),
+                padded_fraction.as_deref(),
             );
 
             let plain_decimal = normalize_decimal_text(&plain);
@@ -692,10 +725,9 @@ mod tests {
         /// a trailing zero.
         #[test]
         fn normalize_decimal_text_yields_a_canonical_coefficient(
-            integer_part in generate_digit_strings(30),
-            fraction_part in generate_digit_strings(30),
+            (integer_part, fraction_part) in generate_decimal_parts(),
         ) {
-            let text = format!("{integer_part}.{fraction_part}");
+            let text = join_decimal_parts(&integer_part, fraction_part.as_deref());
 
             let decimal = normalize_accepted_text(&text);
 

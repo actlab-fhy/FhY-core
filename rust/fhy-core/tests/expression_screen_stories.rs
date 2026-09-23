@@ -632,23 +632,24 @@ fn validate_logical_operands_accepts_a_boolean_native_constant() {
 
 /// Test a constant outside a Boolean position, and an identifier merely
 /// named after a constant, pass.
-#[test]
-fn validate_logical_operands_accepts_a_constant_outside_a_boolean_position() {
-    let sorts = BuiltinSorts::new();
-    let compared = build_and(
-        &sorts.reference_constant("pi").greater(3),
-        &build_literal(true),
-    );
+#[rstest]
+#[case::compared_constant(|sorts: &BuiltinSorts| {
+    build_and(&sorts.reference_constant("pi").greater(3), &build_literal(true))
+})]
+#[case::namesake_identifier(|_: &BuiltinSorts| {
     let (_, namesake) = build_identifier("pi");
-    let named_after = build_and(&namesake, &build_literal(true));
+    build_and(&namesake, &build_literal(true))
+})]
+fn validate_logical_operands_accepts_a_constant_outside_a_boolean_position(
+    #[case] build: fn(&BuiltinSorts) -> Expression,
+) {
+    let sorts = BuiltinSorts::new();
+    let expression = build(&sorts);
 
-    let compared_result =
-        Screen::LogicalOperands.run_with(&compared, &HashMap::new(), &HashMap::new(), &sorts);
-    let named_after_result =
-        Screen::LogicalOperands.run_with(&named_after, &HashMap::new(), &HashMap::new(), &sorts);
+    let result =
+        Screen::LogicalOperands.run_with(&expression, &HashMap::new(), &HashMap::new(), &sorts);
 
-    assert_eq!(compared_result, Ok(()));
-    assert_eq!(named_after_result, Ok(()));
+    assert_eq!(result, Ok(()));
 }
 
 /// Test an identifier declared an integer or a real is refused in each

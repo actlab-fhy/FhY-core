@@ -486,6 +486,10 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
 
+    use proptest::prelude::*;
+    use proptest::sample::select;
+    use rstest::rstest;
+
     use crate::test_support::assert_send_sync;
 
     /// Interned fixture type: a name-keyed tag carrying a `note` that
@@ -1143,43 +1147,100 @@ mod tests {
         assert_eq!(deserialized.label, "original");
     }
 
-    /// Test deserializing a payload missing a required field fails without
-    /// registering anything.
-    #[test]
-    fn canonical_deserialization_rejects_a_payload_missing_a_field() {
-        let missing_field_key = "canonical_deserialization_rejects_a_payload_missing_a_field";
-        let missing_field_payload = serde_json::json!({"name": missing_field_key});
+    /// Test deserializing a payload that does not hold exactly the type's
+    /// fields fails without registering anything.
+    #[rstest]
+    #[case::missing_field(
+        "canonical_deserialization_rejects_a_payload_missing_a_field",
+        serde_json::json!({}),
+        "missing field"
+    )]
+    #[case::unknown_field(
+        "canonical_deserialization_rejects_a_payload_with_an_unknown_field",
+        serde_json::json!({"note": "note", "extra": "field"}),
+        "unknown field"
+    )]
+    fn canonical_deserialization_rejects_a_malformed_payload(
+        #[case] key: &str,
+        #[case] fields_besides_the_name: serde_json::Value,
+        #[case] expected_message: &str,
+    ) {
+        let mut payload = fields_besides_the_name;
+        payload["name"] = key.into();
 
-        let missing_field_result: Result<Canonical<Tag>, _> =
-            serde_json::from_value(missing_field_payload);
-        let Err(missing_field_error) = missing_field_result else {
-            panic!("expected a deserialization error for a missing field");
+        let result: Result<Canonical<Tag>, _> = serde_json::from_value(payload);
+
+        let Err(error) = result else {
+            panic!("expected a deserialization error for a malformed payload");
         };
-        assert!(
-            missing_field_error.to_string().contains("missing field"),
-            "got {missing_field_error}"
-        );
-        assert_eq!(Tag::intern_registry().get(missing_field_key), None);
+        assert!(error.to_string().contains(expected_message), "got {error}");
+        assert_eq!(Tag::intern_registry().get(key), None);
     }
 
-    /// Test deserializing a payload with an unknown field fails without
-    /// registering anything.
-    #[test]
-    fn canonical_deserialization_rejects_a_payload_with_an_unknown_field() {
-        let unknown_field_key = "canonical_deserialization_rejects_a_payload_with_an_unknown_field";
-        let unknown_field_payload =
-            serde_json::json!({"name": unknown_field_key, "note": "note", "extra": "field"});
+    /// Keys the registry model property interns under: both defaults of
+    /// [`create_tag_defaults`] and two keys that are not defaults.
+    const MODEL_KEYS: &[&str] = &["alpha", "beta", "gamma", "delta"];
 
-        let unknown_field_result: Result<Canonical<Tag>, _> =
-            serde_json::from_value(unknown_field_payload);
-        let Err(unknown_field_error) = unknown_field_result else {
-            panic!("expected a deserialization error for an unknown field");
-        };
-        assert!(
-            unknown_field_error.to_string().contains("unknown field"),
-            "got {unknown_field_error}"
-        );
-        assert_eq!(Tag::intern_registry().get(unknown_field_key), None);
+    /// Notes the registry model property interns with.
+    const MODEL_NOTES: &[&str] = &["note-0", "note-1", "note-2"];
+
+    /// One step of an operation sequence run against a registry.
+    #[derive(Debug, Clone)]
+    enum RegistryOperation {
+        Intern {
+            key: &'static str,
+            note: &'static str,
+        },
+        Clear,
+    }
+
+    /// Build a strategy for one registry operation, mostly interns.
+    fn build_registry_operation_strategy() -> impl Strategy<Value = RegistryOperation> {
+        prop_oneof![
+            4 => (select(MODEL_KEYS), select(MODEL_NOTES))
+                .prop_map(|(key, note)| RegistryOperation::Intern { key, note }),
+            1 => Just(RegistryOperation::Clear),
+        ]
+    }
+
+    proptest! {
+        /// Test a registry with defaults behaves as a first-wins map from key
+        /// to handle that a clear resets to the default handles, for any
+        /// sequence of interns and clears.
+        #[test]
+        fn registry_matches_a_first_wins_model_for_any_operation_sequence(
+            operations in prop::collection::vec(build_registry_operation_strategy(), 0..32),
+        ) {
+            let registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
+            let defaults: HashMap<&str, Canonical<Tag>> = ["alpha", "beta"]
+                .into_iter()
+                .map(|key| (key, registry.get(key).expect("defaults are registered")))
+                .collect();
+            let mut model = defaults.clone();
+
+            for operation in operations {
+                match operation {
+                    RegistryOperation::Intern { key, note } => {
+                        let outcome = registry.intern(build_tag(key, note));
+                        if let Some(expected) = model.get(key) {
+                            prop_assert!(!outcome.is_registered());
+                            prop_assert_eq!(outcome.canonical(), expected);
+                        } else {
+                            prop_assert!(outcome.is_registered());
+                            prop_assert_eq!(outcome.canonical().note.as_str(), note);
+                            model.insert(key, outcome.into_canonical());
+                        }
+                    }
+                    RegistryOperation::Clear => {
+                        registry.clear();
+                        model.clone_from(&defaults);
+                    }
+                }
+                for key in MODEL_KEYS {
+                    prop_assert_eq!(registry.get(*key), model.get(key).cloned(), "key {}", key);
+                }
+            }
+        }
     }
 
     /// Test errors for one missing key compare equal and errors for

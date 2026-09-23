@@ -265,67 +265,80 @@ fn expression_arithmetic_builders_promote_a_plain_left_operand(
     assert_eq!(built, expected);
 }
 
+/// Build an expression with a reflected operator from a reference, paired
+/// with the same expression built through `new_binary`.
+type BuildReflected = fn(&Expression) -> (Expression, Expression);
+
 /// Test the reflected operators take a big integer, a literal value, and an
 /// owned expression on either side.
-#[test]
-fn expression_reflected_operators_accept_every_left_operand_type() {
-    let (_, x) = build_identifier("x");
+#[rstest]
+#[case::big_integer(|x: &Expression| {
     let big: BigInt = "100000000000000000000".parse().expect("digits");
+    (big.clone() * x.clone(), Expression::new_binary(BinaryOperation::Multiply, big, x))
+})]
+#[case::literal_value(|x: &Expression| {
     let text = LiteralValue::parse_text("1.50").expect("a decimal text");
+    (text.clone() - x, Expression::new_binary(BinaryOperation::Subtract, text, x))
+})]
+#[case::owned_expression(|x: &Expression| {
+    (x.clone() + x.clone(), Expression::new_binary(BinaryOperation::Add, x, x))
+})]
+fn expression_reflected_operators_accept_every_left_operand_type(#[case] build: BuildReflected) {
+    let (_, x) = build_identifier("x");
 
-    let from_big = big.clone() * x.clone();
-    let from_text = text.clone() - &x;
-    let from_owned = x.clone() + x.clone();
+    let (built, expected) = build(&x);
 
-    assert_eq!(
-        from_big,
-        Expression::new_binary(BinaryOperation::Multiply, big, &x)
-    );
-    assert_eq!(
-        from_text,
-        Expression::new_binary(BinaryOperation::Subtract, text, &x)
-    );
-    assert_eq!(
-        from_owned,
-        Expression::new_binary(BinaryOperation::Add, &x, &x)
-    );
+    assert_eq!(built, expected);
+}
+
+/// Build a negation of one operand type from an identifier and a reference
+/// to it, paired with the expression that operand stands for.
+type LiftOperand = fn(&Identifier, &Expression) -> (Expression, Expression);
+
+/// Return the big integer the big-integer operand case lifts.
+fn build_big_operand() -> BigInt {
+    "-100000000000000000000".parse().expect("digits")
 }
 
 /// Test every operand type lifts to the expression it stands for.
-#[test]
-fn expression_new_binary_lifts_every_operand_type() {
+#[rstest]
+#[case::owned_expression(|_: &Identifier, reference: &Expression| (
+    Expression::new_unary(UnaryOperation::Negate, reference.clone()),
+    reference.clone(),
+))]
+#[case::borrowed_expression(|_: &Identifier, reference: &Expression| (
+    Expression::new_unary(UnaryOperation::Negate, reference),
+    reference.clone(),
+))]
+#[case::owned_identifier(|identifier: &Identifier, reference: &Expression| (
+    Expression::new_unary(UnaryOperation::Negate, identifier.clone()),
+    reference.clone(),
+))]
+#[case::borrowed_identifier(|identifier: &Identifier, reference: &Expression| (
+    Expression::new_unary(UnaryOperation::Negate, identifier),
+    reference.clone(),
+))]
+#[case::literal_value(|_: &Identifier, _: &Expression| (
+    Expression::new_unary(UnaryOperation::Negate, LiteralValue::from(true)),
+    build_literal(true),
+))]
+#[case::i64(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7_i64), build_literal(7)))]
+#[case::i32(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7_i32), build_literal(7)))]
+#[case::u32(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7_u32), build_literal(7)))]
+#[case::big_integer(|_: &Identifier, _: &Expression| (
+    Expression::new_unary(UnaryOperation::Negate, build_big_operand()),
+    build_literal(build_big_operand()),
+))]
+#[case::f64(|_: &Identifier, _: &Expression| (Expression::new_unary(UnaryOperation::Negate, 7.5_f64), build_literal(7.5)))]
+fn expression_new_binary_lifts_every_operand_type(#[case] lift: LiftOperand) {
     let (identifier, reference) = build_identifier("x");
-    let big: BigInt = "-100000000000000000000".parse().expect("digits");
 
-    let built = [
-        Expression::new_unary(UnaryOperation::Negate, reference.clone()),
-        Expression::new_unary(UnaryOperation::Negate, &reference),
-        Expression::new_unary(UnaryOperation::Negate, identifier.clone()),
-        Expression::new_unary(UnaryOperation::Negate, &identifier),
-        Expression::new_unary(UnaryOperation::Negate, LiteralValue::from(true)),
-        Expression::new_unary(UnaryOperation::Negate, 7_i64),
-        Expression::new_unary(UnaryOperation::Negate, 7_i32),
-        Expression::new_unary(UnaryOperation::Negate, 7_u32),
-        Expression::new_unary(UnaryOperation::Negate, big.clone()),
-        Expression::new_unary(UnaryOperation::Negate, 7.5_f64),
-    ];
+    let (built, operand) = lift(&identifier, &reference);
 
-    let operands = [
-        reference.clone(),
-        reference.clone(),
-        reference.clone(),
-        reference,
-        build_literal(true),
-        build_literal(7),
-        build_literal(7),
-        build_literal(7),
-        build_literal(big),
-        build_literal(7.5),
-    ];
-    for (index, (built, operand)) in built.iter().zip(operands).enumerate() {
-        let expected = Expression::new_unary(UnaryOperation::Negate, operand);
-        assert_eq!(built, &expected, "operand type {index}");
-    }
+    assert_eq!(
+        built,
+        Expression::new_unary(UnaryOperation::Negate, operand)
+    );
 }
 
 /// Test a borrowed expression operand is shared, not copied.

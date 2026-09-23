@@ -81,17 +81,30 @@ fn build_call_expression(function_name: &str, arguments: Vec<Expression>) -> Exp
     build_call(function_name, arguments).expect("a named call")
 }
 
-/// Return one expression of every node kind, named.
-fn build_one_of_each_kind() -> Vec<(&'static str, Expression)> {
-    let (_, x) = build_identifier("x");
-    vec![
-        ("literal", build_literal(5)),
-        ("identifier", x.clone()),
-        ("unary", -&x),
-        ("binary", build_simple_binary(BinaryOperation::Add)),
-        ("piecewise", build_one_case_piecewise()),
-        ("call", build_call_expression("f", vec![x])),
-    ]
+/// A kind of expression node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeKind {
+    Literal,
+    Identifier,
+    Unary,
+    Binary,
+    Piecewise,
+    Call,
+}
+
+impl NodeKind {
+    /// Return an expression whose root is a node of this kind.
+    fn build(self) -> Expression {
+        let (_, x) = build_identifier("x");
+        match self {
+            Self::Literal => build_literal(5),
+            Self::Identifier => x,
+            Self::Unary => -&x,
+            Self::Binary => build_simple_binary(BinaryOperation::Add),
+            Self::Piecewise => build_one_case_piecewise(),
+            Self::Call => build_call_expression("f", vec![x]),
+        }
+    }
 }
 
 /// Return a predicate pattern counting its calls in `calls` and answering
@@ -349,16 +362,24 @@ fn match_bindings_with_different_names_are_unequal(
 // =============================================================================
 
 /// Test the wildcard matches a node of every kind and captures nothing.
-#[test]
-fn pattern_wildcard_matches_every_node_kind() {
+#[rstest]
+fn pattern_wildcard_matches_every_node_kind(
+    #[values(
+        NodeKind::Literal,
+        NodeKind::Identifier,
+        NodeKind::Unary,
+        NodeKind::Binary,
+        NodeKind::Piecewise,
+        NodeKind::Call
+    )]
+    kind: NodeKind,
+) {
     let pattern = Pattern::wildcard();
 
-    for (kind, expression) in build_one_of_each_kind() {
-        let bindings = match_infallibly(&pattern, &expression);
+    let bindings = match_infallibly(&pattern, &kind.build());
 
-        let bindings = bindings.unwrap_or_else(|| panic!("the wildcard rejects the {kind}"));
-        assert!(bindings.is_empty(), "the {kind} bound {bindings:?}");
-    }
+    let bindings = bindings.expect("the wildcard matches");
+    assert!(bindings.is_empty(), "bound {bindings:?}");
 }
 
 /// Test the wildcard returns the bindings it was given.
@@ -562,19 +583,27 @@ fn pattern_literal_without_value_matches_every_literal(#[case] expression: Expre
 }
 
 /// Test a literal pattern rejects every node that is not a literal.
-#[test]
-fn pattern_literal_rejects_non_literal_nodes() {
+#[rstest]
+fn pattern_literal_rejects_non_literal_nodes(
+    #[values(
+        NodeKind::Literal,
+        NodeKind::Identifier,
+        NodeKind::Unary,
+        NodeKind::Binary,
+        NodeKind::Piecewise,
+        NodeKind::Call
+    )]
+    kind: NodeKind,
+) {
     let pattern = Pattern::literal(None);
 
-    for (kind, expression) in build_one_of_each_kind() {
-        let result = match_infallibly(&pattern, &expression);
+    let result = match_infallibly(&pattern, &kind.build());
 
-        assert_eq!(
-            result.is_some(),
-            kind == "literal",
-            "{kind}: got {result:?}"
-        );
-    }
+    assert_eq!(
+        result.is_some(),
+        kind == NodeKind::Literal,
+        "got {result:?}"
+    );
 }
 
 /// Test a literal pattern with a value matches a literal stored exactly so.
@@ -655,19 +684,27 @@ fn pattern_identifier_without_identifier_matches_any_reference() {
 }
 
 /// Test an identifier pattern rejects every node that is not a reference.
-#[test]
-fn pattern_identifier_rejects_non_reference_nodes() {
+#[rstest]
+fn pattern_identifier_rejects_non_reference_nodes(
+    #[values(
+        NodeKind::Literal,
+        NodeKind::Identifier,
+        NodeKind::Unary,
+        NodeKind::Binary,
+        NodeKind::Piecewise,
+        NodeKind::Call
+    )]
+    kind: NodeKind,
+) {
     let pattern = Pattern::identifier(None);
 
-    for (kind, expression) in build_one_of_each_kind() {
-        let result = match_infallibly(&pattern, &expression);
+    let result = match_infallibly(&pattern, &kind.build());
 
-        assert_eq!(
-            result.is_some(),
-            kind == "identifier",
-            "{kind}: got {result:?}"
-        );
-    }
+    assert_eq!(
+        result.is_some(),
+        kind == NodeKind::Identifier,
+        "got {result:?}"
+    );
 }
 
 /// Test an identifier pattern matches a reference to the same identifier,
@@ -739,15 +776,23 @@ fn pattern_unary_without_operation_matches_every_operation(#[case] operation: Un
 }
 
 /// Test a unary pattern rejects every node that is not unary.
-#[test]
-fn pattern_unary_rejects_other_node_kinds() {
+#[rstest]
+fn pattern_unary_rejects_other_node_kinds(
+    #[values(
+        NodeKind::Literal,
+        NodeKind::Identifier,
+        NodeKind::Unary,
+        NodeKind::Binary,
+        NodeKind::Piecewise,
+        NodeKind::Call
+    )]
+    kind: NodeKind,
+) {
     let pattern = Pattern::unary(None, Pattern::wildcard());
 
-    for (kind, expression) in build_one_of_each_kind() {
-        let result = match_infallibly(&pattern, &expression);
+    let result = match_infallibly(&pattern, &kind.build());
 
-        assert_eq!(result.is_some(), kind == "unary", "{kind}: got {result:?}");
-    }
+    assert_eq!(result.is_some(), kind == NodeKind::Unary, "got {result:?}");
 }
 
 /// Test a unary pattern binds the captures of its operand pattern.
@@ -819,15 +864,23 @@ fn pattern_binary_without_operation_matches_every_operation(#[case] operation: B
 }
 
 /// Test a binary pattern rejects every node that is not binary.
-#[test]
-fn pattern_binary_rejects_other_node_kinds() {
+#[rstest]
+fn pattern_binary_rejects_other_node_kinds(
+    #[values(
+        NodeKind::Literal,
+        NodeKind::Identifier,
+        NodeKind::Unary,
+        NodeKind::Binary,
+        NodeKind::Piecewise,
+        NodeKind::Call
+    )]
+    kind: NodeKind,
+) {
     let pattern = Pattern::binary(None, Pattern::wildcard(), Pattern::wildcard());
 
-    for (kind, expression) in build_one_of_each_kind() {
-        let result = match_infallibly(&pattern, &expression);
+    let result = match_infallibly(&pattern, &kind.build());
 
-        assert_eq!(result.is_some(), kind == "binary", "{kind}: got {result:?}");
-    }
+    assert_eq!(result.is_some(), kind == NodeKind::Binary, "got {result:?}");
 }
 
 /// Test a binary pattern binds the captures of both operand patterns, left
@@ -927,19 +980,27 @@ fn pattern_piecewise_matches_a_one_case_piecewise() {
 }
 
 /// Test a piecewise pattern rejects every node that is not a piecewise.
-#[test]
-fn pattern_piecewise_rejects_other_node_kinds() {
+#[rstest]
+fn pattern_piecewise_rejects_other_node_kinds(
+    #[values(
+        NodeKind::Literal,
+        NodeKind::Identifier,
+        NodeKind::Unary,
+        NodeKind::Binary,
+        NodeKind::Piecewise,
+        NodeKind::Call
+    )]
+    kind: NodeKind,
+) {
     let pattern = build_piecewise_pattern(None, Pattern::wildcard());
 
-    for (kind, expression) in build_one_of_each_kind() {
-        let result = match_infallibly(&pattern, &expression);
+    let result = match_infallibly(&pattern, &kind.build());
 
-        assert_eq!(
-            result.is_some(),
-            kind == "piecewise",
-            "{kind}: got {result:?}"
-        );
-    }
+    assert_eq!(
+        result.is_some(),
+        kind == NodeKind::Piecewise,
+        "got {result:?}"
+    );
 }
 
 /// Test a piecewise pattern without cases matches any case count and
@@ -1175,15 +1236,23 @@ fn pattern_call_binds_captures_in_its_arguments() {
 }
 
 /// Test a call pattern rejects every node that is not a call.
-#[test]
-fn pattern_call_rejects_other_node_kinds() {
+#[rstest]
+fn pattern_call_rejects_other_node_kinds(
+    #[values(
+        NodeKind::Literal,
+        NodeKind::Identifier,
+        NodeKind::Unary,
+        NodeKind::Binary,
+        NodeKind::Piecewise,
+        NodeKind::Call
+    )]
+    kind: NodeKind,
+) {
     let pattern = Pattern::call(None, None);
 
-    for (kind, expression) in build_one_of_each_kind() {
-        let result = match_infallibly(&pattern, &expression);
+    let result = match_infallibly(&pattern, &kind.build());
 
-        assert_eq!(result.is_some(), kind == "call", "{kind}: got {result:?}");
-    }
+    assert_eq!(result.is_some(), kind == NodeKind::Call, "got {result:?}");
 }
 
 /// Test a call pattern with an empty argument list matches only calls
@@ -1314,21 +1383,29 @@ fn pattern_predicate_captures_nothing() {
 }
 
 /// Test a predicate filtering node kinds matches literals only.
-#[test]
-fn pattern_predicate_filters_node_kinds() {
+#[rstest]
+fn pattern_predicate_filters_node_kinds(
+    #[values(
+        NodeKind::Literal,
+        NodeKind::Identifier,
+        NodeKind::Unary,
+        NodeKind::Binary,
+        NodeKind::Piecewise,
+        NodeKind::Call
+    )]
+    kind: NodeKind,
+) {
     let pattern = Pattern::predicate(|expression| {
         Ok(matches!(expression.kind(), ExpressionKind::Literal(_)))
     });
 
-    for (kind, expression) in build_one_of_each_kind() {
-        let result = match_infallibly(&pattern, &expression);
+    let result = match_infallibly(&pattern, &kind.build());
 
-        assert_eq!(
-            result.is_some(),
-            kind == "literal",
-            "{kind}: got {result:?}"
-        );
-    }
+    assert_eq!(
+        result.is_some(),
+        kind == NodeKind::Literal,
+        "got {result:?}"
+    );
 }
 
 /// Test a clone of a predicate pattern shares the predicate.

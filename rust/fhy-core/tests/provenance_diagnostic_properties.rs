@@ -255,6 +255,12 @@ proptest! {
     }
 }
 
+/// Return a strategy for text of any characters, newlines included, whose
+/// length in characters is in `lengths`.
+fn arbitrary_text(lengths: std::ops::RangeInclusive<usize>) -> impl Strategy<Value = String> {
+    proptest::collection::vec(any::<char>(), lengths).prop_map(String::from_iter)
+}
+
 /// Return a strategy for one diagnostic with a random level, message,
 /// source and detail.
 fn arbitrary_diagnostic() -> impl Strategy<Value = Diagnostic> {
@@ -266,9 +272,9 @@ fn arbitrary_diagnostic() -> impl Strategy<Value = Diagnostic> {
                 DiagnosticLevel::Info,
             ][..],
         ),
-        ".{0,20}",
-        ".{1,10}",
-        proptest::option::of(".{0,20}"),
+        arbitrary_text(0..=20),
+        arbitrary_text(1..=10),
+        proptest::option::of(arbitrary_text(0..=20)),
     )
         .prop_map(|(level, message, source, detail)| {
             Diagnostic::new(level, Note::with_other_kind(message), source, detail)

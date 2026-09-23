@@ -355,8 +355,12 @@ pub trait HasIdentifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
     use std::collections::HashSet;
     use std::thread;
+
+    use proptest::prelude::*;
+    use rstest::rstest;
 
     use crate::test_support::{
         assert_isolated_test_passes, assert_send_sync, compute_hash, is_isolated_run,
@@ -379,38 +383,43 @@ mod tests {
         assert_eq!(compute_hash(&a), compute_hash(&b));
     }
 
-    #[test]
-    fn display_returns_name_hint() {
+    /// Test that a new identifier keeps its name hint as given, ASCII or not.
+    #[rstest]
+    #[case::ascii("test_name")]
+    #[case::latin("é")]
+    #[case::astral("\u{1d465}")]
+    #[case::cjk("名前")]
+    fn new_keeps_the_name_hint_as_given(#[case] name_hint: &str) {
+        let identifier = Identifier::new(name_hint);
+
+        assert_eq!(identifier.name_hint(), name_hint);
+    }
+
+    /// Test that Display writes the name hint verbatim.
+    #[rstest]
+    #[case::plain("my_name")]
+    #[case::empty("")]
+    #[case::double_colon("foo::bar")]
+    fn display_returns_name_hint(#[case] name_hint: &str) {
         let id_value = Identifier::new("display-anchor").id();
-        let id = Identifier::restore(id_value, "my_name".to_string());
-        assert_eq!(format!("{id}"), "my_name");
+        let identifier = Identifier::restore(id_value, name_hint.to_string());
+
+        assert_eq!(format!("{identifier}"), name_hint);
     }
 
-    #[test]
-    fn debug_returns_name_hint_and_id() {
+    /// Test that Debug writes the name hint and the id joined by "::".
+    #[rstest]
+    #[case::plain("my_name")]
+    #[case::empty("")]
+    #[case::double_colon("foo::bar")]
+    fn debug_returns_name_hint_and_id(#[case] name_hint: &str) {
         let id_value = Identifier::new("debug-anchor").id();
-        let id = Identifier::restore(id_value, "my_name".to_string());
-        assert_eq!(format!("{id:?}"), format!("my_name::{id_value}"));
-    }
+        let identifier = Identifier::restore(id_value, name_hint.to_string());
 
-    /// Test that Display and Debug handle an empty name hint.
-    #[test]
-    fn display_and_debug_handle_an_empty_name_hint() {
-        let id_value = Identifier::new("empty-name-hint-anchor").id();
-        let identifier = Identifier::restore(id_value, String::new());
-
-        assert_eq!(format!("{identifier}"), "");
-        assert_eq!(format!("{identifier:?}"), format!("::{id_value}"));
-    }
-
-    /// Test that Display and Debug handle a name hint containing "::".
-    #[test]
-    fn display_and_debug_handle_a_name_hint_containing_a_double_colon() {
-        let id_value = Identifier::new("double-colon-anchor").id();
-        let identifier = Identifier::restore(id_value, "foo::bar".to_string());
-
-        assert_eq!(format!("{identifier}"), "foo::bar");
-        assert_eq!(format!("{identifier:?}"), format!("foo::bar::{id_value}"));
+        assert_eq!(
+            format!("{identifier:?}"),
+            format!("{name_hint}::{id_value}")
+        );
     }
 
     #[test]
@@ -432,42 +441,74 @@ mod tests {
         assert!(next.id() > stale_id);
     }
 
-    #[test]
-    fn serde_round_trip_preserves_id_and_name_hint() {
+    /// Test that serde writes the id and name hint and reads both back.
+    #[rstest]
+    #[case::plain("roundtrip")]
+    #[case::empty("")]
+    #[case::double_colon("foo::bar")]
+    #[case::non_ascii("名前")]
+    fn serde_round_trip_preserves_id_and_name_hint(#[case] name_hint: &str) {
         let id_value = Identifier::new("serde-roundtrip-anchor").id();
-        let original = Identifier::restore(id_value, "roundtrip".to_string());
+        let original = Identifier::restore(id_value, name_hint.to_string());
         let json = serde_json::to_string(&original).unwrap();
-        assert!(json.contains(&format!("\"id\":{id_value}")));
-        assert!(json.contains("\"name_hint\":\"roundtrip\""));
+        assert!(json.contains(&format!("\"id\":{id_value}")), "{json}");
+        assert!(
+            json.contains(&format!("\"name_hint\":\"{name_hint}\"")),
+            "{json}"
+        );
 
         let restored: Identifier = serde_json::from_str(&json).unwrap();
+
         assert_eq!(restored.id(), id_value);
-        assert_eq!(restored.name_hint(), "roundtrip");
+        assert_eq!(restored.name_hint(), name_hint);
     }
 
-    /// Test that serde preserves an empty name hint across a round trip.
+    /// Test that serde accepts the smallest id, zero.
     #[test]
-    fn serde_round_trip_preserves_an_empty_name_hint() {
-        let id_value = Identifier::new("serde-empty-name-hint-anchor").id();
-        let original = Identifier::restore(id_value, String::new());
-        let json = serde_json::to_string(&original).unwrap();
+    fn serde_accepts_the_zero_id() {
+        let restored: Identifier =
+            serde_json::from_str("{\"id\":0,\"name_hint\":\"x\"}").expect("0 is a valid id");
 
-        let restored: Identifier = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.id(), id_value);
-        assert_eq!(restored.name_hint(), "");
+        assert_eq!(restored.id(), 0);
+        assert_eq!(restored.name_hint(), "x");
     }
 
-    /// Test that serde preserves a name hint containing "::" across a round
-    /// trip.
-    #[test]
-    fn serde_round_trip_preserves_a_name_hint_containing_a_double_colon() {
-        let id_value = Identifier::new("serde-double-colon-anchor").id();
-        let original = Identifier::restore(id_value, "foo::bar".to_string());
-        let json = serde_json::to_string(&original).unwrap();
+    /// Test that serde rejects a payload whose fields are missing, unknown or
+    /// of the wrong type.
+    #[rstest]
+    #[case::missing_id("{\"name_hint\":\"x\"}", "missing field `id`")]
+    #[case::missing_name_hint("{\"id\":0}", "missing field `name_hint`")]
+    #[case::string_id("{\"id\":\"not_an_int\",\"name_hint\":\"x\"}", "invalid type: string")]
+    #[case::true_id("{\"id\":true,\"name_hint\":\"x\"}", "invalid type: boolean `true`")]
+    #[case::false_id("{\"id\":false,\"name_hint\":\"x\"}", "invalid type: boolean `false`")]
+    #[case::negative_id("{\"id\":-1,\"name_hint\":\"x\"}", "invalid value: integer `-1`")]
+    #[case::integer_name_hint("{\"id\":0,\"name_hint\":123}", "invalid type: integer `123`")]
+    #[case::extra_key("{\"id\":0,\"name_hint\":\"x\",\"extra\":1}", "unknown field `extra`")]
+    #[case::typo_key(
+        "{\"id\":0,\"name_hint\":\"x\",\"name_hit\":\"typo\"}",
+        "unknown field `name_hit`"
+    )]
+    fn serde_rejects_a_malformed_payload(#[case] json: &str, #[case] expected_message: &str) {
+        let error = serde_json::from_str::<Identifier>(json).expect_err("the payload is malformed");
 
-        let restored: Identifier = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.id(), id_value);
-        assert_eq!(restored.name_hint(), "foo::bar");
+        assert!(
+            error.to_string().contains(expected_message),
+            "unexpected error: {error}"
+        );
+    }
+
+    proptest! {
+        /// Test that serde round-trips an identifier whatever its name hint.
+        #[test]
+        fn serde_round_trip_preserves_any_name_hint(name_hint in any::<String>()) {
+            let original = Identifier::new(&name_hint);
+
+            let json = serde_json::to_string(&original).unwrap();
+            let restored: Identifier = serde_json::from_str(&json).unwrap();
+
+            prop_assert_eq!(restored.id(), original.id());
+            prop_assert_eq!(restored.name_hint(), name_hint.as_str());
+        }
     }
 
     #[test]
@@ -506,6 +547,72 @@ mod tests {
         assert_eq!(counter.load(Ordering::Relaxed), 7);
     }
 
+    /// Reference id counter: a plain next id that allocation hands out and
+    /// increments, and that an advance raises to one past the given id.
+    struct ReferenceCounter {
+        next_id: u64,
+    }
+
+    impl ReferenceCounter {
+        fn allocate(&mut self) -> u64 {
+            let id = self.next_id;
+            self.next_id += 1;
+            id
+        }
+
+        fn advance_past(&mut self, id: u64) {
+            self.next_id = self.next_id.max(id + 1);
+        }
+    }
+
+    /// Run `operations` on a counter after allocating an anchor id: `None`
+    /// allocates, `Some(offset)` advances past the id `offset` past the
+    /// anchor. Allocate once more at the end, and return every id allocated
+    /// after the anchor, minus the anchor.
+    fn run_counter_operations(
+        operations: &[Option<u64>],
+        mut allocate: impl FnMut() -> u64,
+        mut advance_past: impl FnMut(u64),
+    ) -> Vec<u64> {
+        let base = allocate();
+        let mut relative_ids = Vec::new();
+        for operation in operations {
+            match operation {
+                None => relative_ids.push(allocate() - base),
+                Some(offset) => advance_past(base + offset),
+            }
+        }
+        relative_ids.push(allocate() - base);
+        relative_ids
+    }
+
+    proptest! {
+        /// Test that the id counter, from any starting value, issues the same
+        /// ids relative to an anchor as the reference counter started at zero,
+        /// for any sequence of allocations and advances.
+        #[test]
+        fn counter_issues_the_reference_counters_relative_ids_for_any_operation_sequence(
+            start in 0..u64::MAX - 1024,
+            operations in prop::collection::vec(prop::option::of(0..=500_u64), 0..=20),
+        ) {
+            let counter = AtomicU64::new(start);
+            let reference = RefCell::new(ReferenceCounter { next_id: 0 });
+
+            let counter_ids = run_counter_operations(
+                &operations,
+                || take_next_id(&counter).expect("the counter stays below u64::MAX"),
+                |id| advance_past(&counter, id).expect("the id stays below u64::MAX"),
+            );
+            let reference_ids = run_counter_operations(
+                &operations,
+                || reference.borrow_mut().allocate(),
+                |id| reference.borrow_mut().advance_past(id),
+            );
+
+            prop_assert_eq!(counter_ids, reference_ids);
+        }
+    }
+
     #[test]
     #[should_panic(expected = "identifier id space exhausted")]
     fn restoring_u64_max_panics() {
@@ -524,15 +631,24 @@ mod tests {
         assert!(allocated.is_ok_and(|id| id < constructed.id()));
     }
 
-    #[test]
-    fn serde_rejects_an_id_of_u64_max() {
-        let json = format!("{{\"id\":{},\"name_hint\":\"x\"}}", u64::MAX);
+    /// Test that serde rejects an id of `u64::MAX`, which no identifier ever
+    /// holds, and any id too large for a `u64`.
+    #[rstest]
+    #[case::two_pow_64_minus_one("18446744073709551615", "an id below u64::MAX")]
+    #[case::two_pow_64("18446744073709551616", "expected u64")]
+    #[case::just_above_two_pow_64("18446744073709551617", "expected u64")]
+    #[case::two_pow_200(
+        "1606938044258990275541962092341162602522202993782792835301376",
+        "expected u64"
+    )]
+    fn serde_rejects_an_id_of_u64_max_or_more(#[case] id: &str, #[case] expected_message: &str) {
+        let json = format!("{{\"id\":{id},\"name_hint\":\"x\"}}");
 
         let error = serde_json::from_str::<Identifier>(&json)
-            .expect_err("no identifier ever holds u64::MAX");
+            .expect_err("no identifier ever holds u64::MAX or more");
 
         assert!(
-            error.to_string().contains("an id below u64::MAX"),
+            error.to_string().contains(expected_message),
             "unexpected error: {error}"
         );
     }

@@ -111,21 +111,19 @@ fn shipped_note_kind_is_registered_under_its_name(#[case] get_kind: DefaultKind)
 }
 
 /// Test the four shipped kinds are pairwise distinct.
-#[test]
-fn shipped_note_kinds_are_distinct() {
-    let kinds = [
-        get_rationale_note_kind(),
-        get_suggestion_note_kind(),
-        get_remark_note_kind(),
-        get_other_note_kind(),
-    ];
+#[rstest]
+#[case::rationale_suggestion(get_rationale_note_kind, get_suggestion_note_kind)]
+#[case::rationale_remark(get_rationale_note_kind, get_remark_note_kind)]
+#[case::rationale_other(get_rationale_note_kind, get_other_note_kind)]
+#[case::suggestion_remark(get_suggestion_note_kind, get_remark_note_kind)]
+#[case::suggestion_other(get_suggestion_note_kind, get_other_note_kind)]
+#[case::remark_other(get_remark_note_kind, get_other_note_kind)]
+fn shipped_note_kinds_are_distinct(#[case] get_kind: DefaultKind, #[case] get_other: DefaultKind) {
+    let kind = get_kind();
+    let other = get_other();
 
-    for (index, kind) in kinds.iter().enumerate() {
-        for other in &kinds[index + 1..] {
-            assert_ne!(kind, other);
-            assert_ne!(kind.name(), other.name());
-        }
-    }
+    assert_ne!(kind, other);
+    assert_ne!(kind.name(), other.name());
 }
 
 /// Test a caller registers a new kind without changing this crate.

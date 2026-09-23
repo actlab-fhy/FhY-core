@@ -540,8 +540,9 @@ impl<R: fmt::Debug> std::error::Error for ValidationFailedError<R> {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use rstest::rstest;
 
+    use super::*;
     use crate::identifier::{IdSpaceExhausted, try_allocate_id};
     use crate::test_support::{
         RegistryGuard, assert_isolated_test_passes, has_counter_passed, hold_id_counter,
@@ -562,8 +563,14 @@ mod tests {
         )
     }
 
-    #[test]
-    fn clearing_the_registry_keeps_the_shipped_kinds_canonical() {
+    #[rstest]
+    #[case::rationale(get_rationale_note_kind)]
+    #[case::suggestion(get_suggestion_note_kind)]
+    #[case::remark(get_remark_note_kind)]
+    #[case::other(get_other_note_kind)]
+    fn clearing_the_registry_keeps_the_shipped_kinds_canonical(
+        #[case] get_shipped: fn() -> &'static Canonical<NoteKind>,
+    ) {
         let _guard = REGISTRY_GUARD.hold_exclusively();
         let name = Identifier::new("dropped-by-clear");
         let dropped = NoteKind::new(name.clone(), "dropped").into_canonical();
@@ -572,17 +579,11 @@ mod tests {
         NoteKind::intern_registry().clear();
 
         assert_eq!(NoteKind::intern_registry().get(&name), None);
-        for shipped in [
-            get_rationale_note_kind(),
-            get_suggestion_note_kind(),
-            get_remark_note_kind(),
-            get_other_note_kind(),
-        ] {
-            assert_eq!(
-                NoteKind::intern_registry().get(shipped.name()),
-                Some(shipped.clone())
-            );
-        }
+        let shipped = get_shipped();
+        assert_eq!(
+            NoteKind::intern_registry().get(shipped.name()),
+            Some(shipped.clone())
+        );
     }
 
     #[test]
