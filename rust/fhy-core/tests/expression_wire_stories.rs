@@ -309,6 +309,35 @@ fn expression_deep_tree_round_trips_through_a_json_value() {
     });
 }
 
+/// Test JSON text decodes an expression nested as deep as `serde_json`'s
+/// nesting limit allows, two JSON levels per tree level, and refuses one
+/// level more with an error rather than a crash; a JSON value parsed from
+/// that text meets the same limit.
+#[test]
+fn expression_json_text_decodes_up_to_the_serde_json_nesting_limit() {
+    let deepest = build_deep_sum(&build_literal(1), 62);
+    let too_deep = build_deep_sum(&build_literal(1), 63);
+    let deepest_text = serde_json::to_string(&deepest).expect("the expression serializes");
+    let too_deep_text = serde_json::to_string(&too_deep).expect("the expression serializes");
+
+    let decoded: Expression =
+        serde_json::from_str(&deepest_text).expect("62 levels over a leaf decode");
+    let refusal = serde_json::from_str::<Expression>(&too_deep_text);
+    let value_refusal = serde_json::from_str::<Value>(&too_deep_text);
+
+    assert_eq!(decoded, deepest);
+    let error = refusal.expect_err("63 levels over a leaf exceed the nesting limit");
+    assert!(
+        error.to_string().starts_with("recursion limit exceeded"),
+        "{error}"
+    );
+    let error = value_refusal.expect_err("63 levels over a leaf exceed the nesting limit");
+    assert!(
+        error.to_string().starts_with("recursion limit exceeded"),
+        "{error}"
+    );
+}
+
 // =============================================================================
 // Refused payloads
 // =============================================================================

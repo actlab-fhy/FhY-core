@@ -203,6 +203,17 @@ fn is_tree_equal(
 /// values needs up to 32 MiB of stack in an unoptimized build and up to
 /// 8 MiB in an optimized one.
 ///
+/// Decoding JSON text is also capped by `serde_json`'s nesting limit: its
+/// text deserializer refuses input nested more than 127 JSON levels deep
+/// with a `recursion limit exceeded` error. A tree level takes two JSON
+/// levels, or three below a piecewise case or a call argument, which sit in
+/// lists, so `serde_json::from_str` decodes a chain of at most 62 unary or
+/// binary nodes over a leaf. A `serde_json::Value` parsed from text meets the
+/// same limit. A caller needing deeper trees can enable `serde_json`'s
+/// `unbounded_depth` feature and decode through a `serde_json::Deserializer`
+/// after calling its `disable_recursion_limit`, on a thread with a stack
+/// large enough for the recursion above.
+///
 /// # Examples
 ///
 /// ```

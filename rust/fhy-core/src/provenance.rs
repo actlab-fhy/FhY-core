@@ -309,6 +309,17 @@ impl<'de> Deserialize<'de> for Span {
 /// thread stack) overflows the stack. [`Provenance::fuse`] walks an explicit
 /// stack instead, and never nests an unlabelled fusion in its result.
 ///
+/// Decoding JSON text is also capped by `serde_json`'s nesting limit: its
+/// text deserializer refuses input nested more than 127 JSON levels deep
+/// with a `recursion limit exceeded` error. A named or call-site level takes
+/// two JSON levels and a fused level three, since its sources sit in a list,
+/// so `serde_json::from_str` decodes at most 62 nested named or call-site
+/// levels over the unknown provenance. A `serde_json::Value` parsed from text
+/// meets the same limit. A caller needing deeper trees can enable `serde_json`'s
+/// `unbounded_depth` feature and decode through a `serde_json::Deserializer`
+/// after calling its `disable_recursion_limit`, on a thread with a stack
+/// large enough for the recursion above.
+///
 /// # Serialization
 ///
 /// A provenance encodes as `{"__type__": <type id>, "__data__": <fields>}`

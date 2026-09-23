@@ -197,7 +197,9 @@ impl Serialize for LiteralWire<'_> {
 /// format such as JSON.
 ///
 /// Serializing and deserializing recurse once per tree level; see
-/// [`Expression`] for the stack a deep tree needs.
+/// [`Expression`] for the stack a deep tree needs and for the nesting limit
+/// `serde_json` puts on decoding JSON text, which refuses a chain of more
+/// than 62 unary or binary nodes over a leaf.
 impl Serialize for Expression {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut wrapper = serializer.serialize_struct("Expression", 2)?;

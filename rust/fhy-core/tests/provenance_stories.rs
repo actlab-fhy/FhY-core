@@ -1257,6 +1257,44 @@ fn span_decode_rejects_an_offset_beyond_u64() {
     assert_decode_rejected::<Span>(payload);
 }
 
+/// Return `depth` named provenances nested over the unknown provenance.
+fn build_nested_named(depth: usize) -> Provenance {
+    let mut provenance = Provenance::Unknown;
+    for _ in 0..depth {
+        provenance = build_named("n", provenance);
+    }
+    provenance
+}
+
+/// Test JSON text decodes a provenance nested as deep as `serde_json`'s
+/// nesting limit allows, two JSON levels per provenance level, and refuses
+/// one level more with an error rather than a crash; a JSON value parsed
+/// from that text meets the same limit.
+#[test]
+fn provenance_json_text_decodes_up_to_the_serde_json_nesting_limit() {
+    let deepest = build_nested_named(62);
+    let too_deep = build_nested_named(63);
+    let deepest_text = serde_json::to_string(&deepest).expect("the provenance serializes");
+    let too_deep_text = serde_json::to_string(&too_deep).expect("the provenance serializes");
+
+    let decoded: Provenance =
+        serde_json::from_str(&deepest_text).expect("62 levels over a leaf decode");
+    let refusal = serde_json::from_str::<Provenance>(&too_deep_text);
+    let value_refusal = serde_json::from_str::<Value>(&too_deep_text);
+
+    assert_eq!(decoded, deepest);
+    let error = refusal.expect_err("63 levels over a leaf exceed the nesting limit");
+    assert!(
+        error.to_string().starts_with("recursion limit exceeded"),
+        "{error}"
+    );
+    let error = value_refusal.expect_err("63 levels over a leaf exceed the nesting limit");
+    assert!(
+        error.to_string().starts_with("recursion limit exceeded"),
+        "{error}"
+    );
+}
+
 // =============================================================================
 // Errors and thread safety
 // =============================================================================
