@@ -612,6 +612,25 @@ fn validate_logical_operands_reads_a_constant_by_its_sort_not_a_binding() {
     assert_eq!(error.operand(), &pi);
 }
 
+/// Test the value a constant's identifier is bound to is not walked:
+/// `pi + 1` passes with `pi` bound to `!(3)`, whose negated operand is a
+/// number.
+#[test]
+fn validate_logical_operands_does_not_walk_a_binding_of_a_constant() {
+    let sorts = BuiltinSorts::new();
+    let pi_identifier = sorts.find_constant("pi");
+    let expression = Expression::from(pi_identifier.clone()) + 1;
+
+    let result = Screen::LogicalOperands.run_with(
+        &expression,
+        &HashMap::from([(pi_identifier, build_literal(3).logical_not())]),
+        &HashMap::new(),
+        &sorts,
+    );
+
+    assert_eq!(result, Ok(()));
+}
+
 /// Test a Boolean constant passes as a Boolean operand.
 #[test]
 fn validate_logical_operands_accepts_a_boolean_native_constant() {
