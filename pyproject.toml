@@ -1,10 +1,11 @@
 [build-system]
-requires = ["uv_build>=0.11,<0.12"]
-build-backend = "uv_build"
+requires = ["maturin>=1.9.4,<2"]
+build-backend = "maturin"
 
 [project]
 name = "fhy_core"
-version = "0.2.0"
+# maturin reads the version from the workspace Cargo.toml.
+dynamic = ["version"]
 description = "Core utilities for the FhY compiler infrastructure."
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -58,6 +59,22 @@ dev = [
    "pre-commit-hooks",
 ]
 
+[tool.maturin]
+python-source = "src"
+module-name = "fhy_core._rs"
+manifest-path = "rust/fhy-core-py/Cargo.toml"
+
+[tool.uv]
+# uv reuses a built project unless one of these changes, so list the Rust
+# sources the extension is compiled from alongside the default pyproject.toml.
+cache-keys = [
+   { file = "pyproject.toml" },
+   { file = "Cargo.toml" },
+   { file = "Cargo.lock" },
+   { file = "rust/*/Cargo.toml" },
+   { file = "rust/**/*.rs" },
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-n auto -rfEs --strict-markers --durations=20 -m 'not slow'"
@@ -104,7 +121,7 @@ exclude_also = [
 python-version = "3.10"
 
 [tool.ty.src]
-include = ["src", "tests"]
+include = ["src", "tests", "rust/fhy-core/tests/golden"]
 
 [tool.ty.rules]
 # ty defaults to strict inference; start clean and only relax on real friction.

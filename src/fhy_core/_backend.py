@@ -1,0 +1,200 @@
+"""Selection between the Rust extension and the pure-Python implementation.
+
+The selection is made once, when this module is first imported;
+``fhy_core.RUST_BACKEND_SELECTED`` documents when it picks the extension
+``fhy_core._rs``. A missing extension falls back to the pure-Python
+implementation silently. One that fails to import, is built only for other
+interpreters, or whose ``__version__`` is missing, not a PEP 440 version, or
+unequal to the package version falls back with a ``RuntimeWarning`` naming
+the cause. A disabled extension is never imported, so it never warns.
+"""
+
+__all__ = ["IS_RUST_BACKEND_SELECTED"]
+
+import importlib
+import importlib.machinery
+import importlib.metadata
+import os
+import re
+import warnings
+from pathlib import Path
+from typing import Final
+
+_EXTENSION_MODULE = "fhy_core._rs"
+_EXTENSION_STEM = "_rs"
+# File endings of a compiled extension module on any platform.
+_EXTENSION_FILE_ENDINGS = (".so", ".pyd")
+_PACKAGE_NAME = "fhy_core"
+_NO_EXTENSIONS_VARIABLE = "FHY_CORE_NO_EXTENSIONS"
+_EXTENSION_ENABLING_VALUES = frozenset({"", "0", "false", "no", "off"})
+
+# PEP 440's version grammar without the epoch, which Cargo cannot express.
+_PEP440_VERSION_PATTERN = re.compile(
+    r"""
+    v?
+    (?P<release>[0-9]+(?:\.[0-9]+)*)
+    (?:
+        [-_.]?(?P<pre_label>alpha|a|beta|b|preview|pre|c|rc)
+        [-_.]?(?P<pre_number>[0-9]+)?
+    )?
+    (?:
+        -(?P<implicit_post_number>[0-9]+)
+        |
+        [-_.]?(?P<post_label>post|rev|r)[-_.]?(?P<post_number>[0-9]+)?
+    )?
+    (?:[-_.]?(?P<dev_label>dev)[-_.]?(?P<dev_number>[0-9]+)?)?
+    (?:\+(?P<local>[a-z0-9]+(?:[-_.][a-z0-9]+)*))?
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+_PEP440_PRE_RELEASE_LABELS = {
+    "alpha": "a",
+    "a": "a",
+    "beta": "b",
+    "b": "b",
+    "preview": "rc",
+    "pre": "rc",
+    "c": "rc",
+    "rc": "rc",
+}
+
+
+def _is_extension_disabled_by_environment() -> bool:
+    value = os.environ.get(_NO_EXTENSIONS_VARIABLE, "")
+    return value.strip().lower() not in _EXTENSION_ENABLING_VALUES
+
+
+def _warn_extension_failed_to_import(error: ImportError) -> None:
+    warnings.warn(
+        f"The Rust extension {_EXTENSION_MODULE} is installed but failed to "
+        f"import ({type(error).__name__}: {error}); falling back to the "
+        f"pure-Python backend. Set {_NO_EXTENSIONS_VARIABLE}=1 to select the "
+        "pure-Python backend without importing the extension.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
+def _find_foreign_extension_builds(
+    directory: Path, extension_suffixes: list[str]
+) -> list[str]:
+    """Return the extension builds in `directory` that this interpreter skips.
+
+    Args:
+        directory: Directory the extension module is imported from.
+        extension_suffixes: File suffixes this interpreter loads extension
+            modules from, such as ``importlib.machinery.EXTENSION_SUFFIXES``.
+
+    Returns:
+        The sorted file names of the builds found, or an empty list if none
+        was found or one of them matches ``extension_suffixes``.
+
+    """
+    loadable_names = {_EXTENSION_STEM + suffix for suffix in extension_suffixes}
+    build_names = sorted(
+        path.name
+        for path in directory.glob(f"{_EXTENSION_STEM}.*")
+        if path.name.endswith(_EXTENSION_FILE_ENDINGS)
+    )
+    if any(name in loadable_names for name in build_names):
+        return []
+    return build_names
+
+
+def _warn_extension_built_for_other_interpreters(
+    build_names: list[str], extension_suffixes: list[str]
+) -> None:
+    warnings.warn(
+        f"The Rust extension {_EXTENSION_MODULE} is installed only as "
+        f"{', '.join(build_names)}, which this interpreter does not load (it "
+        f"loads {_EXTENSION_STEM}{extension_suffixes[0]}); falling back to "
+        "the pure-Python backend. Rebuild the extension (`uv sync`) for this "
+        f"interpreter, or set {_NO_EXTENSIONS_VARIABLE}=1 to select the "
+        "pure-Python backend without importing the extension.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
+def _warn_extension_version_mismatch(
+    extension_version: str | None, package_version: str
+) -> None:
+    reported_version = (
+        "no __version__ attribute"
+        if extension_version is None
+        else f"version {extension_version!r}"
+    )
+    warnings.warn(
+        f"The Rust extension {_EXTENSION_MODULE} reports {reported_version}, "
+        f"but the installed package {_PACKAGE_NAME} is version "
+        f"{package_version!r}; the extension is stale, so the pure-Python "
+        "backend is used instead. Rebuild the extension (`uv sync`) to "
+        "select it again.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
+def _normalize_pep440_version(version: str) -> str | None:
+    """Return a version in PEP 440's normal form, the form maturin gives it.
+
+    Args:
+        version: Version to normalize, such as a Cargo version.
+
+    Returns:
+        The normalized version, or ``None`` if ``version`` is not a PEP 440
+        version.
+
+    """
+    match = _PEP440_VERSION_PATTERN.fullmatch(version.strip())
+    if match is None:
+        return None
+    normalized = ".".join(str(int(part)) for part in match["release"].split("."))
+    if match["pre_label"] is not None:
+        pre_label = _PEP440_PRE_RELEASE_LABELS[match["pre_label"].lower()]
+        normalized += f"{pre_label}{int(match['pre_number'] or 0)}"
+    if match["implicit_post_number"] is not None:
+        normalized += f".post{int(match['implicit_post_number'])}"
+    elif match["post_label"] is not None:
+        normalized += f".post{int(match['post_number'] or 0)}"
+    if match["dev_label"] is not None:
+        normalized += f".dev{int(match['dev_number'] or 0)}"
+    if match["local"] is not None:
+        normalized += "+" + re.sub(r"[-_]", ".", match["local"].lower())
+    return normalized
+
+
+def _is_extension_usable() -> bool:
+    try:
+        extension = importlib.import_module(_EXTENSION_MODULE)
+    except ModuleNotFoundError as error:
+        if error.name != _EXTENSION_MODULE:
+            _warn_extension_failed_to_import(error)
+            return False
+        extension_suffixes = importlib.machinery.EXTENSION_SUFFIXES
+        build_names = _find_foreign_extension_builds(
+            Path(__file__).parent, extension_suffixes
+        )
+        if build_names:
+            _warn_extension_built_for_other_interpreters(
+                build_names, extension_suffixes
+            )
+        return False
+    except ImportError as error:
+        _warn_extension_failed_to_import(error)
+        return False
+    extension_version = getattr(extension, "__version__", None)
+    package_version = importlib.metadata.version(_PACKAGE_NAME)
+    if (
+        not isinstance(extension_version, str)
+        or _normalize_pep440_version(extension_version) != package_version
+    ):
+        _warn_extension_version_mismatch(extension_version, package_version)
+        return False
+    return True
+
+
+IS_RUST_BACKEND_SELECTED: Final[bool] = (
+    not _is_extension_disabled_by_environment() and _is_extension_usable()
+)
+"""Whether the package runs on the Rust extension in this process."""

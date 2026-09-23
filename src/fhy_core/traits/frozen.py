@@ -446,9 +446,9 @@ class FrozenMixin(ABC):
 
         Manual construction paths that bypass ``__init__``
         (e.g. ``cls.__new__(cls)`` followed by direct attribute
-        assignment, used by serialization and the deterministic-id
-        testing patch) do not trigger the auto-freeze wrap and must
-        call :meth:`freeze` explicitly when construction is complete.
+        assignment, used by deserialization) do not trigger the
+        auto-freeze wrap and must call :meth:`freeze` explicitly when
+        construction is complete.
 
     Composing with ``@dataclass(frozen=True)``:
         Dataclass-frozen subclasses inherit the dataclass's own

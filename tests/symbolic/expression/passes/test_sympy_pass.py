@@ -595,29 +595,23 @@ def test_identifier_round_trips_through_sympy_for_tricky_name_hints(
 
 
 def test_convert_symbol_advances_identifier_id_counter_past_recovered_id() -> None:
-    """Test recovering an `Identifier` from a SymPy symbol advances `_next_id`.
+    """Test recovering an `Identifier` from a SymPy symbol advances the id counter.
 
     `Identifier` documents that ids are never reused. The reverse converter
     must therefore advance the global counter past any id it materializes,
     so a subsequently constructed `Identifier` gets a strictly greater id.
-
-    The starting counter is captured up front and restored on teardown so
-    this test does not leak large id values into other tests in the same
-    pytest worker.
+    The recovered id is placed ahead of a freshly constructed anchor, so it
+    lies beyond every id issued so far.
     """
-    starting_next_id = Identifier._next_id
-    recovered_id = starting_next_id + 100
-    try:
-        recovered = convert_sympy_expression_to_expression(
-            sympy.Symbol(f"x_{recovered_id}")
-        )
-        assert isinstance(recovered, IdentifierExpression)
-        assert recovered.identifier.id == recovered_id
+    recovered_id = Identifier("anchor").id + 100
 
-        fresh = Identifier("y")
-        assert fresh.id > recovered_id
-    finally:
-        Identifier._next_id = starting_next_id
+    recovered = convert_sympy_expression_to_expression(
+        sympy.Symbol(f"x_{recovered_id}")
+    )
+
+    assert isinstance(recovered, IdentifierExpression)
+    assert recovered.identifier.id == recovered_id
+    assert Identifier("y").id > recovered_id
 
 
 def test_convert_add_of_literals_and_symbol_preserves_unevaluated_tail() -> None:

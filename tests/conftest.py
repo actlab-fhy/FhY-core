@@ -1,7 +1,7 @@
 """Testing utilitiy functions."""
 
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Sequence
 from importlib.util import find_spec
 from typing import Any
 from unittest.mock import Mock
@@ -14,10 +14,16 @@ from fhy_core.symbolic.expression import registry as _registry
 from fhy_core.utils.override import override
 
 __all__ = [
+    "NO_EXTENSIONS_VARIABLE",
     "MockIdentifierAliasError",
     "SerializableEqualHashable",
+    "build_backend_environment",
     "mock_identifier",
+    "run_counter_operations",
 ]
+
+# The variable that selects the backend a freshly started interpreter imports.
+NO_EXTENSIONS_VARIABLE = "FHY_CORE_NO_EXTENSIONS"
 
 # Hypothesis settings profiles. `dev` is the local inner loop; `thorough` is
 # the release gate that `nox -s property` selects through HYPOTHESIS_PROFILE;
@@ -71,6 +77,65 @@ def function_registry_snapshot() -> Iterator[None]:
         yield
     finally:
         _registry.set_registry_state_for_tests(snapshot)
+
+
+def build_backend_environment(
+    no_extensions: str | None, *, drop_python_warnings: bool = False
+) -> dict[str, str]:
+    """Return this process's environment with the backend variable replaced.
+
+    A fresh interpreter started with the result selects its backend from
+    ``no_extensions`` alone, whatever this process was started with.
+
+    Args:
+        no_extensions: Value for ``FHY_CORE_NO_EXTENSIONS``, or ``None`` to
+            leave it unset.
+        drop_python_warnings: Whether to also unset ``PYTHONWARNINGS``, so
+            this process's warning filters do not reach the child.
+
+    Returns:
+        A copy of ``os.environ`` with those variables replaced.
+
+    """
+    environment = dict(os.environ)
+    environment.pop(NO_EXTENSIONS_VARIABLE, None)
+    if drop_python_warnings:
+        environment.pop("PYTHONWARNINGS", None)
+    if no_extensions is not None:
+        environment[NO_EXTENSIONS_VARIABLE] = no_extensions
+    return environment
+
+
+def run_counter_operations(
+    operations: Sequence[int | None],
+    allocate: Callable[[], int],
+    advance_past: Callable[[int], None],
+) -> list[int]:
+    """Run allocations and advances on an identifier id counter.
+
+    The counter first allocates an anchor id. ``None`` allocates; an integer
+    advances the counter past the id that far past the anchor. After the
+    operations the counter allocates once more, so every sequence ends by
+    observing where it left the counter.
+
+    Args:
+        operations: The allocations and advance offsets, in order.
+        allocate: The counter's allocation.
+        advance_past: The counter's advance past an id.
+
+    Returns:
+        Every id allocated after the anchor, minus the anchor.
+
+    """
+    base = allocate()
+    relative_ids = []
+    for advance_offset in operations:
+        if advance_offset is None:
+            relative_ids.append(allocate() - base)
+        else:
+            advance_past(base + advance_offset)
+    relative_ids.append(allocate() - base)
+    return relative_ids
 
 
 class MockIdentifierAliasError(Exception):

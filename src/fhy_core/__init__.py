@@ -11,8 +11,10 @@ the top level.
 """
 
 from importlib.metadata import version
+from typing import Final
 
 from . import (
+    _backend,
     diagnostic,
     error,
     identifier,
@@ -35,7 +37,21 @@ from .identifier import Identifier
 
 __version__ = version("fhy_core")
 
+RUST_BACKEND_SELECTED: Final[bool] = _backend.IS_RUST_BACKEND_SELECTED
+"""Whether this process runs on the Rust extension rather than pure Python.
+
+True exactly when the extension ``fhy_core._rs`` is installed, imports, has a
+``__version__`` matching the installed package's version, and is not disabled
+through the ``FHY_CORE_NO_EXTENSIONS`` environment variable. The extension's
+Cargo version is PEP 440-normalized before the comparison (``0.3.0-rc.1``
+matches ``0.3.0rc1``). The variable leaves the extension enabled when it is
+unset, empty, or one of ``0``, ``false``, ``no``, and ``off`` (case-insensitive,
+ignoring surrounding whitespace); any other value disables it. The value is
+fixed when the package is imported.
+"""
+
 __all__ = [
+    "RUST_BACKEND_SELECTED",
     "Identifier",
     "diagnostic",
     "error",

@@ -1,14 +1,19 @@
 """Tests the identifier."""
 
+import base64
 import copy
+import io
 import pickle
 import subprocess
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, NamedTuple
 
 import pytest
 
-from fhy_core.identifier import Identifier
+import fhy_core
+from fhy_core.identifier import Identifier, _PythonIdCounter
 from fhy_core.serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -16,6 +21,9 @@ from fhy_core.serialization import (
     SerializedDict,
 )
 from fhy_core.traits import Equal, Frozen, FrozenMutationError, PartialEqual
+from fhy_core.utils.override import override
+
+from .conftest import build_backend_environment
 
 # =============================================================================
 # Construction & ID generation
@@ -58,10 +66,10 @@ def test_interleaved_construction_and_deserialization_yield_unique_ids() -> None
     # Deserialize ids sit well above the construction range AND are spaced
     # apart by more than `num_each` so constructions cannot fill into a
     # later deserialize id under any interleaving. Each successful
-    # deserialize must bump `_next_id` under lock; without the lock, a
-    # deserialize bump overwritten by a concurrent construction's smaller
-    # increment leaves `_next_id` stale and lets later constructions reach
-    # an already-issued deserialized id.
+    # deserialize must advance the id counter atomically with respect to
+    # construction; a deserialize advance overwritten by a concurrent
+    # construction's smaller increment would leave the counter stale and let
+    # later constructions reach an already-issued deserialized id.
     spacing = num_each + 1
     deserialize_ids = [base + 10_000 + i * spacing for i in range(num_each)]
 
@@ -115,6 +123,158 @@ def test_interleaved_construct_id_strictly_exceeds_running_max() -> None:
             running_max = max(running_max, d_id)
 
 
+def test_constructor_rejects_name_hint_with_lone_surrogate() -> None:
+    """Test a name hint that is not encodable as UTF-8 raises a value error."""
+    with pytest.raises(ValueError, match="UTF-8"):
+        Identifier("x\ud800")
+
+
+def test_rejected_construction_does_not_consume_an_id() -> None:
+    """Test a rejected name hint leaves the id counter untouched."""
+    base = Identifier("anchor").id
+    with pytest.raises(ValueError, match="UTF-8"):
+        Identifier("\udfff")
+    assert Identifier("next").id == base + 1
+
+
+@pytest.mark.parametrize(
+    ("name_hint", "type_name"),
+    [(123, "int"), (None, "NoneType"), (b"x", "bytes"), (["x"], "list")],
+    ids=["int", "none", "bytes", "list"],
+)
+def test_constructor_rejects_a_non_str_name_hint(
+    name_hint: object, type_name: str
+) -> None:
+    """Test a name hint that is not a `str` raises a type error naming its type."""
+    with pytest.raises(
+        TypeError, match=rf"^Identifier name hint must be a str, got {type_name}\.$"
+    ):
+        Identifier(name_hint)  # type: ignore[arg-type]  # test: invalid input
+
+
+def test_non_str_name_hint_does_not_consume_an_id() -> None:
+    """Test a rejected non-`str` name hint leaves the id counter untouched."""
+    base = Identifier("anchor").id
+    with pytest.raises(TypeError):
+        Identifier(123)  # type: ignore[arg-type]  # test: invalid input
+    assert Identifier("next").id == base + 1
+
+
+@pytest.mark.parametrize(
+    "name_hint", ["é", "\U0001d465", "名前"], ids=["latin", "astral", "cjk"]
+)
+def test_constructor_accepts_non_ascii_name_hint(name_hint: str) -> None:
+    """Test a non-ASCII name hint that is valid Unicode is kept as given."""
+    assert Identifier(name_hint).name_hint == name_hint
+
+
+# =============================================================================
+# Pure-Python id counter locking
+#
+# `_PythonIdCounter` must touch its next id only under its lock. Racing threads
+# rarely expose a missing lock under the GIL, so these tests check the
+# discipline directly.
+# =============================================================================
+
+
+class _RecordingLock:
+    """Non-reentrant lock that records whether it is currently held."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.is_held = False
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        acquired = self._lock.acquire(blocking, timeout)
+        if acquired:
+            self.is_held = True
+        return acquired
+
+    def release(self) -> None:
+        self.is_held = False
+        self._lock.release()
+
+    def __enter__(self) -> bool:
+        return self.acquire()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.release()
+
+
+class _LockCheckedCounter(NamedTuple):
+    """A fresh counter, its recording lock, and its next-id accesses so far."""
+
+    counter: _PythonIdCounter
+    lock: _RecordingLock
+    locked_accesses: list[str]
+    unlocked_accesses: list[str]
+
+
+def _create_lock_checked_counter() -> _LockCheckedCounter:
+    """Return a fresh counter that records each next-id access as locked or not.
+
+    The counter is an instance of a subclass whose next-id attribute is a
+    property backed by the instance dict, so every read and write of it goes
+    through the property and is recorded. Accesses made while constructing
+    the counter, before the recording lock replaces its own, are discarded.
+    """
+    lock = _RecordingLock()
+    locked_accesses: list[str] = []
+    unlocked_accesses: list[str] = []
+
+    def record(access: str) -> None:
+        (locked_accesses if lock.is_held else unlocked_accesses).append(access)
+
+    def read_next_id(counter: _PythonIdCounter) -> int:
+        record("read")
+        next_id: int = vars(counter)["_next_id"]
+        return next_id
+
+    def write_next_id(counter: _PythonIdCounter, next_id: int) -> None:
+        record("write")
+        vars(counter)["_next_id"] = next_id
+
+    lock_checked_class = type(
+        "_LockCheckedPythonIdCounter",
+        (_PythonIdCounter,),
+        {"_next_id": property(read_next_id, write_next_id)},
+    )
+    counter: _PythonIdCounter = lock_checked_class()
+    vars(counter)["_lock"] = lock
+    locked_accesses.clear()
+    unlocked_accesses.clear()
+    return _LockCheckedCounter(counter, lock, locked_accesses, unlocked_accesses)
+
+
+def test_python_counter_allocates_only_while_holding_its_lock() -> None:
+    """Test `allocate` reads and advances the next id only under the lock."""
+    checked = _create_lock_checked_counter()
+
+    allocated = [checked.counter.allocate() for _ in range(3)]
+
+    assert allocated == [0, 1, 2]
+    assert checked.unlocked_accesses == []
+    assert {"read", "write"} <= set(checked.locked_accesses)
+    assert not checked.lock.is_held
+
+
+def test_python_counter_advances_only_while_holding_its_lock() -> None:
+    """Test `advance_past` reads and moves the next id only under the lock.
+
+    Advancing ahead of the counter writes the next id, and advancing behind
+    it only reads it; both must happen under the lock.
+    """
+    checked = _create_lock_checked_counter()
+
+    checked.counter.advance_past(10)
+    checked.counter.advance_past(5)
+
+    assert checked.unlocked_accesses == []
+    assert {"read", "write"} <= set(checked.locked_accesses)
+    assert not checked.lock.is_held
+    assert checked.counter.allocate() == 11
+
+
 # =============================================================================
 # Equality & hashing
 # =============================================================================
@@ -146,7 +306,7 @@ def test_inequality_with_non_identifier_types() -> None:
 def test_equality_uses_value_not_identity_for_large_ids() -> None:
     """Test equality holds for two distinct objects sharing a large `id`."""
     # Use JSON round-trip: each `from_json` call parses the payload fresh, so
-    # the two `_id` ints are distinct objects (above CPython's small-int cache
+    # the two id ints are distinct objects (above CPython's small-int cache
     # of -5..256). A reused payload dict would share the same int reference
     # and the `is`-vs-`==` distinction would not be exercised.
     a = Identifier.from_json('{"id": 1000000, "name_hint": "x"}')
@@ -384,6 +544,98 @@ def test_deserialize_typo_key_raises() -> None:
         )
 
 
+def test_deserialize_name_hint_with_lone_surrogate_raises() -> None:
+    """Test deserializing a name hint not encodable as UTF-8 raises a value error."""
+    with pytest.raises(DeserializationValueError):
+        Identifier.deserialize_from_dict({"id": 0, "name_hint": "x\ud800"})
+
+
+# =============================================================================
+# Id space bound
+#
+# Ids are unsigned 64-bit integers under both backends. The largest id an
+# identifier can hold is `2**64 - 2`: no identifier ever holds `2**64 - 1`,
+# so deserialization rejects it, and once `2**64 - 2` is issued or restored
+# the counter cannot advance without wrapping, so construction raises
+# `RuntimeError`.
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "id_value",
+    [2**64 - 1, 2**64, 2**64 + 1, 2**200],
+    ids=["two-pow-64-minus-one", "two-pow-64", "just-above-two-pow-64", "two-pow-200"],
+)
+def test_deserialize_id_of_2_pow_64_minus_1_or_more_raises_value_error(
+    id_value: int,
+) -> None:
+    """Test deserializing an `id` of `2**64 - 1` or more raises a value error."""
+    with pytest.raises(
+        DeserializationValueError,
+        match=r'"Identifier"\. Expected a non-negative integer below 2\*\*64 - 1',
+    ):
+        Identifier.deserialize_from_dict({"id": id_value, "name_hint": "x"})
+
+
+def test_rejected_deserialization_of_2_pow_64_minus_1_leaves_the_counter() -> None:
+    """Test rejecting the id `2**64 - 1` does not advance the counter."""
+    base = Identifier("anchor").id
+    with pytest.raises(DeserializationValueError):
+        Identifier.deserialize_from_dict({"id": 2**64 - 1, "name_hint": "x"})
+
+    assert Identifier("next").id == base + 1
+
+
+_EXHAUST_THEN_CONSTRUCT_PROGRAM = (
+    "import fhy_core\n"
+    "from fhy_core.identifier import Identifier\n"
+    "print(fhy_core.RUST_BACKEND_SELECTED, flush=True)\n"
+    "largest = Identifier.deserialize_from_dict("
+    "{'id': 2**64 - 2, 'name_hint': 'largest'})\n"
+    "print(largest.id, flush=True)\n"
+    "for _ in range(2):\n"
+    "    try:\n"
+    "        Identifier('beyond')\n"
+    "    except RuntimeError as error:\n"
+    "        print(f'{type(error).__name__}: {error}', flush=True)\n"
+)
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+@pytest.mark.parametrize("backend", ["rust", "python"])
+def test_constructing_past_the_largest_issuable_id_raises_runtime_error(
+    backend: str,
+) -> None:
+    """Test construction raises `RuntimeError` once `2**64 - 2` has been issued.
+
+    The child process deserializes the largest issuable id, which leaves the
+    counter at `2**64 - 1`, and then tries to construct two more identifiers.
+    Both backends raise the same catchable error, and a failed construction
+    leaves the counter exhausted rather than wrapped. The child reports the
+    backend it selected, so a stale extension that falls back to Python
+    cannot pass as the Rust case.
+    """
+    if backend == "rust":
+        pytest.importorskip("fhy_core._rs")
+
+    completed = subprocess.run(
+        [sys.executable, "-c", _EXHAUST_THEN_CONSTRUCT_PROGRAM],
+        env=build_backend_environment("0" if backend == "rust" else "1"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        str(backend == "rust"),
+        str(2**64 - 2),
+        "RuntimeError: identifier id space exhausted",
+        "RuntimeError: identifier id space exhausted",
+    ]
+
+
 # =============================================================================
 # Deserialization & generator-state interaction
 #
@@ -447,44 +699,47 @@ def test_deserialize_then_construct_avoids_collision() -> None:
 
 
 # =============================================================================
-# Class-level defaults (subprocess-isolated)
+# Counter start (subprocess-isolated)
 #
-# `_next_id` is mutated by every Identifier construction, so its starting
-# state is only observable in a fresh process. Importing `fhy_core` (or any
-# submodule) may construct identifiers during module initialization; the
-# test reads `Identifier._next_id` immediately after import and then
-# verifies the next user-constructed identifier picks up that counter
-# contiguously and advances it by 1. The assertion is robust to future
-# additions of module-level interned objects.
+# Every construction advances the id counter, so its starting state is only
+# observable in a fresh process. Importing `fhy_core` may construct
+# identifiers during module initialization; the child process collects the
+# ids of every identifier still alive after import, which keeps the
+# assertion robust to future additions of module-level interned objects.
 # =============================================================================
 
 
 @pytest.mark.slow
 @pytest.mark.subprocess
-def test_first_identifier_in_fresh_process_has_id_zero() -> None:
-    """Test the `_next_id` counter is contiguous from a fresh process import.
+def test_fresh_process_issues_ids_upward_from_zero() -> None:
+    """Test a fresh process issues ids contiguously upward from zero.
 
-    Reads `Identifier._next_id` after package initialization and asserts that
-    a freshly-constructed `Identifier` picks up the counter and advances it
-    by exactly one. Combined with the contiguous-construction tests, this
-    pins down the "monotonically-increasing, never-reused" id contract from
-    a clean process start.
+    The smallest id alive after package initialization is zero (or, when
+    initialization constructs no identifier, the first construction gets
+    zero), every such id lies below the first id a caller constructs, and
+    the construction after that advances the counter by exactly one.
     """
     output = subprocess.check_output(
         [
             sys.executable,
             "-c",
+            "import gc\n"
             "import fhy_core  # ensure full package initialization\n"
             "from fhy_core.identifier import Identifier\n"
-            "start_next_id = Identifier._next_id\n"
-            "fresh = Identifier('x')\n"
-            "print(start_next_id, fresh.id, Identifier._next_id)",
+            "import_time_ids = sorted(\n"
+            "    obj.id for obj in gc.get_objects() if isinstance(obj, Identifier)\n"
+            ")\n"
+            "first = Identifier('first').id\n"
+            "second = Identifier('second').id\n"
+            "print(first, second, *import_time_ids)",
         ],
         text=True,
     ).strip()
-    start_next_id, fresh_id, next_id = (int(part) for part in output.split())
-    assert fresh_id == start_next_id
-    assert next_id == fresh_id + 1
+    first_id, second_id, *import_time_ids = (int(part) for part in output.split())
+
+    assert min(import_time_ids, default=first_id) == 0
+    assert all(identifier_id < first_id for identifier_id in import_time_ids)
+    assert second_id == first_id + 1
 
 
 # =============================================================================
@@ -500,17 +755,50 @@ def test_identifier_is_frozen_after_construction() -> None:
 
 
 def test_identifier_rejects_id_mutation_after_construction() -> None:
-    """Test assigning to ``_id`` on a constructed ``Identifier`` raises."""
+    """Test assigning to ``id`` on a constructed ``Identifier`` raises."""
     identifier = Identifier("x")
+    original_id = identifier.id
+
     with pytest.raises(FrozenMutationError):
-        identifier._id = 99
+        identifier.id = 99  # type: ignore[misc]  # test: read-only property
+
+    assert identifier.id == original_id
 
 
 def test_identifier_rejects_name_hint_mutation_after_construction() -> None:
-    """Test assigning to ``_name_hint`` on a constructed ``Identifier`` raises."""
+    """Test assigning to ``name_hint`` on a constructed ``Identifier`` raises."""
     identifier = Identifier("x")
+
     with pytest.raises(FrozenMutationError):
-        identifier._name_hint = "rewritten"
+        identifier.name_hint = "rewritten"  # type: ignore[misc]  # test: read-only
+
+    assert identifier.name_hint == "x"
+
+
+def test_identifier_stores_its_id_and_name_hint_as_plain_values() -> None:
+    """Test an identifier's state is its `int` id and `str` name hint alone.
+
+    No backend object is held, so reading the id and comparing or hashing
+    identifiers never leaves Python.
+    """
+    identifier = Identifier("x")
+
+    stored_values = list(vars(identifier).values())
+
+    assert len(stored_values) == 2
+    assert set(stored_values) == {identifier.id, "x"}
+    assert {type(value) for value in stored_values} == {int, str}
+
+
+def test_identifier_rejects_rebinding_its_stored_state_after_construction() -> None:
+    """Test every instance attribute of a constructed ``Identifier`` is frozen."""
+    identifier = Identifier("x")
+    stored_state_names = list(vars(identifier))
+    assert stored_state_names
+
+    for name in stored_state_names:
+        with pytest.raises(FrozenMutationError):
+            setattr(identifier, name, None)
 
 
 def test_deserialized_identifier_is_frozen() -> None:
@@ -518,12 +806,54 @@ def test_deserialized_identifier_is_frozen() -> None:
     identifier = Identifier.deserialize_from_dict({"id": 12345, "name_hint": "y"})
     assert identifier.is_frozen
     with pytest.raises(FrozenMutationError):
-        identifier._id = 0
+        identifier.id = 0  # type: ignore[misc]  # test: read-only property
 
 
 # =============================================================================
 # Pickle & deepcopy round-trips
 # =============================================================================
+
+
+class _GlobalRecordingUnpickler(pickle.Unpickler):
+    """Unpickler that records every global a pickle refers to."""
+
+    found_globals: list[tuple[str, str]]
+
+    def __init__(self, data: bytes) -> None:
+        super().__init__(io.BytesIO(data))
+        self.found_globals = []
+
+    @override
+    def find_class(self, module_name: str, global_name: str) -> Any:
+        self.found_globals.append((module_name, global_name))
+        return super().find_class(module_name, global_name)
+
+
+def _build_environment_for_the_other_backend() -> dict[str, str]:
+    """Return this process's environment, switched to the unselected backend.
+
+    Skips the calling test when this process runs on the pure-Python
+    backend and the Rust extension is not installed.
+    """
+    if fhy_core.RUST_BACKEND_SELECTED:
+        return build_backend_environment("1")
+    pytest.importorskip("fhy_core._rs")
+    return build_backend_environment(None)
+
+
+def _run_python_under_the_other_backend(
+    source: str, *arguments: str, stdin: str | None = None
+) -> list[str]:
+    """Run a program on the unselected backend and return its output words."""
+    completed = subprocess.run(
+        [sys.executable, "-c", source, *arguments],
+        env=_build_environment_for_the_other_backend(),
+        input=stdin,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return completed.stdout.split()
 
 
 def test_deepcopy_preserves_equality_and_frozen_state() -> None:
@@ -550,11 +880,32 @@ def test_pickle_round_trip_preserves_equality_and_frozen_state() -> None:
     assert restored.name_hint == "original"
     assert restored.is_frozen
     with pytest.raises(FrozenMutationError):
-        restored._name_hint = "rewritten"
+        restored.name_hint = "rewritten"
+
+
+@pytest.mark.parametrize("protocol", range(pickle.HIGHEST_PROTOCOL + 1))
+def test_pickle_refers_to_no_class_but_the_public_identifier(protocol: int) -> None:
+    """Test a pickled identifier holds plain data plus the public class only.
+
+    Only the public class appears in the pickle, so it loads under either
+    backend.
+    """
+    identifier = Identifier("plain")
+    unpickler = _GlobalRecordingUnpickler(pickle.dumps(identifier, protocol))
+
+    restored = unpickler.load()
+
+    non_builtin_globals = {
+        (module_name, global_name)
+        for module_name, global_name in unpickler.found_globals
+        if module_name not in {"builtins", "__builtin__"}
+    }
+    assert non_builtin_globals == {("fhy_core.identifier", "Identifier")}
+    assert restored == identifier
 
 
 def test_restoring_pickled_state_advances_the_global_id_counter() -> None:
-    """Test ``__setstate__`` advances the id counter past the restored id.
+    """Test unpickling advances the id counter past the restored id.
 
     Restoring a pickled identifier in a process whose counter has not yet
     reached its id must not let a later construction re-issue that id,
@@ -564,15 +915,71 @@ def test_restoring_pickled_state_advances_the_global_id_counter() -> None:
     """
     identifier = Identifier("far")
     target_id = Identifier("probe").id + 1000
-    reduced = identifier.__reduce_ex__(2)
+    reduced = identifier.__reduce_ex__(pickle.HIGHEST_PROTOCOL)
     assert isinstance(reduced, tuple)
-    reconstructor, arguments, state = reduced[:3]
-    dict_state, slots_state = state
-    raised_dict_state = {**dict_state, "_id": target_id}
+    reconstructor, (state,) = reduced
 
-    clone = reconstructor(*arguments)
-    clone.__setstate__((raised_dict_state, slots_state))
+    clone = reconstructor({**state, "id": target_id})
 
     assert clone.id == target_id
+    assert clone.name_hint == "far"
     assert clone.is_frozen
     assert Identifier("after").id > target_id
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_pickle_written_under_this_backend_loads_under_the_other() -> None:
+    """Test a pickle from this backend restores, frozen, under the other one.
+
+    Unpickling in the other process also advances that process's counter
+    past the restored id.
+    """
+    far_id = Identifier("anchor").id + 1_000_000
+    identifier = Identifier.deserialize_from_dict({"id": far_id, "name_hint": "far"})
+    payload = base64.b64encode(pickle.dumps(identifier)).decode("ascii")
+
+    output = _run_python_under_the_other_backend(
+        "import base64, pickle, sys\n"
+        "import fhy_core\n"
+        "from fhy_core.identifier import Identifier\n"
+        "restored = pickle.loads(base64.b64decode(sys.stdin.read()))\n"
+        "print(fhy_core.RUST_BACKEND_SELECTED, restored.id, restored.name_hint,\n"
+        "      restored.is_frozen, Identifier('after').id)",
+        stdin=payload,
+    )
+
+    other_backend, restored_id, name_hint, is_frozen, after_id = output
+    assert other_backend == str(not fhy_core.RUST_BACKEND_SELECTED)
+    assert (int(restored_id), name_hint, is_frozen) == (far_id, "far", "True")
+    assert int(after_id) > far_id
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_pickle_written_under_the_other_backend_loads_under_this_one() -> None:
+    """Test a pickle from the other backend restores, frozen, under this one.
+
+    Unpickling here also advances this process's counter past the restored
+    id.
+    """
+    far_id = Identifier("anchor").id + 1_000_000
+
+    other_backend, payload = _run_python_under_the_other_backend(
+        "import base64, pickle, sys\n"
+        "import fhy_core\n"
+        "from fhy_core.identifier import Identifier\n"
+        "identifier = Identifier.deserialize_from_dict(\n"
+        "    {'id': int(sys.argv[1]), 'name_hint': 'far'}\n"
+        ")\n"
+        "print(fhy_core.RUST_BACKEND_SELECTED,\n"
+        "      base64.b64encode(pickle.dumps(identifier)).decode('ascii'))",
+        str(far_id),
+    )
+    restored = pickle.loads(base64.b64decode(payload))
+
+    assert other_backend == str(not fhy_core.RUST_BACKEND_SELECTED)
+    assert isinstance(restored, Identifier)
+    assert (restored.id, restored.name_hint) == (far_id, "far")
+    assert restored.is_frozen
+    assert Identifier("after").id > far_id

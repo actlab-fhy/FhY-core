@@ -11,7 +11,7 @@ git clone https://github.com/actlab-fhy/FhY-core.git -b dev
 cd FhY-core
 ```
 
-2. Install [uv](https://docs.astral.sh/uv/) (used for environment and dependency management), then create the development environment. This installs *FhY* Core in editable mode along with the default `dev` dependency group.
+2. Install [uv](https://docs.astral.sh/uv/) (used for environment and dependency management) and a Rust toolchain (stable, 1.85 or newer; [rustup](https://rustup.rs/) picks the channel from `rust-toolchain.toml`), then create the development environment. This installs *FhY* Core in editable mode along with the default `dev` dependency group, and compiles the Rust extension `fhy_core._rs` with maturin.
 
 ```bash
 uv sync
@@ -172,8 +172,11 @@ how hard Hypothesis looks:
   database in `.hypothesis/`.
 - `thorough`: 400 inputs, derandomized, with no database. This is the
   release gate. Set `HYPOTHESIS_PROFILE=thorough`, or run
-  `uv run nox -s property`, which sets it for you. A failure prints a
-  `@reproduce_failure` blob that replays it exactly.
+  `uv run nox -s property`, which sets it for you and runs the suite once
+  per backend, as `property(backend='rust')` and
+  `property(backend='python')`. Like `tests`, each fails before testing if
+  the package does not report the backend it was asked for. A failure
+  prints a `@reproduce_failure` blob that replays it exactly.
 - `mutation`: 25 inputs, derandomized, with no database, so every mutant
   sees the same inputs. The `mutation` nox session selects it.
 
@@ -231,14 +234,149 @@ than the profile.
 
 ### CI policy and mutation testing
 
-The `property` job only runs on pull requests into `main` and on manual
-dispatch; it does not run on pull requests into `dev`. Run
-`uv run nox -s property` locally before opening a release pull request.
+The `property` and `golden-expanded` jobs only run on pull requests into
+`main` and on manual dispatch; they do not run on pull requests into `dev`.
+Run `uv run nox -s property` and `uv run nox -s golden_expanded` locally
+before opening a release pull request.
+
+The `rust` and `rust-msrv` jobs run on every pull request, and `ci-ok`
+requires both. `rust` runs `cargo fmt --all --check`, `cargo clippy
+--workspace --all-targets --all-features --locked -- -D warnings`, `cargo
+test --workspace --locked --all-features`, and `cargo package --locked -p
+fhy-core`, then unpacks the packaged crate and runs `cargo test --locked
+--features testing` in it, so the tests pass on the crate as a consumer
+receives it. `rust-msrv` runs `cargo check --workspace --lib --locked` on
+the `rust-version` in `Cargo.toml`, once with default features and once
+with `--all-features`, so the MSRV covers both `fhy-core` and the PyO3
+binding crate `fhy-core-py`. That version is a promise to the crate's
+consumers, so `.cargo/config.toml` has the resolver fall back to dependency
+releases that build on it and `cargo update` keeps `Cargo.lock` within it.
+
+The Rust equivalence tests replay golden corpora under `rust/fhy-core/tests/golden/`,
+each recorded from the Python implementation by the `generate_*.py` script
+beside it. `tests/test_golden_corpora.py` reruns every generator in a fresh
+interpreter on the backend the test run selected, so the `tests` sessions
+check the corpora on both backends and every supported Python. It fails,
+printing the regeneration command and a diff, if a committed corpus differs
+outside its `provenance` block or a generator has no committed corpus. The
+`golden-corpora` pre-commit hook runs the same module whenever a commit
+touches `src/fhy_core/`, `rust/fhy-core/tests/golden/`, or
+`tests/test_golden_corpora.py`. The generators are type-checked and linted
+with the package, since they are the oracle the Rust port is held to. After
+changing the Python behavior a corpus records, regenerate it and commit the
+result.
+
+Each generator can also write a much larger random corpus, which an ignored
+test in its equivalence test file replays from the path in an environment
+variable. `uv run nox -s golden_expanded` writes every expanded corpus from
+the pure-Python backend and runs those ignored tests on them (it needs
+`cargo`); the `golden-expanded` job runs it on the same triggers as the
+`property` job. A new generator needs an entry in `EXPANDED_GOLDEN_CORPORA`
+in `noxfile.py`, or the session fails.
 
 Mutation testing measures whether a property earned its place: it makes
 small changes to the source and checks that some test fails. Each targeted
 module has its own config under `cosmic-ray/`; run one with
 `uv run nox -s mutation -- <module>` (the module defaults to `lattice`).
+
+## Porting to Rust
+
+*FhY* Core is moving to Rust one module at a time. The Rust code is a
+Cargo workspace with two crates. `rust/fhy-core` is the pure-Rust library
+and never depends on PyO3. `rust/fhy-core-py` holds the PyO3 bindings, and
+maturin builds it into the extension module `fhy_core._rs`. A port adds its
+types to `fhy-core` and their bindings to `fhy-core-py`. Every port follows
+these rules.
+
+### One extension module per process
+
+All Rust code that uses *FhY* Core's Rust types compiles into a single
+Python extension module. The identifier id counter and every registry are
+Rust `static`s, which exist once per compiled copy of the crate, and PyO3
+creates a separate Python type for each extension module. A second
+extension linking the crate would issue ids that collide with the first
+one's, keep registries whose canonical instances never match, and fail
+`isinstance` checks against the first one's classes. A downstream *FhY*
+package that gains Rust code depends on the crate as a Rust library and is
+compiled into one combined extension module; it never ships an extension
+of its own that links the crate.
+
+### Registries are process-global statics
+
+A registry ported from Python lives in a Rust `static`, as each `Interned`
+type's `InternRegistry` does, mirroring the module-level registry it
+replaces so the Rust behavior can be checked against the Python
+implementation. This is sound only because of the one-extension rule
+above.
+
+### Decoding checks the payload before its side effects
+
+Decoding an identifier advances the id counter, and decoding a canonical
+value interns it, so a decode has side effects that the Python
+deserializer performs in a set order: it checks one level of the payload,
+then restores that level's identifiers, then decodes the nested levels. A
+Rust type whose decode has such side effects implements the crate-private
+`decode::Decode` trait. Its `Payload` is the checked, side-effect-free form
+of one level, with identifier ids held unrestored and nested levels held as
+`DeferredPayload`s, and `build_from_payload` performs the side effects in
+Python's order. The type's `Deserialize` impl is then one call to
+`decode::deserialize_via_payload`. A type with a registry also initializes
+that registry before it restores any id, since Python's defaults exist from
+import.
+
+### Replacing a Python class
+
+- Port bottom-up. A class switches to Rust only once everything it holds
+  is already in Rust, so Rust code never stores Python objects.
+- Switch in one step. The binding replaces the Python class outright; a
+  Python registry and a Rust registry for the same concept are never live
+  at the same time.
+- Benchmark before deleting. Measure the module's hot paths (construction,
+  equality, hashing, attribute access, and whatever the module does most)
+  on both backends with a throwaway script, and delete the script once the
+  decision is made. When the Rust-backed version is at most 10% slower
+  than the Python one on every measured path, delete the pure-Python
+  implementation. When it is more than 10% slower on any path, usually
+  because every call crosses into the extension, the maintainer decides
+  whether to keep the Python class. A kept class moves only the parts that
+  gain from Rust and says why in its module docstring.
+  `fhy_core.identifier` is the example: `Identifier` stays in Python and
+  only its id counter runs in Rust.
+- Freeze the golden corpus. Once a module's Python implementation is
+  deleted, its generator has no oracle left to run. Delete the generator
+  (the drift check and `golden_expanded` find generators by the
+  `generate_*.py` pattern) and its `EXPANDED_GOLDEN_CORPORA` entry, and
+  keep the committed JSON as a fixed regression corpus.
+- From the first deletion on, the package requires the extension, and
+  `FHY_CORE_NO_EXTENSIONS` selects the pure-Python implementation only for
+  modules that still have one.
+
+### Module paths follow the Python package
+
+A Rust module takes the path of the Python module it ports:
+`fhy_core.symbolic.expression` becomes `fhy_core::symbolic::expression`,
+and a package's `core.py` folds into the package's own module. Packages
+that group items by kind, `traits/` and `utils/`, have no Rust
+counterpart; each of their items moves to the module whose concept it
+serves, as `HasIdentifier` lives in `identifier` and `Interned` in
+`interned`. Test support is the exception: `fhy_core.testing_patches`
+becomes the feature-gated `fhy_core::testing`.
+
+### Errors belong to their module
+
+Each module defines the error types for its own operations; the crate has
+no crate-wide error enum. A public error enum is `#[non_exhaustive]`.
+`Display` and `std::error::Error` are implemented by hand. The binding
+crate raises the same Python exception class, with the same message, that
+the Python implementation raises.
+
+### Canonical values keep their identity in Python
+
+When a canonical Rust value, such as an interned `OpAttribute`, reaches
+Python, the binding returns the same Python object for the same canonical
+instance every time, so `is` holds exactly as it does for values interned
+in Python. The binding crate keeps that cache; the core crate never holds
+Python objects.
 
 ## Creating a new Pull Request
 When submitting a pull request, we ask you to check the following:

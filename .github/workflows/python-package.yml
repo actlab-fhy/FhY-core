@@ -3,8 +3,16 @@
 #
 # The config job selects a LEAN matrix (ubuntu x py3.10/3.14) for everyday dev
 # PRs and a FULL matrix (3 OSes x 5 Pythons) for release gates (-> main), main
-# pushes, and manual dispatch. The property job (hypothesis suites) runs only
-# on release gates (PRs -> main) and manual dispatch — never on dev PRs.
+# pushes, and manual dispatch. The property job (hypothesis suites) and the
+# golden-expanded job (large random golden corpora replayed through the Rust
+# equivalence tests) run only on release gates (PRs -> main) and manual
+# dispatch — never on dev PRs.
+#
+# The rust and rust-msrv jobs cover the crate directly: the Python jobs only
+# compile it as an extension module and reach it through the identifier
+# bindings. The tests job also checks the golden corpora those crate tests
+# replay against the Python generators that record them
+# (tests/test_golden_corpora.py).
 # ci-ok aggregates the required jobs into one check.
 
 name: FhY-core CI
@@ -41,6 +49,78 @@ jobs:
       - name: Static Type Safety Check
         if: always()
         run: uv run nox -s type_check
+
+  rust:
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Cache Rust Build Artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Code Formatting
+        run: cargo fmt --all --check
+      - name: Code Linting
+        # fhy-core-py pulls in pyo3, so the workspace clippy run also checks
+        # it; clippy only checks, so that costs no libpython.
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Unit, Integration & Doc Testing
+        # pyo3 leaves libpython unlinked only when maturin sets
+        # PYO3_BUILD_EXTENSION_MODULE for a wheel build, so a plain cargo
+        # build links the runner's Python and the fhy-core-py test binaries
+        # run.
+        run: cargo test --workspace --locked --all-features
+      - name: Packaging
+        # Pack fhy-core, the only publishable workspace member, as crates.io
+        # would receive it and build the library from it.
+        run: cargo package --locked -p fhy-core
+      - name: Testing the Packaged Crate
+        # cargo package only builds the library, so run the tests from the
+        # packed crate as a consumer would get them. The published manifest
+        # loses this crate's dev-dependency on itself, which carries only a
+        # path, so the testing feature is named here instead.
+        run: |
+          tar -xzf target/package/fhy-core-*.crate -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP"/fhy-core-*/
+          cargo test --locked --features testing
+
+  rust-msrv:
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Read the MSRV
+        # From Cargo.toml, so the version tested is the version promised.
+        id: msrv
+        run: |
+          VERSION="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)"
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::No rust-version in Cargo.toml."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "MSRV -> $VERSION"
+      - name: Install Rust ${{ steps.msrv.outputs.version }}
+        # The ref pins the action; the input picks the Rust version.
+        id: toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - name: Cache Rust Build Artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Build the Library on the MSRV
+        # `cargo +<toolchain>`: rust-toolchain.toml pins the channel to stable
+        # and would otherwise win over the toolchain installed here. Both
+        # feature sets, since `--all-features` turns on `testing`, which
+        # `default` does not compile.
+        run: |
+          cargo +${{ steps.toolchain.outputs.name }} check --workspace --lib --locked
+          cargo +${{ steps.toolchain.outputs.name }} check --workspace --lib --all-features --locked
 
   config:
     runs-on: ubuntu-latest
@@ -115,6 +195,27 @@ jobs:
       - name: Property-Based Testing
         run: uv run nox -s property
 
+  golden-expanded:
+    # Release gate only, like property (see the header).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.base_ref == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust Build Artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Expanded Golden Corpus Equivalence
+        run: uv run nox -s golden_expanded
+
   coverage:
     runs-on: "ubuntu-latest"
     needs: [tests]
@@ -145,22 +246,43 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [style, tests, property]
+    needs: [style, rust, rust-msrv, tests, property, golden-expanded]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Verify required jobs succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          echo "style: ${{ needs.style.result }}"
-          echo "tests: ${{ needs.tests.result }}"
-          echo "property: ${{ needs.property.result }}"
-          if [[ "${{ needs.style.result }}" != "success" || "${{ needs.tests.result }}" != "success" ]]; then
-            echo "::error::A required job did not succeed."
-            exit 1
-          fi
-          # property is conditional: skipped is fine (dev PRs), failure is not.
-          if [[ "${{ needs.property.result }}" != "success" && "${{ needs.property.result }}" != "skipped" ]]; then
-            echo "::error::The property job ran and did not succeed."
+          required=(style rust rust-msrv tests)
+          # Conditional jobs skip on dev PRs, so skipped is fine for them;
+          # any other result besides success is not.
+          conditional=(property golden-expanded)
+          failed=0
+          checked=" ${required[*]} ${conditional[*]} "
+          for job in $(jq -r 'keys[]' <<<"$NEEDS"); do
+            if [[ "$checked" != *" $job "* ]]; then
+              echo "::error::The $job job is needed but not checked here."
+              failed=1
+            fi
+          done
+          for job in "${required[@]}"; do
+            result=$(jq -r --arg job "$job" '.[$job].result' <<<"$NEEDS")
+            echo "$job: $result"
+            if [[ "$result" != "success" ]]; then
+              echo "::error::The required $job job did not succeed."
+              failed=1
+            fi
+          done
+          for job in "${conditional[@]}"; do
+            result=$(jq -r --arg job "$job" '.[$job].result' <<<"$NEEDS")
+            echo "$job: $result"
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "::error::The $job job ran and did not succeed."
+              failed=1
+            fi
+          done
+          if (( failed )); then
             exit 1
           fi
           echo "All required jobs passed."
