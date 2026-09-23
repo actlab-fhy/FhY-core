@@ -406,6 +406,10 @@ pub(crate) fn intern_decoded<T: Interned + Eq, E: serde::de::Error>(
             discarded,
         } => {
             if discarded == *canonical {
+                // TODO: Python logs a warning here for each field `Eq`
+                // ignores whose decoded value differs from the canonical
+                // instance's, such as a description. Emit that warning once
+                // the crate has logging.
                 Ok(canonical)
             } else {
                 Err(E::custom(format_args!(
