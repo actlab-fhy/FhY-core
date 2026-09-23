@@ -50,7 +50,7 @@ define_described_tag! {
     payload NoteKindPayload as "NoteKind";
     noun "kind";
 
-    /// Builds the kind named `name` and registers it as the canonical one
+    /// Build the kind named `name` and register it as the canonical one
     /// for that name.
     ///
     /// The outcome carries the canonical handle either way. When `name` is
@@ -73,25 +73,25 @@ define_described_tag! {
     fn new;
 
     shipped by create_default_note_kinds, initialized by initialize_shipped_note_kinds {
-        /// Returns the kind for notes that explain why a decision, transformation,
+        /// Return the kind for notes that explain why a decision, transformation,
         /// or result occurred.
         fn get_rationale_note_kind => RATIONALE, RATIONALE_NAME =
             ("rationale", "Explains why a decision, transformation, or result occurred.");
 
-        /// Returns the kind for notes that suggest a fix or course of action.
+        /// Return the kind for notes that suggest a fix or course of action.
         fn get_suggestion_note_kind => SUGGESTION, SUGGESTION_NAME =
             ("suggestion", "A suggested fix or course of action.");
 
-        /// Returns the kind for neutral informational notes.
+        /// Return the kind for neutral informational notes.
         fn get_remark_note_kind => REMARK, REMARK_NAME =
             ("remark", "A neutral informational observation.");
 
-        /// Returns the kind for uncategorized notes.
+        /// Return the kind for uncategorized notes.
         fn get_other_note_kind => OTHER, OTHER_NAME = ("other", "Uncategorized note.");
     }
 }
 
-/// Renders the name's hint, for example `other`.
+/// Render the name's hint, for example `other`.
 impl fmt::Display for NoteKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self.name(), f)
@@ -110,7 +110,7 @@ pub struct Note {
 }
 
 impl Note {
-    /// Creates the note carrying `message` in the role `kind`.
+    /// Create the note carrying `message` in the role `kind`.
     #[must_use]
     pub fn new(message: impl Into<String>, kind: Canonical<NoteKind>) -> Self {
         Self {
@@ -119,27 +119,27 @@ impl Note {
         }
     }
 
-    /// Creates the note carrying `message` with the uncategorized kind
+    /// Create the note carrying `message` with the uncategorized kind
     /// returned by [`get_other_note_kind`].
     #[must_use]
     pub fn with_other_kind(message: impl Into<String>) -> Self {
         Self::new(message, get_other_note_kind().clone())
     }
 
-    /// Returns the message.
+    /// Return the message.
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
     }
 
-    /// Returns the note's kind.
+    /// Return the note's kind.
     #[must_use]
     pub fn kind(&self) -> &Canonical<NoteKind> {
         &self.kind
     }
 }
 
-/// Renders `kind: message`, for example `other: lowered from ast`.
+/// Render `kind: message`, for example `other: lowered from ast`.
 impl fmt::Display for Note {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.kind, self.message)
@@ -185,7 +185,7 @@ pub enum DiagnosticLevel {
 }
 
 impl DiagnosticLevel {
-    /// Returns the level's lowercase name: `error`, `warning`, or `info`.
+    /// Return the level's lowercase name: `error`, `warning`, or `info`.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -213,7 +213,7 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    /// Creates the diagnostic `message` emitted by `source` at `level`, with
+    /// Create the diagnostic `message` emitted by `source` at `level`, with
     /// supplementary `detail`.
     ///
     /// `source` identifies the emitter, typically a pass name.
@@ -232,31 +232,31 @@ impl Diagnostic {
         }
     }
 
-    /// Returns the severity.
+    /// Return the severity.
     #[must_use]
     pub fn level(&self) -> DiagnosticLevel {
         self.level
     }
 
-    /// Returns the message as a note.
+    /// Return the message as a note.
     #[must_use]
     pub fn message(&self) -> &Note {
         &self.message
     }
 
-    /// Returns the message text, without the note's kind.
+    /// Return the message text, without the note's kind.
     #[must_use]
     pub fn message_text(&self) -> &str {
         self.message.message()
     }
 
-    /// Returns the name of whatever emitted the diagnostic.
+    /// Return the name of whatever emitted the diagnostic.
     #[must_use]
     pub fn source(&self) -> &str {
         &self.source
     }
 
-    /// Returns the supplementary detail, if any.
+    /// Return the supplementary detail, if any.
     #[must_use]
     pub fn detail(&self) -> Option<&str> {
         self.detail.as_deref()
@@ -276,7 +276,7 @@ pub struct ValidationReport<R = ()> {
 }
 
 impl<R> ValidationReport<R> {
-    /// Creates the report holding `diagnostics` and `records`, in order.
+    /// Create the report holding `diagnostics` and `records`, in order.
     #[must_use]
     pub fn new(diagnostics: Vec<Diagnostic>, records: Vec<R>) -> Self {
         Self {
@@ -285,30 +285,30 @@ impl<R> ValidationReport<R> {
         }
     }
 
-    /// Returns every diagnostic, in emission order.
+    /// Return every diagnostic, in emission order.
     #[must_use]
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
 
-    /// Returns the records, in the order given.
+    /// Return the records, in the order given.
     #[must_use]
     pub fn records(&self) -> &[R] {
         &self.records
     }
 
-    /// Returns the [`DiagnosticLevel::Error`] diagnostics, in emission order.
+    /// Return the [`DiagnosticLevel::Error`] diagnostics, in emission order.
     pub fn errors(&self) -> impl Iterator<Item = &Diagnostic> + '_ {
         self.filter_level(DiagnosticLevel::Error)
     }
 
-    /// Returns the [`DiagnosticLevel::Warning`] diagnostics, in emission
+    /// Return the [`DiagnosticLevel::Warning`] diagnostics, in emission
     /// order.
     pub fn warnings(&self) -> impl Iterator<Item = &Diagnostic> + '_ {
         self.filter_level(DiagnosticLevel::Warning)
     }
 
-    /// Returns the [`DiagnosticLevel::Info`] diagnostics, in emission order.
+    /// Return the [`DiagnosticLevel::Info`] diagnostics, in emission order.
     pub fn infos(&self) -> impl Iterator<Item = &Diagnostic> + '_ {
         self.filter_level(DiagnosticLevel::Info)
     }
@@ -320,13 +320,13 @@ impl<R> ValidationReport<R> {
             .filter(move |diagnostic| diagnostic.level == level)
     }
 
-    /// Returns whether any diagnostic is at [`DiagnosticLevel::Error`].
+    /// Return whether any diagnostic is at [`DiagnosticLevel::Error`].
     #[must_use]
     pub fn has_errors(&self) -> bool {
         self.errors().next().is_some()
     }
 
-    /// Renders every diagnostic for a human reader.
+    /// Render every diagnostic for a human reader.
     ///
     /// A report without diagnostics renders as `No validation diagnostics.`.
     /// Otherwise each diagnostic renders as `[LEVEL] source: message` with
@@ -355,7 +355,7 @@ impl<R> ValidationReport<R> {
         lines.join("\n")
     }
 
-    /// Returns the report, or escalates it into an error if it has errors.
+    /// Return the report, or escalate it into an error if it has errors.
     ///
     /// # Errors
     ///
@@ -380,20 +380,20 @@ pub struct ValidationFailedError<R = ()> {
 }
 
 impl<R> ValidationFailedError<R> {
-    /// Returns the report that failed validation.
+    /// Return the report that failed validation.
     #[must_use]
     pub fn report(&self) -> &ValidationReport<R> {
         &self.report
     }
 
-    /// Returns the report that failed validation, consuming the error.
+    /// Return the report that failed validation, consuming the error.
     #[must_use]
     pub fn into_report(self) -> ValidationReport<R> {
         self.report
     }
 }
 
-/// Renders the report's [`ValidationReport::format`] text.
+/// Render the report's [`ValidationReport::format`] text.
 impl<R> fmt::Display for ValidationFailedError<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.report.format())

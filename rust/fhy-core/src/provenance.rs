@@ -42,7 +42,7 @@ pub struct Position {
 }
 
 impl Position {
-    /// Creates the position at `line` and `column`.
+    /// Create the position at `line` and `column`.
     ///
     /// # Errors
     ///
@@ -65,27 +65,27 @@ impl Position {
         Ok(Self { line, column })
     }
 
-    /// Returns the 1-indexed line.
+    /// Return the 1-indexed line.
     #[must_use]
     pub fn line(&self) -> NonZeroU64 {
         self.line
     }
 
-    /// Returns the 1-indexed column.
+    /// Return the 1-indexed column.
     #[must_use]
     pub fn column(&self) -> NonZeroU64 {
         self.column
     }
 }
 
-/// Renders the position as `line:column`, for example `2:8`.
+/// Render the position as `line:column`, for example `2:8`.
 impl fmt::Display for Position {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.line, self.column)
     }
 }
 
-/// Encodes the position as `{"line": .., "column": ..}`.
+/// Encode the position as `{"line": .., "column": ..}`.
 impl Serialize for Position {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut state = serializer.serialize_struct("Position", 2)?;
@@ -103,7 +103,7 @@ struct PositionPayload {
     column: u64,
 }
 
-/// Decodes `{"line": .., "column": ..}`, rejecting a missing or unknown key,
+/// Decode `{"line": .., "column": ..}`, rejecting a missing or unknown key,
 /// a value that is not an integer in `u64`, and a zero line or column.
 impl<'de> Deserialize<'de> for Position {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -125,7 +125,7 @@ pub struct Span {
 }
 
 impl Span {
-    /// Creates the span with the given bounds.
+    /// Create the span with the given bounds.
     ///
     /// # Errors
     ///
@@ -179,7 +179,7 @@ impl Span {
         })
     }
 
-    /// Returns the span with no bounds at all.
+    /// Return the span with no bounds at all.
     #[must_use]
     pub fn unknown() -> Self {
         Self {
@@ -190,31 +190,31 @@ impl Span {
         }
     }
 
-    /// Returns whether none of the four bounds is set.
+    /// Return whether none of the four bounds is set.
     #[must_use]
     pub fn is_unknown(&self) -> bool {
         *self == Self::unknown()
     }
 
-    /// Returns the byte offset the span starts at, if known.
+    /// Return the byte offset the span starts at, if known.
     #[must_use]
     pub fn start_offset(&self) -> Option<u64> {
         self.start_offset
     }
 
-    /// Returns the byte offset the span ends at, if known.
+    /// Return the byte offset the span ends at, if known.
     #[must_use]
     pub fn end_offset(&self) -> Option<u64> {
         self.end_offset
     }
 
-    /// Returns the position the span starts at, if known.
+    /// Return the position the span starts at, if known.
     #[must_use]
     pub fn start_position(&self) -> Option<Position> {
         self.start_position
     }
 
-    /// Returns the position the span ends at, if known.
+    /// Return the position the span ends at, if known.
     #[must_use]
     pub fn end_position(&self) -> Option<Position> {
         self.end_position
@@ -229,9 +229,9 @@ fn format_bound(f: &mut fmt::Formatter<'_>, bound: Option<impl fmt::Display>) ->
     }
 }
 
-/// Renders `<unknown>` when no bound is set. Otherwise, when either position
-/// is set, renders `start-end` from the positions alone, ignoring the
-/// offsets; else renders `@start-end` from the offsets. A missing bound
+/// Render `<unknown>` when no bound is set. Otherwise, when either position
+/// is set, render `start-end` from the positions alone, ignoring the
+/// offsets; else render `@start-end` from the offsets. A missing bound
 /// renders as `?`, as in `1:1-?` or `@5-?`.
 impl fmt::Display for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -250,7 +250,7 @@ impl fmt::Display for Span {
     }
 }
 
-/// Encodes the span as `{"start_offset", "end_offset", "start_position",
+/// Encode the span as `{"start_offset", "end_offset", "start_position",
 /// "end_position"}`, writing `null` for an absent bound.
 impl Serialize for Span {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -281,7 +281,7 @@ struct SpanPayload {
     end_position: Option<Position>,
 }
 
-/// Decodes the four-key span dict. Every key must be present (`null` for an
+/// Decode the four-key span dict. Every key must be present (`null` for an
 /// absent bound) and no other key may appear; the bounds are then checked as
 /// in [`Span::try_new`].
 impl<'de> Deserialize<'de> for Span {
@@ -346,7 +346,7 @@ pub enum Provenance {
 }
 
 impl Provenance {
-    /// Combines `provenances` into one provenance, keeping their order.
+    /// Combine `provenances` into one provenance, keeping their order.
     ///
     /// The inputs are flattened first: every [`Provenance::Unknown`] is
     /// dropped, and an unlabelled [`FusedProvenance`] (one whose metadata is
@@ -427,7 +427,7 @@ fn flatten_fusion_inputs(provenances: impl IntoIterator<Item = Provenance>) -> V
     flat
 }
 
-/// Renders a human-readable description: `<unknown>`, the file variant's
+/// Render a human-readable description: `<unknown>`, the file variant's
 /// path and span, `name` or `name (child)`, `callee at caller`, or
 /// `label[source, ...]`.
 impl fmt::Display for Provenance {
@@ -496,7 +496,7 @@ struct FusedFields<'a> {
     metadata: Option<&'a str>,
 }
 
-/// Encodes the provenance in the wrapped `__type__`/`__data__` form.
+/// Encode the provenance in the wrapped `__type__`/`__data__` form.
 impl Serialize for Provenance {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut envelope = serializer.serialize_struct("Provenance", 2)?;
@@ -593,7 +593,7 @@ enum ProvenancePayload {
     Fused(FusedPayload),
 }
 
-/// Decodes the wrapped `__type__`/`__data__` form, rejecting an unknown
+/// Decode the wrapped `__type__`/`__data__` form, rejecting an unknown
 /// type id, a missing or unknown key at either level, and field values the
 /// variant's constructor rejects.
 impl<'de> Deserialize<'de> for Provenance {
@@ -662,7 +662,7 @@ pub struct FileProvenance {
 }
 
 impl FileProvenance {
-    /// Creates the provenance for `span` in the file at `file_path`, storing
+    /// Create the provenance for `span` in the file at `file_path`, storing
     /// the path in normalized form.
     ///
     /// # Examples
@@ -682,13 +682,13 @@ impl FileProvenance {
         }
     }
 
-    /// Returns the normalized path of the file.
+    /// Return the normalized path of the file.
     #[must_use]
     pub fn file_path(&self) -> &str {
         &self.file_path
     }
 
-    /// Returns the region of the file, if one was given.
+    /// Return the region of the file, if one was given.
     #[must_use]
     pub fn span(&self) -> Option<&Span> {
         self.span.as_ref()
@@ -704,7 +704,7 @@ pub struct NamedProvenance {
 }
 
 impl NamedProvenance {
-    /// Creates the provenance naming `child` as `name`.
+    /// Create the provenance naming `child` as `name`.
     ///
     /// # Errors
     ///
@@ -720,13 +720,13 @@ impl NamedProvenance {
         })
     }
 
-    /// Returns the name.
+    /// Return the name.
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// Returns the named provenance.
+    /// Return the named provenance.
     #[must_use]
     pub fn child(&self) -> &Provenance {
         &self.child
@@ -742,7 +742,7 @@ pub struct CallSiteProvenance {
 }
 
 impl CallSiteProvenance {
-    /// Creates the provenance of a value from `callee` created at `caller`.
+    /// Create the provenance of a value from `callee` created at `caller`.
     #[must_use]
     #[expect(
         clippy::similar_names,
@@ -755,13 +755,13 @@ impl CallSiteProvenance {
         }
     }
 
-    /// Returns the provenance of the called code.
+    /// Return the provenance of the called code.
     #[must_use]
     pub fn callee(&self) -> &Provenance {
         &self.callee
     }
 
-    /// Returns the provenance of the call site.
+    /// Return the provenance of the call site.
     #[must_use]
     pub fn caller(&self) -> &Provenance {
         &self.caller
@@ -780,7 +780,7 @@ pub struct FusedProvenance {
 }
 
 impl FusedProvenance {
-    /// Creates the fusion of `sources`, in order, labelled with `metadata`.
+    /// Create the fusion of `sources`, in order, labelled with `metadata`.
     #[must_use]
     pub fn new(sources: Vec<Provenance>, metadata: Option<String>) -> Self {
         Self {
@@ -789,13 +789,13 @@ impl FusedProvenance {
         }
     }
 
-    /// Returns the fused provenances, in order.
+    /// Return the fused provenances, in order.
     #[must_use]
     pub fn sources(&self) -> &[Provenance] {
         &self.sources
     }
 
-    /// Returns the label, or `None` for an unlabelled fusion.
+    /// Return the label, or `None` for an unlabelled fusion.
     #[must_use]
     pub fn metadata(&self) -> Option<&str> {
         self.metadata.as_deref()
@@ -804,7 +804,7 @@ impl FusedProvenance {
 
 /// Types that carry the provenance of the object they represent.
 pub trait HasProvenance {
-    /// Returns the object's provenance.
+    /// Return the object's provenance.
     #[must_use]
     fn provenance(&self) -> &Provenance;
 }
