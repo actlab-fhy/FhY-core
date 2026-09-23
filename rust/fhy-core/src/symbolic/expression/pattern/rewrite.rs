@@ -21,12 +21,20 @@ type RewriteFn = Arc<dyn Fn(&MatchBindings) -> Result<Expression, CallbackError>
 /// A guard: whether a rule may fire on a match's bindings.
 type GuardFn = Arc<dyn Fn(&MatchBindings) -> Result<bool, CallbackError> + Send + Sync>;
 
+/// A node the walk replaced, and the position of the rule responsible for
+/// it: the rule that fired on it, or, for a node only rebuilt around
+/// rewritten children, the rule responsible for its last rewritten child.
+struct Rewrite {
+    expression: Expression,
+    rule_index: usize,
+}
+
 /// One node of the rewrite walk: the node, its children, and the rewrites
 /// of the children visited so far (`None` for a child left as it was).
 struct WalkFrame {
     node: Expression,
     children: Vec<Expression>,
-    rewritten_children: Vec<Option<Expression>>,
+    rewritten_children: Vec<Option<Rewrite>>,
 }
 
 impl WalkFrame {
@@ -47,6 +55,36 @@ impl WalkFrame {
     }
 }
 
+/// Return the position of the rule responsible for the child that `error`
+/// refuses, or `None` when the error names no rewritten child.
+fn find_refused_child_rule(
+    error: &ExpressionBuildError,
+    rewritten_children: &[Option<Rewrite>],
+) -> Option<usize> {
+    let ExpressionBuildError::NonBooleanConditionLiteral { case_index } = error else {
+        return None;
+    };
+    let condition_index = case_index.checked_mul(2)?;
+    rewritten_children
+        .get(condition_index)?
+        .as_ref()
+        .map(|rewrite| rewrite.rule_index)
+}
+
+/// Build the error for a rebuild refused with `source`, blaming rule
+/// `rule_index` of `rules`.
+fn build_rebuild_error(
+    rules: &[RewriteRule],
+    rule_index: usize,
+    source: ExpressionBuildError,
+) -> RewriteError {
+    RewriteError::Rebuild {
+        rule_index,
+        rule_name: rules[rule_index].name().map(str::to_owned),
+        source,
+    }
+}
+
 /// Finish a node whose children are all rewritten: rebuild it if a child
 /// changed, then try `rules` on it in order, recording a firing in
 /// `fired`. Return the replacement, or `None` when the node stays as it
@@ -55,26 +93,44 @@ fn finish_node(
     frame: WalkFrame,
     rules: &[RewriteRule],
     fired: &mut Vec<FiredRule>,
-) -> Result<Option<Expression>, RewriteError> {
+) -> Result<Option<Rewrite>, RewriteError> {
     let WalkFrame {
         node,
         children,
         rewritten_children,
     } = frame;
-    let rebuilt = if rewritten_children.iter().any(Option::is_some) {
-        let merged = rewritten_children
-            .into_iter()
-            .zip(children)
-            .map(|(rewritten, original)| rewritten.unwrap_or(original))
-            .collect();
-        Some(
-            node.rebuild_with_children(merged)
-                .map_err(RewriteError::Rebuild)?,
-        )
-    } else {
-        None
+    let last_rule_index = rewritten_children
+        .iter()
+        .rev()
+        .flatten()
+        .map(|rewrite| rewrite.rule_index)
+        .next();
+    let rebuilt = match last_rule_index {
+        Some(last_rule_index) => {
+            let merged = rewritten_children
+                .iter()
+                .zip(children)
+                .map(|(rewritten, original)| {
+                    rewritten
+                        .as_ref()
+                        .map_or(original, |rewrite| rewrite.expression.clone())
+                })
+                .collect();
+            let expression = node.rebuild_with_children(merged).map_err(|source| {
+                let rule_index = find_refused_child_rule(&source, &rewritten_children)
+                    .unwrap_or(last_rule_index);
+                build_rebuild_error(rules, rule_index, source)
+            })?;
+            Some(Rewrite {
+                expression,
+                rule_index: last_rule_index,
+            })
+        }
+        None => None,
     };
-    let visited = rebuilt.as_ref().unwrap_or(&node);
+    let visited = rebuilt
+        .as_ref()
+        .map_or(&node, |rewrite| &rewrite.expression);
     for (rule_index, rule) in rules.iter().enumerate() {
         let replacement =
             apply_rewrite_rule(rule, visited).map_err(|source| RewriteError::Callback {
@@ -82,12 +138,15 @@ fn finish_node(
                 rule_name: rule.name().map(str::to_owned),
                 source,
             })?;
-        if let Some(replacement) = replacement {
+        if let Some(expression) = replacement {
             fired.push(FiredRule {
                 rule_index,
                 name: rule.name.clone(),
             });
-            return Ok(Some(replacement));
+            return Ok(Some(Rewrite {
+                expression,
+                rule_index,
+            }));
         }
     }
     Ok(rebuilt)
@@ -285,12 +344,23 @@ pub enum RewriteError {
         source: CallbackError,
     },
     /// A node could not be rebuilt from its rewritten children, such as a
-    /// piecewise whose rewritten case condition became a literal other than
+    /// piecewise whose case condition a rule rewrote to a literal other than
     /// a Boolean.
     ///
-    /// Displays as `rebuilding a node from its rewritten children failed`;
-    /// the build error is the [`source`](Error::source).
-    Rebuild(ExpressionBuildError),
+    /// The rule named is the one that rewrote the refused child, or, when
+    /// the build error names no single child, the rule responsible for the
+    /// last rewritten child. Displays as `rebuilding a node after rewrite
+    /// rule {rule_index} failed`, or as `rebuilding a node after rewrite
+    /// rule {rule_index} ({rule_name}) failed` for a named rule; the build
+    /// error is the [`source`](Error::source).
+    Rebuild {
+        /// The position of the responsible rule in the rule list.
+        rule_index: usize,
+        /// The name of the responsible rule, or `None` for an unnamed rule.
+        rule_name: Option<String>,
+        /// The build error.
+        source: ExpressionBuildError,
+    },
 }
 
 impl fmt::Display for RewriteError {
@@ -306,7 +376,22 @@ impl fmt::Display for RewriteError {
                 rule_name: Some(name),
                 ..
             } => write!(f, "rewrite rule {rule_index} ({name}) failed"),
-            Self::Rebuild(_) => f.write_str("rebuilding a node from its rewritten children failed"),
+            Self::Rebuild {
+                rule_index,
+                rule_name: None,
+                ..
+            } => write!(
+                f,
+                "rebuilding a node after rewrite rule {rule_index} failed"
+            ),
+            Self::Rebuild {
+                rule_index,
+                rule_name: Some(name),
+                ..
+            } => write!(
+                f,
+                "rebuilding a node after rewrite rule {rule_index} ({name}) failed"
+            ),
         }
     }
 }
@@ -315,7 +400,7 @@ impl Error for RewriteError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Callback { source, .. } => Some(source),
-            Self::Rebuild(error) => Some(error),
+            Self::Rebuild { source, .. } => Some(source),
         }
     }
 }
@@ -368,7 +453,8 @@ pub fn apply_rewrite_rule(
 ///
 /// Returns [`RewriteError::Callback`] for the first callback that fails,
 /// naming its rule, and [`RewriteError::Rebuild`] if a node cannot be
-/// rebuilt from its rewritten children. The walk stops at the first error.
+/// rebuilt from its rewritten children, naming the rule whose rewrite it
+/// refuses. The walk stops at the first error.
 pub fn apply_rewrite_rules(
     expression: &Expression,
     rules: &[RewriteRule],
@@ -383,7 +469,7 @@ pub fn apply_rewrite_rules(
         }
         let rewritten = finish_node(current, rules, &mut fired)?;
         let Some(mut parent) = ancestors.pop() else {
-            let output = rewritten.unwrap_or_else(|| expression.clone());
+            let output = rewritten.map_or_else(|| expression.clone(), |rewrite| rewrite.expression);
             let changed = !Expression::ptr_eq(&output, expression);
             return Ok(RewriteOutcome {
                 output,

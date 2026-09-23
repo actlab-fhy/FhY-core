@@ -80,6 +80,20 @@ fn fail_rewrite(_: &MatchBindings) -> Result<Expression, CallbackError> {
     Err(CallbackError::new(ProbeError("rewrite failed")))
 }
 
+/// Return the build error inside `error`, with the responsible rule's index
+/// and name.
+fn expect_rebuild_error(error: &RewriteError) -> (usize, Option<&str>, &ExpressionBuildError) {
+    let RewriteError::Rebuild {
+        rule_index,
+        rule_name,
+        source,
+    } = error
+    else {
+        panic!("expected a rebuild failure, got {error:?}");
+    };
+    (*rule_index, rule_name.as_deref(), source)
+}
+
 /// Return the callback error inside `error`, with the failing rule's index
 /// and name.
 fn expect_callback_error(error: &RewriteError) -> (usize, Option<&str>, &CallbackError) {
@@ -811,24 +825,56 @@ fn apply_rewrite_rules_stops_at_the_first_failure() {
 }
 
 /// Test a rewrite that makes a piecewise case condition a non-Boolean
-/// literal fails the rebuild of the piecewise.
+/// literal fails the rebuild of the piecewise, naming the rule that
+/// rewrote the condition.
 #[test]
-fn apply_rewrite_rules_reports_a_failing_rebuild() {
-    let rule = RewriteRule::new(build_literal_pattern(true), rewrite_to_literal(1));
+fn apply_rewrite_rules_reports_a_failing_rebuild_with_its_rule() {
+    let never_firing = RewriteRule::new(build_literal_pattern(9), rewrite_to_literal(0));
+    let true_to_one =
+        RewriteRule::new(build_literal_pattern(true), rewrite_to_literal(1)).with_name("true -> 1");
     let expression = build_piecewise([(build_literal(true), build_literal(5))], build_literal(6))
         .expect("a valid piecewise");
 
-    let result = apply_rewrite_rules(&expression, &[rule]);
+    let result = apply_rewrite_rules(&expression, &[never_firing, true_to_one]);
 
     let error = result.expect_err("the rebuild fails");
-    assert!(
-        matches!(
-            error,
-            RewriteError::Rebuild(ExpressionBuildError::NonBooleanConditionLiteral {
-                case_index: 0
-            })
-        ),
-        "got {error:?}"
+    assert_eq!(
+        expect_rebuild_error(&error),
+        (
+            1,
+            Some("true -> 1"),
+            &ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 }
+        )
+    );
+}
+
+/// Test a failing rebuild names the rule that rewrote the refused
+/// condition, not another rule that rewrote a sibling after it.
+#[test]
+fn apply_rewrite_rules_blames_the_rule_that_rewrote_the_refused_condition() {
+    let false_to_one = RewriteRule::new(build_literal_pattern(false), rewrite_to_literal(1))
+        .with_name("false -> 1");
+    let six_to_seven =
+        RewriteRule::new(build_literal_pattern(6), rewrite_to_literal(7)).with_name("6 -> 7");
+    let expression = build_piecewise(
+        [
+            (build_literal(true), build_literal(5)),
+            (build_literal(false), build_literal(6)),
+        ],
+        build_literal(8),
+    )
+    .expect("a valid piecewise");
+
+    let result = apply_rewrite_rules(&expression, &[false_to_one, six_to_seven]);
+
+    let error = result.expect_err("the rebuild fails");
+    assert_eq!(
+        expect_rebuild_error(&error),
+        (
+            0,
+            Some("false -> 1"),
+            &ExpressionBuildError::NonBooleanConditionLiteral { case_index: 1 }
+        )
     );
 }
 
@@ -850,9 +896,21 @@ fn apply_rewrite_rules_reports_a_failing_rebuild() {
     },
     "rewrite rule 0 (x + 0 -> x) failed"
 )]
-#[case::rebuild(
-    RewriteError::Rebuild(ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 }),
-    "rebuilding a node from its rewritten children failed"
+#[case::unnamed_rebuild(
+    RewriteError::Rebuild {
+        rule_index: 1,
+        rule_name: None,
+        source: ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 },
+    },
+    "rebuilding a node after rewrite rule 1 failed"
+)]
+#[case::named_rebuild(
+    RewriteError::Rebuild {
+        rule_index: 0,
+        rule_name: Some(String::from("true -> 1")),
+        source: ExpressionBuildError::NonBooleanConditionLiteral { case_index: 0 },
+    },
+    "rebuilding a node after rewrite rule 0 (true -> 1) failed"
 )]
 fn rewrite_error_display_describes_the_failure(
     #[case] error: RewriteError,
@@ -884,7 +942,11 @@ fn rewrite_error_callback_source_is_the_callback_error() {
 #[test]
 fn rewrite_error_rebuild_source_is_the_build_error() {
     let build_error = ExpressionBuildError::NonBooleanConditionLiteral { case_index: 3 };
-    let error = RewriteError::Rebuild(build_error.clone());
+    let error = RewriteError::Rebuild {
+        rule_index: 0,
+        rule_name: None,
+        source: build_error.clone(),
+    };
 
     let source = error.source().expect("a rebuild failure has a source");
 
