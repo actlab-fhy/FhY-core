@@ -515,6 +515,11 @@ def _apply_defect(payload: dict[str, Any], defect: dict[str, Any]) -> dict[str, 
     return damaged
 
 
+# Text both runtimes put in the error for a payload that conflicts with the
+# canonical instance for its key.
+_CANONICAL_CONFLICT_MESSAGE = "conflicts with the canonical instance"
+
+
 def _run_decode(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
     """Decode a payload, recording the canonical it yields or its rejection.
 
@@ -523,7 +528,10 @@ def _run_decode(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
     `DeserializationValueError`, recorded as the op's `error`. An op with a
     `defect` damages the payload's structure before decoding it (see
     `_apply_defect`); the oracle's rejection of the damaged payload is
-    recorded as the op's `error`, named by the raised error's class.
+    recorded as the op's `error`, named by the raised error's class. Every
+    rejection also records as `conflict` whether it reported a conflict with
+    the canonical instance, since both kinds of rejection raise the same
+    class.
     """
     payload = op["payload"]
     if ctx.kind == _OP_ATTRIBUTE_KIND:
@@ -545,7 +553,12 @@ def _run_decode(ctx: _ScriptContext, op: dict[str, Any]) -> dict[str, Any]:
         canonical = ctx.cls.deserialize_from_dict(real)
     except rejection_type as error:
         _mark_registered_payload_slots(ctx, payload_slots)
-        return {"error": type(error).__name__}
+        is_conflict = _CANONICAL_CONFLICT_MESSAGE in str(error)
+        if defect is None and not is_conflict:
+            raise RuntimeError(
+                f"a well-formed payload was rejected for another reason: {error}"
+            ) from error
+        return {"error": type(error).__name__, "conflict": is_conflict}
 
     _mark_registered_payload_slots(ctx, payload_slots)
     slot = ctx.find_slot_for_id(canonical.name.id)

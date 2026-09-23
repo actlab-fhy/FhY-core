@@ -291,63 +291,31 @@ fn apply_defect(mut payload: Value, defect: &Value) -> Value {
 }
 
 /// Denormalize a decode op's payload and apply its defect, if it has one.
-///
-/// Returns the real payload together with whether a rejection of it must be
-/// a canonical conflict (a well-formed payload) or may be any error (a
-/// payload with a structural defect).
-fn build_decode_payload(
-    op: &Value,
-    denormalize: impl FnOnce(&Value) -> Value,
-) -> (Value, ExpectedRejection) {
+fn build_decode_payload(op: &Value, denormalize: impl FnOnce(&Value) -> Value) -> Value {
     let real_payload = denormalize(&op["payload"]);
     match op.get("defect") {
-        Some(defect) => (
-            apply_defect(real_payload, defect),
-            ExpectedRejection::AnyError,
-        ),
-        None => (real_payload, ExpectedRejection::CanonicalConflict),
+        Some(defect) => apply_defect(real_payload, defect),
+        None => real_payload,
     }
 }
 
-/// Which Rust decode errors agree with a rejection the oracle recorded.
-#[derive(Clone, Copy)]
-enum ExpectedRejection {
-    /// Only an error reporting a conflict with the canonical instance, which
-    /// is the one reason the oracle rejects a well-formed payload.
-    CanonicalConflict,
-    /// Any error: a payload with a structural defect is rejected for the
-    /// defect, and the two runtimes word that differently.
-    AnyError,
-}
-
-impl ExpectedRejection {
-    fn agrees_with(self, expected_error: &str, error: &serde_json::Error) -> bool {
-        match self {
-            Self::CanonicalConflict => {
-                expected_error == "DeserializationValueError"
-                    && error
-                        .to_string()
-                        .contains("conflicts with the canonical instance")
-            }
-            Self::AnyError => true,
-        }
-    }
-}
+/// Text both runtimes put in the error for a payload that conflicts with the
+/// canonical instance for its key.
+const CANONICAL_CONFLICT_MESSAGE: &str = "conflicts with the canonical instance";
 
 /// Decode `payload` as a canonical handle and compare the outcome's kind
 /// with the golden expectation.
 ///
 /// Returns the handle when both sides decoded it. The oracle records a
-/// rejected payload as `{"error": <Python error class name>}`: a well-formed
-/// payload that conflicts with an existing canonical as
-/// `DeserializationValueError`, which the Rust decode must reject for the
-/// same reason, and a payload with a structural defect under whatever error
-/// the oracle raised, which the Rust decode must reject with any error. Any
-/// disagreement, in either direction, becomes a mismatch and returns `None`,
-/// as does an agreed rejection.
+/// rejected payload as `{"error": <Python error class name>, "conflict":
+/// <bool>}`, where `conflict` says whether it rejected the payload as a
+/// conflict with the canonical instance rather than for its structure. The
+/// Rust decode must reject the same payloads for the same kind of reason;
+/// the two runtimes word structural errors differently, so only the kind is
+/// compared. Any disagreement, in either direction, becomes a mismatch and
+/// returns `None`, as does an agreed rejection.
 fn decode_or_check_rejection<T>(
     payload: Value,
-    rejection: ExpectedRejection,
     name: &str,
     index: usize,
     expected: &Value,
@@ -362,7 +330,14 @@ where
         expected_error,
     ) {
         (Ok(restored), None) => Some(restored),
-        (Err(error), Some(expected_error)) if rejection.agrees_with(expected_error, &error) => None,
+        (Err(error), Some(_))
+            if error.to_string().contains(CANONICAL_CONFLICT_MESSAGE)
+                == expected["conflict"]
+                    .as_bool()
+                    .expect("a decode rejection records whether it is a conflict") =>
+        {
+            None
+        }
         (Ok(_), Some(expected_error)) => {
             mismatches.push(format!(
                 "case {name} op {index}: expected error {expected_error:?}, got a decoded value"
@@ -528,17 +503,11 @@ fn check_decode_attribute(
     op: &Value,
     mismatches: &mut Vec<String>,
 ) {
-    let (real_payload, rejection) =
-        build_decode_payload(op, |payload| denormalize_op_attribute(payload, slots));
+    let real_payload = build_decode_payload(op, |payload| denormalize_op_attribute(payload, slots));
     let expected = &op["expected"];
-    let Some(restored) = decode_or_check_rejection::<OpAttribute>(
-        real_payload,
-        rejection,
-        name,
-        index,
-        expected,
-        mismatches,
-    ) else {
+    let Some(restored) =
+        decode_or_check_rejection::<OpAttribute>(real_payload, name, index, expected, mismatches)
+    else {
         return;
     };
 
@@ -827,17 +796,11 @@ fn check_decode_domain(
     op: &Value,
     mismatches: &mut Vec<String>,
 ) {
-    let (real_payload, rejection) =
-        build_decode_payload(op, |payload| denormalize_value_domain(payload, slots));
+    let real_payload = build_decode_payload(op, |payload| denormalize_value_domain(payload, slots));
     let expected = &op["expected"];
-    let Some(restored) = decode_or_check_rejection::<ValueDomain>(
-        real_payload,
-        rejection,
-        name,
-        index,
-        expected,
-        mismatches,
-    ) else {
+    let Some(restored) =
+        decode_or_check_rejection::<ValueDomain>(real_payload, name, index, expected, mismatches)
+    else {
         return;
     };
 
