@@ -157,11 +157,7 @@ where
 /// Return `((leaf + 1) + 1) + ...`, `depth` additions deep.
 #[must_use]
 pub(crate) fn build_deep_sum(leaf: &Expression, depth: usize) -> Expression {
-    let mut tree = leaf.clone();
-    for _ in 0..depth {
-        tree = tree + 1;
-    }
-    tree
+    (0..depth).fold(leaf.clone(), |tree, _| tree + 1)
 }
 
 /// Return the doubling DAG over `leaf`, `levels` additions deep: `x0 = leaf`
@@ -172,22 +168,18 @@ pub(crate) fn build_deep_sum(leaf: &Expression, depth: usize) -> Expression {
 /// on it for 64 levels.
 #[must_use]
 pub(crate) fn build_doubling_dag(leaf: &Expression, levels: usize) -> Expression {
-    let mut dag = leaf.clone();
-    for _ in 0..levels {
-        dag = Expression::new_binary(BinaryOperation::Add, &dag, &dag);
-    }
-    dag
+    (0..levels).fold(leaf.clone(), |dag, _| {
+        Expression::new_binary(BinaryOperation::Add, &dag, &dag)
+    })
 }
 
 /// Return `true && (true && (... && leaf))`, `depth` two-operand
 /// conjunctions deep, with `leaf` at the bottom of the right spine.
 #[must_use]
 pub(crate) fn build_deep_conjunction(leaf: &Expression, depth: usize) -> Expression {
-    let mut tree = leaf.clone();
-    for _ in 0..depth {
-        tree = Expression::all([build_literal(true), tree]);
-    }
-    tree
+    (0..depth).fold(leaf.clone(), |tree, _| {
+        Expression::all([build_literal(true), tree])
+    })
 }
 
 /// Identifiers the generated trees refer to, with distinct name hints.
