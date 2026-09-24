@@ -183,3 +183,79 @@ are the model to copy.
    operations, exceptions, pickling and serialization. The full Python
    behavioral tests stay in place until the pure-Python backend is deleted,
    since they are the parity check during the transition.
+
+## S0 baseline (2026-09-24, 2ad1e75)
+
+Median time per call of each benchmark in `benchmarks/`, from
+`uv run nox -s "benchmark-3.11(backend='python')"
+"benchmark-3.11(backend='rust')"`, run back to back on Python 3.11.13 with
+pytest-benchmark 5.3.0 at its default rounds. Every benchmarked class is
+still pure Python on both backends; only `Identifier`'s id counter runs in
+Rust under the Rust backend, and only identifier construction and
+deserialization touch it. The machine (an Intel Core i9-7920X, 24 threads)
+is shared and had a load average of about 4 during the runs, so the numbers
+are indicative. Differences of a few percent between the columns are noise,
+as is the `OpAttribute` hash row, whose code is identical on both backends.
+A slice compares against these numbers only after rerunning both backends
+on the same machine.
+
+| Benchmark | python | rust |
+|---|--:|--:|
+| `test_identifier_construction` | 4.22 µs | 4.06 µs |
+| `test_identifier_id_access` | 74 ns | 74 ns |
+| `test_identifier_name_hint_access` | 74 ns | 75 ns |
+| `test_identifier_eq` | 99 ns | 102 ns |
+| `test_identifier_hash` | 101 ns | 101 ns |
+| `test_identifier_dict_lookup` | 97 ns | 97 ns |
+| `test_identifier_deserialize_from_dict` | 3.64 µs | 3.51 µs |
+| `test_identifier_pickle_round_trip` | 9.00 µs | 9.04 µs |
+| `test_interned_tag_construction_of_existing_key[OpAttribute]` | 16.8 µs | 16.9 µs |
+| `test_interned_tag_construction_of_existing_key[NoteKind]` | 16.7 µs | 17.0 µs |
+| `test_interned_tag_construction_of_existing_key[ValueDomain]` | 16.7 µs | 16.9 µs |
+| `test_interned_tag_lookup[OpAttribute]` | 668 ns | 659 ns |
+| `test_interned_tag_lookup[NoteKind]` | 665 ns | 658 ns |
+| `test_interned_tag_lookup[ValueDomain]` | 658 ns | 665 ns |
+| `test_interned_tag_eq[OpAttribute]` | 157 ns | 160 ns |
+| `test_interned_tag_eq[NoteKind]` | 162 ns | 160 ns |
+| `test_interned_tag_eq[ValueDomain]` | 152 ns | 153 ns |
+| `test_interned_tag_hash[OpAttribute]` | 286 ns | 202 ns |
+| `test_interned_tag_hash[NoteKind]` | 198 ns | 195 ns |
+| `test_interned_tag_hash[ValueDomain]` | 200 ns | 200 ns |
+| `test_value_domain_is_subdomain_of_root` | 87.5 µs | 87.1 µs |
+| `test_value_domain_is_subdomain_of_unrelated` | 87.0 µs | 86.9 µs |
+| `test_note_construction` | 2.02 µs | 2.07 µs |
+| `test_note_eq` | 155 ns | 154 ns |
+| `test_note_str` | 345 ns | 352 ns |
+| `test_diagnostic_construction` | 1.15 µs | 1.16 µs |
+| `test_diagnostic_eq` | 296 ns | 293 ns |
+| `test_validation_report_construction` | 854 ns | 904 ns |
+| `test_validation_report_build_of_100_diagnostics` | 326.7 µs | 328.5 µs |
+| `test_validation_report_eq` | 27.8 µs | 27.9 µs |
+| `test_validation_report_format` | 39.9 µs | 39.2 µs |
+| `test_span_construction` | 7.37 µs | 7.50 µs |
+| `test_unknown_provenance_construction` | 1.76 µs | 1.75 µs |
+| `test_file_provenance_construction` | 2.07 µs | 2.17 µs |
+| `test_named_provenance_construction` | 2.10 µs | 2.07 µs |
+| `test_call_site_provenance_construction` | 2.08 µs | 2.07 µs |
+| `test_fused_provenance_construction` | 2.07 µs | 2.05 µs |
+| `test_provenance_eq[unknown]` | 91 ns | 91 ns |
+| `test_provenance_eq[file]` | 154 ns | 155 ns |
+| `test_provenance_eq[named]` | 267 ns | 266 ns |
+| `test_provenance_eq[call_site]` | 594 ns | 597 ns |
+| `test_provenance_eq[fused]` | 511 ns | 508 ns |
+| `test_provenance_hash[unknown]` | 104 ns | 105 ns |
+| `test_provenance_hash[file]` | 561 ns | 566 ns |
+| `test_provenance_hash[named]` | 659 ns | 658 ns |
+| `test_provenance_hash[call_site]` | 914 ns | 927 ns |
+| `test_provenance_hash[fused]` | 915 ns | 930 ns |
+| `test_provenance_fuse_of_two` | 3.60 µs | 3.58 µs |
+| `test_provenance_fuse_with_reductions` | 4.57 µs | 4.49 µs |
+| `test_compiler_pass_execute` | 13.6 µs | 13.6 µs |
+| `test_pass_manager_run_of_5_passes` | 381.3 µs | 373.5 µs |
+| `test_analysis_manager_cache_hit` | 9.23 µs | 9.22 µs |
+
+Two rows stand out before any switch. `ValueDomain.is_subdomain_of` takes
+about 87 µs on a four-domain chain: each step up the chain runs a
+structural-equivalence check of about 22 µs, most of it spent in
+`isinstance` checks against runtime-checkable protocols. Constructing a tag
+whose key is already registered takes about 17 µs.
