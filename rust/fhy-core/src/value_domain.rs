@@ -1,25 +1,21 @@
 //! Open, registry-backed classification of value kinds in a compiler IR.
 //!
-//! A compiler intermediate representation often needs to say what kind of
-//! value an operation produces or consumes -- concrete data, an address, a
-//! control token -- without a foundational crate committing to a closed set.
-//! [`ValueDomain`] keeps that classification open: a layer registers the
-//! domains it needs without changing this crate.
+//! A [`ValueDomain`] says what kind of value an operation produces or
+//! consumes, such as concrete data or an address. The set is open: a layer
+//! registers the domains it needs without changing this crate, and
+//! [`ValueDomain::data`] and [`ValueDomain::address`] return the two shipped
+//! here. Use them rather than a fresh domain with the same name hint:
+//! identifiers compare by id, so a second `Identifier::new("data")` is a
+//! different key.
 //!
-//! [`ValueDomain::data`] and [`ValueDomain::address`] return the two
-//! domains shipped here. Call them rather than building a fresh domain with the same
-//! name hint. Identifiers compare by id, and a second `Identifier::new("data")`
-//! is a different key.
+//! Domains form a hierarchy through their parents, which
+//! [`ValueDomain::is_subdomain_of`] walks.
 //!
-//! Domains form a hierarchy through their parents, and
-//! [`ValueDomain::is_subdomain_of`] walks that chain, so a layer can relate
-//! its domains without the relationships living in this crate.
-//!
-//! A `description` is human-readable metadata. It takes no part in equality,
-//! hashing or interning: the first domain registered under an identifier stays
-//! canonical, and a later registration of that name returns it, dropping its
-//! own description. A name has one parent, so registering it again under a
-//! parent of another name is a [`ValueDomainConflict`].
+//! A description takes no part in equality, hashing or interning: the first
+//! domain registered under a name stays canonical, and a later registration
+//! of that name returns it, dropping its own description. A name has one
+//! parent, so registering it again under a parent of another name is a
+//! [`ValueDomainConflict`].
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -27,8 +23,7 @@ use std::iter;
 use std::sync::LazyLock;
 
 use serde::de::{self, SeqAccess, Visitor};
-use serde::ser::{SerializeSeq, Serializer};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::identifier::{HasIdentifier, Identifier, reserved};
 use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned, require_default};
@@ -121,14 +116,6 @@ impl ValueDomain {
         Self::register(Self::create(name, description, Some(parent.clone())))
     }
 
-    /// Register `domain` unless its name is registered already, and return
-    /// the canonical handle for the name.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ValueDomainConflict`] if the name is registered under a
-    /// parent of another name, or as a root when `domain` has a parent, or
-    /// the other way around.
     fn register(domain: ValueDomain) -> Result<Canonical<ValueDomain>, ValueDomainConflict> {
         match Self::intern_registry().intern(domain) {
             InternOutcome::Registered(canonical) => Ok(canonical),
@@ -153,7 +140,6 @@ impl ValueDomain {
         }
     }
 
-    /// Build the domain without registering it.
     fn create(
         name: Identifier,
         description: impl Into<String>,
@@ -189,20 +175,18 @@ impl ValueDomain {
     /// The walk follows parents and compares names, so it takes time linear
     /// in the depth of this domain. The relation is reflexive and one-way: a
     /// domain is a subdomain of its ancestors and of itself, never of its
-    /// descendants or of an unrelated domain. A domain's parent exists before
-    /// the domain is built and never changes, so the chain cannot cycle.
+    /// descendants or of an unrelated domain.
     #[must_use]
     pub fn is_subdomain_of(&self, other: &ValueDomain) -> bool {
-        let mut current = self;
-        loop {
-            if current == other {
-                return true;
-            }
-            match current.parent.as_deref() {
-                Some(parent) => current = parent,
-                None => return false,
-            }
-        }
+        self.chain().any(|domain| domain == other)
+    }
+
+    /// Yield this domain, then each ancestor up to the root.
+    ///
+    /// A parent exists before its child is built and never changes, so the
+    /// chain cannot cycle.
+    fn chain(&self) -> impl Iterator<Item = &Self> {
+        iter::successors(Some(self), |domain| domain.parent.as_deref())
     }
 }
 
@@ -265,17 +249,11 @@ impl std::error::Error for ValueDomainConflict {}
 
 impl Serialize for ValueDomain {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut chain: Vec<&ValueDomain> =
-            iter::successors(Some(self), |domain| domain.parent.as_deref()).collect();
-        chain.reverse();
-        let mut levels = serializer.serialize_seq(Some(chain.len()))?;
-        for domain in chain {
-            levels.serialize_element(&LevelRef {
-                name: &domain.name,
-                description: &domain.description,
-            })?;
-        }
-        levels.end()
+        let chain: Vec<&Self> = self.chain().collect();
+        serializer.collect_seq(chain.into_iter().rev().map(|domain| LevelRef {
+            name: &domain.name,
+            description: &domain.description,
+        }))
     }
 }
 
@@ -307,7 +285,6 @@ impl<'de> Deserialize<'de> for Canonical<ValueDomain> {
     }
 }
 
-/// Visitor registering a domain chain, root first.
 struct ChainVisitor;
 
 impl<'de> Visitor<'de> for ChainVisitor {
@@ -364,10 +341,6 @@ impl Hash for ValueDomain {
     }
 }
 
-/// Build the domains this module ships, in registration order.
-///
-/// The registry calls this once, on its first use, and keeps the instances it
-/// builds, so the shipped domains stay canonical for the life of the process.
 fn create_default_domains() -> Vec<ValueDomain> {
     vec![
         ValueDomain::create(
@@ -415,13 +388,11 @@ mod tests {
 
     use crate::test_support::compute_hash;
 
-    /// Intern a root domain under a fresh name and return its handle.
     fn intern_root(name_hint: &str) -> Canonical<ValueDomain> {
         ValueDomain::register_root(Identifier::new(name_hint), "root")
             .expect("the domain registers")
     }
 
-    /// Intern a child of `parent` under a fresh name and return its handle.
     fn intern_child(name_hint: &str, parent: &Canonical<ValueDomain>) -> Canonical<ValueDomain> {
         ValueDomain::register_child(Identifier::new(name_hint), "child", parent)
             .expect("the domain registers")
@@ -542,8 +513,6 @@ mod tests {
         );
     }
 
-    /// Test each form of a conflict displays on one line, naming the domain
-    /// and both parents.
     #[rstest]
     #[case::two_parents(
         Some("data"),
@@ -647,7 +616,6 @@ mod tests {
         assert_eq!(parented, orphan);
     }
 
-    /// Test each shipped default domain is the canonical entry for its name.
     #[rstest]
     #[case::data(ValueDomain::data)]
     #[case::address(ValueDomain::address)]
@@ -662,7 +630,6 @@ mod tests {
         );
     }
 
-    /// Test each shipped domain holds its fixed reserved id and name hint.
     #[rstest]
     #[case::data(ValueDomain::data, 32, "data")]
     #[case::address(ValueDomain::address, 33, "address")]
@@ -682,7 +649,6 @@ mod tests {
         assert_ne!(ValueDomain::data().name(), ValueDomain::address().name());
     }
 
-    /// Test each shipped default domain is a root domain.
     #[rstest]
     #[case::data(ValueDomain::data)]
     #[case::address(ValueDomain::address)]
@@ -692,7 +658,6 @@ mod tests {
         assert_eq!(get_default().parent(), None);
     }
 
-    /// Test each shipped default domain carries a non-empty description.
     #[rstest]
     #[case::data(ValueDomain::data)]
     #[case::address(ValueDomain::address)]
@@ -859,8 +824,8 @@ mod tests {
             }
         }
 
-        /// Test every domain of any hierarchy decodes from its JSON back to
-        /// its own canonical handle.
+        /// Test that every domain of any hierarchy decodes from its JSON back
+        /// to its own canonical handle.
         #[test]
         fn a_domain_in_any_hierarchy_round_trips_through_json(
             choices in build_hierarchy_strategy(),
@@ -875,9 +840,8 @@ mod tests {
             }
         }
 
-        /// Test every domain of any hierarchy decodes from its postcard
-        /// bytes, a format that is not self-describing, back to its own
-        /// canonical handle.
+        /// Test that every domain of any hierarchy decodes from its postcard
+        /// bytes back to its own canonical handle.
         #[test]
         fn a_domain_in_any_hierarchy_round_trips_through_postcard(
             choices in build_hierarchy_strategy(),
@@ -893,7 +857,6 @@ mod tests {
         }
     }
 
-    /// Return the encoded level of the domain named `name`.
     fn encode_level(name: &Identifier, description: &str) -> Value {
         json!({
             "name": {"id": name.id(), "name_hint": name.name_hint()},
@@ -1061,8 +1024,8 @@ mod tests {
         );
     }
 
-    /// Test a chain rejected at one level leaves the levels before it
-    /// registered, root first, and nothing after it.
+    /// Test that a chain rejected at one level leaves the levels before it
+    /// registered and nothing after it.
     #[test]
     fn a_chain_rejected_at_one_level_registers_the_levels_before_it() {
         let conflicting = Identifier::new("conflicting-level");
@@ -1083,7 +1046,6 @@ mod tests {
         assert!(ValueDomain::intern_registry().get(&leaf).is_none());
     }
 
-    /// Test a chain with a malformed level is rejected, naming the problem.
     #[rstest]
     #[case::unknown_field(json!({"surprise": 1}), "unknown field `surprise`")]
     #[case::missing_description(json!({"description": null}), "missing field `description`")]
@@ -1115,7 +1077,6 @@ mod tests {
         assert!(error.to_string().contains(expected_message), "{error}");
     }
 
-    /// Test a payload that is not a non-empty chain is rejected.
     #[rstest]
     #[case::empty(json!([]), "invalid length 0")]
     #[case::a_map(json!({"name": 1}), "invalid type: map")]
