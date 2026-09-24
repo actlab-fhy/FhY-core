@@ -6,11 +6,11 @@
 //! id. Sharing a process with the `it` binary's round-trip tests would fail
 //! them. Do not add a second test.
 
-use fhy_core::diagnostic::get_other_note_kind;
+use fhy_core::diagnostic::NoteKind;
 use fhy_core::expr::builtins::find_composed_function;
 use fhy_core::identifier::{ID_CAP, Identifier};
-use fhy_core::op_attribute::get_commutative;
-use fhy_core::value_domain::get_data_domain;
+use fhy_core::op_attribute::OpAttribute;
+use fhy_core::value_domain::ValueDomain;
 use serde_json::json;
 
 /// Test a payload can raise the counter at most to `ID_CAP`, which leaves
@@ -29,9 +29,9 @@ fn deserializing_the_largest_payload_id_leaves_construction_working() {
     assert_eq!(largest.id(), ID_CAP - 1);
     assert!(rejected.is_err(), "the cap decoded: {rejected:?}");
     assert_eq!((first.id(), second.id()), (ID_CAP, ID_CAP + 1));
-    assert_eq!(get_other_note_kind().name().id(), 3);
-    assert_eq!(get_commutative().name().id(), 16);
-    assert_eq!(get_data_domain().name().id(), 32);
+    assert_eq!(NoteKind::other().name().id(), 3);
+    assert_eq!(OpAttribute::commutative().name().id(), 16);
+    assert_eq!(ValueDomain::data().name().id(), 32);
     let gelu = find_composed_function("gelu").expect("gelu is a composed built-in");
     assert!(
         gelu.parameters()

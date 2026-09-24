@@ -7,16 +7,12 @@
 
 use std::collections::HashSet;
 
-use fhy_core::diagnostic::{
-    get_other_note_kind, get_rationale_note_kind, get_remark_note_kind, get_suggestion_note_kind,
-};
+use fhy_core::diagnostic::NoteKind;
 use fhy_core::expr::builtins::{ComposedFunction, list_composed_functions};
 use fhy_core::identifier::{Identifier, RESERVED_ID_COUNT};
 use fhy_core::interned::Canonical;
-use fhy_core::op_attribute::{
-    OpAttribute, get_associative, get_commutative, get_elementwise, get_pure,
-};
-use fhy_core::value_domain::{get_address_domain, get_data_domain};
+use fhy_core::op_attribute::OpAttribute;
+use fhy_core::value_domain::ValueDomain;
 use serde_json::json;
 
 /// Test the reserved block holds the ids `0..65_536`.
@@ -82,16 +78,16 @@ fn fresh_identifiers_are_never_reserved() {
 #[test]
 fn shipped_identifiers_hold_their_reserved_ids() {
     let shipped = [
-        (get_rationale_note_kind().name(), 0, "rationale"),
-        (get_suggestion_note_kind().name(), 1, "suggestion"),
-        (get_remark_note_kind().name(), 2, "remark"),
-        (get_other_note_kind().name(), 3, "other"),
-        (get_commutative().name(), 16, "commutative"),
-        (get_associative().name(), 17, "associative"),
-        (get_pure().name(), 18, "pure"),
-        (get_elementwise().name(), 19, "elementwise"),
-        (get_data_domain().name(), 32, "data"),
-        (get_address_domain().name(), 33, "address"),
+        (NoteKind::rationale().name(), 0, "rationale"),
+        (NoteKind::suggestion().name(), 1, "suggestion"),
+        (NoteKind::remark().name(), 2, "remark"),
+        (NoteKind::other().name(), 3, "other"),
+        (OpAttribute::commutative().name(), 16, "commutative"),
+        (OpAttribute::associative().name(), 17, "associative"),
+        (OpAttribute::pure().name(), 18, "pure"),
+        (OpAttribute::elementwise().name(), 19, "elementwise"),
+        (ValueDomain::data().name(), 32, "data"),
+        (ValueDomain::address().name(), 33, "address"),
     ];
 
     for (name, id, name_hint) in shipped {
@@ -111,7 +107,10 @@ fn a_shipped_tag_decoded_by_its_reserved_id_is_the_shipped_tag() {
     let decoded: Canonical<OpAttribute> =
         serde_json::from_value(payload).expect("the payload decodes");
 
-    assert_eq!(&decoded, get_commutative());
+    assert_eq!(&decoded, OpAttribute::commutative());
     assert_eq!(decoded.name().name_hint(), "commutative");
-    assert_eq!(decoded.description(), get_commutative().description());
+    assert_eq!(
+        decoded.description(),
+        OpAttribute::commutative().description()
+    );
 }

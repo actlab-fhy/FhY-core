@@ -9,8 +9,9 @@
 //!
 //! An attribute is a free-standing tag: it depends on no operation type and is
 //! specialized for no layer. Each one is canonicalized by its [`Identifier`]
-//! through [`crate::interned`], so call the accessor functions below rather
-//! than building a fresh attribute with the same name hint. Identifiers
+//! through [`crate::interned`], so call the shipped accessors such as
+//! [`OpAttribute::commutative`] rather than building a fresh attribute with
+//! the same name hint. Identifiers
 //! compare by id, and a second `Identifier::new("commutative")` is a
 //! different key.
 //!
@@ -22,68 +23,109 @@
 //! [`Identifier`]: crate::identifier::Identifier
 //! [`InternOutcome::AlreadyCanonical`]: crate::interned::InternOutcome::AlreadyCanonical
 
-use crate::described_tag::define_described_tag;
+use std::sync::LazyLock;
 
-define_described_tag! {
-    /// Open semantic tag attached to a compiler operation.
-    ///
-    /// Two attributes are equal when they carry the same [`Identifier`], whatever
-    /// their descriptions say.
-    ///
-    /// Decoding an attribute canonicalizes it only through the handle, so
-    /// deserialize a [`Canonical<OpAttribute>`]. Deserializing a bare
-    /// `OpAttribute` yields a value that no registry knows about.
-    ///
-    /// [`Identifier`]: crate::identifier::Identifier
-    /// [`Canonical<OpAttribute>`]: crate::interned::Canonical
-    pub struct OpAttribute;
-    payload OpAttributePayload as "OpAttribute";
-    noun "attribute";
+use crate::described_tag::{DescribedTag, TagKind, require_shipped, sealed};
+use crate::identifier::reserved::{self, ReservedIdentifier};
+use crate::interned::{Canonical, InternRegistry};
 
-    /// Build the attribute named `name` and register it as the canonical one
-    /// for that name.
-    ///
-    /// The outcome carries the canonical handle either way. When `name` is
-    /// already taken the earlier attribute stays canonical, and the one built
-    /// here comes back as the outcome's `discarded` value, so a caller that
-    /// cares about the dropped description can see it.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fhy_core::identifier::Identifier;
-    /// use fhy_core::interned::Interned;
-    /// use fhy_core::op_attribute::OpAttribute;
-    ///
-    /// let name = Identifier::new("idempotent");
-    /// let attribute =
-    ///     OpAttribute::new(name.clone(), "Applying the op twice changes nothing.")
-    ///         .into_canonical();
-    ///
-    /// assert_eq!(attribute.name(), &name);
-    /// assert_eq!(OpAttribute::intern_registry().get(&name), Some(attribute));
-    /// ```
-    fn new;
+/// The vocabulary of [`OpAttribute`]s.
+#[derive(Debug)]
+pub enum OpAttributeVocabulary {}
 
-    shipped by create_default_attributes {
-        /// Return the attribute for ops whose output is invariant under operand swap.
-        fn get_commutative => COMMUTATIVE, COMMUTATIVE_NAME =
-            (COMMUTATIVE, "Op output is invariant under operand swap.");
+impl TagKind for OpAttributeVocabulary {}
 
-        /// Return the attribute for ops that compose associatively across
-        /// applications.
-        fn get_associative => ASSOCIATIVE, ASSOCIATIVE_NAME =
-            (ASSOCIATIVE, "Op composes associatively across applications.");
+impl sealed::Sealed for OpAttributeVocabulary {
+    const TYPE_NAME: &'static str = "OpAttribute";
 
-        /// Return the attribute for ops that have no side effects and produce
-        /// deterministic outputs.
-        fn get_pure => PURE, PURE_NAME =
-            (PURE, "Op has no side effects and produces deterministic outputs.");
+    fn registry() -> &'static InternRegistry<OpAttribute> {
+        static REGISTRY: InternRegistry<OpAttribute> =
+            InternRegistry::with_defaults(create_default_attributes);
+        &REGISTRY
+    }
+}
 
-        /// Return the attribute for ops that act independently on each element of
-        /// their operands.
-        fn get_elementwise => ELEMENTWISE, ELEMENTWISE_NAME =
-            (ELEMENTWISE, "Op acts independently on each element of its operands.");
+/// Open semantic tag attached to a compiler operation.
+///
+/// Two attributes are equal when they carry the same
+/// [`Identifier`](crate::identifier::Identifier), whatever their
+/// descriptions say.
+///
+/// Decoding an attribute canonicalizes it only through the handle, so
+/// deserialize a [`Canonical<OpAttribute>`]. Deserializing a bare
+/// `OpAttribute` yields a value that no registry knows about.
+pub type OpAttribute = DescribedTag<OpAttributeVocabulary>;
+
+/// The shipped attributes, in registration order, with their descriptions.
+const SHIPPED_ATTRIBUTES: [(ReservedIdentifier, &str); 4] = [
+    (
+        reserved::COMMUTATIVE,
+        "Op output is invariant under operand swap.",
+    ),
+    (
+        reserved::ASSOCIATIVE,
+        "Op composes associatively across applications.",
+    ),
+    (
+        reserved::PURE,
+        "Op has no side effects and produces deterministic outputs.",
+    ),
+    (
+        reserved::ELEMENTWISE,
+        "Op acts independently on each element of its operands.",
+    ),
+];
+
+/// Build the attributes this module ships, in registration order.
+///
+/// The registry calls this once, on its first use, and keeps the instances
+/// it builds, so the shipped attributes stay canonical for the life of the
+/// process.
+fn create_default_attributes() -> Vec<OpAttribute> {
+    SHIPPED_ATTRIBUTES
+        .iter()
+        .map(|&(entry, description)| OpAttribute::create_shipped(entry, description))
+        .collect()
+}
+
+static COMMUTATIVE: LazyLock<Canonical<OpAttribute>> =
+    LazyLock::new(|| require_shipped(reserved::COMMUTATIVE));
+
+static ASSOCIATIVE: LazyLock<Canonical<OpAttribute>> =
+    LazyLock::new(|| require_shipped(reserved::ASSOCIATIVE));
+
+static PURE: LazyLock<Canonical<OpAttribute>> = LazyLock::new(|| require_shipped(reserved::PURE));
+
+static ELEMENTWISE: LazyLock<Canonical<OpAttribute>> =
+    LazyLock::new(|| require_shipped(reserved::ELEMENTWISE));
+
+impl DescribedTag<OpAttributeVocabulary> {
+    /// Return the attribute for ops whose output is invariant under operand
+    /// swap.
+    #[must_use]
+    pub fn commutative() -> &'static Canonical<OpAttribute> {
+        &COMMUTATIVE
+    }
+
+    /// Return the attribute for ops that compose associatively across
+    /// applications.
+    #[must_use]
+    pub fn associative() -> &'static Canonical<OpAttribute> {
+        &ASSOCIATIVE
+    }
+
+    /// Return the attribute for ops that have no side effects and produce
+    /// deterministic outputs.
+    #[must_use]
+    pub fn pure() -> &'static Canonical<OpAttribute> {
+        &PURE
+    }
+
+    /// Return the attribute for ops that act independently on each element
+    /// of their operands.
+    #[must_use]
+    pub fn elementwise() -> &'static Canonical<OpAttribute> {
+        &ELEMENTWISE
     }
 }
 
@@ -104,10 +146,10 @@ mod tests {
     /// Return every attribute this module ships as a default.
     fn list_default_attributes() -> [&'static Canonical<OpAttribute>; 4] {
         [
-            get_commutative(),
-            get_associative(),
-            get_pure(),
-            get_elementwise(),
+            OpAttribute::commutative(),
+            OpAttribute::associative(),
+            OpAttribute::pure(),
+            OpAttribute::elementwise(),
         ]
     }
 
@@ -202,40 +244,45 @@ mod tests {
 
     #[test]
     fn canonical_attributes_can_be_collected_into_a_set() {
-        let tags: HashSet<Canonical<OpAttribute>> = [get_commutative().clone(), get_pure().clone()]
-            .into_iter()
-            .collect();
+        let tags: HashSet<Canonical<OpAttribute>> = [
+            OpAttribute::commutative().clone(),
+            OpAttribute::pure().clone(),
+        ]
+        .into_iter()
+        .collect();
 
-        assert!(tags.contains(get_commutative()));
-        assert!(tags.contains(get_pure()));
-        assert!(!tags.contains(get_associative()));
+        assert!(tags.contains(OpAttribute::commutative()));
+        assert!(tags.contains(OpAttribute::pure()));
+        assert!(!tags.contains(OpAttribute::associative()));
         assert_eq!(tags.len(), 2);
     }
 
     #[test]
     fn a_repeated_canonical_attribute_collapses_to_one_set_entry() {
         let tags: HashSet<Canonical<OpAttribute>> = [
-            get_commutative().clone(),
-            get_commutative().clone(),
-            get_pure().clone(),
+            OpAttribute::commutative().clone(),
+            OpAttribute::commutative().clone(),
+            OpAttribute::pure().clone(),
         ]
         .into_iter()
         .collect();
 
-        let expected: HashSet<Canonical<OpAttribute>> =
-            [get_commutative().clone(), get_pure().clone()]
-                .into_iter()
-                .collect();
+        let expected: HashSet<Canonical<OpAttribute>> = [
+            OpAttribute::commutative().clone(),
+            OpAttribute::pure().clone(),
+        ]
+        .into_iter()
+        .collect();
         assert_eq!(tags, expected);
     }
 
     /// Test each shipped default attribute is the canonical entry for its
     /// name.
     #[rstest]
-    #[case::commutative(get_commutative)]
-    #[case::associative(get_associative)]
-    #[case::pure(get_pure)]
-    #[case::elementwise(get_elementwise)]
+    #[case::commutative(OpAttribute::commutative)]
+    #[case::associative(OpAttribute::associative)]
+    #[case::pure(OpAttribute::pure)]
+    #[case::elementwise(OpAttribute::elementwise)]
     fn a_default_attribute_is_registered_under_its_name(
         #[case] get_default: fn() -> &'static Canonical<OpAttribute>,
     ) {
@@ -249,10 +296,10 @@ mod tests {
 
     /// Test each shipped attribute holds its fixed reserved id and name hint.
     #[rstest]
-    #[case::commutative(get_commutative, 16, "commutative")]
-    #[case::associative(get_associative, 17, "associative")]
-    #[case::pure(get_pure, 18, "pure")]
-    #[case::elementwise(get_elementwise, 19, "elementwise")]
+    #[case::commutative(OpAttribute::commutative, 16, "commutative")]
+    #[case::associative(OpAttribute::associative, 17, "associative")]
+    #[case::pure(OpAttribute::pure, 18, "pure")]
+    #[case::elementwise(OpAttribute::elementwise, 19, "elementwise")]
     fn a_shipped_attribute_holds_its_reserved_id(
         #[case] get_default: fn() -> &'static Canonical<OpAttribute>,
         #[case] id: u64,
@@ -277,10 +324,10 @@ mod tests {
 
     /// Test each shipped default attribute carries a non-empty description.
     #[rstest]
-    #[case::commutative(get_commutative)]
-    #[case::associative(get_associative)]
-    #[case::pure(get_pure)]
-    #[case::elementwise(get_elementwise)]
+    #[case::commutative(OpAttribute::commutative)]
+    #[case::associative(OpAttribute::associative)]
+    #[case::pure(OpAttribute::pure)]
+    #[case::elementwise(OpAttribute::elementwise)]
     fn a_default_attribute_carries_a_non_empty_description(
         #[case] get_default: fn() -> &'static Canonical<OpAttribute>,
     ) {
@@ -318,11 +365,11 @@ mod tests {
 
     #[test]
     fn decoding_a_registered_name_returns_the_canonical_attribute() {
-        let json = serde_json::to_string(get_pure()).unwrap();
+        let json = serde_json::to_string(OpAttribute::pure()).unwrap();
 
         let restored: Canonical<OpAttribute> = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(restored, *get_pure());
+        assert_eq!(restored, *OpAttribute::pure());
     }
 
     #[test]

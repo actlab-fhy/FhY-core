@@ -20,6 +20,7 @@
 //! enum or a `#[serde(flatten)]` field reaches it as a map, which a derived
 //! `Deserialize` refuses for a numeric field.
 
+pub mod described_tag;
 pub mod diagnostic;
 pub mod expr;
 pub mod identifier;
@@ -30,7 +31,6 @@ pub mod provenance;
 pub mod value_domain;
 
 mod decode;
-mod described_tag;
 mod python_text;
 
 #[cfg(test)]

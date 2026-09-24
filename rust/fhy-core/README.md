@@ -6,10 +6,11 @@ This crate is the Rust implementation of the `fhy_core` Python package. It is be
 
 ## Modules
 
+- `described_tag`: `DescribedTag<K>`, an open vocabulary entry named by an `Identifier`, and the sealed `TagKind` of its vocabularies.
 - `identifier`: `Identifier`, a name hint paired with a process-unique id drawn from a global counter.
 - `interned`: `Interned`, `InternRegistry` and `Canonical`, which keep one canonical instance per key.
-- `op_attribute`: `OpAttribute`, an open tag attached to compiler operations. The shipped defaults are `get_commutative()`, `get_associative()`, `get_pure()` and `get_elementwise()`.
-- `value_domain`: `ValueDomain`, an open, hierarchical classification of the values an operation handles. The shipped defaults are `get_data_domain()` and `get_address_domain()`.
+- `op_attribute`: `OpAttribute`, an open tag attached to compiler operations. The shipped defaults are `OpAttribute::commutative()`, `OpAttribute::associative()`, `OpAttribute::pure()` and `OpAttribute::elementwise()`.
+- `value_domain`: `ValueDomain`, an open, hierarchical classification of the values an operation handles. The shipped defaults are `ValueDomain::data()` and `ValueDomain::address()`.
 
 ## One copy per process
 

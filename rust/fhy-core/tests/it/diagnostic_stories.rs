@@ -12,7 +12,6 @@ use std::error::Error;
 
 use fhy_core::diagnostic::{
     Diagnostic, DiagnosticLevel, Note, NoteKind, ValidationFailedError, ValidationReport,
-    get_other_note_kind, get_rationale_note_kind, get_remark_note_kind, get_suggestion_note_kind,
 };
 use fhy_core::identifier::{HasIdentifier, Identifier};
 use fhy_core::interned::{Canonical, InternOutcome, Interned};
@@ -74,10 +73,10 @@ fn encode_note_payload(message: &str, kind: &NoteKind) -> Value {
 
 /// Test each shipped kind keeps its documented name hint.
 #[rstest]
-#[case::rationale(get_rationale_note_kind, "rationale")]
-#[case::suggestion(get_suggestion_note_kind, "suggestion")]
-#[case::remark(get_remark_note_kind, "remark")]
-#[case::other(get_other_note_kind, "other")]
+#[case::rationale(NoteKind::rationale, "rationale")]
+#[case::suggestion(NoteKind::suggestion, "suggestion")]
+#[case::remark(NoteKind::remark, "remark")]
+#[case::other(NoteKind::other, "other")]
 fn shipped_note_kind_has_its_documented_name(
     #[case] get_kind: DefaultKind,
     #[case] name_hint: &str,
@@ -90,10 +89,10 @@ fn shipped_note_kind_has_its_documented_name(
 
 /// Test each shipped kind is the canonical entry registered for its name.
 #[rstest]
-#[case::rationale(get_rationale_note_kind)]
-#[case::suggestion(get_suggestion_note_kind)]
-#[case::remark(get_remark_note_kind)]
-#[case::other(get_other_note_kind)]
+#[case::rationale(NoteKind::rationale)]
+#[case::suggestion(NoteKind::suggestion)]
+#[case::remark(NoteKind::remark)]
+#[case::other(NoteKind::other)]
 fn shipped_note_kind_is_registered_under_its_name(#[case] get_kind: DefaultKind) {
     let kind = get_kind();
 
@@ -106,12 +105,12 @@ fn shipped_note_kind_is_registered_under_its_name(#[case] get_kind: DefaultKind)
 
 /// Test the four shipped kinds are pairwise distinct.
 #[rstest]
-#[case::rationale_suggestion(get_rationale_note_kind, get_suggestion_note_kind)]
-#[case::rationale_remark(get_rationale_note_kind, get_remark_note_kind)]
-#[case::rationale_other(get_rationale_note_kind, get_other_note_kind)]
-#[case::suggestion_remark(get_suggestion_note_kind, get_remark_note_kind)]
-#[case::suggestion_other(get_suggestion_note_kind, get_other_note_kind)]
-#[case::remark_other(get_remark_note_kind, get_other_note_kind)]
+#[case::rationale_suggestion(NoteKind::rationale, NoteKind::suggestion)]
+#[case::rationale_remark(NoteKind::rationale, NoteKind::remark)]
+#[case::rationale_other(NoteKind::rationale, NoteKind::other)]
+#[case::suggestion_remark(NoteKind::suggestion, NoteKind::remark)]
+#[case::suggestion_other(NoteKind::suggestion, NoteKind::other)]
+#[case::remark_other(NoteKind::remark, NoteKind::other)]
 fn shipped_note_kinds_are_distinct(#[case] get_kind: DefaultKind, #[case] get_other: DefaultKind) {
     let kind = get_kind();
     let other = get_other();
@@ -190,11 +189,11 @@ fn note_kind_encodes_as_name_and_description() {
 /// Test decoding a shipped kind's payload yields the shipped handle.
 #[test]
 fn note_kind_decode_returns_the_shipped_handle() {
-    let json = serde_json::to_string(get_remark_note_kind()).expect("kinds encode");
+    let json = serde_json::to_string(NoteKind::remark()).expect("kinds encode");
 
     let restored: Canonical<NoteKind> = serde_json::from_str(&json).expect("valid payload");
 
-    assert_eq!(&restored, get_remark_note_kind());
+    assert_eq!(&restored, NoteKind::remark());
 }
 
 // =============================================================================
@@ -207,7 +206,7 @@ fn note_with_other_kind_uses_the_other_note_kind() {
     let note = Note::with_other_kind("lowered from ast");
 
     assert_eq!(note.message(), "lowered from ast");
-    assert_eq!(note.kind(), get_other_note_kind());
+    assert_eq!(note.kind(), NoteKind::other());
 }
 
 /// Test a note carries the kind it was built with.
@@ -215,23 +214,23 @@ fn note_with_other_kind_uses_the_other_note_kind() {
 fn note_new_carries_the_explicit_kind() {
     let note = Note::new(
         "tiled the loop for cache locality",
-        get_rationale_note_kind().clone(),
+        NoteKind::rationale().clone(),
     );
 
     assert_eq!(note.message(), "tiled the loop for cache locality");
-    assert_eq!(note.kind(), get_rationale_note_kind());
+    assert_eq!(note.kind(), NoteKind::rationale());
 }
 
 /// Test a note renders as `kind: message`.
 #[rstest]
-#[case::other(get_other_note_kind, "lowered from ast", "other: lowered from ast")]
+#[case::other(NoteKind::other, "lowered from ast", "other: lowered from ast")]
 #[case::suggestion(
-    get_suggestion_note_kind,
+    NoteKind::suggestion,
     "use a smaller tile",
     "suggestion: use a smaller tile"
 )]
-#[case::empty_message(get_remark_note_kind, "", "remark: ")]
-#[case::multi_line_message(get_other_note_kind, "two\nlines", "other: two\nlines")]
+#[case::empty_message(NoteKind::remark, "", "remark: ")]
+#[case::multi_line_message(NoteKind::other, "two\nlines", "other: two\nlines")]
 fn note_display_renders_kind_and_message(
     #[case] get_kind: DefaultKind,
     #[case] message: &str,
@@ -247,10 +246,10 @@ fn note_display_renders_kind_and_message(
 fn note_equality_compares_message_and_kind() {
     let note = Note::with_other_kind("hello");
 
-    assert_eq!(note, Note::new("hello", get_other_note_kind().clone()));
+    assert_eq!(note, Note::new("hello", NoteKind::other().clone()));
     assert_eq!(hash_of(&note), hash_of(&Note::with_other_kind("hello")));
     assert_ne!(note, Note::with_other_kind("goodbye"));
-    assert_ne!(note, Note::new("hello", get_remark_note_kind().clone()));
+    assert_ne!(note, Note::new("hello", NoteKind::remark().clone()));
 }
 
 /// Test a note encodes as its message and its kind's payload.
@@ -260,16 +259,16 @@ fn note_encodes_as_message_and_kind() {
 
     let encoded = serde_json::to_value(&note).expect("notes encode");
 
-    assert_eq!(encoded, encode_note_payload("hi", get_other_note_kind()));
+    assert_eq!(encoded, encode_note_payload("hi", NoteKind::other()));
 }
 
 /// Test a note of each shipped kind round-trips and decodes to the shipped
 /// handle.
 #[rstest]
-#[case::rationale(get_rationale_note_kind)]
-#[case::suggestion(get_suggestion_note_kind)]
-#[case::remark(get_remark_note_kind)]
-#[case::other(get_other_note_kind)]
+#[case::rationale(NoteKind::rationale)]
+#[case::suggestion(NoteKind::suggestion)]
+#[case::remark(NoteKind::remark)]
+#[case::other(NoteKind::other)]
 fn note_round_trips_each_shipped_kind(#[case] get_kind: DefaultKind) {
     let note = Note::new("a message", get_kind().clone());
     let json = serde_json::to_string(&note).expect("notes encode");
@@ -298,15 +297,15 @@ fn note_with_custom_kind_round_trips() {
 /// kind and its description.
 #[test]
 fn note_decode_keeps_the_canonical_kind_description() {
-    let mut payload = encode_note_payload("m", get_other_note_kind());
+    let mut payload = encode_note_payload("m", NoteKind::other());
     payload["kind"]["description"] = json!("changed");
 
     let restored: Note = serde_json::from_value(payload).expect("a divergent description decodes");
 
-    assert_eq!(restored.kind(), get_other_note_kind());
+    assert_eq!(restored.kind(), NoteKind::other());
     assert_eq!(
         restored.kind().description(),
-        get_other_note_kind().description()
+        NoteKind::other().description()
     );
 }
 
@@ -396,7 +395,7 @@ fn diagnostic_level_as_str_is_the_lowercase_name(
 /// Test a diagnostic stores every field it was built with.
 #[test]
 fn diagnostic_new_stores_every_field() {
-    let note = Note::new("missing return", get_rationale_note_kind().clone());
+    let note = Note::new("missing return", NoteKind::rationale().clone());
 
     let diagnostic = Diagnostic::new(
         DiagnosticLevel::Warning,
@@ -416,7 +415,7 @@ fn diagnostic_new_stores_every_field() {
 fn diagnostic_message_text_omits_the_note_kind() {
     let diagnostic = Diagnostic::new(
         DiagnosticLevel::Info,
-        Note::new("tiled", get_rationale_note_kind().clone()),
+        Note::new("tiled", NoteKind::rationale().clone()),
         "tiler",
         None,
     );
@@ -568,7 +567,7 @@ fn report_format_keeps_embedded_newlines() {
 fn report_format_omits_the_note_kind() {
     let report = build_report(vec![Diagnostic::new(
         DiagnosticLevel::Info,
-        Note::new("kinds are hidden", get_rationale_note_kind().clone()),
+        Note::new("kinds are hidden", NoteKind::rationale().clone()),
         "s",
         None,
     )]);
@@ -669,7 +668,7 @@ fn a_failed_validation_run_is_reported_to_the_user() {
     let diagnostics = vec![
         Diagnostic::new(
             DiagnosticLevel::Warning,
-            Note::new("prefer a smaller tile", get_suggestion_note_kind().clone()),
+            Note::new("prefer a smaller tile", NoteKind::suggestion().clone()),
             "tiling.check",
             None,
         ),

@@ -18,7 +18,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use fhy_core::diagnostic::{DiagnosticLevel, Note, get_rationale_note_kind};
+use fhy_core::diagnostic::{DiagnosticLevel, Note, NoteKind};
 use fhy_core::pass::{
     AnalysisId, CompilerPass, ExecutePass, NodeHandle, NodeIdentity, PassContext, PassError,
     PassFailure, PassHook, PreservedAnalyses, create_pass, register_pass, registered_passes,
@@ -735,7 +735,7 @@ fn report_text_keeps_the_detail_separate_from_the_message() {
 /// Test `report` keeps a structured note as given.
 #[test]
 fn report_keeps_a_structured_note() {
-    let note = Note::new("structured-message", get_rationale_note_kind().clone());
+    let note = Note::new("structured-message", NoteKind::rationale().clone());
     let reported = note.clone();
     let mut pass = ClosurePass::new("tests.core.note", move |ir, cx| {
         cx.report(DiagnosticLevel::Error, reported.clone(), None);

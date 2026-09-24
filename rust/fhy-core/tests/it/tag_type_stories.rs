@@ -10,8 +10,8 @@ use std::sync::LazyLock;
 
 use fhy_core::identifier::Identifier;
 use fhy_core::interned::{Canonical, Interned};
-use fhy_core::op_attribute::{OpAttribute, get_associative, get_commutative, get_pure};
-use fhy_core::value_domain::{ValueDomain, get_address_domain, get_data_domain};
+use fhy_core::op_attribute::OpAttribute;
+use fhy_core::value_domain::ValueDomain;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -55,22 +55,22 @@ fn tagging_an_operation_with_shipped_and_layer_specific_attributes() {
     .into_canonical();
 
     let op = StoryOp::create([
-        get_commutative().clone(),
-        get_pure().clone(),
+        OpAttribute::commutative().clone(),
+        OpAttribute::pure().clone(),
         idempotent.clone(),
     ]);
 
     assert_eq!(op.count_tags(), 3);
-    assert!(op.has_tag(get_commutative()));
-    assert!(op.has_tag(get_pure()));
+    assert!(op.has_tag(OpAttribute::commutative()));
+    assert!(op.has_tag(OpAttribute::pure()));
     assert!(op.has_tag(&idempotent));
-    assert!(!op.has_tag(get_associative()));
+    assert!(!op.has_tag(OpAttribute::associative()));
 
     let same_name_again =
         OpAttribute::new(IDEMPOTENT_NAME.clone(), "a different description").into_canonical();
     let op_with_repeat = StoryOp::create([
-        get_commutative().clone(),
-        get_pure().clone(),
+        OpAttribute::commutative().clone(),
+        OpAttribute::pure().clone(),
         idempotent.clone(),
         same_name_again,
     ]);
@@ -78,17 +78,17 @@ fn tagging_an_operation_with_shipped_and_layer_specific_attributes() {
     assert_eq!(op_with_repeat.count_tags(), 3);
 }
 
-/// Name of this story's middle-tier domain, a child of `get_data_domain()`.
+/// Name of this story's middle-tier domain, a child of `ValueDomain::data()`.
 static TENSOR_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("domain-story-tensor"));
 
 /// Name of this story's leaf domain, a child of the tensor domain.
 static TILE_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("domain-story-tile"));
 
 /// Name of this story's domain on an unrelated branch, a child of
-/// `get_address_domain()`.
+/// `ValueDomain::address()`.
 static TOKEN_NAME: LazyLock<Identifier> = LazyLock::new(|| Identifier::new("domain-story-token"));
 
-/// Test a three-level domain hierarchy registered under `get_data_domain()`
+/// Test a three-level domain hierarchy registered under `ValueDomain::data()`
 /// relates each level to its ancestors via `is_subdomain_of`, and relates
 /// none of them to a domain on an unrelated branch.
 #[test]
@@ -96,7 +96,7 @@ fn a_three_level_domain_hierarchy_relates_its_levels() {
     let tensor = ValueDomain::new(
         TENSOR_NAME.clone(),
         "A tensor of concrete data.",
-        Some(get_data_domain().clone()),
+        Some(ValueDomain::data().clone()),
     )
     .into_canonical();
     let tile = ValueDomain::new(
@@ -108,23 +108,23 @@ fn a_three_level_domain_hierarchy_relates_its_levels() {
     let token = ValueDomain::new(
         TOKEN_NAME.clone(),
         "A control token, unrelated to the data branch.",
-        Some(get_address_domain().clone()),
+        Some(ValueDomain::address().clone()),
     )
     .into_canonical();
 
     assert!(tile.is_subdomain_of(&tile));
     assert!(tile.is_subdomain_of(&tensor));
-    assert!(tile.is_subdomain_of(get_data_domain()));
+    assert!(tile.is_subdomain_of(ValueDomain::data()));
     assert!(!tile.is_subdomain_of(&token));
-    assert!(!get_data_domain().is_subdomain_of(&tile));
-    assert!(!token.is_subdomain_of(get_data_domain()));
+    assert!(!ValueDomain::data().is_subdomain_of(&tile));
+    assert!(!token.is_subdomain_of(ValueDomain::data()));
 }
 
 /// Name of the attribute this story persists.
 static PERSISTED_ATTRIBUTE_NAME: LazyLock<Identifier> =
     LazyLock::new(|| Identifier::new("persistence-story-attribute"));
 
-/// Name of the domain this story persists, a child of `get_address_domain()`.
+/// Name of the domain this story persists, a child of `ValueDomain::address()`.
 static PERSISTED_DOMAIN_NAME: LazyLock<Identifier> =
     LazyLock::new(|| Identifier::new("persistence-story-domain"));
 
@@ -145,7 +145,7 @@ fn persisting_and_restoring_a_tagged_operation() {
     let domain = ValueDomain::new(
         PERSISTED_DOMAIN_NAME.clone(),
         "a persisted domain",
-        Some(get_address_domain().clone()),
+        Some(ValueDomain::address().clone()),
     )
     .into_canonical();
     let persisted = PersistedOp {
@@ -209,12 +209,16 @@ fn a_decoded_domain_chain_registers_every_level() {
 #[test]
 fn a_decoded_domain_under_another_parent_is_rejected_and_the_canonical_domain_is_unchanged() {
     let name = Identifier::new("reparented-story-domain");
-    let canonical = ValueDomain::new(name.clone(), "under data", Some(get_data_domain().clone()))
-        .into_canonical();
+    let canonical = ValueDomain::new(
+        name.clone(),
+        "under data",
+        Some(ValueDomain::data().clone()),
+    )
+    .into_canonical();
     let payload = encode_domain(
         &name,
         "under address",
-        &serde_json::to_value(get_address_domain()).expect("the domain encodes"),
+        &serde_json::to_value(ValueDomain::address()).expect("the domain encodes"),
     );
 
     let result = serde_json::from_value::<Canonical<ValueDomain>>(payload);
@@ -224,7 +228,7 @@ fn a_decoded_domain_under_another_parent_is_rejected_and_the_canonical_domain_is
         .get(&name)
         .expect("the domain stays registered");
     assert_eq!(registered, canonical);
-    assert_eq!(registered.parent(), Some(get_data_domain()));
+    assert_eq!(registered.parent(), Some(ValueDomain::data()));
     assert_eq!(registered.description(), "under data");
 }
 

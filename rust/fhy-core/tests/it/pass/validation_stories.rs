@@ -5,7 +5,7 @@
 
 use crate::support::pass_ir;
 
-use fhy_core::diagnostic::{DiagnosticLevel, Note, get_suggestion_note_kind};
+use fhy_core::diagnostic::{DiagnosticLevel, Note, NoteKind};
 use fhy_core::identifier::{HasIdentifier, Identifier};
 use fhy_core::pass::{
     CompilerPass, ExecutePass, PassContext, PassError, PassFailure, PreservedAnalyses,
@@ -342,7 +342,7 @@ fn validation_manager_keeps_a_structured_note() {
 
     impl CompilerPass<BoxIr, ()> for NoteValidator {
         fn run(&mut self, _ir: &BoxIr, cx: &mut PassContext<'_>) -> Result<(), PassFailure> {
-            let note = Note::new("structured-message", get_suggestion_note_kind().clone());
+            let note = Note::new("structured-message", NoteKind::suggestion().clone());
             cx.report(DiagnosticLevel::Error, note, None);
             Ok(())
         }
@@ -363,7 +363,7 @@ fn validation_manager_keeps_a_structured_note() {
             .map(fhy_core::diagnostic::Diagnostic::message),
         Some(&Note::new(
             "structured-message",
-            get_suggestion_note_kind().clone()
+            NoteKind::suggestion().clone()
         ))
     );
 }

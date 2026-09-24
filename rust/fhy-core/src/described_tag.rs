@@ -1,182 +1,266 @@
-//! The shared shape of a described, registry-backed tag.
+//! Described tags: open, registry-backed vocabulary entries.
 //!
-//! A described tag is an open vocabulary entry: an [`Identifier`] name that
-//! is its identity, and a human-readable description that takes no part in
-//! equality, hashing or interning. [`define_described_tag`] generates such a
-//! type together with its shipped defaults, so every tag of this shape
-//! encodes, decodes, interns and compares the same way.
+//! A [`DescribedTag`] is an open vocabulary entry: an [`Identifier`] name
+//! that is its identity, and a human-readable description that takes no part
+//! in equality, hashing or interning. Each vocabulary is a [`TagKind`] with
+//! its own process-wide registry, so the same identifier registered in two
+//! vocabularies names two independent tags. This crate ships two
+//! vocabularies, [`OpAttribute`](crate::op_attribute::OpAttribute) and
+//! [`NoteKind`](crate::diagnostic::NoteKind); the set is closed.
 //!
-//! [`Identifier`]: crate::identifier::Identifier
+//! A tag encodes as `{"name": <identifier>, "description": ..}`. Decoding a
+//! [`Canonical`] of it interns it.
 
-/// Define a described tag type, its payload and its shipped defaults.
+use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
+
+use serde::{Deserialize, Deserializer, Serialize, de};
+
+use crate::decode::{self, Decode};
+use crate::identifier::reserved::ReservedIdentifier;
+use crate::identifier::{HasIdentifier, Identifier, IdentifierWire};
+use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned};
+
+/// A vocabulary of described tags.
 ///
-/// The invocation names the type and its documentation, the payload type and
-/// the struct name its decode errors report, the noun the generated
-/// documentation calls a value, the documentation of `new`, and each shipped
-/// default: its getter and the documentation of that getter, the statics that
-/// hold it and its name, and the reserved-table entry that names it and its
-/// description. Defaults are registered in the order they are listed.
+/// Sealed: only this crate's vocabularies exist, so a tag of one of them can
+/// only be registered through its own registry.
 ///
-/// The type encodes as `{"name": <identifier>, "description": ..}`. Its
-/// decode checks every field before it restores the name, then builds the
-/// value without registering it; decoding a
-/// [`Canonical`](crate::interned::Canonical) of it interns it.
-macro_rules! define_described_tag {
-    (
-        $(#[$type_meta:meta])*
-        pub struct $Type:ident;
-        payload $Payload:ident as $wire_name:tt;
-        noun $noun:literal;
-        $(#[$new_meta:meta])*
-        fn new;
-        shipped by $create_defaults:ident {
-            $(
-                $(#[$getter_meta:meta])*
-                fn $getter:ident => $STATIC:ident, $NAME:ident =
-                    ($reserved:ident, $description:literal);
-            )+
-        }
-    ) => {
-        $(#[$type_meta])*
-        #[derive(Debug, ::serde::Serialize)]
-        pub struct $Type {
-            name: $crate::identifier::Identifier,
-            description: ::std::string::String,
-        }
+/// ```compile_fail
+/// use fhy_core::described_tag::TagKind;
+///
+/// enum MyVocabulary {}
+///
+/// impl TagKind for MyVocabulary {}
+/// ```
+pub trait TagKind: sealed::Sealed + Send + Sync + 'static {}
 
-        impl $Type {
-            $(#[$new_meta])*
-            pub fn new(
-                name: $crate::identifier::Identifier,
-                description: impl ::std::convert::Into<::std::string::String>,
-            ) -> $crate::interned::InternOutcome<Self> {
-                <Self as $crate::interned::Interned>::intern_registry()
-                    .intern(Self::create(name, description))
-            }
+/// The sealing supertrait of [`TagKind`], which carries a vocabulary's name
+/// and registry.
+pub(crate) mod sealed {
+    use super::{DescribedTag, InternRegistry, TagKind};
 
-            #[doc = concat!("Build the ", $noun, " without registering it.")]
-            fn create(
-                name: $crate::identifier::Identifier,
-                description: impl ::std::convert::Into<::std::string::String>,
-            ) -> Self {
-                Self {
-                    name,
-                    description: description.into(),
-                }
-            }
+    #[expect(
+        unnameable_types,
+        reason = "the sealing supertrait is nameable only inside this crate by design"
+    )]
+    pub trait Sealed: Sized {
+        /// The vocabulary's name, which `Debug` renders a tag under.
+        const TYPE_NAME: &'static str;
 
-            #[doc = concat!("Return the ", $noun, "'s name.")]
-            #[must_use]
-            pub fn name(&self) -> &$crate::identifier::Identifier {
-                &self.name
-            }
-
-            #[doc = concat!("Return the ", $noun, "'s human-readable description.")]
-            #[must_use]
-            pub fn description(&self) -> &str {
-                &self.description
-            }
-        }
-
-        impl $crate::identifier::HasIdentifier for $Type {
-            fn identifier(&self) -> &$crate::identifier::Identifier {
-                &self.name
-            }
-        }
-
-        impl $crate::interned::Interned for $Type {
-            type Key = $crate::identifier::Identifier;
-
-            fn intern_key(&self) -> &$crate::identifier::Identifier {
-                &self.name
-            }
-
-            fn intern_registry() -> &'static $crate::interned::InternRegistry<Self> {
-                static REGISTRY: $crate::interned::InternRegistry<$Type> =
-                    $crate::interned::InternRegistry::with_defaults($create_defaults);
-                &REGISTRY
-            }
-        }
-
-        impl ::std::cmp::PartialEq for $Type {
-            fn eq(&self, other: &Self) -> bool {
-                self.name == other.name
-            }
-        }
-
-        impl ::std::cmp::Eq for $Type {}
-
-        impl ::std::hash::Hash for $Type {
-            fn hash<H: ::std::hash::Hasher>(&self, state: &mut H) {
-                self.name.hash(state);
-            }
-        }
-
-        impl $crate::decode::Decode for $Type {
-            type Payload = $Payload;
-
-            fn build_from_payload<E: ::serde::de::Error>(
-                payload: Self::Payload,
-            ) -> ::std::result::Result<Self, E> {
-                let name = $crate::identifier::Identifier::try_from(payload.name)
-                    .map_err(E::custom)?;
-                Ok(Self::create(name, payload.description))
-            }
-        }
-
-        /// Decoding checks every field of the payload before it restores the
-        /// name, so a rejected payload leaves the id counter untouched.
-        impl<'de> ::serde::Deserialize<'de> for $Type {
-            fn deserialize<D: ::serde::Deserializer<'de>>(
-                deserializer: D,
-            ) -> ::std::result::Result<Self, D::Error> {
-                $crate::decode::deserialize_via_payload(deserializer)
-            }
-        }
-
-        #[doc = concat!(
-            "The checked payload of a [`", stringify!($Type),
-            "`], with its name not yet restored."
-        )]
-        #[derive(::serde::Deserialize)]
-        #[serde(rename = $wire_name, deny_unknown_fields)]
-        pub(crate) struct $Payload {
-            name: $crate::identifier::IdentifierWire,
-            description: ::std::string::String,
-        }
-
-        $(
-            #[doc = concat!(
-                "Name of the ", $noun, " returned by [`", stringify!($getter), "`]."
-            )]
-            static $NAME: ::std::sync::LazyLock<$crate::identifier::Identifier> =
-                ::std::sync::LazyLock::new(|| {
-                    $crate::identifier::Identifier::reserved(
-                        $crate::identifier::reserved::$reserved,
-                    )
-                });
-
-            static $STATIC: ::std::sync::LazyLock<$crate::interned::Canonical<$Type>> =
-                ::std::sync::LazyLock::new(|| $crate::interned::require_default(&*$NAME));
-
-            $(#[$getter_meta])*
-            #[must_use]
-            pub fn $getter() -> &'static $crate::interned::Canonical<$Type> {
-                &$STATIC
-            }
-        )+
-
-        /// Build the defaults this module ships, in registration order.
-        ///
-        /// The registry calls this once, on its first use, and keeps the
-        /// instances it builds. A clear registers those same instances again
-        /// rather than building new ones, so the shipped defaults stay
-        /// canonical for the life of the process.
-        fn $create_defaults() -> ::std::vec::Vec<$Type> {
-            ::std::vec![$($Type::create($NAME.clone(), $description)),+]
-        }
-
-    };
+        /// Return the vocabulary's process-wide registry.
+        fn registry() -> &'static InternRegistry<DescribedTag<Self>>
+        where
+            Self: TagKind;
+    }
 }
 
-pub(crate) use define_described_tag;
+/// An open vocabulary entry of the vocabulary `K`.
+///
+/// Two tags are equal when they carry the same [`Identifier`], whatever their
+/// descriptions say.
+#[derive(Serialize)]
+pub struct DescribedTag<K: TagKind> {
+    name: Identifier,
+    description: String,
+    #[serde(skip)]
+    kind: PhantomData<fn() -> K>,
+}
+
+impl<K: TagKind> DescribedTag<K> {
+    /// Build the tag named `name` and register it as the canonical one for
+    /// that name.
+    ///
+    /// The outcome carries the canonical handle either way. When `name` is
+    /// already taken the earlier tag stays canonical, and the one built here
+    /// comes back as the outcome's `discarded` value, so a caller that cares
+    /// about the dropped description can see it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::identifier::Identifier;
+    /// use fhy_core::interned::Interned;
+    /// use fhy_core::op_attribute::OpAttribute;
+    ///
+    /// let name = Identifier::new("idempotent");
+    /// let attribute =
+    ///     OpAttribute::new(name.clone(), "Applying the op twice changes nothing.")
+    ///         .into_canonical();
+    ///
+    /// assert_eq!(attribute.name(), &name);
+    /// assert_eq!(OpAttribute::intern_registry().get(&name), Some(attribute));
+    /// ```
+    pub fn new(name: Identifier, description: impl Into<String>) -> InternOutcome<Self> {
+        K::registry().intern(Self::create(name, description))
+    }
+
+    /// Build the shipped tag `entry` names, for a vocabulary's defaults.
+    pub(crate) fn create_shipped(entry: ReservedIdentifier, description: &str) -> Self {
+        Self::create(Identifier::reserved(entry), description)
+    }
+
+    /// Build the tag without registering it.
+    fn create(name: Identifier, description: impl Into<String>) -> Self {
+        Self {
+            name,
+            description: description.into(),
+            kind: PhantomData,
+        }
+    }
+
+    /// Return the tag's name.
+    #[must_use]
+    pub fn name(&self) -> &Identifier {
+        &self.name
+    }
+
+    /// Return the tag's human-readable description.
+    #[must_use]
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+}
+
+impl<K: TagKind> HasIdentifier for DescribedTag<K> {
+    fn identifier(&self) -> &Identifier {
+        &self.name
+    }
+}
+
+impl<K: TagKind> Interned for DescribedTag<K> {
+    type Key = Identifier;
+
+    fn intern_key(&self) -> &Identifier {
+        &self.name
+    }
+
+    fn intern_registry() -> &'static InternRegistry<Self> {
+        K::registry()
+    }
+}
+
+impl<K: TagKind> PartialEq for DescribedTag<K> {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+
+impl<K: TagKind> Eq for DescribedTag<K> {}
+
+impl<K: TagKind> Hash for DescribedTag<K> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
+}
+
+/// Render the vocabulary's name with the tag's name and description.
+impl<K: TagKind> fmt::Debug for DescribedTag<K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(K::TYPE_NAME)
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .finish()
+    }
+}
+
+/// Render the name's hint, for example `commutative`.
+impl<K: TagKind> fmt::Display for DescribedTag<K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.name, f)
+    }
+}
+
+impl<K: TagKind> Decode for DescribedTag<K> {
+    type Payload = DescribedTagPayload;
+
+    fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
+        let name = Identifier::try_from(payload.name).map_err(E::custom)?;
+        Ok(Self::create(name, payload.description))
+    }
+}
+
+/// Decoding checks every field of the payload before it restores the name,
+/// so a rejected payload leaves the id counter untouched.
+impl<'de, K: TagKind> Deserialize<'de> for DescribedTag<K> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        decode::deserialize_via_payload(deserializer)
+    }
+}
+
+/// The checked payload of a [`DescribedTag`], with its name not yet
+/// restored.
+#[derive(Deserialize)]
+#[serde(rename = "DescribedTag", deny_unknown_fields)]
+pub(crate) struct DescribedTagPayload {
+    name: IdentifierWire,
+    description: String,
+}
+
+/// Return the canonical shipped tag `entry` names in the vocabulary `K`.
+///
+/// # Panics
+///
+/// Panics if `entry` does not name one of the defaults `K`'s registry was
+/// created with.
+pub(crate) fn require_shipped<K: TagKind>(entry: ReservedIdentifier) -> Canonical<DescribedTag<K>> {
+    crate::interned::require_default(&Identifier::reserved(entry))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::diagnostic::NoteKind;
+    use crate::op_attribute::OpAttribute;
+
+    /// Test one identifier registered as an attribute and as a note kind
+    /// names two independent tags, each seen only by its own registry.
+    #[test]
+    fn attribute_and_note_kind_registries_are_independent() {
+        let name = Identifier::new("in-both-vocabularies");
+
+        let attribute = OpAttribute::new(name.clone(), "an attribute").into_canonical();
+        let kind = NoteKind::new(name.clone(), "a note kind").into_canonical();
+
+        assert_eq!(attribute.description(), "an attribute");
+        assert_eq!(kind.description(), "a note kind");
+        assert_eq!(OpAttribute::intern_registry().get(&name), Some(attribute));
+        assert_eq!(NoteKind::intern_registry().get(&name), Some(kind));
+    }
+
+    /// Test an identifier registered in one vocabulary is unknown to the
+    /// other.
+    #[test]
+    fn a_tag_registered_in_one_vocabulary_is_unknown_to_the_other() {
+        let name = Identifier::new("in-one-vocabulary");
+
+        let _attribute = OpAttribute::new(name.clone(), "an attribute");
+
+        assert_eq!(NoteKind::intern_registry().get(&name), None);
+    }
+
+    /// Test a tag of either vocabulary displays as its name hint.
+    #[test]
+    fn display_renders_the_name_hint() {
+        assert_eq!(OpAttribute::commutative().to_string(), "commutative");
+        assert_eq!(NoteKind::rationale().to_string(), "rationale");
+    }
+
+    /// Test `Debug` renders the vocabulary's name, the name and the
+    /// description.
+    #[test]
+    fn debug_names_the_vocabulary() {
+        let rendered = format!("{:?}", **OpAttribute::pure());
+
+        assert!(
+            rendered.starts_with("OpAttribute { name: pure::18"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(OpAttribute::pure().description()),
+            "{rendered}"
+        );
+    }
+}
