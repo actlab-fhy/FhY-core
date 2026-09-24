@@ -168,7 +168,7 @@ fn create_composed_function<const N: usize>(
     result_sort: FunctionSort,
     build_body: fn(&[Expression; N]) -> Expression,
 ) -> ComposedFunction {
-    let parameters = parameter_names.map(Identifier::new_unscoped);
+    let parameters = parameter_names.map(Identifier::new);
     // A clone keeps the identifier's id, so the body's references equal the
     // parameters the function keeps.
     let references = parameters

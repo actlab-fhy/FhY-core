@@ -12,13 +12,6 @@ readme = "README.md"
 [lib]
 name = "fhy_core"
 
-[features]
-default = []
-# Exposes `fhy_core::testing`, the deterministic-identifier scope, to other
-# crates' tests. Enable it from `[dev-dependencies]`, never for a production
-# build.
-testing = []
-
 [dependencies]
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
@@ -27,32 +20,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-# Turns on `testing` for this crate's own integration tests. Resolver 2 unifies
-# dev-dependency features only into test, example and bench builds, so a
-# normal build of the library never sees it.
-fhy-core = { path = ".", features = ["testing"] }
 proptest = { workspace = true }
 rstest = { workspace = true }
 
 [lints]
 workspace = true
 
-# These tests need `fhy_core::testing`. `cargo package` drops the
-# path-only dev-dependency that enables it, so `required-features` makes the
-# published crate skip them instead of failing to compile; `cargo test
-# --features testing` runs them.
-[[test]]
-name = "deterministic_identifiers_stories"
-required-features = ["testing"]
-
-[[test]]
-name = "deterministic_identifiers_constants"
-required-features = ["testing"]
-
-[[test]]
-name = "deterministic_identifiers_equivalence"
-required-features = ["testing"]
-
-[[test]]
-name = "builtins_scope_stories"
-required-features = ["testing"]

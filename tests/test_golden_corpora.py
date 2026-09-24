@@ -7,10 +7,10 @@ here and its output compared with the committed corpus outside the
 ``provenance`` block, which records the commit and interpreter of a run and
 so differs between runs.
 
-The generators mutate process-global state (interned registries, the
-identifier counter, the deterministic-identifier scope), so each one runs in
-a fresh interpreter. That interpreter inherits this process's environment,
-so a corpus is checked on whichever backend the test run selected.
+The generators mutate process-global state (interned registries and the
+identifier counter), so each one runs in a fresh interpreter. That
+interpreter inherits this process's environment, so a corpus is checked on
+whichever backend the test run selected.
 """
 
 import difflib

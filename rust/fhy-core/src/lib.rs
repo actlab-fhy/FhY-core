@@ -33,8 +33,5 @@ mod decode;
 mod described_tag;
 mod python_text;
 
-#[cfg(any(test, feature = "testing"))]
-pub mod testing;
-
 #[cfg(test)]
 mod test_support;

@@ -80,13 +80,11 @@ jobs:
         run: cargo package --locked -p fhy-core
       - name: Testing the Packaged Crate
         # cargo package only builds the library, so run the tests from the
-        # packed crate as a consumer would get them. The published manifest
-        # loses this crate's dev-dependency on itself, which carries only a
-        # path, so the testing feature is named here instead.
+        # packed crate as a consumer would get them.
         run: |
           tar -xzf target/package/fhy-core-*.crate -C "$RUNNER_TEMP"
           cd "$RUNNER_TEMP"/fhy-core-*/
-          cargo test --locked --features testing
+          cargo test --locked
 
   rust-msrv:
     runs-on: "ubuntu-latest"
@@ -115,12 +113,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Build the Library on the MSRV
         # `cargo +<toolchain>`: rust-toolchain.toml pins the channel to stable
-        # and would otherwise win over the toolchain installed here. Both
-        # feature sets, since `--all-features` turns on `testing`, which
-        # `default` does not compile.
+        # and would otherwise win over the toolchain installed here.
         run: |
           cargo +${{ steps.toolchain.outputs.name }} check --workspace --lib --locked
-          cargo +${{ steps.toolchain.outputs.name }} check --workspace --lib --all-features --locked
 
   config:
     runs-on: ubuntu-latest

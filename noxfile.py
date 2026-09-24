@@ -34,11 +34,6 @@ class ExpandedGoldenCorpus(NamedTuple):
 # whose ignored test replays the corpus, and the variable that names the corpus
 # file for that test.
 EXPANDED_GOLDEN_CORPORA = {
-    "generate_deterministic_identifier_cases.py": ExpandedGoldenCorpus(
-        options="--seed 7 --random-count 2000 --max-ops 40 --hints a,b,c,d,e",
-        rust_test="deterministic_identifiers_equivalence",
-        variable="FHY_DETERMINISTIC_IDENTIFIER_CORPUS",
-    ),
     "generate_interned_cases.py": ExpandedGoldenCorpus(
         options="--seed 7 --random-count 2000 --max-ops 60 --keys a,b,c,d,e",
         rust_test="interned_equivalence",
@@ -214,17 +209,12 @@ def golden_expanded(session: nox.Session) -> None:
             str(corpus_path),
             silent=True,
         )
-        # `testing` is on for this crate's own tests already; naming it keeps
-        # the deterministic-identifier test, which requires it, from being
-        # skipped if that ever changes.
         output = session.run(
             "cargo",
             "test",
             "--locked",
             "-p",
             "fhy-core",
-            "--features",
-            "testing",
             "--test",
             corpus.rust_test,
             "--",

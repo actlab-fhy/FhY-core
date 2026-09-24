@@ -85,19 +85,14 @@ impl Identifier {
     /// it, can cause.
     #[must_use]
     pub fn new(name_hint: &str) -> Self {
-        let id = Self::next_id(name_hint);
         Self {
-            id,
+            id: allocate_id(),
             name_hint: Arc::from(name_hint),
         }
     }
 
     /// Restore an identifier with a specific id and name hint, advancing the
     /// global counter so `id` is never re-issued to a later construction.
-    ///
-    /// This is the deserialization path: it ignores any
-    /// deterministic-identifier scope and always consults the real global
-    /// counter.
     ///
     /// # Panics
     ///
@@ -109,20 +104,6 @@ impl Identifier {
         advance_counter_past(id);
         Self {
             id,
-            name_hint: Arc::from(name_hint),
-        }
-    }
-
-    /// Construct an identifier whose id always comes from the global
-    /// counter, even inside a deterministic-identifier scope.
-    ///
-    /// For the parameters of the built-in composed functions, which are
-    /// created on first use: a scope must never hand a test identifier the id
-    /// of a built-in parameter.
-    #[must_use]
-    pub(crate) fn new_unscoped(name_hint: &str) -> Self {
-        Self {
-            id: allocate_id(),
             name_hint: Arc::from(name_hint),
         }
     }
@@ -149,20 +130,6 @@ impl Identifier {
     pub fn name_hint(&self) -> &str {
         &self.name_hint
     }
-
-    /// Return the id `name_hint` receives inside the current thread's
-    /// deterministic-identifier scope, or the next id from the global counter
-    /// outside one.
-    #[cfg(any(test, feature = "testing"))]
-    fn next_id(name_hint: &str) -> u64 {
-        crate::testing::find_scoped_id(name_hint).unwrap_or_else(allocate_id)
-    }
-
-    /// Return the next id from the global counter.
-    #[cfg(not(any(test, feature = "testing")))]
-    fn next_id(_name_hint: &str) -> u64 {
-        allocate_id()
-    }
 }
 
 /// Draw the next id from the process-global counter.
@@ -182,8 +149,7 @@ pub(crate) fn allocate_id() -> u64 {
 /// unchanged when it cannot advance.
 ///
 /// Serves callers that store ids themselves, such as language bindings: it
-/// draws from the same counter as [`Identifier::new`], but ignores any
-/// deterministic-identifier scope.
+/// draws from the same counter as [`Identifier::new`].
 ///
 /// # Errors
 ///

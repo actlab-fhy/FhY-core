@@ -162,13 +162,6 @@ Parts of FhY Core are implemented in Rust, in the crate `fhy-core` under `rust/f
 
 `fhy-core` itself has no PyO3 dependency, so pure-Rust consumers never pull in a Python dependency; only `fhy-core-py` does.
 
-The `testing` feature exposes `fhy_core::testing`, the Rust counterpart of `fhy_core.testing_patches`. Inside a `DeterministicIdentifierScope` scope, identifiers created with the same name hint compare equal, so a test can compare an object graph whose identifiers were created inside the code under test with one it built itself. A scope belongs to the thread that entered it; other threads join it through a handle from `share()`. Enable the feature only for tests:
-
-```toml
-[dev-dependencies]
-fhy-core = { git = "https://github.com/actlab-fhy/FhY-core.git", features = ["testing"] }
-```
-
 ### Building and Testing the Rust Crate
 
 Requires a stable Rust toolchain (1.85+). The `rust-toolchain.toml` at the repo root pins the channel.

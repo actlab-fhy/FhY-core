@@ -5,9 +5,12 @@
 //! every other test in the binary, so they only compare ids they allocated
 //! themselves or the fixed reserved ids, and decode only ids already issued.
 
+use std::collections::HashSet;
+
 use fhy_core::diagnostic::{
     get_other_note_kind, get_rationale_note_kind, get_remark_note_kind, get_suggestion_note_kind,
 };
+use fhy_core::expr::builtins::{ComposedFunction, list_composed_functions};
 use fhy_core::identifier::{Identifier, RESERVED_ID_COUNT};
 use fhy_core::interned::Canonical;
 use fhy_core::op_attribute::{
@@ -20,6 +23,47 @@ use serde_json::json;
 #[test]
 fn the_reserved_block_holds_65536_ids() {
     assert_eq!(RESERVED_ID_COUNT, 65_536);
+}
+
+/// Test identifiers created with one name hint are distinct: a name hint
+/// never decides an identifier's id.
+#[test]
+fn identifiers_created_with_one_name_hint_are_distinct() {
+    let first = Identifier::new("accumulator");
+    let second = Identifier::new("accumulator");
+
+    assert_ne!(first, second);
+    assert_ne!(first.id(), second.id());
+}
+
+/// Test the built-in composed functions' parameters are pairwise distinct,
+/// and that none equals an identifier created afterward with the same name
+/// hint as a parameter.
+#[test]
+fn composed_function_parameters_are_pairwise_distinct_and_unaliased() {
+    let parameters: Vec<Identifier> = list_composed_functions()
+        .iter()
+        .flat_map(ComposedFunction::parameters)
+        .cloned()
+        .collect();
+
+    let lookalikes: Vec<Identifier> = ["a", "b", "x", "lo", "hi", "bound", "slope"]
+        .into_iter()
+        .map(Identifier::new)
+        .collect();
+
+    let distinct_ids: HashSet<u64> = parameters.iter().map(Identifier::id).collect();
+    assert_eq!(
+        distinct_ids.len(),
+        parameters.len(),
+        "a parameter id repeats"
+    );
+    for lookalike in &lookalikes {
+        assert!(
+            !parameters.contains(lookalike),
+            "{lookalike:?} aliases a built-in parameter"
+        );
+    }
 }
 
 /// Test fresh identifiers never take an id from the reserved block.

@@ -1,10 +1,9 @@
 //! Shared golden-replay scaffolding for the equivalence tests.
 //!
-//! `interned_equivalence`, `tag_type_equivalence`, and
-//! `deterministic_identifiers_equivalence` each replay a golden JSON document
-//! recorded by a Python oracle against the matching Rust API, and each reads
-//! an expanded corpus from an environment variable for its `#[ignore]`d
-//! variant. This module holds the replay loop the three share.
+//! `interned_equivalence` and `tag_type_equivalence` each replay a golden
+//! JSON document recorded by a Python oracle against the matching Rust API,
+//! and each reads an expanded corpus from an environment variable for its
+//! `#[ignore]`d variant. This module holds the replay loop the two share.
 
 use serde_json::Value;
 
