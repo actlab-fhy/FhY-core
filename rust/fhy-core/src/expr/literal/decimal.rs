@@ -14,24 +14,21 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use super::LiteralTextError;
 
-/// Convert a digit count to an exponent offset.
 fn convert_count_to_exponent(count: usize) -> i64 {
     i64::try_from(count).expect("a digit count fits in an i64 exponent")
 }
 
-/// Convert a non-negative exponent offset to a digit count.
 fn convert_exponent_to_count(offset: i64) -> usize {
     usize::try_from(offset).expect("the offset is non-negative and bounded by a digit count")
 }
 
-/// Write `count` zeros to `f`.
 fn write_zeros(f: &mut impl fmt::Write, count: usize) -> fmt::Result {
     (0..count).try_for_each(|_| f.write_char('0'))
 }
 
 /// Write `digits`, a significand whose decimal point sits `point` digits
-/// after its first digit, in positional notation: `0.000ddd`, `ddd000`, or
-/// `dd.d`, without a fractional part when the value is integral.
+/// after its first digit, in the positional notation of [`Decimal`]'s
+/// `Display`.
 fn write_positional(digits: &str, point: i64, f: &mut impl fmt::Write) -> fmt::Result {
     let length = convert_count_to_exponent(digits.len());
     if point <= 0 {
@@ -49,7 +46,6 @@ fn write_positional(digits: &str, point: i64, f: &mut impl fmt::Write) -> fmt::R
     }
 }
 
-/// Return whether `text` is a non-empty run of ASCII digits.
 pub(super) fn is_ascii_digit_run(text: &str) -> bool {
     !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
 }
@@ -171,7 +167,6 @@ impl Serialize for Decimal {
     }
 }
 
-/// The visitor reading a decimal from a text in the literal grammar.
 struct DecimalTextVisitor;
 
 impl Visitor<'_> for DecimalTextVisitor {
@@ -201,14 +196,11 @@ mod tests {
 
     use super::*;
 
-    /// Parse `text`, failing the test if it is outside the grammar.
     fn parse_accepted_text(text: &str) -> Decimal {
         text.parse()
             .unwrap_or_else(|_| panic!("{text:?} is in the decimal grammar"))
     }
 
-    /// Build the decimal `coefficient * 10^exponent` from its coefficient
-    /// digits.
     fn build_decimal(digits: &str, exponent: i64) -> Decimal {
         Decimal {
             coefficient: digits.parse().expect("coefficient digits"),
@@ -216,8 +208,6 @@ mod tests {
         }
     }
 
-    /// Test normalization strips leading zeros, trailing zeros and the point,
-    /// and the result displays positionally.
     #[rstest]
     #[case::integer("5", "5", 0, "5")]
     #[case::integer_leading_zero("05", "5", 0, "5")]
@@ -290,8 +280,6 @@ mod tests {
         assert_eq!(decimal.to_string(), expected_text);
     }
 
-    /// Test every spelling of zero normalizes to the coefficient `0` with
-    /// exponent `0` and displays as `0`.
     #[rstest]
     #[case::integer("0")]
     #[case::integer_zeros("000")]
@@ -308,8 +296,6 @@ mod tests {
         assert_eq!(decimal.to_string(), "0");
     }
 
-    /// Test texts differing only in a thirtieth significant digit normalize
-    /// apart, keeping every digit.
     #[test]
     fn decimal_from_str_keeps_thirty_significant_digits_without_rounding() {
         let last_one = format!("1.{}1", "0".repeat(28));
@@ -327,8 +313,6 @@ mod tests {
         assert_eq!(decimal_one.to_string(), last_one);
     }
 
-    /// Test a two-hundred-digit text keeps all its digits through
-    /// normalization and display.
     #[test]
     fn decimal_from_str_keeps_two_hundred_digits() {
         let integer_part = "1234567890".repeat(10);
@@ -345,8 +329,6 @@ mod tests {
         assert_eq!(decimal.to_string(), text);
     }
 
-    /// Test exponents far outside any fixed-width float range normalize and
-    /// display exactly, positionally.
     #[rstest]
     #[case::tiny(&format!(".{}3", "0".repeat(120)), -121, &format!("0.{}3", "0".repeat(120)))]
     #[case::huge(&format!("1{}.0", "0".repeat(80)), 80, &format!("1{}", "0".repeat(80)))]
@@ -361,8 +343,6 @@ mod tests {
         assert_eq!(decimal.to_string(), expected_text);
     }
 
-    /// Test texts outside the unsigned, exponent-free ASCII grammar are
-    /// refused, naming the text.
     #[rstest]
     #[case::empty("")]
     #[case::bare_point(".")]
@@ -391,8 +371,6 @@ mod tests {
         assert_eq!(decimal, Err(LiteralTextError { text: text.into() }));
     }
 
-    /// Test displaying a coefficient and exponent directly puts the point
-    /// where the exponent says, padding with zeros on either side.
     #[rstest]
     #[case::zero("0", 0, "0")]
     #[case::integer("12", 0, "12")]
@@ -413,14 +391,7 @@ mod tests {
         assert_eq!(text, expected);
     }
 
-    /// Build a strategy over the digit strings of `1..=max_length` ASCII
-    /// digits.
-    fn generate_digit_strings(max_length: usize) -> impl Strategy<Value = String> {
-        generate_digit_strings_in(1..=max_length)
-    }
-
-    /// Build a strategy over the digit strings whose length is in `lengths`.
-    fn generate_digit_strings_in(
+    fn generate_digit_strings(
         lengths: std::ops::RangeInclusive<usize>,
     ) -> impl Strategy<Value = String> {
         proptest::collection::vec(proptest::char::range('0', '9'), lengths)
@@ -432,18 +403,17 @@ mod tests {
     /// fraction digits (`[0-9]+`, `[0-9]+.[0-9]*`, or `.[0-9]+`).
     fn generate_decimal_parts() -> impl Strategy<Value = (String, Option<String>)> {
         prop_oneof![
-            generate_digit_strings(30).prop_map(|integer_part| (integer_part, None)),
+            generate_digit_strings(1..=30).prop_map(|integer_part| (integer_part, None)),
             (
-                generate_digit_strings(30),
-                generate_digit_strings_in(0..=30)
+                generate_digit_strings(1..=30),
+                generate_digit_strings(0..=30)
             )
                 .prop_map(|(integer_part, fraction_part)| (integer_part, Some(fraction_part))),
-            generate_digit_strings(30)
+            generate_digit_strings(1..=30)
                 .prop_map(|fraction_part| (String::new(), Some(fraction_part))),
         ]
     }
 
-    /// Join decimal parts into their text.
     fn join_decimal_parts(integer_part: &str, fraction_part: Option<&str>) -> String {
         match fraction_part {
             Some(fraction_part) => format!("{integer_part}.{fraction_part}"),
@@ -452,9 +422,6 @@ mod tests {
     }
 
     proptest! {
-        /// Test a decimal's positional text reads back as the same decimal,
-        /// from a decimal text or from coefficient digits and an exponent
-        /// far outside any float range.
         #[test]
         fn decimal_display_reads_back_as_the_same_decimal(
             decimal in prop_oneof![
@@ -471,8 +438,6 @@ mod tests {
             prop_assert_eq!(parse_accepted_text(&text), decimal, "text {:?}", text);
         }
 
-        /// Test padding a decimal text with leading zeros and trailing
-        /// fractional zeros leaves its normalized form unchanged.
         #[test]
         fn decimal_from_str_ignores_zero_padding(
             (integer_part, fraction_part) in generate_decimal_parts(),
@@ -496,11 +461,11 @@ mod tests {
             prop_assert_eq!(padded_decimal, plain_decimal);
         }
 
-        /// Test moving the decimal point left by `shift` places keeps the
-        /// coefficient and lowers the exponent by `shift`.
+        /// Test that moving the decimal point left by `shift` places keeps
+        /// the coefficient and lowers the exponent by `shift`.
         #[test]
         fn decimal_from_str_tracks_the_point_position_in_the_exponent(
-            digits in generate_digit_strings(40),
+            digits in generate_digit_strings(1..=40),
             point in 0_usize..40,
             shift in 0_usize..40,
         ) {
@@ -518,8 +483,8 @@ mod tests {
             prop_assert_eq!(left_decimal.exponent, right_decimal.exponent - moved);
         }
 
-        /// Test a normalized coefficient is `0` or has neither a leading nor
-        /// a trailing zero, and is never negative.
+        /// Test that a normalized coefficient is `0` or has neither a leading
+        /// nor a trailing zero, and is never negative.
         #[test]
         fn decimal_from_str_yields_a_canonical_coefficient(
             (integer_part, fraction_part) in generate_decimal_parts(),

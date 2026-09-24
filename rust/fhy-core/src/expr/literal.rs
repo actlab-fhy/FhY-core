@@ -279,15 +279,15 @@ mod integer_text {
     use num_bigint::BigInt;
     use serde::de::{self, Deserializer, Visitor};
 
+    use super::is_ascii_digit_run;
+
     /// Return whether `text` is the canonical decimal text of an integer:
     /// `-?(0|[1-9][0-9]*)`, other than `-0`.
     fn is_canonical_integer_text(text: &str) -> bool {
         let digits = text.strip_prefix('-').unwrap_or(text);
-        let is_digit_run = !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit());
-        is_digit_run && (digits == "0" || !digits.starts_with('0')) && text != "-0"
+        is_ascii_digit_run(digits) && (digits == "0" || !digits.starts_with('0')) && text != "-0"
     }
 
-    /// The visitor reading the canonical decimal text of an integer.
     struct IntegerTextVisitor;
 
     impl Visitor<'_> for IntegerTextVisitor {
@@ -305,7 +305,6 @@ mod integer_text {
         }
     }
 
-    /// Read an integer from the canonical decimal text of it.
     pub(super) fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<BigInt, D::Error> {
@@ -321,7 +320,6 @@ mod float_text {
 
     use serde::de::{self, Deserializer, Visitor};
 
-    /// The visitor reading a float from its text.
     struct FloatTextVisitor;
 
     impl Visitor<'_> for FloatTextVisitor {
@@ -338,7 +336,6 @@ mod float_text {
         }
     }
 
-    /// Read a float from its text through `f64::from_str`.
     pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
         deserializer.deserialize_str(FloatTextVisitor)
     }
