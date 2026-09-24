@@ -243,6 +243,18 @@ fn pass_manager_name_is_its_identifier() {
     assert_eq!(manager.identifier(), &name);
 }
 
+/// Test a default pipeline is named `pipeline` and holds no items.
+#[test]
+fn pass_manager_default_is_an_empty_pipeline_named_pipeline() {
+    let input = BoxIr::new(7);
+
+    let mut manager: PassManager<'_, BoxIr> = PassManager::default();
+    let result = manager.run(&input).expect("an empty pipeline cannot fail");
+
+    assert_eq!(manager.name().name_hint(), "pipeline");
+    assert!(result.records().is_empty());
+}
+
 // =============================================================================
 // Analyses under a manager
 // =============================================================================

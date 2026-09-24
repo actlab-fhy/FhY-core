@@ -105,6 +105,13 @@ impl<'p, I> ValidationManager<'p, I> {
     }
 }
 
+impl<I> Default for ValidationManager<'_, I> {
+    /// Create the empty validation pipeline `validation-pipeline`.
+    fn default() -> Self {
+        Self::new(Identifier::new("validation-pipeline"))
+    }
+}
+
 impl<I> HasIdentifier for ValidationManager<'_, I> {
     fn identifier(&self) -> &Identifier {
         &self.name

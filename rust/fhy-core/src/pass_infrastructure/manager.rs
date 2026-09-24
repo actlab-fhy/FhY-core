@@ -554,6 +554,13 @@ impl<'p, I: NodeHandle> PassManager<'p, I> {
     }
 }
 
+impl<I: NodeHandle> Default for PassManager<'_, I> {
+    /// Create the empty pipeline `pipeline` without a verifier.
+    fn default() -> Self {
+        Self::new(Identifier::new("pipeline"))
+    }
+}
+
 impl<I> HasIdentifier for PassManager<'_, I> {
     fn identifier(&self) -> &Identifier {
         &self.name

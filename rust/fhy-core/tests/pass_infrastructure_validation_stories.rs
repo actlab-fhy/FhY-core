@@ -607,6 +607,16 @@ fn validation_manager_name_is_its_identifier() {
     assert_eq!(manager.identifier(), &name);
 }
 
+/// Test a default validation pipeline is named `validation-pipeline` and
+/// holds no validators.
+#[test]
+fn validation_manager_default_is_an_empty_pipeline_named_validation_pipeline() {
+    let manager: ValidationManager<'_, BoxIr> = ValidationManager::default();
+
+    assert_eq!(manager.name().name_hint(), "validation-pipeline");
+    assert!(manager.validator_names().is_empty());
+}
+
 /// Test validators compute analyses afresh on every request.
 #[test]
 fn validation_manager_runs_validators_without_an_analysis_cache() {
