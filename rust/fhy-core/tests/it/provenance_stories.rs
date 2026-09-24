@@ -1,5 +1,5 @@
 //! Tests for `fhy_core::provenance`: positions, spans, the provenance
-//! variants, `Provenance::fuse`, rendering, and the dict wire form.
+//! variants, `Provenance::fuse`, rendering, and the wire form.
 //!
 //! Public API only. Nothing here touches process-global state, so the tests
 //! run in parallel freely.
@@ -90,20 +90,21 @@ fn build_fused(sources: Vec<Provenance>, label: Option<&str>) -> Provenance {
     })
 }
 
-/// Assert decoding the JSON text `payload_text` as a `T` fails with a data
-/// error and, when `crate_error` is given, with a message containing that
-/// crate error's text.
+/// Assert decoding the JSON text `payload_text` as a `T` fails with an
+/// error of `category` and, when `crate_error` is given, with a message
+/// containing that crate error's text.
 ///
 /// The rest of the message is serde's, which this crate does not own.
 fn assert_decode_rejected<T: DeserializeOwned + std::fmt::Debug>(
     payload_text: &str,
+    category: Category,
     crate_error: Option<&str>,
 ) {
     let error = serde_json::from_str::<T>(payload_text)
         .expect_err(&format!("{payload_text} is malformed and must be rejected"));
     assert_eq!(
         error.classify(),
-        Category::Data,
+        category,
         "the error for {payload_text}: {error}"
     );
     if let Some(crate_error) = crate_error {
@@ -1160,15 +1161,16 @@ fn span_encodes_every_key(#[case] span: Span, #[case] expected: Value) {
     assert_eq!(encoded, expected);
 }
 
-/// Test each provenance variant encodes in the wrapped form, with an empty
-/// data dict for the unknown provenance and the normalized path for a file.
+/// Test each provenance variant encodes externally tagged: the unknown
+/// provenance as the string `"unknown"` and every other variant as a
+/// one-key map from its snake-case name to its fields, with the normalized
+/// path for a file.
 #[rstest]
-#[case::unknown(Provenance::Unknown, json!({"__type__": "provenance.unknown", "__data__": {}}))]
+#[case::unknown(Provenance::Unknown, json!("unknown"))]
 #[case::file(
     build_file_with_span("./a//b.fhy", build_offset_span(Some(0), Some(3))),
     json!({
-        "__type__": "provenance.file",
-        "__data__": {
+        "file": {
             "file_path": "a/b.fhy",
             "span": {"start_offset": 0, "end_offset": 3, "start_position": null, "end_position": null},
         },
@@ -1176,40 +1178,30 @@ fn span_encodes_every_key(#[case] span: Span, #[case] expected: Value) {
 )]
 #[case::file_without_span(
     build_file("c.fhy"),
-    json!({"__type__": "provenance.file", "__data__": {"file_path": "c.fhy", "span": null}})
+    json!({"file": {"file_path": "c.fhy", "span": null}})
 )]
 #[case::named(
     build_named("lib", Provenance::Unknown),
-    json!({
-        "__type__": "provenance.named",
-        "__data__": {"name": "lib", "child": {"__type__": "provenance.unknown", "__data__": {}}},
-    })
+    json!({"named": {"name": "lib", "child": "unknown"}})
 )]
 #[case::call_site(
     build_call_site(build_file("a.fhy"), Provenance::Unknown),
     json!({
-        "__type__": "provenance.call_site",
-        "__data__": {
-            "callee": {"__type__": "provenance.file", "__data__": {"file_path": "a.fhy", "span": null}},
-            "caller": {"__type__": "provenance.unknown", "__data__": {}},
+        "call_site": {
+            "callee": {"file": {"file_path": "a.fhy", "span": null}},
+            "caller": "unknown",
         },
     })
 )]
 #[case::fused_without_label(
     build_fused(vec![Provenance::Unknown], None),
-    json!({
-        "__type__": "provenance.fused",
-        "__data__": {
-            "sources": [{"__type__": "provenance.unknown", "__data__": {}}],
-            "metadata": null,
-        },
-    })
+    json!({"fused": {"sources": ["unknown"], "label": null}})
 )]
 #[case::fused_with_label(
     build_fused(vec![], Some("fuse")),
-    json!({"__type__": "provenance.fused", "__data__": {"sources": [], "metadata": "fuse"}})
+    json!({"fused": {"sources": [], "label": "fuse"}})
 )]
-fn provenance_encodes_in_the_wrapped_form(#[case] provenance: Provenance, #[case] expected: Value) {
+fn provenance_encodes_externally_tagged(#[case] provenance: Provenance, #[case] expected: Value) {
     let encoded = serde_json::to_value(&provenance).expect("provenances encode");
 
     assert_eq!(encoded, expected);
@@ -1263,7 +1255,7 @@ fn position_and_span_round_trip_through_json() {
 /// Test decoding two unknown payloads gives equal provenances.
 #[test]
 fn decoded_unknown_provenances_compare_equal() {
-    let payload = json!({"__type__": "provenance.unknown", "__data__": {}});
+    let payload = json!("unknown");
 
     let first: Provenance = serde_json::from_value(payload.clone()).expect("valid payload");
     let second: Provenance = serde_json::from_value(payload).expect("valid payload");
@@ -1275,11 +1267,90 @@ fn decoded_unknown_provenances_compare_equal() {
 /// Test decoding a file payload normalizes its path.
 #[test]
 fn provenance_decode_normalizes_the_file_path() {
-    let payload = json!({"__type__": "provenance.file", "__data__": {"file_path": "./x//y.fhy/", "span": null}});
+    let payload = json!({"file": {"file_path": "./x//y.fhy/", "span": null}});
 
     let decoded: Provenance = serde_json::from_value(payload).expect("valid payload");
 
     assert_eq!(decoded, build_file("x/y.fhy"));
+}
+
+/// Test a file provenance written with an unnormalized path, in either
+/// format, decodes to the normalized path.
+#[test]
+fn file_provenance_decode_normalizes_the_path_in_either_format() {
+    /// The fields of a file provenance, with the path written as given.
+    #[derive(serde::Serialize)]
+    struct RawFile<'a> {
+        file_path: &'a str,
+        span: Option<Span>,
+    }
+    let raw = RawFile {
+        file_path: "./src//a.fhy/",
+        span: None,
+    };
+    let json = serde_json::to_string(&raw).expect("the raw fields encode");
+    let bytes = postcard::to_allocvec(&raw).expect("the raw fields encode");
+
+    let from_json: FileProvenance = serde_json::from_str(&json).expect("the JSON decodes");
+    let from_postcard: FileProvenance = postcard::from_bytes(&bytes).expect("the bytes decode");
+
+    assert_eq!(from_json.file_path(), "src/a.fhy");
+    assert_eq!(from_postcard.file_path(), "src/a.fhy");
+}
+
+/// Test a span payload missing a bound's key decodes with that bound
+/// absent.
+#[rstest]
+#[case::no_keys(json!({}), Span::unknown())]
+#[case::only_offsets(
+    json!({"start_offset": 2, "end_offset": 5}),
+    Span::from_offsets(2..5).unwrap()
+)]
+#[case::only_an_end_position(
+    json!({"end_position": {"line": 3, "column": 1}}),
+    Span::unknown().with_end_position(build_position(3, 1)).unwrap()
+)]
+fn span_decode_reads_a_missing_bound_as_absent(#[case] payload: Value, #[case] expected: Span) {
+    let decoded: Span = serde_json::from_str(&payload.to_string()).expect("the payload decodes");
+
+    assert_eq!(decoded, expected);
+}
+
+/// Test a file payload without its span and a fused payload without its
+/// label decode with those fields absent.
+#[test]
+fn file_and_fused_decode_read_a_missing_option_as_absent() {
+    let file: Provenance =
+        serde_json::from_str(r#"{"file": {"file_path": "a.fhy"}}"#).expect("the file decodes");
+    let fused: Provenance =
+        serde_json::from_str(r#"{"fused": {"sources": []}}"#).expect("the fusion decodes");
+
+    assert_eq!(file, build_file("a.fhy"));
+    assert_eq!(fused, build_fused(vec![], None));
+}
+
+/// Test a span payload with reversed offsets is refused with the span
+/// error's text.
+#[test]
+fn span_decode_rejects_reversed_offsets_with_the_span_error_text() {
+    let payload = r#"{"start_offset": 5, "end_offset": 3}"#;
+
+    let error = serde_json::from_str::<Span>(payload).expect_err("the offsets are reversed");
+
+    let expected = SpanError::EndOffsetBeforeStart { start: 5, end: 3 }.to_string();
+    assert!(error.to_string().contains(&expected), "{error}");
+}
+
+/// Test a named payload with an empty name is refused with the
+/// named-provenance error's text.
+#[test]
+fn named_provenance_decode_rejects_an_empty_name_with_the_error_text() {
+    let payload = r#"{"named": {"name": "", "child": "unknown"}}"#;
+
+    let error = serde_json::from_str::<Provenance>(payload).expect_err("the name is empty");
+
+    let expected = NamedProvenanceError::EmptyName.to_string();
+    assert!(error.to_string().contains(&expected), "{error}");
 }
 
 /// Test malformed position payloads are rejected with a data error, whose
@@ -1299,11 +1370,11 @@ fn provenance_decode_normalizes_the_file_path() {
 )]
 #[case::zero_line(
     json!({"line": 0, "column": 1}),
-    Some(PositionError::ZeroLine.to_string())
+    None
 )]
 #[case::zero_column(
     json!({"line": 1, "column": 0}),
-    Some(PositionError::ZeroColumn.to_string())
+    None
 )]
 #[case::float_line(
     json!({"line": 1.0, "column": 1}),
@@ -1321,37 +1392,20 @@ fn provenance_decode_normalizes_the_file_path() {
     json!({"line": null, "column": 1}),
     None
 )]
-#[case::not_a_map(
-    json!([1, 1]),
-    None
-)]
 fn position_decode_rejects_malformed_payloads(
     #[case] payload: Value,
     #[case] crate_error: Option<String>,
 ) {
-    assert_decode_rejected::<Position>(&payload.to_string(), crate_error.as_deref());
+    assert_decode_rejected::<Position>(
+        &payload.to_string(),
+        Category::Data,
+        crate_error.as_deref(),
+    );
 }
 
-/// Test malformed span payloads, including one missing each key, are
-/// rejected with a data error, whose message names the crate's own error
-/// where one applies.
+/// Test malformed span payloads are rejected with a data error, whose
+/// message names the crate's own error where one applies.
 #[rstest]
-#[case::missing_start_offset(
-    json!({"end_offset": null, "start_position": null, "end_position": null}),
-    None
-)]
-#[case::missing_end_offset(
-    json!({"start_offset": null, "start_position": null, "end_position": null}),
-    None
-)]
-#[case::missing_start_position(
-    json!({"start_offset": null, "end_offset": null, "end_position": null}),
-    None
-)]
-#[case::missing_end_position(
-    json!({"start_offset": null, "end_offset": null, "start_position": null}),
-    None
-)]
 #[case::extra_key(
     json!({"start_offset": 0, "end_offset": 3, "start_position": null, "end_position": null, "extra": 1}),
     None
@@ -1384,108 +1438,63 @@ fn position_decode_rejects_malformed_payloads(
     "start_position": {"line": 0, "column": 1},
     "end_position": null,
 }),
-    Some(PositionError::ZeroLine.to_string())
-)]
-#[case::list_position(
-    json!({"start_offset": null, "end_offset": null, "start_position": [1, 1], "end_position": null}),
     None
 )]
 fn span_decode_rejects_malformed_payloads(
     #[case] payload: Value,
     #[case] crate_error: Option<String>,
 ) {
-    assert_decode_rejected::<Span>(&payload.to_string(), crate_error.as_deref());
+    assert_decode_rejected::<Span>(&payload.to_string(), Category::Data, crate_error.as_deref());
 }
 
-/// Test malformed provenance payloads, including an unknown type id and an
-/// unknown provenance without its empty data dict, are rejected with a data
-/// error, whose message names the crate's own error where one applies.
+/// Test malformed provenance payloads, including an unknown variant name,
+/// a variant body of the wrong shape and two variants at once, are rejected
+/// with an error of the expected category, whose message names the crate's
+/// own error where one applies. Where a provenance is due, `serde_json`
+/// reports a JSON value that is neither a string nor a map, or a second
+/// variant key, as a syntax error rather than a data error.
 #[rstest]
-#[case::unknown_type_id(
-    json!({"__type__": "provenance.does_not_exist", "__data__": {}}),
+#[case::unknown_variant_name(json!({"does_not_exist": {}}), Category::Data, None)]
+#[case::unknown_variant_string(json!("does_not_exist"), Category::Data, None)]
+#[case::variant_with_a_non_map_body(json!({"file": 5}), Category::Data, None)]
+#[case::unit_variant_given_a_body(json!({"unknown": {"x": 1}}), Category::Data, None)]
+#[case::newtype_variant_without_a_body(json!("file"), Category::Data, None)]
+#[case::two_top_level_keys(
+    json!({"file": {"file_path": "a", "span": null}, "named": {"name": "n", "child": "unknown"}}),
+    Category::Syntax,
     None
 )]
-#[case::non_provenance_type_id(
-    json!({"__type__": "position", "__data__": {"line": 1, "column": 1}}),
-    None
-)]
-#[case::unknown_without_data(
-    json!({"__type__": "provenance.unknown"}),
-    None
-)]
-#[case::unknown_with_null_data(
-    json!({"__type__": "provenance.unknown", "__data__": null}),
-    None
-)]
-#[case::unknown_with_a_field(
-    json!({"__type__": "provenance.unknown", "__data__": {"x": 1}}),
-    None
-)]
-#[case::extra_envelope_key(
-    json!({"__type__": "provenance.unknown", "__data__": {}, "z": 1}),
-    None
-)]
-#[case::missing_type(
-    json!({"__data__": {}}),
-    None
-)]
-#[case::file_missing_span(
-    json!({"__type__": "provenance.file", "__data__": {"file_path": "a"}}),
-    None
-)]
-#[case::file_path_not_a_string(
-    json!({"__type__": "provenance.file", "__data__": {"file_path": 3, "span": null}}),
+#[case::file_path_not_a_string(json!({"file": {"file_path": 3, "span": null}}), Category::Data, None)]
+#[case::file_with_an_unknown_field(
+    json!({"file": {"file_path": "a", "span": null, "extra": 1}}),
+    Category::Data,
     None
 )]
 #[case::empty_name(
-    json!({
-    "__type__": "provenance.named",
-    "__data__": {"name": "", "child": {"__type__": "provenance.unknown", "__data__": {}}},
-}),
+    json!({"named": {"name": "", "child": "unknown"}}),
+    Category::Data,
     Some(NamedProvenanceError::EmptyName.to_string())
 )]
-#[case::unwrapped_child(
-    json!({"__type__": "provenance.named", "__data__": {"name": "n", "child": {"line": 1, "column": 1}}}),
+#[case::named_child_not_a_provenance(
+    json!({"named": {"name": "n", "child": {"line": 1, "column": 1}}}),
+    Category::Data,
     None
 )]
-#[case::null_caller(
-    json!({
-    "__type__": "provenance.call_site",
-    "__data__": {"callee": {"__type__": "provenance.unknown", "__data__": {}}, "caller": null},
-}),
-    None
-)]
-#[case::integer_metadata(
-    json!({"__type__": "provenance.fused", "__data__": {"sources": [], "metadata": 5}}),
-    None
-)]
-#[case::null_sources(
-    json!({"__type__": "provenance.fused", "__data__": {"sources": null, "metadata": null}}),
-    None
-)]
-#[case::missing_metadata(
-    json!({"__type__": "provenance.fused", "__data__": {"sources": []}}),
-    None
-)]
+#[case::null_caller(json!({"call_site": {"callee": "unknown", "caller": null}}), Category::Syntax, None)]
+#[case::integer_label(json!({"fused": {"sources": [], "label": 5}}), Category::Data, None)]
+#[case::null_sources(json!({"fused": {"sources": null, "label": null}}), Category::Data, None)]
 #[case::invalid_nested_source(
-    json!({
-    "__type__": "provenance.fused",
-    "__data__": {
-        "sources": [{"__type__": "provenance.named", "__data__": {"name": "", "child": {"__type__": "provenance.unknown", "__data__": {}}}}],
-        "metadata": null,
-    },
-}),
+    json!({"fused": {"sources": [{"named": {"name": "", "child": "unknown"}}], "label": null}}),
+    Category::Data,
     Some(NamedProvenanceError::EmptyName.to_string())
 )]
-#[case::not_a_map(
-    json!([{"__type__": "provenance.unknown", "__data__": {}}]),
-    None
-)]
+#[case::not_a_map(json!(["unknown"]), Category::Syntax, None)]
 fn provenance_decode_rejects_malformed_payloads(
     #[case] payload: Value,
+    #[case] category: Category,
     #[case] crate_error: Option<String>,
 ) {
-    assert_decode_rejected::<Provenance>(&payload.to_string(), crate_error.as_deref());
+    assert_decode_rejected::<Provenance>(&payload.to_string(), category, crate_error.as_deref());
 }
 
 /// Test a line beyond `u64::MAX` is rejected on decode: lines, columns and
@@ -1494,7 +1503,7 @@ fn provenance_decode_rejects_malformed_payloads(
 #[case::huge_line(r#"{"line": 1180591620717411303424, "column": 1}"#)]
 #[case::line_just_past_u64(r#"{"line": 18446744073709551616, "column": 1}"#)]
 fn position_decode_rejects_values_beyond_u64(#[case] payload_text: &str) {
-    assert_decode_rejected::<Position>(payload_text, None);
+    assert_decode_rejected::<Position>(payload_text, Category::Data, None);
 }
 
 /// Test a span offset beyond `u64` is rejected on decode.
@@ -1503,7 +1512,7 @@ fn span_decode_rejects_an_offset_beyond_u64() {
     let payload_text = r#"{"start_offset": 18446744073709551616, "end_offset": null,
         "start_position": null, "end_position": null}"#;
 
-    assert_decode_rejected::<Span>(payload_text, None);
+    assert_decode_rejected::<Span>(payload_text, Category::Data, None);
 }
 
 /// Return `depth` named provenances nested over the unknown provenance.

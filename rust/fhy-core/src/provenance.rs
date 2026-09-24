@@ -18,10 +18,11 @@
 //! sources; labelled fusions and the other variants are kept whole, whatever
 //! they contain.
 //!
-//! [`Position`], [`Span`] and [`Provenance`] serialize to JSON-compatible
-//! dicts. A position is `{"line": .., "column": ..}`, a span names all four
-//! of its fields with `null` for an absent one, and a provenance is wrapped
-//! as `{"__type__": "provenance.<kind>", "__data__": {..}}`.
+//! [`Position`], [`Span`] and [`Provenance`] serialize through plain serde
+//! derives, in any serde format. A position is `{"line": .., "column": ..}`,
+//! a span names all four of its fields with `null` for an absent one, and a
+//! provenance is tagged by its variant name, as in `"unknown"` or `{"file":
+//! {..}}`. Decoding checks the same invariants as the constructors.
 
 use std::fmt;
 use std::hash::Hash;
@@ -29,15 +30,16 @@ use std::num::NonZeroU64;
 use std::ops::Range;
 use std::sync::Arc;
 
-use serde::ser::SerializeStruct;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
-
-use crate::decode::deserialize_map_only;
+use serde::{Deserialize, Serialize};
 
 /// A 1-indexed line and column in a source text.
 ///
 /// Positions order lexicographically, by line and then by column.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+///
+/// A position encodes as `{"line": .., "column": ..}`, and decoding refuses
+/// a zero line or column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, expecting = "a position")]
 pub struct Position {
     line: NonZeroU64,
     column: NonZeroU64,
@@ -87,33 +89,6 @@ impl fmt::Display for Position {
     }
 }
 
-/// Encode the position as `{"line": .., "column": ..}`.
-impl Serialize for Position {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("Position", 2)?;
-        state.serialize_field("line", &self.line.get())?;
-        state.serialize_field("column", &self.column.get())?;
-        state.end()
-    }
-}
-
-/// A position payload, checked for its keys and types but not its values.
-#[derive(Deserialize)]
-#[serde(rename = "Position", deny_unknown_fields)]
-struct PositionPayload {
-    line: u64,
-    column: u64,
-}
-
-/// Decode `{"line": .., "column": ..}`, rejecting a missing or unknown key,
-/// a value that is not an integer in `u64`, and a zero line or column.
-impl<'de> Deserialize<'de> for Position {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let payload: PositionPayload = deserialize_map_only(deserializer)?;
-        Position::try_new(payload.line, payload.column).map_err(de::Error::custom)
-    }
-}
-
 /// A range in a source text given by byte offsets, positions, or both.
 ///
 /// Each of the four bounds is optional. When both offsets are set the end
@@ -133,7 +108,13 @@ impl<'de> Deserialize<'de> for Position {
 /// assert_eq!(span.to_string(), "1:1-1:4");
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// A span encodes as `{"start_offset", "end_offset", "start_position",
+/// "end_position"}`, with `null` for an absent bound. Decoding reads a
+/// missing key as an absent bound and refuses a pair of bounds out of
+/// order, as the builders do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "SpanData")]
 pub struct Span {
     start_offset: Option<u64>,
     end_offset: Option<u64>,
@@ -340,51 +321,27 @@ impl fmt::Display for Span {
     }
 }
 
-/// Encode the span as `{"start_offset", "end_offset", "start_position",
-/// "end_position"}`, writing `null` for an absent bound.
-impl Serialize for Span {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("Span", 4)?;
-        state.serialize_field("start_offset", &self.start_offset)?;
-        state.serialize_field("end_offset", &self.end_offset)?;
-        state.serialize_field("start_position", &self.start_position)?;
-        state.serialize_field("end_position", &self.end_position)?;
-        state.end()
-    }
-}
-
-/// A span payload, checked for its keys and types but not its bounds' order.
-///
-/// `serde` lets an `Option` field be missing and decode as `None`, but the
-/// wire form always carries all four keys. Naming a `deserialize_with` turns
-/// off that special case, so a payload without a key is rejected.
+/// The fields of a [`Span`] as decoded, before their order is checked.
 #[derive(Deserialize)]
-#[serde(rename = "Span", deny_unknown_fields)]
-struct SpanPayload {
-    #[serde(deserialize_with = "Option::deserialize")]
+#[serde(deny_unknown_fields, expecting = "a span")]
+struct SpanData {
     start_offset: Option<u64>,
-    #[serde(deserialize_with = "Option::deserialize")]
     end_offset: Option<u64>,
-    #[serde(deserialize_with = "Option::deserialize")]
     start_position: Option<Position>,
-    #[serde(deserialize_with = "Option::deserialize")]
     end_position: Option<Position>,
 }
 
-/// Decode the four-key span dict. Every key must be present (`null` for an
-/// absent bound) and no other key may appear; the bounds are then checked as
-/// in the builders.
-impl<'de> Deserialize<'de> for Span {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let payload: SpanPayload = deserialize_map_only(deserializer)?;
+impl TryFrom<SpanData> for Span {
+    type Error = SpanError;
+
+    fn try_from(data: SpanData) -> Result<Self, SpanError> {
         Span {
-            start_offset: payload.start_offset,
-            end_offset: payload.end_offset,
-            start_position: payload.start_position,
-            end_position: payload.end_position,
+            start_offset: data.start_offset,
+            end_offset: data.end_offset,
+            start_position: data.start_position,
+            end_position: data.end_position,
         }
         .check_order()
-        .map_err(de::Error::custom)
     }
 }
 
@@ -404,25 +361,24 @@ impl<'de> Deserialize<'de> for Span {
 /// [`Provenance::fuse`] walks an explicit stack instead, and a fusion it
 /// builds never lists an unlabelled fusion among its own sources.
 ///
-/// Decoding JSON text is also capped by `serde_json`'s nesting limit: its
-/// text deserializer refuses input nested more than 127 JSON levels deep
-/// with a `recursion limit exceeded` error. A named or call-site level takes
-/// two JSON levels and a fused level three, since its sources sit in a list,
-/// so `serde_json::from_str` decodes at most 62 nested named or call-site
-/// levels over the unknown provenance. A `serde_json::Value` parsed from text
-/// meets the same limit. A caller needing deeper trees can enable `serde_json`'s
-/// `unbounded_depth` feature and decode through a `serde_json::Deserializer`
-/// after calling its `disable_recursion_limit`, on a thread with a stack
-/// large enough for the recursion above.
+/// Decoding JSON text with `serde_json` refuses input nested more than 127
+/// JSON levels deep with an error, not a crash; a named or call-site level
+/// takes two JSON levels and a fused level three. A format that is not
+/// self-describing, such as postcard, has no such limit: decoding untrusted
+/// bytes there recurses as deep as the input nests, at about two bytes per
+/// named level, and can overflow the stack. A caller decoding untrusted
+/// input bounds its size, or uses a format with a depth limit.
 ///
 /// # Serialization
 ///
-/// A provenance encodes as `{"__type__": <type id>, "__data__": <fields>}`
-/// with the type ids `provenance.unknown`, `provenance.file`,
-/// `provenance.named`, `provenance.call_site` and `provenance.fused`. The
-/// unknown provenance's fields are the empty dict. Decoding requires exactly
-/// those two keys and exactly the variant's field keys.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// A provenance encodes externally tagged by its snake-case variant name:
+/// the unknown provenance as `"unknown"`, and the other variants as a
+/// one-key map such as `{"file": {"file_path": .., "span": ..}}`,
+/// `{"named": {"name": .., "child": ..}}`, `{"call_site": {"callee": ..,
+/// "caller": ..}}` and `{"fused": {"sources": [..], "label": ..}}`.
+/// Decoding normalizes a file path and refuses an empty name.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Provenance {
     /// No source information is available.
     Unknown,
@@ -513,17 +469,6 @@ impl Provenance {
             Provenance::Fused(FusedProvenance::labelled(flat, label))
         }
     }
-
-    /// Return the type id this provenance is wrapped under on the wire.
-    fn type_id(&self) -> &'static str {
-        match self {
-            Provenance::Unknown => "provenance.unknown",
-            Provenance::File(_) => "provenance.file",
-            Provenance::Named(_) => "provenance.named",
-            Provenance::CallSite(_) => "provenance.call_site",
-            Provenance::Fused(_) => "provenance.fused",
-        }
-    }
 }
 
 /// Return `provenances` in order with every unknown provenance dropped and
@@ -584,160 +529,6 @@ impl fmt::Display for Provenance {
     }
 }
 
-/// The fields of the unknown provenance: none, encoded as the empty dict.
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct UnknownFields {}
-
-/// The fields of a file provenance, borrowed for encoding.
-#[derive(Serialize)]
-struct FileFields<'a> {
-    file_path: &'a str,
-    span: Option<&'a Span>,
-}
-
-/// The fields of a named provenance, borrowed for encoding.
-#[derive(Serialize)]
-struct NamedFields<'a> {
-    name: &'a str,
-    child: &'a Provenance,
-}
-
-/// The fields of a call-site provenance, borrowed for encoding.
-#[derive(Serialize)]
-struct CallSiteFields<'a> {
-    callee: &'a Provenance,
-    caller: &'a Provenance,
-}
-
-/// The fields of a fused provenance, borrowed for encoding.
-#[derive(Serialize)]
-struct FusedFields<'a> {
-    sources: &'a [Provenance],
-    metadata: Option<&'a str>,
-}
-
-/// Encode the provenance in the wrapped `__type__`/`__data__` form.
-impl Serialize for Provenance {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut envelope = serializer.serialize_struct("Provenance", 2)?;
-        envelope.serialize_field("__type__", self.type_id())?;
-        match self {
-            Provenance::Unknown => envelope.serialize_field("__data__", &UnknownFields {})?,
-            Provenance::File(file) => envelope.serialize_field(
-                "__data__",
-                &FileFields {
-                    file_path: &file.file_path,
-                    span: file.span.as_ref(),
-                },
-            )?,
-            Provenance::Named(named) => envelope.serialize_field(
-                "__data__",
-                &NamedFields {
-                    name: &named.name,
-                    child: named.child(),
-                },
-            )?,
-            Provenance::CallSite(call_site) => envelope.serialize_field(
-                "__data__",
-                &CallSiteFields {
-                    callee: call_site.callee(),
-                    caller: call_site.caller(),
-                },
-            )?,
-            Provenance::Fused(fused) => envelope.serialize_field(
-                "__data__",
-                &FusedFields {
-                    sources: &fused.sources,
-                    metadata: fused.label(),
-                },
-            )?,
-        }
-        envelope.end()
-    }
-}
-
-/// A file provenance payload, checked for its keys and types.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FilePayload {
-    file_path: String,
-    // Required even when `null`; see `SpanPayload`.
-    #[serde(deserialize_with = "Option::deserialize")]
-    span: Option<Span>,
-}
-
-/// A named provenance payload, checked for its keys and types.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NamedPayload {
-    name: String,
-    child: Provenance,
-}
-
-/// A call-site provenance payload, checked for its keys and types.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CallSitePayload {
-    callee: Provenance,
-    caller: Provenance,
-}
-
-/// A fused provenance payload, checked for its keys and types.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FusedPayload {
-    sources: Vec<Provenance>,
-    // Required even when `null`; see `SpanPayload`.
-    #[serde(deserialize_with = "Option::deserialize")]
-    metadata: Option<String>,
-}
-
-/// A wrapped provenance payload, dispatched on its `__type__`.
-#[derive(Deserialize)]
-#[serde(tag = "__type__", content = "__data__", deny_unknown_fields)]
-enum ProvenancePayload {
-    #[serde(rename = "provenance.unknown")]
-    #[serde(deserialize_with = "deserialize_map_only")]
-    Unknown(UnknownFields),
-    #[serde(rename = "provenance.file")]
-    #[serde(deserialize_with = "deserialize_map_only")]
-    File(FilePayload),
-    #[serde(rename = "provenance.named")]
-    #[serde(deserialize_with = "deserialize_map_only")]
-    Named(NamedPayload),
-    #[serde(rename = "provenance.call_site")]
-    #[serde(deserialize_with = "deserialize_map_only")]
-    CallSite(CallSitePayload),
-    #[serde(rename = "provenance.fused")]
-    #[serde(deserialize_with = "deserialize_map_only")]
-    Fused(FusedPayload),
-}
-
-/// Decode the wrapped `__type__`/`__data__` form, rejecting an unknown
-/// type id, a missing or unknown key at either level, and field values the
-/// variant's constructor rejects.
-impl<'de> Deserialize<'de> for Provenance {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(match deserialize_map_only(deserializer)? {
-            ProvenancePayload::Unknown(UnknownFields {}) => Provenance::Unknown,
-            ProvenancePayload::File(file) => {
-                Provenance::File(FileProvenance::new(file.file_path, file.span))
-            }
-            ProvenancePayload::Named(named) => Provenance::Named(
-                NamedProvenance::try_new(named.name, named.child).map_err(de::Error::custom)?,
-            ),
-            ProvenancePayload::CallSite(call_site) => {
-                Provenance::CallSite(CallSiteProvenance::new(call_site.callee, call_site.caller))
-            }
-            ProvenancePayload::Fused(fused) => Provenance::Fused(FusedProvenance {
-                sources: fused.sources.into_boxed_slice(),
-                label: fused.metadata,
-            }),
-        })
-    }
-}
-
 /// Return `path` normalized as Python's `PurePosixPath` normalizes it.
 ///
 /// `/` is the only separator; every other character, a backslash or a
@@ -777,7 +568,8 @@ fn normalize_file_path(path: &str) -> String {
 /// drive letter such as `C:` are kept as written, so `C:\src\a.fhy` is
 /// one component. Equality, hashing and [`Display`](fmt::Display) use the
 /// normalized text, so `//a` and `/a` differ.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "FileProvenanceData")]
 pub struct FileProvenance {
     file_path: String,
     span: Option<Span>,
@@ -817,9 +609,25 @@ impl FileProvenance {
     }
 }
 
+/// The fields of a [`FileProvenance`] as decoded, before the path is
+/// normalized.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, expecting = "a file provenance")]
+struct FileProvenanceData {
+    file_path: String,
+    span: Option<Span>,
+}
+
+impl From<FileProvenanceData> for FileProvenance {
+    fn from(data: FileProvenanceData) -> Self {
+        FileProvenance::new(data.file_path, data.span)
+    }
+}
+
 /// A child provenance under a human-readable name, such as a builtin over
 /// [`Provenance::Unknown`] or a library symbol over the library's file.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "NamedProvenanceData")]
 pub struct NamedProvenance {
     name: String,
     child: Arc<Provenance>,
@@ -859,9 +667,27 @@ impl NamedProvenance {
     }
 }
 
+/// The fields of a [`NamedProvenance`] as decoded, before the name is
+/// checked.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, expecting = "a named provenance")]
+struct NamedProvenanceData {
+    name: String,
+    child: Provenance,
+}
+
+impl TryFrom<NamedProvenanceData> for NamedProvenance {
+    type Error = NamedProvenanceError;
+
+    fn try_from(data: NamedProvenanceData) -> Result<Self, NamedProvenanceError> {
+        NamedProvenance::try_new(data.name, data.child)
+    }
+}
+
 /// Provenance of a value created at a call site, such as by inlining or
 /// macro expansion.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, expecting = "a call-site provenance")]
 pub struct CallSiteProvenance {
     callee: Arc<Provenance>,
     caller: Arc<Provenance>,
@@ -900,7 +726,8 @@ impl CallSiteProvenance {
 /// single source, and nested unknown or unlabelled sources. Use
 /// [`Provenance::fuse`] or [`Provenance::fuse_labelled`] to build the flat
 /// form.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, expecting = "a fused provenance")]
 pub struct FusedProvenance {
     sources: Box<[Provenance]>,
     label: Option<String>,

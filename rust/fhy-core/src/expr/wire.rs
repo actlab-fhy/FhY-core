@@ -15,7 +15,7 @@ use serde::ser::{self, SerializeSeq, SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
 
-use crate::decode::{self, Decode};
+use crate::decode;
 use crate::identifier::{Identifier, IdentifierWire};
 
 use super::literal::{LiteralKind, LiteralValue};
@@ -239,7 +239,7 @@ enum PayloadNode {
 /// A whole expression payload, checked but not yet built.
 ///
 /// Decoding one restores no identifier.
-pub(crate) struct ExpressionPayload(PayloadNode);
+struct ExpressionPayload(PayloadNode);
 
 /// Return a short name for the kind of JSON value `value` is.
 fn describe_value(value: &Value) -> &'static str {
@@ -469,24 +469,12 @@ impl<'de> Deserialize<'de> for ExpressionPayload {
     }
 }
 
-impl Decode for Expression {
-    type Payload = ExpressionPayload;
-
-    /// Build the checked payload, restoring its identifiers.
-    ///
-    /// # Errors
-    ///
-    /// Never fails on a payload that decoded, whose node invariants were
-    /// all checked while decoding it.
-    fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
-        build_node(payload.0)
-    }
-}
-
 /// Deserialize the wire shape written by the [`Serialize`] implementation,
-/// checking the whole payload before restoring any identifier.
+/// in its map form only, checking the whole payload before restoring any
+/// identifier.
 impl<'de> Deserialize<'de> for Expression {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        decode::deserialize_via_payload(deserializer)
+        let payload: ExpressionPayload = decode::deserialize_map_only(deserializer)?;
+        build_node(payload.0)
     }
 }

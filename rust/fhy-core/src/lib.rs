@@ -10,6 +10,25 @@
 //! canonical instances never equal the first copy's, and keep a separate
 //! pass registry and separate run counters.
 //!
+//! # Serialization
+//!
+//! Every public type that implements `Serialize` also implements
+//! `Deserialize`, with a plain serde shape that this crate defines and
+//! documents on the type. Apart from [`Expression`](expr::Expression), whose
+//! wire form is read through a JSON value, the impls are format-agnostic:
+//! they work with self-describing formats such as JSON and with
+//! non-self-describing formats such as postcard, and the tests round-trip
+//! each such type through both. Deserializing an
+//! [`Identifier`](identifier::Identifier) advances the process-global id
+//! counter past its id, and deserializing a
+//! [`Canonical<T>`](interned::Canonical) interns the value. A decode that
+//! fails partway may leave both effects behind for the parts it already
+//! decoded. Both effects only ever add ids and canonical values, so they
+//! never invalidate an existing identifier or canonical value. The
+//! `__type__`/`__data__` envelope that Python's serialization framework uses
+//! belongs to the Python binding, not to these shapes; only the expression
+//! wire form still carries it.
+//!
 //! This crate turns on `serde_json`'s `arbitrary_precision` feature, so an
 //! integer literal of any size serializes as a JSON integer with all its
 //! digits, as Python writes it. Cargo unifies features across the build

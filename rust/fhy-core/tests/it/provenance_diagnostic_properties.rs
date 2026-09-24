@@ -1,5 +1,6 @@
 //! Property tests for `Provenance::fuse`, file path normalization, the
-//! provenance wire form, position ordering, and `ValidationReport`.
+//! provenance wire form in JSON and postcard, position ordering, and
+//! `ValidationReport`.
 //!
 //! `flatten_sources` is a test-side reference for the reduction `fuse`
 //! documents (drop `Provenance::Unknown`, splice the sources of every
@@ -343,6 +344,44 @@ proptest! {
         let restored: Provenance = serde_json::from_str(&json).expect("encoded provenances decode");
 
         prop_assert_eq!(restored, provenance);
+    }
+
+    /// Test every provenance tree round-trips through postcard, a format
+    /// that is not self-describing.
+    #[test]
+    fn every_provenance_tree_round_trips_through_postcard(provenance in arbitrary_tree()) {
+        let bytes = postcard::to_allocvec(&provenance).expect("provenances encode");
+
+        let restored: Provenance = postcard::from_bytes(&bytes).expect("encoded provenances decode");
+
+        prop_assert_eq!(restored, provenance);
+    }
+
+    /// Test every span round-trips through postcard.
+    #[test]
+    fn every_span_round_trips_through_postcard(span in arbitrary_span()) {
+        let bytes = postcard::to_allocvec(&span).expect("spans encode");
+
+        let restored: Span = postcard::from_bytes(&bytes).expect("encoded spans decode");
+
+        prop_assert_eq!(restored, span);
+    }
+
+    /// Test decoding arbitrary bytes as a provenance returns, with a value
+    /// or an error, rather than panicking. At most 256 bytes bound the
+    /// nesting to about 128 levels, well within the stack.
+    #[test]
+    fn arbitrary_bytes_never_panic_when_decoded_as_a_provenance(
+        bytes in proptest::collection::vec(any::<u8>(), 0..=256),
+    ) {
+        let result = postcard::from_bytes::<Provenance>(&bytes);
+
+        if let Ok(provenance) = result {
+            let re_encoded = postcard::to_allocvec(&provenance).expect("provenances encode");
+            let restored: Provenance =
+                postcard::from_bytes(&re_encoded).expect("encoded provenances decode");
+            prop_assert_eq!(restored, provenance);
+        }
     }
 
     /// Test re-encoding a decoded provenance reproduces the same JSON text.

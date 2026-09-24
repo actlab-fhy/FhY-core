@@ -13,7 +13,7 @@ repository = "https://github.com/actlab-fhy/FhY-core.git"
 
 [workspace.dependencies]
 pyo3 = "0.29"
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 # Integer literals of any size serialize as JSON integers, as Python writes
 # them; `arbitrary_precision` lets `serde_json::Number` carry the digits.
 # Cargo unifies features across the build graph, so this turns the feature
