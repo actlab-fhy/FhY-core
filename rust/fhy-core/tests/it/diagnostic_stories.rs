@@ -13,10 +13,11 @@ use std::error::Error;
 use fhy_core::diagnostic::{
     Diagnostic, DiagnosticLevel, Note, NoteKind, ValidationFailedError, ValidationReport,
 };
-use fhy_core::identifier::{HasIdentifier, Identifier};
+use fhy_core::identifier::{HasIdentifier, ID_CAP, Identifier};
 use fhy_core::interned::{Canonical, Interned};
 use hashing_support::hash_of;
 use rstest::rstest;
+use serde_json::error::Category;
 use serde_json::{Value, json};
 
 // =============================================================================
@@ -311,40 +312,53 @@ fn note_decode_registers_an_unknown_kind() {
     );
 }
 
-/// Test malformed note payloads are rejected with a message naming the
-/// problem.
+/// Test malformed note payloads, including a kind whose id is at the id
+/// cap, are rejected with a data error.
+///
+/// The message is serde's or the identifier's, which the note does not own.
 #[rstest]
-#[case::missing_kind(json!({"message": "x"}), "missing field `kind`")]
+#[case::missing_kind(json!({"message": "x"}))]
 #[case::extra_key(
-    json!({"message": "x", "kind": {"name": {"id": 0, "name_hint": "other"}, "description": ""}, "extra": 1}),
-    "unknown field `extra`, expected `message` or `kind`"
+    json!({"message": "x", "kind": {"name": {"id": 0, "name_hint": "other"}, "description": ""}, "extra": 1})
 )]
 #[case::message_not_a_string(
-    json!({"message": 5, "kind": {"name": {"id": 0, "name_hint": "other"}, "description": ""}}),
-    "invalid type: integer `5`, expected a string"
+    json!({"message": 5, "kind": {"name": {"id": 0, "name_hint": "other"}, "description": ""}})
 )]
 #[case::kind_missing_description(
-    json!({"message": "x", "kind": {"name": {"id": 0, "name_hint": "other"}}}),
-    "missing field `description`"
+    json!({"message": "x", "kind": {"name": {"id": 0, "name_hint": "other"}}})
 )]
 #[case::negative_id(
-    json!({"message": "x", "kind": {"name": {"id": -1, "name_hint": "other"}, "description": ""}}),
-    "invalid value: integer `-1`, expected an id from 0 to 9223372036854775807"
+    json!({"message": "x", "kind": {"name": {"id": -1, "name_hint": "other"}, "description": ""}})
 )]
-#[case::null_kind(
-    json!({"message": "x", "kind": null}),
-    "invalid type: null, expected a described tag"
+#[case::kind_id_at_the_cap(
+    json!({"message": "x", "kind": {"name": {"id": 9_223_372_036_854_775_808_u64, "name_hint": "other"}, "description": ""}})
 )]
-fn note_decode_rejects_malformed_payloads(#[case] payload: Value, #[case] expected: &str) {
+#[case::null_kind(json!({"message": "x", "kind": null}))]
+fn note_decode_rejects_malformed_payloads(#[case] payload: Value) {
     let rendered = payload.to_string();
 
     let error = serde_json::from_str::<Note>(&rendered)
         .expect_err(&format!("{rendered} is malformed and must be rejected"));
 
-    assert!(
-        error.to_string().starts_with(expected),
+    assert_eq!(
+        error.classify(),
+        Category::Data,
         "the error for {rendered}: {error}"
     );
+}
+
+/// Test a note whose kind id is at the id cap is rejected without moving
+/// the identifier counter, so fresh identifiers can still be created.
+#[test]
+fn note_decode_rejects_a_kind_id_at_the_cap() {
+    let payload = r#"{"message": "x", "kind": {"name": {"id": 9223372036854775808,
+        "name_hint": "capped"}, "description": ""}}"#;
+
+    let error = serde_json::from_str::<Note>(payload).expect_err("the id is at the cap");
+
+    assert_eq!(error.classify(), Category::Data, "{error}");
+    let after = Identifier::try_new("after").expect("the counter did not jump to the cap");
+    assert!(after.id() < ID_CAP);
 }
 
 // =============================================================================

@@ -14,6 +14,7 @@ use fhy_core::provenance::{
 use hashing_support::hash_of;
 use rstest::rstest;
 use serde::de::DeserializeOwned;
+use serde_json::error::Category;
 use serde_json::{Value, json};
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
@@ -89,12 +90,28 @@ fn build_fused(sources: Vec<Provenance>, label: Option<&str>) -> Provenance {
     })
 }
 
-/// Assert decoding `payload` as a `T` fails with the message `expected`.
-fn assert_decode_rejected<T: DeserializeOwned + std::fmt::Debug>(payload: Value, expected: &str) {
-    let rendered = payload.to_string();
-    let error = serde_json::from_value::<T>(payload)
-        .expect_err(&format!("{rendered} is malformed and must be rejected"));
-    assert_eq!(error.to_string(), expected, "the error for {rendered}");
+/// Assert decoding the JSON text `payload_text` as a `T` fails with a data
+/// error and, when `crate_error` is given, with a message containing that
+/// crate error's text.
+///
+/// The rest of the message is serde's, which this crate does not own.
+fn assert_decode_rejected<T: DeserializeOwned + std::fmt::Debug>(
+    payload_text: &str,
+    crate_error: Option<&str>,
+) {
+    let error = serde_json::from_str::<T>(payload_text)
+        .expect_err(&format!("{payload_text} is malformed and must be rejected"));
+    assert_eq!(
+        error.classify(),
+        Category::Data,
+        "the error for {payload_text}: {error}"
+    );
+    if let Some(crate_error) = crate_error {
+        assert!(
+            error.to_string().contains(crate_error),
+            "the error for {payload_text}: {error}"
+        );
+    }
 }
 
 // =============================================================================
@@ -1265,79 +1282,83 @@ fn provenance_decode_normalizes_the_file_path() {
     assert_eq!(decoded, build_file("x/y.fhy"));
 }
 
-/// Test malformed position payloads are rejected with a message naming the
-/// problem.
+/// Test malformed position payloads are rejected with a data error, whose
+/// message names the crate's own error where one applies.
 #[rstest]
 #[case::missing_column(
     json!({"line": 1}),
-    "missing field `column`"
+    None
 )]
 #[case::bool_line(
     json!({"line": true, "column": 1}),
-    "invalid type: boolean `true`, expected u64"
+    None
 )]
 #[case::extra_key(
     json!({"line": 1, "column": 2, "z": 3}),
-    "unknown field `z`, expected `line` or `column`"
+    None
 )]
 #[case::zero_line(
     json!({"line": 0, "column": 1}),
-    "a position's line must be at least 1"
+    Some(PositionError::ZeroLine.to_string())
 )]
 #[case::zero_column(
     json!({"line": 1, "column": 0}),
-    "a position's column must be at least 1"
+    Some(PositionError::ZeroColumn.to_string())
 )]
 #[case::float_line(
     json!({"line": 1.0, "column": 1}),
-    "invalid number"
+    None
 )]
 #[case::string_line(
     json!({"line": "1", "column": 1}),
-    r#"invalid type: string "1", expected u64"#
+    None
 )]
 #[case::negative_line(
     json!({"line": -1, "column": 1}),
-    "invalid number"
+    None
 )]
 #[case::null_line(
     json!({"line": null, "column": 1}),
-    "invalid type: null, expected u64"
+    None
 )]
 #[case::not_a_map(
     json!([1, 1]),
-    "invalid type: sequence, expected struct PositionPayload"
+    None
 )]
-fn position_decode_rejects_malformed_payloads(#[case] payload: Value, #[case] expected: &str) {
-    assert_decode_rejected::<Position>(payload, expected);
+fn position_decode_rejects_malformed_payloads(
+    #[case] payload: Value,
+    #[case] crate_error: Option<String>,
+) {
+    assert_decode_rejected::<Position>(&payload.to_string(), crate_error.as_deref());
 }
 
 /// Test malformed span payloads, including one missing each key, are
-/// rejected with a message naming the problem.
+/// rejected with a data error, whose message names the crate's own error
+/// where one applies.
 #[rstest]
 #[case::missing_start_offset(
     json!({"end_offset": null, "start_position": null, "end_position": null}),
-    "missing field `start_offset`"
+    None
 )]
 #[case::missing_end_offset(
     json!({"start_offset": null, "start_position": null, "end_position": null}),
-    "missing field `end_offset`"
+    None
 )]
 #[case::missing_start_position(
     json!({"start_offset": null, "end_offset": null, "end_position": null}),
-    "missing field `start_position`"
+    None
 )]
 #[case::missing_end_position(
     json!({"start_offset": null, "end_offset": null, "start_position": null}),
-    "missing field `end_position`"
+    None
 )]
 #[case::extra_key(
     json!({"start_offset": 0, "end_offset": 3, "start_position": null, "end_position": null, "extra": 1}),
-    "unknown field `extra`, expected one of `start_offset`, `end_offset`, `start_position`, `end_position`"
+    None
 )]
 #[case::end_offset_before_start(
     json!({"start_offset": 5, "end_offset": 3, "start_position": null, "end_position": null}),
-    "a span's end offset 3 precedes its start offset 5"
+    Some(SpanError::EndOffsetBeforeStart { start: 5, end: 3 }.to_string())
 )]
 #[case::end_position_before_start(
     json!({
@@ -1346,15 +1367,15 @@ fn position_decode_rejects_malformed_payloads(#[case] payload: Value, #[case] ex
     "start_position": {"line": 2, "column": 1},
     "end_position": {"line": 1, "column": 1},
 }),
-    "a span's end position 1:1 precedes its start position 2:1"
+    Some(SpanError::EndPositionBeforeStart { start: build_position(2, 1), end: build_position(1, 1) }.to_string())
 )]
 #[case::negative_offset(
     json!({"start_offset": -1, "end_offset": null, "start_position": null, "end_position": null}),
-    "invalid number"
+    None
 )]
 #[case::bool_offset(
     json!({"start_offset": true, "end_offset": null, "start_position": null, "end_position": null}),
-    "invalid type: boolean `true`, expected u64"
+    None
 )]
 #[case::invalid_position(
     json!({
@@ -1363,85 +1384,88 @@ fn position_decode_rejects_malformed_payloads(#[case] payload: Value, #[case] ex
     "start_position": {"line": 0, "column": 1},
     "end_position": null,
 }),
-    "a position's line must be at least 1"
+    Some(PositionError::ZeroLine.to_string())
 )]
 #[case::list_position(
     json!({"start_offset": null, "end_offset": null, "start_position": [1, 1], "end_position": null}),
-    "invalid type: sequence, expected struct PositionPayload"
+    None
 )]
-fn span_decode_rejects_malformed_payloads(#[case] payload: Value, #[case] expected: &str) {
-    assert_decode_rejected::<Span>(payload, expected);
+fn span_decode_rejects_malformed_payloads(
+    #[case] payload: Value,
+    #[case] crate_error: Option<String>,
+) {
+    assert_decode_rejected::<Span>(&payload.to_string(), crate_error.as_deref());
 }
 
-/// Test malformed provenance payloads are rejected with a message naming the
-/// problem, including an unknown type id and an unknown provenance without
-/// its empty data dict.
+/// Test malformed provenance payloads, including an unknown type id and an
+/// unknown provenance without its empty data dict, are rejected with a data
+/// error, whose message names the crate's own error where one applies.
 #[rstest]
 #[case::unknown_type_id(
     json!({"__type__": "provenance.does_not_exist", "__data__": {}}),
-    "unknown variant `provenance.does_not_exist`, expected one of `provenance.unknown`, `provenance.file`, `provenance.named`, `provenance.call_site`, `provenance.fused`"
+    None
 )]
 #[case::non_provenance_type_id(
     json!({"__type__": "position", "__data__": {"line": 1, "column": 1}}),
-    "unknown variant `position`, expected one of `provenance.unknown`, `provenance.file`, `provenance.named`, `provenance.call_site`, `provenance.fused`"
+    None
 )]
 #[case::unknown_without_data(
     json!({"__type__": "provenance.unknown"}),
-    "missing field `__data__`"
+    None
 )]
 #[case::unknown_with_null_data(
     json!({"__type__": "provenance.unknown", "__data__": null}),
-    "invalid type: null, expected struct UnknownFields"
+    None
 )]
 #[case::unknown_with_a_field(
     json!({"__type__": "provenance.unknown", "__data__": {"x": 1}}),
-    "unknown field `x`, there are no fields"
+    None
 )]
 #[case::extra_envelope_key(
     json!({"__type__": "provenance.unknown", "__data__": {}, "z": 1}),
-    r#"invalid value: string "z", expected "__type__" or "__data__""#
+    None
 )]
 #[case::missing_type(
     json!({"__data__": {}}),
-    "missing field `__type__`"
+    None
 )]
 #[case::file_missing_span(
     json!({"__type__": "provenance.file", "__data__": {"file_path": "a"}}),
-    "missing field `span`"
+    None
 )]
 #[case::file_path_not_a_string(
     json!({"__type__": "provenance.file", "__data__": {"file_path": 3, "span": null}}),
-    "invalid type: integer `3`, expected a string"
+    None
 )]
 #[case::empty_name(
     json!({
     "__type__": "provenance.named",
     "__data__": {"name": "", "child": {"__type__": "provenance.unknown", "__data__": {}}},
 }),
-    "a named provenance's name must be non-empty"
+    Some(NamedProvenanceError::EmptyName.to_string())
 )]
 #[case::unwrapped_child(
     json!({"__type__": "provenance.named", "__data__": {"name": "n", "child": {"line": 1, "column": 1}}}),
-    r#"invalid value: string "column", expected "__type__" or "__data__""#
+    None
 )]
 #[case::null_caller(
     json!({
     "__type__": "provenance.call_site",
     "__data__": {"callee": {"__type__": "provenance.unknown", "__data__": {}}, "caller": null},
 }),
-    "invalid type: null, expected adjacently tagged enum ProvenancePayload"
+    None
 )]
 #[case::integer_metadata(
     json!({"__type__": "provenance.fused", "__data__": {"sources": [], "metadata": 5}}),
-    "invalid type: integer `5`, expected a string"
+    None
 )]
 #[case::null_sources(
     json!({"__type__": "provenance.fused", "__data__": {"sources": null, "metadata": null}}),
-    "invalid type: null, expected a sequence"
+    None
 )]
 #[case::missing_metadata(
     json!({"__type__": "provenance.fused", "__data__": {"sources": []}}),
-    "missing field `metadata`"
+    None
 )]
 #[case::invalid_nested_source(
     json!({
@@ -1451,36 +1475,35 @@ fn span_decode_rejects_malformed_payloads(#[case] payload: Value, #[case] expect
         "metadata": null,
     },
 }),
-    "a named provenance's name must be non-empty"
+    Some(NamedProvenanceError::EmptyName.to_string())
 )]
 #[case::not_a_map(
     json!([{"__type__": "provenance.unknown", "__data__": {}}]),
-    "invalid type: sequence, expected adjacently tagged enum ProvenancePayload"
+    None
 )]
-fn provenance_decode_rejects_malformed_payloads(#[case] payload: Value, #[case] expected: &str) {
-    assert_decode_rejected::<Provenance>(payload, expected);
+fn provenance_decode_rejects_malformed_payloads(
+    #[case] payload: Value,
+    #[case] crate_error: Option<String>,
+) {
+    assert_decode_rejected::<Provenance>(&payload.to_string(), crate_error.as_deref());
 }
 
 /// Test a line beyond `u64::MAX` is rejected on decode: lines, columns and
 /// offsets decode as `u64`.
 #[rstest]
-#[case::huge_line(json!({"line": 1_180_591_620_717_411_303_424_u128, "column": 1}))]
-#[case::line_just_past_u64(json!({"line": 18_446_744_073_709_551_616_u128, "column": 1}))]
-fn position_decode_rejects_values_beyond_u64(#[case] payload: Value) {
-    assert_decode_rejected::<Position>(payload, "invalid number");
+#[case::huge_line(r#"{"line": 1180591620717411303424, "column": 1}"#)]
+#[case::line_just_past_u64(r#"{"line": 18446744073709551616, "column": 1}"#)]
+fn position_decode_rejects_values_beyond_u64(#[case] payload_text: &str) {
+    assert_decode_rejected::<Position>(payload_text, None);
 }
 
 /// Test a span offset beyond `u64` is rejected on decode.
 #[test]
 fn span_decode_rejects_an_offset_beyond_u64() {
-    let payload = json!({
-        "start_offset": 18_446_744_073_709_551_616_u128,
-        "end_offset": null,
-        "start_position": null,
-        "end_position": null,
-    });
+    let payload_text = r#"{"start_offset": 18446744073709551616, "end_offset": null,
+        "start_position": null, "end_position": null}"#;
 
-    assert_decode_rejected::<Span>(payload, "invalid number");
+    assert_decode_rejected::<Span>(payload_text, None);
 }
 
 /// Return `depth` named provenances nested over the unknown provenance.
@@ -1492,33 +1515,24 @@ fn build_nested_named(depth: usize) -> Provenance {
     provenance
 }
 
-/// Test JSON text decodes a provenance nested as deep as `serde_json`'s
-/// nesting limit allows, two JSON levels per provenance level, and refuses
-/// one level more with an error rather than a crash; a JSON value parsed
-/// from that text meets the same limit.
+/// Test JSON text nested far past `serde_json`'s nesting limit is refused
+/// with an error rather than a crash, while a moderately deep provenance
+/// round-trips.
+///
+/// The exact limit and its message are `serde_json`'s, not this crate's.
 #[test]
-fn provenance_json_text_decodes_up_to_the_serde_json_nesting_limit() {
-    let deepest = build_nested_named(62);
-    let too_deep = build_nested_named(63);
-    let deepest_text = serde_json::to_string(&deepest).expect("the provenance serializes");
+fn provenance_nested_past_the_json_limit_is_refused_not_crashed() {
+    let moderate = build_nested_named(40);
+    let too_deep = build_nested_named(200);
+    let moderate_text = serde_json::to_string(&moderate).expect("the provenance serializes");
     let too_deep_text = serde_json::to_string(&too_deep).expect("the provenance serializes");
 
     let decoded: Provenance =
-        serde_json::from_str(&deepest_text).expect("62 levels over a leaf decode");
+        serde_json::from_str(&moderate_text).expect("40 levels over a leaf decode");
     let refusal = serde_json::from_str::<Provenance>(&too_deep_text);
-    let value_refusal = serde_json::from_str::<Value>(&too_deep_text);
 
-    assert_eq!(decoded, deepest);
-    let error = refusal.expect_err("63 levels over a leaf exceed the nesting limit");
-    assert!(
-        error.to_string().starts_with("recursion limit exceeded"),
-        "{error}"
-    );
-    let error = value_refusal.expect_err("63 levels over a leaf exceed the nesting limit");
-    assert!(
-        error.to_string().starts_with("recursion limit exceeded"),
-        "{error}"
-    );
+    assert_eq!(decoded, moderate);
+    assert!(refusal.is_err(), "200 levels over a leaf are refused");
 }
 
 // =============================================================================
