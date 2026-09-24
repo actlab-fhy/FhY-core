@@ -38,7 +38,6 @@ impl<'a> PassContext<'a> {
         }
     }
 
-    /// Return the pass name and the diagnostics, consuming the context.
     pub(super) fn into_parts(self) -> (Cow<'static, str>, Vec<Diagnostic>) {
         (self.pass_name, self.diagnostics)
     }

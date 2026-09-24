@@ -9,12 +9,11 @@ use super::error::{PassError, PassHook, render_chain};
 use super::preserved::PreservedAnalyses;
 use crate::diagnostic::{Diagnostic, DiagnosticLevel};
 
-/// The error a pass hook returns.
+/// The error a pass hook returns: any error, boxed.
 ///
-/// Boxed so that [`CompilerPass`] stays object-safe and one pipeline can hold
-/// passes whose own error types differ. The lifecycle wraps a hook's error
-/// in a [`PassError`] naming the pass and the hook, nesting it when it is a
-/// [`PassError`] itself, as a pass that runs another pass returns.
+/// The lifecycle wraps a hook's error in a [`PassError`] naming the pass and
+/// the hook, nesting it when it is a [`PassError`] itself, as a pass that
+/// runs another pass returns.
 pub type PassFailure = Box<dyn Error + Send + Sync + 'static>;
 
 /// Return whether `character` may appear in an identifier or a number.
@@ -232,9 +231,7 @@ pub trait CompilerPass<I, O = I> {
     /// Return the pass's name, the source of its diagnostics and its key in
     /// a [`PassRegistry`](super::PassRegistry).
     ///
-    /// By default: [`short_type_name::<Self>()`](short_type_name), the
-    /// type's name without module paths and generic arguments, borrowed
-    /// from the type name. Registering the pass never changes it.
+    /// By default: [`short_type_name::<Self>()`](short_type_name).
     fn name(&self) -> Cow<'static, str> {
         short_type_name::<Self>()
     }
@@ -427,8 +424,6 @@ pub struct PassOutcome<O> {
 }
 
 impl<O> PassOutcome<O> {
-    /// Create the outcome of a run that produced `result`, emitting
-    /// `diagnostics`.
     fn new(result: LifecycleResult<O>, diagnostics: Vec<Diagnostic>) -> Self {
         Self {
             output: result.output,
@@ -513,9 +508,6 @@ fn guard_hook<T>(
 }
 
 /// Run `pass` over `ir` through the guarded lifecycle, reporting into `cx`.
-///
-/// A hook error becomes a [`PassError`] after an error diagnostic records
-/// it; the diagnostics stay in `cx`.
 pub(super) fn run_lifecycle<I, O, P>(
     pass: &mut P,
     ir: &I,

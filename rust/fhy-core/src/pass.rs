@@ -6,19 +6,15 @@
 //! collects the run's diagnostics and serves [`Analysis`] results. A pass
 //! runs on its own with [`ExecutePass::execute`], or in a [`PassManager`]
 //! pipeline, possibly repeated to a fixpoint in a [`FixpointPassGroup`]. A
-//! pipeline caches analysis results per node for the length of one run,
-//! keyed by the [`NodeIdentity`](crate::tree::NodeIdentity) a
-//! [`NodeHandle`](crate::tree::NodeHandle) reports, and can verify
-//! the IR between passes with a [`ValidationManager`], which runs
-//! [`Validator`]s collect-all into one report. [`PassValidator`] runs a pass
-//! as a validator.
+//! pipeline run returns a [`PassManagerResult`] recording every pass run,
+//! caches analysis results per [`NodeIdentity`](crate::tree::NodeIdentity)
+//! for the length of the run, and can verify the IR between passes with a
+//! [`ValidationManager`], which runs [`Validator`]s collect-all into one
+//! report. [`PassValidator`] runs a pass as a validator.
 //!
-//! Hook errors become a [`PassError`] naming the pass and the hook. A pass
-//! is named by [`CompilerPass::name`], by default
-//! [`short_type_name`] of its type. A [`PassRegistry`] is an owned value
-//! that builds passes by name, and a pipeline run reports its own run
-//! statistics in its [`PassManagerResult`]; the module keeps no global
-//! state.
+//! Hook errors become a [`PassError`] naming the pass and the hook. A
+//! [`PassRegistry`] builds passes by their [`CompilerPass::name`], by
+//! default the [`short_type_name`] of their type.
 //!
 //! [`WalkPass`] and [`RewritePass`] turn the traversals of
 //! [`crate::tree`] into passes.

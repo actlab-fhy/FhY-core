@@ -49,12 +49,12 @@ impl PassHook {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            PassHook::ValidateInput => "validate_input",
-            PassHook::Skip => "skip",
-            PassHook::Run => "run",
-            PassHook::ValidateOutput => "validate_output",
-            PassHook::DidChange => "did_change",
-            PassHook::PreservedAnalyses => "preserved_analyses",
+            Self::ValidateInput => "validate_input",
+            Self::Skip => "skip",
+            Self::Run => "run",
+            Self::ValidateOutput => "validate_output",
+            Self::DidChange => "did_change",
+            Self::PreservedAnalyses => "preserved_analyses",
         }
     }
 
@@ -62,8 +62,8 @@ impl PassHook {
     /// validation hooks, execution for the others.
     fn class(self) -> FailureClass {
         match self {
-            PassHook::ValidateInput | PassHook::ValidateOutput => FailureClass::Validation,
-            PassHook::Skip | PassHook::Run | PassHook::DidChange | PassHook::PreservedAnalyses => {
+            Self::ValidateInput | Self::ValidateOutput => FailureClass::Validation,
+            Self::Skip | Self::Run | Self::DidChange | Self::PreservedAnalyses => {
                 FailureClass::Execution
             }
         }
@@ -182,8 +182,6 @@ pub struct PassError {
 }
 
 impl PassError {
-    /// Create the error of `failure` in `inner`, without diagnostics or
-    /// records.
     fn from_failure(failure: Failure) -> Self {
         Self {
             inner: Box::new(Inner {
@@ -201,7 +199,7 @@ impl PassError {
         hook: PassHook,
         failure: PassFailure,
     ) -> Self {
-        let failure = match failure.downcast::<PassError>() {
+        let failure = match failure.downcast::<Self>() {
             Ok(inner) => Failure::Nested {
                 pass_name,
                 hook,

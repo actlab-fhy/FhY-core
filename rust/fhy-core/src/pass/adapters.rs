@@ -99,8 +99,7 @@ where
         walk_tree(&mut self.visitor, ir, self.order, cx).map_err(Into::into)
     }
 
-    fn did_change(&mut self, input: &N, output: &()) -> Result<bool, PassFailure> {
-        let _ = (input, output);
+    fn did_change(&mut self, _input: &N, _output: &()) -> Result<bool, PassFailure> {
         Ok(false)
     }
 }

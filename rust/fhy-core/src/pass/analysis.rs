@@ -88,7 +88,7 @@ struct CacheKey {
 type CachedResult = Arc<dyn Any + Send + Sync>;
 
 /// Return the key `ir` is cached under.
-fn find_cache_key<T: NodeHandle>(ir: &T) -> CacheKey {
+fn cache_key<T: NodeHandle>(ir: &T) -> CacheKey {
     CacheKey {
         identity: ir.identity(),
         handle_type: TypeId::of::<T>(),
@@ -108,7 +108,6 @@ struct Bucket {
 }
 
 impl Bucket {
-    /// Create the empty bucket for `ir`.
     fn new<T: NodeHandle>(ir: &T) -> Self {
         Self {
             _handle: Box::new(ir.clone()),
@@ -131,7 +130,6 @@ pub(super) struct AnalysisCache {
 }
 
 impl AnalysisCache {
-    /// Create an empty cache.
     pub(super) fn new() -> Self {
         Self::default()
     }
@@ -160,7 +158,7 @@ impl AnalysisCache {
     {
         let bucket = self
             .buckets
-            .entry(find_cache_key(ir))
+            .entry(cache_key(ir))
             .or_insert_with(|| Bucket::new(ir));
         // The key's handle type and `id` fix the result type, so a cached
         // result always downcasts; one that did not would be recomputed and
@@ -171,8 +169,9 @@ impl AnalysisCache {
             }
         }
         let result = Arc::new(compute());
-        let erased: CachedResult = Arc::clone(&result) as CachedResult;
-        bucket.results.insert(id, erased);
+        bucket
+            .results
+            .insert(id, Arc::clone(&result) as CachedResult);
         result
     }
 
@@ -190,8 +189,8 @@ impl AnalysisCache {
         to: &T,
         preserved: &PreservedAnalyses,
     ) {
-        let from_key = find_cache_key(from);
-        let to_key = find_cache_key(to);
+        let from_key = cache_key(from);
+        let to_key = cache_key(to);
         if from_key == to_key {
             return;
         }
