@@ -7,8 +7,7 @@
 //! sends two identifiers to one image.
 //! [`NonBooleanLogicalOperandError`] reports a Boolean position that holds
 //! an operand provably denoting a number, as found by
-//! [`validate_logical_operands`](super::validate_logical_operands) and
-//! [`validate_predicate`](super::validate_predicate); its
+//! a [`BooleanScreen`](super::BooleanScreen); its
 //! [`BooleanPosition`] says where that operand sits.
 
 use std::error::Error;

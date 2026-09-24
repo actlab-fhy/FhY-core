@@ -39,7 +39,7 @@ pub use node::{
 };
 pub use operation::{BinaryOperation, LogicalOperation, UnaryOperation, UnknownNameError};
 pub use registration::register_expression_passes;
-pub use screen::{NoRegisteredSorts, SortLookup, validate_logical_operands, validate_predicate};
+pub use screen::{BooleanScreen, Environment, NoRegisteredSorts, SortLookup, SymbolTypes};
 pub use sort::FunctionSort;
 pub use symbol_type::SymbolType;
 

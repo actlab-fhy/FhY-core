@@ -1,6 +1,6 @@
-//! Tests for the Boolean-position screens `validate_logical_operands` and
-//! `validate_predicate`, and for the error they report, over trees and over
-//! DAGs sharing their subtrees.
+//! Tests for the Boolean-position screen `BooleanScreen`, its
+//! `check_logical_operands` and `check_predicate`, and for the error they
+//! report, over trees and over DAGs sharing their subtrees.
 //!
 //! Public API only (`fhy_core::expr`). Calls of built-in functions take
 //! their result sorts from the catalogue (`floor` returns an integer, `sqrt`
@@ -12,6 +12,7 @@
 use crate::support::expression as expression_support;
 use crate::support::stack as stack_support;
 
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use expression_support::{
@@ -20,9 +21,8 @@ use expression_support::{
 };
 use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::{
-    BooleanPosition, Expression, FunctionName, FunctionSort, LogicalOperation, NoRegisteredSorts,
-    NonBooleanLogicalOperandError, SortLookup, SymbolType, UnaryOperation,
-    validate_logical_operands, validate_predicate,
+    BooleanPosition, BooleanScreen, Expression, FunctionName, FunctionSort, LogicalOperation,
+    NoRegisteredSorts, NonBooleanLogicalOperandError, SortLookup, SymbolType, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -109,11 +109,13 @@ impl Screen {
         symbol_types: &HashMap<Identifier, SymbolType>,
         sorts: &dyn SortLookup,
     ) -> Result<(), NonBooleanLogicalOperandError> {
+        let screen = BooleanScreen::new()
+            .with_sorts(sorts)
+            .with_environment(environment)
+            .with_symbol_types(symbol_types);
         match self {
-            Self::LogicalOperands => {
-                validate_logical_operands(expression, environment, symbol_types, sorts)
-            }
-            Self::Predicate => validate_predicate(expression, environment, symbol_types, sorts),
+            Self::LogicalOperands => screen.check_logical_operands(expression),
+            Self::Predicate => screen.check_predicate(expression),
         }
     }
 
@@ -215,7 +217,7 @@ impl Placement {
 }
 
 // =============================================================================
-// validate_logical_operands: numbers under connectives
+// check_logical_operands: numbers under connectives
 // =============================================================================
 
 /// Test a connective over a number is refused, naming the first numeric
@@ -258,9 +260,7 @@ fn validate_logical_operands_rejects_a_numeric_connective_operand(
 #[case::first(0)]
 #[case::middle(2)]
 #[case::last(4)]
-fn validate_logical_operands_reports_the_operand_index_of_a_logical_operand(
-    #[case] numeric_index: usize,
-) {
+fn boolean_screen_reports_the_operand_index_of_a_logical_operand(#[case] numeric_index: usize) {
     let operands: Vec<Expression> = (0..5)
         .map(|index| {
             if index == numeric_index {
@@ -514,12 +514,7 @@ fn validate_logical_operands_accepts_a_call_the_lookup_does_not_know() {
     let call = build_call_or_panic("f", &[build_literal(1.5)]);
     let expression = build_and(&call, &build_literal(true));
 
-    let result = validate_logical_operands(
-        &expression,
-        &HashMap::new(),
-        &HashMap::new(),
-        &NoRegisteredSorts,
-    );
+    let result = BooleanScreen::new().check_logical_operands(&expression);
 
     assert_eq!(result, Ok(()));
 }
@@ -528,7 +523,7 @@ fn validate_logical_operands_accepts_a_call_the_lookup_does_not_know() {
 /// no lookup registering it: `floor(1.5) && true` is refused and
 /// `nand(true, true) && true` passes.
 #[test]
-fn validate_logical_operands_knows_builtin_result_sorts_without_a_lookup() {
+fn boolean_screen_knows_builtin_result_sorts_without_a_lookup() {
     let floor = Expression::call(BuiltinFunction::Floor, [1.5]);
     let nand = Expression::call(
         BuiltinFunction::Nand,
@@ -537,18 +532,8 @@ fn validate_logical_operands_knows_builtin_result_sorts_without_a_lookup() {
     let refused = build_and(&floor, &build_literal(true));
     let accepted = build_and(&nand, &build_literal(true));
 
-    let refusal = validate_logical_operands(
-        &refused,
-        &HashMap::new(),
-        &HashMap::new(),
-        &NoRegisteredSorts,
-    );
-    let acceptance = validate_logical_operands(
-        &accepted,
-        &HashMap::new(),
-        &HashMap::new(),
-        &NoRegisteredSorts,
-    );
+    let refusal = BooleanScreen::new().check_logical_operands(&refused);
+    let acceptance = BooleanScreen::new().check_logical_operands(&accepted);
 
     assert_refusal(
         &expect_refusal(refusal),
@@ -575,8 +560,9 @@ fn validate_logical_operands_asks_the_lookup_for_a_named_call(
     let call = build_call_or_panic(name, &[build_literal(1)]);
     let expression = !&call;
 
-    let result =
-        validate_logical_operands(&expression, &HashMap::new(), &HashMap::new(), &NamedSorts);
+    let result = BooleanScreen::new()
+        .with_sorts(&NamedSorts)
+        .check_logical_operands(&expression);
 
     assert_eq!(result.is_err(), is_refused, "{result:?}");
 }
@@ -598,7 +584,7 @@ fn validate_logical_operands_accepts_an_operand_it_cannot_prove_numeric(
 }
 
 // =============================================================================
-// validate_logical_operands: bindings and declared types
+// check_logical_operands: bindings and declared types
 // =============================================================================
 
 /// Test an identifier bound to a number is screened as that number.
@@ -953,7 +939,7 @@ fn validate_logical_operands_accepts_a_bound_piecewise_in_a_numeric_position() {
 }
 
 // =============================================================================
-// validate_predicate: the root is a Boolean position
+// check_predicate: the root is a Boolean position
 // =============================================================================
 
 /// Test a numeric root is refused as a predicate root.
@@ -1225,7 +1211,7 @@ fn boolean_position_display_names_the_position(
 #[case::negated_number(Screen::Predicate, !build_literal(2), false)]
 #[case::conjunction_of_numbers(Screen::Predicate, build_and(&build_literal(2), &build_literal(3)), false)]
 #[case::operands_screen(Screen::LogicalOperands, !build_literal(2), false)]
-fn screen_error_parent_is_none_only_at_a_predicate_root(
+fn boolean_screen_error_parent_is_none_only_at_a_predicate_root(
     #[case] screen: Screen,
     #[case] expression: Expression,
     #[case] is_root: bool,
@@ -1234,6 +1220,117 @@ fn screen_error_parent_is_none_only_at_a_predicate_root(
 
     assert_eq!(error.parent().is_none(), is_root, "{error:?}");
     assert_eq!(Expression::ptr_eq(error.operand(), &expression), is_root);
+}
+
+/// Test a bare screen answers as one told nothing through empty maps and
+/// the empty lookup, over refused and accepted fixtures.
+#[test]
+fn boolean_screen_new_knows_nothing() {
+    let (x, x_reference) = build_identifier("x");
+    let fixtures = [
+        Expression::all([build_literal(2), build_literal(true)]),
+        Expression::all([x_reference.clone(), build_literal(true)]),
+        !&x_reference,
+        build_piecewise_or_panic([(x_reference.less(1), 1)], 2),
+        !build_call_or_panic("f", &[build_literal(1)]),
+        !Expression::call(BuiltinFunction::Floor, [1.5]),
+        x_reference.clone(),
+    ];
+    let environment: HashMap<Identifier, Expression> = HashMap::new();
+    let symbol_types: HashMap<Identifier, SymbolType> = HashMap::new();
+    let told_nothing = BooleanScreen::new()
+        .with_sorts(&NoRegisteredSorts)
+        .with_environment(&environment)
+        .with_symbol_types(&symbol_types);
+
+    for fixture in &fixtures {
+        let bare = BooleanScreen::new();
+
+        assert_eq!(
+            bare.check_logical_operands(fixture),
+            told_nothing.check_logical_operands(fixture),
+            "{fixture}"
+        );
+        assert_eq!(
+            bare.check_predicate(fixture),
+            told_nothing.check_predicate(fixture),
+            "{fixture}"
+        );
+    }
+    assert_eq!(
+        BooleanScreen::default().check_predicate(&Expression::from(x)),
+        Ok(())
+    );
+}
+
+/// Test a closure declares the symbol types, as a map does.
+#[test]
+fn boolean_screen_accepts_a_closure_for_symbol_types() {
+    let (n, n_reference) = build_identifier("n");
+    let (_, p_reference) = build_identifier("p");
+    let declare_n_integer = |identifier: &Identifier| (identifier == &n).then_some(SymbolType::Int);
+    let expression = Expression::all([p_reference.clone(), n_reference.clone()]);
+
+    let screen = BooleanScreen::new().with_symbol_types(&declare_n_integer);
+    let result = screen.check_logical_operands(&expression);
+
+    assert_refusal(
+        &expect_refusal(result),
+        &n_reference,
+        &expression,
+        BooleanPosition::LogicalOperand {
+            operation: LogicalOperation::And,
+            operand_index: 1,
+        },
+    );
+    assert_eq!(screen.check_predicate(&p_reference), Ok(()));
+}
+
+/// A lookup counting the named-function result sorts asked of it, and
+/// knowing none.
+#[derive(Debug, Default)]
+struct CountingSorts {
+    call_result_sorts: Cell<usize>,
+}
+
+impl SortLookup for CountingSorts {
+    fn call_result_sort(&self, _name: &FunctionName) -> Option<FunctionSort> {
+        self.call_result_sorts.set(self.call_result_sorts.get() + 1);
+        None
+    }
+}
+
+/// Test a predicate screen of a chain of piecewise nodes, each the otherwise
+/// branch of the one above and all in Boolean position, judges each node
+/// once: the named calls in the case values are looked up at most twice
+/// each, not once per enclosing level.
+#[test]
+fn boolean_screen_judges_each_nested_piecewise_once() {
+    const DEPTH: usize = 2000;
+    let (_, x) = build_identifier("x");
+    let mut chain = build_literal(true);
+    for level in 0..DEPTH {
+        let value = build_call_or_panic("f", &[build_literal(1)]);
+        chain = build_piecewise_or_panic([(x.less(level), value)], chain);
+    }
+    let sorts = CountingSorts::default();
+
+    let result = BooleanScreen::new()
+        .with_sorts(&sorts)
+        .check_predicate(&chain);
+
+    assert_eq!(result, Ok(()));
+    let lookups = sorts.call_result_sorts.get();
+    assert!(lookups <= 2 * DEPTH, "{lookups} lookups for {DEPTH} levels");
+    assert!(lookups >= DEPTH, "{lookups} lookups for {DEPTH} levels");
+}
+
+/// Test a screen's `Debug` writes its type name, not its lookups.
+#[test]
+fn boolean_screen_debug_writes_the_type_name() {
+    let text = format!("{:?}", BooleanScreen::new());
+
+    assert_eq!(text, "BooleanScreen { .. }");
 }
 
 /// Test the empty lookup knows no constant and no function.
@@ -1247,14 +1344,16 @@ fn no_registered_sorts_knows_nothing() {
     assert_eq!(NoRegisteredSorts.call_result_sort(&f), None);
 }
 
-/// Test the screens take a boxed lookup through a trait object.
+/// Test the screen takes a boxed lookup through a trait object.
 #[test]
 fn validate_logical_operands_takes_a_trait_object_lookup() {
-    let sorts: Box<dyn SortLookup> = Box::new(BuiltinSorts::new());
-    let call = build_call_or_panic("sqrt", &[build_literal(2.0)]);
+    let sorts: Box<dyn SortLookup> = Box::new(NamedSorts);
+    let call = build_call_or_panic("real_valued", &[build_literal(2.0)]);
     let expression = !&call;
 
-    let result = validate_logical_operands(&expression, &HashMap::new(), &HashMap::new(), &*sorts);
+    let result = BooleanScreen::new()
+        .with_sorts(&*sorts)
+        .check_logical_operands(&expression);
 
     assert_eq!(expect_refusal(result).operand(), &call);
 }

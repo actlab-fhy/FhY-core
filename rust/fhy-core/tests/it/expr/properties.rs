@@ -20,8 +20,8 @@ use expression_support::{
     build_literal_strategy, coerce_to_condition, copy_deeply,
 };
 use fhy_core::expr::{
-    AlphaRenaming, Decimal, Expression, ExpressionKind, FunctionName, FunctionSort, LiteralValue,
-    PiecewiseError, SortLookup, SymbolType, validate_logical_operands, validate_predicate,
+    AlphaRenaming, BooleanScreen, Decimal, Expression, ExpressionKind, FunctionName, FunctionSort,
+    LiteralValue, PiecewiseError, SortLookup, SymbolType,
 };
 use fhy_core::identifier::Identifier;
 use hashing_support::hash_of;
@@ -621,7 +621,7 @@ proptest! {
     /// Test both screens answer for a DAG, with a DAG bound in the
     /// environment, as for unshared copies of both.
     #[test]
-    fn expression_screens_of_a_dag_answer_as_for_its_unshared_copy(
+    fn boolean_screen_on_a_dag_answers_as_on_its_unshared_copy(
         dag in build_expression_dag_strategy(),
         bound in build_expression_dag_strategy(),
         bound_index in 0..POOL.len(),
@@ -637,16 +637,21 @@ proptest! {
             HashMap::from([(POOL[bound_index].clone(), copy_deeply(&bound))]);
         let copy = copy_deeply(&dag);
 
-        let operands = validate_logical_operands(&dag, &environment, &symbol_types, &TwoCallSorts);
-        let predicate = validate_predicate(&dag, &environment, &symbol_types, &TwoCallSorts);
+        let screen = BooleanScreen::new()
+            .with_sorts(&TwoCallSorts)
+            .with_symbol_types(&symbol_types);
+        let dag_screen = screen.with_environment(&environment);
+        let copy_screen = screen.with_environment(&copy_environment);
+        let operands = dag_screen.check_logical_operands(&dag);
+        let predicate = dag_screen.check_predicate(&dag);
 
         prop_assert_eq!(
             operands,
-            validate_logical_operands(&copy, &copy_environment, &symbol_types, &TwoCallSorts)
+            copy_screen.check_logical_operands(&copy)
         );
         prop_assert_eq!(
             predicate,
-            validate_predicate(&copy, &copy_environment, &symbol_types, &TwoCallSorts)
+            copy_screen.check_predicate(&copy)
         );
     }
 }
