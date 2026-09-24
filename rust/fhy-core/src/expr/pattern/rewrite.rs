@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use super::super::error::{PiecewiseError, RebuildError};
 use super::super::node::Expression;
-use super::matching::{CallbackError, MatchBindings, Pattern, match_pattern};
+use super::matching::{CallbackError, MatchBindings, Pattern};
 use crate::tree::{NodeHandle, NodeIdentity, RewriteTreeError, Rewriter, rewrite_tree};
 
 /// A rewrite: the replacement built from a match's bindings.
@@ -188,26 +188,14 @@ pub(in crate::expr) fn run_rewrite_rules(
 ///
 /// ```
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::expr::{BinaryOperation, Expression, LiteralValue};
-/// use fhy_core::expr::pattern::{
-///     CallbackError, Pattern, RewriteRule, apply_rewrite_rule,
-/// };
+/// use fhy_core::expr::{BinaryOperation, Expression};
+/// use fhy_core::expr::pattern::{Capture, Pattern, RewriteRule, apply_rewrite_rule};
 ///
 /// // `x + 0 -> x`
-/// let rule = RewriteRule::new(
-///     Pattern::binary(
-///         Some(BinaryOperation::Add),
-///         Pattern::capture("x", Pattern::wildcard())?,
-///         Pattern::literal(Some(LiteralValue::from(0))),
-///     ),
-///     |bindings| {
-///         bindings
-///             .get("x")
-///             .cloned()
-///             .ok_or_else(|| CallbackError::from("`x` is unbound"))
-///     },
-/// )
-/// .with_name("x + 0 -> x");
+/// let x = Capture::new("x");
+/// let pattern = Pattern::binary(BinaryOperation::Add, Pattern::capture(&x), Pattern::literal(0));
+/// let rule = RewriteRule::new(pattern, move |bindings| Ok(bindings[&x].clone()))
+///     .with_name("x + 0 -> x");
 /// let a = Expression::from(Identifier::new("a"));
 ///
 /// let rewritten = apply_rewrite_rule(&rule, &(&a + 0))?;
@@ -456,7 +444,7 @@ pub fn apply_rewrite_rule(
     rule: &RewriteRule,
     expression: &Expression,
 ) -> Result<Option<Expression>, CallbackError> {
-    let Some(bindings) = match_pattern(&rule.pattern, expression)? else {
+    let Some(bindings) = rule.pattern.matches(expression)? else {
         return Ok(None);
     };
     if let Some(guard) = &rule.guard {

@@ -4,8 +4,8 @@ use std::error::Error;
 use std::fmt;
 
 use fhy_core::expr::pattern::{
-    CallbackError, MatchBindings, Pattern, RewriteOutcome, RewriteRule, apply_rewrite_rules,
-    match_pattern,
+    CallbackError, Capture, MatchBindings, Pattern, RewriteOutcome, RewriteRule,
+    apply_rewrite_rules,
 };
 use fhy_core::expr::{BinaryOperation, Expression, LiteralValue, UnaryOperation};
 
@@ -33,55 +33,6 @@ pub(crate) fn expect_probe_error(error: &CallbackError) -> &ProbeError {
         .unwrap_or_else(|| panic!("expected a ProbeError, got {error:?}"))
 }
 
-/// Return the pattern capturing any expression under `name`.
-///
-/// # Panics
-///
-/// Panics if `name` is empty.
-#[must_use]
-pub(crate) fn build_capture(name: &str) -> Pattern {
-    Pattern::capture(name, Pattern::wildcard()).expect("a non-empty capture name")
-}
-
-/// Return the pattern capturing what `sub_pattern` matches under `name`.
-///
-/// # Panics
-///
-/// Panics if `name` is empty.
-#[must_use]
-pub(crate) fn build_capture_of(name: &str, sub_pattern: Pattern) -> Pattern {
-    Pattern::capture(name, sub_pattern).expect("a non-empty capture name")
-}
-
-/// Return the pattern matching literals stored exactly as `value`.
-#[must_use]
-pub(crate) fn build_literal_pattern(value: impl Into<LiteralValue>) -> Pattern {
-    Pattern::literal(Some(value.into()))
-}
-
-/// Return the pattern trying `alternatives` in order.
-///
-/// # Panics
-///
-/// Panics if `alternatives` is empty.
-#[must_use]
-pub(crate) fn build_alternatives(alternatives: Vec<Pattern>) -> Pattern {
-    Pattern::alternatives(alternatives).expect("at least one alternative")
-}
-
-/// Return the pattern of a piecewise with the given case patterns.
-///
-/// # Panics
-///
-/// Panics if `cases` is `Some` of an empty list.
-#[must_use]
-pub(crate) fn build_piecewise_pattern(
-    cases: Option<Vec<(Pattern, Pattern)>>,
-    otherwise: Pattern,
-) -> Pattern {
-    Pattern::piecewise(cases, otherwise).expect("no empty case list")
-}
-
 /// Match `pattern` against `expression` and return the result, failing the
 /// test if a predicate fails.
 ///
@@ -93,7 +44,7 @@ pub(crate) fn match_infallibly(
     pattern: &Pattern,
     expression: &Expression,
 ) -> Option<MatchBindings> {
-    match_pattern(pattern, expression).expect("no predicate fails")
+    pattern.matches(expression).expect("no predicate fails")
 }
 
 /// Match `pattern` against `expression` and return the bindings, failing the
@@ -108,18 +59,6 @@ pub(crate) fn expect_match(pattern: &Pattern, expression: &Expression) -> MatchB
         .unwrap_or_else(|| panic!("{pattern:?} does not match {expression:?}"))
 }
 
-/// Return the expression `bindings` binds to `name`.
-///
-/// # Panics
-///
-/// Panics if `name` is unbound.
-#[must_use]
-pub(crate) fn expect_bound<'a>(bindings: &'a MatchBindings, name: &str) -> &'a Expression {
-    bindings
-        .get(name)
-        .unwrap_or_else(|| panic!("{name} is unbound in {bindings:?}"))
-}
-
 /// Rewrite `expression` with `rules`, failing the test if the walk fails.
 ///
 /// # Panics
@@ -130,14 +69,15 @@ pub(crate) fn rewrite(expression: &Expression, rules: &[RewriteRule]) -> Rewrite
     apply_rewrite_rules(expression, rules).expect("no callback or rebuild fails")
 }
 
-/// Return a rewrite returning the expression bound to `name`, failing when
-/// `name` is unbound.
+/// Return a rewrite returning the expression bound to `capture`, failing
+/// when `capture` is unbound.
 pub(crate) fn rewrite_to_capture(
-    name: &'static str,
+    capture: &Capture,
 ) -> impl Fn(&MatchBindings) -> Result<Expression, CallbackError> + Send + Sync + 'static {
+    let capture = capture.clone();
     move |bindings| {
         bindings
-            .get(name)
+            .get(&capture)
             .cloned()
             .ok_or_else(|| CallbackError::from(ProbeError("unbound capture")))
     }
@@ -153,13 +93,14 @@ pub(crate) fn rewrite_to_literal(
 /// Return the rule `x + 0 -> x`, named so.
 #[must_use]
 pub(crate) fn build_x_plus_zero_rule() -> RewriteRule {
+    let x = Capture::new("x");
     RewriteRule::new(
         Pattern::binary(
-            Some(BinaryOperation::Add),
-            build_capture("x"),
-            build_literal_pattern(0),
+            BinaryOperation::Add,
+            Pattern::capture(&x),
+            Pattern::literal(0),
         ),
-        rewrite_to_capture("x"),
+        rewrite_to_capture(&x),
     )
     .with_name("x + 0 -> x")
 }
@@ -167,13 +108,14 @@ pub(crate) fn build_x_plus_zero_rule() -> RewriteRule {
 /// Return the rule `0 + x -> x`, named so.
 #[must_use]
 pub(crate) fn build_zero_plus_x_rule() -> RewriteRule {
+    let x = Capture::new("x");
     RewriteRule::new(
         Pattern::binary(
-            Some(BinaryOperation::Add),
-            build_literal_pattern(0),
-            build_capture("x"),
+            BinaryOperation::Add,
+            Pattern::literal(0),
+            Pattern::capture(&x),
         ),
-        rewrite_to_capture("x"),
+        rewrite_to_capture(&x),
     )
     .with_name("0 + x -> x")
 }
@@ -181,25 +123,27 @@ pub(crate) fn build_zero_plus_x_rule() -> RewriteRule {
 /// Return the rule `x * 1 -> x`, named so.
 #[must_use]
 pub(crate) fn build_x_times_one_rule() -> RewriteRule {
+    let x = Capture::new("x");
     RewriteRule::new(
         Pattern::binary(
-            Some(BinaryOperation::Multiply),
-            build_capture("x"),
-            build_literal_pattern(1),
+            BinaryOperation::Multiply,
+            Pattern::capture(&x),
+            Pattern::literal(1),
         ),
-        rewrite_to_capture("x"),
+        rewrite_to_capture(&x),
     )
     .with_name("x * 1 -> x")
 }
 
-/// Return the rule `x - x -> 0`, named so.
+/// Return the rule `x - x -> 0`, named so: one capture used twice.
 #[must_use]
 pub(crate) fn build_x_minus_x_rule() -> RewriteRule {
+    let x = Capture::new("x");
     RewriteRule::new(
         Pattern::binary(
-            Some(BinaryOperation::Subtract),
-            build_capture("x"),
-            build_capture("x"),
+            BinaryOperation::Subtract,
+            Pattern::capture(&x),
+            Pattern::capture(&x),
         ),
         rewrite_to_literal(0),
     )
@@ -209,12 +153,10 @@ pub(crate) fn build_x_minus_x_rule() -> RewriteRule {
 /// Return the rule collapsing `operation(operation(x))` to `x`.
 #[must_use]
 pub(crate) fn build_double_application_rule(operation: UnaryOperation) -> RewriteRule {
+    let x = Capture::new("x");
     RewriteRule::new(
-        Pattern::unary(
-            Some(operation),
-            Pattern::unary(Some(operation), build_capture("x")),
-        ),
-        rewrite_to_capture("x"),
+        Pattern::unary(operation, Pattern::unary(operation, Pattern::capture(&x))),
+        rewrite_to_capture(&x),
     )
     .with_name("op(op(x)) -> x")
 }

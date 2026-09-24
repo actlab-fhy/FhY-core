@@ -50,24 +50,14 @@ const RULE_APPLIER_PASS_DESCRIPTION: &str =
 /// use fhy_core::identifier::Identifier;
 /// use fhy_core::pass::ExecutePass;
 /// use fhy_core::expr::passes::RewriteRuleApplier;
-/// use fhy_core::expr::pattern::{CallbackError, Pattern, RewriteRule};
-/// use fhy_core::expr::{BinaryOperation, Expression, LiteralValue};
+/// use fhy_core::expr::pattern::{Capture, Pattern, RewriteRule};
+/// use fhy_core::expr::{BinaryOperation, Expression};
 ///
 /// // `x * 1 -> x`
-/// let rule = RewriteRule::new(
-///     Pattern::binary(
-///         Some(BinaryOperation::Multiply),
-///         Pattern::capture("x", Pattern::wildcard())?,
-///         Pattern::literal(Some(LiteralValue::from(1))),
-///     ),
-///     |bindings| {
-///         bindings
-///             .get("x")
-///             .cloned()
-///             .ok_or_else(|| CallbackError::from("`x` is unbound"))
-///     },
-/// )
-/// .with_name("x * 1 -> x");
+/// let x = Capture::new("x");
+/// let pattern = Pattern::binary(BinaryOperation::Multiply, Pattern::capture(&x), Pattern::literal(1));
+/// let rule = RewriteRule::new(pattern, move |bindings| Ok(bindings[&x].clone()))
+///     .with_name("x * 1 -> x");
 /// let a = Expression::from(Identifier::new("a"));
 /// let mut applier = RewriteRuleApplier::new([rule]);
 ///

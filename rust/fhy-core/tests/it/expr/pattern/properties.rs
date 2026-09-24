@@ -2,11 +2,12 @@
 //!
 //! Covers a pattern mirroring a tree's exact shape (it matches the tree and
 //! binds each leaf capture to that leaf, in leaf order), the wildcard,
-//! agreement of `does_pattern_match` with `match_pattern`, a mirror whose
-//! root operation is swapped, a capture repeated across both operands, the
-//! empty rule list as the identity, a semantics-preserving rule set checked
-//! against a reference evaluator and for firing once per wrap, the link
-//! between firings and handle identity, and what counts as a change.
+//! agreement of `is_match` with `matches`, a mirror whose root operation is
+//! swapped, a capture repeated across both operands, literal patterns
+//! agreeing with capture unification, the bindings failed matches leave,
+//! the empty rule list as the identity, a semantics-preserving rule set
+//! checked against a reference evaluator and for firing once per wrap, the
+//! link between firings and handle identity, and what counts as a change.
 //!
 //! Public API only (`fhy_core::expr::pattern`).
 
@@ -18,12 +19,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use expression_support::{
     ALL_BINARY_OPERATIONS as BINARY_OPERATIONS, IDENTIFIER_POOL as POOL, build_callee,
-    build_expression_strategy, copy_deeply,
+    build_expression_strategy, build_literal_strategy, copy_deeply,
 };
 use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::pattern::{
-    CallbackError, MatchBindings, Pattern, RewriteRule, apply_rewrite_rules, does_pattern_match,
-    match_pattern,
+    CallbackError, Capture, MatchBindings, Pattern, RewriteRule, apply_rewrite_rules,
 };
 use fhy_core::expr::{
     BinaryOperation, Callee, Expression, ExpressionKind, LiteralValue, UnaryOperation,
@@ -269,52 +269,48 @@ fn evaluate_numeric(expression: &Expression, environment: &HashMap<Identifier, i
     }
 }
 
-/// Return a rewrite returning the expression bound to `x`.
-fn rewrite_to_x(bindings: &MatchBindings) -> Result<Expression, CallbackError> {
+/// Return the expression `bindings` binds to `x`.
+fn rewrite_to_x(bindings: &MatchBindings, x: &Capture) -> Result<Expression, CallbackError> {
     bindings
-        .get("x")
+        .get(x)
         .cloned()
         .ok_or_else(|| CallbackError::from("`x` is unbound"))
-}
-
-/// Return the capture of any expression under `x`.
-fn build_capture_x() -> Pattern {
-    Pattern::capture("x", Pattern::wildcard()).expect("a non-empty capture name")
 }
 
 /// Return the rules `x + 0 -> x`, `x * 1 -> x` and `-(-x) -> x`, each
 /// counting its firings in `fire_count`.
 fn build_neutral_rules(fire_count: &Arc<AtomicUsize>) -> Vec<RewriteRule> {
+    let x = Capture::new("x");
     let counting_rewrite = |fire_count: &Arc<AtomicUsize>| {
-        let fire_count = Arc::clone(fire_count);
+        let (fire_count, x) = (Arc::clone(fire_count), x.clone());
         move |bindings: &MatchBindings| {
             fire_count.fetch_add(1, Ordering::SeqCst);
-            rewrite_to_x(bindings)
+            rewrite_to_x(bindings, &x)
         }
     };
     vec![
         RewriteRule::new(
             Pattern::binary(
-                Some(BinaryOperation::Add),
-                build_capture_x(),
-                Pattern::literal(Some(LiteralValue::from(0))),
+                BinaryOperation::Add,
+                Pattern::capture(&x),
+                Pattern::literal(0),
             ),
             counting_rewrite(fire_count),
         )
         .with_name("x + 0 -> x"),
         RewriteRule::new(
             Pattern::binary(
-                Some(BinaryOperation::Multiply),
-                build_capture_x(),
-                Pattern::literal(Some(LiteralValue::from(1))),
+                BinaryOperation::Multiply,
+                Pattern::capture(&x),
+                Pattern::literal(1),
             ),
             counting_rewrite(fire_count),
         )
         .with_name("x * 1 -> x"),
         RewriteRule::new(
             Pattern::unary(
-                Some(UnaryOperation::Negate),
-                Pattern::unary(Some(UnaryOperation::Negate), build_capture_x()),
+                UnaryOperation::Negate,
+                Pattern::unary(UnaryOperation::Negate, Pattern::capture(&x)),
             ),
             counting_rewrite(fire_count),
         )
@@ -323,37 +319,43 @@ fn build_neutral_rules(fire_count: &Arc<AtomicUsize>) -> Vec<RewriteRule> {
 }
 
 /// Return a pattern mirroring `expression`'s exact shape, capturing each
-/// leaf under a fresh name, and the leaves in capture-name order.
-fn build_mirroring_pattern(expression: &Expression) -> (Pattern, Vec<(String, Expression)>) {
+/// leaf with a fresh capture, and the leaves with their captures in leaf
+/// order.
+fn build_mirroring_pattern(expression: &Expression) -> (Pattern, Vec<(Capture, Expression)>) {
     let mut captures = Vec::new();
     let pattern = mirror_node(expression, &mut captures);
     (pattern, captures)
 }
 
-/// Return the mirror of `node`, recording its leaves, and each logical node
-/// as a leaf, in `captures`.
-fn mirror_node(node: &Expression, captures: &mut Vec<(String, Expression)>) -> Pattern {
+/// Return the mirror of `node`, recording its leaves in `captures`.
+fn mirror_node(node: &Expression, captures: &mut Vec<(Capture, Expression)>) -> Pattern {
     match node.kind() {
-        ExpressionKind::Unary(unary) => Pattern::unary(
-            Some(unary.operation()),
-            mirror_node(unary.operand(), captures),
-        ),
+        ExpressionKind::Unary(unary) => {
+            Pattern::unary(unary.operation(), mirror_node(unary.operand(), captures))
+        }
         ExpressionKind::Binary(binary) => {
             let left = mirror_node(binary.left(), captures);
             let right = mirror_node(binary.right(), captures);
-            Pattern::binary(Some(binary.operation()), left, right)
+            Pattern::binary(binary.operation(), left, right)
         }
-        ExpressionKind::Call(call) => Pattern::call(
-            Some(call.callee().name()),
-            Some(
-                call.arguments()
-                    .iter()
-                    .map(|argument| mirror_node(argument, captures))
-                    .collect(),
-            ),
-        ),
+        ExpressionKind::Logical(logical) => {
+            let operands: Vec<Pattern> = logical
+                .operands()
+                .iter()
+                .map(|operand| mirror_node(operand, captures))
+                .collect();
+            Pattern::logical(logical.operation(), operands)
+        }
+        ExpressionKind::Call(call) => {
+            let arguments: Vec<Pattern> = call
+                .arguments()
+                .iter()
+                .map(|argument| mirror_node(argument, captures))
+                .collect();
+            Pattern::call(call.callee().clone(), arguments)
+        }
         ExpressionKind::Piecewise(piecewise) => {
-            let cases = piecewise
+            let cases: Vec<(Pattern, Pattern)> = piecewise
                 .cases()
                 .iter()
                 .map(|(condition, value)| {
@@ -362,14 +364,12 @@ fn mirror_node(node: &Expression, captures: &mut Vec<(String, Expression)>) -> P
                 })
                 .collect();
             let otherwise = mirror_node(piecewise.otherwise(), captures);
-            Pattern::piecewise(Some(cases), otherwise).expect("a piecewise has cases")
+            Pattern::piecewise(cases, otherwise)
         }
-        // No pattern shape describes a logical node, so the mirror captures
-        // it whole, as a leaf.
-        ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) | ExpressionKind::Logical(_) => {
-            let name = format!("leaf_{}", captures.len());
-            captures.push((name.clone(), node.clone()));
-            Pattern::capture(&name, Pattern::wildcard()).expect("a non-empty capture name")
+        ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) => {
+            let capture = Capture::new(&format!("leaf_{}", captures.len()));
+            captures.push((capture.clone(), node.clone()));
+            Pattern::capture(&capture)
         }
     }
 }
@@ -383,7 +383,96 @@ fn mirror_binary_root_with(root: &Expression, operation: BinaryOperation) -> Pat
     let mut captures = Vec::new();
     let left = mirror_node(binary.left(), &mut captures);
     let right = mirror_node(binary.right(), &mut captures);
-    Pattern::binary(Some(operation), left, right)
+    Pattern::binary(operation, left, right)
+}
+
+/// The shape of a generated pattern, over a pool of captures picked by
+/// index.
+#[derive(Debug, Clone)]
+enum PatternShape {
+    Wildcard,
+    AnyLiteral,
+    AnyIdentifier,
+    Capture(usize),
+    CapturedAs(Box<PatternShape>, usize),
+    Unary(Box<PatternShape>),
+    Binary(Box<PatternShape>, Box<PatternShape>),
+    Alternatives(Vec<PatternShape>),
+}
+
+/// The number of captures a generated pattern picks from.
+const CAPTURE_POOL_SIZE: usize = 4;
+
+/// Return a strategy for pattern shapes of alternatives and captures over
+/// unary and binary nodes and leaves, up to four levels deep.
+fn build_pattern_shape_strategy() -> impl Strategy<Value = PatternShape> {
+    let leaf = prop_oneof![
+        Just(PatternShape::Wildcard),
+        Just(PatternShape::AnyLiteral),
+        Just(PatternShape::AnyIdentifier),
+        (0..CAPTURE_POOL_SIZE).prop_map(PatternShape::Capture),
+    ];
+    leaf.prop_recursive(4, 24, 3, |inner| {
+        prop_oneof![
+            (inner.clone(), 0..CAPTURE_POOL_SIZE)
+                .prop_map(|(shape, index)| PatternShape::CapturedAs(Box::new(shape), index)),
+            inner
+                .clone()
+                .prop_map(|operand| PatternShape::Unary(Box::new(operand))),
+            (inner.clone(), inner.clone()).prop_map(|(left, right)| {
+                PatternShape::Binary(Box::new(left), Box::new(right))
+            }),
+            prop::collection::vec(inner, 0..4).prop_map(PatternShape::Alternatives),
+        ]
+    })
+}
+
+/// Build the pattern `shape` describes over `pool`, recording in `used` the
+/// captures it holds.
+fn build_shaped_pattern(
+    shape: &PatternShape,
+    pool: &[Capture],
+    used: &mut Vec<Capture>,
+) -> Pattern {
+    let mut record = |index: usize| {
+        let capture = pool[index].clone();
+        if !used.contains(&capture) {
+            used.push(capture.clone());
+        }
+        capture
+    };
+    match shape {
+        PatternShape::Wildcard => Pattern::wildcard(),
+        PatternShape::AnyLiteral => Pattern::any_literal(),
+        PatternShape::AnyIdentifier => Pattern::any_identifier(),
+        PatternShape::Capture(index) => Pattern::capture(&record(*index)),
+        PatternShape::CapturedAs(inner, index) => {
+            let capture = record(*index);
+            build_shaped_pattern(inner, pool, used).captured_as(&capture)
+        }
+        PatternShape::Unary(operand) => {
+            Pattern::unary_any_operation(build_shaped_pattern(operand, pool, used))
+        }
+        PatternShape::Binary(left, right) => {
+            let left = build_shaped_pattern(left, pool, used);
+            Pattern::binary_any_operation(left, build_shaped_pattern(right, pool, used))
+        }
+        PatternShape::Alternatives(alternatives) => Pattern::alternatives(
+            alternatives
+                .iter()
+                .map(|alternative| build_shaped_pattern(alternative, pool, used))
+                .collect::<Vec<_>>(),
+        ),
+    }
+}
+
+/// Return whether `node` is a handle to `expression` or to one of its
+/// subexpressions.
+fn is_subexpression_of(node: &Expression, expression: &Expression) -> bool {
+    Expression::ptr_eq(node, expression)
+        || expression
+            .children()
+            .any(|child| is_subexpression_of(node, child))
 }
 
 /// Return the number of nodes in `expression`, counting each occurrence.
@@ -428,38 +517,38 @@ proptest! {
     fn mirroring_pattern_matches_and_binds_every_leaf(expression in build_expression_strategy(true)) {
         let (mirror, captures) = build_mirroring_pattern(&expression);
 
-        let bindings = match_pattern(&mirror, &expression).expect("no predicate");
+        let bindings = mirror.matches(&expression).expect("no predicate");
 
         let bindings = bindings.expect("the mirror matches");
-        let names: Vec<&str> = bindings.names().collect();
-        let expected_names: Vec<&str> = captures.iter().map(|(name, _)| name.as_str()).collect();
-        prop_assert_eq!(names, expected_names);
-        for (name, leaf) in &captures {
-            let bound = bindings.get(name).expect("every leaf is bound");
-            prop_assert!(Expression::ptr_eq(bound, leaf), "{} is bound to {:?}", name, bound);
+        let bound: Vec<&Capture> = bindings.iter().map(|(capture, _)| capture).collect();
+        let expected: Vec<&Capture> = captures.iter().map(|(capture, _)| capture).collect();
+        prop_assert_eq!(bound, expected);
+        for (capture, leaf) in &captures {
+            let bound = &bindings[capture];
+            prop_assert!(Expression::ptr_eq(bound, leaf), "{} is bound to {:?}", capture, bound);
         }
     }
 
     /// Test the wildcard matches every tree and binds nothing.
     #[test]
     fn wildcard_pattern_matches_every_expression(expression in build_expression_strategy(true)) {
-        let bindings = match_pattern(&Pattern::wildcard(), &expression).expect("no predicate");
+        let bindings = Pattern::wildcard().matches(&expression).expect("no predicate");
 
-        prop_assert!(bindings.is_some_and(|bindings| bindings.is_empty()));
+        prop_assert_eq!(bindings, Some(MatchBindings::new()));
     }
 
-    /// Test `does_pattern_match` agrees with `match_pattern` for a mirror,
-    /// the wildcard, and a literal outside the generated alphabet.
+    /// Test `is_match` agrees with `matches` for a mirror, the wildcard, and
+    /// a literal outside the generated alphabet.
     #[test]
-    fn does_pattern_match_agrees_with_match_pattern(expression in build_expression_strategy(true)) {
+    fn is_match_agrees_with_matches(expression in build_expression_strategy(true)) {
         let (mirror, _) = build_mirroring_pattern(&expression);
-        let outside_alphabet = Pattern::literal(Some(
+        let outside_alphabet = Pattern::literal(
             LiteralValue::parse_text("99999.99999").expect("a decimal text"),
-        ));
+        );
 
         for pattern in [mirror, Pattern::wildcard(), outside_alphabet] {
-            let answer = does_pattern_match(&pattern, &expression).expect("no predicate");
-            let bindings = match_pattern(&pattern, &expression).expect("no predicate");
+            let answer = pattern.is_match(&expression).expect("no predicate");
+            let bindings = pattern.matches(&expression).expect("no predicate");
 
             prop_assert_eq!(answer, bindings.is_some(), "for {:?}", pattern);
         }
@@ -473,30 +562,90 @@ proptest! {
     ) {
         let altered = mirror_binary_root_with(&root, alternate);
 
-        let bindings = match_pattern(&altered, &root).expect("no predicate");
+        let bindings = altered.matches(&root).expect("no predicate");
 
         prop_assert!(bindings.is_none(), "matched with {:?}", bindings);
     }
 
-    /// Test a binary pattern capturing both operands under one name matches
-    /// exactly when the operands are structurally equal, and binds the name
-    /// to a handle to the left operand.
+    /// Test a binary pattern capturing both operands with one capture
+    /// matches exactly when the operands are structurally equal, and binds
+    /// the capture to a handle to the left operand.
     #[test]
     fn repeated_capture_matches_exactly_equal_operands(
         (left, right) in build_operand_pair_strategy(),
         operation in select(BINARY_OPERATIONS.to_vec()),
     ) {
-        let pattern = Pattern::binary(Some(operation), build_capture_x(), build_capture_x());
+        let x = Capture::new("x");
+        let pattern = Pattern::binary(operation, Pattern::capture(&x), Pattern::capture(&x));
         let expression = Expression::new_binary(operation, &left, &right);
 
-        let bindings = match_pattern(&pattern, &expression).expect("no predicate");
+        let bindings = pattern.matches(&expression).expect("no predicate");
 
         prop_assert_eq!(bindings.is_some(), left == right);
         if let Some(bindings) = bindings {
-            let bound = bindings.get("x").expect("x is bound");
+            let bound = &bindings[&x];
             prop_assert!(Expression::ptr_eq(bound, &left), "x is bound to {:?}", bound);
-            prop_assert_eq!(bindings.names().count(), 1);
+            prop_assert_eq!(bindings.len(), 1);
         }
+    }
+
+    /// Test a literal pattern matches a literal exactly when a capture
+    /// repeated over the two literals matches, and both follow
+    /// `LiteralValue` equality.
+    #[test]
+    fn literal_pattern_agrees_with_capture_unification(
+        value in build_literal_strategy(true),
+        other in build_literal_strategy(true),
+    ) {
+        let x = Capture::new("x");
+        let repeated = Pattern::binary_any_operation(Pattern::capture(&x), Pattern::capture(&x));
+        let difference = Expression::new_binary(
+            BinaryOperation::Subtract,
+            Expression::from(value.clone()),
+            Expression::from(other.clone()),
+        );
+
+        let by_literal = Pattern::literal(value.clone())
+            .is_match(&Expression::from(other.clone()))
+            .expect("no predicate");
+        let by_capture = repeated.is_match(&difference).expect("no predicate");
+
+        prop_assert_eq!(by_literal, value == other);
+        prop_assert_eq!(by_capture, value == other);
+    }
+
+    /// Test a match binds only captures its pattern holds, each once and to
+    /// a subexpression of the tree, and a match failing after its first
+    /// operand bound captures leaves none of them behind.
+    #[test]
+    fn failed_matches_leave_no_bindings(
+        shape in build_pattern_shape_strategy(),
+        expression in build_expression_strategy(true),
+    ) {
+        let pool: Vec<Capture> = (0..CAPTURE_POOL_SIZE)
+            .map(|index| Capture::new(&format!("c{index}")))
+            .collect();
+        let mut used = Vec::new();
+        let pattern = build_shaped_pattern(&shape, &pool, &mut used);
+        let fallback = Capture::new("fallback");
+        let failing = Pattern::binary_any_operation(pattern.clone(), Pattern::nothing());
+        let outer = Pattern::alternatives([failing, Pattern::capture(&fallback)]);
+        let wrapped = Expression::new_binary(BinaryOperation::Add, &expression, 0);
+
+        let bindings = pattern.matches(&expression).expect("no predicate");
+        let outer_bindings = outer.matches(&wrapped).expect("no predicate");
+
+        if let Some(bindings) = bindings {
+            let bound: Vec<&Capture> = bindings.iter().map(|(capture, _)| capture).collect();
+            for (index, (capture, node)) in bindings.iter().enumerate() {
+                prop_assert!(used.contains(capture), "{} is not in the pattern", capture);
+                prop_assert!(!bound[..index].contains(&capture), "{} is bound twice", capture);
+                prop_assert!(is_subexpression_of(node, &expression), "{} is bound outside the tree", capture);
+            }
+        }
+        let outer_bindings = outer_bindings.expect("the fallback matches");
+        let outer_bound: Vec<&Capture> = outer_bindings.iter().map(|(capture, _)| capture).collect();
+        prop_assert_eq!(outer_bound, vec![&fallback]);
     }
 
     /// Test an empty rule list returns the input itself, unchanged.
@@ -583,10 +732,11 @@ proptest! {
     fn identity_rewrite_never_changes_the_tree(
         expression in build_expression_strategy(true)
     ) {
-        let rule = RewriteRule::new(
-            Pattern::capture("x", Pattern::literal(None)).expect("a non-empty capture name"),
-            rewrite_to_x,
-        );
+        let x = Capture::new("x");
+        let rule = RewriteRule::new(Pattern::any_literal().captured_as(&x), {
+            let x = x.clone();
+            move |bindings| rewrite_to_x(bindings, &x)
+        });
         let literal_count = count_literal_leaves(&expression);
 
         let outcome = apply_rewrite_rules(&expression, &[rule]).expect("no callback fails");

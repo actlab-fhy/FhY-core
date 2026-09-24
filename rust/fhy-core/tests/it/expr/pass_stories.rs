@@ -21,7 +21,7 @@ use fhy_core::expr::passes::{
     ExpressionPrettyFormatter, RewriteRuleApplier, register_expression_passes,
 };
 use fhy_core::expr::pattern::{
-    CallbackError, FiredRule, MatchBindings, Pattern, RewriteError, RewriteRule,
+    CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteError, RewriteRule,
     apply_rewrite_rules,
 };
 use fhy_core::expr::{
@@ -34,8 +34,8 @@ use fhy_core::pass::{
     PassErrorKind, PassHook, PassManager, PassRegistry, PipelineRecord, PreservedAnalyses,
 };
 use pattern_support::{
-    ProbeError, build_capture, build_literal_pattern, build_x_plus_zero_rule,
-    build_x_times_one_rule, expect_probe_error, rewrite_to_capture, rewrite_to_literal,
+    ProbeError, build_x_plus_zero_rule, build_x_times_one_rule, expect_probe_error,
+    rewrite_to_capture, rewrite_to_literal,
 };
 use rstest::rstest;
 
@@ -62,15 +62,16 @@ fn describe_fired(fired: &[FiredRule]) -> Vec<(usize, Option<&str>)> {
 /// Return the rule `0 + x -> x + 0`, named so, whose output the rule
 /// `x + 0 -> x` rewrites only in a later run.
 fn build_move_zero_right_rule() -> RewriteRule {
+    let x = Capture::new("x");
     RewriteRule::new(
         Pattern::binary(
-            Some(BinaryOperation::Add),
-            build_literal_pattern(0),
-            build_capture("x"),
+            BinaryOperation::Add,
+            Pattern::literal(0),
+            Pattern::capture(&x),
         ),
-        |bindings: &MatchBindings| {
+        move |bindings: &MatchBindings| {
             let x = bindings
-                .get("x")
+                .get(&x)
                 .ok_or_else(|| CallbackError::from(ProbeError("unbound capture")))?;
             Ok(Expression::new_binary(BinaryOperation::Add, x, 0))
         },
@@ -91,8 +92,8 @@ fn expect_rewrite_error(error: &PassError) -> &RewriteError {
 /// refuses as a case condition.
 fn build_refused_condition(c: &Identifier) -> (Expression, RewriteRule) {
     let expression = build_piecewise_or_panic([(Expression::from(c.clone()), 1)], 0);
-    let rule = RewriteRule::new(Pattern::identifier(Some(c.clone())), rewrite_to_literal(1))
-        .with_name("c -> 1");
+    let rule =
+        RewriteRule::new(Pattern::identifier(c.clone()), rewrite_to_literal(1)).with_name("c -> 1");
     (expression, rule)
 }
 
@@ -171,7 +172,8 @@ fn rewrite_rule_applier_execute_reports_a_change_when_a_rule_fires() {
 #[test]
 fn rewrite_rule_applier_execute_with_an_identity_rewrite_at_the_root_is_unchanged() {
     let expression = build_literal(5);
-    let rule = RewriteRule::new(build_capture("x"), rewrite_to_capture("x"));
+    let x = Capture::new("x");
+    let rule = RewriteRule::new(Pattern::capture(&x), rewrite_to_capture(&x));
     let mut applier = RewriteRuleApplier::new([rule]);
 
     let outcome = applier.execute(&expression).expect("no rule fails");

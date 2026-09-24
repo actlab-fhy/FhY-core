@@ -16,15 +16,15 @@ use std::sync::{Arc, Mutex};
 
 use expression_support::{build_callee, build_deep_sum, build_identifier, build_literal};
 use fhy_core::expr::pattern::{
-    CallbackError, FiredRule, MatchBindings, Pattern, RewriteError, RewriteOutcome, RewriteRule,
-    apply_rewrite_rule, apply_rewrite_rules,
+    CallbackError, Capture, FiredRule, MatchBindings, Pattern, RewriteError, RewriteOutcome,
+    RewriteRule, apply_rewrite_rule, apply_rewrite_rules,
 };
 use fhy_core::expr::{
     BinaryOperation, Expression, ExpressionKind, PiecewiseError, RebuildError, UnaryOperation,
 };
 use pattern_support::{
-    ProbeError, build_capture, build_literal_pattern, build_x_minus_x_rule, build_x_plus_zero_rule,
-    build_x_times_one_rule, expect_probe_error, rewrite, rewrite_to_capture, rewrite_to_literal,
+    ProbeError, build_x_minus_x_rule, build_x_plus_zero_rule, build_x_times_one_rule,
+    expect_probe_error, rewrite, rewrite_to_capture, rewrite_to_literal,
 };
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
@@ -57,7 +57,8 @@ fn build_constant_rule(value: i64) -> RewriteRule {
 
 /// Return the rule rewriting any node to itself through a capture.
 fn build_identity_rule() -> RewriteRule {
-    RewriteRule::new(build_capture("x"), rewrite_to_capture("x")).with_name("x -> x")
+    let x = Capture::new("x");
+    RewriteRule::new(Pattern::capture(&x), rewrite_to_capture(&x)).with_name("x -> x")
 }
 
 /// Return a guard failing with a [`ProbeError`].
@@ -93,7 +94,7 @@ fn expect_callback_error(error: &RewriteError) -> (usize, Option<&str>, &Callbac
 /// fire.
 fn build_callback_failure(rule_index: usize, rule_name: Option<&str>) -> RewriteError {
     let mut rules: Vec<RewriteRule> = (0..rule_index)
-        .map(|_| RewriteRule::new(build_literal_pattern(9), rewrite_to_literal(0)))
+        .map(|_| RewriteRule::new(Pattern::literal(9), rewrite_to_literal(0)))
         .collect();
     let failing = RewriteRule::new(Pattern::wildcard(), fail_rewrite);
     rules.push(match rule_name {
@@ -108,9 +109,9 @@ fn build_callback_failure(rule_index: usize, rule_name: Option<&str>) -> Rewrite
 /// to `1`, after rules that never fire.
 fn build_rebuild_failure(rule_index: usize, rule_name: Option<&str>) -> RewriteError {
     let mut rules: Vec<RewriteRule> = (0..rule_index)
-        .map(|_| RewriteRule::new(build_literal_pattern(9), rewrite_to_literal(0)))
+        .map(|_| RewriteRule::new(Pattern::literal(9), rewrite_to_literal(0)))
         .collect();
-    let true_to_one = RewriteRule::new(build_literal_pattern(true), rewrite_to_literal(1));
+    let true_to_one = RewriteRule::new(Pattern::literal(true), rewrite_to_literal(1));
     rules.push(match rule_name {
         Some(name) => true_to_one.with_name(name),
         None => true_to_one,
@@ -145,7 +146,7 @@ fn rewrite_rule_new_matches_with_the_given_pattern(
     #[case] expression: Expression,
     #[case] expected: Option<Expression>,
 ) {
-    let rule = RewriteRule::new(build_literal_pattern(0), rewrite_to_literal(1));
+    let rule = RewriteRule::new(Pattern::literal(0), rewrite_to_literal(1));
 
     let rewritten = rewrite_root(&rule, &expression);
 
@@ -230,11 +231,12 @@ fn apply_rewrite_rule_returns_none_when_the_pattern_does_not_match() {
     let (_, x) = build_identifier("x");
     let calls = Arc::new(AtomicUsize::new(0));
     let (guard_calls, rewrite_calls) = (Arc::clone(&calls), Arc::clone(&calls));
+    let capture = Capture::new("x");
     let rule = RewriteRule::new(
         Pattern::binary(
-            Some(BinaryOperation::Add),
-            build_capture("x"),
-            build_literal_pattern(0),
+            BinaryOperation::Add,
+            Pattern::capture(&capture),
+            Pattern::literal(0),
         ),
         move |_| {
             rewrite_calls.fetch_add(1, Ordering::SeqCst);
@@ -261,15 +263,17 @@ fn apply_rewrite_rule_returns_none_when_the_guard_refuses() {
     let (_, x) = build_identifier("x");
     let rewrite_calls = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&rewrite_calls);
+    let capture = Capture::new("x");
+    let rewrite_to_x = rewrite_to_capture(&capture);
     let rule = RewriteRule::new(
         Pattern::binary(
-            Some(BinaryOperation::Add),
-            build_capture("x"),
-            Pattern::literal(None),
+            BinaryOperation::Add,
+            Pattern::capture(&capture),
+            Pattern::any_literal(),
         ),
         move |bindings| {
             counter.fetch_add(1, Ordering::SeqCst);
-            rewrite_to_capture("x")(bindings)
+            rewrite_to_x(bindings)
         },
     )
     .with_guard(|_| Ok(false));
@@ -284,13 +288,14 @@ fn apply_rewrite_rule_returns_none_when_the_guard_refuses() {
 #[test]
 fn apply_rewrite_rule_fires_when_the_guard_allows() {
     let (_, x) = build_identifier("x");
+    let capture = Capture::new("x");
     let rule = RewriteRule::new(
         Pattern::binary(
-            Some(BinaryOperation::Add),
-            build_capture("x"),
-            Pattern::literal(None),
+            BinaryOperation::Add,
+            Pattern::capture(&capture),
+            Pattern::any_literal(),
         ),
-        rewrite_to_capture("x"),
+        rewrite_to_capture(&capture),
     )
     .with_guard(|_| Ok(true));
 
@@ -307,13 +312,14 @@ fn apply_rewrite_rule_guard_sees_the_bindings(
     #[case] operand: Expression,
     #[case] expected_fire: bool,
 ) {
+    let x = Capture::new("x");
     let rule = RewriteRule::new(
-        Pattern::unary(Some(UnaryOperation::Negate), build_capture("x")),
+        Pattern::unary(UnaryOperation::Negate, Pattern::capture(&x)),
         rewrite_to_literal(0),
     )
-    .with_guard(|bindings| {
+    .with_guard(move |bindings| {
         let bound = bindings
-            .get("x")
+            .get(&x)
             .ok_or_else(|| CallbackError::from(ProbeError("unbound")))?;
         Ok(matches!(bound.kind(), ExpressionKind::Literal(_)))
     });
@@ -349,7 +355,7 @@ fn apply_rewrite_rule_returns_the_rewrite_error() {
 #[test]
 fn apply_rewrite_rule_returns_the_predicate_error() {
     let rule = RewriteRule::new(
-        Pattern::predicate(|_| Err(CallbackError::from(ProbeError("predicate failed")))),
+        Pattern::try_predicate(|_| Err(CallbackError::from(ProbeError("predicate failed")))),
         rewrite_to_literal(0),
     );
 
@@ -435,18 +441,17 @@ fn apply_rewrite_rules_with_an_identity_rewrite_at_the_root_is_unchanged() {
 fn apply_rewrite_rules_with_an_identity_rewrite_below_the_root_is_unchanged() {
     let (_, x) = build_identifier("x");
     let expression = -&x;
-    let rule = RewriteRule::new(build_capture_of_identifier("x"), rewrite_to_capture("x"));
+    let x = Capture::new("x");
+    let rule = RewriteRule::new(
+        Pattern::any_identifier().captured_as(&x),
+        rewrite_to_capture(&x),
+    );
 
     let outcome = rewrite(&expression, &[rule]);
 
     assert!(!outcome.is_changed());
     assert!(Expression::ptr_eq(outcome.output(), &expression));
     assert_eq!(describe_fired(&outcome), vec![(0, None)]);
-}
-
-/// Return the pattern capturing any identifier reference under `name`.
-fn build_capture_of_identifier(name: &str) -> Pattern {
-    Pattern::capture(name, Pattern::identifier(None)).expect("a non-empty capture name")
 }
 
 /// Test `into_output` gives the rewritten tree.
@@ -550,7 +555,7 @@ fn apply_rewrite_rules_walks_bottom_up_in_one_pass() {
 /// Test a replacement is not rewritten again in the same walk.
 #[test]
 fn apply_rewrite_rules_does_not_iterate_to_a_fixpoint() {
-    let rule = RewriteRule::new(build_literal_pattern(0), |_| {
+    let rule = RewriteRule::new(Pattern::literal(0), |_| {
         Ok(Expression::new_binary(
             BinaryOperation::Add,
             build_literal(0),
@@ -691,7 +696,7 @@ fn apply_rewrite_rules_rewrites_a_shared_subtree_once() {
 fn apply_rewrite_rules_rewrites_a_shared_leaf_once() {
     let zero = build_literal(0);
     let expression = Expression::new_binary(BinaryOperation::Add, &zero, &zero);
-    let zero_to_five = RewriteRule::new(build_literal_pattern(0), rewrite_to_literal(5));
+    let zero_to_five = RewriteRule::new(Pattern::literal(0), rewrite_to_literal(5));
 
     let outcome = rewrite(&expression, &[zero_to_five]);
 
@@ -745,7 +750,7 @@ fn apply_rewrite_rules_visits_nodes_in_walk_order() {
                 .lock()
                 .expect("an unpoisoned lock")
                 .push(expression.clone());
-            Ok(false)
+            false
         }),
         rewrite_to_literal(0),
     );
@@ -846,7 +851,7 @@ fn apply_rewrite_rules_reports_a_failing_rewrite_with_its_rule() {
 #[test]
 fn apply_rewrite_rules_reports_a_failing_predicate_with_its_rule() {
     let failing = RewriteRule::new(
-        Pattern::predicate(|_| Err(CallbackError::from(ProbeError("predicate failed")))),
+        Pattern::try_predicate(|_| Err(CallbackError::from(ProbeError("predicate failed")))),
         rewrite_to_literal(0),
     )
     .with_name("probing");
@@ -869,11 +874,11 @@ fn apply_rewrite_rules_stops_at_the_first_failure() {
     let counting = RewriteRule::new(
         Pattern::predicate(move |_| {
             counter.fetch_add(1, Ordering::SeqCst);
-            Ok(false)
+            false
         }),
         rewrite_to_literal(0),
     );
-    let failing_on_one = RewriteRule::new(build_literal_pattern(1), fail_rewrite);
+    let failing_on_one = RewriteRule::new(Pattern::literal(1), fail_rewrite);
     let expression =
         Expression::new_binary(BinaryOperation::Add, build_literal(1), build_literal(2));
 
@@ -889,9 +894,9 @@ fn apply_rewrite_rules_stops_at_the_first_failure() {
 /// rewrote the condition.
 #[test]
 fn apply_rewrite_rules_reports_a_failing_rebuild_with_its_rule() {
-    let never_firing = RewriteRule::new(build_literal_pattern(9), rewrite_to_literal(0));
+    let never_firing = RewriteRule::new(Pattern::literal(9), rewrite_to_literal(0));
     let true_to_one =
-        RewriteRule::new(build_literal_pattern(true), rewrite_to_literal(1)).with_name("true -> 1");
+        RewriteRule::new(Pattern::literal(true), rewrite_to_literal(1)).with_name("true -> 1");
     let expression =
         Expression::piecewise([(build_literal(true), build_literal(5))], build_literal(6))
             .expect("a valid piecewise");
@@ -913,10 +918,10 @@ fn apply_rewrite_rules_reports_a_failing_rebuild_with_its_rule() {
 /// condition, not another rule that rewrote a sibling after it.
 #[test]
 fn apply_rewrite_rules_blames_the_rule_that_rewrote_the_refused_condition() {
-    let false_to_one = RewriteRule::new(build_literal_pattern(false), rewrite_to_literal(1))
-        .with_name("false -> 1");
+    let false_to_one =
+        RewriteRule::new(Pattern::literal(false), rewrite_to_literal(1)).with_name("false -> 1");
     let six_to_seven =
-        RewriteRule::new(build_literal_pattern(6), rewrite_to_literal(7)).with_name("6 -> 7");
+        RewriteRule::new(Pattern::literal(6), rewrite_to_literal(7)).with_name("6 -> 7");
     let expression = Expression::piecewise(
         [
             (build_literal(true), build_literal(5)),
@@ -945,9 +950,9 @@ fn apply_rewrite_rules_blames_the_rule_that_rewrote_the_refused_condition() {
 #[test]
 fn apply_rewrite_rules_blames_the_rule_that_rewrote_a_shared_refused_condition() {
     let six_to_seven =
-        RewriteRule::new(build_literal_pattern(6), rewrite_to_literal(7)).with_name("6 -> 7");
+        RewriteRule::new(Pattern::literal(6), rewrite_to_literal(7)).with_name("6 -> 7");
     let true_to_one =
-        RewriteRule::new(build_literal_pattern(true), rewrite_to_literal(1)).with_name("true -> 1");
+        RewriteRule::new(Pattern::literal(true), rewrite_to_literal(1)).with_name("true -> 1");
     let (_, x) = build_identifier("x");
     let shared_true = build_literal(true);
     let expression = Expression::piecewise(
@@ -1046,13 +1051,14 @@ fn rewrite_error_rebuild_source_is_the_build_error() {
 #[test]
 fn fired_rule_records_index_and_name_in_walk_order() {
     let (_, x) = build_identifier("x");
+    let capture = Capture::new("x");
     let unnamed_times_one = RewriteRule::new(
         Pattern::binary(
-            Some(BinaryOperation::Multiply),
-            build_capture("x"),
-            build_literal_pattern(1),
+            BinaryOperation::Multiply,
+            Pattern::capture(&capture),
+            Pattern::literal(1),
         ),
-        rewrite_to_capture("x"),
+        rewrite_to_capture(&capture),
     );
     let expression = build_plus_zero(&Expression::new_binary(
         BinaryOperation::Multiply,

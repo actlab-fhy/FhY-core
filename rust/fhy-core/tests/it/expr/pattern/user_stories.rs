@@ -8,12 +8,11 @@ use crate::support::expression as expression_support;
 use crate::support::pattern as pattern_support;
 
 use expression_support::{build_identifier, build_literal};
-use fhy_core::expr::pattern::{MatchBindings, Pattern, RewriteRule, match_pattern};
+use fhy_core::expr::pattern::{Capture, MatchBindings, Pattern, RewriteRule};
 use fhy_core::expr::{BinaryOperation, Expression, UnaryOperation};
 use pattern_support::{
-    build_capture, build_capture_of, build_double_application_rule, build_literal_pattern,
-    build_x_minus_x_rule, build_x_plus_zero_rule, build_x_times_one_rule, build_zero_plus_x_rule,
-    expect_bound, rewrite,
+    build_double_application_rule, build_x_minus_x_rule, build_x_plus_zero_rule,
+    build_x_times_one_rule, build_zero_plus_x_rule, rewrite,
 };
 
 /// Return the four algebraic simplifications `x + 0 -> x`, `0 + x -> x`,
@@ -36,7 +35,7 @@ fn collect_matching_subexpressions(
     let mut collected = Vec::new();
     let mut pending = vec![expression.clone()];
     while let Some(node) = pending.pop() {
-        if let Some(bindings) = match_pattern(pattern, &node).expect("no predicate fails") {
+        if let Some(bindings) = pattern.matches(&node).expect("no predicate fails") {
             collected.push((node.clone(), bindings));
         }
         let children: Vec<Expression> = node.children().cloned().collect();
@@ -102,18 +101,19 @@ fn subtraction_canonicalizer_rewrites_at_every_depth() {
     let (_, a) = build_identifier("a");
     let (_, b) = build_identifier("b");
     let (_, c) = build_identifier("c");
-    let rule = RewriteRule::new(
-        Pattern::binary(
-            Some(BinaryOperation::Subtract),
-            build_capture("left"),
-            build_capture("right"),
-        ),
-        |bindings| {
-            let left = expect_bound(bindings, "left");
-            let right = expect_bound(bindings, "right");
-            Ok(Expression::new_binary(BinaryOperation::Add, left, -right))
-        },
-    )
+    let (left, right) = (Capture::new("left"), Capture::new("right"));
+    let pattern = Pattern::binary(
+        BinaryOperation::Subtract,
+        Pattern::capture(&left),
+        Pattern::capture(&right),
+    );
+    let rule = RewriteRule::new(pattern, move |bindings| {
+        Ok(Expression::new_binary(
+            BinaryOperation::Add,
+            &bindings[&left],
+            -&bindings[&right],
+        ))
+    })
     .with_name("a - b -> a + (-b)");
     let expression = &a - (&b - &c);
 
@@ -170,9 +170,10 @@ fn double_negation_peephole_collapses_four_negations_in_one_walk() {
 /// walk: `-(0)` rewritten from `0` by `0 -> -(0)` is not rewritten again.
 #[test]
 fn negation_expander_needs_a_walk_per_expansion() {
+    let x = Capture::new("x");
     let rules = [RewriteRule::new(
-        build_capture_of("x", build_literal_pattern(0)),
-        |bindings| Ok(-expect_bound(bindings, "x")),
+        Pattern::literal(0).captured_as(&x),
+        move |bindings| Ok(-&bindings[&x]),
     )];
 
     let once = rewrite(&build_literal(0), &rules);
@@ -185,19 +186,20 @@ fn negation_expander_needs_a_walk_per_expansion() {
 }
 
 // =============================================================================
-// A subtree finder built on match_pattern
+// A subtree finder built on Pattern::matches
 // =============================================================================
 
-/// Test `match_pattern` drives a read-only walk collecting every `x + 0`
+/// Test `Pattern::matches` drives a read-only walk collecting every `x + 0`
 /// subtree with its capture.
 #[test]
-fn match_pattern_powers_a_manual_subtree_finder() {
+fn pattern_matches_powers_a_manual_subtree_finder() {
     let (_, a) = build_identifier("a");
     let expression = Expression::new_binary(BinaryOperation::Multiply, &a + 0, &a + 0);
+    let x = Capture::new("x");
     let pattern = Pattern::binary(
-        Some(BinaryOperation::Add),
-        build_capture("x"),
-        build_literal_pattern(0),
+        BinaryOperation::Add,
+        Pattern::capture(&x),
+        Pattern::literal(0),
     );
 
     let matches = collect_matching_subexpressions(&pattern, &expression);
@@ -205,6 +207,6 @@ fn match_pattern_powers_a_manual_subtree_finder() {
     assert_eq!(matches.len(), 2);
     for (matched, bindings) in &matches {
         assert_eq!(matched, &(&a + 0));
-        assert!(Expression::ptr_eq(expect_bound(bindings, "x"), &a));
+        assert!(Expression::ptr_eq(&bindings[&x], &a));
     }
 }
