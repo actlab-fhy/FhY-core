@@ -288,41 +288,62 @@ maturin builds it into the extension module `fhy_core._rs`. A port adds its
 types to `fhy-core` and their bindings to `fhy-core-py`. Every port follows
 these rules.
 
+Migration in progress: the crate is being migrated to these rules, see
+`docs/design/rust-workspace.md`.
+
 ### One extension module per process
 
 All Rust code that uses *FhY* Core's Rust types compiles into a single
-Python extension module. The identifier id counter and every registry are
-Rust `static`s, which exist once per compiled copy of the crate, and PyO3
-creates a separate Python type for each extension module. A second
-extension linking the crate would issue ids that collide with the first
-one's, keep registries whose canonical instances never match, and fail
-`isinstance` checks against the first one's classes. A downstream *FhY*
-package that gains Rust code depends on the crate as a Rust library and is
-compiled into one combined extension module; it never ships an extension
-of its own that links the crate.
+Python extension module. The identifier id counter and each `Interned`
+type's `InternRegistry` are Rust `static`s, which exist once per compiled
+copy of the crate, and PyO3 creates a separate Python type for each
+extension module. A second extension linking the crate would issue ids that
+collide with the first one's, keep registries whose canonical instances
+never match, and fail `isinstance` checks against the first one's classes.
+A downstream *FhY* package that gains Rust code depends on the crate as a
+Rust library and is compiled into one combined extension module; it never
+ships an extension of its own that links the crate. No downstream crate
+links `fhy-core` yet, so `fhy-core-py` does not yet offer the library form
+that such a combined module needs; it gains one before the first
+downstream crate does.
 
-### Registries are process-global statics
+### Process-global state is limited to identity
 
-A registry ported from Python lives in a Rust `static`, as each `Interned`
-type's `InternRegistry` does, mirroring the module-level registry it
-replaces so the Rust behavior can be checked against the Python
-implementation. This is sound only because of the one-extension rule
-above.
+Exactly two kinds of state are process-global: the identifier id counter
+and each `Interned` type's `InternRegistry`. Both are append-only: an id is
+never reissued, and a canonical value is never replaced or removed.
+Everything else a port keeps between calls, such as the pass registry, run
+statistics or caches, is an owned value that its user creates and passes
+explicitly. Where the Python API needs one shared instance, the binding
+holds it in the extension's module state. A new process-global `static`
+with interior mutability needs the maintainer's agreement and a line in
+this section. Tests never clear a process-global registry; a test that
+needs an empty or controlled registry builds a local one.
 
-### Decoding checks the payload before its side effects
+Ids `0..RESERVED_ID_COUNT` (65,536 ids) are reserved for the identifiers
+the crate ships, such as the built-in tags, and each shipped identifier has
+a fixed id in the crate-private reserved table. The counter, in Rust and in
+the Python fallback alike, issues fresh ids from 65,536 up to `ID_CAP`
+(2^63), and no id at or above `ID_CAP` is issued or decoded. A newly
+shipped identifier takes an unused id from the reserved table rather than
+drawing one from the counter.
 
-Decoding an identifier advances the id counter, and decoding a canonical
-value interns it, so a decode has side effects that the Python
-deserializer performs in a set order: it checks one level of the payload,
-then restores that level's identifiers, then decodes the nested levels. A
-Rust type whose decode has such side effects implements the crate-private
-`decode::Decode` trait. Its `Payload` is the checked, side-effect-free form
-of one level, with identifier ids held unrestored and nested levels held as
-`DeferredPayload`s, and `build_from_payload` performs the side effects in
-Python's order. The type's `Deserialize` impl is then one call to
-`decode::deserialize_via_payload`. A type with a registry also initializes
-that registry before it restores any id, since Python's defaults exist from
-import.
+### Serialization is plain serde
+
+`fhy-core` serializes with `#[derive(Serialize, Deserialize)]` wherever it
+can, in shapes Rust defines. There is no `__type__`/`__data__` envelope in
+the core crate: the binding adds it where Python's serialization framework
+embeds a Rust value in a Python container. Serde impls must work with
+non-self-describing formats as well as JSON: every serialized type has a
+round-trip test through JSON and one through postcard, the binary test
+format. `src/` never uses `#[serde(tag)]`, `untagged`, `flatten` or
+`skip_serializing_if`, never calls `deserialize_any`, and never names a
+`serde_json` type; `serde_json` is a dev-dependency only. A `BigInt`
+serializes as a decimal string in every format. Decoding has two side
+effects, both monotonic: an `Identifier` advances the id counter past its
+id, and a `Canonical<T>` interns its value. A decode that fails partway may
+leave the counter advanced and some canonical values registered. The
+affected types document this; decoding is not ordered to prevent it.
 
 ### Replacing a Python class
 
@@ -342,33 +363,102 @@ import.
   gain from Rust and says why in its module docstring.
   `fhy_core.identifier` is the example: `Identifier` stays in Python and
   only its id counter runs in Rust.
-- Freeze the golden corpus. Once a module's Python implementation is
-  deleted, its generator has no oracle left to run. Delete the generator
-  (the drift check and `golden_expanded` find generators by the
-  `generate_*.py` pattern) and its `EXPANDED_GOLDEN_CORPORA` entry, and
-  keep the committed JSON as a fixed regression corpus.
+- Freeze the golden corpus. Golden corpora exist only for concepts defined
+  in both languages, today `identifier` and `interned`. Once a module's
+  Python implementation is deleted, its generator has no oracle left to
+  run. Delete the generator (the drift check and `golden_expanded` find
+  generators by the `generate_*.py` pattern) and its
+  `EXPANDED_GOLDEN_CORPORA` entry, and keep the committed JSON as a fixed
+  regression corpus.
 - From the first deletion on, the package requires the extension, and
   `FHY_CORE_NO_EXTENSIONS` selects the pure-Python implementation only for
   modules that still have one.
 
-### Module paths follow the Python package
+### Module paths follow Rust layering
 
-A Rust module takes the path of the Python module it ports:
-`fhy_core.symbolic.expression` becomes `fhy_core::symbolic::expression`,
-and a package's `core.py` folds into the package's own module. Packages
-that group items by kind, `traits/` and `utils/`, have no Rust
-counterpart; each of their items moves to the module whose concept it
-serves, as `HasIdentifier` lives in `identifier` and `Interned` in
-`interned`. Test support is the exception: `fhy_core.testing_patches`
-becomes the feature-gated `fhy_core::testing`.
+A Rust module's path follows the crate's layering, not the Python package.
+Each public item has exactly one public path, every `pub use` is explicit
+(no globs), and CI rejects an item re-exported under a second path. A
+module depends only on the layers before it:
+
+1. `identifier`, `interned`
+2. `diagnostic`, `provenance`, `op_attribute`, `value_domain`,
+   `described_tag`
+3. `tree`
+4. `expr` (with `expr::pattern` and `expr::builtins`) and `pass`, which do
+   not depend on each other
+5. `expr::passes`, the passes over expressions, which depends on both
+
+A module with submodules is a `foo.rs` file next to a `foo/` directory;
+there are no `mod.rs` files. A private module is never named `core`, which
+shadows the `core` crate. A port records its Python module in this table,
+the one place that maps Python paths to Rust ones:
+
+| Python | Rust |
+|---|---|
+| `fhy_core.identifier` | `fhy_core::identifier` |
+| `fhy_core.traits.interned` | `fhy_core::interned` |
+| `fhy_core.diagnostic` | `fhy_core::diagnostic` |
+| `fhy_core.provenance` | `fhy_core::provenance` |
+| `fhy_core.op_attribute` | `fhy_core::op_attribute` |
+| `fhy_core.value_domain` | `fhy_core::value_domain` |
+| `fhy_core.symbolic.symbol_type` | `fhy_core::expr` (`SymbolType`) |
+| `fhy_core.symbolic.expression` (`core`, `errors`, `pprint`, `sort`) | `fhy_core::expr` |
+| `fhy_core.symbolic.expression.builtins` | `fhy_core::expr::builtins` |
+| `fhy_core.symbolic.expression.pattern` (`core`, `rewrite`) | `fhy_core::expr::pattern`; the rule-applier pass is in `fhy_core::expr::passes` |
+| `fhy_core.symbolic.expression.passes` | `fhy_core::expr::passes` |
+| `fhy_core.pass_infrastructure` | `fhy_core::pass`; tree traversal is in `fhy_core::tree` |
 
 ### Errors belong to their module
 
-Each module defines the error types for its own operations; the crate has
-no crate-wide error enum. A public error enum is `#[non_exhaustive]`.
+Each module defines the error types for its own operations, one type per
+family of related operations; the crate has no crate-wide error enum. A
+public error is a `#[non_exhaustive]` enum, or a struct with structured
+fields, so callers match variants and fields rather than text, and it has
+no `is_*` classifiers where a `kind()` or a direct match would do.
+`Display` writes one lowercase line with no trailing period and does not
+repeat the text of its `source()`, which returns the underlying cause.
 `Display` and `std::error::Error` are implemented by hand. The binding
-crate raises the same Python exception class, with the same message, that
-the Python implementation raises.
+converts each core error it raises through its local `IntoPyErr` trait. For
+`identifier` and `interned`, which are defined in both languages, it raises
+the Python implementation's exception class with the same message. For
+every other module, Rust defines the behavior: the binding raises the
+exception class the replaced Python API documents, with the Rust error's
+`Display` text.
+
+### Python parity is limited to dual-defined concepts
+
+Rust matches the Python implementation's behavior and text only for
+concepts defined in both languages at once, today `identifier` and
+`interned`. Code that exists only to match Python starts its doc comment
+with "Matches the Python implementation:". Everywhere else, Rust
+conventions decide: `true`/`false`, Rust's shortest round-trip float
+formatting, lowercase error messages, `Display` impls instead of Python
+`repr` emulation, and names without `get_` or `list_` prefixes, with
+shipped defaults as associated functions such as
+`OpAttribute::commutative()`. Rustdoc describes Rust behavior and does not
+narrate the Python implementation.
+
+### Binding crate layout
+
+`fhy-core-py` declares `fhy_core._rs` with one declarative `#[pymodule]`
+in `lib.rs`. Each core module's bindings live in a file of the same name
+and are exported with `#[pymodule_export]`. The Python namespace of `_rs`
+stays flat, since PyO3 submodules cannot be imported as packages.
+`src/fhy_core/_rs.pyi` is written by hand, and `tests/test_rs_stub.py`
+checks its names and parameters against the built extension.
+
+### Rust test layout
+
+`fhy-core`'s integration tests form one binary, `rust/fhy-core/tests/it/`,
+with one module per area mirroring the crate's modules. Shared helpers
+live in the `support` module (`tests/it/support.rs` and
+`tests/it/support/`) at `pub(crate)`, so a helper no test uses is a
+dead-code warning. A test that needs a fresh process, because it moves
+process-global state further than an ordinary test tolerates, is its own
+`[[test]]` target with exactly one `#[test]` and a comment saying why, and
+it is added to the target list the CI `rust` job checks. Nothing
+re-executes a test binary to get a fresh process.
 
 ### Canonical values keep their identity in Python
 
@@ -376,7 +466,8 @@ When a canonical Rust value, such as an interned `OpAttribute`, reaches
 Python, the binding returns the same Python object for the same canonical
 instance every time, so `is` holds exactly as it does for values interned
 in Python. The binding crate keeps that cache; the core crate never holds
-Python objects.
+Python objects. The cache is added with the first binding that returns a
+canonical value.
 
 ## Creating a new Pull Request
 When submitting a pull request, we ask you to check the following:
