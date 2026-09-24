@@ -23,12 +23,11 @@
 use std::fmt;
 use std::sync::LazyLock;
 
-use serde::{Deserialize, Deserializer, Serialize, de};
+use serde::{Deserialize, Serialize};
 
-use crate::decode::{self, Decode, DeferredPayload};
 use crate::described_tag::{DescribedTag, TagKind, require_shipped, sealed};
 use crate::identifier::reserved::{self, ReservedIdentifier};
-use crate::interned::{Canonical, InternRegistry, intern_decoded};
+use crate::interned::{Canonical, InternRegistry};
 
 /// The vocabulary of [`NoteKind`]s.
 #[derive(Debug)]
@@ -53,9 +52,8 @@ impl sealed::Sealed for NoteKindVocabulary {
 /// descriptions say.
 ///
 /// A kind encodes as `{"name": {"id": .., "name_hint": ..}, "description":
-/// ..}`. Decoding a kind canonicalizes it only through the handle, so
-/// deserialize a [`Canonical<NoteKind>`]. Deserializing a bare `NoteKind`
-/// yields a value that no registry knows about.
+/// ..}`. Only a [`Canonical<NoteKind>`] decodes, registering the kind unless
+/// its name is registered already.
 pub type NoteKind = DescribedTag<NoteKindVocabulary>;
 
 /// The shipped kinds, in registration order, with their descriptions.
@@ -128,10 +126,11 @@ impl DescribedTag<NoteKindVocabulary> {
 
 /// A human-readable message tagged with the role it plays.
 ///
-/// A note encodes as `{"message": .., "kind": <note kind>}`. Decoding checks
-/// the whole payload before it restores the kind's name, and yields the
-/// canonical kind for that name.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+/// A note encodes as `{"message": .., "kind": <note kind>}`. Decoding one
+/// registers its kind, so it yields the canonical kind for that name; a
+/// decode that fails after reading the kind leaves the kind registered.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Note {
     message: String,
     kind: Canonical<NoteKind>,
@@ -172,31 +171,6 @@ impl fmt::Display for Note {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.kind, self.message)
     }
-}
-
-impl Decode for Note {
-    type Payload = NotePayload;
-
-    fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
-        let kind = intern_decoded(payload.kind.decode("kind")?)?;
-        Ok(Self::new(payload.message, kind))
-    }
-}
-
-/// Decoding rejects a missing or unknown key at either level before it
-/// restores the kind's name.
-impl<'de> Deserialize<'de> for Note {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        decode::deserialize_via_payload(deserializer)
-    }
-}
-
-/// A note payload, checked but with its kind held unread.
-#[derive(Deserialize)]
-#[serde(rename = "Note", deny_unknown_fields)]
-pub(crate) struct NotePayload {
-    message: String,
-    kind: DeferredPayload<NoteKind>,
 }
 
 /// Severity of a [`Diagnostic`].
@@ -435,8 +409,8 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::identifier::Identifier;
     use crate::interned::Interned;
-    use crate::test_support::{has_counter_passed, hold_id_counter, reserve_far_ahead_ids};
 
     /// Return the JSON payload of a note whose kind is named by the id `id`,
     /// with `kind_trailing` appended inside the kind and `trailing` appended
@@ -465,36 +439,29 @@ mod tests {
     }
 
     #[test]
-    fn a_valid_note_restores_and_registers_its_kind() {
-        let _counter = hold_id_counter();
-        let [id] = reserve_far_ahead_ids("valid-note-anchor");
+    fn a_valid_note_registers_its_kind() {
+        let id = Identifier::new("valid-note-kind").id();
 
         let note: Note = serde_json::from_str(&encode_note_payload(id, "", "")).unwrap();
 
-        assert!(has_counter_passed(id));
         assert_eq!(note.kind().name().id(), id);
-        assert_eq!(
-            NoteKind::intern_registry().get(note.kind().name()).as_ref(),
-            Some(note.kind())
-        );
+        let registered = NoteKind::intern_registry().get(note.kind().name());
+        assert!(registered.is_some_and(|registered| Canonical::ptr_eq(&registered, note.kind())));
     }
 
     #[test]
-    fn a_note_rejected_for_a_trailing_unknown_field_restores_nothing() {
-        let _counter = hold_id_counter();
-        let [id] = reserve_far_ahead_ids("trailing-note-field-anchor");
+    fn a_note_with_a_trailing_unknown_field_is_rejected() {
+        let id = Identifier::new("trailing-note-field").id();
 
         let error =
             serde_json::from_str::<Note>(&encode_note_payload(id, "", ",\"zzz\":1")).unwrap_err();
 
         assert!(error.to_string().contains("zzz"), "{error}");
-        assert!(!has_counter_passed(id));
     }
 
     #[test]
-    fn a_note_whose_kind_precedes_a_malformed_message_restores_nothing() {
-        let _counter = hold_id_counter();
-        let [id] = reserve_far_ahead_ids("kind-first-note-anchor");
+    fn a_note_whose_kind_precedes_a_malformed_message_is_rejected() {
+        let id = Identifier::new("kind-first-note").id();
         let json = format!(
             "{{\"kind\":{{\"name\":{{\"id\":{id},\"name_hint\":\"k\"}},\"description\":\"d\"}},\
              \"message\":5}}"
@@ -503,25 +470,21 @@ mod tests {
         let error = serde_json::from_str::<Note>(&json).unwrap_err();
 
         assert!(error.to_string().contains("invalid type"), "{error}");
-        assert!(!has_counter_passed(id));
     }
 
     #[test]
-    fn a_note_whose_kind_has_an_unknown_field_restores_nothing() {
-        let _counter = hold_id_counter();
-        let [id] = reserve_far_ahead_ids("kind-unknown-field-anchor");
+    fn a_note_whose_kind_has_an_unknown_field_is_rejected() {
+        let id = Identifier::new("kind-unknown-field").id();
 
         let error =
             serde_json::from_str::<Note>(&encode_note_payload(id, ",\"zzz\":1", "")).unwrap_err();
 
         assert!(error.to_string().contains("zzz"), "{error}");
-        assert!(!has_counter_passed(id));
     }
 
     #[test]
-    fn a_note_whose_kind_lacks_a_description_restores_nothing() {
-        let _counter = hold_id_counter();
-        let [id] = reserve_far_ahead_ids("kind-no-description-anchor");
+    fn a_note_whose_kind_lacks_a_description_is_rejected() {
+        let id = Identifier::new("kind-no-description").id();
         let json = format!(
             "{{\"message\":\"m\",\"kind\":{{\"name\":{{\"id\":{id},\"name_hint\":\"k\"}}}}}}"
         );
@@ -532,13 +495,11 @@ mod tests {
             error.to_string().contains("missing field `description`"),
             "{error}"
         );
-        assert!(!has_counter_passed(id));
     }
 
     #[test]
-    fn a_bare_note_kind_rejected_for_an_unknown_field_restores_nothing() {
-        let _counter = hold_id_counter();
-        let [id] = reserve_far_ahead_ids("bare-kind-anchor");
+    fn a_note_kind_with_an_unknown_field_is_rejected() {
+        let id = Identifier::new("bare-kind").id();
         let json = format!(
             "{{\"name\":{{\"id\":{id},\"name_hint\":\"k\"}},\"description\":\"d\",\"zzz\":1}}"
         );
@@ -546,6 +507,22 @@ mod tests {
         let error = serde_json::from_str::<Canonical<NoteKind>>(&json).unwrap_err();
 
         assert!(error.to_string().contains("zzz"), "{error}");
-        assert!(!has_counter_passed(id));
+    }
+
+    /// Test a note and each shipped kind round-trip through postcard, a
+    /// format that is not self-describing.
+    #[rstest]
+    #[case::rationale(NoteKind::rationale)]
+    #[case::other(NoteKind::other)]
+    fn a_note_round_trips_through_postcard(
+        #[case] get_shipped: fn() -> &'static Canonical<NoteKind>,
+    ) {
+        let note = Note::new("a message", get_shipped().clone());
+
+        let bytes = postcard::to_allocvec(&note).expect("the note encodes");
+        let restored: Note = postcard::from_bytes(&bytes).expect("the note decodes");
+
+        assert_eq!(restored.message(), "a message");
+        assert!(Canonical::ptr_eq(restored.kind(), get_shipped()));
     }
 }

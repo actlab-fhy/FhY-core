@@ -107,7 +107,7 @@ fn a_shipped_tag_decoded_by_its_reserved_id_is_the_shipped_tag() {
     let decoded: Canonical<OpAttribute> =
         serde_json::from_value(payload).expect("the payload decodes");
 
-    assert_eq!(&decoded, OpAttribute::commutative());
+    assert!(Canonical::ptr_eq(&decoded, OpAttribute::commutative()));
     assert_eq!(decoded.name().name_hint(), "commutative");
     assert_eq!(
         decoded.description(),

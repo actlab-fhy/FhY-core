@@ -1,9 +1,10 @@
 //! User-story tests for `fhy_core::op_attribute` and `fhy_core::value_domain`.
 //!
 //! Public API only. These tests share the process-wide `OpAttribute` and
-//! `ValueDomain` registries and run in parallel, so none of them clears a
-//! registry, and each story creates its identifiers under a name hint unique
-//! to that story.
+//! `ValueDomain` registries, which are append-only, and each story registers
+//! identifiers of its own.
+
+use crate::support::stack as stack_support;
 
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -14,6 +15,7 @@ use fhy_core::op_attribute::OpAttribute;
 use fhy_core::value_domain::ValueDomain;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 
 /// A stand-in for a compiler op, carrying the semantic tags attached to it.
 struct StoryOp {
@@ -132,7 +134,7 @@ struct PersistedOp {
 
 /// Test a tagged operation serializes to JSON and, decoded back, carries the
 /// very same canonical `OpAttribute` and `ValueDomain` instances it was built
-/// with, since `==` on `Canonical` is identity.
+/// with.
 #[test]
 fn persisting_and_restoring_a_tagged_operation() {
     let attribute =
@@ -153,6 +155,8 @@ fn persisting_and_restoring_a_tagged_operation() {
 
     assert_eq!(restored.attribute, attribute);
     assert_eq!(restored.domain, domain);
+    assert!(Canonical::ptr_eq(&restored.attribute, &attribute));
+    assert!(Canonical::ptr_eq(&restored.domain, &domain));
 }
 
 /// Test registering an attribute under a name already registered keeps the
@@ -168,13 +172,20 @@ fn registering_a_known_attribute_keeps_the_first_description() {
     assert_eq!(again.description(), "the first description");
 }
 
-/// Return the payload of the domain `name` under the payload `parent`.
-fn encode_domain(name: &Identifier, description: &str, parent: &Value) -> Value {
-    json!({
-        "name": {"id": name.id(), "name_hint": name.name_hint()},
-        "description": description,
-        "parent": parent,
-    })
+/// One level of a domain chain's payload.
+#[derive(Serialize)]
+struct Level<'a> {
+    name: &'a Identifier,
+    description: &'a str,
+}
+
+/// Return the payload of the chain `levels`, root first.
+fn encode_chain(levels: &[(&Identifier, &str)]) -> Value {
+    let levels: Vec<Level<'_>> = levels
+        .iter()
+        .map(|&(name, description)| Level { name, description })
+        .collect();
+    serde_json::to_value(levels).expect("the chain encodes")
 }
 
 /// Test decoding a chain of three domains no registry knows registers every
@@ -182,18 +193,21 @@ fn encode_domain(name: &Identifier, description: &str, parent: &Value) -> Value 
 #[test]
 fn a_decoded_domain_chain_registers_every_level() {
     let names = ["chain-story-root", "chain-story-middle", "chain-story-leaf"].map(Identifier::new);
-    let root = encode_domain(&names[0], "root", &Value::Null);
-    let middle = encode_domain(&names[1], "middle", &root);
-    let leaf = encode_domain(&names[2], "leaf", &middle);
+    let payload = encode_chain(&[
+        (&names[0], "root"),
+        (&names[1], "middle"),
+        (&names[2], "leaf"),
+    ]);
 
-    let decoded: Canonical<ValueDomain> = serde_json::from_value(leaf).expect("the chain decodes");
+    let decoded: Canonical<ValueDomain> =
+        serde_json::from_value(payload).expect("the chain decodes");
 
     let registered = names.each_ref().map(|name| {
         ValueDomain::intern_registry()
             .get(name)
             .expect("every level is registered")
     });
-    assert_eq!(decoded, registered[2]);
+    assert!(Canonical::ptr_eq(&decoded, &registered[2]));
     assert_eq!(registered[0].parent(), None);
     assert_eq!(registered[1].parent(), Some(&registered[0]));
     assert_eq!(registered[2].parent(), Some(&registered[1]));
@@ -206,11 +220,10 @@ fn a_decoded_domain_under_another_parent_is_rejected_and_the_canonical_domain_is
     let name = Identifier::new("reparented-story-domain");
     let canonical = ValueDomain::register_child(name.clone(), "under data", ValueDomain::data())
         .expect("the domain registers");
-    let payload = encode_domain(
-        &name,
-        "under address",
-        &serde_json::to_value(ValueDomain::address()).expect("the domain encodes"),
-    );
+    let payload = encode_chain(&[
+        (ValueDomain::address().name(), "address"),
+        (&name, "under address"),
+    ]);
 
     let result = serde_json::from_value::<Canonical<ValueDomain>>(payload);
 
@@ -230,8 +243,8 @@ fn a_rejected_payload_leaves_the_canonical_domain_unchanged() {
     let name = Identifier::new("rejected-story-domain");
     let canonical =
         ValueDomain::register_root(name.clone(), "registered").expect("the domain registers");
-    let mut payload = encode_domain(&name, "rejected", &Value::Null);
-    payload["unexpected"] = json!(1);
+    let mut payload = encode_chain(&[(&name, "rejected")]);
+    payload[0]["unexpected"] = json!(1);
 
     let result = serde_json::from_value::<Canonical<ValueDomain>>(payload);
 
@@ -242,4 +255,55 @@ fn a_rejected_payload_leaves_the_canonical_domain_unchanged() {
     assert_eq!(registered, canonical);
     assert_eq!(registered.description(), "registered");
     assert_eq!(registered.parent(), None);
+}
+
+/// Test a chain as deep as a stack of a few hundred kilobytes allows no
+/// recursion over decodes from JSON and from postcard, registering every
+/// level: the chain is encoded flat and decoded one level at a time.
+#[test]
+fn value_domain_decodes_a_deep_chain_on_a_small_stack() {
+    let json_names: Vec<Identifier> = (0..SMALL_STACK_DEPTH)
+        .map(|_| Identifier::new("deep-json-level"))
+        .collect();
+    let postcard_names: Vec<Identifier> = (0..SMALL_STACK_DEPTH)
+        .map(|_| Identifier::new("deep-postcard-level"))
+        .collect();
+    let json_levels: Vec<Level<'_>> = json_names
+        .iter()
+        .map(|name| Level {
+            name,
+            description: "deep",
+        })
+        .collect();
+    let postcard_levels: Vec<Level<'_>> = postcard_names
+        .iter()
+        .map(|name| Level {
+            name,
+            description: "deep",
+        })
+        .collect();
+    let json = serde_json::to_string(&json_levels).expect("the chain encodes");
+    let bytes = postcard::to_allocvec(&postcard_levels).expect("the chain encodes");
+
+    let (json_leaf, postcard_leaf) = run_on_small_stack(move || {
+        let from_json: Canonical<ValueDomain> =
+            serde_json::from_str(&json).expect("the deep chain decodes from JSON");
+        let from_postcard: Canonical<ValueDomain> =
+            postcard::from_bytes(&bytes).expect("the deep chain decodes from postcard");
+        (from_json.name().id(), from_postcard.name().id())
+    });
+
+    assert_eq!(json_leaf, json_names[SMALL_STACK_DEPTH - 1].id());
+    assert_eq!(postcard_leaf, postcard_names[SMALL_STACK_DEPTH - 1].id());
+    for names in [&json_names, &postcard_names] {
+        let leaf = ValueDomain::intern_registry()
+            .get(&names[SMALL_STACK_DEPTH - 1])
+            .expect("the leaf is registered");
+        let parent = leaf.parent().expect("the leaf has a parent");
+        assert_eq!(parent.name(), &names[SMALL_STACK_DEPTH - 2]);
+        assert!(
+            ValueDomain::intern_registry().get(&names[0]).is_some(),
+            "the root is registered"
+        );
+    }
 }

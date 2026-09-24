@@ -10,13 +10,9 @@
 
 use std::fmt::Debug;
 
-use fhy_core::diagnostic::{Note, NoteKind};
 use fhy_core::expr::Expression;
 use fhy_core::identifier::Identifier;
-use fhy_core::interned::Canonical;
-use fhy_core::op_attribute::OpAttribute;
 use fhy_core::provenance::{Position, Provenance, Span};
-use fhy_core::value_domain::ValueDomain;
 use rstest::rstest;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -24,13 +20,6 @@ use serde_json::{Value, json};
 /// The types whose payload form is under test.
 #[derive(Debug, Clone, Copy)]
 enum PayloadType {
-    OpAttribute,
-    CanonicalOpAttribute,
-    ValueDomain,
-    CanonicalValueDomain,
-    NoteKind,
-    CanonicalNoteKind,
-    Note,
     Expression,
     ExpressionData,
     Position,
@@ -53,34 +42,6 @@ impl PayloadType {
     /// another case registered.
     fn build_map_and_sequence(self) -> (Value, Value) {
         match self {
-            Self::OpAttribute | Self::CanonicalOpAttribute => {
-                let name = build_identifier_payload("sequence-attribute");
-                (
-                    json!({"name": name, "description": "d"}),
-                    json!([name, "d"]),
-                )
-            }
-            Self::ValueDomain | Self::CanonicalValueDomain => {
-                let name = build_identifier_payload("sequence-domain");
-                (
-                    json!({"name": name, "description": "d", "parent": null}),
-                    json!([name, "d", null]),
-                )
-            }
-            Self::NoteKind | Self::CanonicalNoteKind => {
-                let name = build_identifier_payload("sequence-note-kind");
-                (
-                    json!({"name": name, "description": "d"}),
-                    json!([name, "d"]),
-                )
-            }
-            Self::Note => {
-                let kind = json!({
-                    "name": build_identifier_payload("sequence-note-kind"),
-                    "description": "d",
-                });
-                (json!({"message": "m", "kind": kind}), json!(["m", kind]))
-            }
             Self::Expression => {
                 let data = json!({"identifier": build_identifier_payload("sequence-expression")});
                 (
@@ -137,13 +98,6 @@ impl PayloadType {
     fn decode(self, payload: &Value) -> Result<(), String> {
         let text = payload.to_string();
         match self {
-            Self::OpAttribute => decode_text::<OpAttribute>(&text),
-            Self::CanonicalOpAttribute => decode_text::<Canonical<OpAttribute>>(&text),
-            Self::ValueDomain => decode_text::<ValueDomain>(&text),
-            Self::CanonicalValueDomain => decode_text::<Canonical<ValueDomain>>(&text),
-            Self::NoteKind => decode_text::<NoteKind>(&text),
-            Self::CanonicalNoteKind => decode_text::<Canonical<NoteKind>>(&text),
-            Self::Note => decode_text::<Note>(&text),
             Self::Expression | Self::ExpressionData => decode_text::<Expression>(&text),
             Self::Position => decode_text::<Position>(&text),
             Self::Span => decode_text::<Span>(&text),
@@ -162,13 +116,6 @@ fn decode_text<T: DeserializeOwned + Debug>(text: &str) -> Result<(), String> {
 /// Test a payload given as a sequence of its field values is refused, while
 /// the map form of the same values decodes.
 #[rstest]
-#[case::op_attribute(PayloadType::OpAttribute)]
-#[case::canonical_op_attribute(PayloadType::CanonicalOpAttribute)]
-#[case::value_domain(PayloadType::ValueDomain)]
-#[case::canonical_value_domain(PayloadType::CanonicalValueDomain)]
-#[case::note_kind(PayloadType::NoteKind)]
-#[case::canonical_note_kind(PayloadType::CanonicalNoteKind)]
-#[case::note(PayloadType::Note)]
 #[case::expression(PayloadType::Expression)]
 #[case::expression_data(PayloadType::ExpressionData)]
 #[case::position(PayloadType::Position)]
@@ -189,21 +136,4 @@ fn a_payload_given_as_a_sequence_is_refused(#[case] payload_type: PayloadType) {
         error.contains(payload_type.describe_sequence_refusal()),
         "{payload_type:?} refuses {sequence} as a sequence, not for another reason: {error}"
     );
-}
-
-/// Test a refused sequence payload registers no attribute under the name it
-/// carries, so a later map payload naming the same id registers a fresh
-/// canonical attribute rather than finding one.
-#[test]
-fn a_refused_sequence_payload_registers_nothing() {
-    let name = build_identifier_payload("sequence-never-registered");
-    let sequence = json!([name, "from the sequence"]);
-    let map = json!({"name": name, "description": "from the map"});
-
-    let sequence_result = decode_text::<Canonical<OpAttribute>>(&sequence.to_string());
-    let restored: Canonical<OpAttribute> =
-        serde_json::from_value(map).expect("the map form decodes");
-
-    assert!(sequence_result.is_err(), "the sequence form is refused");
-    assert_eq!(restored.description(), "from the map");
 }

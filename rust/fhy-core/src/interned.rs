@@ -8,15 +8,17 @@
 //! back. Either way the caller receives a [`Canonical`] handle, so a
 //! non-canonical duplicate is never shared.
 //!
-//! Canonical handles compare and hash by identity. Two handles are equal iff
-//! they point at the same registered instance, which for handles taken from
-//! one registry with no clear between them means iff their keys are equal.
+//! Canonical handles compare and hash by key, as the Python implementation's
+//! `==` does. For handles taken from one registry with no clear between
+//! them, equal keys mean the same registered instance;
+//! [`Canonical::ptr_eq`] tells instances apart across registries or across
+//! a clear.
 //!
 //! A registry may be created with default instances, which it registers the
 //! first time it is used and restores whenever a registry the caller owns is
-//! cleared; a process-wide registry is never cleared. A default
-//! keeps its identity across clears, so a handle to a default taken before a
-//! clear still equals the handle taken after it.
+//! cleared; a process-wide registry is never cleared. A default keeps its
+//! identity across clears, so a handle to a default taken before a clear
+//! points at the same instance as the handle taken after it.
 //!
 //! Registries are safe to use from many threads at once.
 
@@ -381,15 +383,29 @@ impl<T> InternOutcome<T> {
 
 /// Shared handle to a canonical instance.
 ///
-/// Handles compare and hash by identity: two handles are equal iff they
-/// point at the same registered instance. A handle dereferences to the
-/// instance.
+/// Handles compare and hash by their instance's key. Two handles from one
+/// registry, with no clear between them, are equal iff they point at the
+/// same registered instance, so for a process-wide registry key equality is
+/// instance identity; [`Canonical::ptr_eq`] observes identity directly. A
+/// handle dereferences to the instance.
+///
+/// Matches the Python implementation: a canonical value compares by key.
 ///
 /// A handle serializes as its instance. Deserializing a handle interns the
 /// decoded value in its type's registry and yields the canonical instance
 /// for its key, or fails when the decoded value is unequal to a canonical
-/// instance already registered under that key.
+/// instance already registered under that key. A decode that fails after
+/// interning part of its payload leaves those parts registered.
 pub struct Canonical<T>(Arc<T>);
+
+impl<T> Canonical<T> {
+    /// Return whether `this` and `other` point at the same registered
+    /// instance.
+    #[must_use]
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
+        Arc::ptr_eq(&this.0, &other.0)
+    }
+}
 
 impl<T> Deref for Canonical<T> {
     type Target = T;
@@ -405,17 +421,17 @@ impl<T> Clone for Canonical<T> {
     }
 }
 
-impl<T> PartialEq for Canonical<T> {
+impl<T: Interned> PartialEq for Canonical<T> {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        Self::ptr_eq(self, other) || self.0.intern_key() == other.0.intern_key()
     }
 }
 
-impl<T> Eq for Canonical<T> {}
+impl<T: Interned> Eq for Canonical<T> {}
 
-impl<T> Hash for Canonical<T> {
+impl<T: Interned> Hash for Canonical<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        std::ptr::hash(Arc::as_ptr(&self.0), state);
+        self.0.intern_key().hash(state);
     }
 }
 
@@ -456,9 +472,7 @@ impl<'de, T: Interned + Eq + Deserialize<'de>> Deserialize<'de> for Canonical<T>
 ///
 /// Returns an error naming `T` and the key when the key is already canonical
 /// and `value` is unequal to the canonical instance, which stays registered.
-pub(crate) fn intern_decoded<T: Interned + Eq, E: serde::de::Error>(
-    value: T,
-) -> Result<Canonical<T>, E> {
+fn intern_decoded<T: Interned + Eq, E: serde::de::Error>(value: T) -> Result<Canonical<T>, E> {
     match T::intern_registry().intern(value) {
         InternOutcome::Registered(canonical) => Ok(canonical),
         InternOutcome::AlreadyCanonical {
@@ -466,10 +480,9 @@ pub(crate) fn intern_decoded<T: Interned + Eq, E: serde::de::Error>(
             discarded,
         } => {
             if discarded == *canonical {
-                // TODO: Python logs a warning here for each field `Eq`
-                // ignores whose decoded value differs from the canonical
-                // instance's, such as a description. Emit that warning once
-                // the crate has logging.
+                // The canonical instance wins, so a field `Eq` ignores, such
+                // as a description, is dropped when the payload's differs.
+                // TODO: warn here once the log dependency is added
                 Ok(canonical)
             } else {
                 Err(E::custom(format_args!(
@@ -497,6 +510,7 @@ pub(crate) fn require_default<T: Interned>(key: &T::Key) -> Canonical<T> {
 
 /// No canonical instance is registered under a key.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct NotInternedError<K> {
     type_name: &'static str,
     key: K,
@@ -938,7 +952,7 @@ mod tests {
         registry.clear();
 
         let after = registry.get("alpha").expect("alpha default is restored");
-        assert_eq!(before, after);
+        assert!(Canonical::ptr_eq(&before, &after));
     }
 
     /// Test interning after `clear` registers a fresh canonical instance.
@@ -954,7 +968,8 @@ mod tests {
 
         assert!(outcome.is_registered());
         let after = outcome.into_canonical();
-        assert_ne!(after, before);
+        assert!(!Canonical::ptr_eq(&after, &before));
+        assert_eq!(after, before);
     }
 
     /// Test `clear` empties a registry that has no defaults.
@@ -988,10 +1003,10 @@ mod tests {
         assert_eq!(first, second);
     }
 
-    /// Test handles for the same key and value from separate registries are
-    /// unequal by identity, though their underlying values are equal.
+    /// Test handles for the same key from separate registries are equal by
+    /// key, though they point at different instances.
     #[test]
-    fn canonical_handles_from_separate_registries_are_unequal() {
+    fn canonical_handles_compare_by_key_across_registries() {
         let registry_a = InternRegistry::<Tag>::new();
         let registry_b = InternRegistry::<Tag>::new();
 
@@ -1002,13 +1017,24 @@ mod tests {
             .intern(build_tag("alpha", "note"))
             .into_canonical();
 
-        assert_ne!(a, b);
-        assert_eq!(*a, *b);
+        assert_eq!(a, b);
+        assert!(!Canonical::ptr_eq(&a, &b));
     }
 
-    /// Test canonical handles hash by identity, matching their equality.
+    /// Test handles for different keys are unequal.
     #[test]
-    fn canonical_handles_hash_by_identity() {
+    fn canonical_handles_for_different_keys_are_unequal() {
+        let registry = InternRegistry::<Tag>::new();
+
+        let alpha = registry.intern(build_tag("alpha", "note")).into_canonical();
+        let beta = registry.intern(build_tag("beta", "note")).into_canonical();
+
+        assert_ne!(alpha, beta);
+    }
+
+    /// Test canonical handles hash by key, matching their equality.
+    #[test]
+    fn canonical_handles_hash_by_key() {
         let registry = InternRegistry::<Tag>::new();
         let _setup = registry.intern(build_tag("alpha", "note"));
         let first = registry.get("alpha").expect("alpha is registered");
@@ -1024,7 +1050,7 @@ mod tests {
             .intern(build_tag("alpha", "note"))
             .into_canonical();
         handles.insert(from_other_registry);
-        assert_eq!(handles.len(), 2);
+        assert_eq!(handles.len(), 1);
     }
 
     /// Test a canonical handle dereferences to its interned instance.
@@ -1276,7 +1302,7 @@ mod tests {
                         let outcome = registry.intern(build_tag(key, note));
                         if let Some(expected) = model.get(key) {
                             prop_assert!(!outcome.is_registered());
-                            prop_assert_eq!(outcome.canonical(), expected);
+                            prop_assert!(Canonical::ptr_eq(outcome.canonical(), expected));
                         } else {
                             prop_assert!(outcome.is_registered());
                             prop_assert_eq!(outcome.canonical().note.as_str(), note);
@@ -1289,7 +1315,17 @@ mod tests {
                     }
                 }
                 for key in MODEL_KEYS {
-                    prop_assert_eq!(registry.get(*key), model.get(key).cloned(), "key {}", key);
+                    let registered = registry.get(*key);
+                    let expected = model.get(key);
+                    prop_assert!(
+                        match (&registered, expected) {
+                            (Some(registered), Some(expected)) => Canonical::ptr_eq(registered, expected),
+                            (None, None) => true,
+                            _ => false,
+                        },
+                        "key {}",
+                        key
+                    );
                 }
             }
         }
@@ -1373,7 +1409,9 @@ mod tests {
             .collect();
         let first = &canonical_handles[0];
         assert!(
-            canonical_handles.iter().all(|handle| handle == first),
+            canonical_handles
+                .iter()
+                .all(|handle| Canonical::ptr_eq(handle, first)),
             "not all canonical handles were equal"
         );
     }
@@ -1414,8 +1452,8 @@ mod tests {
                                 panic!("key {key} must be registered once progress observed it")
                             });
                             if let Some(previous) = observed.get(&key_index) {
-                                assert_eq!(
-                                    *previous, handle,
+                                assert!(
+                                    Canonical::ptr_eq(previous, &handle),
                                     "reader {reader_index} saw a different handle for {key} \
                                      on step {step}"
                                 );

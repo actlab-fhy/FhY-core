@@ -15,11 +15,10 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
-use serde::{Deserialize, Deserializer, Serialize, de};
+use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::decode::{self, Decode};
 use crate::identifier::reserved::ReservedIdentifier;
-use crate::identifier::{HasIdentifier, Identifier, IdentifierWire};
+use crate::identifier::{HasIdentifier, Identifier};
 use crate::interned::{Canonical, InternOutcome, InternRegistry, Interned};
 
 /// A vocabulary of described tags.
@@ -178,29 +177,43 @@ impl<K: TagKind> fmt::Display for DescribedTag<K> {
     }
 }
 
-impl<K: TagKind> Decode for DescribedTag<K> {
-    type Payload = DescribedTagPayload;
-
-    fn build_from_payload<E: de::Error>(payload: Self::Payload) -> Result<Self, E> {
-        let name = Identifier::try_from(payload.name).map_err(E::custom)?;
-        Ok(Self::create(name, payload.description))
-    }
-}
-
-/// Decoding checks every field of the payload before it restores the name,
-/// so a rejected payload leaves the id counter untouched.
-impl<'de, K: TagKind> Deserialize<'de> for DescribedTag<K> {
+/// Decodes a tag's payload and registers it: a payload naming a registered
+/// tag yields that tag, keeping its description.
+///
+/// Only the handle decodes, so a decoded tag is always the registered one:
+///
+/// ```compile_fail
+/// use fhy_core::op_attribute::OpAttribute;
+///
+/// let json = r#"{"name":{"id":16,"name_hint":"commutative"},"description":"d"}"#;
+/// let _detached: OpAttribute = serde_json::from_str(json).unwrap();
+/// ```
+///
+/// ```
+/// use fhy_core::interned::Canonical;
+/// use fhy_core::op_attribute::OpAttribute;
+///
+/// let json = r#"{"name":{"id":16,"name_hint":"commutative"},"description":"d"}"#;
+/// let decoded: Canonical<OpAttribute> = serde_json::from_str(json).unwrap();
+///
+/// assert!(Canonical::ptr_eq(&decoded, OpAttribute::commutative()));
+/// ```
+impl<'de, K: TagKind> Deserialize<'de> for Canonical<DescribedTag<K>> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        decode::deserialize_via_payload(deserializer)
+        let wire = DescribedTagWire::deserialize(deserializer)?;
+        Ok(DescribedTag::register(wire.name, wire.description))
     }
 }
 
-/// The checked payload of a [`DescribedTag`], with its name not yet
-/// restored.
+/// The wire form of a [`DescribedTag`], decoded.
 #[derive(Deserialize)]
-#[serde(rename = "DescribedTag", deny_unknown_fields)]
-pub(crate) struct DescribedTagPayload {
-    name: IdentifierWire,
+#[serde(
+    rename = "DescribedTag",
+    expecting = "a described tag",
+    deny_unknown_fields
+)]
+struct DescribedTagWire {
+    name: Identifier,
     description: String,
 }
 

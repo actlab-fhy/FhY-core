@@ -342,7 +342,11 @@ impl Visitor<'_> for PayloadIdVisitor {
 /// without touching the global counter; converting it into an
 /// [`Identifier`] restores the id.
 #[derive(Deserialize)]
-#[serde(rename = "Identifier", deny_unknown_fields)]
+#[serde(
+    rename = "Identifier",
+    expecting = "an identifier",
+    deny_unknown_fields
+)]
 pub(crate) struct IdentifierWire {
     id: PayloadId,
     name_hint: String,
@@ -725,11 +729,12 @@ mod tests {
         Text,
         /// A bare identifier, from a JSON value.
         Value,
-        /// The name of a note's kind, read after the note.
+        /// The name of a note's kind.
         NoteKind,
         /// The name of a canonical op attribute.
         OpAttribute,
-        /// The name of a value domain's parent, read after the domain.
+        /// The name of a value domain's parent, the first level of its
+        /// chain.
         ValueDomainParent,
         /// The identifier of an identifier reference expression.
         Expression,
@@ -760,15 +765,13 @@ mod tests {
                 ))
                 .map(drop),
                 Self::ValueDomainParent => {
-                    let parent = format!(
-                        "{{\"name\":{identifier},\"description\":\"d\",\"parent\":null}}"
-                    );
                     let valid = format!(
                         "{{\"id\":{},\"name_hint\":\"child\"}}",
                         Identifier::new("out-of-range-child").id()
                     );
-                    serde_json::from_str::<ValueDomain>(&format!(
-                        "{{\"name\":{valid},\"description\":\"d\",\"parent\":{parent}}}"
+                    serde_json::from_str::<Canonical<ValueDomain>>(&format!(
+                        "[{{\"name\":{identifier},\"description\":\"d\"}},\
+                         {{\"name\":{valid},\"description\":\"d\"}}]"
                     ))
                     .map(drop)
                 }
@@ -785,9 +788,11 @@ mod tests {
         /// identifier's own message.
         fn describe_prefix(self) -> &'static str {
             match self {
-                Self::Text | Self::Value | Self::OpAttribute => "",
-                Self::NoteKind => "in `kind`: ",
-                Self::ValueDomainParent => "in `parent`: ",
+                Self::Text
+                | Self::Value
+                | Self::NoteKind
+                | Self::OpAttribute
+                | Self::ValueDomainParent => "",
                 Self::Expression => "in `identifier`: ",
             }
         }
@@ -795,13 +800,16 @@ mod tests {
         /// Return whether a number reaches the identifier's decode as the
         /// JSON text wrote it.
         ///
-        /// Along the other paths it passes through a `serde_json::Value` or
-        /// a buffered level first. With `serde_json`'s `arbitrary_precision`
-        /// feature on, such a number reaches the decode as its digits or as
-        /// a map, so a negative, fractional or oversized id is still
-        /// rejected there, but with `serde_json`'s own message.
+        /// Along the other paths it passes through a `serde_json::Value`
+        /// first. With `serde_json`'s `arbitrary_precision` feature on, such
+        /// a number reaches the decode as its digits, so a negative,
+        /// fractional or oversized id is still rejected there, but with
+        /// `serde_json`'s own message.
         fn reads_numbers_exactly(self) -> bool {
-            matches!(self, Self::Text | Self::OpAttribute)
+            matches!(
+                self,
+                Self::Text | Self::NoteKind | Self::OpAttribute | Self::ValueDomainParent
+            )
         }
 
         /// Assert the error along this path for the id token `id` is
@@ -873,8 +881,8 @@ mod tests {
         path.assert_rejected_with(id, "invalid type: floating point");
     }
 
-    /// Test that serde rejects a negative or fractional id, whichever payload
-    /// the identifier is nested in.
+    /// Test that serde rejects a negative, fractional or string id, whichever
+    /// payload the identifier is nested in.
     #[rstest]
     fn serde_rejects_a_negative_or_fractional_id(
         #[values(
@@ -891,7 +899,9 @@ mod tests {
             ("1.5", "invalid type: floating point `1.5`, expected an id from 0 to \
                      9223372036854775807"),
             ("1e3", "invalid type: floating point `1000.0`, expected an id from 0 to \
-                     9223372036854775807")
+                     9223372036854775807"),
+            ("\"7\"", "invalid type: string \"7\", expected an id from 0 to \
+                       9223372036854775807")
         )]
         case: (&str, &str),
     ) {

@@ -50,9 +50,8 @@ impl sealed::Sealed for OpAttributeVocabulary {
 /// [`Identifier`](crate::identifier::Identifier), whatever their
 /// descriptions say.
 ///
-/// Decoding an attribute canonicalizes it only through the handle, so
-/// deserialize a [`Canonical<OpAttribute>`]. Deserializing a bare
-/// `OpAttribute` yields a value that no registry knows about.
+/// Only a [`Canonical<OpAttribute>`] decodes, registering the attribute
+/// unless its name is registered already.
 pub type OpAttribute = DescribedTag<OpAttributeVocabulary>;
 
 /// The shipped attributes, in registration order, with their descriptions.
@@ -137,9 +136,7 @@ mod tests {
 
     use crate::identifier::{HasIdentifier, Identifier};
     use crate::interned::{Canonical, Interned};
-    use crate::test_support::{
-        has_counter_passed, hold_id_counter, reserve_far_ahead_ids, reserve_pinned_id,
-    };
+    use crate::test_support::reserve_pinned_id;
 
     /// Return every attribute this module ships as a default.
     fn list_default_attributes() -> [&'static Canonical<OpAttribute>; 4] {
@@ -339,7 +336,7 @@ mod tests {
         let json = serde_json::to_string(&*attribute).unwrap();
         let restored: Canonical<OpAttribute> = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(restored, attribute);
+        assert!(Canonical::ptr_eq(&restored, &attribute));
     }
 
     #[test]
@@ -348,7 +345,7 @@ mod tests {
 
         let restored: Canonical<OpAttribute> = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(restored, *OpAttribute::pure());
+        assert!(Canonical::ptr_eq(&restored, OpAttribute::pure()));
     }
 
     #[test]
@@ -381,7 +378,7 @@ mod tests {
 
         let restored: Canonical<OpAttribute> = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(restored, canonical);
+        assert!(Canonical::ptr_eq(&restored, &canonical));
         assert_eq!(restored.description(), "original description");
     }
 
@@ -403,24 +400,60 @@ mod tests {
         assert!(error.to_string().contains(expected_message), "{error}");
     }
 
-    /// Test a payload rejected for a field after its name leaves the name's
-    /// id unrestored.
-    #[rstest]
-    #[case::trailing_unknown_field(",\"description\":\"desc\",\"zzz\":1", "zzz")]
-    #[case::mistyped_trailing_description(",\"description\":3", "invalid type")]
-    fn a_payload_rejected_after_its_name_restores_no_name(
-        #[case] fields_after_the_name: &str,
-        #[case] expected_message: &str,
-    ) {
-        let _counter = hold_id_counter();
-        let [id] = reserve_far_ahead_ids("rejected-after-name-anchor");
-        let json =
-            format!("{{\"name\":{{\"id\":{id},\"name_hint\":\"a\"}}{fields_after_the_name}}}");
+    /// Test an attribute round-trips through postcard, a format that is not
+    /// self-describing, back to its canonical handle.
+    #[test]
+    fn an_attribute_round_trips_through_postcard() {
+        let attribute = OpAttribute::register(Identifier::new("postcard-round-trip"), "desc");
+
+        let bytes = postcard::to_allocvec(&*attribute).expect("the attribute encodes");
+        let restored: Canonical<OpAttribute> =
+            postcard::from_bytes(&bytes).expect("the attribute decodes");
+
+        assert!(Canonical::ptr_eq(&restored, &attribute));
+    }
+
+    /// Test a payload with a reserved id and any description decodes to the
+    /// shipped attribute, keeping its canonical description.
+    #[test]
+    fn a_reserved_id_with_a_conflicting_description_decodes_to_the_shipped_attribute() {
+        let json = r#"{"name":{"id":17,"name_hint":"renamed"},"description":"conflicting"}"#;
+
+        let restored: Canonical<OpAttribute> = serde_json::from_str(json).unwrap();
+
+        assert!(Canonical::ptr_eq(&restored, OpAttribute::associative()));
+        assert_eq!(
+            restored.description(),
+            OpAttribute::associative().description()
+        );
+    }
+
+    /// Test a payload with an id in the reserved block that no shipped tag
+    /// holds decodes as an ordinary attribute.
+    #[test]
+    fn an_unassigned_reserved_id_decodes_as_an_ordinary_attribute() {
+        let json = r#"{"name":{"id":500,"name_hint":"unassigned"},"description":"ordinary"}"#;
+
+        let restored: Canonical<OpAttribute> = serde_json::from_str(json).unwrap();
+
+        assert_eq!(restored.name().id(), 500);
+        assert_eq!(restored.description(), "ordinary");
+    }
+
+    /// Test a payload naming its id twice is rejected.
+    #[test]
+    fn a_payload_with_a_duplicate_id_is_rejected() {
+        let id = Identifier::new("duplicate-id").id();
+        let json = format!(
+            "{{\"name\":{{\"id\":{id},\"id\":{id},\"name_hint\":\"x\"}},\"description\":\"d\"}}"
+        );
 
         let error = serde_json::from_str::<Canonical<OpAttribute>>(&json).unwrap_err();
 
-        assert!(error.to_string().contains(expected_message), "{error}");
-        assert!(!has_counter_passed(id));
+        assert!(
+            error.to_string().contains("duplicate field `id`"),
+            "{error}"
+        );
     }
 
     #[test]
