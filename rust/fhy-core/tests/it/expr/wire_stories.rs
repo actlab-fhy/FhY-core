@@ -11,7 +11,9 @@ use crate::support::stack as stack_support;
 
 use std::fmt::Write as _;
 
-use expression_support::{build_callee, build_decimal_literal, build_identifier, build_literal};
+use expression_support::{
+    build_callee, build_decimal_literal, build_identifier, build_literal, expect_literal,
+};
 use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, ExpressionKind, LiteralValue, UnaryOperation,
@@ -47,14 +49,6 @@ fn build_literal_node(value: &Value) -> Value {
 /// Return the table node of a reference to `identifier`.
 fn build_identifier_node(identifier: &Identifier) -> Value {
     json!({"identifier": {"id": identifier.id(), "name_hint": identifier.name_hint()}})
-}
-
-/// Return the literal an expression refers to, failing the test otherwise.
-fn expect_literal(expression: &Expression) -> &LiteralValue {
-    let ExpressionKind::Literal(literal) = expression.kind() else {
-        panic!("expected a literal, got {expression:?}");
-    };
-    literal
 }
 
 /// Assert decoding `table` is refused with a data error whose message

@@ -34,6 +34,19 @@ pub(crate) fn build_literal(value: impl Into<LiteralValue>) -> Expression {
     Expression::from(value.into())
 }
 
+/// Return the literal `expression` holds, failing the test otherwise.
+///
+/// # Panics
+///
+/// Panics if `expression` is not a literal.
+#[must_use]
+pub(crate) fn expect_literal(expression: &Expression) -> &LiteralValue {
+    let ExpressionKind::Literal(literal) = expression.kind() else {
+        panic!("expected a literal, got {expression:?}");
+    };
+    literal
+}
+
 /// Return a decimal literal expression holding the value of the numeric
 /// text `text`, an integer text included.
 ///

@@ -21,7 +21,9 @@ use fhy_core::expr::{
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
 
-use expression_support::{build_identifier, build_literal, build_piecewise_node_or_panic};
+use expression_support::{
+    build_identifier, build_literal, build_piecewise_node_or_panic, expect_literal,
+};
 
 const COMPOSED_NAMES: [&str; 16] = [
     "max",
@@ -264,14 +266,6 @@ fn find_right_literal(expression: &Expression) -> &LiteralValue {
     };
     let ExpressionKind::Literal(literal) = node.right().kind() else {
         panic!("expected a literal right operand, got {:?}", node.right());
-    };
-    literal
-}
-
-/// Return the literal held by `expression`, failing the test otherwise.
-fn find_literal(expression: &Expression) -> &LiteralValue {
-    let ExpressionKind::Literal(literal) = expression.kind() else {
-        panic!("expected a literal, got {expression:?}");
     };
     literal
 }
@@ -667,7 +661,7 @@ fn composed_function_relu_passes_an_integer_zero_to_max() {
 
     assert_eq!(call.callee(), &Callee::Builtin(BuiltinFunction::Max));
     assert!(matches!(
-        find_literal(&call.arguments()[1]),
+        expect_literal(&call.arguments()[1]),
         LiteralValue::Int(zero) if *zero == BigInt::from(0)
     ));
 }
@@ -708,8 +702,8 @@ fn composed_function_sign_yields_integer_literals() {
     let values: Vec<Option<&BigInt>> = piecewise
         .cases()
         .iter()
-        .map(|(_, value)| find_literal(value))
-        .chain([find_literal(piecewise.otherwise())])
+        .map(|(_, value)| expect_literal(value))
+        .chain([expect_literal(piecewise.otherwise())])
         .map(|literal| match literal {
             LiteralValue::Int(value) => Some(value),
             _ => None,
