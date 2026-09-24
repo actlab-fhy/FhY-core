@@ -155,19 +155,12 @@ This project uses [uv](https://docs.astral.sh/uv/) for environment and dependenc
 
 ## Rust Crate
 
-Parts of FhY Core are implemented in Rust, in the crate `fhy-core` under `rust/fhy-core/`: identifiers, interning, and the `OpAttribute` and `ValueDomain` tag types. The crate serves two purposes:
+Parts of FhY Core are implemented in Rust, in the crate `fhy-core` under `rust/fhy-core/`. Its modules are `identifier`, `interned`, `described_tag`, `diagnostic`, `op_attribute`, `value_domain`, `provenance`, `tree`, `expr` (with `expr::builtins`, `expr::pattern` and `expr::passes`) and `pass`; the crate's [README](rust/fhy-core/README.md) describes each. Where a concept is defined in both languages (`identifier`, `interned`), the Rust behavior matches Python's; elsewhere Rust defines it. The crate serves two purposes:
 
-- **Standalone Rust library**: usable by any Rust project. The crate is not published to crates.io, so depend on it through git: `fhy-core = { git = "https://github.com/actlab-fhy/FhY-core.git" }`. Cargo finds the crate in the repository's workspace by package name.
+- **Standalone Rust library**: usable by any Rust project, from crates.io: `fhy-core = "0.2"`.
 - **Python extension module**: the separate `fhy-core-py` crate under `rust/fhy-core-py/` depends on `fhy-core` and wraps it with [PyO3](https://pyo3.rs/) bindings. [maturin](https://www.maturin.rs/) compiles it into the Python package as `fhy_core._rs`, which currently backs identifier id allocation. The Python API is the same with or without the extension.
 
 `fhy-core` itself has no PyO3 dependency, so pure-Rust consumers never pull in a Python dependency; only `fhy-core-py` does.
-
-The `testing` feature exposes `fhy_core::testing`, the Rust counterpart of `fhy_core.testing_patches`. Inside a `DeterministicIdentifierScope` scope, identifiers created with the same name hint compare equal, so a test can compare an object graph whose identifiers were created inside the code under test with one it built itself. A scope belongs to the thread that entered it; other threads join it through a handle from `share()`. Enable the feature only for tests:
-
-```toml
-[dev-dependencies]
-fhy-core = { git = "https://github.com/actlab-fhy/FhY-core.git", features = ["testing"] }
-```
 
 ### Building and Testing the Rust Crate
 
@@ -183,9 +176,10 @@ cargo check -p fhy-core-py
 # Run all Rust tests, as CI does
 cargo test --workspace --locked --all-features
 
-# Format and lint, as CI does
+# Format, lint and document, as CI does
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 ```
 
 ### Rebuilding the Python Extension

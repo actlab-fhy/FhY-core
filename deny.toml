@@ -1,0 +1,48 @@
+# cargo-deny configuration: supply-chain checks for the Cargo workspace.
+# Run locally with `cargo deny check`; CI runs it in the `deny` job.
+# Docs: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Check every crate any build of the workspace can pull in.
+all-features = true
+
+[advisories]
+# RustSec advisories. Vulnerabilities and unsound crates are errors by
+# default; also refuse yanked releases in Cargo.lock. An entry in `ignore`
+# needs the advisory id and a reason.
+yanked = "deny"
+ignore = []
+
+[licenses]
+# fhy-core is BSD-3-Clause. Every dependency must be available under one of
+# these permissive licenses. A dual-licensed crate passes if either choice is
+# allowed, so "MIT OR Apache-2.0 OR LGPL-2.1-or-later" is taken as MIT.
+# Keep the list to licenses the lock file actually needs: cargo-deny warns
+# about an allowance no crate uses.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "MIT",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.93
+
+[licenses.private]
+# Skip workspace crates that are never published (fhy-core-py).
+ignore = true
+
+[bans]
+# Two versions of one crate compile twice. Today only transitive build
+# dependencies are duplicated, so report duplicates without failing.
+multiple-versions = "warn"
+# A `*` version requirement is refused, except on path dependencies inside
+# the workspace.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# Only crates.io; a git or other-registry dependency must be added here on
+# purpose.
+unknown-registry = "deny"
+unknown-git = "deny"

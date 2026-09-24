@@ -1,0 +1,923 @@
+//! The expression handle, its node kinds, and structural equality.
+//!
+//! An [`Expression`] is a cheap, clonable handle to an immutable node, which
+//! [`Expression::kind`] exposes as an [`ExpressionKind`] to match on. A clone
+//! shares the node, so one subtree may appear in several places. Equality and
+//! hashing are structural, and [`Expression::ptr_eq`] tells whether two
+//! handles share one node.
+
+use std::collections::{HashMap, HashSet};
+use std::convert::Infallible;
+use std::hash::{BuildHasher, DefaultHasher, Hash, Hasher};
+use std::sync::Arc;
+
+use crate::identifier::Identifier;
+use crate::tree::{
+    BuildIdentityHasher, NodeHandle, NodeIdentity, RewriteTreeError, Rewriter, TraversalOrder,
+    Tree, TreeVisitor, rewrite_tree, walk_tree,
+};
+
+use super::alpha::AlphaRenaming;
+use super::callee::Callee;
+use super::error::{PiecewiseError, RebuildError};
+use super::literal::LiteralValue;
+use super::operation::{BinaryOperation, LogicalOperation, UnaryOperation};
+
+/// The childless kind a node is left holding while its children are moved
+/// out to be dropped.
+const DROP_PLACEHOLDER: ExpressionKind = ExpressionKind::Literal(LiteralValue::Bool(false));
+
+/// The children of a node, in visiting order, from either end.
+enum Children<'a> {
+    Contiguous(std::slice::Iter<'a, Expression>),
+    /// The children of a piecewise: each case's condition then value, then
+    /// the otherwise branch.
+    Piecewise {
+        cases: std::slice::Iter<'a, (Expression, Expression)>,
+        front_value: Option<&'a Expression>,
+        back_condition: Option<&'a Expression>,
+        otherwise: Option<&'a Expression>,
+    },
+}
+
+impl<'a> Iterator for Children<'a> {
+    type Item = &'a Expression;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Contiguous(children) => children.next(),
+            Self::Piecewise {
+                cases,
+                front_value,
+                back_condition,
+                otherwise,
+            } => {
+                if let Some(value) = front_value.take() {
+                    return Some(value);
+                }
+                if let Some((condition, value)) = cases.next() {
+                    *front_value = Some(value);
+                    return Some(condition);
+                }
+                back_condition.take().or_else(|| otherwise.take())
+            }
+        }
+    }
+}
+
+impl DoubleEndedIterator for Children<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Contiguous(children) => children.next_back(),
+            Self::Piecewise {
+                cases,
+                front_value,
+                back_condition,
+                otherwise,
+            } => {
+                if let Some(otherwise) = otherwise.take() {
+                    return Some(otherwise);
+                }
+                if let Some(condition) = back_condition.take() {
+                    return Some(condition);
+                }
+                if let Some((condition, value)) = cases.next_back() {
+                    *back_condition = Some(condition);
+                    return Some(value);
+                }
+                front_value.take()
+            }
+        }
+    }
+}
+
+/// Move the children out of `expression`'s node onto `pending` if this is
+/// the node's last handle.
+fn move_children_of_last_handle(expression: &mut Expression, pending: &mut Vec<Expression>) {
+    let Some(kind) = Arc::get_mut(&mut expression.0) else {
+        return;
+    };
+    match std::mem::replace(kind, DROP_PLACEHOLDER) {
+        ExpressionKind::Unary(node) => pending.push(node.operand),
+        ExpressionKind::Binary(node) => pending.extend(node.operands),
+        ExpressionKind::Logical(node) => pending.extend(node.operands),
+        ExpressionKind::Piecewise(node) => {
+            for (condition, value) in node.cases {
+                pending.push(condition);
+                pending.push(value);
+            }
+            pending.push(node.otherwise);
+        }
+        ExpressionKind::Call(node) => pending.extend(node.arguments),
+        ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) => {}
+    }
+}
+
+/// Compare the data of two nodes, excluding their children, and return
+/// whether it matches; `identifiers_match` compares two identifier leaves.
+fn is_node_data_equal(
+    left: &Expression,
+    right: &Expression,
+    identifiers_match: &impl Fn(&Identifier, &Identifier) -> bool,
+) -> bool {
+    match (left.kind(), right.kind()) {
+        (ExpressionKind::Unary(left), ExpressionKind::Unary(right)) => {
+            left.operation == right.operation
+        }
+        (ExpressionKind::Binary(left), ExpressionKind::Binary(right)) => {
+            left.operation == right.operation
+        }
+        (ExpressionKind::Logical(left), ExpressionKind::Logical(right)) => {
+            left.operation == right.operation && left.operands.len() == right.operands.len()
+        }
+        (ExpressionKind::Identifier(left), ExpressionKind::Identifier(right)) => {
+            identifiers_match(left, right)
+        }
+        (ExpressionKind::Literal(left), ExpressionKind::Literal(right)) => left == right,
+        (ExpressionKind::Piecewise(left), ExpressionKind::Piecewise(right)) => {
+            left.cases.len() == right.cases.len()
+        }
+        (ExpressionKind::Call(left), ExpressionKind::Call(right)) => {
+            left.callee == right.callee && left.arguments.len() == right.arguments.len()
+        }
+        _ => false,
+    }
+}
+
+/// Compare two trees node by node; identical handles are skipped when
+/// `skip_shared_nodes` is set, and `identifiers_match` compares two
+/// identifier leaves.
+///
+/// A pair of nodes both of which may be shared is compared once: the walk
+/// is depth-first, so by the time a pair comes up again every pair below
+/// its first occurrence has been compared, and a difference would have
+/// ended the walk. Two DAGs therefore compare in time linear in their
+/// distinct pairs of nodes.
+fn is_tree_equal(
+    left: &Expression,
+    right: &Expression,
+    skip_shared_nodes: bool,
+    identifiers_match: &impl Fn(&Identifier, &Identifier) -> bool,
+) -> bool {
+    let mut compared: HashSet<(NodeIdentity, NodeIdentity), BuildIdentityHasher> =
+        HashSet::default();
+    let mut pending = vec![(left, right)];
+    while let Some((left, right)) = pending.pop() {
+        if skip_shared_nodes && Expression::ptr_eq(left, right) {
+            continue;
+        }
+        if left.is_shared()
+            && right.is_shared()
+            && !compared.insert((left.identity(), right.identity()))
+        {
+            continue;
+        }
+        if !is_node_data_equal(left, right, identifiers_match) {
+            return false;
+        }
+        pending.extend(left.children().zip(right.children()));
+    }
+    true
+}
+
+/// Feed the data of `expression`'s node, excluding its children, to
+/// `hasher`, starting with a tag for its kind.
+fn hash_node_data(expression: &Expression, hasher: &mut impl Hasher) {
+    match expression.kind() {
+        ExpressionKind::Unary(node) => {
+            hasher.write_u8(0);
+            node.operation.hash(hasher);
+        }
+        ExpressionKind::Binary(node) => {
+            hasher.write_u8(1);
+            node.operation.hash(hasher);
+        }
+        ExpressionKind::Identifier(identifier) => {
+            hasher.write_u8(2);
+            identifier.hash(hasher);
+        }
+        ExpressionKind::Literal(value) => {
+            hasher.write_u8(3);
+            value.hash(hasher);
+        }
+        ExpressionKind::Piecewise(node) => {
+            hasher.write_u8(4);
+            hasher.write_usize(node.cases.len());
+        }
+        ExpressionKind::Call(node) => {
+            hasher.write_u8(5);
+            node.callee.hash(hasher);
+            hasher.write_usize(node.arguments.len());
+        }
+        ExpressionKind::Logical(node) => {
+            hasher.write_u8(6);
+            node.operation.hash(hasher);
+            hasher.write_usize(node.operands.len());
+        }
+    }
+}
+
+/// A node whose structural digest is being computed: the node, its
+/// children still to digest, and where its children's digests start on the
+/// walk's digest stack.
+struct DigestFrame<'a> {
+    node: &'a Expression,
+    children: Children<'a>,
+    first_digest: usize,
+}
+
+impl<'a> DigestFrame<'a> {
+    fn new(node: &'a Expression, first_digest: usize) -> Self {
+        Self {
+            node,
+            children: node.iterate_children(),
+            first_digest,
+        }
+    }
+}
+
+/// Return the structural digest of `root`: the hash, under the fixed-key
+/// [`DefaultHasher`], of the node's data (see [`hash_node_data`]) followed
+/// by the digests of its children in order.
+///
+/// The digest depends only on the structure, so equal expressions have
+/// equal digests however their subtrees are shared. It is computed
+/// bottom-up, and the digest of a node that may be shared is remembered by
+/// identity, so each distinct shared node is digested once.
+fn compute_structural_digest(root: &Expression) -> u64 {
+    let mut shared_digests: HashMap<NodeIdentity, u64, BuildIdentityHasher> = HashMap::default();
+    let mut digests: Vec<u64> = Vec::new();
+    let mut ancestors: Vec<DigestFrame<'_>> = Vec::new();
+    let mut current = DigestFrame::new(root, 0);
+    loop {
+        if let Some(child) = current.children.next() {
+            let known = child
+                .is_shared()
+                .then(|| shared_digests.get(&child.identity()))
+                .flatten();
+            if let Some(&digest) = known {
+                digests.push(digest);
+            } else {
+                let frame = DigestFrame::new(child, digests.len());
+                ancestors.push(std::mem::replace(&mut current, frame));
+            }
+            continue;
+        }
+        let mut hasher = DefaultHasher::new();
+        hash_node_data(current.node, &mut hasher);
+        for child_digest in digests.drain(current.first_digest..) {
+            hasher.write_u64(child_digest);
+        }
+        let digest = hasher.finish();
+        let Some(parent) = ancestors.pop() else {
+            return digest;
+        };
+        if current.node.is_shared() {
+            shared_digests.insert(current.node.identity(), digest);
+        }
+        digests.push(digest);
+        current = parent;
+    }
+}
+
+/// Check the literal condition of the piecewise case at `case_index` is a
+/// Boolean; the constructor and the wire decoder share this check.
+pub(super) fn validate_condition_literal(
+    case_index: usize,
+    condition: &LiteralValue,
+) -> Result<(), PiecewiseError> {
+    if !matches!(condition, LiteralValue::Bool(_)) {
+        return Err(PiecewiseError::NonBooleanConditionLiteral { case_index });
+    }
+    Ok(())
+}
+
+/// The visitor behind [`Expression::free_identifiers`]: records every
+/// identifier reference, walking below a node that may be shared only at
+/// its first occurrence.
+#[derive(Default)]
+struct FreeIdentifierCollector {
+    free: HashSet<Identifier>,
+    visited_shared_nodes: HashSet<NodeIdentity, BuildIdentityHasher>,
+    /// Whether the node just visited is seen for the first time.
+    is_first_visit: bool,
+}
+
+impl TreeVisitor<Expression> for FreeIdentifierCollector {
+    type Error = Infallible;
+
+    fn visit(&mut self, node: &Expression, _cx: &mut ()) -> Result<(), Infallible> {
+        self.is_first_visit =
+            !node.is_shared() || self.visited_shared_nodes.insert(node.identity());
+        if self.is_first_visit {
+            if let ExpressionKind::Identifier(identifier) = node.kind() {
+                self.free.insert(identifier.clone());
+            }
+        }
+        Ok(())
+    }
+
+    fn walks_children(&mut self, _node: &Expression) -> bool {
+        self.is_first_visit
+    }
+}
+
+/// The rewriter behind [`Expression::substitute`]: replaces each reference
+/// to a mapped identifier with a handle to its replacement.
+struct Substitution<'m, S> {
+    replacements: &'m HashMap<Identifier, Expression, S>,
+}
+
+impl<S: BuildHasher> Rewriter<Expression> for Substitution<'_, S> {
+    type Error = Infallible;
+
+    fn rewrite(
+        &mut self,
+        node: &Expression,
+        _cx: &mut (),
+    ) -> Result<Option<Expression>, Infallible> {
+        let ExpressionKind::Identifier(identifier) = node.kind() else {
+            return Ok(None);
+        };
+        Ok(self.replacements.get(identifier).cloned())
+    }
+}
+
+/// A symbolic expression: a shared handle to an immutable node.
+///
+/// Cloning bumps a reference count and shares the node. `==` and `Hash`
+/// compare trees structurally; [`ptr_eq`](Self::ptr_eq) compares handles.
+/// `Display` writes the text [`display`](Self::display) writes under the
+/// default options, a DAG's shared subtrees at every occurrence. `Debug`
+/// writes a bounded text for diagnostics: the functional notation with
+/// identifier ids, eliding everything after 1,000 nodes, so a failing
+/// `assert_eq!` on any expression prints in bounded time.
+///
+/// Dropping, comparing, hashing, substituting into, collecting the free
+/// identifiers of, displaying, and screening a tree keep their pending
+/// nodes on the heap, so they handle a tree of any depth on any thread. All
+/// but dropping and displaying handle a subtree occurring in several places
+/// once, so a DAG such as `x(k+1) = xk + xk` costs time linear in its
+/// distinct nodes. Serialization writes, and deserialization reads, a flat
+/// table of the distinct nodes (see the [`Serialize`](serde::Serialize)
+/// impl), so neither recurses per tree level either, and a DAG's sharing
+/// survives the round trip.
+///
+/// # Examples
+///
+/// ```
+/// use fhy_core::identifier::Identifier;
+/// use fhy_core::expr::{Expression, ExpressionKind};
+///
+/// let x = Expression::from(Identifier::new("x"));
+/// let sum = &x + 1;
+/// let same_sum = &x + 1;
+/// assert_eq!(sum, same_sum);
+/// assert!(!Expression::ptr_eq(&sum, &same_sum));
+/// assert!(matches!(sum.kind(), ExpressionKind::Binary(_)));
+/// ```
+///
+/// `/` builds true division, whatever the operand types: `x / 4` over
+/// integers is the exact real quotient, and
+/// [`floor_divide`](Self::floor_divide) rounds down. There is no `%`
+/// operator; the remainder of floor division is
+/// [`floor_mod`](Self::floor_mod):
+///
+/// ```compile_fail,E0369
+/// use fhy_core::identifier::Identifier;
+/// use fhy_core::expr::Expression;
+///
+/// let remainder = Expression::from(Identifier::new("x")) % 3;
+/// ```
+///
+/// A `bool` does not convert into an expression, so a comparison result
+/// cannot stand in for a Boolean constant by accident; a Boolean literal is
+/// built with [`Expression::literal`]:
+///
+/// ```compile_fail,E0277
+/// use fhy_core::expr::{Expression, UnaryOperation};
+///
+/// let negated = Expression::new_unary(UnaryOperation::LogicalNot, true);
+/// ```
+///
+/// Nor does a string; a numeric text becomes a literal through
+/// [`LiteralValue::parse_text`]:
+///
+/// ```compile_fail,E0277
+/// use fhy_core::expr::{Expression, UnaryOperation};
+///
+/// let negated = Expression::new_unary(UnaryOperation::Negate, "1.5");
+/// ```
+///
+/// Expressions have no order: `<` does not compare them, and a comparison
+/// node is built with [`less`](Self::less) and its siblings.
+///
+/// ```compile_fail,E0369
+/// use fhy_core::identifier::Identifier;
+/// use fhy_core::expr::Expression;
+///
+/// let x = Expression::from(Identifier::new("x"));
+/// let y = Expression::from(Identifier::new("y"));
+/// let ordered = x < y;
+/// ```
+#[derive(Clone)]
+pub struct Expression(Arc<ExpressionKind>);
+
+/// The node an [`Expression`] refers to, one variant per node kind.
+#[expect(clippy::exhaustive_enums, reason = "passes match every node kind")]
+#[derive(Debug, Clone)]
+pub enum ExpressionKind {
+    /// A unary operation applied to one operand.
+    Unary(UnaryExpression),
+    /// A binary operation applied to two operands.
+    Binary(BinaryExpression),
+    /// A conjunction or disjunction of two or more operands.
+    Logical(LogicalExpression),
+    /// A reference to an identifier.
+    Identifier(Identifier),
+    /// A constant.
+    Literal(LiteralValue),
+    /// A first-match-wins choice among cases, with a fallback.
+    Piecewise(PiecewiseExpression),
+    /// A function applied to arguments.
+    Call(CallExpression),
+}
+
+/// A unary operation applied to one operand.
+#[derive(Debug, Clone)]
+pub struct UnaryExpression {
+    operation: UnaryOperation,
+    operand: Expression,
+}
+
+/// A binary operation applied to a left and a right operand.
+#[derive(Debug, Clone)]
+pub struct BinaryExpression {
+    operation: BinaryOperation,
+    operands: [Expression; 2],
+}
+
+/// A conjunction or disjunction of two or more operands, in order.
+///
+/// A logical node has at least two operands. It is built by
+/// [`Expression::all`], [`Expression::any`], [`Expression::new_logical`],
+/// [`Expression::and`] and [`Expression::or`], none of which splices the
+/// operands of a nested logical node into it.
+#[derive(Debug, Clone)]
+pub struct LogicalExpression {
+    operation: LogicalOperation,
+    operands: Box<[Expression]>,
+}
+
+/// A first-match-wins choice: the value of the first case whose condition
+/// holds, or the otherwise branch when none does.
+///
+/// A piecewise has at least one case, and no case condition is a literal
+/// other than a Boolean.
+#[derive(Debug, Clone)]
+pub struct PiecewiseExpression {
+    cases: Box<[(Expression, Expression)]>,
+    otherwise: Expression,
+}
+
+/// A function applied to argument expressions: a built-in function or a
+/// named user function (see [`Callee`]).
+///
+/// The argument count is not checked against a built-in function's arity.
+#[derive(Debug, Clone)]
+pub struct CallExpression {
+    callee: Callee,
+    arguments: Box<[Expression]>,
+}
+
+impl Expression {
+    /// Return the node this expression refers to.
+    #[must_use]
+    pub fn kind(&self) -> &ExpressionKind {
+        &self.0
+    }
+
+    /// Return whether `this` and `other` are handles to the same node.
+    ///
+    /// Structurally equal trees built separately are not the same node.
+    #[must_use]
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
+        Arc::ptr_eq(&this.0, &other.0)
+    }
+
+    /// Return the direct children in visiting order.
+    ///
+    /// A unary node yields its operand; a binary node its left then its
+    /// right operand; a logical node its operands in order; a piecewise node
+    /// each case's condition then value, in case order, then its otherwise
+    /// branch (`c0, v0, c1, v1, ..., otherwise`); a call its arguments in
+    /// order. An identifier or a literal has no children.
+    #[must_use]
+    pub fn children(&self) -> impl DoubleEndedIterator<Item = &Expression> {
+        self.iterate_children()
+    }
+
+    /// Return the position in [`children`](Self::children) order of the
+    /// child that `error` refuses, or `None` when the error names no single
+    /// child.
+    pub(crate) fn refused_child_index(error: &RebuildError) -> Option<usize> {
+        let RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index }) =
+            error
+        else {
+            return None;
+        };
+        case_index.checked_mul(2)
+    }
+
+    /// Build a node of the same kind and operation from new children, given
+    /// in [`children`](Self::children) order.
+    ///
+    /// An identifier or a literal takes no children and returns a handle to
+    /// itself. A piecewise rebuilt from `2n + 1` children has `n` cases; a
+    /// call keeps its callee. A logical node takes exactly its own
+    /// operand count, so it keeps at least two operands, and keeps the
+    /// children as given, never flattening a nested logical node into
+    /// itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RebuildError::ChildCount`] if the number of children
+    /// differs from the node's own child count, and
+    /// [`RebuildError::Piecewise`] holding
+    /// [`PiecewiseError::NonBooleanConditionLiteral`] if a new piecewise
+    /// case condition is a literal other than a Boolean.
+    pub fn rebuild_with_children(
+        &self,
+        children: Vec<Expression>,
+    ) -> Result<Expression, RebuildError> {
+        let expected = self.count_children();
+        let actual = children.len();
+        let count_mismatch = || RebuildError::ChildCount { expected, actual };
+        if actual != expected {
+            return Err(count_mismatch());
+        }
+        let rebuilt = match self.kind() {
+            ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) => self.clone(),
+            ExpressionKind::Unary(node) => {
+                let [operand]: [Self; 1] = children
+                    .try_into()
+                    .map_err(|_rejected: Vec<Self>| count_mismatch())?;
+                Self::from_kind(ExpressionKind::Unary(UnaryExpression::new(
+                    node.operation,
+                    operand,
+                )))
+            }
+            ExpressionKind::Binary(node) => {
+                let [left, right]: [Self; 2] = children
+                    .try_into()
+                    .map_err(|_rejected: Vec<Self>| count_mismatch())?;
+                Self::from_kind(ExpressionKind::Binary(BinaryExpression::new(
+                    node.operation,
+                    left,
+                    right,
+                )))
+            }
+            ExpressionKind::Logical(node) => Self::from_kind(ExpressionKind::Logical(
+                LogicalExpression::new(node.operation, children.into_boxed_slice()),
+            )),
+            ExpressionKind::Piecewise(_) => {
+                let mut children = children.into_iter();
+                let otherwise = children.next_back().ok_or_else(count_mismatch)?;
+                let mut cases = Vec::with_capacity(expected / 2);
+                while let (Some(condition), Some(value)) = (children.next(), children.next()) {
+                    cases.push((condition, value));
+                }
+                Self::from_kind(ExpressionKind::Piecewise(
+                    PiecewiseExpression::try_new(cases, otherwise)
+                        .map_err(RebuildError::Piecewise)?,
+                ))
+            }
+            ExpressionKind::Call(node) => Self::from_kind(ExpressionKind::Call(
+                CallExpression::new(node.callee.clone(), children),
+            )),
+        };
+        Ok(rebuilt)
+    }
+
+    /// Return the identifiers the expression refers to.
+    ///
+    /// Expressions bind no identifiers, so every identifier referenced is
+    /// free. A subtree occurring in several places is walked once.
+    #[must_use]
+    pub fn free_identifiers(&self) -> HashSet<Identifier> {
+        let mut collector = FreeIdentifierCollector::default();
+        let Ok(()) = walk_tree(&mut collector, self, TraversalOrder::Pre, &mut ());
+        collector.free
+    }
+
+    /// Replace every reference to a mapped identifier with its replacement,
+    /// simultaneously.
+    ///
+    /// Replacements are not substituted into in turn, and each occurrence of
+    /// a mapped identifier becomes a handle to the same replacement node
+    /// ([`ptr_eq`](Self::ptr_eq) with it). Only the nodes above a replaced
+    /// reference are rebuilt: every subtree without one is returned as a
+    /// handle to itself, so substituting a map that replaces nothing, or
+    /// maps identifiers only to handles of their own references, returns a
+    /// handle to this expression. A subtree occurring in several places is
+    /// substituted into once and its result reused at every occurrence, so
+    /// the result shares its subtrees as this expression does, and the work
+    /// is linear in the distinct nodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PiecewiseError::NonBooleanConditionLiteral`] if a
+    /// replacement puts a literal other than a Boolean in a piecewise case
+    /// condition.
+    pub fn substitute<S: BuildHasher>(
+        &self,
+        replacements: &HashMap<Identifier, Expression, S>,
+    ) -> Result<Expression, PiecewiseError> {
+        let mut substitution = Substitution { replacements };
+        rewrite_tree(&mut substitution, self, &mut ()).map_err(|error| match error {
+            RewriteTreeError::Rewrite(never) => match never {},
+            RewriteTreeError::Rebuild {
+                source: RebuildError::Piecewise(error),
+                ..
+            } => error,
+            RewriteTreeError::Rebuild {
+                source: RebuildError::ChildCount { .. },
+                ..
+            } => unreachable!("the tree walk rebuilds a node from exactly its own children"),
+        })
+    }
+
+    /// Return whether `other` is this expression with its free identifiers
+    /// renamed by `renaming`.
+    ///
+    /// The trees must have the same structure. Where this expression refers
+    /// to an identifier `renaming` maps, `other` must refer to its image;
+    /// where it refers to an unmapped identifier, `other` must refer to the
+    /// same identifier, and that identifier must not be an image of
+    /// `renaming`. Under the empty renaming this is structural equality.
+    ///
+    /// A pair of subtrees met again at another place of the two trees is
+    /// compared once, so two DAGs compare in time linear in their distinct
+    /// nodes.
+    #[must_use]
+    pub fn is_alpha_equivalent_under(&self, other: &Expression, renaming: &AlphaRenaming) -> bool {
+        is_tree_equal(self, other, renaming.is_empty(), &|left, right| {
+            renaming.is_corresponding(left, right)
+        })
+    }
+
+    /// Return the direct children in visiting order, as
+    /// [`children`](Self::children) does, in an iterator type a walk can
+    /// keep in its frames.
+    fn iterate_children(&self) -> Children<'_> {
+        match self.kind() {
+            ExpressionKind::Unary(node) => {
+                Children::Contiguous(std::slice::from_ref(&node.operand).iter())
+            }
+            ExpressionKind::Binary(node) => Children::Contiguous(node.operands.iter()),
+            ExpressionKind::Logical(node) => Children::Contiguous(node.operands.iter()),
+            ExpressionKind::Piecewise(node) => Children::Piecewise {
+                cases: node.cases.iter(),
+                front_value: None,
+                back_condition: None,
+                otherwise: Some(&node.otherwise),
+            },
+            ExpressionKind::Call(node) => Children::Contiguous(node.arguments.iter()),
+            ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) => {
+                Children::Contiguous(std::slice::Iter::default())
+            }
+        }
+    }
+
+    /// Return the number of children, the length of
+    /// [`children`](Self::children).
+    fn count_children(&self) -> usize {
+        match self.kind() {
+            ExpressionKind::Identifier(_) | ExpressionKind::Literal(_) => 0,
+            ExpressionKind::Unary(_) => 1,
+            ExpressionKind::Binary(_) => 2,
+            ExpressionKind::Logical(node) => node.operands.len(),
+            ExpressionKind::Piecewise(node) => 2 * node.cases.len() + 1,
+            ExpressionKind::Call(node) => node.arguments.len(),
+        }
+    }
+
+    /// Wrap `kind` in a new handle.
+    pub(super) fn from_kind(kind: ExpressionKind) -> Self {
+        Self(Arc::new(kind))
+    }
+}
+
+impl From<Identifier> for Expression {
+    /// Wrap an identifier in an identifier reference.
+    fn from(identifier: Identifier) -> Self {
+        Self::from_kind(ExpressionKind::Identifier(identifier))
+    }
+}
+
+impl From<LiteralValue> for Expression {
+    /// Wrap a constant in a literal expression.
+    fn from(value: LiteralValue) -> Self {
+        Self::from_kind(ExpressionKind::Literal(value))
+    }
+}
+
+impl PartialEq for Expression {
+    /// Compare structurally: same node kinds, operations and callees,
+    /// identifiers with the same ids, equal literals, children equal
+    /// in order.
+    fn eq(&self, other: &Self) -> bool {
+        is_tree_equal(self, other, true, &|left, right| left == right)
+    }
+}
+
+impl Eq for Expression {}
+
+impl Hash for Expression {
+    /// Feed the structural digest of the tree to `state`, so equal trees
+    /// hash alike whatever they share.
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(compute_structural_digest(self));
+    }
+}
+
+/// The identity of the node the handle shares: equal for clones, distinct
+/// for separately built nodes, even structurally equal ones.
+impl NodeHandle for Expression {
+    fn identity(&self) -> NodeIdentity {
+        NodeIdentity::of_arc(&self.0)
+    }
+}
+
+/// The tree view of an expression: [`Expression::children`] and
+/// [`Expression::rebuild_with_children`]; a node is shared while it has more
+/// than one handle.
+impl Tree for Expression {
+    type RebuildError = RebuildError;
+
+    fn children(&self) -> impl Iterator<Item = &Self> {
+        Self::children(self)
+    }
+
+    fn rebuild_with_children(&self, children: Vec<Self>) -> Result<Self, RebuildError> {
+        Self::rebuild_with_children(self, children)
+    }
+
+    fn is_shared(&self) -> bool {
+        Arc::strong_count(&self.0) > 1
+    }
+}
+
+impl Drop for Expression {
+    /// Drop the node if this is its last handle, moving the children of
+    /// every node dropped with it onto a work list, so a deep tree drops
+    /// without deep recursion.
+    fn drop(&mut self) {
+        let mut pending = Vec::new();
+        move_children_of_last_handle(self, &mut pending);
+        while let Some(mut expression) = pending.pop() {
+            move_children_of_last_handle(&mut expression, &mut pending);
+        }
+    }
+}
+
+impl UnaryExpression {
+    /// Construct a unary node.
+    pub(super) fn new(operation: UnaryOperation, operand: Expression) -> Self {
+        Self { operation, operand }
+    }
+
+    /// Return the operation.
+    #[must_use]
+    pub fn operation(&self) -> UnaryOperation {
+        self.operation
+    }
+
+    /// Return the operand.
+    #[must_use]
+    pub fn operand(&self) -> &Expression {
+        &self.operand
+    }
+}
+
+impl BinaryExpression {
+    /// Construct a binary node.
+    pub(super) fn new(operation: BinaryOperation, left: Expression, right: Expression) -> Self {
+        Self {
+            operation,
+            operands: [left, right],
+        }
+    }
+
+    /// Return the operation.
+    #[must_use]
+    pub fn operation(&self) -> BinaryOperation {
+        self.operation
+    }
+
+    /// Return the left operand.
+    #[must_use]
+    pub fn left(&self) -> &Expression {
+        &self.operands[0]
+    }
+
+    /// Return the right operand.
+    #[must_use]
+    pub fn right(&self) -> &Expression {
+        &self.operands[1]
+    }
+}
+
+impl LogicalExpression {
+    /// Construct the logical node of `operation` over `operands`, which
+    /// number at least two: the builders, rebuilding and the wire decoder
+    /// ensure the count before calling.
+    pub(super) fn new(operation: LogicalOperation, operands: Box<[Expression]>) -> Self {
+        Self {
+            operation,
+            operands,
+        }
+    }
+
+    /// Return the operation.
+    #[must_use]
+    pub fn operation(&self) -> LogicalOperation {
+        self.operation
+    }
+
+    /// Return the operands in order; there are always at least two.
+    #[must_use]
+    pub fn operands(&self) -> &[Expression] {
+        &self.operands
+    }
+}
+
+impl PiecewiseExpression {
+    /// Construct a piecewise from its `(condition, value)` cases, in
+    /// evaluation order, and its otherwise branch; [`Expression::piecewise`]
+    /// is the public way.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PiecewiseError::NoCases`] if `cases` is empty, and
+    /// [`PiecewiseError::NonBooleanConditionLiteral`] naming the
+    /// first case whose condition is a literal other than a Boolean.
+    pub(crate) fn try_new(
+        cases: Vec<(Expression, Expression)>,
+        otherwise: Expression,
+    ) -> Result<Self, PiecewiseError> {
+        if cases.is_empty() {
+            return Err(PiecewiseError::NoCases);
+        }
+        for (case_index, (condition, _)) in cases.iter().enumerate() {
+            if let ExpressionKind::Literal(literal) = condition.kind() {
+                validate_condition_literal(case_index, literal)?;
+            }
+        }
+        Ok(Self {
+            cases: cases.into_boxed_slice(),
+            otherwise,
+        })
+    }
+
+    /// Return the `(condition, value)` cases in evaluation order.
+    #[must_use]
+    pub fn cases(&self) -> &[(Expression, Expression)] {
+        &self.cases
+    }
+
+    /// Return the otherwise branch.
+    #[must_use]
+    pub fn otherwise(&self) -> &Expression {
+        &self.otherwise
+    }
+}
+
+impl CallExpression {
+    /// Construct a call of `callee` with `arguments` in order;
+    /// [`Expression::call`] is the public way.
+    pub(crate) fn new(callee: Callee, arguments: Vec<Expression>) -> Self {
+        Self {
+            callee,
+            arguments: arguments.into_boxed_slice(),
+        }
+    }
+
+    /// Return the function the call applies.
+    #[must_use]
+    pub fn callee(&self) -> &Callee {
+        &self.callee
+    }
+
+    /// Return the arguments in order.
+    #[must_use]
+    pub fn arguments(&self) -> &[Expression] {
+        &self.arguments
+    }
+}
+
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Expression>();
+    assert_send_sync::<ExpressionKind>();
+};

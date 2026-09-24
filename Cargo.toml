@@ -13,8 +13,14 @@ repository = "https://github.com/actlab-fhy/FhY-core.git"
 
 [workspace.dependencies]
 pyo3 = "0.29"
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
+num-bigint = "0.5"
+num-traits = "0.2"
+proptest = "1"
+# The non-self-describing format the serialization round-trip tests use.
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+rstest = "0.27"
 fhy-core = { path = "rust/fhy-core" }
 
 [workspace.lints.rust]
@@ -42,3 +48,7 @@ undocumented_unsafe_blocks = "warn"
 map_err_ignore = "warn"
 let_underscore_must_use = "warn"
 partial_pub_fields = "warn"
+exhaustive_enums = "warn"
+exhaustive_structs = "warn"
+cargo_common_metadata = "warn"
+mod_module_files = "warn"

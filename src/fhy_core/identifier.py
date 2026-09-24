@@ -21,6 +21,7 @@ from collections.abc import Callable
 from threading import Lock
 from typing import (
     Any,
+    Final,
     Protocol,
     TypedDict,
     TypeGuard,
@@ -41,12 +42,21 @@ from .serialization import (
 from .traits.equality import EqualMixin
 from .traits.frozen import FrozenMixin
 
+# Ids below this are reserved for the identifiers the Rust extension ships, so
+# the counter starts here. Matches the Rust implementation:
+# `fhy_core::identifier::RESERVED_ID_COUNT`.
+_RESERVED_ID_COUNT: Final[int] = 65_536
+# Exclusive upper bound of a payload id, so no payload can raise the counter
+# past it. Matches the Rust implementation: `fhy_core::identifier::ID_CAP`.
+_ID_CAP: Final[int] = 2**63
 _ID_SPACE_SIZE = 2**64
 _EXHAUSTED_COUNTER_VALUE = _ID_SPACE_SIZE - 1
 _ID_SPACE_EXHAUSTED_MESSAGE = "identifier id space exhausted"
 # The messages the Rust extension raises for an id outside ``[0, 2**64)``.
 _NEGATIVE_ID_MESSAGE = "can't convert negative int to unsigned"
 _OVERSIZED_ID_MESSAGE = "int too big to convert"
+# The message the Rust extension raises for an id in ``[2**63, 2**64)``.
+_ID_OUT_OF_RANGE_MESSAGE = f"identifier id {{}} is at or above the cap {_ID_CAP}"
 
 
 class _IdentifierData(TypedDict):
@@ -81,15 +91,24 @@ def _is_utf8_encodable(text: str) -> bool:
 class _PythonIdCounter:
     """Lock-protected id counter that never wraps.
 
-    Behaves like the Rust extension's counter: ids are in ``[0, 2**64)``,
-    and the largest id issued is ``2**64 - 2``. Allocating once the counter
-    has reached ``2**64 - 1``, or advancing past ``2**64 - 1``, raises
-    ``RuntimeError`` and leaves the counter unchanged.
+    Behaves like the Rust extension's counter: it starts at ``65_536``,
+    above the ids reserved for shipped identifiers, it advances only past
+    ids in ``[0, 2**63)``, and the largest id it issues is ``2**64 - 2``.
+    Allocating once the counter has reached ``2**64 - 1`` raises
+    ``RuntimeError``, advancing past an id outside ``[0, 2**63)`` raises
+    ``OverflowError``, and both leave the counter unchanged.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, next_id: int = _RESERVED_ID_COUNT) -> None:
+        """Create a counter whose first allocation returns ``next_id``.
+
+        Args:
+            next_id: The first id to issue. Tests set it to reach the end of
+                the id space; the process-global counter keeps the default.
+
+        """
         self._lock = Lock()
-        self._next_id = 0
+        self._next_id = next_id
 
     def allocate(self) -> int:
         """Return the next id and advance the counter past it.
@@ -112,20 +131,18 @@ class _PythonIdCounter:
         ``identifier_id``.
 
         Args:
-            identifier_id: Id in ``[0, 2**64)`` to advance past.
+            identifier_id: Id in ``[0, 2**63)`` to advance past.
 
         Raises:
-            OverflowError: If ``identifier_id`` is outside ``[0, 2**64)``.
-            RuntimeError: If ``identifier_id`` is ``2**64 - 1``, which the
-                counter cannot advance past.
+            OverflowError: If ``identifier_id`` is outside ``[0, 2**63)``.
 
         """
         if identifier_id < 0:
             raise OverflowError(_NEGATIVE_ID_MESSAGE)
         if identifier_id >= _ID_SPACE_SIZE:
             raise OverflowError(_OVERSIZED_ID_MESSAGE)
-        if identifier_id == _EXHAUSTED_COUNTER_VALUE:
-            raise RuntimeError(_ID_SPACE_EXHAUSTED_MESSAGE)
+        if identifier_id >= _ID_CAP:
+            raise OverflowError(_ID_OUT_OF_RANGE_MESSAGE.format(identifier_id))
         with self._lock:
             if identifier_id >= self._next_id:
                 self._next_id = identifier_id + 1
@@ -152,7 +169,9 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     Two ``Identifier`` instances are equal iff they share the same ``id``;
     ``name_hint`` is a debugging aid and is not consulted by ``__eq__`` or
     ``__hash__``. Ids are drawn from a single process-global,
-    monotonically-increasing counter and are never reused.
+    monotonically-increasing counter and are never reused. The ids
+    ``0..65_536`` are reserved for the identifiers the Rust extension ships,
+    so the counter starts at ``65_536`` on both backends.
 
     Construction and deserialization are thread-safe and share the same
     counter: a deserialized id cannot collide with a subsequently
@@ -163,13 +182,13 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     same way. A pickle holds only the id and the name hint and loads under
     either backend.
 
-    Ids are unsigned 64-bit integers, and the largest id an identifier ever
-    holds is ``2**64 - 2``. Deserialization accepts an int ``id`` with
-    ``0 <= id < 2**64 - 1`` and raises ``DeserializationValueError`` for any
-    other int. Once ``2**64 - 2`` is issued or restored, the counter cannot
-    advance without wrapping and re-issuing a live id, so construction
-    raises ``RuntimeError("identifier id space exhausted")`` on both
-    backends and leaves the counter unchanged.
+    Ids are unsigned 64-bit integers. Deserialization accepts an int ``id``
+    with ``0 <= id < 2**63`` and raises ``DeserializationValueError`` for any
+    other int before it touches the counter, so no payload can raise the
+    counter past ``2**63`` and exhaust it. Construction still raises
+    ``RuntimeError("identifier id space exhausted")`` on both backends, and
+    leaves the counter unchanged, once ``2**64 - 2`` has been issued, which
+    only a counter started near the end of the id space can reach.
 
     A name hint must be a ``str`` encodable as UTF-8: construction raises
     ``TypeError`` for any other type and ``ValueError`` for a string holding
@@ -228,9 +247,9 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
             raise DeserializationValueError(
                 cls, "id", "a non-negative integer", data["id"]
             )
-        if data["id"] >= _EXHAUSTED_COUNTER_VALUE:
+        if data["id"] >= _ID_CAP:
             raise DeserializationValueError(
-                cls, "id", "a non-negative integer below 2**64 - 1", data["id"]
+                cls, "id", "a non-negative integer below 2**63", data["id"]
             )
         if not _is_utf8_encodable(data["name_hint"]):
             raise DeserializationValueError(

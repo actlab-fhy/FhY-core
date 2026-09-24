@@ -8,14 +8,17 @@
 //! back. Either way the caller receives a [`Canonical`] handle, so a
 //! non-canonical duplicate is never shared.
 //!
-//! Canonical handles compare and hash by identity. Two handles are equal iff
-//! they point at the same registered instance, which for handles taken from
-//! one registry with no clear between them means iff their keys are equal.
+//! Canonical handles compare and hash by key, as the Python implementation's
+//! `==` does. For handles taken from one registry with no clear between
+//! them, equal keys mean the same registered instance;
+//! [`Canonical::ptr_eq`] tells instances apart across registries or across
+//! a clear.
 //!
 //! A registry may be created with default instances, which it registers the
-//! first time it is used and restores whenever it is cleared. A default
-//! keeps its identity across clears, so a handle to a default taken before a
-//! clear still equals the handle taken after it.
+//! first time it is used and restores whenever a registry the caller owns is
+//! cleared; a process-wide registry is never cleared. A default keeps its
+//! identity across clears, so a handle to a default taken before a clear
+//! points at the same instance as the handle taken after it.
 //!
 //! Registries are safe to use from many threads at once.
 
@@ -40,6 +43,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// - Neither `intern_key` nor the key's `Hash` and `Eq` implementations
 ///   access the type's registry. The registry calls them while it holds its
 ///   lock.
+///
+/// The registry is process-wide and append-only: [`InternRegistry::clear`]
+/// needs an owned registry, so no code can clear it. Every value a decode
+/// interns stays registered, so decoding untrusted payloads grows the
+/// registry without bound.
 ///
 /// # Examples
 ///
@@ -91,40 +99,28 @@ pub trait Interned: Sized + Send + Sync + 'static {
 /// and of every other registry.
 ///
 /// A registry suits small, long-lived vocabularies such as attributes and
-/// value domains. Every [`intern`](Self::intern) takes the write lock, even
-/// when the key is already registered, and an instance stays registered
-/// until a [`clear`](Self::clear), so a registry is not a hash-consing table
-/// for IR nodes.
+/// value domains, not hash-consing IR nodes: every registration takes the
+/// write lock, and an instance stays registered until a
+/// [`clear`](Self::clear).
 pub struct InternRegistry<T: Interned> {
     create_defaults: fn() -> Vec<T>,
     state: OnceLock<RwLock<RegistryState<T>>>,
 }
 
-/// Build a map from each instance's key to the instance, assuming
-/// `instances` holds at most one instance per key.
-fn index_by_key<T: Interned>(instances: &[Arc<T>]) -> HashMap<T::Key, Arc<T>> {
-    let mut entries = HashMap::with_capacity(instances.len());
-    for instance in instances {
-        entries.insert(instance.intern_key().clone(), Arc::clone(instance));
-    }
-    entries
-}
-
 /// Registered instances, and the defaults a clear restores.
 ///
 /// For keys whose `Hash` and `Eq` behave the same on every call, every
-/// registry operation that mutates this state either completes or panics
-/// before changing anything (for example, a key's `Hash` panicking mid-lookup), so a panic
-/// inside a critical section never leaves the state half-updated. That is
-/// what makes recovering a poisoned lock over this state safe.
+/// operation that mutates this state either completes or panics before
+/// changing anything, such as a key's `Hash` panicking mid-lookup. A panic
+/// never leaves the state half-updated, so recovering a poisoned lock over
+/// it is safe.
 struct RegistryState<T: Interned> {
     defaults: Vec<Arc<T>>,
     entries: HashMap<T::Key, Arc<T>>,
 }
 
 impl<T: Interned> RegistryState<T> {
-    /// Create the state from freshly constructed default values, keeping
-    /// only the first value registered under each key.
+    /// Keeps only the first of the values sharing a key.
     fn from_defaults(values: Vec<T>) -> Self {
         let mut defaults: Vec<Arc<T>> = Vec::with_capacity(values.len());
         let mut entries: HashMap<T::Key, Arc<T>> = HashMap::with_capacity(values.len());
@@ -138,10 +134,12 @@ impl<T: Interned> RegistryState<T> {
         Self { defaults, entries }
     }
 
-    /// Unregister every instance except the defaults, restoring each
-    /// default's original identity.
     fn restore_defaults(&mut self) {
-        self.entries = index_by_key(&self.defaults);
+        self.entries = self
+            .defaults
+            .iter()
+            .map(|instance| (instance.intern_key().clone(), Arc::clone(instance)))
+            .collect();
     }
 }
 
@@ -170,23 +168,34 @@ impl<T: Interned> InternRegistry<T> {
     /// Register `value` as the canonical instance for its key, unless one is
     /// already registered.
     ///
+    /// A key that is already registered is found under the read lock, so
+    /// interns of registered keys run concurrently; only a registration takes
+    /// the write lock.
+    ///
     /// # Panics
     ///
     /// Panics if this is the registry's first use and `create_defaults`
     /// panics.
     pub fn intern(&self, value: T) -> InternOutcome<T> {
-        let mut state = self.write_state();
-        match state.entries.get(value.intern_key()) {
-            None => {
-                let key = value.intern_key().clone();
-                let instance = Arc::new(value);
-                state.entries.insert(key, Arc::clone(&instance));
-                InternOutcome::Registered(Canonical(instance))
-            }
-            Some(existing) => InternOutcome::AlreadyCanonical {
+        if let Some(existing) = self.read_state().entries.get(value.intern_key()) {
+            return InternOutcome::AlreadyCanonical {
                 canonical: Canonical(Arc::clone(existing)),
                 discarded: value,
+            };
+        }
+        // Another thread may register the key between the two locks, so the
+        // write path looks the key up again.
+        let mut state = self.write_state();
+        match state.entries.entry(value.intern_key().clone()) {
+            Entry::Occupied(existing) => InternOutcome::AlreadyCanonical {
+                canonical: Canonical(Arc::clone(existing.get())),
+                discarded: value,
             },
+            Entry::Vacant(slot) => {
+                let instance = Arc::new(value);
+                slot.insert(Arc::clone(&instance));
+                InternOutcome::Registered(Canonical(instance))
+            }
         }
     }
 
@@ -237,30 +246,55 @@ impl<T: Interned> InternRegistry<T> {
     /// instance that compares unequal to them. Defaults are registered again
     /// with the same identity they had before.
     ///
-    /// # Panics
+    /// Clearing takes `&mut self`, so only a registry the caller owns can be
+    /// cleared, never a process-wide one behind a `&'static` reference.
     ///
-    /// Panics if this is the registry's first use and `create_defaults`
-    /// panics.
-    pub fn clear(&self) {
-        self.write_state().restore_defaults();
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::interned::{InternRegistry, Interned};
+    ///
+    /// #[derive(Debug)]
+    /// struct Tag(String);
+    ///
+    /// impl Interned for Tag {
+    ///     type Key = String;
+    ///
+    ///     fn intern_key(&self) -> &String {
+    ///         &self.0
+    ///     }
+    ///
+    ///     fn intern_registry() -> &'static InternRegistry<Self> {
+    ///         static REGISTRY: InternRegistry<Tag> = InternRegistry::new();
+    ///         &REGISTRY
+    ///     }
+    /// }
+    ///
+    /// let mut registry = InternRegistry::<Tag>::new();
+    /// let _outcome = registry.intern(Tag("x".to_owned()));
+    ///
+    /// registry.clear();
+    ///
+    /// assert!(registry.get("x").is_none());
+    /// ```
+    ///
+    /// A process-wide registry cannot be cleared:
+    ///
+    /// ```compile_fail
+    /// use fhy_core::interned::Interned;
+    /// use fhy_core::op_attribute::OpAttribute;
+    ///
+    /// OpAttribute::intern_registry().clear();
+    /// ```
+    pub fn clear(&mut self) {
+        if let Some(state) = self.state.get_mut() {
+            state
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner)
+                .restore_defaults();
+        }
     }
 
-    /// Register the defaults now if this is the registry's first use.
-    ///
-    /// A decode calls this before it restores any identifier, so the
-    /// defaults' names draw their ids from the counter before a payload's id
-    /// can exhaust it.
-    ///
-    /// # Panics
-    ///
-    /// Panics if this is the registry's first use and `create_defaults`
-    /// panics.
-    pub(crate) fn initialize(&self) {
-        self.state();
-    }
-
-    /// Return the registry's state, initializing it from `create_defaults`
-    /// on first use.
     fn state(&self) -> &RwLock<RegistryState<T>> {
         self.state.get_or_init(|| {
             let defaults = (self.create_defaults)();
@@ -268,12 +302,12 @@ impl<T: Interned> InternRegistry<T> {
         })
     }
 
-    /// Take the state's read lock, recovering from poisoning.
+    /// Recovers from poisoning, which [`RegistryState`] makes safe.
     fn read_state(&self) -> RwLockReadGuard<'_, RegistryState<T>> {
         self.state().read().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Take the state's write lock, recovering from poisoning.
+    /// Recovers from poisoning, which [`RegistryState`] makes safe.
     fn write_state(&self) -> RwLockWriteGuard<'_, RegistryState<T>> {
         self.state().write().unwrap_or_else(PoisonError::into_inner)
     }
@@ -294,6 +328,10 @@ impl<T: Interned> fmt::Debug for InternRegistry<T> {
 }
 
 /// Result of [`InternRegistry::intern`].
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "interning either registers the value or finds its canonical instance, and callers match both"
+)]
 #[must_use = "the outcome holds the canonical handle"]
 #[derive(Debug)]
 pub enum InternOutcome<T> {
@@ -335,15 +373,28 @@ impl<T> InternOutcome<T> {
 
 /// Shared handle to a canonical instance.
 ///
-/// Handles compare and hash by identity: two handles are equal iff they
-/// point at the same registered instance. A handle dereferences to the
-/// instance.
+/// Handles compare and hash by their instance's key. For a process-wide
+/// registry, which is never cleared, key equality is instance identity;
+/// [`Canonical::ptr_eq`] observes identity directly. A handle dereferences
+/// to the instance.
+///
+/// Matches the Python implementation: a canonical value compares by key.
 ///
 /// A handle serializes as its instance. Deserializing a handle interns the
 /// decoded value in its type's registry and yields the canonical instance
 /// for its key, or fails when the decoded value is unequal to a canonical
-/// instance already registered under that key.
+/// instance already registered under that key. A decode that fails after
+/// interning part of its payload leaves those parts registered.
 pub struct Canonical<T>(Arc<T>);
+
+impl<T> Canonical<T> {
+    /// Return whether `this` and `other` point at the same registered
+    /// instance.
+    #[must_use]
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
+        Arc::ptr_eq(&this.0, &other.0)
+    }
+}
 
 impl<T> Deref for Canonical<T> {
     type Target = T;
@@ -359,17 +410,17 @@ impl<T> Clone for Canonical<T> {
     }
 }
 
-impl<T> PartialEq for Canonical<T> {
+impl<T: Interned> PartialEq for Canonical<T> {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        Self::ptr_eq(self, other) || self.0.intern_key() == other.0.intern_key()
     }
 }
 
-impl<T> Eq for Canonical<T> {}
+impl<T: Interned> Eq for Canonical<T> {}
 
-impl<T> Hash for Canonical<T> {
+impl<T: Interned> Hash for Canonical<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        std::ptr::hash(Arc::as_ptr(&self.0), state);
+        self.0.intern_key().hash(state);
     }
 }
 
@@ -392,43 +443,35 @@ impl<T: Serialize> Serialize for Canonical<T> {
 }
 
 /// A value that differs only in fields `Eq` ignores, such as a description,
-/// decodes to the canonical instance without any report: this crate has no
-/// logger, so the ignored metadata is dropped silently.
+/// decodes to the canonical instance, and the ignored fields are dropped.
 ///
-/// `T`'s own decode runs first and decides what the payload's nested handles
-/// register before the value itself is interned. Rejecting the value as a
-/// conflict leaves registered whatever that decode registered.
+/// `T`'s own decode runs first, so a conflict rejected afterwards leaves
+/// registered whatever that decode registered for nested handles.
 impl<'de, T: Interned + Eq + Deserialize<'de>> Deserialize<'de> for Canonical<T> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         intern_decoded(T::deserialize(deserializer)?)
     }
 }
 
-/// Intern a decoded value and return the canonical handle for its key.
-///
-/// # Errors
-///
-/// Returns an error naming `T` and the key when the key is already canonical
-/// and `value` is unequal to the canonical instance, which stays registered.
-pub(crate) fn intern_decoded<T: Interned + Eq, E: serde::de::Error>(
-    value: T,
-) -> Result<Canonical<T>, E> {
+/// Intern a decoded value, failing when it is unequal to the canonical
+/// instance already registered under its key.
+fn intern_decoded<T: Interned + Eq, E: serde::de::Error>(value: T) -> Result<Canonical<T>, E> {
     match T::intern_registry().intern(value) {
         InternOutcome::Registered(canonical) => Ok(canonical),
         InternOutcome::AlreadyCanonical {
             canonical,
             discarded,
-        } => {
-            if discarded == *canonical {
-                Ok(canonical)
-            } else {
-                Err(E::custom(format_args!(
-                    "payload for {} under key {:?} conflicts with the canonical instance",
-                    std::any::type_name::<T>(),
-                    canonical.intern_key()
-                )))
-            }
+        } if discarded == *canonical => {
+            // The canonical instance wins, so a field `Eq` ignores, such as a
+            // description, is dropped when the payload's differs.
+            // TODO: warn here once the log dependency is added
+            Ok(canonical)
         }
+        InternOutcome::AlreadyCanonical { canonical, .. } => Err(E::custom(format_args!(
+            "payload for {} under key {:?} conflicts with the canonical instance",
+            std::any::type_name::<T>(),
+            canonical.intern_key()
+        ))),
     }
 }
 
@@ -447,22 +490,11 @@ pub(crate) fn require_default<T: Interned>(key: &T::Key) -> Canonical<T> {
 
 /// No canonical instance is registered under a key.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct NotInternedError<K> {
     type_name: &'static str,
     key: K,
 }
-
-impl<K: fmt::Debug> fmt::Display for NotInternedError<K> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "no canonical {} is interned under key {:?}",
-            self.type_name, self.key
-        )
-    }
-}
-
-impl<K: fmt::Debug> std::error::Error for NotInternedError<K> {}
 
 impl<K> NotInternedError<K> {
     /// Return the key that was looked up.
@@ -478,13 +510,31 @@ impl<K> NotInternedError<K> {
     }
 }
 
+impl<K: fmt::Debug> fmt::Display for NotInternedError<K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "no canonical {} is interned under key {:?}",
+            self.type_name, self.key
+        )
+    }
+}
+
+impl<K: fmt::Debug> std::error::Error for NotInternedError<K> {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
     use std::panic::{self, AssertUnwindSafe};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Condvar, Mutex};
     use std::thread;
+    use std::time::Duration;
+
+    use proptest::prelude::*;
+    use proptest::sample::select;
+    use rstest::rstest;
 
     use crate::test_support::assert_send_sync;
 
@@ -545,6 +595,13 @@ mod tests {
         }
     }
 
+    /// Join `handle`, re-raising the thread's panic with its own payload.
+    fn join_propagating_panics<T>(handle: thread::ScopedJoinHandle<'_, T>) -> T {
+        handle
+            .join()
+            .unwrap_or_else(|payload| panic::resume_unwind(payload))
+    }
+
     fn build_tag(name: &str, note: &str) -> Tag {
         Tag {
             name: name.to_string(),
@@ -602,7 +659,6 @@ mod tests {
         }
     }
 
-    /// Test the first value interned for a key becomes canonical.
     #[test]
     fn intern_registers_the_first_value_for_a_key() {
         let registry = InternRegistry::<Tag>::new();
@@ -618,7 +674,6 @@ mod tests {
         assert_eq!(canonical.note, "note");
     }
 
-    /// Test a repeated key keeps the first interned value canonical.
     #[test]
     fn intern_keeps_the_first_value_canonical_for_a_repeated_key() {
         let registry = InternRegistry::<Tag>::new();
@@ -638,8 +693,6 @@ mod tests {
         assert_eq!(canonical.note, "first-note");
     }
 
-    /// Test a repeated key hands back the discarded value alongside the
-    /// canonical one.
     #[test]
     fn intern_hands_back_the_discarded_value_for_a_repeated_key() {
         let registry = InternRegistry::<Tag>::new();
@@ -658,8 +711,6 @@ mod tests {
         assert_eq!(canonical.note, "first-note");
     }
 
-    /// Test a repeated key with matching metadata hands back a discarded
-    /// value that is equal to the canonical one.
     #[test]
     fn intern_hands_back_an_equal_discarded_value_when_metadata_agrees() {
         let registry = InternRegistry::<Tag>::new();
@@ -677,7 +728,6 @@ mod tests {
         assert_eq!(discarded, *canonical);
     }
 
-    /// Test an interned value is retrievable afterward by its key.
     #[test]
     fn intern_makes_the_value_retrievable_by_key() {
         let registry = InternRegistry::<Tag>::new();
@@ -688,7 +738,6 @@ mod tests {
         assert_eq!(registry.get("alpha"), Some(canonical));
     }
 
-    /// Test `get` returns `None` for a key with no canonical instance.
     #[test]
     fn get_returns_none_for_a_missing_key() {
         let registry = InternRegistry::<Tag>::new();
@@ -707,7 +756,6 @@ mod tests {
         assert_eq!(looked_up, Some(canonical));
     }
 
-    /// Test `require` returns the canonical instance for a registered key.
     #[test]
     fn require_returns_the_canonical_instance_for_a_registered_key() {
         let registry = InternRegistry::<Tag>::new();
@@ -718,7 +766,6 @@ mod tests {
         assert_eq!(required, canonical);
     }
 
-    /// Test `require` reports the missing key and the interned type's name.
     #[test]
     fn require_reports_the_missing_key_and_type() {
         let registry = InternRegistry::<Tag>::new();
@@ -757,7 +804,6 @@ mod tests {
         );
     }
 
-    /// Test a missing-key error is a `std::error::Error` with no source.
     #[test]
     fn require_error_is_a_std_error_without_a_source() {
         let registry = InternRegistry::<Tag>::new();
@@ -781,7 +827,6 @@ mod tests {
         assert_eq!(required, canonical);
     }
 
-    /// Test defaults are registered before any explicit intern.
     #[test]
     fn with_defaults_registers_defaults_before_any_intern() {
         let registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
@@ -793,7 +838,6 @@ mod tests {
         assert_eq!(beta.note, "default-beta");
     }
 
-    /// Test duplicate-keyed defaults keep the first one canonical.
     #[test]
     fn with_defaults_keeps_the_first_of_duplicate_default_keys() {
         let registry = InternRegistry::<Tag>::with_defaults(create_duplicate_defaults);
@@ -809,7 +853,7 @@ mod tests {
     fn with_defaults_runs_the_default_constructor_once() {
         let calls_before = DEFAULT_CALLS.load(Ordering::SeqCst);
 
-        let registry = InternRegistry::<Tag>::with_defaults(create_counted_defaults);
+        let mut registry = InternRegistry::<Tag>::with_defaults(create_counted_defaults);
         assert_eq!(DEFAULT_CALLS.load(Ordering::SeqCst), calls_before);
 
         let _first_get = registry.get("alpha");
@@ -821,8 +865,6 @@ mod tests {
         assert_eq!(DEFAULT_CALLS.load(Ordering::SeqCst), calls_before + 1);
     }
 
-    /// Test interning a value under a default's key returns the default as
-    /// canonical.
     #[test]
     fn intern_of_a_default_key_returns_the_default() {
         let registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
@@ -836,8 +878,6 @@ mod tests {
         assert_eq!(canonical, default_alpha);
     }
 
-    /// Test interning a default's key as a registry's first operation keeps
-    /// the default canonical.
     #[test]
     fn intern_as_the_first_operation_defers_to_a_default() {
         let registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
@@ -850,11 +890,9 @@ mod tests {
         assert_eq!(canonical.note, "default-alpha");
     }
 
-    /// Test clearing as a registry's first operation leaves its defaults
-    /// registered.
     #[test]
     fn clear_as_the_first_operation_keeps_defaults() {
-        let registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
+        let mut registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
 
         registry.clear();
 
@@ -862,10 +900,9 @@ mod tests {
         assert_eq!(alpha.note, "default-alpha");
     }
 
-    /// Test `clear` unregisters instances that are not defaults.
     #[test]
     fn clear_unregisters_non_default_instances() {
-        let registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
+        let mut registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
         let _setup = registry.intern(build_tag("gamma", "note"));
 
         registry.clear();
@@ -873,22 +910,20 @@ mod tests {
         assert_eq!(registry.get("gamma"), None);
     }
 
-    /// Test `clear` keeps the identity of default instances.
     #[test]
     fn clear_keeps_the_identity_of_defaults() {
-        let registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
+        let mut registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
         let before = registry.get("alpha").expect("alpha default is registered");
 
         registry.clear();
 
         let after = registry.get("alpha").expect("alpha default is restored");
-        assert_eq!(before, after);
+        assert!(Canonical::ptr_eq(&before, &after));
     }
 
-    /// Test interning after `clear` registers a fresh canonical instance.
     #[test]
     fn intern_after_clear_registers_a_new_canonical_instance() {
-        let registry = InternRegistry::<Tag>::new();
+        let mut registry = InternRegistry::<Tag>::new();
         let before = registry
             .intern(build_tag("alpha", "before"))
             .into_canonical();
@@ -898,13 +933,13 @@ mod tests {
 
         assert!(outcome.is_registered());
         let after = outcome.into_canonical();
-        assert_ne!(after, before);
+        assert!(!Canonical::ptr_eq(&after, &before));
+        assert_eq!(after, before);
     }
 
-    /// Test `clear` empties a registry that has no defaults.
     #[test]
     fn clear_empties_a_registry_without_defaults() {
-        let registry = InternRegistry::<Tag>::new();
+        let mut registry = InternRegistry::<Tag>::new();
         let _setup = registry.intern(build_tag("alpha", "note"));
 
         registry.clear();
@@ -912,7 +947,6 @@ mod tests {
         assert_eq!(registry.get("alpha"), None);
     }
 
-    /// Test a `Default`-constructed registry starts empty.
     #[test]
     fn default_registry_is_empty() {
         let registry = InternRegistry::<Tag>::default();
@@ -920,7 +954,6 @@ mod tests {
         assert_eq!(registry.get("alpha"), None);
     }
 
-    /// Test two handles for the same key from one registry are equal.
     #[test]
     fn canonical_handles_from_one_registry_are_equal_for_one_key() {
         let registry = InternRegistry::<Tag>::new();
@@ -932,10 +965,10 @@ mod tests {
         assert_eq!(first, second);
     }
 
-    /// Test handles for the same key and value from separate registries are
-    /// unequal by identity, though their underlying values are equal.
+    /// Test handles for the same key from separate registries are equal by
+    /// key, though they point at different instances.
     #[test]
-    fn canonical_handles_from_separate_registries_are_unequal() {
+    fn canonical_handles_compare_by_key_across_registries() {
         let registry_a = InternRegistry::<Tag>::new();
         let registry_b = InternRegistry::<Tag>::new();
 
@@ -946,13 +979,22 @@ mod tests {
             .intern(build_tag("alpha", "note"))
             .into_canonical();
 
-        assert_ne!(a, b);
-        assert_eq!(*a, *b);
+        assert_eq!(a, b);
+        assert!(!Canonical::ptr_eq(&a, &b));
     }
 
-    /// Test canonical handles hash by identity, matching their equality.
     #[test]
-    fn canonical_handles_hash_by_identity() {
+    fn canonical_handles_for_different_keys_are_unequal() {
+        let registry = InternRegistry::<Tag>::new();
+
+        let alpha = registry.intern(build_tag("alpha", "note")).into_canonical();
+        let beta = registry.intern(build_tag("beta", "note")).into_canonical();
+
+        assert_ne!(alpha, beta);
+    }
+
+    #[test]
+    fn canonical_handles_hash_by_key() {
         let registry = InternRegistry::<Tag>::new();
         let _setup = registry.intern(build_tag("alpha", "note"));
         let first = registry.get("alpha").expect("alpha is registered");
@@ -968,10 +1010,9 @@ mod tests {
             .intern(build_tag("alpha", "note"))
             .into_canonical();
         handles.insert(from_other_registry);
-        assert_eq!(handles.len(), 2);
+        assert_eq!(handles.len(), 1);
     }
 
-    /// Test a canonical handle dereferences to its interned instance.
     #[test]
     fn canonical_dereferences_to_the_instance() {
         let registry = InternRegistry::<Tag>::new();
@@ -983,7 +1024,6 @@ mod tests {
         assert_eq!(&*canonical, &build_tag("alpha", "note"));
     }
 
-    /// Test a canonical handle's `Display` matches its instance's `Display`.
     #[test]
     fn canonical_display_matches_the_instance() {
         let registry = InternRegistry::<Tag>::new();
@@ -995,7 +1035,6 @@ mod tests {
         assert_eq!(canonical.to_string(), expected);
     }
 
-    /// Test a canonical handle's `Debug` matches its instance's `Debug`.
     #[test]
     fn canonical_debug_matches_the_instance() {
         let registry = InternRegistry::<Tag>::new();
@@ -1005,8 +1044,6 @@ mod tests {
         assert_eq!(format!("{canonical:?}"), format!("{:?}", *canonical));
     }
 
-    /// Test cloning a canonical handle yields a handle equal to the
-    /// original.
     #[test]
     fn canonical_clone_equals_the_original() {
         let registry = InternRegistry::<Tag>::new();
@@ -1038,8 +1075,6 @@ mod tests {
         );
     }
 
-    /// Test `is_registered` is false when a canonical instance already
-    /// existed for the key.
     #[test]
     fn intern_outcome_is_registered_is_false_for_an_existing_key() {
         let registry = InternRegistry::<Tag>::new();
@@ -1050,7 +1085,6 @@ mod tests {
         assert!(!outcome.is_registered());
     }
 
-    /// Test a canonical handle serializes the same as its instance.
     #[test]
     fn canonical_serializes_as_its_instance() {
         let registry = InternRegistry::<Tag>::new();
@@ -1066,7 +1100,6 @@ mod tests {
         );
     }
 
-    /// Test deserializing an unregistered key registers the decoded value.
     #[test]
     fn canonical_deserialization_registers_an_unregistered_key() {
         let key = "canonical_deserialization_registers_an_unregistered_key";
@@ -1081,8 +1114,6 @@ mod tests {
         assert_eq!(deserialized, expected);
     }
 
-    /// Test deserializing a registered key with a payload equal to the
-    /// canonical instance returns that instance.
     #[test]
     fn canonical_deserialization_returns_the_existing_canonical_instance() {
         let key = "canonical_deserialization_returns_the_existing_canonical_instance";
@@ -1123,8 +1154,6 @@ mod tests {
         assert_eq!(Tag::intern_registry().get(key), Some(original));
     }
 
-    /// Test deserializing a registered key with a payload that differs only in
-    /// a field `Eq` ignores returns the canonical instance unchanged.
     #[test]
     fn canonical_deserialization_accepts_a_payload_differing_only_in_ignored_metadata() {
         let key = "canonical_deserialization_accepts_a_payload_differing_only_in_ignored_metadata";
@@ -1143,47 +1172,111 @@ mod tests {
         assert_eq!(deserialized.label, "original");
     }
 
-    /// Test deserializing a payload missing a required field fails without
-    /// registering anything.
-    #[test]
-    fn canonical_deserialization_rejects_a_payload_missing_a_field() {
-        let missing_field_key = "canonical_deserialization_rejects_a_payload_missing_a_field";
-        let missing_field_payload = serde_json::json!({"name": missing_field_key});
+    /// Test deserializing a payload that does not hold exactly the type's
+    /// fields fails without registering anything.
+    #[rstest]
+    #[case::missing_field(
+        "canonical_deserialization_rejects_a_payload_missing_a_field",
+        serde_json::json!({}),
+        "missing field"
+    )]
+    #[case::unknown_field(
+        "canonical_deserialization_rejects_a_payload_with_an_unknown_field",
+        serde_json::json!({"note": "note", "extra": "field"}),
+        "unknown field"
+    )]
+    fn canonical_deserialization_rejects_a_malformed_payload(
+        #[case] key: &str,
+        #[case] fields_besides_the_name: serde_json::Value,
+        #[case] expected_message: &str,
+    ) {
+        let mut payload = fields_besides_the_name;
+        payload["name"] = key.into();
 
-        let missing_field_result: Result<Canonical<Tag>, _> =
-            serde_json::from_value(missing_field_payload);
-        let Err(missing_field_error) = missing_field_result else {
-            panic!("expected a deserialization error for a missing field");
+        let result: Result<Canonical<Tag>, _> = serde_json::from_value(payload);
+
+        let Err(error) = result else {
+            panic!("expected a deserialization error for a malformed payload");
         };
-        assert!(
-            missing_field_error.to_string().contains("missing field"),
-            "got {missing_field_error}"
-        );
-        assert_eq!(Tag::intern_registry().get(missing_field_key), None);
+        assert!(error.to_string().contains(expected_message), "got {error}");
+        assert_eq!(Tag::intern_registry().get(key), None);
     }
 
-    /// Test deserializing a payload with an unknown field fails without
-    /// registering anything.
-    #[test]
-    fn canonical_deserialization_rejects_a_payload_with_an_unknown_field() {
-        let unknown_field_key = "canonical_deserialization_rejects_a_payload_with_an_unknown_field";
-        let unknown_field_payload =
-            serde_json::json!({"name": unknown_field_key, "note": "note", "extra": "field"});
+    /// Keys the registry model property interns under: both defaults of
+    /// [`create_tag_defaults`] and two keys that are not defaults.
+    const MODEL_KEYS: &[&str] = &["alpha", "beta", "gamma", "delta"];
 
-        let unknown_field_result: Result<Canonical<Tag>, _> =
-            serde_json::from_value(unknown_field_payload);
-        let Err(unknown_field_error) = unknown_field_result else {
-            panic!("expected a deserialization error for an unknown field");
-        };
-        assert!(
-            unknown_field_error.to_string().contains("unknown field"),
-            "got {unknown_field_error}"
-        );
-        assert_eq!(Tag::intern_registry().get(unknown_field_key), None);
+    const MODEL_NOTES: &[&str] = &["note-0", "note-1", "note-2"];
+
+    /// One step of an operation sequence run against a registry.
+    #[derive(Debug, Clone)]
+    enum RegistryOperation {
+        Intern {
+            key: &'static str,
+            note: &'static str,
+        },
+        Clear,
     }
 
-    /// Test errors for one missing key compare equal and errors for
-    /// different missing keys do not.
+    /// Build a strategy for one registry operation, mostly interns.
+    fn build_registry_operation_strategy() -> impl Strategy<Value = RegistryOperation> {
+        prop_oneof![
+            4 => (select(MODEL_KEYS), select(MODEL_NOTES))
+                .prop_map(|(key, note)| RegistryOperation::Intern { key, note }),
+            1 => Just(RegistryOperation::Clear),
+        ]
+    }
+
+    proptest! {
+        /// Test a registry with defaults behaves as a first-wins map from key
+        /// to handle that a clear resets to the default handles, for any
+        /// sequence of interns and clears.
+        #[test]
+        fn registry_matches_a_first_wins_model_for_any_operation_sequence(
+            operations in prop::collection::vec(build_registry_operation_strategy(), 0..32),
+        ) {
+            let mut registry = InternRegistry::<Tag>::with_defaults(create_tag_defaults);
+            let defaults: HashMap<&str, Canonical<Tag>> = ["alpha", "beta"]
+                .into_iter()
+                .map(|key| (key, registry.get(key).expect("defaults are registered")))
+                .collect();
+            let mut model = defaults.clone();
+
+            for operation in operations {
+                match operation {
+                    RegistryOperation::Intern { key, note } => {
+                        let outcome = registry.intern(build_tag(key, note));
+                        if let Some(expected) = model.get(key) {
+                            prop_assert!(!outcome.is_registered());
+                            prop_assert!(Canonical::ptr_eq(outcome.canonical(), expected));
+                        } else {
+                            prop_assert!(outcome.is_registered());
+                            prop_assert_eq!(outcome.canonical().note.as_str(), note);
+                            model.insert(key, outcome.into_canonical());
+                        }
+                    }
+                    RegistryOperation::Clear => {
+                        registry.clear();
+                        model.clone_from(&defaults);
+                    }
+                }
+                for key in MODEL_KEYS {
+                    let registered = registry.get(*key);
+                    let expected = model.get(key);
+                    prop_assert!(
+                        match (&registered, expected) {
+                            (Some(registered), Some(expected)) => Canonical::ptr_eq(registered, expected),
+                            (None, None) => true,
+                            _ => false,
+                        },
+                        "key {}",
+                        key
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn require_errors_compare_by_missing_key() {
         let registry = InternRegistry::<Tag>::new();
@@ -1202,7 +1295,6 @@ mod tests {
         assert_ne!(first, other);
     }
 
-    /// Test a registry's `Debug` output names the registry type.
     #[test]
     fn registry_debug_names_the_registry_type() {
         let registry = InternRegistry::<Tag>::new();
@@ -1235,14 +1327,7 @@ mod tests {
                     })
                 })
                 .collect();
-            handles
-                .into_iter()
-                .map(|handle| {
-                    handle
-                        .join()
-                        .unwrap_or_else(|payload| panic::resume_unwind(payload))
-                })
-                .collect()
+            handles.into_iter().map(join_propagating_panics).collect()
         });
 
         let registered_count = outcomes
@@ -1260,7 +1345,9 @@ mod tests {
             .collect();
         let first = &canonical_handles[0];
         assert!(
-            canonical_handles.iter().all(|handle| handle == first),
+            canonical_handles
+                .iter()
+                .all(|handle| Canonical::ptr_eq(handle, first)),
             "not all canonical handles were equal"
         );
     }
@@ -1301,8 +1388,8 @@ mod tests {
                                 panic!("key {key} must be registered once progress observed it")
                             });
                             if let Some(previous) = observed.get(&key_index) {
-                                assert_eq!(
-                                    *previous, handle,
+                                assert!(
+                                    Canonical::ptr_eq(previous, &handle),
                                     "reader {reader_index} saw a different handle for {key} \
                                      on step {step}"
                                 );
@@ -1314,15 +1401,120 @@ mod tests {
                 })
                 .collect();
 
-            writer_handle
-                .join()
-                .unwrap_or_else(|payload| panic::resume_unwind(payload));
+            join_propagating_panics(writer_handle);
             for handle in reader_handles {
-                handle
-                    .join()
-                    .unwrap_or_else(|payload| panic::resume_unwind(payload));
+                join_propagating_panics(handle);
             }
         });
+    }
+
+    /// Meeting point for the threads that hash a [`RendezvousKey`] once it
+    /// is armed.
+    #[derive(Debug, Default)]
+    struct Rendezvous {
+        armed: AtomicBool,
+        arrived: Mutex<usize>,
+        all_arrived: Condvar,
+        met: Mutex<Vec<bool>>,
+    }
+
+    impl Rendezvous {
+        /// Number of threads that must meet.
+        const PARTIES: usize = 2;
+
+        /// How long an arriving thread waits for the others.
+        const TIMEOUT: Duration = Duration::from_secs(5);
+
+        /// Arrive, wait for every party or the timeout, and record whether
+        /// every party arrived in time.
+        fn arrive(&self) {
+            let mut arrived = self.arrived.lock().unwrap_or_else(PoisonError::into_inner);
+            *arrived += 1;
+            self.all_arrived.notify_all();
+            let (arrived, timeout) = self
+                .all_arrived
+                .wait_timeout_while(arrived, Self::TIMEOUT, |arrived| *arrived < Self::PARTIES)
+                .unwrap_or_else(PoisonError::into_inner);
+            drop(arrived);
+            self.met
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(!timeout.timed_out());
+        }
+    }
+
+    /// Key whose `Hash`, once armed, waits for a second thread to hash it
+    /// too. Two interns of it can only both finish hashing in time if they
+    /// hold the registry's lock at the same time.
+    #[derive(Debug, Clone)]
+    struct RendezvousKey {
+        name: String,
+        rendezvous: Arc<Rendezvous>,
+    }
+
+    impl PartialEq for RendezvousKey {
+        fn eq(&self, other: &Self) -> bool {
+            self.name == other.name
+        }
+    }
+
+    impl Eq for RendezvousKey {}
+
+    impl Hash for RendezvousKey {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            if self.rendezvous.armed.load(Ordering::SeqCst) {
+                self.rendezvous.arrive();
+            }
+            self.name.hash(state);
+        }
+    }
+
+    struct RendezvousTag {
+        key: RendezvousKey,
+    }
+
+    impl Interned for RendezvousTag {
+        type Key = RendezvousKey;
+
+        fn intern_key(&self) -> &RendezvousKey {
+            &self.key
+        }
+
+        fn intern_registry() -> &'static InternRegistry<RendezvousTag> {
+            static REGISTRY: InternRegistry<RendezvousTag> = InternRegistry::new();
+            &REGISTRY
+        }
+    }
+
+    /// Test two interns of an already registered key look it up under the
+    /// read lock at the same time, rather than one after the other.
+    #[test]
+    fn interns_of_a_registered_key_share_the_read_lock() {
+        let registry = InternRegistry::<RendezvousTag>::new();
+        let key = RendezvousKey {
+            name: "shared".to_owned(),
+            rendezvous: Arc::default(),
+        };
+        let first = registry.intern(RendezvousTag { key: key.clone() });
+        assert!(first.is_registered());
+
+        key.rendezvous.armed.store(true, Ordering::SeqCst);
+        let outcomes: Vec<InternOutcome<RendezvousTag>> = thread::scope(|scope| {
+            let handles: Vec<_> = (0..Rendezvous::PARTIES)
+                .map(|_| scope.spawn(|| registry.intern(RendezvousTag { key: key.clone() })))
+                .collect();
+            handles.into_iter().map(join_propagating_panics).collect()
+        });
+        key.rendezvous.armed.store(false, Ordering::SeqCst);
+
+        assert!(outcomes.iter().all(|outcome| !outcome.is_registered()));
+        let met = key
+            .rendezvous
+            .met
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        assert_eq!(met, vec![true; Rendezvous::PARTIES]);
     }
 
     /// Test the registry keeps working after a key's `Hash` implementation

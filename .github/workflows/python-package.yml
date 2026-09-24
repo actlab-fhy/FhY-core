@@ -8,7 +8,8 @@
 # equivalence tests) run only on release gates (PRs -> main) and manual
 # dispatch — never on dev PRs.
 #
-# The rust and rust-msrv jobs cover the crate directly: the Python jobs only
+# The rust and rust-msrv jobs cover the crate directly, and the deny job checks
+# its dependency graph with cargo-deny (deny.toml): the Python jobs only
 # compile it as an extension module and reach it through the identifier
 # bindings. The tests job also checks the golden corpora those crate tests
 # replay against the Python generators that record them
@@ -68,25 +69,98 @@ jobs:
         # fhy-core-py pulls in pyo3, so the workspace clippy run also checks
         # it; clippy only checks, so that costs no libpython.
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Integration Test Targets
+        # Every integration test shares the `it` binary. A test that needs a
+        # fresh process is its own single-test target and is listed here on
+        # purpose: id_cap_decode moves the global id counter to the cap.
+        run: |
+          expected="id_cap_decode it"
+          actual="$(cargo metadata --no-deps --format-version 1 --locked | python3 -c '
+          import json, sys
+          metadata = json.load(sys.stdin)
+          (package,) = [p for p in metadata["packages"] if p["name"] == "fhy-core"]
+          print(" ".join(sorted(t["name"] for t in package["targets"] if t["kind"] == ["test"])))
+          ')"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::fhy-core test targets are '$actual', expected '$expected'."
+            exit 1
+          fi
       - name: Unit, Integration & Doc Testing
         # pyo3 leaves libpython unlinked only when maturin sets
         # PYO3_BUILD_EXTENSION_MODULE for a wheel build, so a plain cargo
         # build links the runner's Python and the fhy-core-py test binaries
         # run.
         run: cargo test --workspace --locked --all-features
+      - name: Documentation
+        # Fresh docs, so the public-paths check below reads no stale page.
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          rm -rf target/doc
+          cargo doc --workspace --no-deps --locked
+      - name: Public Paths
+        # Each public item has exactly one path: no glob re-exports, no module
+        # re-exports another public module's item, and no item name appears
+        # under two paths.
+        run: |
+          globs="$(grep -rnE '^\s*pub use [^;]*\*' rust/fhy-core/src || true)"
+          if [[ -n "$globs" ]]; then
+            echo "::error::glob re-exports: $globs"
+            exit 1
+          fi
+          doc=target/doc/fhy_core
+          reexports="$(grep -l 'id="reexports"' $(find "$doc" -name index.html) || true)"
+          if [[ -n "$reexports" ]]; then
+            echo "::error::a module re-exports an item that already has a public path: $reexports"
+            exit 1
+          fi
+          duplicates="$(grep -oE 'href="[^"#]+\.html"' "$doc/all.html" | grep -v '"\.\./' \
+            | sed -E 's#^href="(.*/)?[a-z]+\.([A-Za-z0-9_]+)\.html"$#\2#' | sort | uniq -d)"
+          if [[ -n "$duplicates" ]]; then
+            echo "::error::items with more than one public path: $duplicates"
+            exit 1
+          fi
       - name: Packaging
         # Pack fhy-core, the only publishable workspace member, as crates.io
         # would receive it and build the library from it.
         run: cargo package --locked -p fhy-core
+      - name: Package Contents
+        # The include list ships Rust sources, tests and golden JSON only.
+        run: |
+          unexpected="$(cargo package --list --locked -p fhy-core | grep -Ev \
+            '^(Cargo\.toml(\.orig)?|Cargo\.lock|\.cargo_vcs_info\.json|README\.md|LICENSE|src/.+\.rs|tests/.+\.rs|tests/golden/[a-z_]+\.json)$' || true)"
+          if [[ -n "$unexpected" ]]; then
+            echo "::error::the package ships unexpected files: $unexpected"
+            exit 1
+          fi
       - name: Testing the Packaged Crate
         # cargo package only builds the library, so run the tests from the
-        # packed crate as a consumer would get them. The published manifest
-        # loses this crate's dev-dependency on itself, which carries only a
-        # path, so the testing feature is named here instead.
+        # packed crate as a consumer would get them.
         run: |
           tar -xzf target/package/fhy-core-*.crate -C "$RUNNER_TEMP"
           cd "$RUNNER_TEMP"/fhy-core-*/
-          cargo test --locked --features testing
+          cargo test --locked
+
+  deny:
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Licenses, Bans & Sources
+        # deny.toml: every dependency permissively licensed, from crates.io,
+        # with no wildcard version requirement.
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans licenses sources
+      - name: Security Advisories
+        # A new RustSec advisory against an existing dependency must be seen,
+        # but it should not block unrelated pull requests, so this step warns
+        # rather than fails the job.
+        continue-on-error: true
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
 
   rust-msrv:
     runs-on: "ubuntu-latest"
@@ -115,12 +189,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Build the Library on the MSRV
         # `cargo +<toolchain>`: rust-toolchain.toml pins the channel to stable
-        # and would otherwise win over the toolchain installed here. Both
-        # feature sets, since `--all-features` turns on `testing`, which
-        # `default` does not compile.
+        # and would otherwise win over the toolchain installed here.
         run: |
           cargo +${{ steps.toolchain.outputs.name }} check --workspace --lib --locked
-          cargo +${{ steps.toolchain.outputs.name }} check --workspace --lib --all-features --locked
 
   config:
     runs-on: ubuntu-latest
@@ -246,7 +317,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [style, rust, rust-msrv, tests, property, golden-expanded]
+    needs: [style, rust, rust-msrv, deny, tests, property, golden-expanded]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -254,7 +325,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
-          required=(style rust rust-msrv tests)
+          required=(style rust rust-msrv deny tests)
           # Conditional jobs skip on dev PRs, so skipped is fine for them;
           # any other result besides success is not.
           conditional=(property golden-expanded)
