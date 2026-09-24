@@ -5,7 +5,7 @@
 //! the identifier references, one bracket pair per inner node, and a literal
 //! printing as its `Display` text.
 //!
-//! Public API only (`fhy_core::symbolic::expression`).
+//! Public API only (`fhy_core::expr`).
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
@@ -13,7 +13,7 @@ pub mod expression_support;
 use expression_support::{
     IDENTIFIER_POOL as POOL, build_expression_strategy, build_literal_strategy,
 };
-use fhy_core::symbolic::expression::{
+use fhy_core::expr::{
     Expression, ExpressionKind, FormatOptions, IdentifierStyle, Notation, format_expression,
 };
 use proptest::prelude::*;

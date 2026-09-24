@@ -6,7 +6,7 @@
 //! numeric sort. Its text form is the lowercase sort name (`"bool"`,
 //! `"nat"`, `"int"`, `"real"`), which is also its serialized form.
 
-use crate::symbolic::wire_name::impl_wire_name_traits;
+use crate::expr::wire_name::impl_wire_name_traits;
 
 /// Every function sort, in declaration order.
 const ALL_FUNCTION_SORTS: [FunctionSort; 4] = [
@@ -25,7 +25,7 @@ const ALL_FUNCTION_SORTS: [FunctionSort; 4] = [
 /// # Examples
 ///
 /// ```
-/// use fhy_core::symbolic::expression::FunctionSort;
+/// use fhy_core::expr::FunctionSort;
 ///
 /// assert_eq!(FunctionSort::Nat.as_str(), "nat");
 /// assert_eq!(FunctionSort::Real.to_string(), "real");

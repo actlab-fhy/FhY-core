@@ -421,7 +421,7 @@ impl<N: Tree, E: Error + 'static> Error for RewriteTreeError<N, E> {
 /// use fhy_core::pass_infrastructure::{
 ///     CompilerPass, ExecutePass, PassContext, TraversalOrder, TreeVisitor, WalkPass,
 /// };
-/// use fhy_core::symbolic::expression::Expression;
+/// use fhy_core::expr::Expression;
 ///
 /// #[derive(Default)]
 /// struct NodeCounter(usize);
@@ -516,7 +516,7 @@ where
 ///
 /// use fhy_core::identifier::Identifier;
 /// use fhy_core::pass_infrastructure::{ExecutePass, PassContext, RewritePass, Rewriter};
-/// use fhy_core::symbolic::expression::{Expression, ExpressionKind};
+/// use fhy_core::expr::{Expression, ExpressionKind};
 ///
 /// /// Replaces `x` by `y`.
 /// struct Rename {

@@ -11,11 +11,11 @@
 use std::fmt::Debug;
 
 use fhy_core::diagnostic::{Note, NoteKind};
+use fhy_core::expr::Expression;
 use fhy_core::identifier::Identifier;
 use fhy_core::interned::Canonical;
 use fhy_core::op_attribute::OpAttribute;
 use fhy_core::provenance::{Position, Provenance, Span};
-use fhy_core::symbolic::expression::Expression;
 use fhy_core::value_domain::ValueDomain;
 use rstest::rstest;
 use serde::de::DeserializeOwned;

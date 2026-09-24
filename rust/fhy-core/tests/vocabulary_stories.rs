@@ -13,8 +13,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 
 use expression_support::{ALL_BINARY_OPERATIONS, ALL_UNARY_OPERATIONS};
-use fhy_core::symbolic::expression::{BinaryOperation, FunctionSort, UnaryOperation};
-use fhy_core::symbolic::symbol_type::SymbolType;
+use fhy_core::expr::{BinaryOperation, FunctionSort, SymbolType, UnaryOperation};
 use rstest::rstest;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};

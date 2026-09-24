@@ -11,14 +11,14 @@ pub mod expression_support;
 pub mod stack_support;
 
 use expression_support::{build_call_or_panic, build_deep_sum, build_identifier, build_literal};
+use fhy_core::expr::{
+    BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralValue,
+    UnaryOperation, build_piecewise,
+};
 use fhy_core::identifier::Identifier;
 use fhy_core::pass_infrastructure::{
     ExecutePass, NodeHandle, PassContext, RewritePass, RewriteTreeError, Rewriter, TraversalOrder,
     Tree, TreeVisitor, WalkPass,
-};
-use fhy_core::symbolic::expression::{
-    BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralValue,
-    UnaryOperation, build_piecewise,
 };
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 

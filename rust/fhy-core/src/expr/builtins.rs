@@ -22,8 +22,8 @@
 //! # Examples
 //!
 //! ```
-//! use fhy_core::symbolic::expression::FunctionSort;
-//! use fhy_core::symbolic::expression::builtins::find_composed_function;
+//! use fhy_core::expr::FunctionSort;
+//! use fhy_core::expr::builtins::find_composed_function;
 //!
 //! let relu = find_composed_function("relu").expect("relu is a composed built-in");
 //! assert_eq!(relu.parameter_sorts(), [FunctionSort::Real]);
@@ -475,7 +475,7 @@ pub fn list_native_constants() -> &'static [NativeConstantSpec] {
 /// # Examples
 ///
 /// ```
-/// use fhy_core::symbolic::expression::builtins::find_composed_function;
+/// use fhy_core::expr::builtins::find_composed_function;
 ///
 /// let max = find_composed_function("max").expect("max is a composed built-in");
 /// assert_eq!(max.name(), "max");

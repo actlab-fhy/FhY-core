@@ -8,7 +8,7 @@
 //! as `"//"`), which the symbolic notation of the printer uses. Within each
 //! enum, no two operations share a wire name or a symbol.
 
-use crate::symbolic::wire_name::impl_wire_name_traits;
+use crate::expr::wire_name::impl_wire_name_traits;
 
 /// Every unary operation, in declaration order.
 const ALL_UNARY_OPERATIONS: [UnaryOperation; 3] = [
@@ -45,7 +45,7 @@ const ALL_BINARY_OPERATIONS: [BinaryOperation; 15] = [
 /// # Examples
 ///
 /// ```
-/// use fhy_core::symbolic::expression::UnaryOperation;
+/// use fhy_core::expr::UnaryOperation;
 ///
 /// assert_eq!(UnaryOperation::LogicalNot.as_str(), "logical_not");
 /// assert_eq!(UnaryOperation::LogicalNot.symbol(), "!");
@@ -117,7 +117,7 @@ impl_wire_name_traits!(
 /// # Examples
 ///
 /// ```
-/// use fhy_core::symbolic::expression::BinaryOperation;
+/// use fhy_core::expr::BinaryOperation;
 ///
 /// assert_eq!(BinaryOperation::FloorDivide.as_str(), "floor_divide");
 /// assert_eq!(BinaryOperation::FloorDivide.symbol(), "//");

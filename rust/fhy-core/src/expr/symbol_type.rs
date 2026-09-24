@@ -5,7 +5,7 @@
 //! lowercase value name (`"real"`, `"int"`, `"bool"`), which is also its
 //! serialized form.
 
-use crate::symbolic::wire_name::impl_wire_name_traits;
+use crate::expr::wire_name::impl_wire_name_traits;
 
 /// Every symbol type, in declaration order.
 const ALL_SYMBOL_TYPES: [SymbolType; 3] = [SymbolType::Real, SymbolType::Int, SymbolType::Bool];
@@ -19,7 +19,7 @@ const ALL_SYMBOL_TYPES: [SymbolType; 3] = [SymbolType::Real, SymbolType::Int, Sy
 /// # Examples
 ///
 /// ```
-/// use fhy_core::symbolic::symbol_type::SymbolType;
+/// use fhy_core::expr::SymbolType;
 ///
 /// assert_eq!(SymbolType::Int.as_str(), "int");
 /// assert_eq!(SymbolType::Real.to_string(), "real");

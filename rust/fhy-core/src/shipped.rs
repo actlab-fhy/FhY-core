@@ -8,8 +8,8 @@
 //! the id counter calls it before any restored id advances it.
 
 use crate::diagnostic::initialize_shipped_note_kinds;
+use crate::expr::builtins::initialize_composed_functions;
 use crate::op_attribute::initialize_shipped_attributes;
-use crate::symbolic::expression::builtins::initialize_composed_functions;
 use crate::value_domain::initialize_shipped_domains;
 
 /// Create every shipped static that holds an identifier, if this is its first
@@ -34,6 +34,8 @@ mod tests {
         Note, get_other_note_kind, get_rationale_note_kind, get_remark_note_kind,
         get_suggestion_note_kind,
     };
+    use crate::expr::builtins::find_composed_function;
+    use crate::expr::{Expression, ExpressionKind};
     use crate::identifier::{
         IdSpaceExhausted, Identifier, try_advance_counter_past, try_allocate_id,
     };
@@ -41,8 +43,6 @@ mod tests {
     use crate::op_attribute::{
         OpAttribute, get_associative, get_commutative, get_elementwise, get_pure,
     };
-    use crate::symbolic::expression::builtins::find_composed_function;
-    use crate::symbolic::expression::{Expression, ExpressionKind};
     use crate::test_support::{assert_isolated_test_passes, is_isolated_run};
     use crate::value_domain::{ValueDomain, get_address_domain, get_data_domain};
 

@@ -8,8 +8,8 @@
 
 use std::collections::HashSet;
 
+use fhy_core::expr::builtins::{ComposedFunction, list_composed_functions};
 use fhy_core::identifier::Identifier;
-use fhy_core::symbolic::expression::builtins::{ComposedFunction, list_composed_functions};
 use fhy_core::testing::DeterministicIdentifierScope;
 
 /// Test a scope that first creates the catalogue neither merges same-named

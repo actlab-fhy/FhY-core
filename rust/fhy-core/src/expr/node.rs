@@ -379,7 +379,7 @@ impl<S: BuildHasher> Rewriter<Expression> for Substitution<'_, S> {
 ///
 /// ```
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::symbolic::expression::{Expression, ExpressionKind};
+/// use fhy_core::expr::{Expression, ExpressionKind};
 ///
 /// let x = Expression::from(Identifier::new("x"));
 /// let sum = &x + 1;
@@ -394,7 +394,7 @@ impl<S: BuildHasher> Rewriter<Expression> for Substitution<'_, S> {
 ///
 /// ```compile_fail,E0369
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::symbolic::expression::Expression;
+/// use fhy_core::expr::Expression;
 ///
 /// let x = Expression::from(Identifier::new("x"));
 /// let y = Expression::from(Identifier::new("y"));

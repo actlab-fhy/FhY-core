@@ -2,18 +2,18 @@
 //! overloads, the operation-named builder methods, the variadic builders,
 //! and the build errors.
 //!
-//! Public API only (`fhy_core::symbolic::expression`).
+//! Public API only (`fhy_core::expr`).
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
 
 use expression_support::{build_identifier, build_literal, build_text_literal};
-use fhy_core::identifier::Identifier;
-use fhy_core::symbolic::expression::{
+use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, IntoOperand,
     LiteralKind, LiteralValue, UnaryOperation, build_call, build_logical_and, build_logical_or,
     build_piecewise,
 };
+use fhy_core::identifier::Identifier;
 use rstest::rstest;
 
 /// The binary operations reachable from an expression on the left, each

@@ -1,5 +1,6 @@
-//! The symbolic expression tree, its builders, the analyses over it, and
-//! the compiler passes over it.
+//! Symbolic expressions and the vocabulary they are built from: the
+//! expression tree, its builders, the analyses over it, and the compiler
+//! passes over it.
 //!
 //! Integer literals of any size hold a [`BigInt`], re-exported here from
 //! `num-bigint`, so building and reading them needs no direct dependency
@@ -18,7 +19,9 @@ mod pprint;
 mod registration;
 mod screen;
 mod sort;
+mod symbol_type;
 mod wire;
+mod wire_name;
 
 pub use alpha::AlphaRenaming;
 pub use build::{IntoOperand, build_call, build_logical_and, build_logical_or, build_piecewise};
@@ -37,6 +40,7 @@ pub use pprint::{
 pub use registration::register_expression_passes;
 pub use screen::{NoRegisteredSorts, SortLookup, validate_logical_operands, validate_predicate};
 pub use sort::FunctionSort;
+pub use symbol_type::SymbolType;
 
 /// The arbitrary-precision signed integer an integer literal holds, as
 /// [`LiteralKind::Int`] shows it and as [`LiteralValue::from`] and the
@@ -50,7 +54,7 @@ pub use sort::FunctionSort;
 /// # Examples
 ///
 /// ```
-/// use fhy_core::symbolic::expression::{BigInt, LiteralKind, LiteralValue};
+/// use fhy_core::expr::{BigInt, LiteralKind, LiteralValue};
 ///
 /// let big: BigInt = "100000000000000000000".parse().expect("digits");
 /// let literal = LiteralValue::from(big.clone());

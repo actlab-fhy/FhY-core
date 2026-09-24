@@ -3,7 +3,7 @@
 //! ids, piecewise and call layout, shared subtrees, and trees thousands of
 //! levels deep printed on a small thread stack.
 //!
-//! Public API only (`fhy_core::symbolic::expression`).
+//! Public API only (`fhy_core::expr`).
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
@@ -13,11 +13,11 @@ pub mod stack_support;
 use expression_support::{
     build_deep_conjunction, build_deep_sum, build_identifier, build_literal, build_text_literal,
 };
-use fhy_core::identifier::Identifier;
-use fhy_core::symbolic::expression::{
+use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, FormatOptions, IdentifierStyle, LiteralValue, Notation,
     UnaryOperation, build_call, build_logical_and, build_piecewise, format_expression,
 };
+use fhy_core::identifier::Identifier;
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 

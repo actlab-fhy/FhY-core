@@ -2,12 +2,12 @@
 //! `validate_predicate`, and for the error they report, over trees and over
 //! DAGs sharing their subtrees.
 //!
-//! Public API only (`fhy_core::symbolic::expression`). Calls and native
-//! constants take their sorts from a test-local [`SortLookup`] holding the
-//! sorts of the built-in functions and constants the tests name (`floor`
-//! returns an integer, `sqrt` a real, `nand` a Boolean; `pi`, `e`, `inf`
-//! and `nan` are real constants), so the tests exercise the same sorts a
-//! populated function registry reports.
+//! Public API only (`fhy_core::expr`). Calls and native constants take
+//! their sorts from a test-local [`SortLookup`] holding the sorts of the
+//! built-in functions and constants the tests name (`floor` returns an
+//! integer, `sqrt` a real, `nand` a Boolean; `pi`, `e`, `inf` and `nan` are
+//! real constants), so the tests exercise the same sorts a populated
+//! function registry reports.
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
@@ -20,13 +20,12 @@ use expression_support::{
     build_call_or_panic, build_deep_conjunction, build_deep_sum, build_identifier, build_literal,
     build_piecewise_or_panic, build_text_literal,
 };
-use fhy_core::identifier::Identifier;
-use fhy_core::symbolic::expression::{
+use fhy_core::expr::{
     BinaryOperation, BooleanPosition, Expression, FunctionSort, NoRegisteredSorts,
-    NonBooleanLogicalOperandError, SortLookup, UnaryOperation, build_logical_and, build_logical_or,
-    build_piecewise, validate_logical_operands, validate_predicate,
+    NonBooleanLogicalOperandError, SortLookup, SymbolType, UnaryOperation, build_logical_and,
+    build_logical_or, build_piecewise, validate_logical_operands, validate_predicate,
 };
-use fhy_core::symbolic::symbol_type::SymbolType;
+use fhy_core::identifier::Identifier;
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};
 

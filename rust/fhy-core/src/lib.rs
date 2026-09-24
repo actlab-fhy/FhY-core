@@ -21,12 +21,12 @@
 //! `Deserialize` refuses for a numeric field.
 
 pub mod diagnostic;
+pub mod expr;
 pub mod identifier;
 pub mod interned;
 pub mod op_attribute;
 pub mod pass_infrastructure;
 pub mod provenance;
-pub mod symbolic;
 pub mod value_domain;
 
 mod decode;

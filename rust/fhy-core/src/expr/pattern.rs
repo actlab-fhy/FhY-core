@@ -9,10 +9,10 @@
 //! supplied by the caller (predicates, guards, rewrites) are fallible; their
 //! [`CallbackError`]s end a match or a walk.
 
-mod core;
+mod matching;
 mod rewrite;
 
-pub use self::core::{
+pub use self::matching::{
     CallbackError, MatchBindings, Pattern, PatternError, does_pattern_match, match_pattern,
 };
 pub use self::rewrite::{

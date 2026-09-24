@@ -22,7 +22,7 @@ use super::pattern::RewriteRuleApplier;
 ///
 /// ```
 /// use fhy_core::pass_infrastructure::create_pass;
-/// use fhy_core::symbolic::expression::{Expression, register_expression_passes};
+/// use fhy_core::expr::{Expression, register_expression_passes};
 ///
 /// register_expression_passes()?;
 /// let applier =

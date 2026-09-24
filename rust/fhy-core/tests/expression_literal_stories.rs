@@ -2,14 +2,12 @@
 //! equivalence buckets and canonical keys, the integer-bucket predicate,
 //! `Display`, and the sorts a literal has.
 //!
-//! Public API only (`fhy_core::symbolic::expression`).
+//! Public API only (`fhy_core::expr`).
 
 #[path = "common/hashing.rs"]
 pub mod hashing_support;
 
-use fhy_core::symbolic::expression::{
-    BigInt, FunctionSort, LiteralKind, LiteralTextError, LiteralValue,
-};
+use fhy_core::expr::{BigInt, FunctionSort, LiteralKind, LiteralTextError, LiteralValue};
 use hashing_support::hash_of;
 use rstest::rstest;
 

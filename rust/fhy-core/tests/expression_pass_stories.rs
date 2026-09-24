@@ -20,18 +20,18 @@ use expression_support::{
     build_piecewise_or_panic,
 };
 use fhy_core::diagnostic::{Diagnostic, DiagnosticLevel};
+use fhy_core::expr::pattern::{
+    CallbackError, FiredRule, MatchBindings, Pattern, RewriteError, RewriteRule,
+    RewriteRuleApplier, apply_rewrite_rules,
+};
+use fhy_core::expr::{
+    BinaryOperation, Expression, ExpressionBuildError, ExpressionPrettyFormatter, FormatOptions,
+    IdentifierStyle, Notation, format_expression, register_expression_passes,
+};
 use fhy_core::identifier::Identifier;
 use fhy_core::pass_infrastructure::{
     CompilerPass, ExecutePass, FixpointIterationRecord, FixpointPassGroup, PassError, PassHook,
     PassManager, PipelineRecord, PreservedAnalyses, create_pass, registered_passes,
-};
-use fhy_core::symbolic::expression::pattern::{
-    CallbackError, FiredRule, MatchBindings, Pattern, RewriteError, RewriteRule,
-    RewriteRuleApplier, apply_rewrite_rules,
-};
-use fhy_core::symbolic::expression::{
-    BinaryOperation, Expression, ExpressionBuildError, ExpressionPrettyFormatter, FormatOptions,
-    IdentifierStyle, Notation, format_expression, register_expression_passes,
 };
 use pattern_support::{
     ProbeError, build_capture, build_literal_pattern, build_x_plus_zero_rule,

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use super::super::error::ExpressionBuildError;
 use super::super::node::Expression;
-use super::core::{CallbackError, MatchBindings, Pattern, match_pattern};
+use super::matching::{CallbackError, MatchBindings, Pattern, match_pattern};
 use crate::diagnostic::DiagnosticLevel;
 use crate::pass_infrastructure::{
     CompilerPass, NodeHandle, NodeIdentity, PassContext, PassFailure, RewriteTreeError, Rewriter,
@@ -202,8 +202,8 @@ fn run_rewrite_rules(
 ///
 /// ```
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::symbolic::expression::{BinaryOperation, Expression, LiteralValue};
-/// use fhy_core::symbolic::expression::pattern::{
+/// use fhy_core::expr::{BinaryOperation, Expression, LiteralValue};
+/// use fhy_core::expr::pattern::{
 ///     CallbackError, Pattern, RewriteRule, apply_rewrite_rule,
 /// };
 ///
@@ -468,10 +468,10 @@ impl Error for RewriteError {
 /// ```
 /// use fhy_core::identifier::Identifier;
 /// use fhy_core::pass_infrastructure::ExecutePass;
-/// use fhy_core::symbolic::expression::pattern::{
+/// use fhy_core::expr::pattern::{
 ///     CallbackError, Pattern, RewriteRule, RewriteRuleApplier,
 /// };
-/// use fhy_core::symbolic::expression::{BinaryOperation, Expression, LiteralValue};
+/// use fhy_core::expr::{BinaryOperation, Expression, LiteralValue};
 ///
 /// // `x * 1 -> x`
 /// let rule = RewriteRule::new(

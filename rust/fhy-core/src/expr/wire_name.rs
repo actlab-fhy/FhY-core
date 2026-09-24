@@ -54,7 +54,7 @@ macro_rules! impl_wire_name_traits {
             fn deserialize<D: ::serde::Deserializer<'de>>(
                 deserializer: D,
             ) -> ::std::result::Result<Self, D::Error> {
-                $crate::symbolic::wire_name::deserialize_wire_name(
+                $crate::expr::wire_name::deserialize_wire_name(
                     deserializer,
                     &$members,
                     Self::as_str,

@@ -7,7 +7,7 @@
 //! text `Display`, and, over DAGs sharing their subtrees at random, that
 //! every analysis answers as it does for an unshared copy.
 //!
-//! Public API only (`fhy_core::symbolic::expression`).
+//! Public API only (`fhy_core::expr`).
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
@@ -21,12 +21,12 @@ use expression_support::{
     IDENTIFIER_POOL as POOL, build_expression_dag_strategy, build_expression_strategy,
     build_literal_strategy, coerce_to_condition, copy_deeply,
 };
-use fhy_core::identifier::Identifier;
-use fhy_core::symbolic::expression::{
+use fhy_core::expr::{
     AlphaRenaming, Expression, ExpressionBuildError, ExpressionKind, FunctionSort, LiteralKind,
-    LiteralValue, SortLookup, build_piecewise, validate_logical_operands, validate_predicate,
+    LiteralValue, SortLookup, SymbolType, build_piecewise, validate_logical_operands,
+    validate_predicate,
 };
-use fhy_core::symbolic::symbol_type::SymbolType;
+use fhy_core::identifier::Identifier;
 use hashing_support::hash_of;
 use proptest::prelude::*;
 use proptest::sample::select;

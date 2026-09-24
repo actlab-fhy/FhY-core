@@ -2,7 +2,7 @@
 //! build a rule set, rewrite a tree with it (or walk a tree matching a
 //! pattern by hand), and check the resulting tree.
 //!
-//! Public API only (`fhy_core::symbolic::expression::pattern`).
+//! Public API only (`fhy_core::expr::pattern`).
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
@@ -10,8 +10,8 @@ pub mod expression_support;
 pub mod pattern_support;
 
 use expression_support::{build_identifier, build_literal};
-use fhy_core::symbolic::expression::pattern::{MatchBindings, Pattern, RewriteRule, match_pattern};
-use fhy_core::symbolic::expression::{BinaryOperation, Expression, UnaryOperation};
+use fhy_core::expr::pattern::{MatchBindings, Pattern, RewriteRule, match_pattern};
+use fhy_core::expr::{BinaryOperation, Expression, UnaryOperation};
 use pattern_support::{
     build_capture, build_capture_of, build_double_application_rule, build_literal_pattern,
     build_x_minus_x_rule, build_x_plus_zero_rule, build_x_times_one_rule, build_zero_plus_x_rule,

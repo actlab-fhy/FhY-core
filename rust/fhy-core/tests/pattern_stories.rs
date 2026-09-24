@@ -3,7 +3,7 @@
 //! matching, predicates and their failures, alternatives, the free matching
 //! functions, and patterns thousands of levels deep.
 //!
-//! Public API only (`fhy_core::symbolic::expression::pattern`).
+//! Public API only (`fhy_core::expr::pattern`).
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
@@ -21,10 +21,10 @@ use expression_support::{
     DEEP_TREE_DEPTH, PATTERN_MATCH_STACK_BYTES, build_call_or_panic, build_deep_sum,
     build_identifier, build_literal, build_text_literal,
 };
-use fhy_core::symbolic::expression::pattern::{
+use fhy_core::expr::pattern::{
     CallbackError, MatchBindings, Pattern, PatternError, does_pattern_match, match_pattern,
 };
-use fhy_core::symbolic::expression::{
+use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralValue,
     UnaryOperation, build_piecewise,
 };
@@ -1752,7 +1752,7 @@ fn callback_error_from_literal_text_error_wraps_it() {
 
     let wrapped = error
         .inner()
-        .downcast_ref::<fhy_core::symbolic::expression::LiteralTextError>()
+        .downcast_ref::<fhy_core::expr::LiteralTextError>()
         .expect("a wrapped literal text error");
     assert_eq!(wrapped.text(), "abc");
     assert_eq!(error.to_string(), expected_message);

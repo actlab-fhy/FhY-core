@@ -24,7 +24,7 @@ use super::pprint::{FormatOptions, IdentifierStyle, format_expression};
 /// # Examples
 ///
 /// ```
-/// use fhy_core::symbolic::expression::{ExpressionBuildError, build_piecewise, Expression};
+/// use fhy_core::expr::{ExpressionBuildError, build_piecewise, Expression};
 ///
 /// let no_cases: Vec<(Expression, Expression)> = Vec::new();
 /// let result = build_piecewise(no_cases, 0);

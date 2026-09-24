@@ -8,7 +8,7 @@
 //! against a reference evaluator and for firing once per wrap, the link
 //! between firings and handle identity, and what counts as a change.
 //!
-//! Public API only (`fhy_core::symbolic::expression::pattern`).
+//! Public API only (`fhy_core::expr::pattern`).
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
@@ -21,15 +21,15 @@ use expression_support::{
     ALL_BINARY_OPERATIONS as BINARY_OPERATIONS, IDENTIFIER_POOL as POOL, build_expression_strategy,
     copy_deeply,
 };
-use fhy_core::identifier::Identifier;
-use fhy_core::symbolic::expression::pattern::{
+use fhy_core::expr::pattern::{
     CallbackError, MatchBindings, Pattern, RewriteRule, apply_rewrite_rules, does_pattern_match,
     match_pattern,
 };
-use fhy_core::symbolic::expression::{
+use fhy_core::expr::{
     BinaryOperation, Expression, ExpressionKind, LiteralKind, LiteralValue, UnaryOperation,
     build_call,
 };
+use fhy_core::identifier::Identifier;
 use proptest::prelude::*;
 use proptest::sample::select;
 

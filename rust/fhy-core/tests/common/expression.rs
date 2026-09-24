@@ -6,15 +6,15 @@
 
 use std::sync::LazyLock;
 
-use fhy_core::identifier::Identifier;
-use fhy_core::symbolic::expression::builtins::{
+use fhy_core::expr::builtins::{
     ComposedFunction, NativeFunctionSignature, list_composed_functions, list_native_functions,
 };
-use fhy_core::symbolic::expression::{
+use fhy_core::expr::{
     BigInt, BinaryOperation, CallExpression, Expression, ExpressionKind, IntoOperand, LiteralKind,
     LiteralValue, PiecewiseExpression, UnaryOperation, build_call, build_logical_and,
     build_piecewise,
 };
+use fhy_core::identifier::Identifier;
 use proptest::num::f64 as f64_class;
 use proptest::prelude::*;
 use proptest::sample::select;

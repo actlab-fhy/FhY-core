@@ -3,8 +3,7 @@
 //! JSON text, refused payloads, and the identifier counter left untouched by
 //! a refused payload.
 //!
-//! Public API only (`fhy_core::symbolic::expression`,
-//! `fhy_core::identifier`).
+//! Public API only (`fhy_core::expr`, `fhy_core::identifier`).
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -17,11 +16,11 @@ use expression_support::{
     DEEP_TREE_DEPTH, SERIALIZATION_STACK_BYTES, build_deep_sum, build_identifier, build_literal,
     build_text_literal,
 };
-use fhy_core::identifier::Identifier;
-use fhy_core::symbolic::expression::{
+use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, LiteralKind,
     UnaryOperation, build_call, build_piecewise,
 };
+use fhy_core::identifier::Identifier;
 use rstest::rstest;
 use serde_json::{Value, json};
 use stack_support::run_on_stack;

@@ -3,7 +3,7 @@
 //! equality and hashing, handle identity, renaming equivalence, DAGs whose
 //! subtrees are shared, and trees thousands of levels deep.
 //!
-//! Public API only (`fhy_core::symbolic::expression`).
+//! Public API only (`fhy_core::expr`).
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
@@ -18,11 +18,11 @@ use expression_support::{
     build_call_node_or_panic, build_deep_sum, build_doubling_dag, build_identifier, build_literal,
     build_piecewise_node_or_panic, build_text_literal, copy_deeply, is_doubling_dag_over,
 };
-use fhy_core::identifier::Identifier;
-use fhy_core::symbolic::expression::{
+use fhy_core::expr::{
     AlphaRenaming, BinaryExpression, BinaryOperation, CallExpression, Expression,
     ExpressionBuildError, ExpressionKind, PiecewiseExpression, UnaryExpression, UnaryOperation,
 };
+use fhy_core::identifier::Identifier;
 use hashing_support::hash_of;
 use rstest::rstest;
 use stack_support::{SMALL_STACK_DEPTH, run_on_small_stack};

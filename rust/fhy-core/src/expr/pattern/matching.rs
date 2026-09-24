@@ -119,8 +119,8 @@ fn match_sequence<'a>(
 ///
 /// ```
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::symbolic::expression::{BinaryOperation, Expression, LiteralValue};
-/// use fhy_core::symbolic::expression::pattern::{Pattern, match_pattern};
+/// use fhy_core::expr::{BinaryOperation, Expression, LiteralValue};
+/// use fhy_core::expr::pattern::{Pattern, match_pattern};
 ///
 /// // `x + 0`, capturing `x`.
 /// let pattern = Pattern::binary(
@@ -177,7 +177,7 @@ impl Pattern {
     /// `"1.5"` does not match `"1.50"`, the float `0.0` matches `-0.0`, and
     /// a NaN value matches no literal at all.
     ///
-    /// [`LiteralKind`]: crate::symbolic::expression::LiteralKind
+    /// [`LiteralKind`]: crate::expr::LiteralKind
     #[must_use]
     pub fn literal(value: Option<LiteralValue>) -> Self {
         Self(PatternKind::Literal(value))
@@ -422,8 +422,8 @@ impl Pattern {
 /// # Examples
 ///
 /// ```
-/// use fhy_core::symbolic::expression::{Expression, LiteralValue};
-/// use fhy_core::symbolic::expression::pattern::MatchBindings;
+/// use fhy_core::expr::{Expression, LiteralValue};
+/// use fhy_core::expr::pattern::MatchBindings;
 ///
 /// let five = Expression::from(LiteralValue::from(5));
 /// let bindings = MatchBindings::empty()
@@ -578,8 +578,8 @@ impl Error for PatternError {}
 /// # Examples
 ///
 /// ```
-/// use fhy_core::symbolic::expression::{Expression, LiteralValue};
-/// use fhy_core::symbolic::expression::pattern::{CallbackError, Pattern, match_pattern};
+/// use fhy_core::expr::{Expression, LiteralValue};
+/// use fhy_core::expr::pattern::{CallbackError, Pattern, match_pattern};
 ///
 /// let refusing = Pattern::predicate(|_| Err(CallbackError::new("no verdict")));
 ///

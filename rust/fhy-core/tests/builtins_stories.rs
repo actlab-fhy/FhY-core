@@ -1,5 +1,5 @@
 //! Stories for the built-in catalogue in
-//! `fhy_core::symbolic::expression::builtins`: the three tables and their
+//! `fhy_core::expr::builtins`: the three tables and their
 //! order, lookups by name, the declared sorts, the constant values, the
 //! parameters, and the exact composed bodies and their printed text. Public
 //! API only.
@@ -15,16 +15,16 @@ pub mod expression_support;
 use std::collections::{HashMap, HashSet};
 use std::thread;
 
-use fhy_core::identifier::Identifier;
-use fhy_core::symbolic::expression::builtins::{
+use fhy_core::expr::builtins::{
     ComposedFunction, NativeConstantSpec, NativeFunctionSignature, find_composed_function,
     find_native_constant, find_native_function, list_composed_functions, list_native_constants,
     list_native_functions,
 };
-use fhy_core::symbolic::expression::{
+use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, ExpressionKind, FormatOptions, FunctionSort, LiteralKind,
     Notation, UnaryOperation, build_piecewise, format_expression,
 };
+use fhy_core::identifier::Identifier;
 use rstest::rstest;
 
 use expression_support::{

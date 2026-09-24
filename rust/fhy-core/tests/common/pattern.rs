@@ -7,11 +7,11 @@
 use std::error::Error;
 use std::fmt;
 
-use fhy_core::symbolic::expression::pattern::{
+use fhy_core::expr::pattern::{
     CallbackError, MatchBindings, Pattern, RewriteOutcome, RewriteRule, apply_rewrite_rules,
     match_pattern,
 };
-use fhy_core::symbolic::expression::{BinaryOperation, Expression, LiteralValue, UnaryOperation};
+use fhy_core::expr::{BinaryOperation, Expression, LiteralValue, UnaryOperation};
 
 /// An error a test callback fails with, recognizable after propagation.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -3,9 +3,9 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasher;
 
+use crate::expr::SymbolType;
 use crate::identifier::Identifier;
 use crate::pass_infrastructure::{BuildIdentityHasher, NodeHandle, NodeIdentity, Tree};
-use crate::symbolic::symbol_type::SymbolType;
 
 use super::error::{BooleanPosition, NonBooleanLogicalOperandError};
 use super::literal::LiteralKind;
@@ -303,7 +303,7 @@ impl SortLookup for NoRegisteredSorts {
 /// ```
 /// use std::collections::HashMap;
 ///
-/// use fhy_core::symbolic::expression::{
+/// use fhy_core::expr::{
 ///     BooleanPosition, NoRegisteredSorts, build_logical_and, validate_logical_operands,
 /// };
 ///
@@ -316,7 +316,7 @@ impl SortLookup for NoRegisteredSorts {
 /// )
 /// .expect_err("a number under a conjunction is refused");
 /// assert!(matches!(error.position(), BooleanPosition::LogicalOperand { .. }));
-/// # Ok::<(), fhy_core::symbolic::expression::ExpressionBuildError>(())
+/// # Ok::<(), fhy_core::expr::ExpressionBuildError>(())
 /// ```
 pub fn validate_logical_operands<E, T, L>(
     expression: &Expression,

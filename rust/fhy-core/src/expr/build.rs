@@ -78,7 +78,7 @@ where
 /// Boolean constant by accident:
 ///
 /// ```compile_fail,E0277
-/// use fhy_core::symbolic::expression::{Expression, UnaryOperation};
+/// use fhy_core::expr::{Expression, UnaryOperation};
 ///
 /// let negated = Expression::new_unary(UnaryOperation::LogicalNot, true);
 /// ```
@@ -87,7 +87,7 @@ where
 /// [`LiteralValue::parse_text`]:
 ///
 /// ```compile_fail,E0277
-/// use fhy_core::symbolic::expression::{Expression, UnaryOperation};
+/// use fhy_core::expr::{Expression, UnaryOperation};
 ///
 /// let negated = Expression::new_unary(UnaryOperation::Negate, "1.5");
 /// ```
@@ -179,7 +179,7 @@ impl Expression {
     /// # Examples
     ///
     /// ```
-    /// use fhy_core::symbolic::expression::{Expression, ExpressionKind, UnaryOperation};
+    /// use fhy_core::expr::{Expression, ExpressionKind, UnaryOperation};
     ///
     /// let negated = Expression::new_unary(UnaryOperation::Negate, 5);
     /// let ExpressionKind::Unary(node) = negated.kind() else { panic!("a unary node") };
@@ -362,7 +362,7 @@ impl Neg for &Expression {
 ///
 /// ```
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::symbolic::expression::{BinaryOperation, Expression, build_logical_and};
+/// use fhy_core::expr::{BinaryOperation, Expression, build_logical_and};
 ///
 /// let x = Expression::from(Identifier::new("x"));
 /// let bounded = build_logical_and([x.greater_equal(0), x.less(10)])?;
@@ -372,7 +372,7 @@ impl Neg for &Expression {
 ///     x.less(10),
 /// );
 /// assert_eq!(bounded, expected);
-/// # Ok::<(), fhy_core::symbolic::expression::ExpressionBuildError>(())
+/// # Ok::<(), fhy_core::expr::ExpressionBuildError>(())
 /// ```
 pub fn build_logical_and<I>(operands: I) -> Result<Expression, ExpressionBuildError>
 where

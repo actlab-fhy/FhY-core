@@ -223,7 +223,7 @@ pub enum IdentifierStyle {
 /// # Examples
 ///
 /// ```
-/// use fhy_core::symbolic::expression::{FormatOptions, IdentifierStyle, Notation};
+/// use fhy_core::expr::{FormatOptions, IdentifierStyle, Notation};
 ///
 /// let options = FormatOptions::default()
 ///     .with_notation(Notation::Functional)
@@ -280,7 +280,7 @@ impl FormatOptions {
 /// ```
 /// use fhy_core::identifier::Identifier;
 /// use fhy_core::pass_infrastructure::ExecutePass;
-/// use fhy_core::symbolic::expression::{
+/// use fhy_core::expr::{
 ///     Expression, ExpressionPrettyFormatter, FormatOptions, Notation,
 /// };
 ///
@@ -375,7 +375,7 @@ fn print_node<'a>(
 ///
 /// ```
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::symbolic::expression::{
+/// use fhy_core::expr::{
 ///     Expression, FormatOptions, Notation, format_expression,
 /// };
 ///

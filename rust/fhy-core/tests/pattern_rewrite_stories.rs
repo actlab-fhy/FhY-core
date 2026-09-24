@@ -4,7 +4,7 @@
 //! rules, failing callbacks and rebuilds, and trees thousands of levels
 //! deep.
 //!
-//! Public API only (`fhy_core::symbolic::expression::pattern`).
+//! Public API only (`fhy_core::expr::pattern`).
 
 #[path = "common/expression.rs"]
 pub mod expression_support;
@@ -18,11 +18,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use expression_support::{build_deep_sum, build_identifier, build_literal};
-use fhy_core::symbolic::expression::pattern::{
+use fhy_core::expr::pattern::{
     CallbackError, FiredRule, MatchBindings, Pattern, RewriteError, RewriteOutcome, RewriteRule,
     apply_rewrite_rule, apply_rewrite_rules,
 };
-use fhy_core::symbolic::expression::{
+use fhy_core::expr::{
     BinaryOperation, Expression, ExpressionBuildError, ExpressionKind, UnaryOperation, build_call,
     build_piecewise,
 };

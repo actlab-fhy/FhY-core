@@ -75,7 +75,7 @@ fn fold_negative_zero(value: f64) -> f64 {
 /// # Examples
 ///
 /// ```
-/// use fhy_core::symbolic::expression::LiteralValue;
+/// use fhy_core::expr::LiteralValue;
 ///
 /// let integer = LiteralValue::from(5);
 /// let padded_text = LiteralValue::parse_text("05")?;
@@ -83,7 +83,7 @@ fn fold_negative_zero(value: f64) -> f64 {
 /// assert_eq!(padded_text.canonical_key(), "int:5");
 /// assert_eq!(padded_text.to_string(), "05");
 /// assert_ne!(LiteralValue::from(1), LiteralValue::from(1.0));
-/// # Ok::<(), fhy_core::symbolic::expression::LiteralTextError>(())
+/// # Ok::<(), fhy_core::expr::LiteralTextError>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct LiteralValue {
@@ -302,7 +302,7 @@ impl FunctionSort {
     /// # Examples
     ///
     /// ```
-    /// use fhy_core::symbolic::expression::{FunctionSort, LiteralValue};
+    /// use fhy_core::expr::{FunctionSort, LiteralValue};
     ///
     /// assert!(FunctionSort::Nat.accepts_literal(&LiteralValue::from(3)));
     /// assert!(!FunctionSort::Nat.accepts_literal(&LiteralValue::from(-3)));

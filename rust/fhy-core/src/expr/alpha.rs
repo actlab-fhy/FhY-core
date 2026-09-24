@@ -25,7 +25,7 @@ use super::error::NonInjectiveRenamingError;
 /// use std::collections::HashMap;
 ///
 /// use fhy_core::identifier::Identifier;
-/// use fhy_core::symbolic::expression::{AlphaRenaming, Expression};
+/// use fhy_core::expr::{AlphaRenaming, Expression};
 ///
 /// let (a, b, c) = (Identifier::new("a"), Identifier::new("b"), Identifier::new("c"));
 /// let renaming = AlphaRenaming::try_new(HashMap::from([(a.clone(), c.clone())]))

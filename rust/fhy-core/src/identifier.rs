@@ -709,9 +709,9 @@ mod tests {
         /// path, returning the error text.
         fn decode_error(self, id: &str) -> String {
             use crate::diagnostic::Note;
+            use crate::expr::Expression;
             use crate::interned::Canonical;
             use crate::op_attribute::OpAttribute;
-            use crate::symbolic::expression::Expression;
             use crate::value_domain::ValueDomain;
 
             let identifier = format!("{{\"id\":{id},\"name_hint\":\"x\"}}");
