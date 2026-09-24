@@ -7,16 +7,18 @@
 //! equality is built with [`Expression::equals`], never with `==`, which
 //! compares expressions structurally.
 //!
-//! The arithmetic operators `+ - * / %` and unary `-` build binary and unary
+//! The arithmetic operators `+ - * /` and unary `-` build binary and unary
 //! nodes, with an expression on either side of a binary operator and any
-//! operand on the other side. The other operations are methods named after
-//! them: [`Expression::equals`], [`Expression::less`],
-//! [`Expression::floor_divide`], [`Expression::power`],
+//! operand on the other side; `/` is true division for every operand type.
+//! There is no `%`. The other operations are methods named after them:
+//! [`Expression::equals`], [`Expression::less`],
+//! [`Expression::floor_divide`], [`Expression::floor_mod`],
+//! [`Expression::power`],
 //! [`Expression::logical_not`], and so on.
 //! [`build_logical_and`], [`build_logical_or`], [`build_piecewise`], and
 //! [`build_call`] build the nodes whose operand count varies.
 
-use std::ops::{Add, Div, Mul, Neg, Rem, Sub};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use num_bigint::BigInt;
 
@@ -240,10 +242,29 @@ impl Expression {
         Self::new_binary(BinaryOperation::GreaterEqual, self, other)
     }
 
-    /// Build the floor division `self // other`.
+    /// Build the floor division `self // other`: the quotient rounded
+    /// toward negative infinity.
     #[must_use]
     pub fn floor_divide(&self, other: impl IntoOperand) -> Expression {
         Self::new_binary(BinaryOperation::FloorDivide, self, other)
+    }
+
+    /// Build the floor modulo `self % other`: the remainder of floor
+    /// division, whose sign follows the divisor, so `-7 floor_mod 3` is `2`
+    /// and `7 floor_mod -3` is `-2`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::identifier::Identifier;
+    /// use fhy_core::expr::{BinaryOperation, Expression};
+    ///
+    /// let x = Expression::from(Identifier::new("x"));
+    /// assert_eq!(x.floor_mod(3), Expression::new_binary(BinaryOperation::FloorMod, &x, 3));
+    /// ```
+    #[must_use]
+    pub fn floor_mod(&self, other: impl IntoOperand) -> Expression {
+        Self::new_binary(BinaryOperation::FloorMod, self, other)
     }
 
     /// Build the exponentiation `self ** other`.
@@ -315,7 +336,6 @@ macro_rules! impl_arithmetic_operators {
         impl_arithmetic_operator!(Sub, sub, BinaryOperation::Subtract, [$($left),*]);
         impl_arithmetic_operator!(Mul, mul, BinaryOperation::Multiply, [$($left),*]);
         impl_arithmetic_operator!(Div, div, BinaryOperation::Divide, [$($left),*]);
-        impl_arithmetic_operator!(Rem, rem, BinaryOperation::Modulo, [$($left),*]);
     };
 }
 

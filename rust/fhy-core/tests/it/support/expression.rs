@@ -199,7 +199,7 @@ pub(crate) const ALL_BINARY_OPERATIONS: [BinaryOperation; 15] = [
     BinaryOperation::Multiply,
     BinaryOperation::Divide,
     BinaryOperation::FloorDivide,
-    BinaryOperation::Modulo,
+    BinaryOperation::FloorMod,
     BinaryOperation::Power,
     BinaryOperation::LogicalAnd,
     BinaryOperation::LogicalOr,

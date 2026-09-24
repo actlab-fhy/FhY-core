@@ -31,7 +31,7 @@ const ALL_FUNCTION_SORTS: [FunctionSort; 4] = [
 
 /// Every wire word of the four vocabularies, plus near misses of each: the
 /// candidate strings the membership tests feed to deserialization.
-const CANDIDATE_WIRE_WORDS: [&str; 30] = [
+const CANDIDATE_WIRE_WORDS: [&str; 31] = [
     "real",
     "int",
     "bool",
@@ -48,6 +48,7 @@ const CANDIDATE_WIRE_WORDS: [&str; 30] = [
     "multiply",
     "divide",
     "floor_divide",
+    "floor_mod",
     "modulo",
     "power",
     "logical_and",
@@ -306,7 +307,7 @@ fn unary_operation_accepts_exactly_its_three_wire_names() {
 #[case::multiply(BinaryOperation::Multiply, "multiply", "*")]
 #[case::divide(BinaryOperation::Divide, "divide", "/")]
 #[case::floor_divide(BinaryOperation::FloorDivide, "floor_divide", "//")]
-#[case::modulo(BinaryOperation::Modulo, "modulo", "%")]
+#[case::floor_mod(BinaryOperation::FloorMod, "floor_mod", "%")]
 #[case::power(BinaryOperation::Power, "power", "**")]
 #[case::logical_and(BinaryOperation::LogicalAnd, "logical_and", "&&")]
 #[case::logical_or(BinaryOperation::LogicalOr, "logical_or", "||")]
@@ -338,7 +339,7 @@ fn binary_operation_text_forms_are_the_wire_name_and_symbol(
 #[case::multiply(BinaryOperation::Multiply, "multiply")]
 #[case::divide(BinaryOperation::Divide, "divide")]
 #[case::floor_divide(BinaryOperation::FloorDivide, "floor_divide")]
-#[case::modulo(BinaryOperation::Modulo, "modulo")]
+#[case::floor_mod(BinaryOperation::FloorMod, "floor_mod")]
 #[case::power(BinaryOperation::Power, "power")]
 #[case::logical_and(BinaryOperation::LogicalAnd, "logical_and")]
 #[case::logical_or(BinaryOperation::LogicalOr, "logical_or")]
@@ -366,6 +367,7 @@ fn binary_operation_serializes_as_the_wire_name(
 #[case::joined(json!("floordivide"))]
 #[case::short_word(json!("and"))]
 #[case::abbreviation(json!("mod"))]
+#[case::old_modulo_name(json!("modulo"))]
 #[case::unary_name(json!("negate"))]
 #[case::padded(json!(" add"))]
 #[case::empty(json!(""))]
@@ -388,7 +390,7 @@ fn binary_operation_accepts_exactly_its_fifteen_wire_names() {
         "multiply",
         "divide",
         "floor_divide",
-        "modulo",
+        "floor_mod",
         "power",
         "logical_and",
         "logical_or",

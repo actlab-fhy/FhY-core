@@ -24,7 +24,7 @@ const ALL_BINARY_OPERATIONS: [BinaryOperation; 15] = [
     BinaryOperation::Multiply,
     BinaryOperation::Divide,
     BinaryOperation::FloorDivide,
-    BinaryOperation::Modulo,
+    BinaryOperation::FloorMod,
     BinaryOperation::Power,
     BinaryOperation::LogicalAnd,
     BinaryOperation::LogicalOr,
@@ -131,12 +131,15 @@ pub enum BinaryOperation {
     Subtract,
     /// Multiplication, `a * b`.
     Multiply,
-    /// True division, `a / b`.
+    /// True division, `a / b`: the exact real quotient whatever the operand
+    /// types, so `x / 4` over integers is never truncated. Integer division
+    /// rounding down is [`FloorDivide`](Self::FloorDivide).
     Divide,
     /// Division rounded toward negative infinity, `a // b`.
     FloorDivide,
-    /// Remainder of floor division, `a % b`.
-    Modulo,
+    /// Remainder of floor division, `a % b`: its sign follows the divisor,
+    /// so `-7 % 3` is `2` and `7 % -3` is `-2`.
+    FloorMod,
     /// Exponentiation, `a ** b`.
     Power,
     /// Boolean conjunction, `a && b`.
@@ -168,7 +171,7 @@ impl BinaryOperation {
             Self::Multiply => "multiply",
             Self::Divide => "divide",
             Self::FloorDivide => "floor_divide",
-            Self::Modulo => "modulo",
+            Self::FloorMod => "floor_mod",
             Self::Power => "power",
             Self::LogicalAnd => "logical_and",
             Self::LogicalOr => "logical_or",
@@ -192,7 +195,7 @@ impl BinaryOperation {
             Self::Multiply => "*",
             Self::Divide => "/",
             Self::FloorDivide => "//",
-            Self::Modulo => "%",
+            Self::FloorMod => "%",
             Self::Power => "**",
             Self::LogicalAnd => "&&",
             Self::LogicalOr => "||",
@@ -208,7 +211,7 @@ impl BinaryOperation {
     /// Return whether the operation is arithmetic, so its result is a number:
     /// true for [`Add`](Self::Add), [`Subtract`](Self::Subtract),
     /// [`Multiply`](Self::Multiply), [`Divide`](Self::Divide),
-    /// [`FloorDivide`](Self::FloorDivide), [`Modulo`](Self::Modulo), and
+    /// [`FloorDivide`](Self::FloorDivide), [`FloorMod`](Self::FloorMod), and
     /// [`Power`](Self::Power).
     #[must_use]
     pub(crate) fn is_arithmetic(self) -> bool {
@@ -218,7 +221,7 @@ impl BinaryOperation {
             | Self::Multiply
             | Self::Divide
             | Self::FloorDivide
-            | Self::Modulo
+            | Self::FloorMod
             | Self::Power => true,
             Self::LogicalAnd
             | Self::LogicalOr
@@ -284,7 +287,7 @@ mod tests {
     #[case::multiply(BinaryOperation::Multiply, true, false)]
     #[case::divide(BinaryOperation::Divide, true, false)]
     #[case::floor_divide(BinaryOperation::FloorDivide, true, false)]
-    #[case::modulo(BinaryOperation::Modulo, true, false)]
+    #[case::floor_mod(BinaryOperation::FloorMod, true, false)]
     #[case::power(BinaryOperation::Power, true, false)]
     #[case::logical_and(BinaryOperation::LogicalAnd, false, true)]
     #[case::logical_or(BinaryOperation::LogicalOr, false, true)]

@@ -382,6 +382,19 @@ impl<S: BuildHasher> Rewriter<Expression> for Substitution<'_, S> {
 /// assert!(matches!(sum.kind(), ExpressionKind::Binary(_)));
 /// ```
 ///
+/// `/` builds true division, whatever the operand types: `x / 4` over
+/// integers is the exact real quotient, and
+/// [`floor_divide`](Self::floor_divide) rounds down. There is no `%`
+/// operator; the remainder of floor division is
+/// [`floor_mod`](Self::floor_mod):
+///
+/// ```compile_fail,E0369
+/// use fhy_core::identifier::Identifier;
+/// use fhy_core::expr::Expression;
+///
+/// let remainder = Expression::from(Identifier::new("x")) % 3;
+/// ```
+///
 /// Expressions have no order: `<` does not compare them, and a comparison
 /// node is built with [`less`](Self::less) and its siblings.
 ///

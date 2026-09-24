@@ -23,7 +23,7 @@ enum BinaryBuilder {
     Multiply,
     Divide,
     FloorDivide,
-    Modulo,
+    FloorMod,
     Power,
     Equals,
     NotEquals,
@@ -42,7 +42,7 @@ impl BinaryBuilder {
             Self::Multiply => BinaryOperation::Multiply,
             Self::Divide => BinaryOperation::Divide,
             Self::FloorDivide => BinaryOperation::FloorDivide,
-            Self::Modulo => BinaryOperation::Modulo,
+            Self::FloorMod => BinaryOperation::FloorMod,
             Self::Power => BinaryOperation::Power,
             Self::Equals => BinaryOperation::Equal,
             Self::NotEquals => BinaryOperation::NotEqual,
@@ -61,7 +61,7 @@ impl BinaryBuilder {
             Self::Multiply => left * right,
             Self::Divide => left / right,
             Self::FloorDivide => left.floor_divide(right),
-            Self::Modulo => left % right,
+            Self::FloorMod => left.floor_mod(right),
             Self::Power => left.power(right),
             Self::Equals => left.equals(right),
             Self::NotEquals => left.not_equals(right),
@@ -155,7 +155,7 @@ fn expression_binary_builders_produce_the_matching_binary_node(
         BinaryBuilder::Multiply,
         BinaryBuilder::Divide,
         BinaryBuilder::FloorDivide,
-        BinaryBuilder::Modulo,
+        BinaryBuilder::FloorMod,
         BinaryBuilder::Power,
         BinaryBuilder::Equals,
         BinaryBuilder::NotEquals,
@@ -189,7 +189,7 @@ fn expression_binary_builders_promote_a_plain_right_operand(
         BinaryBuilder::Multiply,
         BinaryBuilder::Divide,
         BinaryBuilder::FloorDivide,
-        BinaryBuilder::Modulo,
+        BinaryBuilder::FloorMod,
         BinaryBuilder::Power,
         BinaryBuilder::Equals,
         BinaryBuilder::NotEquals,
@@ -215,8 +215,8 @@ fn expression_binary_builders_promote_a_plain_right_operand(
 }
 
 /// Test each arithmetic operator wraps a plain left operand in the
-/// expression it stands for; floor division and exponentiation take one
-/// through `new_binary`.
+/// expression it stands for; floor division, floor modulo and
+/// exponentiation take one through `new_binary`.
 #[rstest]
 fn expression_arithmetic_builders_promote_a_plain_left_operand(
     #[values(
@@ -225,7 +225,7 @@ fn expression_arithmetic_builders_promote_a_plain_left_operand(
         BinaryOperation::Multiply,
         BinaryOperation::Divide,
         BinaryOperation::FloorDivide,
-        BinaryOperation::Modulo,
+        BinaryOperation::FloorMod,
         BinaryOperation::Power
     )]
     operation: BinaryOperation,
@@ -247,9 +247,6 @@ fn expression_arithmetic_builders_promote_a_plain_left_operand(
         (BinaryOperation::Divide, PlainOperand::Integer(value)) => value / &right,
         (BinaryOperation::Divide, PlainOperand::Float(value)) => value / &right,
         (BinaryOperation::Divide, PlainOperand::Identifier(value)) => value / &right,
-        (BinaryOperation::Modulo, PlainOperand::Integer(value)) => value % &right,
-        (BinaryOperation::Modulo, PlainOperand::Float(value)) => value % &right,
-        (BinaryOperation::Modulo, PlainOperand::Identifier(value)) => value % &right,
         (operation, PlainOperand::Integer(value)) => {
             Expression::new_binary(operation, value, &right)
         }
@@ -329,14 +326,6 @@ macro_rules! build_with_every_operator {
                 $left / right.clone(),
                 Expression::new_binary(BinaryOperation::Divide, $left, right),
             ),
-            (
-                $left % right,
-                Expression::new_binary(BinaryOperation::Modulo, $left, right),
-            ),
-            (
-                $left % right.clone(),
-                Expression::new_binary(BinaryOperation::Modulo, $left, right),
-            ),
         ]
     }};
 }
@@ -372,7 +361,7 @@ fn expression_arithmetic_operators_accept_every_operand_type_on_the_left(
 
     let pairs = build(&x);
 
-    assert_eq!(pairs.len(), 10);
+    assert_eq!(pairs.len(), 8);
     for (built, expected) in pairs {
         assert_eq!(built, expected);
     }
@@ -515,6 +504,38 @@ fn expression_binary_builder_takes_a_parsed_text_operand(
     };
     assert_eq!(variant, expected_variant);
     assert_eq!(right.to_string(), expected_display);
+}
+
+/// Test `floor_mod` builds the floor-modulo node over the receiver and its
+/// operand, promoting a plain operand.
+#[test]
+fn expression_floor_mod_builds_a_floor_mod_node() {
+    let (_, x) = build_identifier("x");
+
+    let built = x.floor_mod(3);
+
+    let ExpressionKind::Binary(node) = built.kind() else {
+        panic!("expected a binary node, got {built:?}");
+    };
+    assert_eq!(node.operation(), BinaryOperation::FloorMod);
+    assert!(Expression::ptr_eq(node.left(), &x));
+    assert_eq!(node.right(), &build_literal(3));
+}
+
+/// Test `/` builds true division whatever the operand types, integers
+/// included, never floor division.
+#[rstest]
+#[case::integers(|| build_literal(7) / 4)]
+#[case::integer_on_the_left(|| 7 / build_literal(4))]
+#[case::identifier_by_integer(|| build_identifier("x").1 / 4)]
+#[case::floats(|| build_literal(7.0) / 4.0)]
+fn expression_div_operator_builds_true_division(#[case] build: fn() -> Expression) {
+    let built = build();
+
+    let ExpressionKind::Binary(node) = built.kind() else {
+        panic!("expected a binary node, got {built:?}");
+    };
+    assert_eq!(node.operation(), BinaryOperation::Divide);
 }
 
 // =============================================================================

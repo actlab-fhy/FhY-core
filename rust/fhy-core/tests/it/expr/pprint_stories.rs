@@ -274,7 +274,7 @@ fn format_expression_writes_each_unary_operation(
 #[case::multiply(BinaryOperation::Multiply, "(x * 2)", "(multiply x 2)")]
 #[case::divide(BinaryOperation::Divide, "(x / 2)", "(divide x 2)")]
 #[case::floor_divide(BinaryOperation::FloorDivide, "(x // 2)", "(floor_divide x 2)")]
-#[case::modulo(BinaryOperation::Modulo, "(x % 2)", "(modulo x 2)")]
+#[case::floor_mod(BinaryOperation::FloorMod, "(x % 2)", "(floor_mod x 2)")]
 #[case::power(BinaryOperation::Power, "(x ** 2)", "(power x 2)")]
 #[case::logical_and(BinaryOperation::LogicalAnd, "(x && 2)", "(logical_and x 2)")]
 #[case::logical_or(BinaryOperation::LogicalOr, "(x || 2)", "(logical_or x 2)")]

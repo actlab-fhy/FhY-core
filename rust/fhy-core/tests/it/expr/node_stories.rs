@@ -294,7 +294,7 @@ fn call_expression_try_new_rejects_empty_function_name() {
 fn expression_from_node_struct_rewraps_the_node() {
     let (_, x) = build_identifier("x");
     let unary = -&x;
-    let binary = &x % 3;
+    let binary = x.floor_mod(3);
     let piecewise =
         build_piecewise_node_or_panic(vec![(x.less(0), build_literal(1))], build_literal(2));
     let call = build_call_node_or_panic("f", vec![x.clone()]);

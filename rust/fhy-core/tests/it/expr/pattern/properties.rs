@@ -47,7 +47,7 @@ const NUMERIC_BINARY_OPERATIONS: [BinaryOperation; 3] = [
 /// The division operations of the numeric fragment, whose divisor is always
 /// a non-zero literal.
 const NUMERIC_DIVISION_OPERATIONS: [BinaryOperation; 2] =
-    [BinaryOperation::FloorDivide, BinaryOperation::Modulo];
+    [BinaryOperation::FloorDivide, BinaryOperation::FloorMod];
 
 /// The divisors of the division operations.
 const NONZERO_DIVISORS: [i64; 16] = [-8, -7, -6, -5, -4, -3, -2, -1, 1, 2, 3, 4, 5, 6, 7, 8];
@@ -210,7 +210,7 @@ fn build_environment_strategy() -> impl Strategy<Value = HashMap<Identifier, i64
 }
 
 /// Evaluate a numeric tree with wrapping 64-bit integer arithmetic, floor
-/// division and modulo rounding toward negative infinity as Python's do.
+/// division and floor modulo rounding toward negative infinity.
 ///
 /// Wrapping arithmetic is a ring, so `x + 0`, `x * 1` and `-(-x)` equal `x`
 /// for every `x`.
@@ -242,7 +242,7 @@ fn evaluate_numeric(expression: &Expression, environment: &HashMap<Identifier, i
                         left.wrapping_rem(right) != 0 && (left < 0) != (right < 0);
                     quotient - i64::from(rounds_toward_zero)
                 }
-                BinaryOperation::Modulo => {
+                BinaryOperation::FloorMod => {
                     let remainder = left.wrapping_rem(right);
                     if remainder != 0 && (remainder < 0) != (right < 0) {
                         remainder + right
