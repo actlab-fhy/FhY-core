@@ -287,9 +287,6 @@ maturin builds it into the extension module `fhy_core._rs`. A port adds its
 types to `fhy-core` and their bindings to `fhy-core-py`. Every port follows
 these rules.
 
-Migration in progress: the crate is being migrated to these rules, see
-`docs/design/rust-workspace.md`.
-
 ### One extension module per process
 
 All Rust code that uses *FhY* Core's Rust types compiles into a single
@@ -381,12 +378,13 @@ Each public item has exactly one public path, every `pub use` is explicit
 module depends only on the layers before it:
 
 1. `identifier`, `interned`
-2. `diagnostic`, `provenance`, `op_attribute`, `value_domain`,
-   `described_tag`
-3. `tree`
-4. `expr` (with `expr::pattern` and `expr::builtins`) and `pass`, which do
+2. `described_tag`, `value_domain`, `provenance`
+3. `diagnostic` and `op_attribute`, whose tags are `described_tag`
+   vocabularies
+4. `tree`
+5. `expr` (with `expr::pattern` and `expr::builtins`) and `pass`, which do
    not depend on each other
-5. `expr::passes`, the passes over expressions, which depends on both
+6. `expr::passes`, the passes over expressions, which depends on both
 
 A module with submodules is a `foo.rs` file next to a `foo/` directory;
 there are no `mod.rs` files. A private module is never named `core`, which
@@ -425,6 +423,16 @@ every other module, Rust defines the behavior: the binding raises the
 exception class the replaced Python API documents, with the Rust error's
 `Display` text.
 
+### Public enums and structs
+
+A public enum that may gain variants is `#[non_exhaustive]`. An enum that
+passes and callers match exhaustively, such as `ExpressionKind`, the
+operation enums, `LiteralValue`, `Callee` or `Provenance`, stays exhaustive
+and says why in an `#[expect(clippy::exhaustive_enums, reason = "...")]`;
+the workspace lints `clippy::exhaustive_enums` and
+`clippy::exhaustive_structs` reject any other exhaustive public enum, or
+struct with only public fields.
+
 ### Python parity is limited to dual-defined concepts
 
 Rust matches the Python implementation's behavior and text only for
@@ -442,8 +450,10 @@ narrate the Python implementation.
 
 `fhy-core-py` declares `fhy_core._rs` with one declarative `#[pymodule]`
 in `lib.rs`. Each core module's bindings live in a file of the same name
-and are exported with `#[pymodule_export]`. The Python namespace of `_rs`
-stays flat, since PyO3 submodules cannot be imported as packages.
+and are exported with `#[pymodule_export]`, and implements the local
+`IntoPyErr` trait of `error.rs` for the core errors they raise. The Python
+namespace of `_rs` stays flat, since PyO3 submodules cannot be imported as
+packages.
 `src/fhy_core/_rs.pyi` is written by hand, and `tests/test_rs_stub.py`
 checks its names and parameters against the built extension.
 
@@ -453,11 +463,14 @@ checks its names and parameters against the built extension.
 with one module per area mirroring the crate's modules. Shared helpers
 live in the `support` module (`tests/it/support.rs` and
 `tests/it/support/`) at `pub(crate)`, so a helper no test uses is a
-dead-code warning. A test that needs a fresh process, because it moves
-process-global state further than an ordinary test tolerates, is its own
-`[[test]]` target with exactly one `#[test]` and a comment saying why, and
-it is added to the target list the CI `rust` job checks. Nothing
-re-executes a test binary to get a fresh process.
+dead-code warning. A helper that only one test module uses lives in that
+module. A test that needs a fresh process, because it moves process-global
+state further than an ordinary test tolerates, is its own test target, a
+file `tests/<name>.rs` beside `tests/it/` with exactly one `#[test]` and a
+comment saying why, and it is added to the target list the CI `rust` job
+checks. Today the one such target is `id_cap_decode`, which moves the id
+counter to `ID_CAP`. Nothing re-executes a test binary to get a fresh
+process.
 
 ### Canonical values keep their identity in Python
 
