@@ -4,25 +4,15 @@
 //! [`Span`] is a range given by byte offsets, positions, or both. Neither
 //! names a file: a [`FileProvenance`] pairs a path with an optional span.
 //!
-//! A [`Provenance`] records the origin of a compiler object as one of five
-//! variants. [`Provenance::Unknown`] carries no information; a file region, a
-//! named wrapper around a child provenance, a call site, and a fusion of
-//! several provenances cover the rest. Richer origins, such as a builtin or a
-//! library symbol, are compositions of these variants rather than new ones.
+//! A [`Provenance`] records the origin of a compiler object: unknown, a file
+//! region, a named wrapper around a child provenance, a call site, or a
+//! fusion of several provenances. A transformation that combines several
+//! objects combines their provenances with [`Provenance::fuse`], or with
+//! [`Provenance::fuse_labelled`] to name the transformation.
 //!
-//! A transformation that combines several objects combines their provenances
-//! with [`Provenance::fuse`], or [`Provenance::fuse_labelled`] to name the
-//! transformation, which drop unknown inputs and splice in the sources of
-//! unlabelled fusions. A fusion that either builds therefore never
-//! lists an unknown provenance or an unlabelled fusion among its own
-//! sources; labelled fusions and the other variants are kept whole, whatever
-//! they contain.
-//!
-//! [`Position`], [`Span`] and [`Provenance`] serialize through plain serde
-//! derives, in any serde format. A position is `{"line": .., "column": ..}`,
-//! a span names all four of its fields with `null` for an absent one, and a
-//! provenance is tagged by its variant name, as in `"unknown"` or `{"file":
-//! {..}}`. Decoding checks the same invariants as the constructors.
+//! These types serialize through plain serde derives, in any serde format,
+//! with the shapes documented on each type. Decoding checks the same
+//! invariants as the constructors.
 
 use std::fmt;
 use std::hash::Hash;
@@ -335,7 +325,7 @@ impl TryFrom<SpanData> for Span {
     type Error = SpanError;
 
     fn try_from(data: SpanData) -> Result<Self, SpanError> {
-        Span {
+        Self {
             start_offset: data.start_offset,
             end_offset: data.end_offset,
             start_position: data.start_position,
@@ -355,19 +345,17 @@ impl TryFrom<SpanData> for Span {
 /// Equality, hashing, `Debug`, [`Display`](fmt::Display), serialization,
 /// deserialization and dropping recurse through nested provenances, and
 /// cloning recurses through nested fusions (a named or call-site child is
-/// shared, not copied), so their stack use grows with the nesting depth of
-/// the tree, and a tree nested deeply enough (on the order of tens of
-/// thousands of levels on a default thread stack) overflows the stack.
-/// [`Provenance::fuse`] walks an explicit stack instead, and a fusion it
-/// builds never lists an unlabelled fusion among its own sources.
+/// shared, not copied). A tree nested deeply enough, on the order of tens
+/// of thousands of levels on a default thread stack, overflows the stack.
+/// [`Provenance::fuse`] walks an explicit stack instead.
 ///
 /// Decoding JSON text with `serde_json` refuses input nested more than 127
-/// JSON levels deep with an error, not a crash; a named or call-site level
-/// takes two JSON levels and a fused level three. A format that is not
-/// self-describing, such as postcard, has no such limit: decoding untrusted
-/// bytes there recurses as deep as the input nests, at about two bytes per
-/// named level, and can overflow the stack. A caller decoding untrusted
-/// input bounds its size, or uses a format with a depth limit.
+/// JSON levels deep with an error; a named or call-site level takes two
+/// JSON levels and a fused level three. A format that is not
+/// self-describing, such as postcard, has no such limit, so decoding
+/// untrusted bytes can overflow the stack at about two bytes per named
+/// level. A caller decoding untrusted input bounds its size, or uses a
+/// format with a depth limit.
 ///
 /// # Serialization
 ///
@@ -430,10 +418,10 @@ impl Provenance {
     #[must_use]
     pub fn fuse(provenances: impl IntoIterator<Item = Provenance>) -> Provenance {
         let flat = flatten_fusion_inputs(provenances);
-        match <[Provenance; 1]>::try_from(flat) {
+        match <[Self; 1]>::try_from(flat) {
             Ok([single]) => single,
-            Err(flat) if flat.is_empty() => Provenance::Unknown,
-            Err(flat) => Provenance::Fused(FusedProvenance::new(flat)),
+            Err(flat) if flat.is_empty() => Self::Unknown,
+            Err(flat) => Self::Fused(FusedProvenance::new(flat)),
         }
     }
 
@@ -468,9 +456,9 @@ impl Provenance {
     ) -> Provenance {
         let flat = flatten_fusion_inputs(provenances);
         if flat.is_empty() {
-            Provenance::Unknown
+            Self::Unknown
         } else {
-            Provenance::Fused(FusedProvenance::labelled(flat, label))
+            Self::Fused(FusedProvenance::labelled(flat, label))
         }
     }
 }
@@ -503,22 +491,22 @@ fn flatten_fusion_inputs(provenances: impl IntoIterator<Item = Provenance>) -> V
 impl fmt::Display for Provenance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Provenance::Unknown => f.write_str("<unknown>"),
-            Provenance::File(file) => {
+            Self::Unknown => f.write_str("<unknown>"),
+            Self::File(file) => {
                 f.write_str(&file.file_path)?;
                 match &file.span {
                     Some(span) if !span.is_unknown() => write!(f, ":{span}"),
                     _ => Ok(()),
                 }
             }
-            Provenance::Named(named) => match named.child() {
-                Provenance::Unknown => f.write_str(&named.name),
+            Self::Named(named) => match named.child() {
+                Self::Unknown => f.write_str(&named.name),
                 child => write!(f, "{} ({child})", named.name),
             },
-            Provenance::CallSite(call_site) => {
+            Self::CallSite(call_site) => {
                 write!(f, "{} at {}", call_site.callee(), call_site.caller())
             }
-            Provenance::Fused(fused) => {
+            Self::Fused(fused) => {
                 f.write_str(fused.label().unwrap_or("fused"))?;
                 f.write_str("[")?;
                 for (index, source) in fused.sources.iter().enumerate() {
@@ -533,15 +521,8 @@ impl fmt::Display for Provenance {
     }
 }
 
-/// Return `path` in its lexical normal form.
-///
-/// `/` is the only separator; every other character, a backslash or a
-/// drive letter's colon included, is part of a component. Empty and `.`
-/// components are removed, which drops repeated and trailing separators,
-/// `..` components are kept, a root of exactly two separators (`//`) is
-/// kept while one or three or more leading separators become the root `/`,
-/// and a path with no root and no components becomes `.`. The result is the
-/// same on every platform, and normalizing twice changes nothing.
+/// Return `path` in the lexical normal form [`FileProvenance`] describes.
+/// Normalizing twice changes nothing.
 fn normalize_file_path(path: &str) -> String {
     let root = if path.starts_with("//") && !path.starts_with("///") {
         "//"
@@ -567,13 +548,13 @@ fn normalize_file_path(path: &str) -> String {
 /// The path is text stored in a lexical normal form, the same on every
 /// platform: `/` is the only separator, repeated separators and `.`
 /// components are removed and a trailing separator is dropped, so `./a` and
-/// `a//b/` become `a` and `a/b`, and the empty path becomes `.`. A root of
-/// exactly two separators stays `//`, while three or more leading
-/// separators become `/`. A `..` component is never resolved, and `~`, a
-/// backslash and a drive letter such as `C:` are ordinary characters, so
-/// `C:\src\a.fhy` is one component. Equality, hashing and
-/// [`Display`](fmt::Display) use the normalized text, so `//a` and `/a`
-/// differ.
+/// `a//b/` become `a` and `a/b`. A path left with no root and no
+/// components, such as the empty path, becomes `.`. A root of exactly two
+/// separators stays `//`, while three or more leading separators become
+/// `/`. A `..` component is never resolved, and `~`, a backslash and a drive
+/// letter such as `C:` are ordinary characters, so `C:\src\a.fhy` is one
+/// component. Equality, hashing and [`Display`](fmt::Display) use the
+/// normalized text, so `//a` and `/a` differ.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(from = "FileProvenanceData")]
 pub struct FileProvenance {
@@ -626,7 +607,7 @@ struct FileProvenanceData {
 
 impl From<FileProvenanceData> for FileProvenance {
     fn from(data: FileProvenanceData) -> Self {
-        FileProvenance::new(data.file_path, data.span)
+        Self::new(data.file_path, data.span)
     }
 }
 
@@ -686,7 +667,7 @@ impl TryFrom<NamedProvenanceData> for NamedProvenance {
     type Error = NamedProvenanceError;
 
     fn try_from(data: NamedProvenanceData) -> Result<Self, NamedProvenanceError> {
-        NamedProvenance::try_new(data.name, data.child)
+        Self::try_new(data.name, data.child)
     }
 }
 
@@ -791,8 +772,8 @@ pub enum PositionError {
 impl fmt::Display for PositionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PositionError::ZeroLine => f.write_str("a position's line must be at least 1"),
-            PositionError::ZeroColumn => f.write_str("a position's column must be at least 1"),
+            Self::ZeroLine => f.write_str("a position's line must be at least 1"),
+            Self::ZeroColumn => f.write_str("a position's column must be at least 1"),
         }
     }
 }
@@ -822,13 +803,11 @@ pub enum SpanError {
 impl fmt::Display for SpanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SpanError::EndOffsetBeforeStart { start, end } => {
-                write!(
-                    f,
-                    "a span's end offset {end} precedes its start offset {start}"
-                )
-            }
-            SpanError::EndPositionBeforeStart { start, end } => write!(
+            Self::EndOffsetBeforeStart { start, end } => write!(
+                f,
+                "a span's end offset {end} precedes its start offset {start}"
+            ),
+            Self::EndPositionBeforeStart { start, end } => write!(
                 f,
                 "a span's end position {end} precedes its start position {start}"
             ),
@@ -849,9 +828,7 @@ pub enum NamedProvenanceError {
 impl fmt::Display for NamedProvenanceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            NamedProvenanceError::EmptyName => {
-                f.write_str("a named provenance's name must be non-empty")
-            }
+            Self::EmptyName => f.write_str("a named provenance's name must be non-empty"),
         }
     }
 }
