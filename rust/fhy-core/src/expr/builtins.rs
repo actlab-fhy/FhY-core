@@ -465,101 +465,75 @@ where
         .expect("a catalogue piecewise has at least one case and comparison conditions")
 }
 
-/// Build a call of the built-in `function`.
-fn create_call<I>(function: BuiltinFunction, arguments: I) -> Expression
-where
-    I: IntoIterator,
-    I::Item: Into<Expression>,
-{
-    Expression::call(function, arguments)
-}
-
-/// `max(a, b) = {a if a > b; b otherwise}`.
 fn build_max_body([a, b]: &[Expression; 2]) -> Expression {
     create_piecewise([(a.greater(b), a)], b)
 }
 
-/// `min(a, b) = {a if a < b; b otherwise}`.
 fn build_min_body([a, b]: &[Expression; 2]) -> Expression {
     create_piecewise([(a.less(b), a)], b)
 }
 
-/// `abs(x) = {x if x >= 0.0; -x otherwise}`.
 fn build_abs_body([x]: &[Expression; 1]) -> Expression {
     create_piecewise([(x.greater_equal(0.0), x)], -x)
 }
 
-/// `sign(x) = {1 if x > 0.0; -1 if x < 0.0; 0 otherwise}`, with integer
-/// results.
 fn build_sign_body([x]: &[Expression; 1]) -> Expression {
     create_piecewise([(x.greater(0.0), 1_i64), (x.less(0.0), -1_i64)], 0_i64)
 }
 
-/// `clamp(x, lo, hi) = min(max(x, lo), hi)`.
 fn build_clamp_body([x, lo, hi]: &[Expression; 3]) -> Expression {
-    create_call(
+    Expression::call(
         BuiltinFunction::Min,
-        [&create_call(BuiltinFunction::Max, [x, lo]), hi],
+        [&Expression::call(BuiltinFunction::Max, [x, lo]), hi],
     )
 }
 
-/// `clamp_symmetric(x, bound) = clamp(x, -bound, bound)`.
 fn build_clamp_symmetric_body([x, bound]: &[Expression; 2]) -> Expression {
-    create_call(BuiltinFunction::Clamp, [x, &-bound, bound])
+    Expression::call(BuiltinFunction::Clamp, [x, &-bound, bound])
 }
 
-/// `relu(x) = max(x, 0)`, with an integer zero.
 fn build_relu_body([x]: &[Expression; 1]) -> Expression {
-    create_call(BuiltinFunction::Max, [x, &Expression::from(0_i64)])
+    Expression::call(BuiltinFunction::Max, [x, &Expression::from(0_i64)])
 }
 
-/// `leaky_relu(x, slope) = {x if x > 0.0; x * slope otherwise}`.
 fn build_leaky_relu_body([x, slope]: &[Expression; 2]) -> Expression {
     create_piecewise([(x.greater(0.0), x)], x * slope)
 }
 
-/// `xor(a, b) = (a || b) && !(a && b)`.
 fn build_xor_body([a, b]: &[Expression; 2]) -> Expression {
     a.or(b).and(!a.and(b))
 }
 
-/// `nand(a, b) = !(a && b)`.
 fn build_nand_body([a, b]: &[Expression; 2]) -> Expression {
     !a.and(b)
 }
 
-/// `nor(a, b) = !(a || b)`.
 fn build_nor_body([a, b]: &[Expression; 2]) -> Expression {
     !a.or(b)
 }
 
-/// `implies(a, b) = !a || b`.
 fn build_implies_body([a, b]: &[Expression; 2]) -> Expression {
     (!a).or(b)
 }
 
-/// `iff(a, b) = a == b`.
 fn build_iff_body([a, b]: &[Expression; 2]) -> Expression {
     a.equals(b)
 }
 
-/// `sigmoid(x) = 1.0 / (1.0 + exp(-x))`.
 fn build_sigmoid_body([x]: &[Expression; 1]) -> Expression {
-    1.0 / (1.0 + create_call(BuiltinFunction::Exp, [-x]))
+    1.0 / (1.0 + Expression::call(BuiltinFunction::Exp, [-x]))
 }
 
-/// `silu(x) = x * sigmoid(x)`.
 fn build_silu_body([x]: &[Expression; 1]) -> Expression {
-    x * create_call(BuiltinFunction::Sigmoid, [x])
+    x * Expression::call(BuiltinFunction::Sigmoid, [x])
 }
 
-/// `gelu(x) = (0.5 * x) * (1.0 + erf(x / sqrt(2.0)))`.
 fn build_gelu_body([x]: &[Expression; 1]) -> Expression {
     0.5 * x
         * (1.0
-            + create_call(
+            + Expression::call(
                 BuiltinFunction::Erf,
-                [x / create_call(BuiltinFunction::Sqrt, [2.0])],
+                [x / Expression::call(BuiltinFunction::Sqrt, [2.0])],
             ))
 }
 
@@ -662,8 +636,8 @@ mod tests {
     use super::super::node::ExpressionKind;
     use super::*;
 
-    /// Test the catalogue-order arrays list every variant exactly once, at
-    /// the index an exhaustive `match` gives it, so a variant cannot be
+    /// Test that the catalogue-order arrays list every variant exactly once,
+    /// at the index an exhaustive `match` gives it, so a variant cannot be
     /// added without listing it.
     #[test]
     fn catalogue_order_array_lists_every_variant() {
@@ -684,8 +658,8 @@ mod tests {
         }
     }
 
-    /// Test the composed functions lead the catalogue, each built for its
-    /// own variant, and every native function has no definition.
+    /// Test that the composed functions lead the catalogue, each built for
+    /// its own variant, and that no native function has a definition.
     #[test]
     fn composed_functions_lead_the_catalogue_in_order() {
         for (index, function) in FUNCTIONS.into_iter().enumerate() {
@@ -706,7 +680,6 @@ mod tests {
         }
     }
 
-    /// Test every composed body calls only built-in functions.
     #[test]
     fn composed_bodies_call_only_builtin_functions() {
         for composed in BuiltinFunction::iter().filter_map(BuiltinFunction::composed) {
