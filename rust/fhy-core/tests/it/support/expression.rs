@@ -97,20 +97,6 @@ where
     Expression::call(build_callee(function_name), arguments)
 }
 
-/// Return the piecewise expression `Expression::piecewise` builds from
-/// `cases`, given as a list, failing the test if it is refused.
-///
-/// # Panics
-///
-/// Panics if the constructor refuses the parts.
-#[must_use]
-pub(crate) fn build_piecewise_node_or_panic(
-    cases: Vec<(Expression, Expression)>,
-    otherwise: Expression,
-) -> Expression {
-    Expression::piecewise(cases, otherwise).expect("a valid piecewise")
-}
-
 /// Return `((leaf + 1) + 1) + ...`, `depth` additions deep.
 #[must_use]
 pub(crate) fn build_deep_sum(leaf: &Expression, depth: usize) -> Expression {
@@ -298,6 +284,7 @@ fn build_finite_float_strategy() -> impl Strategy<Value = f64> {
 /// Return a strategy for literals of every kind: Booleans, small and
 /// big integers, floats, and integers and decimals parsed from texts, short
 /// and long.
+///
 /// Floats are finite unless `with_non_finite_floats` is set, in which case
 /// NaNs of both signs and both infinities are drawn too.
 ///
@@ -332,12 +319,13 @@ pub(crate) fn build_literal_strategy(with_non_finite_floats: bool) -> BoxedStrat
     .boxed()
 }
 
-/// Return a strategy for trees over [`IDENTIFIER_POOL`] of every node kind:
-/// unary and binary nodes of every operation, logical nodes of two to four
-/// operands, piecewise nodes of one to
-/// three cases, and calls of zero to three arguments to built-in and
-/// unknown functions, up to five levels deep. Float literals are finite
-/// unless `with_non_finite_floats` is set.
+/// Return a strategy for trees over [`IDENTIFIER_POOL`] of every node kind,
+/// up to five levels deep.
+///
+/// The trees hold unary and binary nodes of every operation, logical nodes
+/// of two to four operands, piecewise nodes of one to three cases, and calls
+/// of zero to three arguments to built-in and unknown functions. Float
+/// literals are finite unless `with_non_finite_floats` is set.
 ///
 /// # Panics
 ///

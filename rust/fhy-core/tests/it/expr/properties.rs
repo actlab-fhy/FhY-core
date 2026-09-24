@@ -18,7 +18,7 @@ use std::sync::LazyLock;
 use expression_support::{
     ALL_BINARY_OPERATIONS, ALL_LOGICAL_OPERATIONS, ALL_UNARY_OPERATIONS, CALLEES,
     IDENTIFIER_POOL as POOL, build_expression_strategy, build_literal_strategy,
-    build_piecewise_node_or_panic, coerce_to_condition, copy_deeply,
+    build_piecewise_or_panic, coerce_to_condition, copy_deeply,
 };
 use fhy_core::expr::{
     AlphaRenaming, BinaryOperation, BooleanScreen, Callee, Decimal, Expression, ExpressionKind,
@@ -256,9 +256,8 @@ fn build_dag_node(specification: DagNodeSpecification, nodes: &[Expression]) -> 
         DagNodeSpecification::Piecewise(cases, otherwise) => {
             let cases = cases
                 .into_iter()
-                .map(|(condition, value)| (coerce_to_condition(pick(condition)), pick(value)))
-                .collect();
-            build_piecewise_node_or_panic(cases, pick(otherwise))
+                .map(|(condition, value)| (coerce_to_condition(pick(condition)), pick(value)));
+            build_piecewise_or_panic(cases, pick(otherwise))
         }
         DagNodeSpecification::Call(callee, arguments) => {
             Expression::call(callee, arguments.into_iter().map(pick))

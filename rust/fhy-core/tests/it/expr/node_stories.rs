@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 
 use expression_support::{
     build_callee, build_decimal_literal, build_deep_sum, build_doubling_dag, build_identifier,
-    build_literal, build_piecewise_node_or_panic, copy_deeply,
+    build_literal, build_piecewise_or_panic, copy_deeply,
 };
 use fhy_core::expr::builtins::BuiltinFunction;
 use fhy_core::expr::{
@@ -371,7 +371,7 @@ fn expression_children_of_piecewise_interleave_cases_then_otherwise() {
     let (first_condition, second_condition) = (build_literal(true), build_literal(false));
     let (first_value, second_value) = (build_literal(1), build_literal(2));
     let otherwise = build_literal(0);
-    let expression = build_piecewise_node_or_panic(
+    let expression = build_piecewise_or_panic(
         vec![
             (first_condition.clone(), first_value.clone()),
             (second_condition.clone(), second_value.clone()),
@@ -399,7 +399,7 @@ fn expression_children_of_piecewise_interleave_cases_then_otherwise() {
 fn expression_children_of_single_case_piecewise_are_condition_value_otherwise() {
     let (condition, value, otherwise) = (build_literal(true), build_literal(1), build_literal(0));
     let expression =
-        build_piecewise_node_or_panic(vec![(condition.clone(), value.clone())], otherwise.clone());
+        build_piecewise_or_panic(vec![(condition.clone(), value.clone())], otherwise.clone());
 
     let children: Vec<&Expression> = expression.children().collect();
 
@@ -466,7 +466,7 @@ fn expression_children_of_leaf_are_empty(#[case] leaf: Expression) {
 /// Test rebuilding a one-case piecewise from its own children reproduces it.
 #[test]
 fn expression_rebuild_with_children_round_trips_single_case_piecewise() {
-    let expression = build_piecewise_node_or_panic(
+    let expression = build_piecewise_or_panic(
         vec![(build_literal(true), build_literal(1))],
         build_literal(0),
     );
@@ -490,12 +490,8 @@ fn expression_rebuild_with_children_round_trips_multiple_case_piecewise() {
     ];
     let values = [build_literal(1), build_literal(2), build_literal(3)];
     let otherwise = build_literal(0);
-    let expression = build_piecewise_node_or_panic(
-        conditions
-            .iter()
-            .cloned()
-            .zip(values.iter().cloned())
-            .collect(),
+    let expression = build_piecewise_or_panic(
+        conditions.iter().cloned().zip(values.iter().cloned()),
         otherwise.clone(),
     );
     let children: Vec<Expression> = expression.children().cloned().collect();
@@ -536,7 +532,7 @@ fn expression_rebuild_with_children_round_trips_multiple_case_piecewise() {
 #[case::five(5)]
 #[case::six(6)]
 fn expression_rebuild_with_children_rejects_piecewise_child_count(#[case] child_count: usize) {
-    let expression = build_piecewise_node_or_panic(
+    let expression = build_piecewise_or_panic(
         vec![(build_literal(true), build_literal(1))],
         build_literal(0),
     );
@@ -557,7 +553,7 @@ fn expression_rebuild_with_children_rejects_piecewise_child_count(#[case] child_
 /// refused.
 #[test]
 fn expression_rebuild_with_children_rejects_numeric_piecewise_condition() {
-    let expression = build_piecewise_node_or_panic(
+    let expression = build_piecewise_or_panic(
         vec![(build_literal(true), build_literal(1))],
         build_literal(0),
     );
@@ -681,7 +677,7 @@ fn expression_rebuild_with_children_rejects_a_different_child_count(
 /// chain of messages names each failure once.
 #[test]
 fn rebuild_error_display_does_not_repeat_its_source() {
-    let expression = build_piecewise_node_or_panic(
+    let expression = build_piecewise_or_panic(
         vec![(build_identifier("c").1, build_literal(1))],
         build_literal(0),
     );
@@ -808,7 +804,7 @@ fn expression_free_identifiers_of_piecewise_cover_every_branch() {
     let (c, c_reference) = build_identifier("c");
     let (v, v_reference) = build_identifier("v");
     let (o, o_reference) = build_identifier("o");
-    let expression = build_piecewise_node_or_panic(
+    let expression = build_piecewise_or_panic(
         vec![
             (c_reference.clone(), v_reference),
             (!&c_reference, build_literal(1)),
@@ -960,7 +956,7 @@ fn expression_substitute_does_not_chain_replacements() {
 fn expression_substitute_refuses_a_number_in_a_piecewise_condition() {
     let (c, condition) = build_identifier("c");
     let expression =
-        build_piecewise_node_or_panic(vec![(condition, build_literal(1))], build_literal(0));
+        build_piecewise_or_panic(vec![(condition, build_literal(1))], build_literal(0));
 
     let result = expression.substitute(&HashMap::from([(c, build_literal(1))]));
 
@@ -974,7 +970,7 @@ fn expression_substitute_refuses_a_number_in_a_piecewise_condition() {
 #[test]
 fn expression_substitute_with_empty_map_yields_an_equal_tree() {
     let (_, x) = build_identifier("x");
-    let expression = build_piecewise_node_or_panic(
+    let expression = build_piecewise_or_panic(
         vec![(x.less(3), build_call_node_or_panic("f", vec![-&x]))],
         x.power(2),
     );
@@ -996,7 +992,7 @@ fn expression_substitute_with_empty_map_yields_an_equal_tree() {
 #[case::literal(|| build_literal(42))]
 #[case::unary(|| Expression::new_unary(UnaryOperation::Negate, 1))]
 #[case::binary(|| Expression::new_binary(BinaryOperation::Add, 1, 2))]
-#[case::piecewise(|| build_piecewise_node_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(0)))]
+#[case::piecewise(|| build_piecewise_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(0)))]
 #[case::call(|| build_call_node_or_panic("max", vec![build_literal(1), build_literal(2)]))]
 fn expression_separately_built_equal_trees_are_equal_but_distinct(
     #[case] build: fn() -> Expression,
@@ -1045,7 +1041,7 @@ fn expression_references_to_distinct_identifiers_are_unequal() {
 #[case::literal(|| build_literal(42))]
 #[case::unary(|| Expression::new_unary(UnaryOperation::Negate, 1))]
 #[case::binary(|| Expression::new_binary(BinaryOperation::Add, 1, 2))]
-#[case::piecewise(|| build_piecewise_node_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(0)))]
+#[case::piecewise(|| build_piecewise_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(0)))]
 #[case::call(|| build_call_node_or_panic("max", vec![build_literal(1), build_literal(2)]))]
 fn expression_set_of_equal_trees_keeps_one_member(#[case] build: fn() -> Expression) {
     let first = build();
@@ -1094,11 +1090,11 @@ fn expression_literal_equality_follows_literal_equivalence(
 fn expression_reordered_piecewise_cases_are_unequal() {
     let first_case = (build_literal(true), build_literal(1));
     let second_case = (build_literal(false), build_literal(2));
-    let forward = build_piecewise_node_or_panic(
+    let forward = build_piecewise_or_panic(
         vec![first_case.clone(), second_case.clone()],
         build_literal(0),
     );
-    let reversed = build_piecewise_node_or_panic(vec![second_case, first_case], build_literal(0));
+    let reversed = build_piecewise_or_panic(vec![second_case, first_case], build_literal(0));
 
     assert_ne!(forward, reversed);
     assert_ne!(reversed, forward);
@@ -1122,7 +1118,7 @@ fn expression_reordered_piecewise_cases_are_unequal() {
 )]
 #[case::function_name(build_call_node_or_panic("f", vec![build_literal(1)]), build_call_node_or_panic("g", vec![build_literal(1)]))]
 #[case::arity(build_call_node_or_panic("f", vec![build_literal(1)]), build_call_node_or_panic("f", vec![build_literal(1), build_literal(1)]))]
-#[case::otherwise(build_piecewise_node_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(0)), build_piecewise_node_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(2)))]
+#[case::otherwise(build_piecewise_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(0)), build_piecewise_or_panic(vec![(build_literal(true), build_literal(1))], build_literal(2)))]
 #[case::unary_and_binary(
     Expression::new_unary(UnaryOperation::Negate, 1),
     Expression::new_binary(BinaryOperation::Subtract, 0, 1)
@@ -1168,11 +1164,11 @@ fn expression_piecewise_nodes_with_different_case_counts_are_unequal() {
         second_value,
         otherwise,
     ] = ["p", "q", "y", "z", "w"].map(|name| build_identifier(name).1);
-    let one_case = build_piecewise_node_or_panic(
+    let one_case = build_piecewise_or_panic(
         vec![(first_condition.clone(), first_value.clone())],
         second_condition.clone(),
     );
-    let two_cases = build_piecewise_node_or_panic(
+    let two_cases = build_piecewise_or_panic(
         vec![
             (first_condition, first_value),
             (second_condition, second_value),
@@ -1352,7 +1348,7 @@ fn build_doubling_dag_over(identifier: &Identifier, levels: usize) -> Expression
 
 /// Return `(x < 3 ? f(-x) : x ** 2)` over the reference `x`.
 fn build_mixed_tree(x: &Expression) -> Expression {
-    build_piecewise_node_or_panic(
+    build_piecewise_or_panic(
         vec![(x.less(3), build_call_node_or_panic("f", vec![-x]))],
         x.power(2),
     )
@@ -1543,7 +1539,7 @@ fn expression_dags_differing_beside_a_shared_subtree_are_unequal(
 #[case::shared_piecewise_branches(|| {
     let (_, x) = build_identifier("x");
     let shared = Expression::new_binary(BinaryOperation::Multiply, &x, 2);
-    build_piecewise_node_or_panic(vec![(x.less(0), shared.clone())], shared)
+    build_piecewise_or_panic(vec![(x.less(0), shared.clone())], shared)
 })]
 #[case::shared_call_arguments(|| {
     let shared = build_mixed_tree(&build_identifier("x").1);
