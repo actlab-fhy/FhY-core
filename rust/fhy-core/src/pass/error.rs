@@ -58,8 +58,6 @@ impl PassHook {
         }
     }
 
-    /// Return the class of a failure of this hook: validation for the two
-    /// validation hooks, execution for the others.
     fn class(self) -> FailureClass {
         match self {
             Self::ValidateInput | Self::ValidateOutput => FailureClass::Validation,
@@ -102,28 +100,24 @@ pub enum VerificationPoint {
     Output,
 }
 
-/// What failed.
+/// What failed; [`PassErrorKind`] is its public view.
 #[derive(Debug)]
 enum Failure {
-    /// A hook returned an error that is not a [`PassError`].
     Hook {
         pass_name: Cow<'static, str>,
         hook: PassHook,
         source: PassFailure,
     },
-    /// A hook returned a [`PassError`].
     Nested {
         pass_name: Cow<'static, str>,
         hook: PassHook,
         inner: PassError,
     },
-    /// Verification rejected the IR a pass received or produced.
     Verification {
         pass_name: Cow<'static, str>,
         point: VerificationPoint,
         report: ValidationReport<ValidatorRecord>,
     },
-    /// A fixpoint group used its iteration budget without converging.
     NonConvergence {
         group_name: Identifier,
         max_iterations: NonZeroUsize,

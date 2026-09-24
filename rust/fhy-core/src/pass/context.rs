@@ -50,10 +50,8 @@ impl<'a> PassContext<'a> {
 
     /// Record `diagnostic` as given, its source included.
     ///
-    /// Build it with [`Diagnostic::error`], [`Diagnostic::warning`] or
-    /// [`Diagnostic::info`], naming its source, and add a detail with
-    /// [`Diagnostic::with_detail`]; [`report_text`](Self::report_text)
-    /// records a text attributed to the running pass.
+    /// [`report_text`](Self::report_text) records a text attributed to the
+    /// running pass instead.
     pub fn report(&mut self, diagnostic: Diagnostic) {
         self.diagnostics.push(diagnostic);
     }
