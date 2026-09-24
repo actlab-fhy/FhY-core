@@ -2,17 +2,20 @@
 //! `UnaryOperation`, `BinaryOperation`, and `LogicalOperation`.
 //!
 //! Public API only. Each enum is checked for its text forms (`as_str`,
-//! `symbol`, `Display`), its serialized form, and the strings its
-//! deserialization refuses; the stories at the end use the enums the way an
-//! expression payload or a function signature does.
+//! `symbol`, `Display`, `FromStr`), its serialized form, and the strings its
+//! deserialization and parsing refuse; the stories at the end use the enums
+//! the way an expression payload or a function signature does.
 
 use crate::support::expression as expression_support;
 
 use std::collections::{BTreeSet, HashMap};
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
+use std::str::FromStr;
 
 use expression_support::{ALL_BINARY_OPERATIONS, ALL_LOGICAL_OPERATIONS, ALL_UNARY_OPERATIONS};
-use fhy_core::expr::{BinaryOperation, FunctionSort, LogicalOperation, SymbolType, UnaryOperation};
+use fhy_core::expr::{
+    BinaryOperation, FunctionSort, LogicalOperation, SymbolType, UnaryOperation, UnknownNameError,
+};
 use rstest::rstest;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -21,6 +24,17 @@ use serde_json::{Value, json};
 /// Every `SymbolType`, in declaration order.
 const ALL_SYMBOL_TYPES: [SymbolType; 3] = [SymbolType::Real, SymbolType::Int, SymbolType::Bool];
 
+/// Return the position of `symbol_type` in [`ALL_SYMBOL_TYPES`]; the
+/// exhaustive `match` fails to compile when a variant is added, so the list
+/// stays complete.
+const fn index_symbol_type(symbol_type: SymbolType) -> usize {
+    match symbol_type {
+        SymbolType::Real => 0,
+        SymbolType::Int => 1,
+        SymbolType::Bool => 2,
+    }
+}
+
 /// Every `FunctionSort`, in declaration order.
 const ALL_FUNCTION_SORTS: [FunctionSort; 4] = [
     FunctionSort::Bool,
@@ -28,6 +42,31 @@ const ALL_FUNCTION_SORTS: [FunctionSort; 4] = [
     FunctionSort::Int,
     FunctionSort::Real,
 ];
+
+/// Return the position of `sort` in [`ALL_FUNCTION_SORTS`]; the exhaustive
+/// `match` fails to compile when a variant is added, so the list stays
+/// complete.
+const fn index_function_sort(sort: FunctionSort) -> usize {
+    match sort {
+        FunctionSort::Bool => 0,
+        FunctionSort::Nat => 1,
+        FunctionSort::Int => 2,
+        FunctionSort::Real => 3,
+    }
+}
+
+const _: () = {
+    let mut index = 0;
+    while index < ALL_SYMBOL_TYPES.len() {
+        assert!(index_symbol_type(ALL_SYMBOL_TYPES[index]) == index);
+        index += 1;
+    }
+    let mut index = 0;
+    while index < ALL_FUNCTION_SORTS.len() {
+        assert!(index_function_sort(ALL_FUNCTION_SORTS[index]) == index);
+        index += 1;
+    }
+};
 
 /// Every wire word of the four vocabularies, plus near misses of each: the
 /// candidate strings the membership tests feed to deserialization.
@@ -451,46 +490,69 @@ fn logical_operation_accepts_exactly_its_two_wire_names() {
     assert_eq!(accepted, BTreeSet::from(["and", "or"]));
 }
 
-/// Return the message deserializing the JSON string `word` as `T` fails with.
-fn describe_rejected_word<T: DeserializeOwned + Debug>(word: &str) -> String {
-    let result = serde_json::from_value::<T>(json!(word));
+/// Assert parsing `word` as `T` fails with an [`UnknownNameError`] naming
+/// `word` and displaying `expected`.
+fn assert_from_str_refuses<T>(word: &str, expected: &str)
+where
+    T: FromStr<Err = UnknownNameError> + Debug,
+{
+    let error = word
+        .parse::<T>()
+        .expect_err("the word names no variant of the enum");
 
-    let Err(error) = &result else {
-        panic!("expected {word:?} to be rejected, got {result:?}");
-    };
-    error.to_string()
+    assert_eq!(error.name(), word);
+    assert_eq!(error.to_string(), expected);
 }
 
-/// Test each vocabulary's rejection of an unknown word names the word and
-/// the names it expects.
-#[rstest]
-#[case::symbol_type(
-    describe_rejected_word::<SymbolType>("float"),
-    "invalid value: string \"float\", expected a symbol type name: real, int, or bool"
-)]
-#[case::function_sort(
-    describe_rejected_word::<FunctionSort>("float"),
-    "invalid value: string \"float\", expected a function sort name: bool, nat, int, or real"
-)]
-#[case::unary_operation(
-    describe_rejected_word::<UnaryOperation>("not"),
-    "invalid value: string \"not\", expected a unary operation name such as negate or \
-     logical_not"
-)]
-#[case::binary_operation(
-    describe_rejected_word::<BinaryOperation>("plus"),
-    "invalid value: string \"plus\", expected a binary operation name such as add or \
-     floor_divide"
-)]
-#[case::logical_operation(
-    describe_rejected_word::<LogicalOperation>("xor"),
-    "invalid value: string \"xor\", expected a logical operation name: and or or"
-)]
-fn vocabulary_rejection_names_the_word_and_the_expected_names(
-    #[case] message: String,
-    #[case] expected: &str,
-) {
-    assert_eq!(message, expected);
+/// Test each vocabulary's `FromStr` refuses an unknown word with its own
+/// error, which names the word and the enum.
+#[test]
+fn vocabulary_from_str_refuses_an_unknown_word_naming_it() {
+    assert_from_str_refuses::<SymbolType>("float", "unknown symbol type `float`");
+    assert_from_str_refuses::<FunctionSort>("float", "unknown function sort `float`");
+    assert_from_str_refuses::<UnaryOperation>("not", "unknown unary operation `not`");
+    assert_from_str_refuses::<BinaryOperation>("plus", "unknown binary operation `plus`");
+    assert_from_str_refuses::<LogicalOperation>("xor", "unknown logical operation `xor`");
+    assert_from_str_refuses::<BinaryOperation>("Add", "unknown binary operation `Add`");
+    assert_from_str_refuses::<BinaryOperation>("+", "unknown binary operation `+`");
+    assert_from_str_refuses::<UnaryOperation>("", "unknown unary operation ``");
+}
+
+/// Assert every variant in `variants` has one text in every form: `as_str`,
+/// `Display`, the serialized JSON string, and the input `FromStr` and
+/// `Deserialize` accept, and that no two variants share it.
+fn assert_text_forms_agree<T>(variants: &[T], as_str: fn(T) -> &'static str)
+where
+    T: Copy + PartialEq + Debug + fmt::Display + FromStr + Serialize + DeserializeOwned,
+    T::Err: Debug,
+{
+    let names: BTreeSet<&str> = variants.iter().map(|variant| as_str(*variant)).collect();
+    assert_eq!(names.len(), variants.len(), "names are distinct");
+    for &variant in variants {
+        let name = as_str(variant);
+
+        let displayed = variant.to_string();
+        let parsed = name.parse::<T>().expect("the name parses");
+        let serialized = serde_json::to_value(variant).expect("the variant serializes");
+        let deserialized: T = serde_json::from_value(json!(name)).expect("the name deserializes");
+
+        assert_eq!(displayed, name, "Display of {variant:?}");
+        assert_eq!(parsed, variant, "FromStr of {name:?}");
+        assert_eq!(serialized, json!(name), "serialized form of {variant:?}");
+        assert_eq!(deserialized, variant, "deserialized form of {name:?}");
+    }
+}
+
+/// Test `as_str`, `Display`, serde and `FromStr` agree for every variant of
+/// every vocabulary enum, over lists whose completeness an exhaustive
+/// `match` guards.
+#[test]
+fn vocabulary_as_str_display_serde_and_from_str_agree_for_every_variant() {
+    assert_text_forms_agree(&ALL_SYMBOL_TYPES, SymbolType::as_str);
+    assert_text_forms_agree(&ALL_FUNCTION_SORTS, FunctionSort::as_str);
+    assert_text_forms_agree(&ALL_UNARY_OPERATIONS, UnaryOperation::as_str);
+    assert_text_forms_agree(&ALL_BINARY_OPERATIONS, BinaryOperation::as_str);
+    assert_text_forms_agree(&ALL_LOGICAL_OPERATIONS, LogicalOperation::as_str);
 }
 
 /// Test no two operations of one kind share a symbol, so a table from symbol

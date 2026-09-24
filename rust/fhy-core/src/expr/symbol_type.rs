@@ -5,16 +5,15 @@
 //! lowercase value name (`"real"`, `"int"`, `"bool"`), which is also its
 //! serialized form.
 
-use crate::expr::wire_name::impl_wire_name_traits;
+use serde::{Deserialize, Serialize};
 
-/// Every symbol type, in declaration order.
-const ALL_SYMBOL_TYPES: [SymbolType; 3] = [SymbolType::Real, SymbolType::Int, SymbolType::Bool];
+use super::operation::impl_name_text;
 
 /// The value kind a symbolic identifier ranges over.
 ///
-/// Serializes as its [`as_str`](Self::as_str) text, and deserializes only
-/// from exactly that text: any other string, including a differently cased
-/// one, is rejected.
+/// Serializes as its [`as_str`](Self::as_str) text, and deserializes, like
+/// [`FromStr`](std::str::FromStr) parses, only from exactly that text: any
+/// other string, including a differently cased one, is refused.
 ///
 /// # Examples
 ///
@@ -24,7 +23,8 @@ const ALL_SYMBOL_TYPES: [SymbolType; 3] = [SymbolType::Real, SymbolType::Int, Sy
 /// assert_eq!(SymbolType::Int.as_str(), "int");
 /// assert_eq!(SymbolType::Real.to_string(), "real");
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SymbolType {
     /// A real number.
     Real,
@@ -47,8 +47,4 @@ impl SymbolType {
     }
 }
 
-impl_wire_name_traits!(
-    SymbolType,
-    ALL_SYMBOL_TYPES,
-    "a symbol type name: real, int, or bool"
-);
+impl_name_text!(SymbolType, "symbol type");

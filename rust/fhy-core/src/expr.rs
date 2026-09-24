@@ -21,7 +21,6 @@ mod screen;
 mod sort;
 mod symbol_type;
 mod wire;
-mod wire_name;
 
 pub use alpha::AlphaRenaming;
 pub use build::IntoOperand;
@@ -37,7 +36,7 @@ pub use node::{
     BinaryExpression, CallExpression, Expression, ExpressionKind, LogicalExpression,
     PiecewiseExpression, UnaryExpression,
 };
-pub use operation::{BinaryOperation, LogicalOperation, UnaryOperation};
+pub use operation::{BinaryOperation, LogicalOperation, UnaryOperation, UnknownNameError};
 pub use registration::register_expression_passes;
 pub use screen::{NoRegisteredSorts, SortLookup, validate_logical_operands, validate_predicate};
 pub use sort::FunctionSort;

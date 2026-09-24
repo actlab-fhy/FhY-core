@@ -578,13 +578,13 @@ fn expression_deserialize_rejects_an_unknown_type_id() {
 #[case::unknown_operation(json!({
     "__type__": "unary_expression",
     "__data__": {"operation": "-", "operand": build_literal_wire(&json!(1))}
-}), "in `operation`: invalid value: string \"-\", expected a unary operation name such as \
-     negate or logical_not")]
+}), "in `operation`: unknown variant `-`, expected one of `negate`, `positive`, \
+     `logical_not`")]
 #[case::unknown_unary_operation_name(json!({
     "__type__": "unary_expression",
     "__data__": {"operation": "not", "operand": build_literal_wire(&json!(1))}
-}), "in `operation`: invalid value: string \"not\", expected a unary operation name such as \
-     negate or logical_not")]
+}), "in `operation`: unknown variant `not`, expected one of `negate`, `positive`, \
+     `logical_not`")]
 #[case::unknown_binary_operation_name(json!({
     "__type__": "binary_expression",
     "__data__": {
@@ -592,8 +592,9 @@ fn expression_deserialize_rejects_an_unknown_type_id() {
         "left": build_literal_wire(&json!(1)),
         "right": build_literal_wire(&json!(2))
     }
-}), "in `operation`: invalid value: string \"plus\", expected a binary operation name such as \
-     add or floor_divide")]
+}), "in `operation`: unknown variant `plus`, expected one of `add`, `subtract`, \
+     `multiply`, `divide`, `floor_divide`, `floor_mod`, `power`, `equal`, `not_equal`, `less`, \
+     `less_equal`, `greater`, `greater_equal`")]
 #[case::arguments_not_a_list(json!({
     "__type__": "call_expression",
     "__data__": {"function_name": "f", "arguments": build_literal_wire(&json!(1))}
@@ -637,8 +638,7 @@ fn expression_deserialize_rejects_an_unknown_type_id() {
         "operation": "xor",
         "operands": [build_literal_wire(&json!(true)), build_literal_wire(&json!(false))]
     }
-}), "in `operation`: invalid value: string \"xor\", expected a logical operation name: and or \
-     or")]
+}), "in `operation`: unknown variant `xor`, expected `and` or `or`")]
 #[case::logical_operands_not_a_list(json!({
     "__type__": "logical_expression",
     "__data__": {"operation": "and", "operands": build_literal_wire(&json!(true))}

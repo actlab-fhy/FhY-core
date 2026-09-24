@@ -6,21 +6,15 @@
 //! numeric sort. Its text form is the lowercase sort name (`"bool"`,
 //! `"nat"`, `"int"`, `"real"`), which is also its serialized form.
 
-use crate::expr::wire_name::impl_wire_name_traits;
+use serde::{Deserialize, Serialize};
 
-/// Every function sort, in declaration order.
-const ALL_FUNCTION_SORTS: [FunctionSort; 4] = [
-    FunctionSort::Bool,
-    FunctionSort::Nat,
-    FunctionSort::Int,
-    FunctionSort::Real,
-];
+use super::operation::impl_name_text;
 
 /// The coarse mathematical sort of a function parameter or result.
 ///
-/// Serializes as its [`as_str`](Self::as_str) text, and deserializes only
-/// from exactly that text: any other string, including a differently cased
-/// one, is rejected.
+/// Serializes as its [`as_str`](Self::as_str) text, and deserializes, like
+/// [`FromStr`](std::str::FromStr) parses, only from exactly that text: any
+/// other string, including a differently cased one, is refused.
 ///
 /// # Examples
 ///
@@ -30,7 +24,8 @@ const ALL_FUNCTION_SORTS: [FunctionSort; 4] = [
 /// assert_eq!(FunctionSort::Nat.as_str(), "nat");
 /// assert_eq!(FunctionSort::Real.to_string(), "real");
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FunctionSort {
     /// A Boolean value.
     Bool,
@@ -56,8 +51,4 @@ impl FunctionSort {
     }
 }
 
-impl_wire_name_traits!(
-    FunctionSort,
-    ALL_FUNCTION_SORTS,
-    "a function sort name: bool, nat, int, or real"
-);
+impl_name_text!(FunctionSort, "function sort");

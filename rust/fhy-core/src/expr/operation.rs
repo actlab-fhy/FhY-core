@@ -9,40 +9,104 @@
 //! as `"//"`), which the symbolic notation of the printer uses. Within each
 //! enum, no two operations share a wire name or a symbol.
 
-use crate::expr::wire_name::impl_wire_name_traits;
+use std::error::Error;
+use std::fmt;
 
-/// Every unary operation, in declaration order.
-const ALL_UNARY_OPERATIONS: [UnaryOperation; 3] = [
-    UnaryOperation::Negate,
-    UnaryOperation::Positive,
-    UnaryOperation::LogicalNot,
-];
+use serde::de::IntoDeserializer;
+use serde::de::value::{Error as ValueError, StrDeserializer};
+use serde::{Deserialize, Serialize};
 
-/// Every binary operation, in declaration order.
-const ALL_BINARY_OPERATIONS: [BinaryOperation; 13] = [
-    BinaryOperation::Add,
-    BinaryOperation::Subtract,
-    BinaryOperation::Multiply,
-    BinaryOperation::Divide,
-    BinaryOperation::FloorDivide,
-    BinaryOperation::FloorMod,
-    BinaryOperation::Power,
-    BinaryOperation::Equal,
-    BinaryOperation::NotEqual,
-    BinaryOperation::Less,
-    BinaryOperation::LessEqual,
-    BinaryOperation::Greater,
-    BinaryOperation::GreaterEqual,
-];
+/// Parse `text` as the variant of `T` whose serialized name it is, exactly,
+/// through `T`'s derived `Deserialize`; `expected` names the enum in the
+/// error.
+///
+/// # Errors
+///
+/// Returns [`UnknownNameError`] if no variant of `T` has the name `text`.
+pub(crate) fn parse_variant_name<'a, T: Deserialize<'a>>(
+    text: &'a str,
+    expected: &'static str,
+) -> Result<T, UnknownNameError> {
+    let deserializer: StrDeserializer<'a, ValueError> = text.into_deserializer();
+    T::deserialize(deserializer).map_err(|_unknown: ValueError| UnknownNameError {
+        name: text.into(),
+        expected,
+    })
+}
 
-/// Every logical operation, in declaration order.
-const ALL_LOGICAL_OPERATIONS: [LogicalOperation; 2] = [LogicalOperation::And, LogicalOperation::Or];
+/// A name that no variant of an enum has, refused by the enum's
+/// [`FromStr`](std::str::FromStr).
+///
+/// `Display` writes the enum's description and the name in backticks, such
+/// as ``unknown binary operation `plus` ``.
+///
+/// # Examples
+///
+/// ```
+/// use fhy_core::expr::{BinaryOperation, UnknownNameError};
+///
+/// let error: UnknownNameError = "plus".parse::<BinaryOperation>().unwrap_err();
+/// assert_eq!(error.name(), "plus");
+/// assert_eq!(error.to_string(), "unknown binary operation `plus`");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownNameError {
+    name: Box<str>,
+    expected: &'static str,
+}
+
+impl UnknownNameError {
+    /// Return the refused name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl fmt::Display for UnknownNameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown {} `{}`", self.expected, self.name)
+    }
+}
+
+impl Error for UnknownNameError {}
+
+/// Implement `Display`, writing the `as_str` text, and `FromStr`, parsing
+/// exactly that text through the derived `Deserialize`, for an enum;
+/// `$expected` names the enum in a refusal.
+macro_rules! impl_name_text {
+    ($Type:ty, $expected:literal) => {
+        impl ::std::fmt::Display for $Type {
+            /// Write the [`as_str`](Self::as_str) text.
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+
+        impl ::std::str::FromStr for $Type {
+            type Err = $crate::expr::UnknownNameError;
+
+            /// Parse the variant whose [`as_str`](Self::as_str) text is
+            /// exactly `text`.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`UnknownNameError`](crate::expr::UnknownNameError)
+            /// if no variant has that text.
+            fn from_str(text: &str) -> Result<Self, Self::Err> {
+                $crate::expr::operation::parse_variant_name(text, $expected)
+            }
+        }
+    };
+}
+
+pub(crate) use impl_name_text;
 
 /// The operation of a unary expression.
 ///
-/// Serializes as its wire name ([`as_str`](Self::as_str)), and deserializes
-/// only from exactly that text: a symbol, a differently cased name, or any
-/// other string is rejected.
+/// Serializes as its wire name ([`as_str`](Self::as_str)), and deserializes,
+/// like [`FromStr`](std::str::FromStr) parses, only from exactly that text: a symbol, a
+/// differently cased name, or any other string is refused.
 ///
 /// # Examples
 ///
@@ -52,7 +116,8 @@ const ALL_LOGICAL_OPERATIONS: [LogicalOperation; 2] = [LogicalOperation::And, Lo
 /// assert_eq!(UnaryOperation::LogicalNot.as_str(), "logical_not");
 /// assert_eq!(UnaryOperation::LogicalNot.symbol(), "!");
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UnaryOperation {
     /// Arithmetic negation, `-x`.
     Negate,
@@ -104,17 +169,13 @@ impl UnaryOperation {
     }
 }
 
-impl_wire_name_traits!(
-    UnaryOperation,
-    ALL_UNARY_OPERATIONS,
-    "a unary operation name such as negate or logical_not"
-);
+impl_name_text!(UnaryOperation, "unary operation");
 
 /// The operation of a binary expression.
 ///
-/// Serializes as its wire name ([`as_str`](Self::as_str)), and deserializes
-/// only from exactly that text: a symbol, a differently cased name, or any
-/// other string is rejected.
+/// Serializes as its wire name ([`as_str`](Self::as_str)), and deserializes,
+/// like [`FromStr`](std::str::FromStr) parses, only from exactly that text: a symbol, a
+/// differently cased name, or any other string is refused.
 ///
 /// # Examples
 ///
@@ -125,7 +186,8 @@ impl_wire_name_traits!(
 /// assert_eq!(BinaryOperation::FloorDivide.symbol(), "//");
 /// assert_eq!(BinaryOperation::LessEqual.to_string(), "less_equal");
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BinaryOperation {
     /// Addition, `a + b`.
     Add,
@@ -227,18 +289,14 @@ impl BinaryOperation {
     }
 }
 
-impl_wire_name_traits!(
-    BinaryOperation,
-    ALL_BINARY_OPERATIONS,
-    "a binary operation name such as add or floor_divide"
-);
+impl_name_text!(BinaryOperation, "binary operation");
 
 /// The operation of a logical expression: a conjunction or a disjunction of
 /// two or more operands.
 ///
-/// Serializes as its wire name ([`as_str`](Self::as_str)), and deserializes
-/// only from exactly that text: a symbol, a differently cased name, or any
-/// other string is rejected.
+/// Serializes as its wire name ([`as_str`](Self::as_str)), and deserializes,
+/// like [`FromStr`](std::str::FromStr) parses, only from exactly that text: a symbol, a
+/// differently cased name, or any other string is refused.
 ///
 /// # Examples
 ///
@@ -248,7 +306,8 @@ impl_wire_name_traits!(
 /// assert_eq!(LogicalOperation::And.as_str(), "and");
 /// assert_eq!(LogicalOperation::Or.symbol(), "||");
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LogicalOperation {
     /// Boolean conjunction, `a && b && ...`: true when every operand is.
     And,
@@ -277,11 +336,7 @@ impl LogicalOperation {
     }
 }
 
-impl_wire_name_traits!(
-    LogicalOperation,
-    ALL_LOGICAL_OPERATIONS,
-    "a logical operation name: and or or"
-);
+impl_name_text!(LogicalOperation, "logical operation");
 
 #[cfg(test)]
 mod tests {
