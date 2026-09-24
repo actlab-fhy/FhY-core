@@ -15,16 +15,22 @@
 //! derived `Debug` recurses once per tree level.
 
 use std::collections::{HashMap, HashSet};
+use std::convert::Infallible;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use crate::identifier::Identifier;
-use crate::pass_infrastructure::{NodeHandle, NodeIdentity, Tree};
+use crate::pass_infrastructure::{
+    NodeHandle, NodeIdentity, PassContext, RewriteTreeError, Rewriter, Tree, rewrite_tree,
+};
 
 use super::alpha::AlphaRenaming;
 use super::error::ExpressionBuildError;
 use super::literal::{LiteralKind, LiteralValue};
 use super::operation::{BinaryOperation, UnaryOperation};
+
+/// The name of the pass context substitution runs its rewrite in.
+const SUBSTITUTION_PASS_NAME: &str = "substitute";
 
 /// The children of a node, in visiting order, from either end.
 enum Children<'a> {
@@ -89,13 +95,6 @@ impl DoubleEndedIterator for Children<'_> {
             }
         }
     }
-}
-
-/// One step of a bottom-up rebuild: visit a node's children, or rebuild
-/// the node from their results.
-enum RebuildStep<'a> {
-    Enter(&'a Expression),
-    Exit(&'a Expression),
 }
 
 /// Return the error for rebuilding a node of `expected` children from
@@ -176,6 +175,27 @@ fn is_tree_equal(
         pending.extend(left.children().zip(right.children()));
     }
     true
+}
+
+/// The rewriter behind [`Expression::substitute`]: replaces each reference
+/// to a mapped identifier with a handle to its replacement.
+struct Substitution<'m, S> {
+    replacements: &'m HashMap<Identifier, Expression, S>,
+}
+
+impl<S: BuildHasher> Rewriter<Expression> for Substitution<'_, S> {
+    type Error = Infallible;
+
+    fn rewrite(
+        &mut self,
+        node: &Expression,
+        _cx: &mut PassContext<'_>,
+    ) -> Result<Option<Expression>, Infallible> {
+        let ExpressionKind::Identifier(identifier) = node.kind() else {
+            return Ok(None);
+        };
+        Ok(self.replacements.get(identifier).cloned())
+    }
 }
 
 /// A symbolic expression: a shared handle to an immutable node.
@@ -405,48 +425,29 @@ impl Expression {
     ///
     /// Replacements are not substituted into in turn, and each occurrence of
     /// a mapped identifier becomes a handle to the same replacement node
-    /// ([`ptr_eq`](Self::ptr_eq) with it). An unmapped identifier and a
-    /// literal are returned as handles to themselves; every other node is
-    /// rebuilt from its substituted children, so a leaf that nothing replaces
-    /// keeps its node.
+    /// ([`ptr_eq`](Self::ptr_eq) with it). Only the nodes above a replaced
+    /// reference are rebuilt: every subtree without one is returned as a
+    /// handle to itself, so substituting a map that replaces nothing returns
+    /// a handle to this expression. A subtree occurring in several places is
+    /// substituted into once and its result reused at every occurrence, so
+    /// the result shares its subtrees as this expression does, and the work
+    /// is linear in the distinct nodes.
     ///
     /// # Errors
     ///
     /// Returns [`ExpressionBuildError::NonBooleanConditionLiteral`] if a
     /// replacement puts a literal other than a Boolean in a piecewise case
     /// condition.
-    #[expect(
-        clippy::missing_panics_doc,
-        reason = "the one expect guards an invariant of the rebuild walk, never caller input"
-    )]
     pub fn substitute<S: BuildHasher>(
         &self,
         replacements: &HashMap<Identifier, Expression, S>,
     ) -> Result<Expression, ExpressionBuildError> {
-        let mut steps = vec![RebuildStep::Enter(self)];
-        let mut results: Vec<Expression> = Vec::new();
-        while let Some(step) = steps.pop() {
-            match step {
-                RebuildStep::Enter(expression) => match expression.kind() {
-                    ExpressionKind::Identifier(identifier) => {
-                        results.push(replacements.get(identifier).unwrap_or(expression).clone());
-                    }
-                    ExpressionKind::Literal(_) => results.push(expression.clone()),
-                    _ => {
-                        steps.push(RebuildStep::Exit(expression));
-                        steps.extend(expression.children().rev().map(RebuildStep::Enter));
-                    }
-                },
-                RebuildStep::Exit(expression) => {
-                    let first_child = results.len() - expression.count_children();
-                    let children = results.split_off(first_child);
-                    results.push(expression.rebuild_with_children(children)?);
-                }
-            }
-        }
-        Ok(results
-            .pop()
-            .expect("a rebuild walk leaves exactly the rebuilt root"))
+        let mut substitution = Substitution { replacements };
+        let mut cx = PassContext::new_standalone(SUBSTITUTION_PASS_NAME.to_owned());
+        rewrite_tree(&mut substitution, self, &mut cx).map_err(|error| match error {
+            RewriteTreeError::Rewrite(never) => match never {},
+            RewriteTreeError::Rebuild { source, .. } => source,
+        })
     }
 
     /// Return whether `other` is this expression with its free identifiers

@@ -1,7 +1,7 @@
 //! Tests for the expression handle and its nodes: construction and getters,
 //! children and rebuilding, free identifiers, substitution, structural
-//! equality and hashing, handle identity, renaming equivalence, and trees
-//! thousands of levels deep.
+//! equality and hashing, handle identity, renaming equivalence, DAGs whose
+//! subtrees are shared, and trees thousands of levels deep.
 //!
 //! Public API only (`fhy_core::symbolic::expression`).
 
@@ -15,8 +15,8 @@ pub mod stack_support;
 use std::collections::{HashMap, HashSet};
 
 use expression_support::{
-    build_call_node_or_panic, build_deep_sum, build_identifier, build_literal,
-    build_piecewise_node_or_panic, build_text_literal,
+    build_call_node_or_panic, build_deep_sum, build_doubling_dag, build_identifier, build_literal,
+    build_piecewise_node_or_panic, build_text_literal, is_doubling_dag_over,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
@@ -1183,6 +1183,136 @@ fn alpha_renaming_are_identifiers_alpha_equivalent_follows_the_renaming(
 }
 
 // =============================================================================
+// Shared subtrees
+// =============================================================================
+
+/// The number of additions in the doubling DAGs: they have `2^65 - 1`
+/// occurrences, which no walk visiting every occurrence finishes.
+const DOUBLING_LEVELS: usize = 64;
+
+/// Return `(x < 3 ? f(-x) : x ** 2)` over the reference `x`.
+fn build_mixed_tree(x: &Expression) -> Expression {
+    build_piecewise_node_or_panic(
+        vec![(x.less(3), build_call_node_or_panic("f", vec![-x]))],
+        x.power(2),
+    )
+}
+
+/// Test substituting a map that replaces nothing in the tree returns the
+/// input itself.
+#[rstest]
+#[case::empty_map(HashMap::new())]
+#[case::absent_identifier(HashMap::from([(Identifier::new("z"), build_literal(5))]))]
+fn expression_substitute_replacing_nothing_returns_the_input_itself(
+    #[case] replacements: HashMap<Identifier, Expression>,
+) {
+    let (_, x) = build_identifier("x");
+    let expression = build_mixed_tree(&x);
+
+    let result = expression
+        .substitute(&replacements)
+        .expect("nothing to refuse");
+
+    assert!(Expression::ptr_eq(&result, &expression));
+}
+
+/// Test substitution rebuilds only the nodes above a replaced identifier:
+/// a subtree with nothing replaced, and a leaf beside the replacement, keep
+/// their nodes.
+#[test]
+fn expression_substitute_keeps_the_subtrees_it_does_not_change() {
+    let (x, x_reference) = build_identifier("x");
+    let (_, y_reference) = build_identifier("y");
+    let one = build_literal(1);
+    let changed = Expression::new_binary(BinaryOperation::Add, &x_reference, &one);
+    let untouched = Expression::new_binary(BinaryOperation::Subtract, &y_reference, 2);
+    let expression = Expression::new_binary(BinaryOperation::Multiply, &changed, &untouched);
+
+    let result = expression
+        .substitute(&HashMap::from([(x, build_literal(5))]))
+        .expect("no piecewise to refuse");
+
+    let node = expect_binary(&result);
+    assert!(Expression::ptr_eq(node.right(), &untouched));
+    assert!(!Expression::ptr_eq(node.left(), &changed));
+    assert!(Expression::ptr_eq(expect_binary(node.left()).right(), &one));
+    assert_eq!(
+        result,
+        Expression::new_binary(
+            BinaryOperation::Multiply,
+            Expression::new_binary(BinaryOperation::Add, 5, 1),
+            &untouched
+        )
+    );
+}
+
+/// Test a shared subtree with nothing replaced keeps its node at every
+/// occurrence, beside a replaced identifier: `(a + s) - s` becomes
+/// `(b + s) - s` over the same `s`.
+#[test]
+fn expression_substitute_keeps_an_untouched_shared_subtree_at_every_occurrence() {
+    let (a, a_reference) = build_identifier("a");
+    let (_, b_reference) = build_identifier("b");
+    let (_, c_reference) = build_identifier("c");
+    let shared = Expression::new_binary(BinaryOperation::Multiply, &c_reference, 2);
+    let expression = Expression::new_binary(
+        BinaryOperation::Subtract,
+        Expression::new_binary(BinaryOperation::Add, &a_reference, &shared),
+        &shared,
+    );
+
+    let result = expression
+        .substitute(&HashMap::from([(a, b_reference.clone())]))
+        .expect("no piecewise to refuse");
+
+    let node = expect_binary(&result);
+    let sum = expect_binary(node.left());
+    assert!(Expression::ptr_eq(sum.left(), &b_reference));
+    assert!(Expression::ptr_eq(sum.right(), &shared));
+    assert!(Expression::ptr_eq(node.right(), &shared));
+}
+
+/// Test substituting into a doubling DAG substitutes each shared node once
+/// and keeps the sharing: the output is the doubling DAG over the
+/// replacement.
+#[test]
+fn expression_substitute_of_a_doubling_dag_keeps_its_sharing() {
+    let (a, a_reference) = build_identifier("a");
+    let (_, b_reference) = build_identifier("b");
+    let dag = build_doubling_dag(&a_reference, DOUBLING_LEVELS);
+
+    let result = dag
+        .substitute(&HashMap::from([(a, b_reference.clone())]))
+        .expect("no piecewise to refuse");
+
+    assert!(is_doubling_dag_over(&result, &b_reference, DOUBLING_LEVELS));
+}
+
+/// Test a doubling DAG nothing in which is replaced comes back as itself,
+/// beside a doubling DAG that is substituted into.
+#[test]
+fn expression_substitute_keeps_an_untouched_doubling_dag_itself() {
+    let (a, a_reference) = build_identifier("a");
+    let (_, b_reference) = build_identifier("b");
+    let (_, c_reference) = build_identifier("c");
+    let changed = build_doubling_dag(&a_reference, DOUBLING_LEVELS);
+    let untouched = build_doubling_dag(&c_reference, DOUBLING_LEVELS);
+    let expression = Expression::new_binary(BinaryOperation::Multiply, &changed, &untouched);
+
+    let result = expression
+        .substitute(&HashMap::from([(a, b_reference.clone())]))
+        .expect("no piecewise to refuse");
+
+    let node = expect_binary(&result);
+    assert!(Expression::ptr_eq(node.right(), &untouched));
+    assert!(is_doubling_dag_over(
+        node.left(),
+        &b_reference,
+        DOUBLING_LEVELS
+    ));
+}
+
+// =============================================================================
 // Deep trees
 // =============================================================================
 
@@ -1267,5 +1397,26 @@ fn expression_substitute_reaches_the_bottom_of_a_deep_tree_on_a_small_stack() {
             result == build_deep_sum(&build_literal(0), SMALL_STACK_DEPTH),
             "the substituted tree differs from the tree over 0"
         );
+    });
+}
+
+/// Test substituting into a doubling DAG [`SMALL_STACK_DEPTH`] levels deep
+/// keeps its sharing, on a small thread stack.
+#[test]
+fn expression_substitute_of_a_deep_doubling_dag_keeps_its_sharing_on_a_small_stack() {
+    run_on_small_stack(|| {
+        let (a, a_reference) = build_identifier("a");
+        let (_, b_reference) = build_identifier("b");
+        let dag = build_doubling_dag(&a_reference, SMALL_STACK_DEPTH);
+
+        let result = dag
+            .substitute(&HashMap::from([(a, b_reference.clone())]))
+            .expect("no piecewise to refuse");
+
+        assert!(is_doubling_dag_over(
+            &result,
+            &b_reference,
+            SMALL_STACK_DEPTH
+        ));
     });
 }

@@ -2,9 +2,10 @@
 //!
 //! Covers the free-identifier law of substitution, structural equality as an
 //! equivalence consistent with hashing, rebuilding and substituting as
-//! identities, the JSON round trip, renaming free identifiers, and the laws
+//! identities, the JSON round trip, renaming free identifiers, the laws
 //! of literal equality, canonical keys, the integer-bucket predicate, and
-//! text `Display`.
+//! text `Display`, and, over DAGs sharing their subtrees at random, that
+//! substitution answers as it does for an unshared copy.
 //!
 //! Public API only (`fhy_core::symbolic::expression`).
 
@@ -17,8 +18,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use expression_support::{
-    IDENTIFIER_POOL as POOL, build_expression_strategy, build_literal_strategy,
-    coerce_to_condition, copy_deeply,
+    IDENTIFIER_POOL as POOL, build_expression_dag_strategy, build_expression_strategy,
+    build_literal_strategy, coerce_to_condition, copy_deeply,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::symbolic::expression::{
@@ -414,5 +415,50 @@ proptest! {
 
         prop_assert_eq!(text_literal.to_string(), text);
         prop_assert_eq!(LiteralValue::from(integer).to_string(), integer.to_string());
+    }
+}
+
+proptest! {
+    /// Test substituting into a DAG gives what substituting into its
+    /// unshared copy gives, the same tree or the same refusal.
+    #[test]
+    fn expression_substitute_into_a_dag_answers_as_for_its_unshared_copy(
+        dag in build_expression_dag_strategy(),
+        domain in prop::sample::subsequence(vec![0_usize, 1, 2], 1..=2),
+        replacements in prop::collection::vec(
+            prop_oneof![
+                build_expression_dag_strategy(),
+                build_literal_strategy(false).prop_map(Expression::from),
+            ],
+            2,
+        ),
+    ) {
+        let substitution: HashMap<Identifier, Expression> = domain
+            .iter()
+            .zip(replacements)
+            .map(|(index, replacement)| (POOL[*index].clone(), replacement))
+            .collect();
+
+        let substituted = dag.substitute(&substitution);
+
+        prop_assert_eq!(substituted, copy_deeply(&dag).substitute(&substitution));
+    }
+
+    /// Test substituting for identifiers a DAG does not refer to returns the
+    /// DAG itself.
+    #[test]
+    fn expression_substitute_replacing_nothing_returns_the_dag_itself(
+        dag in build_expression_dag_strategy(),
+        replacement in build_expression_dag_strategy(),
+    ) {
+        let absent: HashMap<Identifier, Expression> = POOL
+            .iter()
+            .filter(|identifier| !dag.free_identifiers().contains(*identifier))
+            .map(|identifier| (identifier.clone(), replacement.clone()))
+            .collect();
+
+        let substituted = dag.substitute(&absent).expect("nothing is replaced");
+
+        prop_assert!(Expression::ptr_eq(&substituted, &dag));
     }
 }
