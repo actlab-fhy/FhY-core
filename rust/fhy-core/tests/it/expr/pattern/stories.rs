@@ -3,16 +3,15 @@
 //! equality, predicates and their failures, alternatives and the binding
 //! trail, the matching methods, callback errors, and patterns thousands of
 //! levels deep.
-//!
-//! Public API only (`fhy_core::expr::pattern`).
 
 use crate::support::expression as expression_support;
 use crate::support::hashing as hashing_support;
 use crate::support::pattern as pattern_support;
 use crate::support::stack as stack_support;
 
-use std::sync::Arc;
+use std::error::Error;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use expression_support::{
     build_call_or_panic, build_callee, build_decimal_literal, build_deep_sum, build_identifier,
@@ -37,23 +36,14 @@ const DEEP_TREE_DEPTH: usize = 4000;
 /// recurses once per pattern level.
 const PATTERN_MATCH_STACK_BYTES: usize = 16 << 20;
 
-/// Match `pattern` against `expression` and return the result, failing the
-/// test if a predicate fails.
-///
-/// # Panics
-///
-/// Panics if a predicate in `pattern` fails.
+/// Match `pattern` against `expression`, failing the test if a predicate
+/// fails.
 #[must_use]
 fn match_infallibly(pattern: &Pattern, expression: &Expression) -> Option<MatchBindings> {
     pattern.matches(expression).expect("no predicate fails")
 }
 
-/// Match `pattern` against `expression` and return the bindings, failing the
-/// test if it does not match.
-///
-/// # Panics
-///
-/// Panics if a predicate fails or `pattern` does not match.
+/// Match `pattern` against `expression`, failing the test unless it matches.
 #[must_use]
 fn expect_match(pattern: &Pattern, expression: &Expression) -> MatchBindings {
     match_infallibly(pattern, expression)
@@ -95,7 +85,6 @@ fn build_two_case_piecewise() -> Expression {
     .expect("a valid piecewise")
 }
 
-/// A kind of expression node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NodeKind {
     Literal,
@@ -118,7 +107,7 @@ impl NodeKind {
             Self::Binary => build_simple_binary(BinaryOperation::Add),
             Self::Logical => build_simple_logical(LogicalOperation::And, 2),
             Self::Piecewise => build_one_case_piecewise(),
-            Self::Call => build_call_or_panic("f", vec![x]),
+            Self::Call => build_call_or_panic("f", [x]),
         }
     }
 }
@@ -146,6 +135,14 @@ fn build_deep_sum_pattern(leaf_pattern: Pattern, depth: usize) -> Pattern {
         pattern = Pattern::binary(BinaryOperation::Add, pattern, Pattern::literal(1));
     }
     pattern
+}
+
+/// Assert `pattern` matches the node of `kind` exactly when `kind` is
+/// `matching_kind`.
+fn assert_matches_only_kind(pattern: &Pattern, kind: NodeKind, matching_kind: NodeKind) {
+    let result = match_infallibly(pattern, &kind.build());
+
+    assert_eq!(result.is_some(), kind == matching_kind, "got {result:?}");
 }
 
 // =============================================================================
@@ -194,7 +191,6 @@ fn match_bindings_new_binds_no_capture() {
     assert_eq!(MatchBindings::default(), bindings);
 }
 
-/// Test `get` returns `None` for a capture the matched pattern lacks.
 #[test]
 fn match_bindings_get_returns_none_for_a_capture_the_pattern_lacks() {
     let (x, y) = (Capture::new("x"), Capture::new("y"));
@@ -205,7 +201,6 @@ fn match_bindings_get_returns_none_for_a_capture_the_pattern_lacks() {
     assert!(bound.is_none(), "got {bound:?}");
 }
 
-/// Test `contains` reports exactly the bound captures.
 #[test]
 fn match_bindings_contains_reports_only_bound_captures() {
     let (x, y) = (Capture::new("x"), Capture::new("y"));
@@ -235,7 +230,6 @@ fn match_bindings_iter_lists_captures_in_binding_order() {
     assert_eq!(entries, [(&y, &build_literal(1)), (&x, &build_literal(2))]);
 }
 
-/// Test indexing by a capture gives the expression bound to it.
 #[test]
 fn match_bindings_index_returns_the_bound_expression() {
     let x = Capture::new("x");
@@ -246,7 +240,6 @@ fn match_bindings_index_returns_the_bound_expression() {
     assert!(Expression::ptr_eq(&bindings[&x], &expression));
 }
 
-/// Test indexing by a capture the bindings do not bind panics.
 #[test]
 #[should_panic(expected = "capture `x` is not bound")]
 fn match_bindings_index_panics_for_an_unbound_capture() {
@@ -256,8 +249,6 @@ fn match_bindings_index_panics_for_an_unbound_capture() {
     let _ = &bindings[&x];
 }
 
-/// Test bindings of one capture to equal expressions are equal and hash
-/// equally.
 #[test]
 fn match_bindings_with_equal_content_are_equal_and_hash_equally() {
     let x = Capture::new("x");
@@ -282,7 +273,6 @@ fn match_bindings_equality_compares_expressions_structurally() {
     assert_eq!(hash_of(&left), hash_of(&right));
 }
 
-/// Test bindings of a capture to different expressions are unequal.
 #[test]
 fn match_bindings_with_different_expressions_are_unequal() {
     let x = Capture::new("x");
@@ -399,7 +389,6 @@ fn pattern_wildcard_matches_every_node_kind(
     assert_eq!(result, Some(MatchBindings::new()));
 }
 
-/// Test `nothing` matches no node of any kind.
 #[rstest]
 fn pattern_nothing_matches_no_expression(
     #[values(
@@ -422,7 +411,6 @@ fn pattern_nothing_matches_no_expression(
 // Capture patterns
 // =============================================================================
 
-/// Test a capture binds a handle to the matched node.
 #[test]
 fn pattern_capture_binds_the_matched_node() {
     let x = Capture::new("x");
@@ -443,7 +431,6 @@ fn pattern_capture_binds_exactly_its_handle() {
     assert_eq!(collect_captures(&bindings), [&x]);
 }
 
-/// Test a capture with an empty name builds and binds.
 #[test]
 fn pattern_capture_accepts_an_empty_name() {
     let unnamed = Capture::new("");
@@ -471,7 +458,6 @@ fn pattern_captures_with_the_same_name_are_independent() {
     assert_eq!(bindings[&second], build_literal(2));
 }
 
-/// Test one capture in two sibling positions binds once.
 #[test]
 fn pattern_capture_shared_by_siblings_binds_once() {
     let x = Capture::new("x");
@@ -489,7 +475,6 @@ fn pattern_capture_shared_by_siblings_binds_once() {
     assert!(Expression::ptr_eq(&bindings[&x], &left));
 }
 
-/// Test `captured_as` fails when its pattern fails.
 #[test]
 fn pattern_captured_as_fails_when_the_pattern_fails() {
     let x = Capture::new("x");
@@ -500,7 +485,6 @@ fn pattern_captured_as_fails_when_the_pattern_fails() {
     assert!(result.is_none(), "got {result:?}");
 }
 
-/// Test `captured_as` binds when its pattern matches.
 #[test]
 fn pattern_captured_as_binds_when_the_pattern_matches() {
     let x = Capture::new("x");
@@ -512,27 +496,6 @@ fn pattern_captured_as_binds_when_the_pattern_matches() {
     assert!(Expression::ptr_eq(&bindings[&x], &expression));
 }
 
-/// Test a capture repeated over equal operands matches.
-#[test]
-fn pattern_capture_repeated_over_equal_operands_matches() {
-    let x = Capture::new("x");
-    let pattern = Pattern::binary(
-        BinaryOperation::Subtract,
-        Pattern::capture(&x),
-        Pattern::capture(&x),
-    );
-    let expression = Expression::new_binary(
-        BinaryOperation::Subtract,
-        build_literal(5),
-        build_literal(5),
-    );
-
-    let bindings = expect_match(&pattern, &expression);
-
-    assert_eq!(bindings[&x], build_literal(5));
-}
-
-/// Test a capture repeated over different operands fails.
 #[test]
 fn pattern_capture_repeated_over_different_operands_fails() {
     let x = Capture::new("x");
@@ -570,9 +533,6 @@ fn pattern_capture_repeated_over_equal_compounds_keeps_the_first() {
     assert!(Expression::ptr_eq(&bindings[&x], &left));
 }
 
-/// Test a repeated capture over equal literals matches and keeps the first
-/// operand: `5` minus the integer parsed from `"05"`, `NaN - NaN`, and
-/// `0.0 - -0.0`.
 #[rstest]
 #[case::integer_and_integer_text(build_literal(5), build_parsed_literal("05"))]
 #[case::nan_and_nan(build_literal(f64::NAN), build_literal(f64::NAN))]
@@ -622,7 +582,6 @@ fn pattern_capture_records_bindings_in_completion_order() {
 // Literal
 // =============================================================================
 
-/// Test the any-literal pattern matches a literal of every variant.
 #[rstest]
 #[case::integer(build_literal(5))]
 #[case::float(build_literal(2.75))]
@@ -650,13 +609,7 @@ fn pattern_literal_rejects_non_literal_nodes(
     )]
     kind: NodeKind,
 ) {
-    let result = match_infallibly(&Pattern::any_literal(), &kind.build());
-
-    assert_eq!(
-        result.is_some(),
-        kind == NodeKind::Literal,
-        "got {result:?}"
-    );
+    assert_matches_only_kind(&Pattern::any_literal(), kind, NodeKind::Literal);
 }
 
 /// Test a literal pattern matches every literal equal to its value, as
@@ -759,7 +712,6 @@ fn pattern_literal_and_repeated_capture_agree_on_literal_equality(
 // Identifier
 // =============================================================================
 
-/// Test the any-identifier pattern matches any reference.
 #[test]
 fn pattern_any_identifier_matches_any_reference() {
     let (_, x) = build_identifier("x");
@@ -787,13 +739,7 @@ fn pattern_identifier_rejects_non_reference_nodes(
     )]
     kind: NodeKind,
 ) {
-    let result = match_infallibly(&Pattern::any_identifier(), &kind.build());
-
-    assert_eq!(
-        result.is_some(),
-        kind == NodeKind::Identifier,
-        "got {result:?}"
-    );
+    assert_matches_only_kind(&Pattern::any_identifier(), kind, NodeKind::Identifier);
 }
 
 /// Test an identifier pattern matches a reference to the same identifier,
@@ -810,8 +756,6 @@ fn pattern_identifier_matches_a_reference_to_the_same_identifier() {
     assert_eq!(through_clone, Some(MatchBindings::new()));
 }
 
-/// Test an identifier pattern rejects a different identifier with the same
-/// name hint.
 #[test]
 fn pattern_identifier_rejects_a_different_identifier_with_the_same_hint() {
     let (first, _) = build_identifier("x");
@@ -826,7 +770,6 @@ fn pattern_identifier_rejects_a_different_identifier_with_the_same_hint() {
 // Unary
 // =============================================================================
 
-/// Test a unary pattern matches its operation.
 #[test]
 fn pattern_unary_matches_its_operation() {
     let pattern = Pattern::unary(UnaryOperation::Negate, Pattern::wildcard());
@@ -836,7 +779,6 @@ fn pattern_unary_matches_its_operation() {
     assert_eq!(result, Some(MatchBindings::new()));
 }
 
-/// Test a unary pattern rejects another operation.
 #[test]
 fn pattern_unary_rejects_another_operation() {
     let pattern = Pattern::unary(UnaryOperation::Negate, Pattern::wildcard());
@@ -847,7 +789,6 @@ fn pattern_unary_rejects_another_operation() {
     assert!(result.is_none(), "got {result:?}");
 }
 
-/// Test a unary pattern of any operation matches every operation.
 #[rstest]
 #[case::negate(UnaryOperation::Negate)]
 #[case::positive(UnaryOperation::Positive)]
@@ -863,7 +804,6 @@ fn pattern_unary_any_operation_matches_every_operation(#[case] operation: UnaryO
     assert_eq!(result, Some(MatchBindings::new()));
 }
 
-/// Test a unary pattern rejects every node that is not unary.
 #[rstest]
 fn pattern_unary_rejects_other_node_kinds(
     #[values(
@@ -879,12 +819,9 @@ fn pattern_unary_rejects_other_node_kinds(
 ) {
     let pattern = Pattern::unary_any_operation(Pattern::wildcard());
 
-    let result = match_infallibly(&pattern, &kind.build());
-
-    assert_eq!(result.is_some(), kind == NodeKind::Unary, "got {result:?}");
+    assert_matches_only_kind(&pattern, kind, NodeKind::Unary);
 }
 
-/// Test a unary pattern binds the captures of its operand pattern.
 #[test]
 fn pattern_unary_binds_captures_in_its_operand() {
     let x = Capture::new("x");
@@ -896,7 +833,6 @@ fn pattern_unary_binds_captures_in_its_operand() {
     assert!(Expression::ptr_eq(&bindings[&x], &operand));
 }
 
-/// Test a unary pattern fails when its operand pattern fails.
 #[test]
 fn pattern_unary_fails_when_its_operand_fails() {
     let pattern = Pattern::unary(UnaryOperation::Negate, Pattern::literal(5));
@@ -910,7 +846,6 @@ fn pattern_unary_fails_when_its_operand_fails() {
 // Binary
 // =============================================================================
 
-/// Test a binary pattern matches its operation.
 #[test]
 fn pattern_binary_matches_its_operation() {
     let pattern = Pattern::binary(
@@ -924,7 +859,6 @@ fn pattern_binary_matches_its_operation() {
     assert_eq!(result, Some(MatchBindings::new()));
 }
 
-/// Test a binary pattern rejects another operation.
 #[test]
 fn pattern_binary_rejects_another_operation() {
     let pattern = Pattern::binary(
@@ -938,7 +872,6 @@ fn pattern_binary_rejects_another_operation() {
     assert!(result.is_none(), "got {result:?}");
 }
 
-/// Test a binary pattern of any operation matches every operation.
 #[rstest]
 #[case::add(BinaryOperation::Add)]
 #[case::multiply(BinaryOperation::Multiply)]
@@ -953,7 +886,6 @@ fn pattern_binary_any_operation_matches_every_operation(#[case] operation: Binar
     assert_eq!(result, Some(MatchBindings::new()));
 }
 
-/// Test a binary pattern rejects every node that is not binary.
 #[rstest]
 fn pattern_binary_rejects_other_node_kinds(
     #[values(
@@ -969,9 +901,7 @@ fn pattern_binary_rejects_other_node_kinds(
 ) {
     let pattern = Pattern::binary_any_operation(Pattern::wildcard(), Pattern::wildcard());
 
-    let result = match_infallibly(&pattern, &kind.build());
-
-    assert_eq!(result.is_some(), kind == NodeKind::Binary, "got {result:?}");
+    assert_matches_only_kind(&pattern, kind, NodeKind::Binary);
 }
 
 /// Test a binary pattern binds the captures of both operand patterns, left
@@ -998,35 +928,17 @@ fn pattern_binary_binds_captures_in_both_operands() {
 }
 
 /// Test a binary pattern fails when its left operand pattern fails.
-#[test]
-fn pattern_binary_fails_when_its_left_operand_fails() {
-    let pattern = Pattern::binary(
-        BinaryOperation::Add,
-        Pattern::literal(99),
-        Pattern::wildcard(),
-    );
+#[rstest]
+#[case::left(Pattern::literal(99), Pattern::wildcard())]
+#[case::right(Pattern::wildcard(), Pattern::literal(99))]
+fn pattern_binary_fails_when_an_operand_fails(#[case] left: Pattern, #[case] right: Pattern) {
+    let pattern = Pattern::binary(BinaryOperation::Add, left, right);
 
     let result = match_infallibly(&pattern, &build_simple_binary(BinaryOperation::Add));
 
     assert!(result.is_none(), "got {result:?}");
 }
 
-/// Test a binary pattern fails when its right operand pattern fails.
-#[test]
-fn pattern_binary_fails_when_its_right_operand_fails() {
-    let pattern = Pattern::binary(
-        BinaryOperation::Add,
-        Pattern::wildcard(),
-        Pattern::literal(99),
-    );
-
-    let result = match_infallibly(&pattern, &build_simple_binary(BinaryOperation::Add));
-
-    assert!(result.is_none(), "got {result:?}");
-}
-
-/// Test a binary pattern whose left operand fails does not try its right
-/// operand.
 #[test]
 fn pattern_binary_skips_the_right_operand_after_a_left_failure() {
     let calls = Arc::new(AtomicUsize::new(0));
@@ -1062,7 +974,6 @@ fn pattern_logical_binds_captures_in_its_operands() {
     assert!(Expression::ptr_eq(&bindings[&b], &second));
 }
 
-/// Test a logical pattern rejects the other operation.
 #[rstest]
 #[case::and_pattern_on_or(LogicalOperation::And, LogicalOperation::Or)]
 #[case::or_pattern_on_and(LogicalOperation::Or, LogicalOperation::And)]
@@ -1077,8 +988,6 @@ fn pattern_logical_rejects_another_operation(
     assert!(result.is_none(), "got {result:?}");
 }
 
-/// Test a logical pattern with operand patterns rejects another operand
-/// count.
 #[rstest]
 #[case::fewer_operands(2)]
 #[case::more_operands(4)]
@@ -1100,7 +1009,6 @@ fn pattern_logical_rejects_another_operand_count(#[case] count: i64) {
     assert!(result.is_none(), "got {result:?}");
 }
 
-/// Test a logical pattern fails when one of its operand patterns fails.
 #[test]
 fn pattern_logical_fails_when_an_operand_fails() {
     let pattern = Pattern::logical(
@@ -1113,7 +1021,6 @@ fn pattern_logical_fails_when_an_operand_fails() {
     assert!(result.is_none(), "got {result:?}");
 }
 
-/// Test a logical pattern of any operation matches both operations.
 #[rstest]
 #[case::and(LogicalOperation::And)]
 #[case::or(LogicalOperation::Or)]
@@ -1144,7 +1051,6 @@ fn pattern_logical_any_operands_matches_any_operand_count(#[case] count: i64) {
     assert!(disjunction.is_none(), "got {disjunction:?}");
 }
 
-/// Test the any-logical pattern matches logical nodes only.
 #[rstest]
 fn pattern_any_logical_rejects_other_node_kinds(
     #[values(
@@ -1158,13 +1064,7 @@ fn pattern_any_logical_rejects_other_node_kinds(
     )]
     kind: NodeKind,
 ) {
-    let result = match_infallibly(&Pattern::any_logical(), &kind.build());
-
-    assert_eq!(
-        result.is_some(),
-        kind == NodeKind::Logical,
-        "got {result:?}"
-    );
+    assert_matches_only_kind(&Pattern::any_logical(), kind, NodeKind::Logical);
 }
 
 // =============================================================================
@@ -1184,8 +1084,6 @@ fn pattern_piecewise_with_no_cases_matches_nothing(#[case] expression: Expressio
     assert!(result.is_none(), "got {result:?}");
 }
 
-/// Test a piecewise pattern with one case pattern matches a one-case
-/// piecewise.
 #[test]
 fn pattern_piecewise_matches_a_one_case_piecewise() {
     let pattern = Pattern::piecewise(
@@ -1198,7 +1096,6 @@ fn pattern_piecewise_matches_a_one_case_piecewise() {
     assert_eq!(result, Some(MatchBindings::new()));
 }
 
-/// Test a piecewise pattern rejects every node that is not a piecewise.
 #[rstest]
 fn pattern_piecewise_rejects_other_node_kinds(
     #[values(
@@ -1214,13 +1111,7 @@ fn pattern_piecewise_rejects_other_node_kinds(
 ) {
     let pattern = Pattern::piecewise_any_cases(Pattern::wildcard());
 
-    let result = match_infallibly(&pattern, &kind.build());
-
-    assert_eq!(
-        result.is_some(),
-        kind == NodeKind::Piecewise,
-        "got {result:?}"
-    );
+    assert_matches_only_kind(&pattern, kind, NodeKind::Piecewise);
 }
 
 /// Test a piecewise pattern of any cases matches any case count and
@@ -1239,8 +1130,6 @@ fn pattern_piecewise_any_cases_matches_any_case_count() {
     assert_eq!(two_case_bindings[&o], build_literal(3));
 }
 
-/// Test a piecewise pattern with case patterns rejects a different case
-/// count.
 #[test]
 fn pattern_piecewise_rejects_a_different_case_count() {
     let pattern = Pattern::piecewise(
@@ -1253,8 +1142,6 @@ fn pattern_piecewise_rejects_a_different_case_count() {
     assert!(result.is_none(), "got {result:?}");
 }
 
-/// Test a piecewise pattern binds the condition, the value and the
-/// otherwise branch.
 #[test]
 fn pattern_piecewise_binds_condition_value_and_otherwise() {
     let (c, v, o) = (Capture::new("c"), Capture::new("v"), Capture::new("o"));
@@ -1307,40 +1194,18 @@ fn pattern_piecewise_binds_cases_in_evaluation_order() {
     assert!(Expression::ptr_eq(&bindings[&v2], &second_value));
 }
 
-/// Test a piecewise pattern fails when a condition pattern fails.
-#[test]
-fn pattern_piecewise_fails_when_a_condition_fails() {
-    let pattern = Pattern::piecewise(
-        [(Pattern::literal(99), Pattern::wildcard())],
-        Pattern::wildcard(),
-    );
-
-    let result = match_infallibly(&pattern, &build_one_case_piecewise());
-
-    assert!(result.is_none(), "got {result:?}");
-}
-
-/// Test a piecewise pattern fails when a value pattern fails.
-#[test]
-fn pattern_piecewise_fails_when_a_value_fails() {
-    let pattern = Pattern::piecewise(
-        [(Pattern::wildcard(), Pattern::literal(99))],
-        Pattern::wildcard(),
-    );
-
-    let result = match_infallibly(&pattern, &build_one_case_piecewise());
-
-    assert!(result.is_none(), "got {result:?}");
-}
-
-/// Test a piecewise pattern fails when its otherwise pattern fails, although
-/// every case matches.
-#[test]
-fn pattern_piecewise_fails_when_the_otherwise_branch_fails() {
-    let pattern = Pattern::piecewise(
-        [(Pattern::wildcard(), Pattern::wildcard())],
-        Pattern::literal(99),
-    );
+/// Test a piecewise pattern fails when one part's pattern fails, although
+/// the other parts match.
+#[rstest]
+#[case::condition(Pattern::literal(99), Pattern::wildcard(), Pattern::wildcard())]
+#[case::value(Pattern::wildcard(), Pattern::literal(99), Pattern::wildcard())]
+#[case::otherwise(Pattern::wildcard(), Pattern::wildcard(), Pattern::literal(99))]
+fn pattern_piecewise_fails_when_a_part_fails(
+    #[case] condition: Pattern,
+    #[case] value: Pattern,
+    #[case] otherwise: Pattern,
+) {
+    let pattern = Pattern::piecewise([(condition, value)], otherwise);
 
     let result = match_infallibly(&pattern, &build_one_case_piecewise());
 
@@ -1373,18 +1238,15 @@ fn pattern_piecewise_repeated_capture_spans_cases_and_otherwise(
 // Call
 // =============================================================================
 
-/// Test a call pattern matches its callee.
 #[test]
 fn pattern_call_matches_its_callee() {
     let pattern = Pattern::call(build_callee("f"), [Pattern::wildcard()]);
 
-    let result = match_infallibly(&pattern, &build_call_or_panic("f", vec![build_literal(1)]));
+    let result = match_infallibly(&pattern, &build_call_or_panic("f", [build_literal(1)]));
 
     assert_eq!(result, Some(MatchBindings::new()));
 }
 
-/// Test a call pattern rejects another callee: another user function, or a
-/// built-in function.
 #[rstest]
 #[case::another_name("g")]
 #[case::builtin("sqrt")]
@@ -1393,7 +1255,7 @@ fn pattern_call_rejects_another_callee(#[case] function_name: &str) {
 
     let result = match_infallibly(
         &pattern,
-        &build_call_or_panic(function_name, vec![build_literal(1)]),
+        &build_call_or_panic(function_name, [build_literal(1)]),
     );
 
     assert!(result.is_none(), "got {result:?}");
@@ -1412,7 +1274,6 @@ fn pattern_call_of_a_builtin_matches_only_that_builtin() {
     assert!(exp.is_none(), "got {exp:?}");
 }
 
-/// Test a call pattern of any callee matches any callee.
 #[rstest]
 #[case::f("f")]
 #[case::g("g")]
@@ -1423,13 +1284,12 @@ fn pattern_call_any_callee_matches_any_callee(#[case] function_name: &str) {
 
     let result = match_infallibly(
         &pattern,
-        &build_call_or_panic(function_name, vec![build_literal(1)]),
+        &build_call_or_panic(function_name, [build_literal(1)]),
     );
 
     assert_eq!(result, Some(MatchBindings::new()));
 }
 
-/// Test a call pattern with argument patterns rejects another arity.
 #[rstest]
 #[case::fewer_arguments(vec![build_literal(1)])]
 #[case::more_arguments(vec![build_literal(1), build_literal(2), build_literal(3)])]
@@ -1458,12 +1318,11 @@ fn pattern_call_any_arguments_matches_any_arity(#[case] arguments: Vec<Expressio
     assert_eq!(result, Some(MatchBindings::new()));
 }
 
-/// Test a call pattern of any arguments still requires its callee.
 #[test]
 fn pattern_call_any_arguments_rejects_another_callee() {
     let pattern = Pattern::call_any_arguments(build_callee("f"));
 
-    let result = match_infallibly(&pattern, &build_call_or_panic("g", vec![build_literal(1)]));
+    let result = match_infallibly(&pattern, &build_call_or_panic("g", [build_literal(1)]));
 
     assert!(result.is_none(), "got {result:?}");
 }
@@ -1479,17 +1338,13 @@ fn pattern_call_binds_captures_in_its_arguments() {
     );
     let (first, second) = (build_literal(1), build_literal(2));
 
-    let bindings = expect_match(
-        &pattern,
-        &build_call_or_panic("f", vec![first.clone(), second.clone()]),
-    );
+    let bindings = expect_match(&pattern, &build_call_or_panic("f", [&first, &second]));
 
     assert_eq!(collect_captures(&bindings), [&a, &b]);
     assert!(Expression::ptr_eq(&bindings[&a], &first));
     assert!(Expression::ptr_eq(&bindings[&b], &second));
 }
 
-/// Test the any-call pattern rejects every node that is not a call.
 #[rstest]
 fn pattern_call_rejects_other_node_kinds(
     #[values(
@@ -1503,13 +1358,9 @@ fn pattern_call_rejects_other_node_kinds(
     )]
     kind: NodeKind,
 ) {
-    let result = match_infallibly(&Pattern::any_call(), &kind.build());
-
-    assert_eq!(result.is_some(), kind == NodeKind::Call, "got {result:?}");
+    assert_matches_only_kind(&Pattern::any_call(), kind, NodeKind::Call);
 }
 
-/// Test a call pattern with no argument pattern matches only calls without
-/// arguments.
 #[test]
 fn pattern_call_with_empty_arguments_matches_only_calls_without_arguments() {
     let pattern = Pattern::call(build_callee("f"), Vec::<Pattern>::new());
@@ -1518,15 +1369,12 @@ fn pattern_call_with_empty_arguments_matches_only_calls_without_arguments() {
         &pattern,
         &build_call_or_panic("f", Vec::<Expression>::new()),
     );
-    let with_argument =
-        match_infallibly(&pattern, &build_call_or_panic("f", vec![build_literal(1)]));
+    let with_argument = match_infallibly(&pattern, &build_call_or_panic("f", [build_literal(1)]));
 
     assert_eq!(without_arguments, Some(MatchBindings::new()));
     assert!(with_argument.is_none(), "got {with_argument:?}");
 }
 
-/// Test a capture repeated across call arguments requires equal
-/// arguments.
 #[rstest]
 #[case::equal_arguments(build_literal(1), true)]
 #[case::different_arguments(build_literal(2), false)]
@@ -1539,7 +1387,7 @@ fn pattern_call_repeated_capture_requires_equal_arguments(
         build_callee("f"),
         [Pattern::capture(&x), Pattern::capture(&x)],
     );
-    let expression = build_call_or_panic("f", vec![build_literal(1), second_argument]);
+    let expression = build_call_or_panic("f", [build_literal(1), second_argument]);
 
     let result = match_infallibly(&pattern, &expression);
 
@@ -1550,25 +1398,18 @@ fn pattern_call_repeated_capture_requires_equal_arguments(
 // Predicate
 // =============================================================================
 
-/// Test a predicate pattern matches when the predicate holds.
-#[test]
-fn pattern_predicate_matches_when_the_predicate_holds() {
-    let pattern = Pattern::predicate(|_| true);
+#[rstest]
+#[case::holds(true, Some(MatchBindings::new()))]
+#[case::does_not_hold(false, None)]
+fn pattern_predicate_matches_exactly_when_it_holds(
+    #[case] verdict: bool,
+    #[case] expected: Option<MatchBindings>,
+) {
+    let pattern = Pattern::predicate(move |_| verdict);
 
     let result = match_infallibly(&pattern, &build_literal(5));
 
-    assert_eq!(result, Some(MatchBindings::new()));
-}
-
-/// Test a predicate pattern does not match when the predicate does not
-/// hold.
-#[test]
-fn pattern_predicate_rejects_when_the_predicate_does_not_hold() {
-    let pattern = Pattern::predicate(|_| false);
-
-    let result = match_infallibly(&pattern, &build_literal(5));
-
-    assert!(result.is_none(), "got {result:?}");
+    assert_eq!(result, expected);
 }
 
 /// Test a fallible predicate matches exactly when it returns `Ok(true)`.
@@ -1586,7 +1427,7 @@ fn pattern_try_predicate_matches_when_it_answers_true(#[case] verdict: bool) {
 /// Test the predicate is called once, with a handle to the candidate.
 #[test]
 fn pattern_predicate_receives_the_candidate() {
-    let seen = Arc::new(std::sync::Mutex::new(Vec::<Expression>::new()));
+    let seen = Arc::new(Mutex::new(Vec::new()));
     let recorder = Arc::clone(&seen);
     let pattern = Pattern::predicate(move |expression| {
         recorder
@@ -1600,12 +1441,11 @@ fn pattern_predicate_receives_the_candidate() {
     let result = match_infallibly(&pattern, &expression);
 
     assert_eq!(result, Some(MatchBindings::new()));
-    let seen = seen.lock().expect("an unpoisoned lock");
+    let seen = seen.lock().expect("an unpoisoned lock").clone();
     assert_eq!(seen.len(), 1);
     assert!(Expression::ptr_eq(&seen[0], &expression));
 }
 
-/// Test a failing predicate's error is returned from the match unchanged.
 #[test]
 fn pattern_predicate_error_is_returned_from_the_match() {
     let pattern = build_failing_predicate("predicate failed");
@@ -1665,16 +1505,9 @@ fn pattern_predicate_filters_node_kinds(
     let pattern =
         Pattern::predicate(|expression| matches!(expression.kind(), ExpressionKind::Literal(_)));
 
-    let result = match_infallibly(&pattern, &kind.build());
-
-    assert_eq!(
-        result.is_some(),
-        kind == NodeKind::Literal,
-        "got {result:?}"
-    );
+    assert_matches_only_kind(&pattern, kind, NodeKind::Literal);
 }
 
-/// Test a clone of a predicate pattern shares the predicate.
 #[test]
 fn pattern_clone_shares_the_predicate() {
     let calls = Arc::new(AtomicUsize::new(0));
@@ -1693,7 +1526,6 @@ fn pattern_clone_shares_the_predicate() {
 // Alternatives
 // =============================================================================
 
-/// Test an alternatives pattern of no alternative matches nothing.
 #[rstest]
 fn pattern_alternatives_of_none_matches_nothing(
     #[values(
@@ -1730,7 +1562,6 @@ fn pattern_alternatives_returns_the_first_match() {
     assert!(Expression::ptr_eq(&bindings[&first], &expression));
 }
 
-/// Test a later alternative matches when the earlier ones fail.
 #[test]
 fn pattern_alternatives_falls_through_to_a_later_alternative() {
     let x = Capture::new("x");
@@ -1745,7 +1576,6 @@ fn pattern_alternatives_falls_through_to_a_later_alternative() {
     assert!(Expression::ptr_eq(&bindings[&x], &expression));
 }
 
-/// Test an alternatives pattern fails when every alternative fails.
 #[test]
 fn pattern_alternatives_fails_when_every_alternative_fails() {
     let pattern = Pattern::alternatives([Pattern::literal(5), Pattern::literal(6)]);
@@ -1781,7 +1611,6 @@ fn pattern_alternatives_isolates_failed_attempts() {
     assert_eq!(bindings[&x], build_literal(2));
 }
 
-/// Test a capture made inside a failed alternative is discarded.
 #[test]
 fn pattern_alternatives_discards_captures_of_a_failed_alternative() {
     let (in_failed, in_successful) = (Capture::new("in_failed"), Capture::new("in_successful"));
@@ -1885,30 +1714,18 @@ fn pattern_alternatives_of_many_failing_branches_matches_in_linear_time() {
 // =============================================================================
 
 /// Test `matches` returns `None` for a mismatch.
-#[test]
-fn pattern_matches_returns_none_on_a_mismatch() {
-    let result = match_infallibly(&Pattern::literal(5), &build_literal(6));
+#[rstest]
+#[case::matching(5, true)]
+#[case::mismatching(6, false)]
+fn pattern_is_match_answers_whether_the_pattern_matches(
+    #[case] value: i64,
+    #[case] expected: bool,
+) {
+    let result = Pattern::literal(5).is_match(&build_literal(value));
 
-    assert!(result.is_none(), "got {result:?}");
+    assert_eq!(result.expect("no callback"), expected);
 }
 
-/// Test `is_match` answers true for a match.
-#[test]
-fn pattern_is_match_is_true_on_a_match() {
-    let result = Pattern::literal(5).is_match(&build_literal(5));
-
-    assert!(result.expect("no callback"));
-}
-
-/// Test `is_match` answers false for a mismatch.
-#[test]
-fn pattern_is_match_is_false_on_a_mismatch() {
-    let result = Pattern::literal(5).is_match(&build_literal(6));
-
-    assert!(!result.expect("no callback"));
-}
-
-/// Test matching tests the root only and never searches subexpressions.
 #[test]
 fn pattern_matches_does_not_search_subexpressions() {
     let result = match_infallibly(
@@ -1919,7 +1736,6 @@ fn pattern_matches_does_not_search_subexpressions() {
     assert!(result.is_none(), "got {result:?}");
 }
 
-/// Return the pattern `5`.
 fn build_five_pattern(_: &Capture, _: &Capture) -> Pattern {
     Pattern::literal(5)
 }
@@ -1933,7 +1749,6 @@ fn build_sum_pattern(a: &Capture, b: &Capture) -> Pattern {
     )
 }
 
-/// Return the pattern matching `5` or any identifier.
 fn build_five_or_identifier_pattern(_: &Capture, _: &Capture) -> Pattern {
     Pattern::alternatives([Pattern::literal(5), Pattern::any_identifier()])
 }
@@ -2002,36 +1817,30 @@ fn callback_error_downcasts_to_the_wrapped_error() {
     assert_eq!(downcast.ok().as_deref(), Some(&ProbeError("probe")));
 }
 
-/// Fail with a [`ProbeError`] through `?`.
 fn fail_with_a_probe_error() -> Result<(), CallbackError> {
     Err(ProbeError("probe"))?
 }
 
-/// Fail with a refused piecewise through `?`.
 fn fail_with_a_piecewise_error() -> Result<(), CallbackError> {
     Expression::piecewise(Vec::<(Expression, Expression)>::new(), build_literal(0))?;
     Ok(())
 }
 
-/// Fail with a refused rebuild through `?`.
 fn fail_with_a_rebuild_error() -> Result<(), CallbackError> {
     build_simple_binary(BinaryOperation::Add).rebuild_with_children(Vec::new())?;
     Ok(())
 }
 
-/// Fail with a refused function name through `?`.
 fn fail_with_a_function_name_error() -> Result<(), CallbackError> {
     FunctionName::try_new("")?;
     Ok(())
 }
 
-/// Fail with a refused literal text through `?`.
 fn fail_with_a_literal_text_error() -> Result<(), CallbackError> {
     LiteralValue::parse_text("abc")?;
     Ok(())
 }
 
-/// Test `?` converts any error into a callback error holding it.
 #[rstest]
 #[case::probe_error(fail_with_a_probe_error, |error: &CallbackError| {
     error.downcast_ref::<ProbeError>() == Some(&ProbeError("probe"))
@@ -2064,7 +1873,7 @@ fn callback_error_converts_from_any_error_with_question_mark(
 /// error, unchanged.
 #[test]
 fn callback_error_converts_into_a_boxed_error() {
-    fn propagate() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn propagate() -> Result<(), Box<dyn Error + Send + Sync>> {
         fail_with_a_probe_error()?;
         Ok(())
     }
