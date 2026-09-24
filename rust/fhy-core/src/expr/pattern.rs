@@ -2,12 +2,13 @@
 //!
 //! A [`Pattern`] describes a shape of [`Expression`](super::Expression);
 //! [`Pattern::matches`] tests it at the root of an expression and returns
-//! the [`MatchBindings`] its [`Capture`]s recorded. A [`RewriteRule`] pairs a
-//! pattern with a rewrite of what it matches, and [`apply_rewrite_rules`]
-//! applies a list of rules to every node of a tree, bottom-up, in one pass;
-//! [`RewriteRuleApplier`](super::passes::RewriteRuleApplier) does the same
-//! as a compiler pass. Callbacks
-//! supplied by the caller (predicates, guards, rewrites) are fallible; their
+//! the [`MatchBindings`] its [`Capture`]s recorded. A [`Rule`] is a rewrite
+//! tried at the root of an expression; a [`RewriteRule`] is the rule pairing
+//! a pattern with a rewrite of what it matches. [`apply_rewrite_rules`]
+//! applies a list of rules to every node of a tree, bottom-up, in one pass,
+//! and [`RewriteRuleApplier`](super::passes::RewriteRuleApplier) does the
+//! same as a compiler pass. Callbacks supplied by the caller (predicates,
+//! guards, rewrites and native rules) are fallible; their
 //! [`CallbackError`]s end a match or a walk.
 
 mod matching;

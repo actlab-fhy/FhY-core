@@ -433,6 +433,7 @@ impl FiredRule {
 
 /// The result of [`apply_rewrite_rules`]: the rewritten tree, whether it
 /// differs from the input, and the rules that fired.
+#[must_use = "the outcome holds the rewritten tree"]
 #[derive(Debug, Clone)]
 pub struct RewriteOutcome {
     output: Expression,

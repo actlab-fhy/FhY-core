@@ -64,7 +64,6 @@ pub(crate) fn expect_match(pattern: &Pattern, expression: &Expression) -> MatchB
 /// # Panics
 ///
 /// Panics if a rule's callback or rebuild fails.
-#[must_use]
 pub(crate) fn rewrite(expression: &Expression, rules: &[RewriteRule]) -> RewriteOutcome {
     apply_rewrite_rules(expression, rules).expect("no callback or rebuild fails")
 }
