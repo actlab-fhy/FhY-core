@@ -29,6 +29,10 @@ use crate::identifier::reserved::{self, ReservedIdentifier};
 use crate::interned::{Canonical, InternRegistry};
 
 /// The vocabulary of [`OpAttribute`]s.
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "an uninhabited marker type, with no variants to add"
+)]
 #[derive(Debug)]
 pub enum OpAttributeVocabulary {}
 

@@ -24,6 +24,10 @@ use super::operation::impl_name_text;
 /// assert_eq!(FunctionSort::Nat.as_str(), "nat");
 /// assert_eq!(FunctionSort::Real.to_string(), "real");
 /// ```
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "a closed classification that passes map one to one"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FunctionSort {

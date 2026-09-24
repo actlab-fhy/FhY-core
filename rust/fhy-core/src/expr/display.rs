@@ -242,6 +242,7 @@ fn schedule_call<'a>(pending: &mut Vec<Step<'a>>, node: &'a CallExpression, nota
 }
 
 /// How operations, piecewise nodes, and calls are written.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Notation {
     /// Infix operator symbols: `(-x)`, `(x + 1)`, `{1 if (x > 0); 0 otherwise}`,
@@ -254,6 +255,7 @@ pub enum Notation {
 }
 
 /// How an identifier reference is written.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum IdentifierStyle {
     /// The identifier's name hint alone: `x`.

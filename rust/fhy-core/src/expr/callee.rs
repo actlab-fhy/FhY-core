@@ -33,6 +33,10 @@ use super::builtins::BuiltinFunction;
 /// assert_eq!("".parse::<Callee>(), Err(FunctionNameError::Empty));
 /// # Ok::<(), FunctionNameError>(())
 /// ```
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "a call names either a built-in or a user function, and passes match both"
+)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Callee {

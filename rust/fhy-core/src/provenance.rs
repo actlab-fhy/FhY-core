@@ -377,6 +377,10 @@ impl TryFrom<SpanData> for Span {
 /// `{"named": {"name": .., "child": ..}}`, `{"call_site": {"callee": ..,
 /// "caller": ..}}` and `{"fused": {"sources": [..], "label": ..}}`.
 /// Decoding normalizes a file path and refuses an empty name.
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "richer origins compose these variants, and consumers match all of them"
+)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Provenance {

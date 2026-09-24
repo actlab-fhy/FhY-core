@@ -531,6 +531,10 @@ pub trait SortLookup {
 }
 
 /// A [`SortLookup`] that knows no native constant and no named function.
+#[expect(
+    clippy::exhaustive_structs,
+    reason = "a stateless unit type that callers name as a value"
+)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct NoRegisteredSorts;
 

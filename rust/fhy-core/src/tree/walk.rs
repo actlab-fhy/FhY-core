@@ -3,6 +3,10 @@
 use super::node::Tree;
 
 /// Where [`walk_tree`] visits a node relative to its children.
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "a walk visits a node before or after its children, and walks match both"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TraversalOrder {
     /// Visit the node before its children.

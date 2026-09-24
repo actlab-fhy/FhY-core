@@ -431,6 +431,7 @@ impl<S: BuildHasher> Rewriter<Expression> for Substitution<'_, S> {
 pub struct Expression(Arc<ExpressionKind>);
 
 /// The node an [`Expression`] refers to, one variant per node kind.
+#[expect(clippy::exhaustive_enums, reason = "passes match every node kind")]
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
     /// A unary operation applied to one operand.

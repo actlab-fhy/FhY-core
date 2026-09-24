@@ -60,6 +60,7 @@ use super::sort::FunctionSort;
 /// assert_ne!(LiteralValue::from(1), LiteralValue::from(1.0));
 /// # Ok::<(), fhy_core::expr::LiteralTextError>(())
 /// ```
+#[expect(clippy::exhaustive_enums, reason = "passes match every literal form")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LiteralValue {

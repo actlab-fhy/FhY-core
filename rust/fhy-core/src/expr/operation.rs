@@ -123,6 +123,7 @@ pub(crate) use impl_name_text;
 /// assert_eq!(UnaryOperation::LogicalNot.as_str(), "logical_not");
 /// assert_eq!(UnaryOperation::LogicalNot.symbol(), "!");
 /// ```
+#[expect(clippy::exhaustive_enums, reason = "passes match every operation")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UnaryOperation {
@@ -193,6 +194,7 @@ impl_name_text!(UnaryOperation, "unary operation");
 /// assert_eq!(BinaryOperation::FloorDivide.symbol(), "//");
 /// assert_eq!(BinaryOperation::LessEqual.to_string(), "less_equal");
 /// ```
+#[expect(clippy::exhaustive_enums, reason = "passes match every operation")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BinaryOperation {
@@ -313,6 +315,7 @@ impl_name_text!(BinaryOperation, "binary operation");
 /// assert_eq!(LogicalOperation::And.as_str(), "and");
 /// assert_eq!(LogicalOperation::Or.symbol(), "||");
 /// ```
+#[expect(clippy::exhaustive_enums, reason = "passes match every operation")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LogicalOperation {

@@ -342,6 +342,10 @@ impl<T: Interned> fmt::Debug for InternRegistry<T> {
 }
 
 /// Result of [`InternRegistry::intern`].
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "interning either registers the value or finds its canonical instance, and callers match both"
+)]
 #[must_use = "the outcome holds the canonical handle"]
 #[derive(Debug)]
 pub enum InternOutcome<T> {
