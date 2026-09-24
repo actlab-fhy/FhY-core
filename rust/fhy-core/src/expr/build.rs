@@ -15,8 +15,8 @@
 //! [`Expression::floor_divide`], [`Expression::floor_mod`],
 //! [`Expression::power`], [`Expression::and`], and so on.
 //! [`Expression::all`], [`Expression::any`], [`Expression::new_logical`],
-//! [`build_piecewise`], and [`build_call`] build the nodes whose operand
-//! count varies.
+//! [`Expression::piecewise`], and [`Expression::call`] build the nodes whose
+//! operand count varies.
 
 use std::ops::{Add, Div, Mul, Neg, Not, Sub};
 
@@ -182,6 +182,79 @@ impl Expression {
             left.into_expression(),
             right.into_expression(),
         ))
+    }
+
+    /// Build a piecewise from `(condition, value)` cases in evaluation order
+    /// and an `otherwise` branch: the value of the first case whose
+    /// condition holds, or the otherwise branch when none does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PiecewiseError::NoCases`] if `cases` is empty, and
+    /// [`PiecewiseError::NonBooleanConditionLiteral`] naming the first case
+    /// whose condition is a literal other than a Boolean.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::identifier::Identifier;
+    /// use fhy_core::expr::{Expression, PiecewiseError};
+    ///
+    /// let x = Expression::from(Identifier::new("x"));
+    /// let sign = Expression::piecewise([(x.greater(0), 1), (x.less(0), -1)], 0)?;
+    /// assert_eq!(sign.to_string(), "{1 if (x > 0); -1 if (x < 0); 0 otherwise}");
+    ///
+    /// let no_cases: [(Expression, Expression); 0] = [];
+    /// assert_eq!(Expression::piecewise(no_cases, 0), Err(PiecewiseError::NoCases));
+    /// # Ok::<(), PiecewiseError>(())
+    /// ```
+    pub fn piecewise<C, V, O>(
+        cases: impl IntoIterator<Item = (C, V)>,
+        otherwise: O,
+    ) -> Result<Self, PiecewiseError>
+    where
+        C: IntoOperand,
+        V: IntoOperand,
+        O: IntoOperand,
+    {
+        let cases = cases
+            .into_iter()
+            .map(|(condition, value)| (condition.into_expression(), value.into_expression()))
+            .collect();
+        PiecewiseExpression::try_new(cases, otherwise.into_expression()).map(Self::from)
+    }
+
+    /// Build a call of `function_name` with `arguments` in order.
+    ///
+    /// Neither the name nor the argument count is checked against any
+    /// function catalogue.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FunctionNameError::Empty`] if `function_name` is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fhy_core::identifier::Identifier;
+    /// use fhy_core::expr::{Expression, FunctionNameError};
+    ///
+    /// let x = Expression::from(Identifier::new("x"));
+    /// let call = Expression::call("max", [&x, &Expression::from(Identifier::new("y"))])?;
+    /// assert_eq!(call.to_string(), "max(x, y)");
+    /// assert_eq!(Expression::call("", [1]), Err(FunctionNameError::Empty));
+    /// # Ok::<(), FunctionNameError>(())
+    /// ```
+    pub fn call<I>(function_name: &str, arguments: I) -> Result<Self, FunctionNameError>
+    where
+        I: IntoIterator,
+        I::Item: IntoOperand,
+    {
+        let arguments = arguments
+            .into_iter()
+            .map(sealed::Sealed::into_expression)
+            .collect();
+        CallExpression::try_new(function_name, arguments).map(Self::from)
     }
 
     /// Build the conjunction or disjunction `operation` of `operands`.
@@ -475,45 +548,4 @@ impl Not for &Expression {
     fn not(self) -> Expression {
         Expression::new_unary(UnaryOperation::LogicalNot, self)
     }
-}
-
-/// Build a piecewise from `(condition, value)` cases in evaluation order and
-/// an `otherwise` branch.
-///
-/// # Errors
-///
-/// Returns [`PiecewiseError::NoCases`] if `cases` is empty, and
-/// [`PiecewiseError::NonBooleanConditionLiteral`] naming the first
-/// case whose condition is a literal other than a Boolean.
-pub fn build_piecewise<C, V, O>(
-    cases: impl IntoIterator<Item = (C, V)>,
-    otherwise: O,
-) -> Result<Expression, PiecewiseError>
-where
-    C: IntoOperand,
-    V: IntoOperand,
-    O: IntoOperand,
-{
-    let cases = cases
-        .into_iter()
-        .map(|(condition, value)| (condition.into_expression(), value.into_expression()))
-        .collect();
-    PiecewiseExpression::try_new(cases, otherwise.into_expression()).map(Expression::from)
-}
-
-/// Build a call of `function_name` with `arguments` in order.
-///
-/// # Errors
-///
-/// Returns [`FunctionNameError::Empty`] if `function_name` is empty.
-pub fn build_call<I>(function_name: &str, arguments: I) -> Result<Expression, FunctionNameError>
-where
-    I: IntoIterator,
-    I::Item: IntoOperand,
-{
-    let arguments = arguments
-        .into_iter()
-        .map(sealed::Sealed::into_expression)
-        .collect();
-    CallExpression::try_new(function_name, arguments).map(Expression::from)
 }

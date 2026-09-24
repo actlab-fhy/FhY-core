@@ -24,9 +24,7 @@ use fhy_core::expr::pattern::{
     CallbackError, MatchBindings, Pattern, RewriteRule, apply_rewrite_rules, does_pattern_match,
     match_pattern,
 };
-use fhy_core::expr::{
-    BinaryOperation, Expression, ExpressionKind, LiteralValue, UnaryOperation, build_call,
-};
+use fhy_core::expr::{BinaryOperation, Expression, ExpressionKind, LiteralValue, UnaryOperation};
 use fhy_core::identifier::Identifier;
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -187,9 +185,9 @@ fn build_wrapped_numeric_tree_strategy() -> BoxedStrategy<(Expression, Expressio
             )
                 .prop_map(|(function_name, (plain, wrapped), wrap)| {
                     (
-                        build_call(function_name, [plain]).expect("a named call"),
+                        Expression::call(function_name, [plain]).expect("a named call"),
                         apply_wrap(
-                            build_call(function_name, [wrapped]).expect("a named call"),
+                            Expression::call(function_name, [wrapped]).expect("a named call"),
                             wrap,
                         ),
                     )
@@ -555,7 +553,7 @@ proptest! {
     fn neutral_rules_rewrite_a_shared_subtree_like_its_unshared_copy(
         (_, wrapped) in build_wrapped_numeric_tree_strategy()
     ) {
-        let shared = build_call("f", [wrapped.clone(), &wrapped + &wrapped]).expect("a named call");
+        let shared = Expression::call("f", [wrapped.clone(), &wrapped + &wrapped]).expect("a named call");
         let unshared = copy_deeply(&shared);
         let rules = build_neutral_rules(&Arc::new(AtomicUsize::new(0)));
 

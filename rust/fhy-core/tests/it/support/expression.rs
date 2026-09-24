@@ -6,9 +6,8 @@ use fhy_core::expr::builtins::{
     ComposedFunction, NativeFunctionSignature, list_composed_functions, list_native_functions,
 };
 use fhy_core::expr::{
-    BigInt, BinaryOperation, CallExpression, Decimal, Expression, ExpressionKind, IntoOperand,
-    LiteralValue, LogicalOperation, PiecewiseExpression, UnaryOperation, build_call,
-    build_piecewise,
+    BigInt, BinaryOperation, Decimal, Expression, ExpressionKind, IntoOperand, LiteralValue,
+    LogicalOperation, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use proptest::num::f64 as f64_class;
@@ -55,8 +54,8 @@ pub(crate) fn build_decimal_literal(text: &str) -> Expression {
     ))
 }
 
-/// Return the piecewise expression `build_piecewise` builds from `cases`
-/// and `otherwise`, failing the test if it is refused.
+/// Return the piecewise expression `Expression::piecewise` builds from
+/// `cases` and `otherwise`, failing the test if it is refused.
 ///
 /// # Panics
 ///
@@ -66,11 +65,11 @@ pub(crate) fn build_piecewise_or_panic<C: IntoOperand, V: IntoOperand, O: IntoOp
     cases: impl IntoIterator<Item = (C, V)>,
     otherwise: O,
 ) -> Expression {
-    build_piecewise(cases, otherwise).expect("a valid piecewise")
+    Expression::piecewise(cases, otherwise).expect("a valid piecewise")
 }
 
-/// Return the call `build_call` builds of `function_name` with `arguments`,
-/// failing the test if it is refused.
+/// Return the call `Expression::call` builds of `function_name` with
+/// `arguments`, failing the test if it is refused.
 ///
 /// # Panics
 ///
@@ -81,13 +80,11 @@ where
     I: IntoIterator,
     I::Item: IntoOperand,
 {
-    build_call(function_name, arguments).expect("a named call")
+    Expression::call(function_name, arguments).expect("a named call")
 }
 
-/// Return the piecewise expression built by the node constructor
-/// `PiecewiseExpression::try_new`, failing the test if it is refused.
-///
-/// For tests whose expected trees must not depend on the builders.
+/// Return the piecewise expression `Expression::piecewise` builds from
+/// `cases`, given as a list, failing the test if it is refused.
 ///
 /// # Panics
 ///
@@ -97,13 +94,11 @@ pub(crate) fn build_piecewise_node_or_panic(
     cases: Vec<(Expression, Expression)>,
     otherwise: Expression,
 ) -> Expression {
-    Expression::from(PiecewiseExpression::try_new(cases, otherwise).expect("a valid piecewise"))
+    Expression::piecewise(cases, otherwise).expect("a valid piecewise")
 }
 
-/// Return the call built by the node constructor `CallExpression::try_new`,
-/// failing the test if it is refused.
-///
-/// For tests whose expected trees must not depend on the builders.
+/// Return the call `Expression::call` builds of `function_name` with
+/// `arguments`, given as a list, failing the test if it is refused.
 ///
 /// # Panics
 ///
@@ -113,7 +108,7 @@ pub(crate) fn build_call_node_or_panic(
     function_name: &str,
     arguments: Vec<Expression>,
 ) -> Expression {
-    Expression::from(CallExpression::try_new(function_name, arguments).expect("a valid call"))
+    Expression::call(function_name, arguments).expect("a valid call")
 }
 
 /// Return `((leaf + 1) + 1) + ...`, `depth` additions deep.
@@ -504,14 +499,14 @@ pub(crate) fn build_expression_strategy(with_non_finite_floats: bool) -> BoxedSt
                 inner.clone(),
             )
                 .prop_map(|(cases, otherwise)| {
-                    build_piecewise(cases, otherwise).expect("conditions are coerced")
+                    Expression::piecewise(cases, otherwise).expect("conditions are coerced")
                 }),
             (
                 select(CALL_NAMES.clone()),
                 prop::collection::vec(inner, 0..4)
             )
                 .prop_map(|(function_name, arguments)| {
-                    build_call(function_name, arguments).expect("a named call")
+                    Expression::call(function_name, arguments).expect("a named call")
                 }),
         ]
     })

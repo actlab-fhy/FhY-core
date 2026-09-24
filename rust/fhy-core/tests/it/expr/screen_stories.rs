@@ -20,7 +20,7 @@ use expression_support::{
 };
 use fhy_core::expr::{
     BooleanPosition, Expression, FunctionSort, LogicalOperation, NoRegisteredSorts,
-    NonBooleanLogicalOperandError, SortLookup, SymbolType, UnaryOperation, build_piecewise,
+    NonBooleanLogicalOperandError, SortLookup, SymbolType, UnaryOperation,
     validate_logical_operands, validate_predicate,
 };
 use fhy_core::identifier::Identifier;
@@ -415,7 +415,7 @@ fn validate_logical_operands_rejects_a_piecewise_operand_with_one_numeric_branch
 fn validate_logical_operands_reports_a_shared_branch_at_its_first_position() {
     let (_, x) = build_identifier("x");
     let shared = build_literal(2);
-    let mixed = build_piecewise(
+    let mixed = Expression::piecewise(
         [
             (x.greater(0), shared.clone()),
             (x.less(0), build_literal(true)),
@@ -443,7 +443,7 @@ fn validate_logical_operands_reports_a_shared_branch_at_its_first_position() {
 fn validate_checks_every_case_condition_before_any_case_value(#[case] screen: Screen) {
     let (_, x) = build_identifier("x");
     let numeric_condition = &x + 1;
-    let mixed = build_piecewise(
+    let mixed = Expression::piecewise(
         [
             (x.greater(0), build_literal(2)),
             (numeric_condition.clone(), build_literal(true)),

@@ -16,7 +16,7 @@ use expression_support::{
 };
 use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, ExpressionKind, FunctionNameError, LiteralValue,
-    PiecewiseError, UnaryOperation, build_call, build_piecewise,
+    PiecewiseError, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -76,9 +76,9 @@ fn expression_literal_round_trips_through_its_wire_form() {
 fn expression_serializes_every_node_kind_in_its_wire_shape() {
     let (x, x_reference) = build_identifier("x");
     let x_wire = build_identifier_wire(&x);
-    let expression = build_piecewise(
+    let expression = Expression::piecewise(
         [(x_reference.less(3), -&x_reference)],
-        build_call(
+        Expression::call(
             "max",
             [
                 x_reference.clone(),
@@ -119,9 +119,9 @@ fn expression_serializes_every_node_kind_in_its_wire_shape() {
 #[test]
 fn expression_serializes_fields_in_declaration_order() {
     let (_, x) = build_identifier("x");
-    let expression = build_piecewise(
+    let expression = Expression::piecewise(
         [(x.greater(0), -(&x + 1))],
-        build_call("f", [&x]).expect("a call"),
+        Expression::call("f", [&x]).expect("a call"),
     )
     .expect("a valid piecewise");
 
@@ -287,7 +287,7 @@ fn expression_literal_refuses_to_serialize_a_non_finite_float(#[case] value: f64
 /// Test a multi-case piecewise round-trips through a JSON value.
 #[test]
 fn expression_piecewise_round_trips_through_a_json_value() {
-    let expression = build_piecewise(
+    let expression = Expression::piecewise(
         [
             (build_literal(true), build_literal(1)),
             (build_literal(false), build_literal(2)),
@@ -304,8 +304,8 @@ fn expression_piecewise_round_trips_through_a_json_value() {
 /// Test a piecewise round-trips through JSON text.
 #[test]
 fn expression_piecewise_round_trips_through_json_text() {
-    let expression =
-        build_piecewise([(build_literal(true), build_literal(1))], 0).expect("a valid piecewise");
+    let expression = Expression::piecewise([(build_literal(true), build_literal(1))], 0)
+        .expect("a valid piecewise");
 
     let text = serde_json::to_string(&expression).expect("the expression serializes");
     let restored: Expression = serde_json::from_str(&text).expect("the text deserializes");
@@ -316,9 +316,10 @@ fn expression_piecewise_round_trips_through_json_text() {
 /// Test a piecewise nested in another round-trips.
 #[test]
 fn expression_nested_piecewise_round_trips() {
-    let inner = build_piecewise([(build_literal(true), build_literal(1))], 0).expect("a piecewise");
-    let outer =
-        build_piecewise([(build_literal(false), inner)], build_literal(9)).expect("a piecewise");
+    let inner =
+        Expression::piecewise([(build_literal(true), build_literal(1))], 0).expect("a piecewise");
+    let outer = Expression::piecewise([(build_literal(false), inner)], build_literal(9))
+        .expect("a piecewise");
 
     let restored = decode(encode(&outer)).expect("a valid payload");
 

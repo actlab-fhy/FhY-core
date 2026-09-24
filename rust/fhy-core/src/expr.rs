@@ -24,7 +24,7 @@ mod wire;
 mod wire_name;
 
 pub use alpha::AlphaRenaming;
-pub use build::{IntoOperand, build_call, build_piecewise};
+pub use build::IntoOperand;
 pub use display::{
     ExpressionDisplay, ExpressionPrettyFormatter, FormatOptions, IdentifierStyle, Notation,
 };

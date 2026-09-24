@@ -34,7 +34,7 @@ use std::sync::LazyLock;
 
 use crate::identifier::Identifier;
 
-use super::build::{IntoOperand, build_call, build_piecewise};
+use super::build::IntoOperand;
 use super::literal::LiteralValue;
 use super::node::Expression;
 use super::sort::FunctionSort;
@@ -59,7 +59,7 @@ where
     V: IntoOperand,
     O: IntoOperand,
 {
-    build_piecewise(cases, otherwise)
+    Expression::piecewise(cases, otherwise)
         .expect("a catalogue piecewise has at least one case and comparison conditions")
 }
 
@@ -70,7 +70,7 @@ where
     I: IntoIterator,
     I::Item: IntoOperand,
 {
-    build_call(function_name, arguments).expect("a catalogue function name is not empty")
+    Expression::call(function_name, arguments).expect("a catalogue function name is not empty")
 }
 
 /// `max(a, b) = {a if a > b; b otherwise}`.

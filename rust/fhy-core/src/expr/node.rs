@@ -646,7 +646,7 @@ impl Expression {
     #[must_use]
     pub fn is_alpha_equivalent_under(&self, other: &Expression, renaming: &AlphaRenaming) -> bool {
         is_tree_equal(self, other, renaming.is_empty(), &|left, right| {
-            renaming.are_identifiers_alpha_equivalent(left, right)
+            renaming.is_corresponding(left, right)
         })
     }
 
@@ -928,14 +928,15 @@ pub(super) fn validate_function_name(function_name: &str) -> Result<(), Function
 
 impl PiecewiseExpression {
     /// Construct a piecewise from its `(condition, value)` cases, in
-    /// evaluation order, and its otherwise branch.
+    /// evaluation order, and its otherwise branch; [`Expression::piecewise`]
+    /// is the public way.
     ///
     /// # Errors
     ///
     /// Returns [`PiecewiseError::NoCases`] if `cases` is empty, and
     /// [`PiecewiseError::NonBooleanConditionLiteral`] naming the
     /// first case whose condition is a literal other than a Boolean.
-    pub fn try_new(
+    pub(crate) fn try_new(
         cases: Vec<(Expression, Expression)>,
         otherwise: Expression,
     ) -> Result<Self, PiecewiseError> {
@@ -965,12 +966,13 @@ impl PiecewiseExpression {
 }
 
 impl CallExpression {
-    /// Construct a call of `function_name` with `arguments` in order.
+    /// Construct a call of `function_name` with `arguments` in order;
+    /// [`Expression::call`] is the public way.
     ///
     /// # Errors
     ///
     /// Returns [`FunctionNameError::Empty`] if `function_name` is empty.
-    pub fn try_new(
+    pub(crate) fn try_new(
         function_name: &str,
         arguments: Vec<Expression>,
     ) -> Result<Self, FunctionNameError> {

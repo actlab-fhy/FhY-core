@@ -27,10 +27,10 @@ use super::operation::LogicalOperation;
 /// # Examples
 ///
 /// ```
-/// use fhy_core::expr::{Expression, PiecewiseError, build_piecewise};
+/// use fhy_core::expr::{Expression, PiecewiseError};
 ///
 /// let no_cases: Vec<(Expression, Expression)> = Vec::new();
-/// let result = build_piecewise(no_cases, 0);
+/// let result = Expression::piecewise(no_cases, 0);
 /// assert_eq!(result, Err(PiecewiseError::NoCases));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,9 +119,9 @@ impl Error for RebuildError {
 /// # Examples
 ///
 /// ```
-/// use fhy_core::expr::{FunctionNameError, build_call};
+/// use fhy_core::expr::{Expression, FunctionNameError};
 ///
-/// let result = build_call("", [1]);
+/// let result = Expression::call("", [1]);
 /// assert_eq!(result, Err(FunctionNameError::Empty));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

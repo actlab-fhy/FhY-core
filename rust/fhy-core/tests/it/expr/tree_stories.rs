@@ -11,7 +11,7 @@ use crate::support::stack as stack_support;
 use expression_support::{build_call_or_panic, build_deep_sum, build_identifier, build_literal};
 use fhy_core::expr::{
     BinaryOperation, Expression, ExpressionKind, LiteralValue, PiecewiseError, RebuildError,
-    UnaryOperation, build_piecewise,
+    UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use fhy_core::pass::{ExecutePass, RewritePass, WalkPass};
@@ -170,7 +170,7 @@ fn expression_is_shared_exactly_while_another_handle_exists() {
 #[test]
 fn expression_tree_children_are_the_expression_children() {
     let (_, x) = build_identifier("x");
-    let expression = build_piecewise([(x.clone(), build_literal(1))], build_literal(2))
+    let expression = Expression::piecewise([(x.clone(), build_literal(1))], build_literal(2))
         .expect("a valid piecewise");
 
     let tree_children: Vec<&Expression> = Tree::children(&expression).collect();
@@ -304,8 +304,9 @@ fn rewrite_pass_keeps_an_expression_it_does_not_touch() {
 /// fails with the refused rebuild of the piecewise.
 #[test]
 fn rewrite_tree_reports_a_refused_expression_rebuild() {
-    let expression = build_piecewise([(build_literal(true), build_literal(5))], build_literal(6))
-        .expect("a valid piecewise");
+    let expression =
+        Expression::piecewise([(build_literal(true), build_literal(5))], build_literal(6))
+            .expect("a valid piecewise");
     let mut pass = RewritePass::new(TrueToOne);
 
     let result = pass.execute(&expression);

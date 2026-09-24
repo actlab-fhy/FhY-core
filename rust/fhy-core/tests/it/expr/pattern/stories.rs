@@ -22,7 +22,7 @@ use fhy_core::expr::pattern::{
 };
 use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, ExpressionKind, FunctionNameError, LiteralValue,
-    PiecewiseError, RebuildError, UnaryOperation, build_piecewise,
+    PiecewiseError, RebuildError, UnaryOperation,
 };
 use hashing_support::hash_of;
 use pattern_support::{
@@ -58,13 +58,13 @@ fn build_simple_binary(operation: BinaryOperation) -> Expression {
 
 /// Return a one-case piecewise `true -> 1, otherwise 2`.
 fn build_one_case_piecewise() -> Expression {
-    build_piecewise([(build_literal(true), build_literal(1))], build_literal(2))
+    Expression::piecewise([(build_literal(true), build_literal(1))], build_literal(2))
         .expect("a valid piecewise")
 }
 
 /// Return a two-case piecewise `true -> 1, false -> 2, otherwise 3`.
 fn build_two_case_piecewise() -> Expression {
-    build_piecewise(
+    Expression::piecewise(
         [
             (build_literal(true), build_literal(1)),
             (build_literal(false), build_literal(2)),
@@ -1041,7 +1041,7 @@ fn pattern_piecewise_binds_condition_value_and_otherwise() {
     );
     let (condition, value, otherwise) = (build_literal(true), build_literal(1), build_literal(2));
     let expression =
-        build_piecewise([(&condition, &value)], &otherwise).expect("a valid piecewise");
+        Expression::piecewise([(&condition, &value)], &otherwise).expect("a valid piecewise");
 
     let bindings = expect_match(&pattern, &expression);
 
@@ -1064,8 +1064,8 @@ fn pattern_piecewise_binds_cases_in_evaluation_order() {
     );
     let (c1, c2) = (build_literal(true), build_literal(false));
     let (v1, v2) = (build_literal(1), build_literal(2));
-    let expression =
-        build_piecewise([(&c1, &v1), (&c2, &v2)], build_literal(0)).expect("a valid piecewise");
+    let expression = Expression::piecewise([(&c1, &v1), (&c2, &v2)], build_literal(0))
+        .expect("a valid piecewise");
 
     let bindings = expect_match(&pattern, &expression);
 
@@ -1129,8 +1129,8 @@ fn pattern_piecewise_repeated_capture_spans_cases_and_otherwise(
         Some(vec![(Pattern::wildcard(), build_capture("v"))]),
         build_capture("v"),
     );
-    let expression =
-        build_piecewise([(build_literal(true), build_literal(1))], otherwise).expect("a piecewise");
+    let expression = Expression::piecewise([(build_literal(true), build_literal(1))], otherwise)
+        .expect("a piecewise");
 
     let result = match_infallibly(&pattern, &expression);
 

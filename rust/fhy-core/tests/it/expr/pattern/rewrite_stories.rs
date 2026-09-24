@@ -21,7 +21,6 @@ use fhy_core::expr::pattern::{
 };
 use fhy_core::expr::{
     BinaryOperation, Expression, ExpressionKind, PiecewiseError, RebuildError, UnaryOperation,
-    build_call, build_piecewise,
 };
 use pattern_support::{
     ProbeError, build_capture, build_literal_pattern, build_x_minus_x_rule, build_x_plus_zero_rule,
@@ -564,8 +563,8 @@ fn apply_rewrite_rules_rewrites_inside_a_piecewise_branch() {
     let (_, condition) = build_identifier("c");
     let (_, x) = build_identifier("x");
     let (_, otherwise) = build_identifier("y");
-    let expression =
-        build_piecewise([(&condition, build_plus_zero(&x))], &otherwise).expect("a piecewise");
+    let expression = Expression::piecewise([(&condition, build_plus_zero(&x))], &otherwise)
+        .expect("a piecewise");
 
     let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
 
@@ -582,11 +581,11 @@ fn apply_rewrite_rules_rewrites_inside_a_piecewise_branch() {
 fn apply_rewrite_rules_rewrites_inside_call_arguments() {
     let (_, x) = build_identifier("x");
     let expression =
-        build_call("f", [build_plus_zero(&x), build_literal(3)]).expect("a named call");
+        Expression::call("f", [build_plus_zero(&x), build_literal(3)]).expect("a named call");
 
     let outcome = rewrite(&expression, &[build_x_plus_zero_rule()]);
 
-    let expected = build_call("f", [x, build_literal(3)]).expect("a named call");
+    let expected = Expression::call("f", [x, build_literal(3)]).expect("a named call");
     assert_eq!(outcome.output(), &expected);
 }
 
@@ -732,9 +731,9 @@ fn apply_rewrite_rules_visits_nodes_in_walk_order() {
     let (c1, v1) = (build_literal(false), build_literal(11));
     let otherwise = build_literal(12);
     let piecewise =
-        build_piecewise([(&c0, &v0), (&c1, &v1)], &otherwise).expect("a valid piecewise");
+        Expression::piecewise([(&c0, &v0), (&c1, &v1)], &otherwise).expect("a valid piecewise");
     let argument = build_literal(13);
-    let expression = build_call("f", [&piecewise, &argument]).expect("a named call");
+    let expression = Expression::call("f", [&piecewise, &argument]).expect("a named call");
 
     let outcome = rewrite(&expression, &[rule]);
 
@@ -871,8 +870,9 @@ fn apply_rewrite_rules_reports_a_failing_rebuild_with_its_rule() {
     let never_firing = RewriteRule::new(build_literal_pattern(9), rewrite_to_literal(0));
     let true_to_one =
         RewriteRule::new(build_literal_pattern(true), rewrite_to_literal(1)).with_name("true -> 1");
-    let expression = build_piecewise([(build_literal(true), build_literal(5))], build_literal(6))
-        .expect("a valid piecewise");
+    let expression =
+        Expression::piecewise([(build_literal(true), build_literal(5))], build_literal(6))
+            .expect("a valid piecewise");
 
     let result = apply_rewrite_rules(&expression, &[never_firing, true_to_one]);
 
@@ -895,7 +895,7 @@ fn apply_rewrite_rules_blames_the_rule_that_rewrote_the_refused_condition() {
         .with_name("false -> 1");
     let six_to_seven =
         RewriteRule::new(build_literal_pattern(6), rewrite_to_literal(7)).with_name("6 -> 7");
-    let expression = build_piecewise(
+    let expression = Expression::piecewise(
         [
             (build_literal(true), build_literal(5)),
             (build_literal(false), build_literal(6)),
@@ -928,7 +928,7 @@ fn apply_rewrite_rules_blames_the_rule_that_rewrote_a_shared_refused_condition()
         RewriteRule::new(build_literal_pattern(true), rewrite_to_literal(1)).with_name("true -> 1");
     let (_, x) = build_identifier("x");
     let shared_true = build_literal(true);
-    let expression = build_piecewise(
+    let expression = Expression::piecewise(
         [(&x, &shared_true), (&shared_true, &build_literal(6))],
         build_literal(8),
     )

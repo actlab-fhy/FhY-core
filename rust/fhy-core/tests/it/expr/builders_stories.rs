@@ -10,7 +10,7 @@ use expression_support::{build_identifier, build_literal};
 use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, ExpressionKind, FunctionNameError, IntoOperand,
     LiteralValue, LogicalExpression, LogicalOperation, PiecewiseError, RebuildError,
-    UnaryOperation, build_call, build_piecewise,
+    UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -754,10 +754,10 @@ fn expression_all_keeps_both_bounds_of_a_range() {
 
 /// Test the piecewise builder keeps expression operands as they are.
 #[test]
-fn build_piecewise_wraps_expression_operands_directly() {
+fn expression_piecewise_wraps_expression_operands_directly() {
     let (condition, value, otherwise) = (build_literal(true), build_literal(1), build_literal(2));
 
-    let built = build_piecewise([(&condition, &value)], &otherwise).expect("one case");
+    let built = Expression::piecewise([(&condition, &value)], &otherwise).expect("one case");
 
     let ExpressionKind::Piecewise(node) = built.kind() else {
         panic!("expected a piecewise node, got {built:?}");
@@ -769,11 +769,11 @@ fn build_piecewise_wraps_expression_operands_directly() {
 
 /// Test the piecewise builder keeps several cases in order.
 #[test]
-fn build_piecewise_keeps_multiple_cases_in_declared_order() {
+fn expression_piecewise_keeps_multiple_cases_in_declared_order() {
     let (first_condition, second_condition) = (build_literal(true), build_literal(false));
     let (first_value, second_value) = (build_literal(1), build_literal(2));
 
-    let built = build_piecewise(
+    let built = Expression::piecewise(
         [
             (&first_condition, &first_value),
             (&second_condition, &second_value),
@@ -795,18 +795,19 @@ fn build_piecewise_keeps_multiple_cases_in_declared_order() {
 /// Test the piecewise builder wraps identifiers in each position and numbers
 /// in the value and otherwise positions.
 #[test]
-fn build_piecewise_coerces_identifiers_and_numbers() {
+fn expression_piecewise_coerces_identifiers_and_numbers() {
     let (flag, flag_reference) = build_identifier("flag");
     let (x, x_reference) = build_identifier("x");
     let (fallback, fallback_reference) = build_identifier("fallback");
 
-    let with_identifiers = build_piecewise([(flag, x)], fallback).expect("one case");
-    let with_numbers = build_piecewise([(build_literal(true), 5)], 10).expect("one case");
+    let with_identifiers = Expression::piecewise([(flag, x)], fallback).expect("one case");
+    let with_numbers = Expression::piecewise([(build_literal(true), 5)], 10).expect("one case");
 
     let expected_identifiers =
-        build_piecewise([(&flag_reference, &x_reference)], &fallback_reference).expect("one case");
+        Expression::piecewise([(&flag_reference, &x_reference)], &fallback_reference)
+            .expect("one case");
     let expected_numbers =
-        build_piecewise([(build_literal(true), build_literal(5))], build_literal(10))
+        Expression::piecewise([(build_literal(true), build_literal(5))], build_literal(10))
             .expect("one case");
     assert_eq!(with_identifiers, expected_identifiers);
     assert_eq!(with_numbers, expected_numbers);
@@ -814,8 +815,8 @@ fn build_piecewise_coerces_identifiers_and_numbers() {
 
 /// Test the piecewise builder refuses a number as a case condition.
 #[test]
-fn build_piecewise_rejects_a_numeric_condition() {
-    let result = build_piecewise([(1, 5)], 10);
+fn expression_piecewise_rejects_a_numeric_condition() {
+    let result = Expression::piecewise([(1, 5)], 10);
 
     assert_eq!(
         result,
@@ -825,19 +826,20 @@ fn build_piecewise_rejects_a_numeric_condition() {
 
 /// Test the piecewise builder refuses no cases.
 #[test]
-fn build_piecewise_rejects_zero_cases() {
-    let result = build_piecewise(Vec::<(Expression, Expression)>::new(), 0);
+fn expression_piecewise_rejects_zero_cases() {
+    let result = Expression::piecewise(Vec::<(Expression, Expression)>::new(), 0);
 
     assert_eq!(result, Err(PiecewiseError::NoCases));
 }
 
 /// Test Boolean literal value and otherwise operands pass through as given.
 #[test]
-fn build_piecewise_keeps_explicit_boolean_literal_operands() {
+fn expression_piecewise_keeps_explicit_boolean_literal_operands() {
     let value = build_literal(true);
     let otherwise = build_literal(false);
 
-    let built = build_piecewise([(build_literal(true), &value)], &otherwise).expect("one case");
+    let built =
+        Expression::piecewise([(build_literal(true), &value)], &otherwise).expect("one case");
 
     let ExpressionKind::Piecewise(node) = built.kind() else {
         panic!("expected a piecewise node, got {built:?}");
@@ -848,10 +850,11 @@ fn build_piecewise_keeps_explicit_boolean_literal_operands() {
 
 /// Test an equality built with `equals` is a valid case condition.
 #[test]
-fn build_piecewise_accepts_an_equals_condition() {
+fn expression_piecewise_accepts_an_equals_condition() {
     let (_, x) = build_identifier("x");
 
-    let built = build_piecewise([(x.equals(0), 7), (x.less_equal(0), 8)], 9).expect("two cases");
+    let built =
+        Expression::piecewise([(x.equals(0), 7), (x.less_equal(0), 8)], 9).expect("two cases");
 
     let ExpressionKind::Piecewise(node) = built.kind() else {
         panic!("expected a piecewise node, got {built:?}");
@@ -861,10 +864,10 @@ fn build_piecewise_accepts_an_equals_condition() {
 
 /// Test the call builder carries the name and the argument nodes.
 #[test]
-fn build_call_returns_a_call_with_name_and_arguments() {
+fn expression_call_returns_a_call_with_name_and_arguments() {
     let (first, second) = (build_literal(1), build_literal(2));
 
-    let built = build_call("max", [&first, &second]).expect("a named call");
+    let built = Expression::call("max", [&first, &second]).expect("a named call");
 
     let ExpressionKind::Call(node) = built.kind() else {
         panic!("expected a call node, got {built:?}");
@@ -877,8 +880,8 @@ fn build_call_returns_a_call_with_name_and_arguments() {
 
 /// Test the call builder accepts zero arguments.
 #[test]
-fn build_call_supports_zero_arguments() {
-    let built = build_call("nullary", Vec::<Expression>::new()).expect("a named call");
+fn expression_call_supports_zero_arguments() {
+    let built = Expression::call("nullary", Vec::<Expression>::new()).expect("a named call");
 
     let ExpressionKind::Call(node) = built.kind() else {
         panic!("expected a call node, got {built:?}");
@@ -888,26 +891,26 @@ fn build_call_supports_zero_arguments() {
 
 /// Test the call builder wraps identifier and number arguments.
 #[test]
-fn build_call_coerces_identifiers_and_numbers() {
+fn expression_call_coerces_identifiers_and_numbers() {
     let (x, x_reference) = build_identifier("x");
 
-    let with_identifier = build_call("f", [x]).expect("a named call");
-    let with_numbers = build_call("max", [1, 2]).expect("a named call");
+    let with_identifier = Expression::call("f", [x]).expect("a named call");
+    let with_numbers = Expression::call("max", [1, 2]).expect("a named call");
 
     assert_eq!(
         with_identifier,
-        build_call("f", [x_reference]).expect("a named call")
+        Expression::call("f", [x_reference]).expect("a named call")
     );
     assert_eq!(
         with_numbers,
-        build_call("max", [build_literal(1), build_literal(2)]).expect("a named call")
+        Expression::call("max", [build_literal(1), build_literal(2)]).expect("a named call")
     );
 }
 
 /// Test the call builder refuses an empty function name.
 #[test]
-fn build_call_rejects_an_empty_function_name() {
-    let result = build_call("", [1]);
+fn expression_call_rejects_an_empty_function_name() {
+    let result = Expression::call("", [1]);
 
     assert_eq!(result, Err(FunctionNameError::Empty));
 }
@@ -961,8 +964,9 @@ fn function_name_error_display_describes_the_failure() {
 /// variant naming its cause.
 #[test]
 fn expression_piecewise_errors_are_piecewise_errors() {
-    let no_cases = build_piecewise(Vec::<(Expression, Expression)>::new(), 0);
-    let numeric_condition = build_piecewise([(build_literal(true), 1), (build_literal(2), 3)], 0);
+    let no_cases = Expression::piecewise(Vec::<(Expression, Expression)>::new(), 0);
+    let numeric_condition =
+        Expression::piecewise([(build_literal(true), 1), (build_literal(2), 3)], 0);
 
     let causes = [no_cases, numeric_condition].map(|result| match result {
         Err(PiecewiseError::NoCases) => "no cases".to_owned(),

@@ -69,7 +69,7 @@ impl AlphaRenaming {
     /// other: `right` is the image of a mapped `left`, or an unmapped
     /// `left` itself when it is not an image.
     #[must_use]
-    pub fn are_identifiers_alpha_equivalent(&self, left: &Identifier, right: &Identifier) -> bool {
+    pub fn is_corresponding(&self, left: &Identifier, right: &Identifier) -> bool {
         match self.free_renaming.get(left) {
             Some(image) => image == right,
             None => !self.images.contains(right) && left == right,

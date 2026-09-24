@@ -40,6 +40,14 @@ fn expect_unary(expression: &Expression) -> &UnaryExpression {
     node
 }
 
+/// Return the call node `expression` refers to.
+fn expect_call(expression: &Expression) -> &CallExpression {
+    let ExpressionKind::Call(node) = expression.kind() else {
+        panic!("expected a call node, got {expression:?}");
+    };
+    node
+}
+
 /// Return the binary node `expression` refers to.
 fn expect_binary(expression: &Expression) -> &BinaryExpression {
     let ExpressionKind::Binary(node) = expression.kind() else {
@@ -124,9 +132,10 @@ fn piecewise_expression_exposes_cases_and_otherwise() {
     let value = build_literal(1);
     let otherwise = build_literal(2);
 
-    let node =
-        PiecewiseExpression::try_new(vec![(condition.clone(), value.clone())], otherwise.clone())
+    let expression =
+        Expression::piecewise(vec![(condition.clone(), value.clone())], otherwise.clone())
             .expect("a valid piecewise");
+    let node = expect_piecewise(&expression);
 
     assert_eq!(node.cases().len(), 1);
     assert!(Expression::ptr_eq(&node.cases()[0].0, &condition));
@@ -140,7 +149,7 @@ fn piecewise_expression_keeps_cases_in_declared_order() {
     let (first_condition, second_condition) = (build_literal(true), build_literal(false));
     let (first_value, second_value) = (build_literal(1), build_literal(2));
 
-    let node = PiecewiseExpression::try_new(
+    let expression = Expression::piecewise(
         vec![
             (first_condition.clone(), first_value.clone()),
             (second_condition.clone(), second_value.clone()),
@@ -148,6 +157,7 @@ fn piecewise_expression_keeps_cases_in_declared_order() {
         build_literal(0),
     )
     .expect("a valid piecewise");
+    let node = expect_piecewise(&expression);
 
     let flattened: Vec<&Expression> = node
         .cases()
@@ -167,8 +177,8 @@ fn piecewise_expression_keeps_cases_in_declared_order() {
 
 /// Test a piecewise with no cases is refused.
 #[test]
-fn piecewise_expression_try_new_rejects_zero_cases() {
-    let result = PiecewiseExpression::try_new(Vec::new(), build_literal(0));
+fn expression_piecewise_rejects_zero_cases() {
+    let result = Expression::piecewise(Vec::<(Expression, Expression)>::new(), build_literal(0));
 
     assert!(
         matches!(result, Err(PiecewiseError::NoCases)),
@@ -180,14 +190,15 @@ fn piecewise_expression_try_new_rejects_zero_cases() {
 #[rstest]
 #[case::true_value(true)]
 #[case::false_value(false)]
-fn piecewise_expression_try_new_accepts_boolean_literal_condition(#[case] value: bool) {
+fn expression_piecewise_accepts_boolean_literal_condition(#[case] value: bool) {
     let condition = build_literal(value);
 
-    let node = PiecewiseExpression::try_new(
+    let expression = Expression::piecewise(
         vec![(condition.clone(), build_literal(1))],
         build_literal(0),
     )
     .expect("a Boolean literal condition is valid");
+    let node = expect_piecewise(&expression);
 
     assert!(Expression::ptr_eq(&node.cases()[0].0, &condition));
 }
@@ -199,11 +210,8 @@ fn piecewise_expression_try_new_accepts_boolean_literal_condition(#[case] value:
 #[case::float(build_literal(5.0))]
 #[case::integer_text(build_parsed_literal("5"))]
 #[case::decimal(build_decimal_literal("1.5"))]
-fn piecewise_expression_try_new_rejects_non_boolean_literal_condition(
-    #[case] condition: Expression,
-) {
-    let result =
-        PiecewiseExpression::try_new(vec![(condition, build_literal(1))], build_literal(0));
+fn expression_piecewise_rejects_non_boolean_literal_condition(#[case] condition: Expression) {
+    let result = Expression::piecewise(vec![(condition, build_literal(1))], build_literal(0));
 
     assert!(
         matches!(
@@ -216,7 +224,7 @@ fn piecewise_expression_try_new_rejects_non_boolean_literal_condition(
 
 /// Test the refusal names the first offending case, not the first case.
 #[test]
-fn piecewise_expression_try_new_names_the_first_non_boolean_condition() {
+fn expression_piecewise_names_the_first_non_boolean_condition() {
     let cases = vec![
         (build_literal(true), build_literal(1)),
         (build_literal(false), build_literal(2)),
@@ -224,7 +232,7 @@ fn piecewise_expression_try_new_names_the_first_non_boolean_condition() {
         (build_literal(4), build_literal(4)),
     ];
 
-    let result = PiecewiseExpression::try_new(cases, build_literal(0));
+    let result = Expression::piecewise(cases, build_literal(0));
 
     assert!(
         matches!(
@@ -237,11 +245,11 @@ fn piecewise_expression_try_new_names_the_first_non_boolean_condition() {
 
 /// Test a condition that is not a literal is never refused, whatever it is.
 #[test]
-fn piecewise_expression_try_new_accepts_non_literal_condition() {
+fn expression_piecewise_accepts_non_literal_condition() {
     let (_, flag) = build_identifier("flag");
     let arithmetic = &flag + 1;
 
-    let node = PiecewiseExpression::try_new(
+    let expression = Expression::piecewise(
         vec![
             (flag.clone(), build_literal(1)),
             (arithmetic, build_literal(2)),
@@ -249,6 +257,7 @@ fn piecewise_expression_try_new_accepts_non_literal_condition() {
         build_literal(0),
     )
     .expect("non-literal conditions are valid");
+    let node = expect_piecewise(&expression);
 
     assert!(Expression::ptr_eq(&node.cases()[0].0, &flag));
 }
@@ -258,8 +267,8 @@ fn piecewise_expression_try_new_accepts_non_literal_condition() {
 fn call_expression_exposes_name_and_arguments() {
     let (first, second) = (build_literal(1), build_literal(2));
 
-    let node =
-        CallExpression::try_new("max", vec![first.clone(), second.clone()]).expect("a valid call");
+    let expression = Expression::call("max", [&first, &second]).expect("a valid call");
+    let node = expect_call(&expression);
 
     assert_eq!(node.function_name(), "max");
     assert_same_nodes(
@@ -271,7 +280,8 @@ fn call_expression_exposes_name_and_arguments() {
 /// Test a call may take no arguments.
 #[test]
 fn call_expression_accepts_zero_arguments() {
-    let node = CallExpression::try_new("nullary", Vec::new()).expect("a valid call");
+    let expression = Expression::call("nullary", Vec::<Expression>::new()).expect("a valid call");
+    let node = expect_call(&expression);
 
     assert_eq!(node.function_name(), "nullary");
     assert!(node.arguments().is_empty());
@@ -279,8 +289,8 @@ fn call_expression_accepts_zero_arguments() {
 
 /// Test a call with an empty function name is refused.
 #[test]
-fn call_expression_try_new_rejects_empty_function_name() {
-    let result = CallExpression::try_new("", vec![build_literal(1)]);
+fn expression_call_rejects_an_empty_function_name() {
+    let result = Expression::call("", [build_literal(1)]);
 
     assert!(
         matches!(result, Err(FunctionNameError::Empty)),
@@ -1244,21 +1254,14 @@ fn expression_is_alpha_equivalent_under_rejects_a_different_structure() {
 }
 
 /// Test a renaming sending two identifiers to one image is refused, which
-/// keeps `a + b` from being equivalent to `c + c`, whichever colliding pair
-/// comes first.
-#[rstest]
-#[case::a_first(false)]
-#[case::b_first(true)]
-fn alpha_renaming_try_new_refuses_a_non_injective_map(#[case] is_b_first: bool) {
+/// keeps `a + b` from being equivalent to `c + c`.
+#[test]
+fn alpha_renaming_try_new_refuses_a_non_injective_map() {
     let (a, _) = build_identifier("a");
     let (b, _) = build_identifier("b");
     let (c, _) = build_identifier("c");
-    let mut pairs = vec![(a, c.clone()), (b, c.clone())];
-    if is_b_first {
-        pairs.reverse();
-    }
 
-    let error = AlphaRenaming::try_new(pairs.into_iter().collect::<HashMap<_, _>>())
+    let error = AlphaRenaming::try_new(HashMap::from([(a, c.clone()), (b, c.clone())]))
         .expect_err("two identifiers share the image c");
 
     assert_eq!(error.image(), &c);
@@ -1302,7 +1305,7 @@ fn alpha_renaming_non_injective_refusal_is_symmetric() {
 #[case::unmapped_to_itself("v", "v", true)]
 #[case::unmapped_to_another("v", "u", false)]
 #[case::unmapped_to_an_image("w", "w", false)]
-fn alpha_renaming_are_identifiers_alpha_equivalent_follows_the_renaming(
+fn alpha_renaming_is_corresponding_follows_the_renaming(
     #[case] left: &str,
     #[case] right: &str,
     #[case] expected: bool,
@@ -1313,8 +1316,7 @@ fn alpha_renaming_are_identifiers_alpha_equivalent_follows_the_renaming(
         .collect();
     let renaming = build_renaming([(identifiers["x"].clone(), identifiers["w"].clone())]);
 
-    let equivalent =
-        renaming.are_identifiers_alpha_equivalent(&identifiers[left], &identifiers[right]);
+    let equivalent = renaming.is_corresponding(&identifiers[left], &identifiers[right]);
 
     assert_eq!(equivalent, expected);
 }

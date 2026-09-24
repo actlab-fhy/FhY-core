@@ -21,7 +21,7 @@ use expression_support::{
 };
 use fhy_core::expr::{
     AlphaRenaming, Decimal, Expression, ExpressionKind, FunctionSort, LiteralValue, PiecewiseError,
-    SortLookup, SymbolType, build_piecewise, validate_logical_operands, validate_predicate,
+    SortLookup, SymbolType, validate_logical_operands, validate_predicate,
 };
 use fhy_core::identifier::Identifier;
 use hashing_support::hash_of;
@@ -102,7 +102,7 @@ fn build_piecewise_strategy() -> BoxedStrategy<Expression> {
             .into_iter()
             .map(|(condition, value)| (coerce_to_condition(condition), value))
             .collect();
-        build_piecewise(cases, otherwise).expect("conditions are coerced")
+        Expression::piecewise(cases, otherwise).expect("conditions are coerced")
     }
 
     let leaf = prop_oneof![

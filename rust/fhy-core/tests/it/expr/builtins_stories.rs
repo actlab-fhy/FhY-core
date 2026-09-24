@@ -5,7 +5,7 @@
 //! API only.
 //!
 //! Expected bodies are built with the node constructors
-//! (`Expression::new_binary`, `PiecewiseExpression::try_new`, ...), not the
+//! (`Expression::new_binary`, `Expression::piecewise`, ...), not the
 //! operator builders, and compared structurally, so a literal's kind
 //! matters: `0` and `0.0` are different literals.
 
@@ -21,7 +21,7 @@ use fhy_core::expr::builtins::{
 };
 use fhy_core::expr::{
     BigInt, BinaryOperation, Expression, ExpressionKind, FormatOptions, FunctionSort, LiteralValue,
-    LogicalOperation, Notation, UnaryOperation, build_piecewise,
+    LogicalOperation, Notation, UnaryOperation,
 };
 use fhy_core::identifier::Identifier;
 use rstest::rstest;
@@ -960,8 +960,9 @@ fn build_piecewise_guards_a_fast_path_with_a_fallback() {
     let (_, sqrt_path) = build_identifier("sqrt_path");
     let (_, fallback_path) = build_identifier("fallback_path");
 
-    let expression = build_piecewise([(x.greater(0), sqrt_path.clone())], fallback_path.clone())
-        .expect("one guarded case builds");
+    let expression =
+        Expression::piecewise([(x.greater(0), sqrt_path.clone())], fallback_path.clone())
+            .expect("one guarded case builds");
 
     let expected = build_piecewise_node_or_panic(
         vec![(
