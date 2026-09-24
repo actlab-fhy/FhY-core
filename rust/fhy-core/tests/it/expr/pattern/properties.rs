@@ -274,7 +274,7 @@ fn rewrite_to_x(bindings: &MatchBindings) -> Result<Expression, CallbackError> {
     bindings
         .get("x")
         .cloned()
-        .ok_or_else(|| CallbackError::new("`x` is unbound"))
+        .ok_or_else(|| CallbackError::from("`x` is unbound"))
 }
 
 /// Return the capture of any expression under `x`.

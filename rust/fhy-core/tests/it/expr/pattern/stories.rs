@@ -21,8 +21,8 @@ use fhy_core::expr::pattern::{
     CallbackError, MatchBindings, Pattern, PatternError, does_pattern_match, match_pattern,
 };
 use fhy_core::expr::{
-    BigInt, BinaryOperation, Expression, ExpressionKind, FunctionNameError, LiteralValue,
-    PiecewiseError, RebuildError, UnaryOperation,
+    BigInt, BinaryOperation, Expression, ExpressionKind, FunctionName, FunctionNameError,
+    LiteralTextError, LiteralValue, PiecewiseError, RebuildError, UnaryOperation,
 };
 use hashing_support::hash_of;
 use pattern_support::{
@@ -1333,7 +1333,7 @@ fn pattern_predicate_receives_the_candidate() {
 /// Test a failing predicate's error is returned from the match unchanged.
 #[test]
 fn pattern_predicate_error_is_returned_from_the_match() {
-    let pattern = Pattern::predicate(|_| Err(CallbackError::new(ProbeError("predicate failed"))));
+    let pattern = Pattern::predicate(|_| Err(CallbackError::from(ProbeError("predicate failed"))));
 
     let result = match_pattern(&pattern, &build_literal(5));
 
@@ -1346,7 +1346,7 @@ fn pattern_predicate_error_is_returned_from_the_match() {
 #[test]
 fn pattern_predicate_error_stops_the_match() {
     let calls = Arc::new(AtomicUsize::new(0));
-    let failing = Pattern::predicate(|_| Err(CallbackError::new(ProbeError("stop"))));
+    let failing = Pattern::predicate(|_| Err(CallbackError::from(ProbeError("stop"))));
     let pattern = build_alternatives(vec![
         Pattern::binary(None, failing, build_counting_predicate(&calls, true)),
         build_counting_predicate(&calls, true),
@@ -1676,107 +1676,101 @@ fn pattern_error_display_describes_the_refusal(
 /// Test a callback error built from text displays the text and has no
 /// source.
 #[rstest]
-#[case::from_str(CallbackError::new("no verdict"))]
-#[case::from_string(CallbackError::new(String::from("no verdict")))]
-fn callback_error_new_from_text_displays_the_text(#[case] error: CallbackError) {
+#[case::from_str(CallbackError::from("no verdict"))]
+#[case::from_string(CallbackError::from(String::from("no verdict")))]
+fn callback_error_from_text_displays_the_text(#[case] error: CallbackError) {
     let message = error.to_string();
 
     assert_eq!(message, "no verdict");
-    assert!(std::error::Error::source(&error).is_none());
+    assert!(error.source().is_none());
 }
 
-/// Test a callback error wraps an error transparently: its message, its
-/// source, and the wrapped error itself.
+/// Test a callback error is the wrapped error itself: its message and a
+/// downcast to it.
 #[test]
-fn callback_error_wraps_an_error_transparently() {
-    let error = CallbackError::new(ProbeError("probe"));
+fn callback_error_downcasts_to_the_wrapped_error() {
+    let error = CallbackError::from(ProbeError("probe"));
 
     let message = error.to_string();
-    let inner = expect_probe_error(&error).clone();
-    let unwrapped = error.into_inner();
+    let downcast = error.downcast::<ProbeError>();
 
     assert_eq!(message, "probe");
-    assert_eq!(inner, ProbeError("probe"));
+    assert_eq!(downcast.ok().as_deref(), Some(&ProbeError("probe")));
+}
+
+/// Fail with a [`ProbeError`] through `?`.
+fn fail_with_a_probe_error() -> Result<(), CallbackError> {
+    Err(ProbeError("probe"))?
+}
+
+/// Fail with a refused piecewise through `?`.
+fn fail_with_a_piecewise_error() -> Result<(), CallbackError> {
+    Expression::piecewise(Vec::<(Expression, Expression)>::new(), build_literal(0))?;
+    Ok(())
+}
+
+/// Fail with a refused rebuild through `?`.
+fn fail_with_a_rebuild_error() -> Result<(), CallbackError> {
+    build_simple_binary(BinaryOperation::Add).rebuild_with_children(Vec::new())?;
+    Ok(())
+}
+
+/// Fail with a refused function name through `?`.
+fn fail_with_a_function_name_error() -> Result<(), CallbackError> {
+    FunctionName::try_new("")?;
+    Ok(())
+}
+
+/// Fail with a refused literal text through `?`.
+fn fail_with_a_literal_text_error() -> Result<(), CallbackError> {
+    LiteralValue::parse_text("abc")?;
+    Ok(())
+}
+
+/// Test `?` converts any error into a callback error holding it.
+#[rstest]
+#[case::probe_error(fail_with_a_probe_error, |error: &CallbackError| {
+    error.downcast_ref::<ProbeError>() == Some(&ProbeError("probe"))
+})]
+#[case::piecewise_error(fail_with_a_piecewise_error, |error: &CallbackError| {
+    error.downcast_ref::<PiecewiseError>() == Some(&PiecewiseError::NoCases)
+})]
+#[case::rebuild_error(fail_with_a_rebuild_error, |error: &CallbackError| {
+    error.downcast_ref::<RebuildError>()
+        == Some(&RebuildError::ChildCount { expected: 2, actual: 0 })
+})]
+#[case::function_name_error(fail_with_a_function_name_error, |error: &CallbackError| {
+    error.downcast_ref::<FunctionNameError>() == Some(&FunctionNameError::Empty)
+})]
+#[case::literal_text_error(fail_with_a_literal_text_error, |error: &CallbackError| {
+    error
+        .downcast_ref::<LiteralTextError>()
+        .is_some_and(|wrapped| wrapped.text() == "abc")
+})]
+fn callback_error_converts_from_any_error_with_question_mark(
+    #[case] fail: fn() -> Result<(), CallbackError>,
+    #[case] holds_the_error: fn(&CallbackError) -> bool,
+) {
+    let error = fail().expect_err("the callback fails");
+
+    assert!(holds_the_error(&error), "got {error:?}");
+}
+
+/// Test `?` passes a callback error on into a function returning a boxed
+/// error, unchanged.
+#[test]
+fn callback_error_converts_into_a_boxed_error() {
+    fn propagate() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        fail_with_a_probe_error()?;
+        Ok(())
+    }
+
+    let error = propagate().expect_err("the callback fails");
+
     assert_eq!(
-        unwrapped.downcast_ref::<ProbeError>(),
+        error.downcast_ref::<ProbeError>(),
         Some(&ProbeError("probe"))
     );
-}
-
-/// Test a callback error forwards the wrapped error's source.
-#[test]
-fn callback_error_source_is_the_wrapped_errors_source() {
-    /// An error caused by a [`ProbeError`].
-    #[derive(Debug)]
-    struct CausedError(ProbeError);
-
-    impl std::fmt::Display for CausedError {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.write_str("caused")
-        }
-    }
-
-    impl std::error::Error for CausedError {
-        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-            Some(&self.0)
-        }
-    }
-
-    let error = CallbackError::new(CausedError(ProbeError("cause")));
-
-    let source = std::error::Error::source(&error);
-
-    assert_eq!(error.to_string(), "caused");
-    let source = source.expect("the wrapped error's source");
-    assert_eq!(
-        source.downcast_ref::<ProbeError>(),
-        Some(&ProbeError("cause"))
-    );
-}
-
-/// Test each refused node build converts into a callback error wrapping it.
-#[test]
-fn callback_error_from_a_build_error_wraps_it() {
-    let piecewise_error = PiecewiseError::NoCases;
-    let rebuild_error = RebuildError::ChildCount {
-        expected: 2,
-        actual: 1,
-    };
-    let name_error = FunctionNameError::Empty;
-
-    let from_piecewise = CallbackError::from(piecewise_error);
-    let from_rebuild = CallbackError::from(rebuild_error.clone());
-    let from_name = CallbackError::from(name_error);
-
-    assert_eq!(
-        from_piecewise.inner().downcast_ref::<PiecewiseError>(),
-        Some(&piecewise_error)
-    );
-    assert_eq!(
-        from_rebuild.inner().downcast_ref::<RebuildError>(),
-        Some(&rebuild_error)
-    );
-    assert_eq!(
-        from_name.inner().downcast_ref::<FunctionNameError>(),
-        Some(&name_error)
-    );
-    assert_eq!(from_piecewise.to_string(), piecewise_error.to_string());
-}
-
-/// Test a refused literal text converts into a callback error wrapping it.
-#[test]
-fn callback_error_from_literal_text_error_wraps_it() {
-    let text_error = LiteralValue::parse_text("abc").expect_err("not a literal text");
-    let expected_message = text_error.to_string();
-
-    let error = CallbackError::from(text_error);
-
-    let wrapped = error
-        .inner()
-        .downcast_ref::<fhy_core::expr::LiteralTextError>()
-        .expect("a wrapped literal text error");
-    assert_eq!(wrapped.text(), "abc");
-    assert_eq!(error.to_string(), expected_message);
 }
 
 // =============================================================================

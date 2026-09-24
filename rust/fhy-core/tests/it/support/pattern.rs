@@ -21,7 +21,7 @@ impl fmt::Display for ProbeError {
 
 impl Error for ProbeError {}
 
-/// Return the [`ProbeError`] `error` wraps.
+/// Return the [`ProbeError`] `error` holds.
 ///
 /// # Panics
 ///
@@ -29,7 +29,6 @@ impl Error for ProbeError {}
 #[must_use]
 pub(crate) fn expect_probe_error(error: &CallbackError) -> &ProbeError {
     error
-        .inner()
         .downcast_ref::<ProbeError>()
         .unwrap_or_else(|| panic!("expected a ProbeError, got {error:?}"))
 }
@@ -140,7 +139,7 @@ pub(crate) fn rewrite_to_capture(
         bindings
             .get(name)
             .cloned()
-            .ok_or_else(|| CallbackError::new(ProbeError("unbound capture")))
+            .ok_or_else(|| CallbackError::from(ProbeError("unbound capture")))
     }
 }
 

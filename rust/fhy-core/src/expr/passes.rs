@@ -64,7 +64,7 @@ const RULE_APPLIER_PASS_DESCRIPTION: &str =
 ///         bindings
 ///             .get("x")
 ///             .cloned()
-///             .ok_or_else(|| CallbackError::new("`x` is unbound"))
+///             .ok_or_else(|| CallbackError::from("`x` is unbound"))
 ///     },
 /// )
 /// .with_name("x * 1 -> x");

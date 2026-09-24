@@ -71,7 +71,7 @@ fn build_move_zero_right_rule() -> RewriteRule {
         |bindings: &MatchBindings| {
             let x = bindings
                 .get("x")
-                .ok_or_else(|| CallbackError::new(ProbeError("unbound capture")))?;
+                .ok_or_else(|| CallbackError::from(ProbeError("unbound capture")))?;
             Ok(Expression::new_binary(BinaryOperation::Add, x, 0))
         },
     )
@@ -317,10 +317,10 @@ fn rewrite_rule_applier_did_change_compares_identity() {
 /// of the run hook whose source is the rule's callback error.
 #[rstest]
 #[case::guard(RewriteRule::new(Pattern::wildcard(), rewrite_to_literal(0)).with_guard(
-    |_: &MatchBindings| Err(CallbackError::new(ProbeError("guard failed")))
+    |_: &MatchBindings| Err(CallbackError::from(ProbeError("guard failed")))
 ), "guard failed")]
 #[case::rewrite(RewriteRule::new(Pattern::wildcard(), |_: &MatchBindings| {
-    Err(CallbackError::new(ProbeError("rewrite failed")))
+    Err(CallbackError::from(ProbeError("rewrite failed")))
 }), "rewrite failed")]
 fn rewrite_rule_applier_execute_fails_with_the_callback_error(
     #[case] failing: RewriteRule,
@@ -345,16 +345,12 @@ fn rewrite_rule_applier_execute_fails_with_the_callback_error(
     );
     assert_eq!(error.class(), FailureClass::Execution);
     assert_eq!(error.pass_name(), Some(RULE_APPLIER_NAME));
-    let RewriteError::Callback {
-        rule_index,
-        rule_name,
-        source,
-    } = expect_rewrite_error(&error)
-    else {
+    let rewrite_error = expect_rewrite_error(&error);
+    let RewriteError::Callback { source, .. } = rewrite_error else {
         panic!("expected a callback failure, got {error:?}");
     };
-    assert_eq!(*rule_index, 1);
-    assert_eq!(rule_name.as_deref(), Some("failing"));
+    assert_eq!(rewrite_error.rule_index(), 1);
+    assert_eq!(rewrite_error.rule_name(), Some("failing"));
     assert_eq!(expect_probe_error(source), &ProbeError(message));
 }
 
@@ -371,16 +367,12 @@ fn rewrite_rule_applier_execute_fails_with_the_rebuild_error() {
         .execute(&expression)
         .expect_err("the piecewise refuses the literal condition");
 
-    let RewriteError::Rebuild {
-        rule_index,
-        rule_name,
-        source,
-    } = expect_rewrite_error(&error)
-    else {
+    let rewrite_error = expect_rewrite_error(&error);
+    let RewriteError::Rebuild { source, .. } = rewrite_error else {
         panic!("expected a rebuild failure, got {error:?}");
     };
-    assert_eq!(*rule_index, 0);
-    assert_eq!(rule_name.as_deref(), Some("c -> 1"));
+    assert_eq!(rewrite_error.rule_index(), 0);
+    assert_eq!(rewrite_error.rule_name(), Some("c -> 1"));
     assert_eq!(
         source,
         &RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index: 0 })

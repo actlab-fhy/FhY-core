@@ -62,40 +62,63 @@ fn build_identity_rule() -> RewriteRule {
 
 /// Return a guard failing with a [`ProbeError`].
 fn fail_guard(_: &MatchBindings) -> Result<bool, CallbackError> {
-    Err(CallbackError::new(ProbeError("guard failed")))
+    Err(CallbackError::from(ProbeError("guard failed")))
 }
 
 /// Return a rewrite failing with a [`ProbeError`].
 fn fail_rewrite(_: &MatchBindings) -> Result<Expression, CallbackError> {
-    Err(CallbackError::new(ProbeError("rewrite failed")))
+    Err(CallbackError::from(ProbeError("rewrite failed")))
 }
 
 /// Return the build error inside `error`, with the responsible rule's index
 /// and name.
 fn expect_rebuild_error(error: &RewriteError) -> (usize, Option<&str>, &RebuildError) {
-    let RewriteError::Rebuild {
-        rule_index,
-        rule_name,
-        source,
-    } = error
-    else {
+    let RewriteError::Rebuild { source, .. } = error else {
         panic!("expected a rebuild failure, got {error:?}");
     };
-    (*rule_index, rule_name.as_deref(), source)
+    (error.rule_index(), error.rule_name(), source)
 }
 
 /// Return the callback error inside `error`, with the failing rule's index
 /// and name.
 fn expect_callback_error(error: &RewriteError) -> (usize, Option<&str>, &CallbackError) {
-    let RewriteError::Callback {
-        rule_index,
-        rule_name,
-        source,
-    } = error
-    else {
+    let RewriteError::Callback { source, .. } = error else {
         panic!("expected a callback failure, got {error:?}");
     };
-    (*rule_index, rule_name.as_deref(), source)
+    (error.rule_index(), error.rule_name(), source)
+}
+
+/// Return the error of a walk over `5` in which the rule at `rule_index`,
+/// named `rule_name` if given, fails its rewrite, after rules that never
+/// fire.
+fn build_callback_failure(rule_index: usize, rule_name: Option<&str>) -> RewriteError {
+    let mut rules: Vec<RewriteRule> = (0..rule_index)
+        .map(|_| RewriteRule::new(build_literal_pattern(9), rewrite_to_literal(0)))
+        .collect();
+    let failing = RewriteRule::new(Pattern::wildcard(), fail_rewrite);
+    rules.push(match rule_name {
+        Some(name) => failing.with_name(name),
+        None => failing,
+    });
+    apply_rewrite_rules(&build_literal(5), &rules).expect_err("the last rule fails")
+}
+
+/// Return the error of a walk over `{5 if true; 6 otherwise}` in which the
+/// rule at `rule_index`, named `rule_name` if given, rewrites the condition
+/// to `1`, after rules that never fire.
+fn build_rebuild_failure(rule_index: usize, rule_name: Option<&str>) -> RewriteError {
+    let mut rules: Vec<RewriteRule> = (0..rule_index)
+        .map(|_| RewriteRule::new(build_literal_pattern(9), rewrite_to_literal(0)))
+        .collect();
+    let true_to_one = RewriteRule::new(build_literal_pattern(true), rewrite_to_literal(1));
+    rules.push(match rule_name {
+        Some(name) => true_to_one.with_name(name),
+        None => true_to_one,
+    });
+    let expression =
+        Expression::piecewise([(build_literal(true), build_literal(5))], build_literal(6))
+            .expect("a valid piecewise");
+    apply_rewrite_rules(&expression, &rules).expect_err("the rebuild fails")
 }
 
 // =============================================================================
@@ -291,7 +314,7 @@ fn apply_rewrite_rule_guard_sees_the_bindings(
     .with_guard(|bindings| {
         let bound = bindings
             .get("x")
-            .ok_or_else(|| CallbackError::new(ProbeError("unbound")))?;
+            .ok_or_else(|| CallbackError::from(ProbeError("unbound")))?;
         Ok(matches!(bound.kind(), ExpressionKind::Literal(_)))
     });
 
@@ -326,7 +349,7 @@ fn apply_rewrite_rule_returns_the_rewrite_error() {
 #[test]
 fn apply_rewrite_rule_returns_the_predicate_error() {
     let rule = RewriteRule::new(
-        Pattern::predicate(|_| Err(CallbackError::new(ProbeError("predicate failed")))),
+        Pattern::predicate(|_| Err(CallbackError::from(ProbeError("predicate failed")))),
         rewrite_to_literal(0),
     );
 
@@ -823,7 +846,7 @@ fn apply_rewrite_rules_reports_a_failing_rewrite_with_its_rule() {
 #[test]
 fn apply_rewrite_rules_reports_a_failing_predicate_with_its_rule() {
     let failing = RewriteRule::new(
-        Pattern::predicate(|_| Err(CallbackError::new(ProbeError("predicate failed")))),
+        Pattern::predicate(|_| Err(CallbackError::from(ProbeError("predicate failed")))),
         rewrite_to_literal(0),
     )
     .with_name("probing");
@@ -948,36 +971,17 @@ fn apply_rewrite_rules_blames_the_rule_that_rewrote_a_shared_refused_condition()
 
 /// Test each rewrite error displays its documented message.
 #[rstest]
-#[case::unnamed_callback(
-    RewriteError::Callback {
-        rule_index: 2,
-        rule_name: None,
-        source: CallbackError::new("inner"),
-    },
-    "rewrite rule 2 failed"
-)]
+#[case::unnamed_callback(build_callback_failure(2, None), "rewrite rule 2 failed")]
 #[case::named_callback(
-    RewriteError::Callback {
-        rule_index: 0,
-        rule_name: Some(String::from("x + 0 -> x")),
-        source: CallbackError::new("inner"),
-    },
+    build_callback_failure(0, Some("x + 0 -> x")),
     "rewrite rule 0 (x + 0 -> x) failed"
 )]
 #[case::unnamed_rebuild(
-    RewriteError::Rebuild {
-        rule_index: 1,
-        rule_name: None,
-        source: RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index: 0 }),
-    },
+    build_rebuild_failure(1, None),
     "rebuilding a node after rewrite rule 1 failed"
 )]
 #[case::named_rebuild(
-    RewriteError::Rebuild {
-        rule_index: 0,
-        rule_name: Some(String::from("true -> 1")),
-        source: RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index: 0 }),
-    },
+    build_rebuild_failure(0, Some("true -> 1")),
     "rebuilding a node after rewrite rule 0 (true -> 1) failed"
 )]
 fn rewrite_error_display_describes_the_failure(
@@ -989,37 +993,48 @@ fn rewrite_error_display_describes_the_failure(
     assert_eq!(message, expected);
 }
 
-/// Test a callback failure's source is the callback's error.
+/// Test a rewrite error reports the index and name of its rule.
+#[rstest]
+#[case::unnamed_callback(build_callback_failure(2, None), 2, None)]
+#[case::named_callback(build_callback_failure(1, Some("fails")), 1, Some("fails"))]
+#[case::unnamed_rebuild(build_rebuild_failure(1, None), 1, None)]
+#[case::named_rebuild(build_rebuild_failure(0, Some("true -> 1")), 0, Some("true -> 1"))]
+fn rewrite_error_accessors_report_rule_index_and_name(
+    #[case] error: RewriteError,
+    #[case] rule_index: usize,
+    #[case] rule_name: Option<&str>,
+) {
+    assert_eq!(error.rule_index(), rule_index);
+    assert_eq!(error.rule_name(), rule_name);
+}
+
+/// Test a callback failure's source is the error the caller's callback
+/// returned.
 #[test]
-fn rewrite_error_callback_source_is_the_callback_error() {
-    let error = RewriteError::Callback {
-        rule_index: 0,
-        rule_name: None,
-        source: CallbackError::new(ProbeError("inner")),
-    };
+fn rewrite_error_callback_source_is_the_callers_error() {
+    let error = build_callback_failure(0, None);
 
     let source = error.source().expect("a callback failure has a source");
 
-    let callback_error = source
-        .downcast_ref::<CallbackError>()
-        .expect("the source is the callback error");
-    assert_eq!(expect_probe_error(callback_error), &ProbeError("inner"));
+    assert_eq!(
+        source.downcast_ref::<ProbeError>(),
+        Some(&ProbeError("rewrite failed"))
+    );
 }
 
 /// Test a rebuild failure's source is the build error.
 #[test]
 fn rewrite_error_rebuild_source_is_the_build_error() {
-    let build_error =
-        RebuildError::Piecewise(PiecewiseError::NonBooleanConditionLiteral { case_index: 3 });
-    let error = RewriteError::Rebuild {
-        rule_index: 0,
-        rule_name: None,
-        source: build_error.clone(),
-    };
+    let error = build_rebuild_failure(0, None);
 
     let source = error.source().expect("a rebuild failure has a source");
 
-    assert_eq!(source.downcast_ref::<RebuildError>(), Some(&build_error));
+    assert_eq!(
+        source.downcast_ref::<RebuildError>(),
+        Some(&RebuildError::Piecewise(
+            PiecewiseError::NonBooleanConditionLiteral { case_index: 0 }
+        ))
+    );
 }
 
 // =============================================================================

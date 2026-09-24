@@ -22,9 +22,7 @@ use std::sync::Arc;
 
 use crate::identifier::Identifier;
 
-use super::super::callee::FunctionNameError;
-use super::super::error::{PiecewiseError, RebuildError};
-use super::super::literal::{LiteralTextError, LiteralValue};
+use super::super::literal::LiteralValue;
 use super::super::node::{Expression, ExpressionKind};
 use super::super::operation::{BinaryOperation, UnaryOperation};
 
@@ -149,7 +147,7 @@ fn match_sequence<'a>(
 /// let bindings = match_pattern(&pattern, &(&a + 0))?.expect("`a + 0` matches");
 /// assert!(Expression::ptr_eq(bindings.get("x").expect("`x` is bound"), &a));
 /// assert!(match_pattern(&pattern, &(&a + 1))?.is_none());
-/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// # Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct Pattern(PatternKind);
@@ -585,9 +583,9 @@ impl Error for PatternError {}
 /// The failure of a caller-supplied callback: a pattern predicate, a rewrite
 /// rule's guard, or a rewrite rule's rewrite.
 ///
-/// It wraps the callback's own error transparently: `Display` and
-/// [`source`](Error::source) are the wrapped error's, and
-/// [`inner`](Self::inner) exposes it for downcasting.
+/// It is the callback's own error, boxed: `?` converts any error type, a
+/// `String` or a `&str` into it, and `downcast_ref` recovers the error the
+/// callback returned. A match or a rewrite walk returns it unchanged.
 ///
 /// # Examples
 ///
@@ -595,80 +593,14 @@ impl Error for PatternError {}
 /// use fhy_core::expr::{Expression, LiteralValue};
 /// use fhy_core::expr::pattern::{CallbackError, Pattern, match_pattern};
 ///
-/// let refusing = Pattern::predicate(|_| Err(CallbackError::new("no verdict")));
+/// let refusing = Pattern::predicate(|_| Err(CallbackError::from("no verdict")));
 ///
 /// let result = match_pattern(&refusing, &Expression::from(LiteralValue::from(1)));
 ///
 /// let error = result.expect_err("the predicate fails");
 /// assert_eq!(error.to_string(), "no verdict");
 /// ```
-#[derive(Debug)]
-pub struct CallbackError(Box<dyn Error + Send + Sync>);
-
-impl CallbackError {
-    /// Wrap `error`, which may be any error type, a `String`, or a `&str`.
-    #[must_use]
-    pub fn new(error: impl Into<Box<dyn Error + Send + Sync>>) -> Self {
-        Self(error.into())
-    }
-
-    /// Return the wrapped error.
-    #[must_use]
-    pub fn inner(&self) -> &(dyn Error + Send + Sync + 'static) {
-        &*self.0
-    }
-
-    /// Return the wrapped error, consuming this one.
-    #[must_use]
-    pub fn into_inner(self) -> Box<dyn Error + Send + Sync> {
-        self.0
-    }
-}
-
-impl fmt::Display for CallbackError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl Error for CallbackError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        self.0.source()
-    }
-}
-
-impl From<PiecewiseError> for CallbackError {
-    /// Wrap a refused piecewise, so a rewrite can use `?` on the piecewise
-    /// builder.
-    fn from(error: PiecewiseError) -> Self {
-        Self(Box::new(error))
-    }
-}
-
-impl From<RebuildError> for CallbackError {
-    /// Wrap a refused rebuild, so a rewrite can use `?` on
-    /// [`Expression::rebuild_with_children`].
-    fn from(error: RebuildError) -> Self {
-        Self(Box::new(error))
-    }
-}
-
-impl From<FunctionNameError> for CallbackError {
-    /// Wrap a refused function name, so a rewrite can use `?` on
-    /// [`FunctionName::try_new`](super::super::FunctionName::try_new) or on
-    /// parsing a [`Callee`](super::super::Callee).
-    fn from(error: FunctionNameError) -> Self {
-        Self(Box::new(error))
-    }
-}
-
-impl From<LiteralTextError> for CallbackError {
-    /// Wrap a refused literal text, so a callback can use `?` on
-    /// [`LiteralValue::parse_text`].
-    fn from(error: LiteralTextError) -> Self {
-        Self(Box::new(error))
-    }
-}
+pub type CallbackError = Box<dyn Error + Send + Sync + 'static>;
 
 /// Match `expression` against `pattern` from empty bindings, at the root
 /// only, and return the captures, or `None` if it does not match.
@@ -701,5 +633,4 @@ const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Pattern>();
     assert_send_sync::<MatchBindings>();
-    assert_send_sync::<CallbackError>();
 };

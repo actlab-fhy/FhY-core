@@ -124,7 +124,7 @@ impl Rewriter<Expression> for RuleApplier<'_> {
             let replacement =
                 apply_rewrite_rule(rule, node).map_err(|source| RewriteError::Callback {
                     rule_index,
-                    rule_name: rule.name().map(str::to_owned),
+                    rule_name: rule.name.clone(),
                     source,
                 })?;
             if let Some(expression) = replacement {
@@ -164,7 +164,7 @@ pub(in crate::expr) fn run_rewrite_rules(
             let rule_index = applier.find_blamed_rule(&node, &children, &source);
             RewriteError::Rebuild {
                 rule_index,
-                rule_name: rules[rule_index].name().map(str::to_owned),
+                rule_name: rules[rule_index].name.clone(),
                 source,
             }
         }
@@ -204,7 +204,7 @@ pub(in crate::expr) fn run_rewrite_rules(
 ///         bindings
 ///             .get("x")
 ///             .cloned()
-///             .ok_or_else(|| CallbackError::new("`x` is unbound"))
+///             .ok_or_else(|| CallbackError::from("`x` is unbound"))
 ///     },
 /// )
 /// .with_name("x + 0 -> x");
@@ -213,7 +213,7 @@ pub(in crate::expr) fn run_rewrite_rules(
 /// let rewritten = apply_rewrite_rule(&rule, &(&a + 0))?;
 ///
 /// assert!(rewritten.is_some_and(|result| Expression::ptr_eq(&result, &a)));
-/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// # Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
 /// ```
 #[derive(Clone)]
 pub struct RewriteRule {
@@ -349,6 +349,10 @@ impl RewriteOutcome {
 }
 
 /// A rewrite walk that failed.
+///
+/// Both variants carry the position of the rule responsible in the rule
+/// list and its name, read with [`rule_index`](Self::rule_index) and
+/// [`rule_name`](Self::rule_name).
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum RewriteError {
@@ -357,12 +361,13 @@ pub enum RewriteError {
     ///
     /// Displays as `rewrite rule {rule_index} failed`, or as
     /// `rewrite rule {rule_index} ({rule_name}) failed` for a named rule;
-    /// the callback's error is the [`source`](Error::source).
+    /// the error the callback returned is the [`source`](Error::source).
+    #[non_exhaustive]
     Callback {
         /// The position of the failing rule in the rule list.
         rule_index: usize,
         /// The name of the failing rule, or `None` for an unnamed rule.
-        rule_name: Option<String>,
+        rule_name: Option<Arc<str>>,
         /// The callback's error.
         source: CallbackError,
     },
@@ -376,42 +381,51 @@ pub enum RewriteError {
     /// rule {rule_index} failed`, or as `rebuilding a node after rewrite
     /// rule {rule_index} ({rule_name}) failed` for a named rule; the rebuild
     /// error is the [`source`](Error::source).
+    #[non_exhaustive]
     Rebuild {
         /// The position of the responsible rule in the rule list.
         rule_index: usize,
         /// The name of the responsible rule, or `None` for an unnamed rule.
-        rule_name: Option<String>,
+        rule_name: Option<Arc<str>>,
         /// The rebuild error.
         source: RebuildError,
     },
 }
 
+impl RewriteError {
+    /// Return the position of the responsible rule in the rule list.
+    #[must_use]
+    pub fn rule_index(&self) -> usize {
+        match self {
+            Self::Callback { rule_index, .. } | Self::Rebuild { rule_index, .. } => *rule_index,
+        }
+    }
+
+    /// Return the name of the responsible rule, or `None` for an unnamed
+    /// rule.
+    #[must_use]
+    pub fn rule_name(&self) -> Option<&str> {
+        match self {
+            Self::Callback { rule_name, .. } | Self::Rebuild { rule_name, .. } => {
+                rule_name.as_deref()
+            }
+        }
+    }
+}
+
 impl fmt::Display for RewriteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Callback {
-                rule_index,
-                rule_name: None,
-                ..
-            } => write!(f, "rewrite rule {rule_index} failed"),
-            Self::Callback {
-                rule_index,
-                rule_name: Some(name),
-                ..
-            } => write!(f, "rewrite rule {rule_index} ({name}) failed"),
-            Self::Rebuild {
-                rule_index,
-                rule_name: None,
-                ..
-            } => write!(
+        let rule_index = self.rule_index();
+        match (self, self.rule_name()) {
+            (Self::Callback { .. }, None) => write!(f, "rewrite rule {rule_index} failed"),
+            (Self::Callback { .. }, Some(name)) => {
+                write!(f, "rewrite rule {rule_index} ({name}) failed")
+            }
+            (Self::Rebuild { .. }, None) => write!(
                 f,
                 "rebuilding a node after rewrite rule {rule_index} failed"
             ),
-            Self::Rebuild {
-                rule_index,
-                rule_name: Some(name),
-                ..
-            } => write!(
+            (Self::Rebuild { .. }, Some(name)) => write!(
                 f,
                 "rebuilding a node after rewrite rule {rule_index} ({name}) failed"
             ),
@@ -422,7 +436,7 @@ impl fmt::Display for RewriteError {
 impl Error for RewriteError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Callback { source, .. } => Some(source),
+            Self::Callback { source, .. } => Some(&**source),
             Self::Rebuild { source, .. } => Some(source),
         }
     }
